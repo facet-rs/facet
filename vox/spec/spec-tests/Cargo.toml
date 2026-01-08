@@ -30,3 +30,11 @@ roam-codegen = { path = "../../rust/roam-codegen" }
 [[bin]]
 name = "ws-echo-server"
 path = "src/bin/ws_echo_server.rs"
+
+[[bin]]
+name = "tcp-echo-server"
+path = "src/bin/tcp_echo_server.rs"
+
+[[bin]]
+name = "cross-language-test"
+path = "src/bin/cross_language_test.rs"

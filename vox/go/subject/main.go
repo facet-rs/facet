@@ -14,12 +14,13 @@ import (
 )
 
 const (
-	localMaxPayload     = uint32(1024 * 1024)
-	localInitialCredit  = uint32(64 * 1024)
-	goodbyeDecodeError  = "message.decode-error"
-	goodbyeHelloUnknown = "message.hello.unknown-version"
-	goodbyePayloadLimit = "flow.unary.payload-limit"
-	goodbyeStreamIDZero = "streaming.id.zero-reserved"
+	localMaxPayload       = uint32(1024 * 1024)
+	localInitialCredit    = uint32(64 * 1024)
+	goodbyeDecodeError    = "message.decode-error"
+	goodbyeHelloUnknown   = "message.hello.unknown-version"
+	goodbyePayloadLimit   = "flow.unary.payload-limit"
+	goodbyeStreamIDZero   = "streaming.id.zero-reserved"
+	goodbyeStreamUnknown  = "streaming.unknown"
 )
 
 type echoService struct{}
@@ -184,6 +185,19 @@ func main() {
 						}
 						return nil
 
+					case 5: // Data
+						sid, err := readUvarint(payload, &off)
+						if err != nil {
+							return err
+						}
+						if sid == 0 {
+							_ = sendGoodbye(conn, goodbyeStreamIDZero)
+							return io.EOF
+						}
+						// Unknown stream IDs should trigger goodbye
+						_ = sendGoodbye(conn, goodbyeStreamUnknown)
+						return io.EOF
+
 					case 6, 7: // Close / Reset
 						sid, err := readUvarint(payload, &off)
 						if err != nil {
@@ -193,7 +207,10 @@ func main() {
 							_ = sendGoodbye(conn, goodbyeStreamIDZero)
 							return io.EOF
 						}
-						return nil
+						// Unknown stream IDs should trigger goodbye
+						_ = sendGoodbye(conn, goodbyeStreamUnknown)
+						return io.EOF
+
 					default:
 						// Ignore.
 						return nil

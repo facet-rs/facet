@@ -1,5 +1,12 @@
+//! Go code generation for roam services.
+//!
+//! Generates caller interfaces, handler interfaces, client implementations,
+//! and dispatchers from ServiceDetail.
+
+use std::collections::HashSet;
+
 use heck::{ToSnakeCase, ToUpperCamelCase};
-use roam_schema::{MethodDetail, ServiceDetail, TypeDetail};
+use roam_schema::{MethodDetail, ServiceDetail, TypeDetail, VariantPayload};
 
 use crate::render::{fq_name, hex_u64};
 
@@ -21,7 +28,145 @@ pub fn generate_method_ids(methods: &[MethodDetail]) -> String {
     out
 }
 
+// ============================================================================
+// Named Type Collection and Generation
+// ============================================================================
+
+/// Collect all named types (structs and enums with a name) from a service.
+fn collect_named_types(service: &ServiceDetail) -> Vec<(String, TypeDetail)> {
+    let mut seen = HashSet::new();
+    let mut types = Vec::new();
+
+    fn visit(ty: &TypeDetail, seen: &mut HashSet<String>, types: &mut Vec<(String, TypeDetail)>) {
+        match ty {
+            TypeDetail::Struct {
+                name: Some(name),
+                fields,
+            } => {
+                if !seen.contains(name) {
+                    seen.insert(name.clone());
+                    // Visit nested types first (dependencies before dependents)
+                    for field in fields {
+                        visit(&field.type_info, seen, types);
+                    }
+                    types.push((name.clone(), ty.clone()));
+                }
+            }
+            TypeDetail::Enum {
+                name: Some(name),
+                variants,
+            } => {
+                if !seen.contains(name) {
+                    seen.insert(name.clone());
+                    // Visit nested types in variants
+                    for variant in variants {
+                        match &variant.payload {
+                            VariantPayload::Newtype(inner) => visit(inner, seen, types),
+                            VariantPayload::Struct(fields) => {
+                                for field in fields {
+                                    visit(&field.type_info, seen, types);
+                                }
+                            }
+                            VariantPayload::Unit => {}
+                        }
+                    }
+                    types.push((name.clone(), ty.clone()));
+                }
+            }
+            TypeDetail::List(inner) => visit(inner, seen, types),
+            TypeDetail::Option(inner) => visit(inner, seen, types),
+            TypeDetail::Array { element, .. } => visit(element, seen, types),
+            TypeDetail::Map { key, value } => {
+                visit(key, seen, types);
+                visit(value, seen, types);
+            }
+            TypeDetail::Set(inner) => visit(inner, seen, types),
+            TypeDetail::Tuple(items) => {
+                for item in items {
+                    visit(item, seen, types);
+                }
+            }
+            TypeDetail::Push(inner) | TypeDetail::Pull(inner) => visit(inner, seen, types),
+            _ => {}
+        }
+    }
+
+    for method in &service.methods {
+        for arg in &method.args {
+            visit(&arg.type_info, &mut seen, &mut types);
+        }
+        visit(&method.return_type, &mut seen, &mut types);
+    }
+
+    types
+}
+
+/// Generate Go type definitions for all named types.
+fn generate_named_types(named_types: &[(String, TypeDetail)]) -> String {
+    let mut out = String::new();
+
+    if named_types.is_empty() {
+        return out;
+    }
+
+    out.push_str("// Named type definitions\n\n");
+
+    for (name, ty) in named_types {
+        match ty {
+            TypeDetail::Struct { fields, .. } => {
+                out.push_str(&format!("type {name} struct {{\n"));
+                for field in fields {
+                    let field_name = field.name.to_upper_camel_case();
+                    let field_type = go_type_base(&field.type_info);
+                    out.push_str(&format!("\t{field_name} {field_type}\n"));
+                }
+                out.push_str("}\n\n");
+            }
+            TypeDetail::Enum { variants, .. } => {
+                // Go doesn't have sum types, so we generate an interface + variant structs
+                out.push_str(&format!("// {name} is a sum type (enum)\n"));
+                out.push_str(&format!("type {name} interface {{\n"));
+                out.push_str(&format!("\tis{name}()\n"));
+                out.push_str("}\n\n");
+
+                for variant in variants {
+                    let variant_name = format!("{name}{}", variant.name.to_upper_camel_case());
+                    match &variant.payload {
+                        VariantPayload::Unit => {
+                            out.push_str(&format!("type {variant_name} struct{{}}\n"));
+                        }
+                        VariantPayload::Newtype(inner) => {
+                            out.push_str(&format!("type {variant_name} struct {{\n"));
+                            out.push_str(&format!("\tValue {}\n", go_type_base(inner)));
+                            out.push_str("}\n");
+                        }
+                        VariantPayload::Struct(fields) => {
+                            out.push_str(&format!("type {variant_name} struct {{\n"));
+                            for field in fields {
+                                let field_name = field.name.to_upper_camel_case();
+                                let field_type = go_type_base(&field.type_info);
+                                out.push_str(&format!("\t{field_name} {field_type}\n"));
+                            }
+                            out.push_str("}\n");
+                        }
+                    }
+                    out.push_str(&format!("func ({variant_name}) is{name}() {{}}\n\n"));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    out
+}
+
+// ============================================================================
+// Service Generation
+// ============================================================================
+
 /// Generate a complete Go file for a service.
+///
+/// r[impl codegen.go.service] - Generate client, server, and method IDs.
 pub fn generate_service(service: &ServiceDetail) -> String {
     let mut out = String::new();
     out.push_str("// Code generated by roam-codegen. DO NOT EDIT.\n\n");
@@ -30,6 +175,7 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     out.push_str("\t\"context\"\n");
     out.push_str("\t\"encoding/binary\"\n");
     out.push_str("\t\"errors\"\n");
+    out.push_str("\t\"math\"\n");
     out.push_str(")\n\n");
 
     let service_name = service.name.to_upper_camel_case();
@@ -47,11 +193,21 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     }
     out.push_str(")\n\n");
 
-    // Generate client interface
-    out.push_str(&generate_client_interface(service));
+    // Collect and generate named types
+    let named_types = collect_named_types(service);
+    out.push_str(&generate_named_types(&named_types));
 
-    // Generate server handler interface
-    out.push_str(&generate_server_handler(service));
+    // Generate caller interface (for making calls)
+    out.push_str(&generate_caller_interface(service));
+
+    // Generate client implementation
+    out.push_str(&generate_client_impl(service));
+
+    // Generate server handler interface (with inverted streaming types)
+    out.push_str(&generate_handler_interface(service));
+
+    // Generate dispatcher
+    out.push_str(&generate_dispatcher(service));
 
     // Generate runtime helper functions
     out.push_str(&generate_runtime_helpers());
@@ -59,7 +215,14 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     out
 }
 
-fn generate_client_interface(service: &ServiceDetail) -> String {
+// ============================================================================
+// Caller Interface (Client Interface)
+// ============================================================================
+
+/// Generate caller interface (for making calls to the service).
+///
+/// r[impl streaming.caller-pov] - Schema types are from caller's perspective.
+fn generate_caller_interface(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name = service.name.to_upper_camel_case();
 
@@ -77,10 +240,16 @@ fn generate_client_interface(service: &ServiceDetail) -> String {
         let args = method
             .args
             .iter()
-            .map(|a| format!("{} {}", a.name.to_snake_case(), go_type(&a.type_info)))
+            .map(|a| {
+                format!(
+                    "{} {}",
+                    a.name.to_snake_case(),
+                    go_type_client_arg(&a.type_info)
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
-        let ret_ty = go_type(&method.return_type);
+        let ret_ty = go_type_client_return(&method.return_type);
 
         if let Some(doc) = &method.doc {
             out.push_str(&format!("\t// {method_name} - {doc}\n"));
@@ -100,24 +269,234 @@ fn generate_client_interface(service: &ServiceDetail) -> String {
     out
 }
 
-fn generate_server_handler(service: &ServiceDetail) -> String {
+// ============================================================================
+// Client Implementation
+// ============================================================================
+
+/// Generate client implementation (for making calls to the service).
+///
+/// r[impl codegen.go.client] - Generate client struct with method implementations.
+fn generate_client_impl(service: &ServiceDetail) -> String {
+    let mut out = String::new();
+    let service_name = service.name.to_upper_camel_case();
+
+    out.push_str(&format!(
+        "// {service_name}Client implements {service_name}Caller.\n"
+    ));
+    out.push_str(&format!("type {service_name}Client struct {{\n"));
+    out.push_str("\tconn Connection\n");
+    out.push_str("}\n\n");
+
+    out.push_str(&format!(
+        "// New{service_name}Client creates a new client.\n"
+    ));
+    out.push_str(&format!(
+        "func New{service_name}Client(conn Connection) *{service_name}Client {{\n"
+    ));
+    out.push_str(&format!("\treturn &{service_name}Client{{conn: conn}}\n"));
+    out.push_str("}\n\n");
+
+    for method in &service.methods {
+        let method_name = method.method_name.to_upper_camel_case();
+        let id = crate::method_id(method);
+
+        // Check if method uses streaming
+        let has_streaming =
+            method.args.iter().any(|a| is_stream(&a.type_info)) || is_stream(&method.return_type);
+
+        // Build args list
+        let args = method
+            .args
+            .iter()
+            .map(|a| {
+                format!(
+                    "{} {}",
+                    a.name.to_snake_case(),
+                    go_type_client_arg(&a.type_info)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let ret_ty = go_type_client_return(&method.return_type);
+
+        if let Some(doc) = &method.doc {
+            out.push_str(&format!("// {method_name} - {doc}\n"));
+        }
+
+        if ret_ty == "()" {
+            out.push_str(&format!(
+                "func (c *{service_name}Client) {method_name}(ctx context.Context, {args}) error {{\n"
+            ));
+        } else {
+            out.push_str(&format!(
+                "func (c *{service_name}Client) {method_name}(ctx context.Context, {args}) ({ret_ty}, error) {{\n"
+            ));
+        }
+
+        if has_streaming {
+            // Streaming methods need special handling
+            out.push_str("\t// TODO: Streaming methods require connection-level support\n");
+            if ret_ty == "()" {
+                out.push_str(
+                    "\treturn errors.New(\"streaming methods not yet implemented in Go client\")\n",
+                );
+            } else {
+                out.push_str(&format!(
+                    "\tvar zero {ret_ty}\n\treturn zero, errors.New(\"streaming methods not yet implemented in Go client\")\n"
+                ));
+            }
+        } else {
+            // Unary method - encode args, call, decode response
+            out.push_str("\tvar payload []byte\n");
+
+            // Encode each argument
+            for arg in &method.args {
+                let arg_name = arg.name.to_snake_case();
+                let encode_expr = generate_encode_expr(&arg.type_info, &arg_name);
+                out.push_str(&format!("\tpayload = append(payload, {encode_expr}...)\n"));
+            }
+
+            out.push_str(&format!(
+                "\tresponse, err := c.conn.Call(ctx, {}, payload)\n",
+                hex_u64(id)
+            ));
+            out.push_str("\tif err != nil {\n");
+            if ret_ty == "()" {
+                out.push_str("\t\treturn err\n");
+            } else {
+                out.push_str(&format!("\t\tvar zero {ret_ty}\n\t\treturn zero, err\n"));
+            }
+            out.push_str("\t}\n");
+
+            // Decode response: Result<T, RoamError<E>>
+            out.push_str("\toff := 0\n");
+            out.push_str("\tresultTag, err := readUvarint(response, &off)\n");
+            out.push_str("\tif err != nil {\n");
+            if ret_ty == "()" {
+                out.push_str("\t\treturn err\n");
+            } else {
+                out.push_str(&format!("\t\tvar zero {ret_ty}\n\t\treturn zero, err\n"));
+            }
+            out.push_str("\t}\n");
+
+            out.push_str("\tif resultTag == 0 {\n");
+            out.push_str("\t\t// Ok variant\n");
+
+            if method.return_type == TypeDetail::Unit {
+                if ret_ty == "()" {
+                    out.push_str("\t\treturn nil\n");
+                } else {
+                    out.push_str("\t\treturn struct{}{}, nil\n");
+                }
+            } else {
+                let decode_stmt =
+                    generate_decode_stmt_buf(&method.return_type, "result", "off", "response");
+                out.push_str(&format!("\t\t{decode_stmt}\n"));
+                out.push_str("\t\tif err != nil {\n");
+                out.push_str(&format!(
+                    "\t\t\tvar zero {ret_ty}\n\t\t\treturn zero, err\n"
+                ));
+                out.push_str("\t\t}\n");
+                out.push_str("\t\treturn result, nil\n");
+            }
+
+            out.push_str("\t}\n");
+            out.push_str("\t// Err variant - decode RoamError\n");
+            out.push_str("\terrorTag, err := readUvarint(response, &off)\n");
+            out.push_str("\tif err != nil {\n");
+            if ret_ty == "()" {
+                out.push_str("\t\treturn err\n");
+            } else {
+                out.push_str(&format!("\t\tvar zero {ret_ty}\n\t\treturn zero, err\n"));
+            }
+            out.push_str("\t}\n");
+            out.push_str("\tswitch errorTag {\n");
+            out.push_str("\tcase 0:\n");
+            if ret_ty == "()" {
+                out.push_str("\t\treturn errors.New(\"user error\")\n");
+            } else {
+                out.push_str(&format!(
+                    "\t\tvar zero {ret_ty}\n\t\treturn zero, errors.New(\"user error\")\n"
+                ));
+            }
+            out.push_str("\tcase 1:\n");
+            if ret_ty == "()" {
+                out.push_str("\t\treturn errors.New(\"unknown method\")\n");
+            } else {
+                out.push_str(&format!(
+                    "\t\tvar zero {ret_ty}\n\t\treturn zero, errors.New(\"unknown method\")\n"
+                ));
+            }
+            out.push_str("\tcase 2:\n");
+            if ret_ty == "()" {
+                out.push_str("\t\treturn errors.New(\"invalid payload\")\n");
+            } else {
+                out.push_str(&format!(
+                    "\t\tvar zero {ret_ty}\n\t\treturn zero, errors.New(\"invalid payload\")\n"
+                ));
+            }
+            out.push_str("\tcase 3:\n");
+            if ret_ty == "()" {
+                out.push_str("\t\treturn errors.New(\"cancelled\")\n");
+            } else {
+                out.push_str(&format!(
+                    "\t\tvar zero {ret_ty}\n\t\treturn zero, errors.New(\"cancelled\")\n"
+                ));
+            }
+            out.push_str("\tdefault:\n");
+            if ret_ty == "()" {
+                out.push_str("\t\treturn errors.New(\"unknown error\")\n");
+            } else {
+                out.push_str(&format!(
+                    "\t\tvar zero {ret_ty}\n\t\treturn zero, errors.New(\"unknown error\")\n"
+                ));
+            }
+            out.push_str("\t}\n");
+        }
+
+        out.push_str("}\n\n");
+    }
+
+    out
+}
+
+// ============================================================================
+// Handler Interface (Server Interface)
+// ============================================================================
+
+/// Generate handler interface (for handling incoming calls).
+///
+/// r[impl streaming.caller-pov] - Schema is from caller's perspective, handler inverts.
+/// Handler's Push becomes Pull (receives), handler's Pull becomes Push (sends).
+fn generate_handler_interface(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name = service.name.to_upper_camel_case();
 
     out.push_str(&format!(
         "// {service_name}Handler handles server-side method calls.\n"
     ));
+    out.push_str("// Note: Streaming types are inverted from the schema definition\n");
+    out.push_str("// per r[streaming.caller-pov].\n");
     out.push_str(&format!("type {service_name}Handler interface {{\n"));
 
     for method in &service.methods {
         let method_name = method.method_name.to_upper_camel_case();
+        // Handler args: Push becomes Pull (receives), Pull becomes Push (sends)
+        // r[impl streaming.caller-pov]
         let args = method
             .args
             .iter()
-            .map(|a| format!("{} {}", a.name.to_snake_case(), go_type(&a.type_info)))
+            .map(|a| {
+                format!(
+                    "{} {}",
+                    a.name.to_snake_case(),
+                    go_type_server_arg(&a.type_info)
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
-        let ret_ty = go_type(&method.return_type);
+        let ret_ty = go_type_server_return(&method.return_type);
 
         if ret_ty == "()" {
             out.push_str(&format!(
@@ -131,8 +510,18 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     }
 
     out.push_str("}\n\n");
+    out
+}
 
-    // Generate dispatcher function
+// ============================================================================
+// Dispatcher
+// ============================================================================
+
+/// Generate dispatcher for handling incoming calls.
+fn generate_dispatcher(service: &ServiceDetail) -> String {
+    let mut out = String::new();
+    let service_name = service.name.to_upper_camel_case();
+
     out.push_str(&format!(
         "// New{service_name}Dispatcher creates a dispatcher for the service.\n"
     ));
@@ -147,15 +536,25 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     for method in &service.methods {
         let method_name = method.method_name.to_upper_camel_case();
         let id = crate::method_id(method);
+
+        // Skip streaming methods in unary dispatch for now
+        let has_streaming =
+            method.args.iter().any(|a| is_stream(&a.type_info)) || is_stream(&method.return_type);
+        if has_streaming {
+            out.push_str(&format!("\t\tcase {}:\n", hex_u64(id)));
+            out.push_str("\t\t\t// TODO: Streaming methods require separate dispatch\n");
+            out.push_str("\t\t\treturn encodeUnknownMethodError(), nil\n");
+            continue;
+        }
+
         out.push_str(&format!("\t\tcase {}:\n", hex_u64(id)));
         out.push_str("\t\t\toff := 0\n");
 
         // Decode arguments
         for arg in &method.args {
             let arg_name = arg.name.to_snake_case();
-            out.push_str(&format!(
-                "\t\t\t{arg_name}, err := readString(payload, &off)\n"
-            ));
+            let decode_stmt = generate_decode_stmt(&arg.type_info, &arg_name, "off");
+            out.push_str(&format!("\t\t\t{decode_stmt}\n"));
             out.push_str("\t\t\tif err != nil {\n");
             out.push_str("\t\t\t\treturn encodeInvalidPayloadError(), nil\n");
             out.push_str("\t\t\t}\n");
@@ -169,15 +568,15 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
             .collect::<Vec<_>>()
             .join(", ");
 
-        let ret_ty = go_type(&method.return_type);
-        if ret_ty == "()" {
+        let ret_ty = go_type_server_return(&method.return_type);
+        if ret_ty == "()" || method.return_type == TypeDetail::Unit {
             out.push_str(&format!(
-                "\t\t\terr = handler.{method_name}(ctx, {args_list})\n"
+                "\t\t\terr := handler.{method_name}(ctx, {args_list})\n"
             ));
             out.push_str("\t\t\tif err != nil {\n");
             out.push_str("\t\t\t\treturn encodeResultErr(err), nil\n");
             out.push_str("\t\t\t}\n");
-            out.push_str("\t\t\treturn encodeResultOk(\"\", encodeString), nil\n");
+            out.push_str("\t\t\treturn encodeResultOkUnit(), nil\n");
         } else {
             out.push_str(&format!(
                 "\t\t\tresult, err := handler.{method_name}(ctx, {args_list})\n"
@@ -185,7 +584,10 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
             out.push_str("\t\t\tif err != nil {\n");
             out.push_str("\t\t\t\treturn encodeResultErr(err), nil\n");
             out.push_str("\t\t\t}\n");
-            out.push_str("\t\t\treturn encodeResultOk(result, encodeString), nil\n");
+            let encode_expr = generate_encode_expr(&method.return_type, "result");
+            out.push_str(&format!(
+                "\t\t\treturn encodeResultOk({encode_expr}), nil\n"
+            ));
         }
     }
 
@@ -193,12 +595,22 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     out.push_str("\t\t\treturn encodeUnknownMethodError(), nil\n");
     out.push_str("\t\t}\n");
     out.push_str("\t}\n");
-    out.push_str("}\n");
+    out.push_str("}\n\n");
 
     out
 }
 
-fn go_type(ty: &TypeDetail) -> String {
+// ============================================================================
+// Type Conversion Functions
+// ============================================================================
+
+/// Check if a type is a stream (Push or Pull).
+fn is_stream(ty: &TypeDetail) -> bool {
+    matches!(ty, TypeDetail::Push(_) | TypeDetail::Pull(_))
+}
+
+/// Convert TypeDetail to base Go type (non-streaming, non-perspective-aware).
+fn go_type_base(ty: &TypeDetail) -> String {
     match ty {
         TypeDetail::Bool => "bool".into(),
         TypeDetail::U8 => "uint8".into(),
@@ -215,55 +627,640 @@ fn go_type(ty: &TypeDetail) -> String {
         TypeDetail::F64 => "float64".into(),
         TypeDetail::Char => "rune".into(),
         TypeDetail::String => "string".into(),
-        TypeDetail::Unit => "()".into(),
+        TypeDetail::Unit => "struct{}".into(),
         TypeDetail::Bytes => "[]byte".into(),
-        TypeDetail::List(inner) => format!("[]{}", go_type(inner)),
-        TypeDetail::Option(inner) => format!("*{}", go_type(inner)),
-        TypeDetail::Array { element, len } => format!("[{}]{}", len, go_type(element)),
-        TypeDetail::Map { key, value } => format!("map[{}]{}", go_type(key), go_type(value)),
-        TypeDetail::Set(inner) => format!("map[{}]struct{{}}", go_type(inner)),
+        TypeDetail::List(inner) => format!("[]{}", go_type_base(inner)),
+        TypeDetail::Option(inner) => format!("*{}", go_type_base(inner)),
+        TypeDetail::Array { element, len } => format!("[{}]{}", len, go_type_base(element)),
+        TypeDetail::Map { key, value } => {
+            format!("map[{}]{}", go_type_base(key), go_type_base(value))
+        }
+        TypeDetail::Set(inner) => format!("map[{}]struct{{}}", go_type_base(inner)),
         TypeDetail::Tuple(items) => {
             // Go doesn't have tuples; use a struct
             let inner = items
                 .iter()
                 .enumerate()
-                .map(|(i, t)| format!("F{} {}", i, go_type(t)))
+                .map(|(i, t)| format!("F{} {}", i, go_type_base(t)))
                 .collect::<Vec<_>>()
                 .join("; ");
             format!("struct {{ {inner} }}")
         }
-        // Push: caller sends data to callee (send-only channel)
-        TypeDetail::Push(inner) => format!("chan<- {}", go_type(inner)),
-        // Pull: callee sends data to caller (receive-only channel)
-        TypeDetail::Pull(inner) => format!("<-chan {}", go_type(inner)),
-        TypeDetail::Struct { fields, .. } => {
+        TypeDetail::Push(inner) => format!("chan<- {}", go_type_base(inner)),
+        TypeDetail::Pull(inner) => format!("<-chan {}", go_type_base(inner)),
+        TypeDetail::Struct {
+            name: Some(name), ..
+        } => name.clone(),
+        TypeDetail::Struct { name: None, fields } => {
             let inner = fields
                 .iter()
-                .map(|f| format!("{} {}", f.name.to_upper_camel_case(), go_type(&f.type_info)))
+                .map(|f| {
+                    format!(
+                        "{} {}",
+                        f.name.to_upper_camel_case(),
+                        go_type_base(&f.type_info)
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("; ");
             format!("struct {{ {inner} }}")
         }
-        TypeDetail::Enum { .. } => "interface{}".into(), // Would need proper type generation
+        TypeDetail::Enum {
+            name: Some(name), ..
+        } => name.clone(),
+        TypeDetail::Enum { name: None, .. } => "interface{}".into(),
     }
 }
+
+/// Convert TypeDetail to Go type for client arguments.
+/// Schema types are from CALLER's perspective (per spec r[streaming.caller-pov]).
+/// Caller uses types as-is: Push = caller sends, Pull = caller receives.
+fn go_type_client_arg(ty: &TypeDetail) -> String {
+    match ty {
+        TypeDetail::Push(inner) => format!("chan<- {}", go_type_base(inner)),
+        TypeDetail::Pull(inner) => format!("<-chan {}", go_type_base(inner)),
+        _ => go_type_base(ty),
+    }
+}
+
+/// Convert TypeDetail to Go type for client returns.
+/// Schema types are from CALLER's perspective - no transformation needed.
+fn go_type_client_return(ty: &TypeDetail) -> String {
+    match ty {
+        TypeDetail::Push(inner) => format!("chan<- {}", go_type_base(inner)),
+        TypeDetail::Pull(inner) => format!("<-chan {}", go_type_base(inner)),
+        TypeDetail::Unit => "()".into(), // Special case for no return value
+        _ => go_type_base(ty),
+    }
+}
+
+/// Convert TypeDetail to Go type for server/handler arguments.
+/// Schema types are from caller's perspective, so we INVERT for handler.
+/// Caller's Push (sends) becomes handler's Pull (receives).
+/// Caller's Pull (receives) becomes handler's Push (sends).
+///
+/// r[impl streaming.caller-pov] - Schema is from caller's perspective, server inverts.
+fn go_type_server_arg(ty: &TypeDetail) -> String {
+    match ty {
+        TypeDetail::Push(inner) => format!("<-chan {}", go_type_base(inner)),
+        TypeDetail::Pull(inner) => format!("chan<- {}", go_type_base(inner)),
+        _ => go_type_base(ty),
+    }
+}
+
+/// Convert TypeDetail to Go type for server/handler returns.
+/// Schema types are from caller's perspective, so we INVERT for handler.
+fn go_type_server_return(ty: &TypeDetail) -> String {
+    match ty {
+        TypeDetail::Push(inner) => format!("<-chan {}", go_type_base(inner)),
+        TypeDetail::Pull(inner) => format!("chan<- {}", go_type_base(inner)),
+        TypeDetail::Unit => "()".into(), // Special case for no return value
+        _ => go_type_base(ty),
+    }
+}
+
+// ============================================================================
+// Encoding/Decoding Code Generation
+// ============================================================================
+
+/// Generate a Go expression that encodes a value of the given type.
+/// Returns the expression as a `[]byte`.
+fn generate_encode_expr(ty: &TypeDetail, expr: &str) -> String {
+    match ty {
+        TypeDetail::Bool => format!("encodeBool({expr})"),
+        TypeDetail::U8 => format!("encodeU8({expr})"),
+        TypeDetail::I8 => format!("encodeI8({expr})"),
+        TypeDetail::U16 => format!("encodeU16({expr})"),
+        TypeDetail::I16 => format!("encodeI16({expr})"),
+        TypeDetail::U32 => format!("encodeU32({expr})"),
+        TypeDetail::I32 => format!("encodeI32({expr})"),
+        TypeDetail::U64 => format!("encodeUvarint({expr})"),
+        TypeDetail::I64 => format!("encodeI64({expr})"),
+        TypeDetail::U128 => format!("{expr}[:]"), // Fixed size array to slice
+        TypeDetail::I128 => format!("{expr}[:]"), // Fixed size array to slice
+        TypeDetail::F32 => format!("encodeF32({expr})"),
+        TypeDetail::F64 => format!("encodeF64({expr})"),
+        TypeDetail::Char => format!("encodeString(string({expr}))"),
+        TypeDetail::String => format!("encodeString({expr})"),
+        TypeDetail::Unit => "[]byte{}".into(),
+        TypeDetail::Bytes => format!("encodeBytes({expr})"),
+        TypeDetail::List(inner) => {
+            let item_encode = generate_encode_expr(inner, "item");
+            format!(
+                "encodeSlice({expr}, func(item {}) []byte {{ return {item_encode} }})",
+                go_type_base(inner)
+            )
+        }
+        TypeDetail::Option(inner) => {
+            let inner_encode = generate_encode_expr(inner, "*v");
+            format!(
+                "encodeOption({expr}, func(v *{}) []byte {{ return {inner_encode} }})",
+                go_type_base(inner)
+            )
+        }
+        TypeDetail::Array { element, len: _ } => {
+            let item_encode = generate_encode_expr(element, "item");
+            format!(
+                "encodeArray({expr}[:], func(item {}) []byte {{ return {item_encode} }})",
+                go_type_base(element)
+            )
+        }
+        TypeDetail::Map { key, value } => {
+            let k_enc = generate_encode_expr(key, "k");
+            let v_enc = generate_encode_expr(value, "v");
+            format!(
+                "encodeMap({expr}, func(k {}, v {}) []byte {{ return append({k_enc}, {v_enc}...) }})",
+                go_type_base(key),
+                go_type_base(value)
+            )
+        }
+        TypeDetail::Set(inner) => {
+            let item_encode = generate_encode_expr(inner, "item");
+            format!(
+                "encodeSet({expr}, func(item {}) []byte {{ return {item_encode} }})",
+                go_type_base(inner)
+            )
+        }
+        TypeDetail::Tuple(items) => {
+            if items.is_empty() {
+                "[]byte{}".into()
+            } else {
+                let parts: Vec<String> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| generate_encode_expr(t, &format!("{expr}.F{i}")))
+                    .collect();
+                format!("concat({})", parts.join(", "))
+            }
+        }
+        TypeDetail::Struct { fields, .. } => {
+            if fields.is_empty() {
+                "[]byte{}".into()
+            } else {
+                let parts: Vec<String> = fields
+                    .iter()
+                    .map(|f| {
+                        generate_encode_expr(
+                            &f.type_info,
+                            &format!("{expr}.{}", f.name.to_upper_camel_case()),
+                        )
+                    })
+                    .collect();
+                format!("concat({})", parts.join(", "))
+            }
+        }
+        TypeDetail::Enum { variants, .. } => {
+            // Generate a switch statement
+            let mut code = format!("func() []byte {{ switch v := {expr}.(type) {{\n");
+            for (i, v) in variants.iter().enumerate() {
+                let variant_type = format!(
+                    "{}{}",
+                    if let TypeDetail::Enum {
+                        name: Some(name), ..
+                    } = ty
+                    {
+                        name.clone()
+                    } else {
+                        "".into()
+                    },
+                    v.name.to_upper_camel_case()
+                );
+                code.push_str(&format!("\tcase {variant_type}:\n"));
+                match &v.payload {
+                    VariantPayload::Unit => {
+                        code.push_str(&format!("\t\treturn encodeUvarint(uint64({i}))\n"));
+                    }
+                    VariantPayload::Newtype(inner) => {
+                        let inner_enc = generate_encode_expr(inner, "v.Value");
+                        code.push_str(&format!(
+                            "\t\treturn append(encodeUvarint(uint64({i})), {inner_enc}...)\n"
+                        ));
+                    }
+                    VariantPayload::Struct(fields) => {
+                        let field_encs: Vec<String> = fields
+                            .iter()
+                            .map(|f| {
+                                generate_encode_expr(
+                                    &f.type_info,
+                                    &format!("v.{}", f.name.to_upper_camel_case()),
+                                )
+                            })
+                            .collect();
+                        code.push_str(&format!(
+                            "\t\treturn concat(encodeUvarint(uint64({i})), {})\n",
+                            field_encs.join(", ")
+                        ));
+                    }
+                }
+            }
+            code.push_str("\tdefault:\n\t\treturn nil\n\t}\n}()");
+            code
+        }
+        TypeDetail::Push(_) | TypeDetail::Pull(_) => {
+            // Streaming types encode as u64 stream ID
+            // r[impl streaming.type]
+            format!("encodeUvarint({expr}.StreamID)")
+        }
+    }
+}
+
+/// Generate Go code that decodes a value from a buffer.
+/// Returns a statement that declares `{var_name}` and `err`, and updates offset.
+fn generate_decode_stmt(ty: &TypeDetail, var_name: &str, offset_var: &str) -> String {
+    generate_decode_stmt_buf(ty, var_name, offset_var, "payload")
+}
+
+/// Generate Go code that decodes a value from a named buffer.
+/// Returns a statement that declares `{var_name}` and `err`, and updates offset.
+fn generate_decode_stmt_buf(
+    ty: &TypeDetail,
+    var_name: &str,
+    offset_var: &str,
+    buf_name: &str,
+) -> String {
+    match ty {
+        TypeDetail::Bool => format!("{var_name}, err := readBool({buf_name}, &{offset_var})"),
+        TypeDetail::U8 => format!("{var_name}, err := readU8({buf_name}, &{offset_var})"),
+        TypeDetail::I8 => format!("{var_name}, err := readI8({buf_name}, &{offset_var})"),
+        TypeDetail::U16 => format!("{var_name}, err := readU16({buf_name}, &{offset_var})"),
+        TypeDetail::I16 => format!("{var_name}, err := readI16({buf_name}, &{offset_var})"),
+        TypeDetail::U32 => format!("{var_name}, err := readU32({buf_name}, &{offset_var})"),
+        TypeDetail::I32 => format!("{var_name}, err := readI32({buf_name}, &{offset_var})"),
+        TypeDetail::U64 => format!("{var_name}, err := readUvarint({buf_name}, &{offset_var})"),
+        TypeDetail::I64 => format!("{var_name}, err := readI64({buf_name}, &{offset_var})"),
+        TypeDetail::U128 => format!("{var_name}, err := readU128({buf_name}, &{offset_var})"),
+        TypeDetail::I128 => format!("{var_name}, err := readI128({buf_name}, &{offset_var})"),
+        TypeDetail::F32 => format!("{var_name}, err := readF32({buf_name}, &{offset_var})"),
+        TypeDetail::F64 => format!("{var_name}, err := readF64({buf_name}, &{offset_var})"),
+        TypeDetail::Char => format!(
+            "{var_name}Str, err := readString({buf_name}, &{offset_var}); var {var_name} rune; if err == nil {{ r := []rune({var_name}Str); if len(r) > 0 {{ {var_name} = r[0] }} }}"
+        ),
+        TypeDetail::String => format!("{var_name}, err := readString({buf_name}, &{offset_var})"),
+        TypeDetail::Unit => format!("var {var_name} struct{{}}; var err error"),
+        TypeDetail::Bytes => format!("{var_name}, err := readBytes({buf_name}, &{offset_var})"),
+        TypeDetail::List(inner) => {
+            let inner_type = go_type_base(inner);
+            format!(
+                "{var_name}, err := readSlice({buf_name}, &{offset_var}, func(buf []byte, off *int) ({inner_type}, error) {{ return read{}(buf, off) }})",
+                type_reader_name(inner)
+            )
+        }
+        TypeDetail::Option(inner) => {
+            let inner_type = go_type_base(inner);
+            format!(
+                "{var_name}, err := readOption({buf_name}, &{offset_var}, func(buf []byte, off *int) ({inner_type}, error) {{ return read{}(buf, off) }})",
+                type_reader_name(inner)
+            )
+        }
+        TypeDetail::Array { element, len } => {
+            let inner_type = go_type_base(element);
+            format!(
+                "{var_name}Slice, err := readSlice({buf_name}, &{offset_var}, func(buf []byte, off *int) ({inner_type}, error) {{ return read{}(buf, off) }}); var {var_name} [{len}]{inner_type}; copy({var_name}[:], {var_name}Slice)",
+                type_reader_name(element)
+            )
+        }
+        TypeDetail::Map { key, value } => {
+            let key_type = go_type_base(key);
+            let value_type = go_type_base(value);
+            format!(
+                "{var_name}, err := readMap({buf_name}, &{offset_var}, func(buf []byte, off *int) ({key_type}, error) {{ return read{}(buf, off) }}, func(buf []byte, off *int) ({value_type}, error) {{ return read{}(buf, off) }})",
+                type_reader_name(key),
+                type_reader_name(value)
+            )
+        }
+        TypeDetail::Set(inner) => {
+            let inner_type = go_type_base(inner);
+            format!(
+                "{var_name}, err := readSet({buf_name}, &{offset_var}, func(buf []byte, off *int) ({inner_type}, error) {{ return read{}(buf, off) }})",
+                type_reader_name(inner)
+            )
+        }
+        TypeDetail::Tuple(items) => {
+            // Read each field individually
+            let tuple_type = go_type_base(ty);
+            let mut code = format!("var {var_name} {tuple_type}; var err error\n");
+            for (i, item_ty) in items.iter().enumerate() {
+                let field_name = format!("{var_name}_f{i}");
+                code.push_str(&format!(
+                    "\t\t\t{}\n",
+                    generate_decode_stmt_buf(item_ty, &field_name, offset_var, buf_name)
+                ));
+                code.push_str("\t\t\tif err != nil { return encodeInvalidPayloadError(), nil }\n");
+                code.push_str(&format!("\t\t\t{var_name}.F{i} = {field_name}\n"));
+            }
+            // Remove trailing newline and return without additional error handling
+            code.push_str("\t\t\terr = nil");
+            code
+        }
+        TypeDetail::Struct { fields, .. } => {
+            let struct_type = go_type_base(ty);
+            let mut code = format!("var {var_name} {struct_type}; var err error\n");
+            for field in fields {
+                let field_var = format!("{var_name}_{}", field.name.to_snake_case());
+                code.push_str(&format!(
+                    "\t\t\t{}\n",
+                    generate_decode_stmt_buf(&field.type_info, &field_var, offset_var, buf_name)
+                ));
+                code.push_str("\t\t\tif err != nil { return encodeInvalidPayloadError(), nil }\n");
+                code.push_str(&format!(
+                    "\t\t\t{var_name}.{} = {field_var}\n",
+                    field.name.to_upper_camel_case()
+                ));
+            }
+            code.push_str("\t\t\terr = nil");
+            code
+        }
+        TypeDetail::Enum { name, variants } => {
+            let enum_type = go_type_base(ty);
+            let enum_name = name.clone().unwrap_or_default();
+            let mut code = format!("var {var_name} {enum_type}; var err error\n");
+            code.push_str(&format!(
+                "\t\t\t{var_name}Tag, err := readUvarint({buf_name}, &{offset_var})\n"
+            ));
+            code.push_str("\t\t\tif err != nil { return encodeInvalidPayloadError(), nil }\n");
+            code.push_str(&format!("\t\t\tswitch {var_name}Tag {{\n"));
+            for (i, v) in variants.iter().enumerate() {
+                let variant_type = format!("{enum_name}{}", v.name.to_upper_camel_case());
+                code.push_str(&format!("\t\t\tcase {i}:\n"));
+                match &v.payload {
+                    VariantPayload::Unit => {
+                        code.push_str(&format!("\t\t\t\t{var_name} = {variant_type}{{}}\n"));
+                    }
+                    VariantPayload::Newtype(inner) => {
+                        let val_var = format!("{var_name}_val");
+                        code.push_str(&format!(
+                            "\t\t\t\t{}\n",
+                            generate_decode_stmt_buf(inner, &val_var, offset_var, buf_name)
+                        ));
+                        code.push_str(
+                            "\t\t\t\tif err != nil { return encodeInvalidPayloadError(), nil }\n",
+                        );
+                        code.push_str(&format!(
+                            "\t\t\t\t{var_name} = {variant_type}{{Value: {val_var}}}\n"
+                        ));
+                    }
+                    VariantPayload::Struct(fields) => {
+                        code.push_str(&format!("\t\t\t\tvar v {variant_type}\n"));
+                        for field in fields {
+                            let field_var = format!("{var_name}_{}", field.name.to_snake_case());
+                            code.push_str(&format!(
+                                "\t\t\t\t{}\n",
+                                generate_decode_stmt_buf(
+                                    &field.type_info,
+                                    &field_var,
+                                    offset_var,
+                                    buf_name
+                                )
+                            ));
+                            code.push_str("\t\t\t\tif err != nil { return encodeInvalidPayloadError(), nil }\n");
+                            code.push_str(&format!(
+                                "\t\t\t\tv.{} = {field_var}\n",
+                                field.name.to_upper_camel_case()
+                            ));
+                        }
+                        code.push_str(&format!("\t\t\t\t{var_name} = v\n"));
+                    }
+                }
+            }
+            code.push_str("\t\t\tdefault:\n");
+            code.push_str("\t\t\t\terr = errors.New(\"unknown enum variant\")\n");
+            code.push_str("\t\t\t}\n");
+            code.push_str(&format!("\t\t\t_ = {var_name}"));
+            code
+        }
+        TypeDetail::Push(_) | TypeDetail::Pull(_) => {
+            // Streaming types decode as u64 stream ID
+            // r[impl streaming.type]
+            format!(
+                "{var_name}ID, err := readUvarint({buf_name}, &{offset_var}); {var_name} := StreamID({var_name}ID)"
+            )
+        }
+    }
+}
+
+/// Get the reader function name suffix for a type (for use in generic readers)
+fn type_reader_name(ty: &TypeDetail) -> &'static str {
+    match ty {
+        TypeDetail::Bool => "Bool",
+        TypeDetail::U8 => "U8",
+        TypeDetail::I8 => "I8",
+        TypeDetail::U16 => "U16",
+        TypeDetail::I16 => "I16",
+        TypeDetail::U32 => "U32",
+        TypeDetail::I32 => "I32",
+        TypeDetail::U64 => "Uvarint",
+        TypeDetail::I64 => "I64",
+        TypeDetail::F32 => "F32",
+        TypeDetail::F64 => "F64",
+        TypeDetail::String => "String",
+        TypeDetail::Bytes => "Bytes",
+        _ => "Generic", // For complex types, would need custom handling
+    }
+}
+
+// ============================================================================
+// Runtime Helpers
+// ============================================================================
 
 fn generate_runtime_helpers() -> String {
     let mut out = String::new();
     out.push_str("// Runtime helper functions\n\n");
 
-    out.push_str("func appendUvarint(dst []byte, v uint64) []byte {\n");
+    // Connection interface
+    out.push_str("// Connection represents a roam connection for making calls.\n");
+    out.push_str("type Connection interface {\n");
+    out.push_str("\tCall(ctx context.Context, methodID uint64, payload []byte) ([]byte, error)\n");
+    out.push_str("}\n\n");
+
+    // StreamID type
+    out.push_str("// StreamID represents a stream identifier.\n");
+    out.push_str("type StreamID uint64\n\n");
+
+    // Varint encoding/decoding
+    out.push_str("func encodeUvarint(v uint64) []byte {\n");
     out.push_str("\tvar tmp [10]byte\n");
     out.push_str("\tn := binary.PutUvarint(tmp[:], v)\n");
-    out.push_str("\treturn append(dst, tmp[:n]...)\n");
+    out.push_str("\treturn append([]byte(nil), tmp[:n]...)\n");
+    out.push_str("}\n\n");
+
+    out.push_str("func readUvarint(buf []byte, off *int) (uint64, error) {\n");
+    out.push_str("\tv, n := binary.Uvarint(buf[*off:])\n");
+    out.push_str("\tif n <= 0 {\n");
+    out.push_str("\t\treturn 0, errors.New(\"varint decode error\")\n");
+    out.push_str("\t}\n");
+    out.push_str("\t*off += n\n");
+    out.push_str("\treturn v, nil\n");
+    out.push_str("}\n\n");
+
+    // Bool encoding/decoding
+    out.push_str("func encodeBool(v bool) []byte {\n");
+    out.push_str("\tif v {\n");
+    out.push_str("\t\treturn []byte{1}\n");
+    out.push_str("\t}\n");
+    out.push_str("\treturn []byte{0}\n");
+    out.push_str("}\n\n");
+
+    out.push_str("func readBool(buf []byte, off *int) (bool, error) {\n");
+    out.push_str("\tif *off >= len(buf) {\n");
+    out.push_str("\t\treturn false, errors.New(\"bool: buffer too short\")\n");
+    out.push_str("\t}\n");
+    out.push_str("\tv := buf[*off] != 0\n");
+    out.push_str("\t*off++\n");
+    out.push_str("\treturn v, nil\n");
+    out.push_str("}\n\n");
+
+    // Integer encoding/decoding
+    for (bits, signed) in [
+        (8, false),
+        (8, true),
+        (16, false),
+        (16, true),
+        (32, false),
+        (32, true),
+        (64, true),
+    ] {
+        let prefix = if signed { "I" } else { "U" };
+        let go_type = if signed {
+            format!("int{bits}")
+        } else {
+            format!("uint{bits}")
+        };
+
+        if bits == 8 {
+            out.push_str(&format!(
+                "func encode{prefix}{bits}(v {go_type}) []byte {{\n"
+            ));
+            out.push_str("\treturn []byte{byte(v)}\n");
+            out.push_str("}\n\n");
+
+            out.push_str(&format!(
+                "func read{prefix}{bits}(buf []byte, off *int) ({go_type}, error) {{\n"
+            ));
+            out.push_str("\tif *off >= len(buf) {\n");
+            out.push_str(&format!(
+                "\t\treturn 0, errors.New(\"{}: buffer too short\")\n",
+                go_type
+            ));
+            out.push_str("\t}\n");
+            out.push_str(&format!("\tv := {go_type}(buf[*off])\n"));
+            out.push_str("\t*off++\n");
+            out.push_str("\treturn v, nil\n");
+            out.push_str("}\n\n");
+        } else if bits == 64 && signed {
+            // i64 uses zigzag encoding
+            out.push_str(&format!(
+                "func encode{prefix}{bits}(v {go_type}) []byte {{\n"
+            ));
+            out.push_str("\t// Zigzag encode\n");
+            out.push_str("\tu := uint64((v << 1) ^ (v >> 63))\n");
+            out.push_str("\treturn encodeUvarint(u)\n");
+            out.push_str("}\n\n");
+
+            out.push_str(&format!(
+                "func read{prefix}{bits}(buf []byte, off *int) ({go_type}, error) {{\n"
+            ));
+            out.push_str("\tu, err := readUvarint(buf, off)\n");
+            out.push_str("\tif err != nil {\n");
+            out.push_str("\t\treturn 0, err\n");
+            out.push_str("\t}\n");
+            out.push_str("\t// Zigzag decode\n");
+            out.push_str(&format!("\treturn {go_type}((u >> 1) ^ -(u & 1)), nil\n"));
+            out.push_str("}\n\n");
+        } else {
+            // Other integers use little-endian fixed encoding
+            out.push_str(&format!(
+                "func encode{prefix}{bits}(v {go_type}) []byte {{\n"
+            ));
+            out.push_str(&format!("\tbuf := make([]byte, {})\n", bits / 8));
+            if signed {
+                out.push_str(&format!(
+                    "\tbinary.LittleEndian.PutUint{bits}(buf, uint{bits}(v))\n"
+                ));
+            } else {
+                out.push_str(&format!("\tbinary.LittleEndian.PutUint{bits}(buf, v)\n"));
+            }
+            out.push_str("\treturn buf\n");
+            out.push_str("}\n\n");
+
+            out.push_str(&format!(
+                "func read{prefix}{bits}(buf []byte, off *int) ({go_type}, error) {{\n"
+            ));
+            out.push_str(&format!("\tif *off + {} > len(buf) {{\n", bits / 8));
+            out.push_str(&format!(
+                "\t\treturn 0, errors.New(\"{}: buffer too short\")\n",
+                go_type
+            ));
+            out.push_str("\t}\n");
+            out.push_str(&format!(
+                "\tv := binary.LittleEndian.Uint{bits}(buf[*off:])\n"
+            ));
+            out.push_str(&format!("\t*off += {}\n", bits / 8));
+            if signed {
+                out.push_str(&format!("\treturn {go_type}(v), nil\n"));
+            } else {
+                out.push_str("\treturn v, nil\n");
+            }
+            out.push_str("}\n\n");
+        }
+    }
+
+    // U128/I128 (as [16]byte)
+    out.push_str("func readU128(buf []byte, off *int) ([16]byte, error) {\n");
+    out.push_str("\tvar v [16]byte\n");
+    out.push_str("\tif *off + 16 > len(buf) {\n");
+    out.push_str("\t\treturn v, errors.New(\"u128: buffer too short\")\n");
+    out.push_str("\t}\n");
+    out.push_str("\tcopy(v[:], buf[*off:*off+16])\n");
+    out.push_str("\t*off += 16\n");
+    out.push_str("\treturn v, nil\n");
+    out.push_str("}\n\n");
+
+    out.push_str("func readI128(buf []byte, off *int) ([16]byte, error) {\n");
+    out.push_str("\treturn readU128(buf, off)\n");
+    out.push_str("}\n\n");
+
+    // Float encoding/decoding
+    out.push_str("func encodeF32(v float32) []byte {\n");
+    out.push_str("\tbuf := make([]byte, 4)\n");
+    out.push_str("\tbinary.LittleEndian.PutUint32(buf, math.Float32bits(v))\n");
+    out.push_str("\treturn buf\n");
+    out.push_str("}\n\n");
+
+    out.push_str("func readF32(buf []byte, off *int) (float32, error) {\n");
+    out.push_str("\tif *off + 4 > len(buf) {\n");
+    out.push_str("\t\treturn 0, errors.New(\"f32: buffer too short\")\n");
+    out.push_str("\t}\n");
+    out.push_str("\tv := binary.LittleEndian.Uint32(buf[*off:])\n");
+    out.push_str("\t*off += 4\n");
+    out.push_str("\treturn math.Float32frombits(v), nil\n");
+    out.push_str("}\n\n");
+
+    out.push_str("func encodeF64(v float64) []byte {\n");
+    out.push_str("\tbuf := make([]byte, 8)\n");
+    out.push_str("\tbinary.LittleEndian.PutUint64(buf, math.Float64bits(v))\n");
+    out.push_str("\treturn buf\n");
+    out.push_str("}\n\n");
+
+    out.push_str("func readF64(buf []byte, off *int) (float64, error) {\n");
+    out.push_str("\tif *off + 8 > len(buf) {\n");
+    out.push_str("\t\treturn 0, errors.New(\"f64: buffer too short\")\n");
+    out.push_str("\t}\n");
+    out.push_str("\tv := binary.LittleEndian.Uint64(buf[*off:])\n");
+    out.push_str("\t*off += 8\n");
+    out.push_str("\treturn math.Float64frombits(v), nil\n");
+    out.push_str("}\n\n");
+
+    // String encoding/decoding
+    out.push_str("func encodeString(s string) []byte {\n");
+    out.push_str("\tb := []byte(s)\n");
+    out.push_str("\treturn append(encodeUvarint(uint64(len(b))), b...)\n");
     out.push_str("}\n\n");
 
     out.push_str("func readString(buf []byte, off *int) (string, error) {\n");
-    out.push_str("\tv, n := binary.Uvarint(buf[*off:])\n");
-    out.push_str("\tif n <= 0 {\n");
-    out.push_str("\t\treturn \"\", errors.New(\"varint decode error\")\n");
+    out.push_str("\tv, err := readUvarint(buf, off)\n");
+    out.push_str("\tif err != nil {\n");
+    out.push_str("\t\treturn \"\", err\n");
     out.push_str("\t}\n");
-    out.push_str("\t*off += n\n");
     out.push_str("\tif v > uint64(len(buf)-*off) {\n");
     out.push_str("\t\treturn \"\", errors.New(\"string: length out of range\")\n");
     out.push_str("\t}\n");
@@ -272,43 +1269,286 @@ fn generate_runtime_helpers() -> String {
     out.push_str("\treturn s, nil\n");
     out.push_str("}\n\n");
 
-    out.push_str("func encodeString(s string) []byte {\n");
-    out.push_str("\tvar out []byte\n");
-    out.push_str("\tb := []byte(s)\n");
-    out.push_str("\tout = appendUvarint(out, uint64(len(b)))\n");
-    out.push_str("\treturn append(out, b...)\n");
+    // Bytes encoding/decoding
+    out.push_str("func encodeBytes(b []byte) []byte {\n");
+    out.push_str("\treturn append(encodeUvarint(uint64(len(b))), b...)\n");
     out.push_str("}\n\n");
 
-    out.push_str("func encodeResultOk(value string, encoder func(string) []byte) []byte {\n");
-    out.push_str("\tvar out []byte\n");
-    out.push_str("\tout = appendUvarint(out, 0) // Result::Ok\n");
-    out.push_str("\tout = append(out, encoder(value)...)\n");
+    out.push_str("func readBytes(buf []byte, off *int) ([]byte, error) {\n");
+    out.push_str("\tv, err := readUvarint(buf, off)\n");
+    out.push_str("\tif err != nil {\n");
+    out.push_str("\t\treturn nil, err\n");
+    out.push_str("\t}\n");
+    out.push_str("\tif v > uint64(len(buf)-*off) {\n");
+    out.push_str("\t\treturn nil, errors.New(\"bytes: length out of range\")\n");
+    out.push_str("\t}\n");
+    out.push_str("\tb := make([]byte, v)\n");
+    out.push_str("\tcopy(b, buf[*off:*off+int(v)])\n");
+    out.push_str("\t*off += int(v)\n");
+    out.push_str("\treturn b, nil\n");
+    out.push_str("}\n\n");
+
+    // Generic slice encoding/decoding
+    out.push_str("func encodeSlice[T any](items []T, encode func(T) []byte) []byte {\n");
+    out.push_str("\tout := encodeUvarint(uint64(len(items)))\n");
+    out.push_str("\tfor _, item := range items {\n");
+    out.push_str("\t\tout = append(out, encode(item)...)\n");
+    out.push_str("\t}\n");
     out.push_str("\treturn out\n");
     out.push_str("}\n\n");
 
-    out.push_str("func encodeResultErr(err error) []byte {\n");
+    out.push_str("func readSlice[T any](buf []byte, off *int, decode func([]byte, *int) (T, error)) ([]T, error) {\n");
+    out.push_str("\tcount, err := readUvarint(buf, off)\n");
+    out.push_str("\tif err != nil {\n");
+    out.push_str("\t\treturn nil, err\n");
+    out.push_str("\t}\n");
+    out.push_str("\titems := make([]T, count)\n");
+    out.push_str("\tfor i := uint64(0); i < count; i++ {\n");
+    out.push_str("\t\titems[i], err = decode(buf, off)\n");
+    out.push_str("\t\tif err != nil {\n");
+    out.push_str("\t\t\treturn nil, err\n");
+    out.push_str("\t\t}\n");
+    out.push_str("\t}\n");
+    out.push_str("\treturn items, nil\n");
+    out.push_str("}\n\n");
+
+    // Array encoding (same as slice but input is slice)
+    out.push_str("func encodeArray[T any](items []T, encode func(T) []byte) []byte {\n");
+    out.push_str("\treturn encodeSlice(items, encode)\n");
+    out.push_str("}\n\n");
+
+    // Option encoding/decoding
+    out.push_str("func encodeOption[T any](v *T, encode func(*T) []byte) []byte {\n");
+    out.push_str("\tif v == nil {\n");
+    out.push_str("\t\treturn []byte{0}\n");
+    out.push_str("\t}\n");
+    out.push_str("\treturn append([]byte{1}, encode(v)...)\n");
+    out.push_str("}\n\n");
+
+    out.push_str("func readOption[T any](buf []byte, off *int, decode func([]byte, *int) (T, error)) (*T, error) {\n");
+    out.push_str("\ttag, err := readBool(buf, off)\n");
+    out.push_str("\tif err != nil {\n");
+    out.push_str("\t\treturn nil, err\n");
+    out.push_str("\t}\n");
+    out.push_str("\tif !tag {\n");
+    out.push_str("\t\treturn nil, nil\n");
+    out.push_str("\t}\n");
+    out.push_str("\tv, err := decode(buf, off)\n");
+    out.push_str("\tif err != nil {\n");
+    out.push_str("\t\treturn nil, err\n");
+    out.push_str("\t}\n");
+    out.push_str("\treturn &v, nil\n");
+    out.push_str("}\n\n");
+
+    // Map encoding/decoding
+    out.push_str(
+        "func encodeMap[K comparable, V any](m map[K]V, encode func(K, V) []byte) []byte {\n",
+    );
+    out.push_str("\tout := encodeUvarint(uint64(len(m)))\n");
+    out.push_str("\tfor k, v := range m {\n");
+    out.push_str("\t\tout = append(out, encode(k, v)...)\n");
+    out.push_str("\t}\n");
+    out.push_str("\treturn out\n");
+    out.push_str("}\n\n");
+
+    out.push_str("func readMap[K comparable, V any](buf []byte, off *int, decodeKey func([]byte, *int) (K, error), decodeValue func([]byte, *int) (V, error)) (map[K]V, error) {\n");
+    out.push_str("\tcount, err := readUvarint(buf, off)\n");
+    out.push_str("\tif err != nil {\n");
+    out.push_str("\t\treturn nil, err\n");
+    out.push_str("\t}\n");
+    out.push_str("\tm := make(map[K]V, count)\n");
+    out.push_str("\tfor i := uint64(0); i < count; i++ {\n");
+    out.push_str("\t\tk, err := decodeKey(buf, off)\n");
+    out.push_str("\t\tif err != nil {\n");
+    out.push_str("\t\t\treturn nil, err\n");
+    out.push_str("\t\t}\n");
+    out.push_str("\t\tv, err := decodeValue(buf, off)\n");
+    out.push_str("\t\tif err != nil {\n");
+    out.push_str("\t\t\treturn nil, err\n");
+    out.push_str("\t\t}\n");
+    out.push_str("\t\tm[k] = v\n");
+    out.push_str("\t}\n");
+    out.push_str("\treturn m, nil\n");
+    out.push_str("}\n\n");
+
+    // Set encoding/decoding
+    out.push_str(
+        "func encodeSet[K comparable](s map[K]struct{}, encode func(K) []byte) []byte {\n",
+    );
+    out.push_str("\tout := encodeUvarint(uint64(len(s)))\n");
+    out.push_str("\tfor k := range s {\n");
+    out.push_str("\t\tout = append(out, encode(k)...)\n");
+    out.push_str("\t}\n");
+    out.push_str("\treturn out\n");
+    out.push_str("}\n\n");
+
+    out.push_str("func readSet[K comparable](buf []byte, off *int, decode func([]byte, *int) (K, error)) (map[K]struct{}, error) {\n");
+    out.push_str("\tcount, err := readUvarint(buf, off)\n");
+    out.push_str("\tif err != nil {\n");
+    out.push_str("\t\treturn nil, err\n");
+    out.push_str("\t}\n");
+    out.push_str("\ts := make(map[K]struct{}, count)\n");
+    out.push_str("\tfor i := uint64(0); i < count; i++ {\n");
+    out.push_str("\t\tk, err := decode(buf, off)\n");
+    out.push_str("\t\tif err != nil {\n");
+    out.push_str("\t\t\treturn nil, err\n");
+    out.push_str("\t\t}\n");
+    out.push_str("\t\ts[k] = struct{}{}\n");
+    out.push_str("\t}\n");
+    out.push_str("\treturn s, nil\n");
+    out.push_str("}\n\n");
+
+    // Concat helper
+    out.push_str("func concat(parts ...[]byte) []byte {\n");
     out.push_str("\tvar out []byte\n");
-    out.push_str("\tout = appendUvarint(out, 1) // Result::Err\n");
-    out.push_str("\tout = appendUvarint(out, 0) // RoamError::User\n");
-    out.push_str("\tb := []byte(err.Error())\n");
-    out.push_str("\tout = appendUvarint(out, uint64(len(b)))\n");
-    out.push_str("\tout = append(out, b...)\n");
+    out.push_str("\tfor _, p := range parts {\n");
+    out.push_str("\t\tout = append(out, p...)\n");
+    out.push_str("\t}\n");
+    out.push_str("\treturn out\n");
+    out.push_str("}\n\n");
+
+    // Result encoding helpers
+    out.push_str("func encodeResultOk(payload []byte) []byte {\n");
+    out.push_str("\treturn append(encodeUvarint(0), payload...)\n");
+    out.push_str("}\n\n");
+
+    out.push_str("func encodeResultOkUnit() []byte {\n");
+    out.push_str("\treturn encodeUvarint(0)\n");
+    out.push_str("}\n\n");
+
+    out.push_str("func encodeResultErr(err error) []byte {\n");
+    out.push_str("\tout := encodeUvarint(1) // Result::Err\n");
+    out.push_str("\tout = append(out, encodeUvarint(0)...) // RoamError::User\n");
+    out.push_str("\tout = append(out, encodeString(err.Error())...)\n");
     out.push_str("\treturn out\n");
     out.push_str("}\n\n");
 
     out.push_str("func encodeUnknownMethodError() []byte {\n");
-    out.push_str("\tvar out []byte\n");
-    out.push_str("\tout = appendUvarint(out, 1) // Result::Err\n");
-    out.push_str("\tout = appendUvarint(out, 1) // RoamError::UnknownMethod\n");
+    out.push_str("\tout := encodeUvarint(1) // Result::Err\n");
+    out.push_str("\tout = append(out, encodeUvarint(1)...) // RoamError::UnknownMethod\n");
     out.push_str("\treturn out\n");
     out.push_str("}\n\n");
 
     out.push_str("func encodeInvalidPayloadError() []byte {\n");
-    out.push_str("\tvar out []byte\n");
-    out.push_str("\tout = appendUvarint(out, 1) // Result::Err\n");
-    out.push_str("\tout = appendUvarint(out, 2) // RoamError::InvalidPayload\n");
+    out.push_str("\tout := encodeUvarint(1) // Result::Err\n");
+    out.push_str("\tout = append(out, encodeUvarint(2)...) // RoamError::InvalidPayload\n");
     out.push_str("\treturn out\n");
     out.push_str("}\n");
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roam_schema::{ArgDetail, MethodDetail, ServiceDetail, TypeDetail};
+
+    #[test]
+    fn test_go_type_base_primitives() {
+        assert_eq!(go_type_base(&TypeDetail::Bool), "bool");
+        assert_eq!(go_type_base(&TypeDetail::U32), "uint32");
+        assert_eq!(go_type_base(&TypeDetail::I64), "int64");
+        assert_eq!(go_type_base(&TypeDetail::F32), "float32");
+        assert_eq!(go_type_base(&TypeDetail::F64), "float64");
+        assert_eq!(go_type_base(&TypeDetail::String), "string");
+        assert_eq!(go_type_base(&TypeDetail::Bytes), "[]byte");
+        assert_eq!(go_type_base(&TypeDetail::Unit), "struct{}");
+    }
+
+    #[test]
+    fn test_go_type_base_containers() {
+        let vec_ty = TypeDetail::List(Box::new(TypeDetail::I32));
+        assert_eq!(go_type_base(&vec_ty), "[]int32");
+
+        let opt_ty = TypeDetail::Option(Box::new(TypeDetail::String));
+        assert_eq!(go_type_base(&opt_ty), "*string");
+
+        let map_ty = TypeDetail::Map {
+            key: Box::new(TypeDetail::String),
+            value: Box::new(TypeDetail::I32),
+        };
+        assert_eq!(go_type_base(&map_ty), "map[string]int32");
+    }
+
+    #[test]
+    fn test_go_type_streaming_client() {
+        // Client uses Push to send, Pull to receive (no inversion)
+        let push_ty = TypeDetail::Push(Box::new(TypeDetail::String));
+        assert_eq!(go_type_client_arg(&push_ty), "chan<- string");
+
+        let pull_ty = TypeDetail::Pull(Box::new(TypeDetail::U32));
+        assert_eq!(go_type_client_arg(&pull_ty), "<-chan uint32");
+    }
+
+    #[test]
+    fn test_go_type_streaming_server() {
+        // Server inverts: Push becomes Pull (receives), Pull becomes Push (sends)
+        // r[impl streaming.caller-pov]
+        let push_ty = TypeDetail::Push(Box::new(TypeDetail::String));
+        assert_eq!(go_type_server_arg(&push_ty), "<-chan string");
+
+        let pull_ty = TypeDetail::Pull(Box::new(TypeDetail::U32));
+        assert_eq!(go_type_server_arg(&pull_ty), "chan<- uint32");
+    }
+
+    fn sample_service() -> ServiceDetail {
+        ServiceDetail {
+            name: "Echo".into(),
+            doc: Some("Simple echo service".into()),
+            methods: vec![MethodDetail {
+                service_name: "Echo".into(),
+                method_name: "echo".into(),
+                args: vec![ArgDetail {
+                    name: "message".into(),
+                    type_info: TypeDetail::String,
+                }],
+                return_type: TypeDetail::String,
+                doc: Some("Echo back the message".into()),
+            }],
+        }
+    }
+
+    #[test]
+    fn test_generate_service_contains_interfaces() {
+        let service = sample_service();
+        let code = generate_service(&service);
+
+        assert!(code.contains("type EchoCaller interface"));
+        assert!(code.contains("type EchoHandler interface"));
+        assert!(code.contains("type EchoClient struct"));
+        assert!(code.contains("func NewEchoDispatcher"));
+        assert!(code.contains("EchoMethodEcho"));
+    }
+
+    #[test]
+    fn test_streaming_service_handler_inverts() {
+        let service = ServiceDetail {
+            name: "Stream".into(),
+            doc: None,
+            methods: vec![MethodDetail {
+                service_name: "Stream".into(),
+                method_name: "upload".into(),
+                args: vec![ArgDetail {
+                    name: "data".into(),
+                    type_info: TypeDetail::Push(Box::new(TypeDetail::Bytes)),
+                }],
+                return_type: TypeDetail::U64,
+                doc: None,
+            }],
+        };
+
+        let code = generate_service(&service);
+
+        // Caller uses chan<- (sends data)
+        assert!(
+            code.contains("chan<- []byte"),
+            "Caller should have chan<- []byte"
+        );
+
+        // Handler uses <-chan (receives data) - inverted
+        assert!(
+            code.contains("<-chan []byte"),
+            "Handler should have <-chan []byte (inverted)"
+        );
+    }
 }
