@@ -634,9 +634,10 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
         // Handle the case where peek_event was called before capture_raw.
         // This happens when deserialize_option peeks to check for null.
         let start_offset = if let Some(event) = self.event_peek.take() {
-            let start = self.peek_start_offset.take().expect(
-                "peek_start_offset should be set when event_peek is set",
-            );
+            let start = self
+                .peek_start_offset
+                .take()
+                .expect("peek_start_offset should be set when event_peek is set");
 
             // Based on the peeked event, we may need to skip the rest of a container.
             // Note: When peeking a StructStart/SequenceStart, the parser already pushed
@@ -654,8 +655,7 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
                     self.stack.pop();
                     res?;
                 }
-                ParseEvent::StructEnd
-                | ParseEvent::SequenceEnd => {
+                ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
                     // This shouldn't happen in valid usage, but handle gracefully
                     return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
                         message: "unexpected end event in capture_raw".to_string(),
