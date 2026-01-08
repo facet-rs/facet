@@ -83,10 +83,10 @@ A new runtime MUST start at `Revision(0)`.
 
 Each cached value tracks two revisions:
 
-r[revision.verified_at]
+r[revision.verified-at]
 `verified_at` MUST record the revision at which the cached value was last confirmed to be valid.
 
-r[revision.changed_at]
+r[revision.changed-at]
 `changed_at` MUST record the revision at which the value actually changed. This MAY be older than `verified_at` if the value was revalidated without recomputation.
 
 > r[revision.early-cutoff]

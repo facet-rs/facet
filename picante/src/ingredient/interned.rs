@@ -31,6 +31,7 @@ pub struct InternedIngredient<K> {
     by_id: DashMap<InternId, Arc<K>>,
 }
 
+// r[interned.constraints]
 impl<K> InternedIngredient<K>
 where
     K: Facet<'static> + Send + Sync + 'static,

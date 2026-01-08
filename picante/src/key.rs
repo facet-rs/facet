@@ -19,6 +19,8 @@ impl QueryKindId {
 
     // r[kind.hash]
     // r[kind.stability]
+    // r[kind.collision]
+    // r[kind.uniqueness]
     /// Create a stable id from a string.
     ///
     /// This is intended for macro-generated kind ids, which must remain stable

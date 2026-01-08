@@ -229,6 +229,7 @@ impl InFlightEntry {
 pub(crate) enum TryLeadResult {
     /// We became the leader. The guard MUST be used to complete/fail/cancel.
     Leader(InFlightGuard),
+    // r[inflight.follower]
     /// Someone else is already computing. Wait on the entry.
     Follower(Arc<InFlightEntry>),
 }

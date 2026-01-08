@@ -161,6 +161,7 @@ impl InputCore {
 // Helper functions to create persistence callbacks (monomorphized per K,V)
 // ============================================================================
 
+// r[input.constraints]
 fn make_encode_input_record<K, V>() -> EncodeInputRecordFn
 where
     K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,

@@ -37,7 +37,9 @@ type ComputeFut<'a> = BoxFuture<'a, PicanteResult<ArcAny>>;
 struct ErasedRecordData {
     dyn_key: DynKey,
     value: ArcAny,
+    // r[revision.verified-at]
     verified_at: Revision,
+    // r[revision.changed-at]
     changed_at: Revision,
     deps: Arc<[Dep]>,
 }
@@ -102,6 +104,8 @@ struct TypedCompute<DB, K, V> {
     _phantom: PhantomData<(K, V)>,
 }
 
+// r[type-erasure.tradeoffs]
+// r[derived.compute-fn]
 impl<DB, K, V> ErasedCompute<DB> for TypedCompute<DB, K, V>
 where
     DB: IngredientLookup + Send + Sync + 'static,
@@ -109,6 +113,7 @@ where
     V: Send + Sync + 'static,
 {
     fn compute<'a>(&'a self, db: &'a DB, key: Key) -> ComputeFut<'a> {
+        // Tradeoffs: vtable dispatch, BoxFuture allocation, key decode per compute
         Box::pin(async move {
             let k: K = key.decode_facet()?;
             let v: V = (self.f)(db, k).await?;
@@ -371,6 +376,7 @@ impl DerivedCore {
                 continue;
             }
 
+            // r[inflight.shared-cache-adopt]
             // 3) Check shared completed-result cache for cross-snapshot memoization.
             //    Unlike the in-flight registry, this persists after the leader finishes.
             if let Some(record) =
@@ -563,7 +569,8 @@ impl DerivedCore {
                         "inflight: leader, computing"
                     );
 
-                    // Run compute under an active frame.
+                    // r[cell.no-lock-await]
+                    // Run compute under an active frame (no lock held during compute).
                     let frame = ActiveFrameHandle::new(requested.clone(), rev);
                     let _frame_guard = frame::push_frame(frame.clone());
 
@@ -1400,8 +1407,8 @@ enum ErasedState {
         started_at: Revision,
     },
     // r[cell.stale]
-    // r[revision.verified_at]
-    // r[revision.changed_at]
+    // r[revision.verified-at]
+    // r[revision.changed-at]
     Ready {
         /// The cached value, stored as Arc<dyn Any> where the Any is V.
         /// Use Arc::downcast::<V>() to recover the Arc<V>.

@@ -59,7 +59,11 @@ pub struct CacheSaveOptions {
 }
 
 // r[persist.structure]
+// r[persist.not-stored]
 /// Top-level cache file payload (encoded with `facet-postcard`).
+///
+/// Note: Custom database fields and the dependency graph are NOT stored here.
+/// The dependency graph is reconstructed during load from ingredient records.
 #[derive(Debug, Clone, Facet)]
 pub struct CacheFile {
     /// Cache format version.
