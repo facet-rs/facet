@@ -45,3 +45,4 @@ facet-singularize/data/wordfreq_top50k.txt
 scripts/node_modules/
 scripts/pnpm-lock.yaml
 scripts/app.js
+.tracey/

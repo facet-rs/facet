@@ -267,7 +267,7 @@ fn invariant_cannot_shrink_or_grow() {
 #[test]
 fn reference_is_covariant() {
     // From the Rust Reference:
-    // &'a T is covariant in 'a and covariant in T
+    // &'a T is covariant with respect to 'a and covariant with respect to T
     // https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types
     //
     // Even though i32 is bivariant (no lifetime constraints), &i32 introduces

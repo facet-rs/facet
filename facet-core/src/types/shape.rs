@@ -460,17 +460,31 @@ impl Shape {
         })
     }
 
-    /// Compute the variance of this type by walking its fields recursively.
+    /// Compute the combined variance of this type over all its lifetime parameters.
     ///
-    /// This method walks struct fields and enum variants to determine the
-    /// combined variance. For leaf types (scalars, etc.), it delegates to
-    /// the `variance` field.
+    /// Variance describes how a type relates to subtyping of its parameters.
+    /// From the [Rustonomicon](https://doc.rust-lang.org/nomicon/subtyping.html):
+    /// - **Covariant**: lifetimes can be shortened (`'static` → `'a`)
+    /// - **Contravariant**: lifetimes can be lengthened (`'a` → `'static`)
+    /// - **Invariant**: lifetimes cannot be changed
+    /// - **Bivariant**: no lifetime parameters (can be treated as any of the above)
     ///
-    /// The implementation tracks visited types to:
-    /// 1. Detect cycles (recursive types) - returns Covariant for cycles since
-    ///    they don't contribute new variance information
-    /// 2. Prevent exponential blowup for types with multiple recursive fields
-    ///    (e.g., `Node(&Node, &Node, &Node, &Node)` would be O(4^depth) without this)
+    /// This method computes the *combined* variance across all lifetime parameters
+    /// in the type. For example:
+    /// - `i32` → Bivariant (no lifetimes)
+    /// - `&'a T` → Covariant (single lifetime in covariant position)
+    /// - `&'a mut &'b T` → Invariant (`'a` covariant + `'b` invariant = invariant)
+    ///
+    /// The primary use case is determining if [`Peek::shrink_lifetime`] or
+    /// [`Peek::grow_lifetime`] operations are safe:
+    /// - `can_shrink()` is true for Covariant and Bivariant
+    /// - `can_grow()` is true for Contravariant and Bivariant
+    ///
+    /// See [GitHub issue #1713](https://github.com/facet-rs/facet/issues/1713) for
+    /// discussion of potential API improvements.
+    ///
+    /// [`Peek::shrink_lifetime`]: https://docs.rs/facet-reflect/latest/facet_reflect/struct.Peek.html#method.shrink_lifetime
+    /// [`Peek::grow_lifetime`]: https://docs.rs/facet-reflect/latest/facet_reflect/struct.Peek.html#method.grow_lifetime
     pub fn computed_variance(&'static self) -> Variance {
         let mut visited = VarianceVisited::new();
         self.computed_variance_impl(&mut visited)
@@ -529,6 +543,11 @@ impl Shape {
                 let transformed = match dep.position {
                     VariancePosition::Covariant => dep_variance,
                     VariancePosition::Contravariant => dep_variance.flip(),
+                    // Invariant position: bivariant passes through, everything else becomes invariant
+                    VariancePosition::Invariant => match dep_variance {
+                        Variance::Bivariant => Variance::Bivariant,
+                        _ => Variance::Invariant,
+                    },
                 };
                 variance = variance.combine(transformed);
 

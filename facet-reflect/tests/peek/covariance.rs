@@ -1,9 +1,9 @@
-//! Tests demonstrating that Peek is invariant over 'facet, with variance-aware
+//! Tests demonstrating that Peek is invariant with respect to 'facet, with variance-aware
 //! lifetime transformation methods.
 //!
 //! Invariance means Peek<'mem, 'a> cannot be cast to Peek<'mem, 'b> even if 'a: 'b.
 //!
-//! This is REQUIRED for soundness! If Peek were covariant over 'facet, we could:
+//! This is REQUIRED for soundness! If Peek were covariant with respect to 'facet, we could:
 //! 1. Create Peek<'mem, 'static> from FnWrapper<'static> (contains fn(&'static str))
 //! 2. Use covariance to cast it to Peek<'mem, 'short>
 //! 3. Call get::<FnWrapper<'short>>() to get &FnWrapper<'short>
@@ -236,7 +236,7 @@ fn shrink_lifetime_nested_bivariant() {
 
 /// Test that Option<T> propagates variance correctly
 ///
-/// Option<T> is covariant in T, meaning it preserves T's variance:
+/// Option<T> is covariant with respect to T, meaning it preserves T's variance:
 /// - Option<bivariant> = bivariant
 /// - Option<covariant> = covariant
 /// - Option<invariant> = invariant
@@ -266,10 +266,10 @@ fn option_variance_propagation() {
 /// Soundness test for GitHub issues #1696 and #1708
 ///
 /// With bivariance support, `fn() -> i32` is bivariant (no lifetime constraints).
-/// `&T` is covariant in T, so `&fn() -> i32` combines Covariant with Bivariant = Covariant.
+/// `&T` is covariant with respect to T, so `&fn() -> i32` combines Covariant with Bivariant = Covariant.
 ///
 /// From the Rust Reference (https://doc.rust-lang.org/reference/subtyping.html):
-/// - &'a T is covariant in 'a and covariant in T
+/// - &'a T is covariant with respect to 'a and covariant with respect to T
 /// - fn() -> i32 is bivariant (i32 has no lifetime constraints)
 /// - Covariant.combine(Bivariant) = Covariant
 #[test]
@@ -281,7 +281,7 @@ fn reference_to_bivariant_fn_ptr_is_covariant() {
     let peek = Peek::new(&ref_to_fn);
 
     // &fn() should be covariant because:
-    // - &T is covariant in T
+    // - &T is covariant with respect to T
     // - fn() -> i32 is bivariant
     // - Covariant.combine(Bivariant) = Covariant
     assert_eq!(
@@ -308,25 +308,29 @@ fn shrink_lifetime_ref_to_bivariant_fn_ptr_succeeds() {
     let _ = shrunk;
 }
 
-/// Test that &mut T is invariant regardless of T's variance
+/// Test that &'a mut T variance depends on T's variance
+///
+/// - `&'a mut T` is covariant with respect to 'a and invariant with respect to T
+/// - If `T` contributes `Bivariant`, then `&mut T` is `Covariant` (only the lifetime matters)
+/// - Otherwise, `&mut T` is `Invariant` (the invariant dependency forces it)
 #[test]
-fn mut_ref_is_invariant() {
+fn mut_ref_variance_depends_on_inner() {
+    // i32 is bivariant (no lifetime constraints)
+    // &mut i32 is covariant (covariant with respect to 'a, invariant dependency on bivariant T = covariant)
     let mut value: i32 = 42;
     let mut_ref: &mut i32 = &mut value;
     let peek = Peek::new(&mut_ref);
-
-    // &mut T is always invariant in T
     assert_eq!(
         peek.variance(),
-        Variance::Invariant,
-        "&mut T should always be invariant"
+        Variance::Covariant,
+        "&mut bivariant should be covariant (from the lifetime)"
     );
 }
 
 /// Test that &T combines Covariant with T's variance correctly
 ///
 /// From the Rust Reference (https://doc.rust-lang.org/reference/subtyping.html):
-/// &'a T is covariant in 'a and covariant in T
+/// &'a T is covariant with respect to 'a and covariant with respect to T
 ///
 /// This means &T combines Covariant with T's variance:
 /// - &bivariant = covariant (Covariant.combine(Bivariant) = Covariant)

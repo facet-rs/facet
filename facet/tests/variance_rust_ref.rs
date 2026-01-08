@@ -7,9 +7,9 @@
 //!
 //! ## Important Note on Bivariance
 //!
-//! The Rust Reference describes variance "in T" - how a container relates to its
-//! type parameter. For example, Vec<T> is "covariant in T", meaning Vec preserves
-//! T's subtyping relationship.
+//! The Rust Reference describes variance “in T” (or equivalently, “with respect to T”):
+//! how a container relates to its type parameter. For example, Vec<T> is covariant
+//! with respect to T, meaning Vec preserves T's subtyping relationship.
 //!
 //! However, what we compute with `computed_variance()` is the overall variance
 //! of the type with respect to lifetimes. When T has no lifetime constraints
@@ -17,9 +17,9 @@
 //!
 //! Examples:
 //! - i32 is bivariant (no lifetime constraints)
-//! - Vec<T> is covariant in T, so Vec<i32> is bivariant (bivariant.combine(bivariant) = bivariant)
-//! - *const T is covariant in T, so *const i32 is bivariant
-//! - *mut T is invariant in T, so *mut i32 is invariant (invariance dominates)
+//! - Vec<T> is covariant with respect to T, so Vec<i32> is bivariant (bivariant.combine(bivariant) = bivariant)
+//! - *const T is covariant with respect to T, so *const i32 is bivariant
+//! - *mut T is invariant with respect to T, so *mut i32 is invariant (invariance dominates)
 
 #![allow(dead_code)] // Test types don't need all fields to be read
 
@@ -49,12 +49,12 @@ use facet::{Facet, Variance};
 // =============================================================================
 
 // -----------------------------------------------------------------------------
-// *const T - covariant in T (propagates T's variance)
+// *const T - covariant with respect to T (propagates T's variance)
 // -----------------------------------------------------------------------------
 
 #[test]
 fn const_ptr_propagates_variance() {
-    // *const T is covariant in T, meaning it propagates T's variance
+    // *const T is covariant with respect to T, meaning it propagates T's variance
     // Since i32 is bivariant (no lifetime constraints), *const i32 is also bivariant
     let shape = <*const i32>::SHAPE;
     assert_eq!(
@@ -76,17 +76,17 @@ fn const_ptr_propagates_inner_bivariance() {
 }
 
 // -----------------------------------------------------------------------------
-// *mut T - invariant in T (always invariant)
+// *mut T - invariant with respect to T (always invariant)
 // -----------------------------------------------------------------------------
 
 #[test]
 fn mut_ptr_invariant_in_t() {
-    // *mut T is invariant in T
+    // *mut T is invariant with respect to T
     let shape = <*mut i32>::SHAPE;
     assert_eq!(
         shape.computed_variance(),
         Variance::Invariant,
-        "*mut T should be invariant in T (Rust Reference)"
+        "*mut T should be invariant with respect to T (Rust Reference)"
     );
 }
 
@@ -102,12 +102,12 @@ fn mut_ptr_stays_invariant_regardless_of_inner() {
 }
 
 // -----------------------------------------------------------------------------
-// [T; N] - covariant in T (propagates T's variance)
+// [T; N] - covariant with respect to T (propagates T's variance)
 // -----------------------------------------------------------------------------
 
 #[test]
 fn array_propagates_variance() {
-    // [T; N] is covariant in T, so [bivariant; N] is bivariant
+    // [T; N] is covariant with respect to T, so [bivariant; N] is bivariant
     let shape = <[i32; 5]>::SHAPE;
     assert_eq!(
         shape.computed_variance(),
@@ -185,7 +185,7 @@ fn struct_nested_invariant() {
 }
 
 // -----------------------------------------------------------------------------
-// Vec<T> - covariant in T (propagates T's variance)
+// Vec<T> - covariant with respect to T (propagates T's variance)
 // -----------------------------------------------------------------------------
 
 #[test]
@@ -209,7 +209,7 @@ fn vec_propagates_invariance() {
 }
 
 // -----------------------------------------------------------------------------
-// Box<T> - covariant in T (propagates T's variance)
+// Box<T> - covariant with respect to T (propagates T's variance)
 // -----------------------------------------------------------------------------
 
 #[test]
@@ -233,7 +233,7 @@ fn box_propagates_invariance() {
 }
 
 // -----------------------------------------------------------------------------
-// Option<T> - covariant in T (propagates T's variance)
+// Option<T> - covariant with respect to T (propagates T's variance)
 // -----------------------------------------------------------------------------
 
 #[test]
@@ -257,7 +257,7 @@ fn option_propagates_invariance() {
 }
 
 // -----------------------------------------------------------------------------
-// Tuple variance - covariant in each element (combines all variances)
+// Tuple variance - covariant with respect to each element (combines all variances)
 // -----------------------------------------------------------------------------
 
 #[test]

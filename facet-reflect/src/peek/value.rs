@@ -56,7 +56,7 @@ impl core::fmt::Debug for ValueId {
 ///
 /// # Variance and Soundness
 ///
-/// `Peek` is **invariant** over `'facet`. This is required for soundness:
+/// `Peek` is **invariant** with respect to `'facet`. This is required for soundness:
 /// if `Peek` were covariant, it would be possible to launder lifetimes
 /// through reflection, leading to use-after-free bugs with types like
 /// `fn(&'a str)`. See [issue #1168](https://github.com/facet-rs/facet/issues/1168).
@@ -72,17 +72,17 @@ pub struct Peek<'mem, 'facet> {
     /// Shape of the value
     pub(crate) shape: &'static Shape,
 
-    // Invariant over 'facet: Peek<'mem, 'a> cannot be cast to Peek<'mem, 'b> even if 'a: 'b.
+    // Invariant with respect to 'facet: Peek<'mem, 'a> cannot be cast to Peek<'mem, 'b> even if 'a: 'b.
     //
-    // This is REQUIRED for soundness! If Peek were covariant over 'facet, we could:
+    // This is REQUIRED for soundness! If Peek were covariant with respect to 'facet, we could:
     // 1. Create Peek<'mem, 'static> from FnWrapper<'static> (contains fn(&'static str))
     // 2. Use covariance to cast it to Peek<'mem, 'short>
     // 3. Call get::<FnWrapper<'short>>() to get &FnWrapper<'short>
     // 4. This would allow calling the function with a &'short str that goes out of scope
     //    while the original function pointer still holds it as 'static
     //
-    // The fn(&'a ()) -> &'a () pattern makes this type invariant over 'facet.
-    // The &'mem () makes this type covariant over 'mem (safe because we only read through it).
+    // The fn(&'a ()) -> &'a () pattern makes this type invariant with respect to 'facet.
+    // The &'mem () makes this type covariant with respect to 'mem (safe because we only read through it).
     // See: https://github.com/facet-rs/facet/issues/1168
     _invariant: PhantomData<(&'mem (), fn(&'facet ()) -> &'facet ())>,
 }
@@ -120,7 +120,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// Returns the computed variance of the underlying type.
     ///
     /// This walks the type's fields to determine if the type is covariant,
-    /// contravariant, or invariant over its lifetime parameter.
+    /// contravariant, or invariant with respect to its lifetime parameter.
     #[inline]
     pub fn variance(&self) -> Variance {
         self.shape.computed_variance()
@@ -1050,8 +1050,8 @@ impl<'mem, 'facet> core::hash::Hash for Peek<'mem, 'facet> {
 
 /// A covariant wrapper around [`Peek`] for types that can safely shrink lifetimes.
 ///
-/// Unlike [`Peek`], which is invariant over `'facet` for soundness reasons,
-/// `CovariantPeek` is **covariant** over `'facet`. This means a `CovariantPeek<'mem, 'static>`
+/// Unlike [`Peek`], which is invariant with respect to `'facet` for soundness reasons,
+/// `CovariantPeek` is **covariant** with respect to `'facet`. This means a `CovariantPeek<'mem, 'static>`
 /// can be used where a `CovariantPeek<'mem, 'a>` is expected.
 ///
 /// # Variance Background
@@ -1089,7 +1089,7 @@ impl<'mem, 'facet> core::hash::Hash for Peek<'mem, 'facet> {
 ///     value: &'a str,
 /// }
 ///
-/// // Data<'a> is covariant in 'a because &'a str is covariant
+/// // Data<'a> is covariant with respect to 'a because &'a str is covariant
 /// let data = Data { value: "hello" };
 /// let peek: Peek<'_, 'static> = Peek::new(&data);
 ///
@@ -1110,7 +1110,7 @@ pub struct CovariantPeek<'mem, 'facet> {
     /// Shape of the value
     shape: &'static Shape,
 
-    // Covariant over both 'mem and 'facet: CovariantPeek<'mem, 'static> can be used where
+    // Covariant with respect to both 'mem and 'facet: CovariantPeek<'mem, 'static> can be used where
     // CovariantPeek<'mem, 'a> is expected.
     //
     // This is safe ONLY because we verify at construction time that the underlying
@@ -1343,21 +1343,21 @@ mod tests {
 
     #[test]
     fn test_covariant_peek_lifetime_covariance() {
-        // This test verifies that CovariantPeek is actually covariant over 'facet
+        // This test verifies that CovariantPeek is actually covariant with respect to 'facet
         // by passing a CovariantPeek<'_, 'static> to a function expecting CovariantPeek<'_, 'a>
         fn use_shorter<'a>(_p: CovariantPeek<'_, 'a>) {}
 
         let value = 42i32;
         let covariant: CovariantPeek<'_, 'static> = CovariantPeek::from_ref(&value).unwrap();
 
-        // This compiles because CovariantPeek is covariant over 'facet
+        // This compiles because CovariantPeek is covariant with respect to 'facet
         use_shorter(covariant);
     }
 
     #[test]
     #[cfg(feature = "alloc")]
     fn test_covariant_peek_vec_type() {
-        // Vec<T> is covariant in T
+        // Vec<T> is covariant with respect to T
         let vec = alloc::vec![1i32, 2, 3];
         let peek = Peek::new(&vec);
         let covariant = CovariantPeek::new(peek);
@@ -1367,7 +1367,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn test_covariant_peek_option_type() {
-        // Option<T> is covariant in T
+        // Option<T> is covariant with respect to T
         let opt = Some(42i32);
         let peek = Peek::new(&opt);
         let covariant = CovariantPeek::new(peek);
