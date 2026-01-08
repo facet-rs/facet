@@ -982,3 +982,89 @@ fn transparent_generic_tuple_struct() {
     let inner = shape.inner.unwrap();
     assert_eq!(format!("{inner}"), "Vec<i32>");
 }
+
+// Test for issue #1714 - module_path and source location in Shape
+#[test]
+fn shape_module_path_and_source_location() {
+    #[derive(Debug, Facet)]
+    struct TestModulePath {
+        x: i32,
+    }
+
+    let shape = TestModulePath::SHAPE;
+
+    // module_path should be set for derived types
+    assert!(
+        shape.module_path.is_some(),
+        "module_path should be Some for derived types"
+    );
+    let module_path = shape.module_path.unwrap();
+    // The module path should contain "derive" since this test is in derive.rs
+    assert!(
+        module_path.contains("derive"),
+        "module_path should contain 'derive', got: {}",
+        module_path
+    );
+
+    // Source location should be set when doc feature is enabled (which it is by default)
+    assert!(
+        shape.source_file.is_some(),
+        "source_file should be Some for derived types"
+    );
+    let source_file = shape.source_file.unwrap();
+    assert!(
+        source_file.contains("derive.rs"),
+        "source_file should contain 'derive.rs', got: {}",
+        source_file
+    );
+
+    assert!(
+        shape.source_line.is_some(),
+        "source_line should be Some for derived types"
+    );
+    assert!(
+        shape.source_column.is_some(),
+        "source_column should be Some for derived types"
+    );
+
+    // Foreign types (like primitives) should have None for these fields
+    let i32_shape = i32::SHAPE;
+    assert!(
+        i32_shape.module_path.is_none(),
+        "module_path should be None for primitives"
+    );
+    assert!(
+        i32_shape.source_file.is_none(),
+        "source_file should be None for primitives"
+    );
+}
+
+// Test module_path for enums
+#[test]
+fn enum_module_path_and_source_location() {
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum TestEnumPath {
+        A,
+        B,
+    }
+
+    let shape = TestEnumPath::SHAPE;
+
+    assert!(
+        shape.module_path.is_some(),
+        "module_path should be Some for derived enums"
+    );
+    let module_path = shape.module_path.unwrap();
+    assert!(
+        module_path.contains("derive"),
+        "module_path should contain 'derive', got: {}",
+        module_path
+    );
+
+    assert!(
+        shape.source_file.is_some(),
+        "source_file should be Some for derived enums"
+    );
+}

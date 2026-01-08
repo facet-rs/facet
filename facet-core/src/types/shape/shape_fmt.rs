@@ -32,6 +32,10 @@ impl fmt::Debug for Shape {
             ty: _,
             def: _,
             type_identifier: _,
+            module_path: _,   // omit by default (for code generation)
+            source_file: _,   // omit by default (for debugging)
+            source_line: _,   // omit by default (for debugging)
+            source_column: _, // omit by default (for debugging)
             type_params: _,
             doc: _,
             attributes: _,

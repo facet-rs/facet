@@ -183,6 +183,20 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     #[cfg(not(feature = "doc"))]
     let doc_call = quote! {};
 
+    // Source location - only emit if doc feature is enabled
+    #[cfg(feature = "doc")]
+    let source_location_call = if crate::is_no_doc() {
+        quote! {}
+    } else {
+        quote! {
+            .source_file(::core::file!())
+            .source_line(::core::line!())
+            .source_column(::core::column!())
+        }
+    };
+    #[cfg(not(feature = "doc"))]
+    let source_location_call = quote! {};
+
     // Container attributes - returns builder call only if there are attributes
     let attributes_call = {
         let mut attribute_tokens: Vec<TokenStream> = Vec::new();
@@ -971,6 +985,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 #(#shadow_struct_defs)*
                 #fields
                 𝟋ShpB::for_sized::<Self>(#enum_name_str)
+                    .module_path(::core::module_path!())
+                    #source_location_call
                     .vtable(#vtable_init)
                     #type_ops_call
                     .ty(#ty_field)

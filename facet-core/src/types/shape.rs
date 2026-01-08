@@ -133,6 +133,34 @@ pub struct Shape {
     /// For the full name with generics, use `vtable.type_name`.
     pub type_identifier: &'static str,
 
+    /// Module path where this type is defined (e.g. `"std::collections"`).
+    ///
+    /// Combined with `type_identifier`, this gives the fully qualified path
+    /// for code generation (e.g. `std::collections::HashMap`).
+    ///
+    /// - `None` for primitives and foreign types (e.g. std library types)
+    /// - `Some("crate_name")` for types at the crate root
+    /// - `Some("crate_name::module::submodule")` for nested types
+    pub module_path: Option<&'static str>,
+
+    /// Source file where this type is defined.
+    ///
+    /// Populated when the `doc` feature is enabled in facet-macros.
+    /// `None` for primitives and foreign types (e.g. std library types).
+    pub source_file: Option<&'static str>,
+
+    /// Source line number where this type is defined (1-indexed).
+    ///
+    /// Populated when the `doc` feature is enabled in facet-macros.
+    /// `None` for primitives and foreign types.
+    pub source_line: Option<u32>,
+
+    /// Source column number where this type is defined (1-indexed).
+    ///
+    /// Populated when the `doc` feature is enabled in facet-macros.
+    /// `None` for primitives and foreign types.
+    pub source_column: Option<u32>,
+
     /// Generic type parameters (e.g. `T` in `Vec<T>`).
     /// Includes bounds and variance information.
     pub type_params: &'static [TypeParam],
