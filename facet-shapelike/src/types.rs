@@ -87,6 +87,8 @@ pub enum KnownPointer {
     OnceCell,
     Mutex,
     RwLock,
+    OnceLock,
+    LazyLock,
     NonNull,
     SharedReference,
     ExclusiveReference,

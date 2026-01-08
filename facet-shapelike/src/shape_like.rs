@@ -568,6 +568,8 @@ impl From<&PointerDef> for PointerDefLike {
                 facet_core::KnownPointer::OnceCell => KnownPointer::OnceCell,
                 facet_core::KnownPointer::Mutex => KnownPointer::Mutex,
                 facet_core::KnownPointer::RwLock => KnownPointer::RwLock,
+                facet_core::KnownPointer::OnceLock => KnownPointer::OnceLock,
+                facet_core::KnownPointer::LazyLock => KnownPointer::LazyLock,
                 facet_core::KnownPointer::NonNull => KnownPointer::NonNull,
                 facet_core::KnownPointer::SharedReference => KnownPointer::SharedReference,
                 facet_core::KnownPointer::ExclusiveReference => KnownPointer::ExclusiveReference,
