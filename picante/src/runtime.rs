@@ -11,6 +11,7 @@ use tokio::sync::{broadcast, watch};
 /// Global counter for assigning unique runtime IDs.
 static RUNTIME_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+// r[snapshot.runtime-id]
 /// Unique identifier for a database runtime.
 ///
 /// This ID is used to distinguish between different database instances for
@@ -27,19 +28,25 @@ impl RuntimeId {
     }
 }
 
+// r[runtime.components]
 /// Shared runtime state for a Picante database: primarily the current revision.
 #[derive(Debug)]
 pub struct Runtime {
     /// Unique identifier for this runtime family (shared with snapshots).
     id: RuntimeId,
     current_revision: AtomicU64,
+    // r[event.channel]
     revision_tx: watch::Sender<Revision>,
+    // r[event.broadcast-capacity]
     events_tx: broadcast::Sender<RuntimeEvent>,
+    // r[dep.forward]
     deps_by_query: DashMap<DynKey, Arc<[Dep]>>,
+    // r[dep.reverse]
     reverse_deps: DashMap<DynKey, DashSet<DynKey>>,
 }
 
 impl Runtime {
+    // r[runtime.new]
     /// Create a new runtime starting at revision 0.
     pub fn new() -> Self {
         Self::default()
@@ -86,6 +93,7 @@ impl Runtime {
         self.events_tx.subscribe()
     }
 
+    // r[revision.bump]
     /// Bump the current revision and return the new value.
     pub fn bump_revision(&self) -> Revision {
         let next = self.current_revision.fetch_add(1, Ordering::AcqRel) + 1;
@@ -97,6 +105,7 @@ impl Runtime {
         rev
     }
 
+    // r[revision.set]
     /// Set the current revision (intended for cache loading).
     pub fn set_current_revision(&self, revision: Revision) {
         self.current_revision.store(revision.0, Ordering::Release);
@@ -104,6 +113,7 @@ impl Runtime {
         let _ = self.events_tx.send(RuntimeEvent::RevisionSet { revision });
     }
 
+    // r[runtime.notify-input-set]
     /// Emit an input change event (for live reload / diagnostics).
     pub fn notify_input_set(&self, revision: Revision, kind: QueryKindId, key: Key) {
         let source = DynKey {
@@ -134,6 +144,7 @@ impl Runtime {
         self.propagate_invalidation(revision, &source);
     }
 
+    // r[runtime.update-deps]
     /// Update the dependency edges for `query`.
     pub fn update_query_deps(&self, query: DynKey, deps: Arc<[Dep]>) {
         let old = self.deps_by_query.insert(query.clone(), deps.clone());
@@ -171,6 +182,7 @@ impl Runtime {
         }
     }
 
+    // r[event.query-changed-cutoff]
     /// Emit a derived query change event (for live reload / diagnostics).
     pub fn notify_query_changed(&self, revision: Revision, query: DynKey) {
         let _ = self.events_tx.send(RuntimeEvent::QueryChanged {
@@ -181,6 +193,7 @@ impl Runtime {
         });
     }
 
+    // r[runtime.clear-deps]
     /// Clear the in-memory dependency graph (used during cache loads).
     pub fn clear_dependency_graph(&self) {
         self.deps_by_query.clear();
@@ -212,6 +225,8 @@ impl Runtime {
             .collect()
     }
 
+    // r[runtime.propagate-invalidation]
+    // r[dep.invalidation]
     fn propagate_invalidation(&self, revision: Revision, source: &DynKey) {
         let mut queue = VecDeque::new();
         let mut seen: HashSet<DynKey> = HashSet::new();
@@ -246,9 +261,11 @@ impl Runtime {
     }
 }
 
+// r[revision.initial]
 impl Default for Runtime {
     fn default() -> Self {
         let (revision_tx, _) = watch::channel(Revision(0));
+        // r[event.broadcast-capacity]
         let (events_tx, _) = broadcast::channel(1024);
         Self {
             id: RuntimeId::new_unique(),
@@ -261,6 +278,8 @@ impl Default for Runtime {
     }
 }
 
+// r[event.types]
+// r[event.key-fields]
 /// Notifications emitted by a [`Runtime`].
 #[derive(Debug, Clone)]
 pub enum RuntimeEvent {

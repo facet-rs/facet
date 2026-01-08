@@ -39,6 +39,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
+// r[debug.graph]
 /// A snapshot of the dependency graph for visualization and analysis.
 #[derive(Debug, Clone)]
 pub struct DependencyGraph {
@@ -208,6 +209,7 @@ impl DependencyGraph {
     }
 }
 
+// r[debug.cache-stats]
 /// Statistics about cache usage and performance.
 #[derive(Debug, Clone)]
 pub struct CacheStats {
@@ -332,6 +334,7 @@ pub enum TraceEvent {
     },
 }
 
+// r[debug.trace-collector]
 /// A collector that records runtime events for analysis.
 ///
 /// This subscribes to the runtime's event stream and records
@@ -467,6 +470,7 @@ impl TraceCollector {
     }
 }
 
+// r[debug.trace-analysis]
 /// Analysis of a collected trace.
 #[derive(Debug, Clone)]
 pub struct TraceAnalysis {

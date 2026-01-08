@@ -12,6 +12,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
+// r[persist.format]
+// r[persist.load-version]
 const FORMAT_VERSION: u32 = 1;
 
 /// Controls how Picante behaves when a cache file can't be decoded/validated.
@@ -56,6 +58,7 @@ pub struct CacheSaveOptions {
     pub max_record_bytes: Option<usize>,
 }
 
+// r[persist.structure]
 /// Top-level cache file payload (encoded with `facet-postcard`).
 #[derive(Debug, Clone, Facet)]
 pub struct CacheFile {
@@ -67,6 +70,7 @@ pub struct CacheFile {
     pub sections: Vec<Section>,
 }
 
+// r[persist.section]
 /// A per-ingredient cache section.
 #[derive(Debug, Clone, Facet)]
 pub struct Section {
@@ -149,6 +153,7 @@ pub trait PersistableIngredient: Send + Sync {
     }
 }
 
+// r[persist.save-fn]
 /// Save `runtime` and `ingredients` to `path`.
 pub async fn save_cache(
     path: impl AsRef<Path>,
@@ -158,6 +163,9 @@ pub async fn save_cache(
     save_cache_with_options(path, runtime, ingredients, &CacheSaveOptions::default()).await
 }
 
+// r[persist.save-options]
+// r[persist.save-atomic]
+// r[persist.save-unique-kinds]
 /// Save `runtime` and `ingredients` to `path` with cache size limits.
 pub async fn save_cache_with_options(
     path: impl AsRef<Path>,
@@ -244,6 +252,8 @@ pub async fn save_cache_with_options(
     Ok(())
 }
 
+// r[persist.load-fn]
+// r[persist.load-return]
 /// Load `runtime` and `ingredients` from `path`.
 ///
 /// Returns `Ok(false)` if the cache file does not exist.
@@ -255,6 +265,7 @@ pub async fn load_cache(
     load_cache_with_options(path, runtime, ingredients, &CacheLoadOptions::default()).await
 }
 
+// r[persist.load-options]
 /// Load `runtime` and `ingredients` from `path` with a corruption policy.
 ///
 /// Returns `Ok(false)` if the cache file does not exist, is ignored, or is deleted.
@@ -282,6 +293,10 @@ pub async fn load_cache_with_options(
     }
 }
 
+// r[persist.load-order]
+// r[persist.load-kind-match]
+// r[persist.load-name-match]
+// r[persist.load-type-match]
 async fn load_cache_inner(
     path: &Path,
     runtime: &Runtime,
@@ -312,6 +327,7 @@ async fn load_cache_inner(
 
     let cache: CacheFile = decode_cache_file(&bytes)?;
 
+    // r[persist.load-version]
     if cache.format_version != FORMAT_VERSION {
         return Err(Arc::new(PicanteError::Cache {
             message: format!(

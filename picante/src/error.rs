@@ -4,9 +4,12 @@ use crate::key::{DynKey, QueryKindId};
 use std::fmt;
 use std::sync::Arc;
 
+// r[error.result]
 /// Result type used by Picante APIs.
 pub type PicanteResult<T> = std::result::Result<T, Arc<PicanteError>>;
 
+// r[error.type]
+// r[error.variants]
 /// A Picante runtime / persistence error.
 #[derive(Debug)]
 pub enum PicanteError {

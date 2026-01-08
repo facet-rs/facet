@@ -8,14 +8,18 @@ use std::future::Future;
 use std::sync::Arc;
 use tracing::trace;
 
+// r[frame.task-local]
+// r[frame.cycle-stack]
 tokio::task_local! {
     static ACTIVE_STACK: RefCell<Vec<ActiveFrameHandle>>;
 }
 
+// r[frame.purpose]
 /// A cheap, clonable handle for the currently-running query frame.
 #[derive(Clone)]
 pub struct ActiveFrameHandle(Arc<ActiveFrameInner>);
 
+// r[frame.no-lock-await]
 struct ActiveFrameInner {
     dyn_key: DynKey,
     started_at: Revision,
@@ -87,6 +91,8 @@ pub fn has_active_frame() -> bool {
         .unwrap_or(false)
 }
 
+// r[frame.record-dep]
+// r[dep.recording]
 /// Record a dependency on the current top-of-stack frame, if any.
 pub fn record_dep(dep: Dep) {
     let _ = ACTIVE_STACK.try_with(|stack| {
@@ -96,6 +102,8 @@ pub fn record_dep(dep: Dep) {
     });
 }
 
+// r[frame.cycle-detect]
+// r[frame.cycle-per-task]
 /// If `requested` already exists in the task-local stack, returns the full stack of `DynKey`s.
 pub fn find_cycle(requested: &DynKey) -> Option<Vec<DynKey>> {
     ACTIVE_STACK

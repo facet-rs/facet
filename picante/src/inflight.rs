@@ -18,6 +18,8 @@ use tracing::trace;
 /// Type-erased result value from a computation.
 pub(crate) type ArcAny = Arc<dyn std::any::Any + Send + Sync>;
 
+// r[inflight.registry]
+// r[inflight.purpose]
 /// Global registry for in-flight computations.
 ///
 /// This allows concurrent queries from different database snapshots to share
@@ -29,6 +31,7 @@ static IN_FLIGHT_REGISTRY: std::sync::LazyLock<DashMap<InFlightKey, Arc<InFlight
 // Shared completed-result cache (cross-snapshot memoization)
 // ============================================================================
 
+// r[inflight.shared-cache]
 /// A completed derived-query result that can be adopted by other runtimes/snapshots.
 #[derive(Clone)]
 pub(crate) struct SharedCacheRecord {
@@ -39,11 +42,13 @@ pub(crate) struct SharedCacheRecord {
     pub(crate) insert_id: u64,
 }
 
+// r[inflight.shared-cache-key]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct SharedCacheKey {
     runtime_id: RuntimeId,
     kind: QueryKindId,
     key: Key,
+    // Note: no revision in the key
 }
 
 static SHARED_CACHE: std::sync::LazyLock<DashMap<SharedCacheKey, SharedCacheRecord>> =
@@ -53,6 +58,7 @@ static SHARED_CACHE_ORDER: std::sync::LazyLock<
     parking_lot::Mutex<VecDeque<(SharedCacheKey, u64)>>,
 > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(VecDeque::new()));
 
+// r[inflight.shared-cache-size]
 static SHARED_CACHE_MAX_ENTRIES: AtomicUsize = AtomicUsize::new(20_000);
 static SHARED_CACHE_MAX_ENTRIES_OVERRIDDEN: AtomicBool = AtomicBool::new(false);
 static SHARED_CACHE_INSERT_ID: AtomicU64 = AtomicU64::new(1);
@@ -132,6 +138,8 @@ pub fn __test_shared_cache_set_max_entries(max_entries: usize) {
     SHARED_CACHE_MAX_ENTRIES_OVERRIDDEN.store(true, Ordering::Relaxed);
 }
 
+// r[inflight.key]
+// r[inflight.scope]
 /// Key identifying an in-flight computation.
 ///
 /// Two queries are considered the same if they have the same:
@@ -235,6 +243,7 @@ pub(crate) struct InFlightGuard {
 }
 
 impl InFlightGuard {
+    // r[inflight.complete]
     /// Mark the computation as successfully completed.
     pub(crate) fn complete(mut self, value: ArcAny, deps: Arc<[Dep]>, changed_at: Revision) {
         self.entry.complete(value, deps, changed_at);
@@ -244,6 +253,7 @@ impl InFlightGuard {
         IN_FLIGHT_REGISTRY.remove(&self.key);
     }
 
+    // r[inflight.fail]
     /// Mark the computation as failed.
     pub(crate) fn fail(mut self, error: Arc<PicanteError>) {
         self.entry.fail(error);
@@ -252,6 +262,7 @@ impl InFlightGuard {
     }
 }
 
+// r[inflight.cancel]
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
         if !self.completed {
@@ -263,6 +274,7 @@ impl Drop for InFlightGuard {
     }
 }
 
+// r[inflight.try-lead]
 /// Try to become the leader for a computation, or get the existing entry if
 /// someone else is already computing.
 pub(crate) fn try_lead(key: InFlightKey) -> TryLeadResult {

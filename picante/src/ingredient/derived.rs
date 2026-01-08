@@ -83,6 +83,7 @@ struct ApplyWalResult {
 /// Function pointer for deep equality check without knowing V
 type EqErasedFn = fn(&dyn Any, &dyn Any) -> bool;
 
+// r[type-erasure.mechanism]
 /// Trait for type-erased compute function (dyn dispatch)
 ///
 /// This trait allows the state machine to call compute() without being generic
@@ -132,6 +133,8 @@ where
 // Non-generic core: state machine compiled ONCE
 // ============================================================================
 
+// r[type-erasure.purpose]
+// r[type-erasure.benefit]
 /// Non-generic core containing the type-erased state machine.
 ///
 /// By keeping this struct non-generic and making its methods generic over parameters,
@@ -582,6 +585,8 @@ impl DerivedCore {
                     // 4) finalize
                     match result {
                         Ok(Ok(out)) => {
+                            // r[revision.early-cutoff]
+                            // r[cell.compute]
                             let changed_at = match prev {
                                 Some((prev_value, prev_changed_at)) => {
                                     // Fast path: pointer equality (values are literally the same Arc)
@@ -704,6 +709,8 @@ impl DerivedCore {
         }
     }
 
+    // r[cell.revalidate]
+    // r[cell.revalidate-missing]
     async fn try_revalidate<DB>(
         &self,
         db: &DB,
@@ -1104,6 +1111,8 @@ where
 // Thin generic wrapper (one per DB/K/V, but minimal code)
 // ============================================================================
 
+// r[derived.type]
+// r[derived.memoization]
 /// A memoized async derived query ingredient.
 ///
 /// This is a thin wrapper around `DerivedCore` that handles key encoding
@@ -1173,6 +1182,8 @@ where
         self.core.kind_name
     }
 
+    // r[derived.get]
+    // r[cell.access]
     /// Get the value for `key` at the database's current revision.
     pub async fn get(&self, db: &DB, key: K) -> PicanteResult<V> {
         // Encode key once (avoids re-encoding on every lookup)
@@ -1369,9 +1380,11 @@ where
 /// monomorphized for every query type, dramatically reducing compile times.
 pub struct ErasedCell {
     state: Mutex<ErasedState>,
+    // r[cell.waiter]
     notify: Notify,
 }
 
+// r[cell.states]
 /// Type-erased state (not generic over V).
 ///
 /// Values are stored as `Arc<dyn Any + Send + Sync>` where the Any contains V.
@@ -1381,9 +1394,13 @@ pub struct ErasedCell {
 /// - Single compilation of state machine logic
 enum ErasedState {
     Vacant,
+    // r[cell.leader-local]
     Running {
         started_at: Revision,
     },
+    // r[cell.stale]
+    // r[revision.verified_at]
+    // r[revision.changed_at]
     Ready {
         /// The cached value, stored as Arc<dyn Any> where the Any is V.
         /// Use Arc::downcast::<V>() to recover the Arc<V>.
@@ -1392,6 +1409,8 @@ enum ErasedState {
         changed_at: Revision,
         deps: Arc<[Dep]>,
     },
+    // r[cell.poison]
+    // r[cell.poison-scoped]
     Poisoned {
         error: Arc<PicanteError>,
         verified_at: Revision,
