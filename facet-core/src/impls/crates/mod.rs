@@ -5,6 +5,7 @@ mod chrono;
 mod compact_str;
 mod indexmap;
 mod jiff;
+mod lock_api;
 mod num_complex;
 mod ordered_float;
 mod ruint;

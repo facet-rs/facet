@@ -61,6 +61,8 @@ ruint = ["alloc", "dep:ruint", "ruint?/alloc"]
 indexmap = ["alloc", "dep:indexmap"]
 # Provide Facet trait implementations for rust_decimal::Decimal
 rust_decimal = ["alloc", "dep:rust_decimal"]
+# Provide Facet trait implementations for lock_api::Mutex and lock_api::RwLock
+lock_api = ["alloc", "dep:lock_api"]
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.
@@ -96,10 +98,12 @@ smol_str = { workspace = true, optional = true }
 url = { version = "2.5.4", optional = true, default-features = false }
 uuid = { workspace = true, optional = true }
 rust_decimal = { workspace = true, optional = true }
+lock_api = { version = "0.4", optional = true, default-features = false }
 
 
 [dev-dependencies]
 facet-testhelpers = { path = "../facet-testhelpers" }
+parking_lot = "0.12"
 
 [lints]
 workspace = true

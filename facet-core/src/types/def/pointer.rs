@@ -140,6 +140,23 @@ pub struct LockResult {
 }
 
 impl LockResult {
+    /// Creates a new `LockResult` from its components.
+    ///
+    /// # Safety
+    ///
+    /// - `data` must point to valid data protected by the guard
+    /// - `guard` must point to a valid guard that, when dropped via `guard_vtable.drop_in_place`,
+    ///   will release the lock
+    /// - The guard must outlive any use of `data`
+    #[must_use]
+    pub unsafe fn new(data: PtrMut, guard: PtrConst, guard_vtable: &'static LockGuardVTable) -> Self {
+        Self {
+            data,
+            guard,
+            guard_vtable,
+        }
+    }
+
     /// Returns a reference to the locked data
     #[must_use]
     pub fn data(&self) -> &PtrMut {
