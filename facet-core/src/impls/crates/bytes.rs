@@ -135,6 +135,7 @@ unsafe impl Facet<'_> for Bytes {
             .build();
 
         ShapeBuilder::for_sized::<Bytes>("Bytes")
+            .module_path("bytes")
             .ty(Type::User(UserType::Opaque))
             .def(Def::List(ListDef::with_type_ops(
                 &BYTES_LIST_VTABLE,
@@ -252,6 +253,7 @@ unsafe impl Facet<'_> for BytesMut {
             .build();
 
         ShapeBuilder::for_sized::<BytesMut>("BytesMut")
+            .module_path("bytes")
             .ty(Type::User(UserType::Opaque))
             .def(Def::List(ListDef::with_type_ops(
                 &BYTES_MUT_LIST_VTABLE,

@@ -76,6 +76,7 @@ unsafe fn rc_downgrade_into_fn<'a, 'ptr, T: Facet<'a>>(strong: PtrMut, weak: Ptr
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Rc<T>>("Rc")
+            .module_path("alloc::rc")
             .type_name(rc_type_name::<T>)
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(PointerDef {
@@ -222,6 +223,7 @@ unsafe impl<'a> Facet<'a> for Rc<str> {
         };
 
         ShapeBuilder::for_sized::<Rc<str>>("Rc")
+            .module_path("alloc::rc")
             .type_name(rc_str_type_name)
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(PointerDef {
@@ -344,6 +346,7 @@ unsafe fn rc_slice_downgrade_into_fn<'a, 'ptr, U: Facet<'a>>(
 unsafe impl<'a, U: Facet<'a>> Facet<'a> for Rc<[U]> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Rc<[U]>>("Rc")
+            .module_path("alloc::rc")
             .type_name(rc_slice_type_name::<U>)
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(PointerDef {
@@ -470,6 +473,7 @@ unsafe fn weak_upgrade_into_fn<'a, 'ptr, T: Facet<'a>>(
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Weak<T>>("Weak")
+            .module_path("alloc::rc")
             .type_name(weak_type_name::<T>)
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(PointerDef {
@@ -595,6 +599,7 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
         };
 
         ShapeBuilder::for_sized::<Weak<str>>("Weak")
+            .module_path("alloc::rc")
             .type_name(weak_str_type_name)
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(PointerDef {
@@ -669,6 +674,7 @@ unsafe fn weak_slice_upgrade_into_fn<'a, 'ptr, U: Facet<'a>>(
 unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Weak<[U]>>("Weak")
+            .module_path("alloc::rc")
             .type_name(weak_slice_type_name::<U>)
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(PointerDef {

@@ -77,6 +77,7 @@ const DATETIME_UTC_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for DateTime<Utc> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<DateTime<Utc>>("DateTime<Utc>")
+            .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&DATETIME_UTC_VTABLE)
@@ -155,6 +156,7 @@ const DATETIME_FIXED_OFFSET_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for DateTime<FixedOffset> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<DateTime<FixedOffset>>("DateTime<FixedOffset>")
+            .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&DATETIME_FIXED_OFFSET_VTABLE)
@@ -234,6 +236,7 @@ const DATETIME_LOCAL_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for DateTime<Local> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<DateTime<Local>>("DateTime<Local>")
+            .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&DATETIME_LOCAL_VTABLE)
@@ -311,6 +314,7 @@ const NAIVE_DATETIME_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for NaiveDateTime {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<NaiveDateTime>("NaiveDateTime")
+            .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&NAIVE_DATETIME_VTABLE)
@@ -385,6 +389,7 @@ const NAIVE_DATE_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for NaiveDate {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<NaiveDate>("NaiveDate")
+            .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&NAIVE_DATE_VTABLE)
@@ -462,6 +467,7 @@ const NAIVE_TIME_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for NaiveTime {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<NaiveTime>("NaiveTime")
+            .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&NAIVE_TIME_VTABLE)

@@ -47,6 +47,7 @@ unsafe impl Facet<'_> for CompactString {
         );
 
         ShapeBuilder::for_sized::<CompactString>("CompactString")
+            .module_path("compact_str")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)

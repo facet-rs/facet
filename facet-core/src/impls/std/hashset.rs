@@ -242,6 +242,7 @@ where
         }
 
         ShapeBuilder::for_sized::<Self>("HashSet")
+            .module_path("std::collections::hash_set")
             .type_name(build_type_name::<T>())
             .ty(Type::User(UserType::Opaque))
             .def(Def::Set(SetDef::new(

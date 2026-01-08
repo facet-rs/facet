@@ -248,6 +248,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
         }
 
         ShapeBuilder::for_sized::<Option<T>>("Option")
+            .module_path("core::option")
             .ty(Type::User(
                 // Null-Pointer-Optimization check
                 if core::mem::size_of::<T>() == core::mem::size_of::<Option<T>>()

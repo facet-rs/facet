@@ -283,6 +283,7 @@ where
         }
 
         ShapeBuilder::for_sized::<Cow<'a, T>>("Cow")
+            .module_path("alloc::borrow")
             .type_name(build_type_name::<T>())
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(PointerDef {
