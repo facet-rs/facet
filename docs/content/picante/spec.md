@@ -10,8 +10,41 @@ This document specifies **observable semantics**: what a user of the API can rel
 
 ### Runtime instance and runtime family
 
-- A **runtime instance** is one live in-memory execution of a database (or a snapshot) with its own revision counter and memo tables.
-- A **runtime family** is a database plus any snapshots derived from it. Families are relevant only for allowed sharing optimizations; see “Sharing optimizations” below.
+A **runtime instance** is the in-memory Picante state owned by one database object (created via `#[picante::db]`) or by one snapshot of that database.
+Concretely: if you have two distinct `Database` values in your Rust program, they are two distinct runtime instances.
+This is not “per task” or “per thread”; it is “per database object”.
+
+A **runtime family** is a set of related runtime instances consisting of:
+
+- one “root” database instance, and
+- all snapshots created from that database instance (and snapshots-of-snapshots, if supported).
+
+Families matter only for allowed sharing optimizations; see “Sharing optimizations” below.
+
+#### Multiple runtime instances in one program (non-normative)
+
+You can have multiple independent Picante databases in a single Rust program by constructing multiple `#[picante::db]` values:
+
+```rust
+#[picante::db(inputs(Item), interned(Label), tracked(item_length))]
+pub struct Database {}
+
+let db_a = Database::new(); // runtime instance A (family A)
+let db_b = Database::new(); // runtime instance B (family B), independent from A
+```
+
+Each `Database::new()` creates a new runtime family with independent observable state.
+Operationally, this means mutations in `db_a` are not observable through `db_b`, and vice versa (they are independent databases).
+By contrast, cloning a shared reference to the same database (e.g. `Arc<Database>`) does not create a new runtime instance; it is still the same database object.
+
+You create additional runtime instances *within the same family* by taking snapshots:
+
+```rust
+let snap_a1 = DatabaseSnapshot::from_database(&db_a).await; // runtime instance A1 (family A)
+let snap_a2 = DatabaseSnapshot::from_database(&db_a).await; // runtime instance A2 (family A)
+```
+
+Snapshots are separate runtime instances (they have their own memo tables and evolve independently), but they remain members of the parent’s family.
 
 ### Revision
 
