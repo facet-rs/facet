@@ -285,11 +285,27 @@ let config: Option<std::sync::Arc<ConfigData>> = db.get(ConfigKey)?;
 >
 > If called during derived query evaluation, it MUST record a dependency on that input record (see `r[dep.recording]`).
 
+### Equality and change detection
+
+Picante’s observable semantics depend on a notion of when a value “changed”:
+
+- input `set` is a no-op iff the new value is equal to the old value, and
+- derived recomputation applies early-cutoff iff the new value is equal to the old value.
+
+To be implementable and predictable, this specification requires implementations to use a well-defined equality relation.
+
+> r[equality.relation]
+> For each input kind and derived kind, the implementation MUST define an equality relation `≈` over that kind’s stored values such that `≈` is an equivalence relation (reflexive, symmetric, transitive).
+>
+> The relation MUST be deterministic: for any two values `a` and `b`, whether `a ≈ b` holds MUST NOT depend on timing, concurrency, global mutable state, or external state.
+>
+> The specific relation is otherwise implementation-defined (e.g., deep structural equality), but it MUST be consistent for the lifetime of the process.
+
 > r[input.set]
 > Setting an input record MUST behave as follows:
 >
 > 1. If the record did not previously exist, it is created with the provided value.
-> 2. If the record exists and the value is byte-for-byte / structural-equality equal to the current value, the operation MUST be a no-op.
+> 2. If the record exists and the new value is equal to the current value (per `r[equality.relation]`), the operation MUST be a no-op.
 > 3. If the record exists and the value differs from the current value, the value MUST be replaced.
 > 4. The view revision MUST advance to a fresh later revision iff the operation is not a no-op.
 
@@ -385,6 +401,8 @@ When the file changes, updating `FileDigest` causes downstream recomputation; if
 > During evaluation of a derived query, each read of an input record or derived query result MUST be recorded as a dependency of the evaluating query for the purpose of future revalidation.
 >
 > Dependencies MUST be recorded with enough precision to revalidate: at minimum, the dependency’s `(kind, key)` identity.
+>
+> Implementations MAY omit recording dependencies on records whose values are immutable for the lifetime of the process (for example, interned records addressed by an ID), since such dependencies can never affect revalidation.
 
 ### Cell state and visibility
 
@@ -392,18 +410,18 @@ Each derived query `(kind, key)` conceptually has a memo entry (“cell”) with
 
 - the last computed value (if any),
 - a dependency set (from the last successful computation),
-- `verified_at`: the revision at which the cached value was last confirmed valid,
-- `changed_at`: the revision at which the cached value last changed.
+- `verified_at`: the most recent revision at which the cached value was confirmed valid with respect to its recorded dependencies,
+- `changed_at`: the most recent revision at which the cached value changed (per `r[equality.relation]`).
 
 r[revision.early-cutoff]
-When a derived query is recomputed at revision `R` and produces a value equal to the previously cached value, `changed_at` MUST NOT advance (it remains the prior `changed_at`), while `verified_at` MUST advance to `R`.
+When a derived query is recomputed at revision `R` and produces a value equal to the previously cached value (per `r[equality.relation]`), `changed_at` MUST NOT advance (it remains the prior `changed_at`), while `verified_at` MUST advance to `R`.
 
 ### Revalidation
 
 > r[cell.revalidate]
 > When accessing a cached derived value at revision `R`, if the cached value is not known-valid at `R`, the runtime MUST revalidate it by checking the stored dependencies:
 >
-> - If every dependency’s `changed_at` is `<=` the cached value’s `changed_at`, revalidation succeeds and the cached value MUST be returned (with `verified_at` updated to `R`).
+> - If every dependency’s `changed_at` is `<=` the cached value’s `verified_at`, revalidation succeeds and the cached value MUST be returned (with `verified_at` updated to `R`).
 > - Otherwise, revalidation fails and the query MUST be recomputed.
 
 r[cell.revalidate-missing]
@@ -440,6 +458,15 @@ A **snapshot** is a fork of a database’s state at a single revision, with isol
 >
 > - For every input record, reads from the snapshot behave exactly as reads from the source database at revision `R`.
 > - For derived queries, evaluations performed against the snapshot MUST be consistent with the snapshot’s view of inputs and the derived-query semantics in this document.
+
+> r[snapshot.linearizable]
+> Snapshot creation MUST be linearizable with respect to input mutations on the source view:
+>
+> - There MUST exist a single revision `R` between invocation and completion of snapshot creation such that the snapshot is bound to `R`.
+> - Any input mutation that completes before `R` MUST be visible in the snapshot.
+> - Any input mutation that completes after `R` MUST NOT be visible in the snapshot.
+>
+> In particular, the snapshot MUST NOT observe a “torn” state that could not exist at any single revision (i.e., different input records MUST NOT reflect different revisions).
 
 r[snapshot.isolation]
 After snapshot creation, subsequent input changes in the source database MUST NOT be visible in the snapshot, and subsequent input changes in the snapshot MUST NOT be visible in the source database.
