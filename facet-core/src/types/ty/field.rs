@@ -69,7 +69,7 @@ crate::bitflags! {
         /// Set by `#[facet(skip_deserializing)]`.
         const SKIP_DESERIALIZING = 1 << 4;
 
-        /// Field is a child node (for hierarchical formats like KDL/XML).
+        /// Field is a child node (for hierarchical formats like XML).
         /// Set by `#[facet(child)]`.
         const CHILD = 1 << 5;
 
@@ -190,7 +190,7 @@ impl Field {
         self.default.as_ref()
     }
 
-    /// Returns true if this field is a child (for KDL/XML/HTML formats).
+    /// Returns true if this field is a child (for XML/HTML formats).
     ///
     /// This checks the `CHILD` flag (O(1)).
     #[inline]
@@ -206,24 +206,20 @@ impl Field {
         self.has_attr(Some("xml"), "text") || self.has_attr(Some("html"), "text")
     }
 
-    /// Returns true if this field collects multiple child elements (for XML/HTML/KDL formats).
+    /// Returns true if this field collects multiple child elements (for XML/HTML formats).
     ///
-    /// Checks for `xml::elements`, `html::elements`, `kdl::children` attributes.
+    /// Checks for `xml::elements`, `html::elements` attributes.
     #[inline]
     pub fn is_elements(&self) -> bool {
-        self.has_attr(Some("xml"), "elements")
-            || self.has_attr(Some("html"), "elements")
-            || self.has_attr(Some("kdl"), "children")
+        self.has_attr(Some("xml"), "elements") || self.has_attr(Some("html"), "elements")
     }
 
-    /// Returns true if this field is a single child element (for XML/HTML/KDL formats).
+    /// Returns true if this field is a single child element (for XML/HTML formats).
     ///
-    /// Checks for `xml::element`, `html::element`, `kdl::child` attributes.
+    /// Checks for `xml::element`, `html::element` attributes.
     #[inline]
     pub fn is_element(&self) -> bool {
-        self.has_attr(Some("xml"), "element")
-            || self.has_attr(Some("html"), "element")
-            || self.has_attr(Some("kdl"), "child")
+        self.has_attr(Some("xml"), "element") || self.has_attr(Some("html"), "element")
     }
 
     /// Returns true if this field is an attribute on the element tag (for XML/HTML formats).
@@ -241,38 +237,6 @@ impl Field {
     #[inline]
     pub fn is_tag(&self) -> bool {
         self.has_attr(Some("xml"), "tag") || self.has_attr(Some("html"), "tag")
-    }
-
-    /// Returns true if this field is a KDL argument (positional value).
-    ///
-    /// Checks for `kdl::argument` or `kdl::arguments` attributes.
-    #[inline]
-    pub fn is_argument(&self) -> bool {
-        self.has_attr(Some("kdl"), "argument") || self.has_attr(Some("kdl"), "arguments")
-    }
-
-    /// Returns true if this field is a KDL property (named value).
-    ///
-    /// Checks for `kdl::property` attribute.
-    #[inline]
-    pub fn is_property(&self) -> bool {
-        self.has_attr(Some("kdl"), "property")
-    }
-
-    /// Returns true if this field captures the KDL node name.
-    ///
-    /// Checks for `kdl::node_name` attribute.
-    #[inline]
-    pub fn is_node_name(&self) -> bool {
-        self.has_attr(Some("kdl"), "node_name")
-    }
-
-    /// Returns true if this field uses `kdl::arguments` (plural) to collect all arguments.
-    ///
-    /// Checks for `kdl::arguments` attribute specifically.
-    #[inline]
-    pub fn is_arguments_plural(&self) -> bool {
-        self.has_attr(Some("kdl"), "arguments")
     }
 
     /// Returns true if this field stores metadata.

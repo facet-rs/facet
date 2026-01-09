@@ -30,7 +30,7 @@ The JIT accelerates this by compiling deserialization code specialized for:
 ### Tier 1 (shape JIT)
 
 - Compiles code that consumes `ParseEvent`s and writes directly into the output’s memory at known offsets.
-- Works with any format that implements `FormatParser` (JSON/YAML/TOML/KDL/…).
+- Works with any format that implements `FormatParser` (JSON/YAML/TOML/…).
 
 ### Tier 2 (format JIT)
 

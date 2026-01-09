@@ -68,7 +68,7 @@ Please review https://github.com/facet-rs/facet/blob/main/AGENTS.md#for-humans. 
 ## Generated files (don’t fight the generators)
 
 - Many `README.md` files are generated. Edit `README.md.in`, and follow the repo’s regeneration workflow (see `CONTRIBUTING.md` and `DEVELOP.md`).
-- If you see prominent “AUTO-GENERATED / DO NOT EDIT” headers, treat them as authoritative and find the source-of-truth input (often under `tools/`, `xtask/`, or format-crate KDL/config files).
+- If you see prominent “AUTO-GENERATED / DO NOT EDIT” headers, treat them as authoritative and find the source-of-truth input (often under `tools/`, `xtask/`, or format-crate config files).
 
 ## Testing & verification (what “done” looks like)
 

@@ -465,9 +465,8 @@ dependencies = [
 name = "benchmark-defs"
 version = "0.42.0"
 dependencies = [
- "facet",
- "facet-args",
- "facet-kdl",
+ "serde",
+ "serde_yaml",
 ]
 
 [[package]]
@@ -1707,7 +1706,6 @@ dependencies = [
  "axum",
  "facet",
  "facet-json",
- "facet-kdl",
  "facet-msgpack",
  "facet-postcard",
  "facet-toml",
@@ -1938,25 +1936,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-kdl"
-version = "0.42.0"
-dependencies = [
- "axum-core",
- "facet",
- "facet-core",
- "facet-format",
- "facet-path",
- "facet-reflect",
- "facet-showcase",
- "http",
- "http-body-util",
- "itoa",
- "kdl",
- "miette",
- "zmij",
-]
-
-[[package]]
 name = "facet-macro-parse"
 version = "0.42.0"
 dependencies = [
@@ -2119,7 +2098,6 @@ dependencies = [
  "facet-assert",
  "facet-core",
  "facet-json",
- "facet-kdl",
  "facet-postcard",
  "facet-reflect",
  "facet-testhelpers",
@@ -3268,17 +3246,6 @@ dependencies = [
  "hashbrown 0.16.1",
  "portable-atomic",
  "thiserror",
-]
-
-[[package]]
-name = "kdl"
-version = "6.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81a29e7b50079ff44549f68c0becb1c73d7f6de2a4ea952da77966daf3d4761e"
-dependencies = [
- "miette",
- "num",
- "winnow 0.6.24",
 ]
 
 [[package]]
@@ -4870,6 +4837,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.12.1",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5720,6 +5700,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
 name = "unsynn"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6258,15 +6244,6 @@ name = "winnow"
 version = "0.5.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f593a95398737aeed53e489c785df13f3618e41dbcd6718c6addbf1395aa6876"
-dependencies = [
- "memchr",
-]
-
-[[package]]
-name = "winnow"
-version = "0.6.24"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8d71a593cc5c42ad7876e2c1fda56f314f3754c084128833e64f1345ff8a03a"
 dependencies = [
  "memchr",
 ]

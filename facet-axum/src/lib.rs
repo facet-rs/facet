@@ -74,10 +74,6 @@ pub use facet_toml::{Toml, TomlRejection};
 #[cfg(feature = "xml")]
 pub use facet_xml::{Xml, XmlRejection};
 
-// Re-export KDL types
-#[cfg(feature = "kdl")]
-pub use facet_kdl::{Kdl, KdlRejection};
-
 // Re-export MessagePack types
 #[cfg(feature = "msgpack")]
 pub use facet_msgpack::{MsgPack, MsgPackRejection};

@@ -1,84 +1,69 @@
 //! Shared benchmark definitions for benchmark-generator and benchmark-analyzer.
 //!
 //! Supports multiple serialization formats (JSON, Postcard, MessagePack, etc.)
-//! Each format has its own KDL file defining benchmarks and types.
+//! Each format has its own YAML file defining benchmarks and types.
 
-use facet::Facet;
-use facet_args as args;
-use facet_kdl as kdl;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
 /// Arguments for the bench command, shared between xtask and benchmark-analyzer.
-#[derive(Facet, Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct BenchReportArgs {
     /// Filter to run only specific benchmark(s), e.g., "booleans"
-    #[facet(args::positional, default)]
     pub filter: Option<String>,
 
     /// Start HTTP server to view the report after generation
-    #[facet(args::named)]
     pub serve: bool,
 
     /// Skip running benchmarks, reuse previous benchmark data
-    #[facet(args::named)]
     pub no_run: bool,
 
     /// Skip cloning perf.facet.rs and generating index (just export raw data)
-    #[facet(args::named)]
     pub no_index: bool,
 
     /// Push results to perf.facet.rs (refuses if filter is set)
-    #[facet(args::named)]
     pub push: bool,
 }
 
 /// A complete benchmark suite file (one per format).
-#[derive(Debug, Facet)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BenchmarkFile {
-    /// Format configuration (required, first child)
-    #[facet(kdl::child)]
+    /// Format configuration (required)
     pub format: FormatConfig,
     /// Benchmark definitions
-    #[facet(kdl::children, default)]
+    #[serde(default)]
     pub benchmarks: Vec<BenchmarkDef>,
     /// Type definitions used by benchmarks
-    #[facet(kdl::children, default)]
+    #[serde(default)]
     pub type_defs: Vec<TypeDef>,
 }
 
 /// Format-specific configuration.
-#[derive(Debug, Facet, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormatConfig {
     /// Format identifier (e.g., "json", "postcard", "msgpack")
-    #[facet(kdl::child)]
-    pub name: FormatName,
+    pub name: String,
     /// Baseline implementation crate (e.g., "serde_json", "postcard")
-    #[facet(kdl::child)]
-    pub baseline: BaselineCrate,
+    pub baseline: String,
     /// Facet implementation crate (e.g., "facet_json", "facet_postcard")
-    #[facet(kdl::child)]
-    pub facet_crate: FacetCrate,
+    pub facet_crate: String,
     /// Which JIT tiers to benchmark (default: `[1, 2]` for text formats, `[2]` for binary formats)
     /// T1 = shape-based JIT (works for text formats with structural tokens)
     /// T2 = format-specific JIT (works for all formats with FormatJitParser)
-    #[facet(kdl::child, default)]
-    pub jit_tiers: Option<JitTiers>,
-}
-
-#[derive(Debug, Facet, Clone)]
-pub struct JitTiers {
-    #[facet(kdl::arguments)]
-    pub tiers: Vec<u8>,
+    #[serde(default)]
+    pub jit_tiers: Option<u8>,
 }
 
 impl FormatConfig {
     /// Get the JIT tiers to benchmark. Defaults to [1, 2] if not specified.
     pub fn jit_tiers(&self) -> Vec<u8> {
-        self.jit_tiers
-            .as_ref()
-            .map(|t| t.tiers.clone())
-            .unwrap_or_else(|| vec![1, 2])
+        match self.jit_tiers {
+            Some(2) => vec![2],
+            Some(1) => vec![1],
+            None => vec![1, 2],
+            Some(n) => vec![n],
+        }
     }
 
     /// Check if T1 benchmarks should be generated.
@@ -92,108 +77,44 @@ impl FormatConfig {
     }
 }
 
-#[derive(Debug, Facet, Clone)]
-pub struct FormatName {
-    #[facet(kdl::argument)]
-    pub value: String,
-}
-
-#[derive(Debug, Facet, Clone)]
-pub struct BaselineCrate {
-    #[facet(kdl::argument)]
-    pub value: String,
-}
-
-#[derive(Debug, Facet, Clone)]
-pub struct FacetCrate {
-    #[facet(kdl::argument)]
-    pub value: String,
-}
-
 /// A single benchmark definition.
-#[derive(Debug, Facet, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkDef {
-    #[facet(kdl::property)]
     pub name: String,
-    #[facet(kdl::property, rename = "type")]
+    #[serde(rename = "type")]
     pub type_name: String,
-    #[facet(kdl::property)]
     pub category: String,
     /// Inline JSON payload
-    #[facet(kdl::child, default)]
-    pub json: Option<JsonData>,
+    #[serde(default)]
+    pub json: Option<String>,
     /// JSON from file path
-    #[facet(kdl::child, default)]
-    pub json_file: Option<JsonFile>,
+    #[serde(default)]
+    pub json_file: Option<String>,
     /// Brotli-compressed JSON from file path
-    #[facet(kdl::child, default)]
-    pub json_brotli: Option<JsonBrotli>,
+    #[serde(default)]
+    pub json_brotli: Option<String>,
     /// Generated payload (format-agnostic generator name)
-    #[facet(kdl::child, default)]
-    pub generated: Option<Generated>,
+    #[serde(default)]
+    pub generated: Option<String>,
     /// Inline binary payload (hex-encoded)
-    #[facet(kdl::child, default)]
-    pub binary_hex: Option<BinaryHex>,
+    #[serde(default)]
+    pub binary_hex: Option<String>,
     /// Inline binary payload (base64-encoded)
-    #[facet(kdl::child, default)]
-    pub binary_base64: Option<BinaryBase64>,
-}
-
-#[derive(Debug, Facet, Clone)]
-pub struct JsonData {
-    #[facet(kdl::argument)]
-    pub content: String,
-}
-
-#[derive(Debug, Facet, Clone)]
-pub struct JsonFile {
-    #[facet(kdl::argument)]
-    pub path: String,
-}
-
-#[derive(Debug, Facet, Clone)]
-pub struct JsonBrotli {
-    #[facet(kdl::argument)]
-    pub path: String,
-}
-
-#[derive(Debug, Facet, Clone)]
-pub struct Generated {
-    #[facet(kdl::argument)]
-    pub generator_name: String,
-}
-
-#[derive(Debug, Facet, Clone)]
-pub struct BinaryHex {
-    #[facet(kdl::argument)]
-    pub content: String,
-}
-
-#[derive(Debug, Facet, Clone)]
-pub struct BinaryBase64 {
-    #[facet(kdl::argument)]
-    pub content: String,
+    #[serde(default)]
+    pub binary_base64: Option<String>,
 }
 
 /// A type definition used in benchmarks.
-#[derive(Debug, Facet, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeDef {
-    #[facet(kdl::property)]
     pub name: String,
-    #[facet(kdl::child)]
-    pub code: CodeBlock,
+    pub code: String,
 }
 
-#[derive(Debug, Facet, Clone)]
-pub struct CodeBlock {
-    #[facet(kdl::argument)]
-    pub content: String,
-}
-
-/// Parse a single benchmark file from KDL.
-pub fn parse_benchmarks(kdl_path: &Path) -> Result<BenchmarkFile, Box<dyn std::error::Error>> {
-    let content = std::fs::read_to_string(kdl_path)?;
-    let file: BenchmarkFile = facet_kdl::from_str(&content)?;
+/// Parse a single benchmark file from YAML.
+pub fn parse_benchmarks(yaml_path: &Path) -> Result<BenchmarkFile, Box<dyn std::error::Error>> {
+    let content = std::fs::read_to_string(yaml_path)?;
+    let file: BenchmarkFile = serde_yaml::from_str(&content)?;
     Ok(file)
 }
 
@@ -207,10 +128,13 @@ pub fn discover_benchmark_files(
     for entry in std::fs::read_dir(benches_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "kdl") {
+        if path
+            .extension()
+            .is_some_and(|ext| ext == "yaml" || ext == "yml")
+        {
             match parse_benchmarks(&path) {
                 Ok(file) => {
-                    let format_name = file.format.name.value.clone();
+                    let format_name = file.format.name.clone();
                     files.insert(format_name, file);
                 }
                 Err(e) => {
@@ -223,7 +147,7 @@ pub fn discover_benchmark_files(
     Ok(files)
 }
 
-/// Load benchmark categories from all KDL files.
+/// Load benchmark categories from all YAML files.
 /// Returns a map of (format, benchmark_name) -> category.
 pub fn load_categories(workspace_root: &Path) -> HashMap<(String, String), String> {
     let benches_dir = workspace_root.join("facet-perf-shootout/benches");
@@ -303,8 +227,8 @@ pub fn format_label(format: &str) -> &'static str {
 /// Get target names for a format.
 /// Returns (baseline, t0, t1, t2) target names.
 pub fn format_targets(format: &FormatConfig) -> (String, String, String, String) {
-    let baseline = format.baseline.value.clone();
-    let facet = &format.facet_crate.value;
+    let baseline = format.baseline.clone();
+    let facet = &format.facet_crate;
     (
         baseline,
         format!("{}_t0", facet),
@@ -320,25 +244,26 @@ mod tests {
     #[test]
     fn test_parse_format_block() {
         let content = r#"
-format {
-    name "json"
-    baseline "serde_json"
-    facet_crate "facet_json"
-}
+format:
+  name: json
+  baseline: serde_json
+  facet_crate: facet_json
 
-benchmark name="test" type="String" category="micro" {
-    json "hello"
-}
+benchmarks:
+  - name: test
+    type: String
+    category: micro
+    json: "hello"
 
-type_def name="Foo" {
-    code "struct Foo { x: u64 }"
-}
+type_defs:
+  - name: Foo
+    code: "struct Foo { x: u64 }"
 "#;
 
-        let file: BenchmarkFile = facet_kdl::from_str(content).expect("should parse");
-        assert_eq!(file.format.name.value, "json");
-        assert_eq!(file.format.baseline.value, "serde_json");
-        assert_eq!(file.format.facet_crate.value, "facet_json");
+        let file: BenchmarkFile = serde_yaml::from_str(content).expect("should parse");
+        assert_eq!(file.format.name, "json");
+        assert_eq!(file.format.baseline, "serde_json");
+        assert_eq!(file.format.facet_crate, "facet_json");
         assert_eq!(file.benchmarks.len(), 1);
         assert_eq!(file.benchmarks[0].name, "test");
         assert_eq!(file.type_defs.len(), 1);
@@ -347,15 +272,9 @@ type_def name="Foo" {
     #[test]
     fn test_format_targets() {
         let format = FormatConfig {
-            name: FormatName {
-                value: "json".to_string(),
-            },
-            baseline: BaselineCrate {
-                value: "serde_json".to_string(),
-            },
-            facet_crate: FacetCrate {
-                value: "facet_json".to_string(),
-            },
+            name: "json".to_string(),
+            baseline: "serde_json".to_string(),
+            facet_crate: "facet_json".to_string(),
             jit_tiers: None,
         };
 
@@ -367,16 +286,16 @@ type_def name="Foo" {
     }
 
     #[test]
-    fn test_parse_real_json_kdl() {
-        // Test parsing the actual json.kdl file
+    fn test_parse_real_json_yaml() {
+        // Test parsing the actual json.yaml file
         let workspace_root = std::env::current_dir().unwrap();
-        let kdl_path = workspace_root.join("facet-perf-shootout/benches/json.kdl");
+        let yaml_path = workspace_root.join("facet-perf-shootout/benches/json.yaml");
 
-        if kdl_path.exists() {
-            let file = parse_benchmarks(&kdl_path).expect("should parse json.kdl");
-            assert_eq!(file.format.name.value, "json");
-            assert_eq!(file.format.baseline.value, "serde_json");
-            assert_eq!(file.format.facet_crate.value, "facet_json");
+        if yaml_path.exists() {
+            let file = parse_benchmarks(&yaml_path).expect("should parse json.yaml");
+            assert_eq!(file.format.name, "json");
+            assert_eq!(file.format.baseline, "serde_json");
+            assert_eq!(file.format.facet_crate, "facet_json");
             assert!(!file.benchmarks.is_empty(), "should have benchmarks");
             assert!(!file.type_defs.is_empty(), "should have type defs");
         }

@@ -126,7 +126,7 @@ facet's goal is not speed. It's expressiveness, diagnostics, and flexibility. If
 
 - The **attribute grammar system** just landed — extension crates can define custom attributes without writing proc-macros
 - The ecosystem has standardized on **miette** for error reporting
-- Format crates have matured: JSON, YAML, TOML, KDL, MessagePack, CSV, and more
+- Format crates have matured: JSON, YAML, TOML, MessagePack, CSV, and more
 - facet-args provides CLI parsing, facet-pretty does debug output, facet-diff does structural comparison
 
 The ecosystem is here. The tooling is here.

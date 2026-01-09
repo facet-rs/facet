@@ -24,11 +24,11 @@ cargo bench -p facet-perf-shootout --features jit -- json::simple_struct
 
 ## Benchmark Definitions
 
-Benchmarks are defined in KDL files under `benches/`:
-- `json.kdl` - JSON format benchmarks
-- `postcard.kdl` - Postcard format benchmarks
+Benchmarks are defined in YAML files under `benches/`:
+- `json.yaml` - JSON format benchmarks
+- `postcard.yaml` - Postcard format benchmarks
 
-To regenerate benchmark code after editing KDL files:
+To regenerate benchmark code after editing YAML files:
 ```bash
 cargo xtask gen-benchmarks
 ```

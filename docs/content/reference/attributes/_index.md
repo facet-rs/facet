@@ -13,22 +13,22 @@ For the full guide on creating extension attributes, see [Extend → Extension A
 
 ```rust,noexec
 use facet::Facet;
-use facet_kdl as kdl;
+use facet_xml as xml;
 
 #[derive(Facet)]
 struct Config {
-    #[facet(kdl::child)]
+    #[facet(xml::child)]
     server: Server,
 
-    #[facet(kdl::property)]
+    #[facet(xml::property)]
     name: String,
 }
 ```
 
-The namespace (`kdl`) comes from how you import the crate:
+The namespace (`xml`) comes from how you import the crate:
 
 ```rust,noexec
-use facet_kdl as kdl;  // Enables kdl:: prefix
+use facet_xml as xml;  // Enables xml:: prefix
 use facet_args as args;  // Enables args:: prefix
 ```
 

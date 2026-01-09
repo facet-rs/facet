@@ -1,0 +1,745 @@
+# JSON format benchmark definitions
+# Each benchmark gets divan + gungraun versions for all targets
+
+format:
+  name: json
+  baseline: serde_json
+  facet_crate: facet_json
+  # Targets: serde_json, facet_json_t0, facet_json_t1, facet_json_t2
+
+benchmarks:
+  - name: simple_struct
+    type: SimpleRecord
+    category: micro
+    json: '{"id": 42, "name": "test", "active": true}'
+
+  # Struct key length variations - tests dispatch strategy selection
+  # Short keys (all ≤5 chars): uses Inline dispatch (single u64 pattern matching)
+  - name: short_keys
+    type: ShortKeys
+    category: micro
+    json: '{"id": 42, "name": "test", "age": 30, "ok": true}'
+
+  # Medium keys (6-10 chars): uses Inline dispatch with two u64 loads
+  - name: medium_keys
+    type: MediumKeys
+    category: micro
+    json: '{"userId": 42, "userName": "test", "isActive": true, "counter": 100}'
+
+  # Long keys (>13 chars): uses Linear dispatch (exceeds Inline limit)
+  - name: long_keys
+    type: LongKeys
+    category: micro
+    json: '{"userIdentifier": 42, "displayNameValue": "test", "isCurrentlyActive": true}'
+
+  - name: single_nested_struct
+    type: Outer
+    category: micro
+    json: '{"id": 42, "inner": {"x": 10, "y": 20}, "name": "test"}'
+
+  # Nesting level variations - tests recursive compilation overhead
+  - name: nest_1
+    type: Nest1
+    category: micro
+    json: '{"id": 1, "val": "a"}'
+
+  - name: nest_2
+    type: Nest2
+    category: micro
+    json: '{"id": 2, "inner": {"id": 1, "val": "a"}}'
+
+  - name: nest_3
+    type: Nest3
+    category: micro
+    json: '{"id": 3, "inner": {"id": 2, "inner": {"id": 1, "val": "a"}}}'
+
+  - name: simple_with_options
+    type: WithOptions
+    category: micro
+    json: '{"id": 42, "maybe_count": 123, "maybe_flag": null, "maybe_value": 2.5}'
+
+  # ============================================================================
+  # Synthetic Benchmarks (Generated Data)
+  # ============================================================================
+
+  - name: booleans
+    type: Vec<bool>
+    category: synthetic
+    generated: booleans
+
+  - name: integers
+    type: Vec<u64>
+    category: synthetic
+    generated: integers
+
+  - name: floats
+    type: Vec<f64>
+    category: synthetic
+    generated: floats
+
+  - name: short_strings
+    type: Vec<String>
+    category: synthetic
+    generated: short_strings
+
+  - name: long_strings
+    type: Vec<String>
+    category: synthetic
+    generated: long_strings
+
+  - name: escaped_strings
+    type: Vec<String>
+    category: synthetic
+    generated: escaped_strings
+
+  - name: hashmaps
+    type: std::collections::HashMap<String, u64>
+    category: synthetic
+    generated: hashmaps
+
+  - name: nested_structs
+    type: Vec<NestedOuter>
+    category: synthetic
+    generated: nested_structs
+
+  - name: options
+    type: Vec<OptionsMaybeData>
+    category: synthetic
+    generated: options
+
+  # ============================================================================
+  # Realistic Benchmarks (Large Real-World Data)
+  # ============================================================================
+
+  - name: twitter
+    type: TwitterResponseSparse
+    category: realistic
+    json_brotli: corpus/twitter.json.br
+
+  - name: canada
+    type: Canada
+    category: realistic
+    json_brotli: corpus/canada.json.br
+
+  - name: citm_catalog
+    type: CitmCatalog
+    category: realistic
+    json_brotli: corpus/citm_catalog.json.br
+
+  # ============================================================================
+  # Performance Profiling Benchmarks (Stage 2 - Priority 1)
+  # ============================================================================
+
+  # Wide struct: 50 fields, all scalars - stresses key dispatch (linear scan)
+  - name: wide_struct_50
+    type: WideStruct50
+    category: synthetic
+    generated: wide_struct_50
+
+  # Wide struct: 63 fields - maximum ISet/bitmask supports (u64 limit)
+  - name: wide_struct_63
+    type: WideStruct63
+    category: synthetic
+    generated: wide_struct_63
+
+  # Many unknown fields: 10 known fields, 40 unknown in JSON - stresses skip logic
+  - name: unknown_fields
+    type: Vec<SmallStruct>
+    category: synthetic
+    generated: unknown_fields
+
+  # Deep nesting: 5 levels deep, mixed types - stresses function call overhead
+  - name: deep_nesting_5levels
+    type: Level1
+    category: synthetic
+    generated: deep_nesting_5levels
+
+  # Large strings: 1KB-10KB with escapes - stresses string decode and allocation
+  - name: large_strings_escaped
+    type: Vec<String>
+    category: synthetic
+    generated: large_strings_escaped
+
+  # Large strings: 1KB-10KB unescaped - stresses raw string copy
+  - name: large_strings_unescaped
+    type: Vec<String>
+    category: synthetic
+    generated: large_strings_unescaped
+
+  # Big integer array: 10K elements - stresses bulk operations
+  - name: big_array_10k
+    type: Vec<i64>
+    category: synthetic
+    generated: big_array_10k
+
+  # ============================================================================
+  # Flatten Benchmarks (Flattened Enums)
+  # ============================================================================
+
+  - name: flatten_2enums
+    type: Vec<Config2Enums>
+    category: synthetic
+    generated: flatten_2enums
+
+  - name: flatten_4enums
+    type: Vec<Config4Enums>
+    category: synthetic
+    generated: flatten_4enums
+
+# Type definitions
+type_defs:
+  - name: SimpleRecord
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct SimpleRecord {
+          id: u64,
+          name: String,
+          active: bool,
+      }
+
+  # Short keys: all field names ≤5 chars - enables Inline dispatch (single u64)
+  - name: ShortKeys
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct ShortKeys {
+          id: u64,    // 2 chars
+          name: String, // 4 chars
+          age: i64,   // 3 chars
+          ok: bool,   // 2 chars
+      }
+
+  # Medium keys: 6-10 char field names - uses Inline dispatch with two u64 loads
+  - name: MediumKeys
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct MediumKeys {
+          #[facet(rename = "userId")]
+          #[serde(rename = "userId")]
+          user_id: u64,         // 6 chars
+          #[facet(rename = "userName")]
+          #[serde(rename = "userName")]
+          user_name: String,    // 8 chars
+          #[facet(rename = "isActive")]
+          #[serde(rename = "isActive")]
+          is_active: bool,      // 8 chars
+          counter: i64,         // 7 chars
+      }
+
+  # Long keys: >13 char field names - uses Linear dispatch (exceeds Inline limit)
+  - name: LongKeys
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct LongKeys {
+          #[facet(rename = "userIdentifier")]
+          #[serde(rename = "userIdentifier")]
+          user_identifier: u64,       // 14 chars
+          #[facet(rename = "displayNameValue")]
+          #[serde(rename = "displayNameValue")]
+          display_name_value: String, // 16 chars
+          #[facet(rename = "isCurrentlyActive")]
+          #[serde(rename = "isCurrentlyActive")]
+          is_currently_active: bool,  // 17 chars
+      }
+
+  # Nesting level 1: flat struct (baseline)
+  - name: Nest1
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Nest1 {
+          id: u64,
+          val: String,
+      }
+
+  # Nesting level 2: one level deep
+  - name: Nest2
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Nest2 {
+          id: u64,
+          inner: Nest1,
+      }
+
+  # Nesting level 3: two levels deep
+  - name: Nest3
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Nest3 {
+          id: u64,
+          inner: Nest2,
+      }
+
+  - name: Inner
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Inner {
+          x: i64,
+          y: i64,
+      }
+
+  - name: Outer
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Outer {
+          id: u64,
+          inner: Inner,
+          name: String,
+      }
+
+  - name: WithOptions
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct WithOptions {
+          id: u64,
+          maybe_count: Option<i64>,
+          maybe_flag: Option<bool>,
+          maybe_value: Option<f64>,
+      }
+
+  - name: NestedOuter
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct NestedOuter {
+          id: u64,
+          inner: NestedInner,
+      }
+
+  - name: NestedInner
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct NestedInner {
+          name: String,
+          value: f64,
+          deep: NestedDeep,
+      }
+
+  - name: NestedDeep
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct NestedDeep {
+          flag: bool,
+          count: u32,
+      }
+
+  - name: OptionsMaybeData
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct OptionsMaybeData {
+          required: u64,
+          optional_string: Option<String>,
+          optional_number: Option<f64>,
+      }
+
+  # Twitter types
+  - name: TwitterResponseSparse
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct TwitterResponseSparse {
+          statuses: Vec<StatusSparse>,
+      }
+
+  - name: StatusSparse
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct StatusSparse {
+          id: u64,
+          text: String,
+          user: UserSparse,
+          retweet_count: u32,
+          favorite_count: u32,
+      }
+
+  - name: UserSparse
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct UserSparse {
+          id: u64,
+          screen_name: String,
+          followers_count: u32,
+      }
+
+  # Canada GeoJSON types
+  - name: Canada
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Canada {
+          #[facet(rename = "type")]
+          #[serde(rename = "type")]
+          type_: String,
+          features: Vec<Feature>,
+      }
+
+  - name: Feature
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Feature {
+          #[facet(rename = "type")]
+          #[serde(rename = "type")]
+          type_: String,
+          properties: Properties,
+          geometry: Geometry,
+      }
+
+  - name: Properties
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Properties {
+          name: String,
+      }
+
+  - name: Geometry
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Geometry {
+          #[facet(rename = "type")]
+          #[serde(rename = "type")]
+          type_: String,
+          coordinates: Vec<Vec<Vec<f64>>>,
+      }
+
+  # CITM Catalog types (event ticketing data)
+  - name: CitmCatalog
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct CitmCatalog {
+          #[serde(rename = "areaNames")]
+          #[facet(rename = "areaNames")]
+          area_names: std::collections::HashMap<String, String>,
+          #[serde(rename = "audienceSubCategoryNames")]
+          #[facet(rename = "audienceSubCategoryNames")]
+          audience_sub_category_names: std::collections::HashMap<String, String>,
+          #[serde(rename = "blockNames")]
+          #[facet(rename = "blockNames")]
+          block_names: std::collections::HashMap<String, String>,
+          events: std::collections::HashMap<String, Event>,
+          performances: Vec<Performance>,
+          #[serde(rename = "seatCategoryNames")]
+          #[facet(rename = "seatCategoryNames")]
+          seat_category_names: std::collections::HashMap<String, String>,
+          #[serde(rename = "subTopicNames")]
+          #[facet(rename = "subTopicNames")]
+          sub_topic_names: std::collections::HashMap<String, String>,
+          #[serde(rename = "subjectNames")]
+          #[facet(rename = "subjectNames")]
+          subject_names: std::collections::HashMap<String, String>,
+          #[serde(rename = "topicNames")]
+          #[facet(rename = "topicNames")]
+          topic_names: std::collections::HashMap<String, String>,
+          #[serde(rename = "topicSubTopics")]
+          #[facet(rename = "topicSubTopics")]
+          topic_sub_topics: std::collections::HashMap<String, Vec<u64>>,
+          #[serde(rename = "venueNames")]
+          #[facet(rename = "venueNames")]
+          venue_names: std::collections::HashMap<String, String>,
+      }
+
+  - name: Event
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Event {
+          description: Option<String>,
+          id: u64,
+          logo: Option<String>,
+          name: String,
+          #[serde(rename = "subTopicIds")]
+          #[facet(rename = "subTopicIds")]
+          sub_topic_ids: Vec<u64>,
+          #[serde(rename = "subjectCode")]
+          #[facet(rename = "subjectCode")]
+          subject_code: Option<String>,
+          subtitle: Option<String>,
+          #[serde(rename = "topicIds")]
+          #[facet(rename = "topicIds")]
+          topic_ids: Vec<u64>,
+      }
+
+  - name: Performance
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Performance {
+          #[serde(rename = "eventId")]
+          #[facet(rename = "eventId")]
+          event_id: u64,
+          id: u64,
+          logo: Option<String>,
+          name: Option<String>,
+          prices: Vec<Price>,
+          #[serde(rename = "seatCategories")]
+          #[facet(rename = "seatCategories")]
+          seat_categories: Vec<SeatCategory>,
+          #[serde(rename = "seatMapImage")]
+          #[facet(rename = "seatMapImage")]
+          seat_map_image: Option<String>,
+          start: u64,
+          #[serde(rename = "venueCode")]
+          #[facet(rename = "venueCode")]
+          venue_code: String,
+      }
+
+  - name: Price
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Price {
+          amount: u64,
+          #[serde(rename = "audienceSubCategoryId")]
+          #[facet(rename = "audienceSubCategoryId")]
+          audience_sub_category_id: u64,
+          #[serde(rename = "seatCategoryId")]
+          #[facet(rename = "seatCategoryId")]
+          seat_category_id: u64,
+      }
+
+  - name: SeatCategory
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct SeatCategory {
+          areas: Vec<Area>,
+          #[serde(rename = "seatCategoryId")]
+          #[facet(rename = "seatCategoryId")]
+          seat_category_id: u64,
+      }
+
+  - name: Area
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Area {
+          #[serde(rename = "areaId")]
+          #[facet(rename = "areaId")]
+          area_id: u64,
+          #[serde(rename = "blockIds")]
+          #[facet(rename = "blockIds")]
+          block_ids: Vec<u64>,
+      }
+
+  - name: WideStruct50
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct WideStruct50 {
+          field_00: u64, field_01: u64, field_02: u64, field_03: u64, field_04: u64,
+          field_05: u64, field_06: u64, field_07: u64, field_08: u64, field_09: u64,
+          field_10: String, field_11: String, field_12: String, field_13: String, field_14: String,
+          field_15: String, field_16: String, field_17: String, field_18: String, field_19: String,
+          field_20: f64, field_21: f64, field_22: f64, field_23: f64, field_24: f64,
+          field_25: f64, field_26: f64, field_27: f64, field_28: f64, field_29: f64,
+          field_30: bool, field_31: bool, field_32: bool, field_33: bool, field_34: bool,
+          field_35: bool, field_36: bool, field_37: bool, field_38: bool, field_39: bool,
+          field_40: i64, field_41: i64, field_42: i64, field_43: i64, field_44: i64,
+          field_45: i64, field_46: i64, field_47: i64, field_48: i64, field_49: i64,
+      }
+
+  - name: WideStruct63
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct WideStruct63 {
+          // 50 required + 13 optional = 63 total fields (max for u64 bitmask)
+          field_00: u64, field_01: u64, field_02: u64, field_03: u64, field_04: u64,
+          field_05: u64, field_06: u64, field_07: u64, field_08: u64, field_09: u64,
+          field_10: u64, field_11: u64, field_12: u64, field_13: u64, field_14: u64,
+          field_15: u64,
+          field_16: String, field_17: String, field_18: String, field_19: String,
+          field_20: String, field_21: String, field_22: String, field_23: String,
+          field_24: String, field_25: String, field_26: String, field_27: String,
+          field_28: String, field_29: String, field_30: String, field_31: String,
+          field_32: f64, field_33: f64, field_34: f64, field_35: f64,
+          field_36: f64, field_37: f64, field_38: f64, field_39: f64,
+          field_40: f64, field_41: f64, field_42: f64, field_43: f64,
+          field_44: f64, field_45: f64, field_46: f64, field_47: f64,
+          field_48: bool, field_49: bool,
+          // Last 13 fields are optional to stay at 63 total fields (u64 bitmask limit)
+          field_50: Option<bool>, field_51: Option<bool>, field_52: Option<bool>, field_53: Option<bool>,
+          field_54: Option<bool>, field_55: Option<bool>, field_56: Option<bool>, field_57: Option<bool>,
+          field_58: Option<i64>, field_59: Option<i64>, field_60: Option<i64>, field_61: Option<i64>,
+          field_62: Option<i64>,
+      }
+
+  - name: SmallStruct
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct SmallStruct {
+          // Only 10 known fields - but JSON will have 50 total (40 unknown)
+          id: u64,
+          name: String,
+          value: f64,
+          active: bool,
+          count: i64,
+          score: f64,
+          enabled: bool,
+          index: u64,
+          label: String,
+          flag: bool,
+      }
+
+  - name: Level1
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Level1 {
+          id: u64,
+          data: String,
+          nested: Level2,
+      }
+
+  - name: Level2
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Level2 {
+          value: f64,
+          flag: bool,
+          nested: Level3,
+      }
+
+  - name: Level3
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Level3 {
+          count: i64,
+          name: String,
+          nested: Level4,
+      }
+
+  - name: Level4
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Level4 {
+          x: f64,
+          y: f64,
+          nested: Level5,
+      }
+
+  - name: Level5
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Level5 {
+          leaf_id: u64,
+          leaf_value: String,
+          leaf_flag: bool,
+      }
+
+  # Auth method variants
+  - name: AuthPassword
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct AuthPassword {
+          password: String,
+      }
+
+  - name: AuthToken
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct AuthToken {
+          token: String,
+          token_expiry: u64,
+      }
+
+  - name: AuthMethod
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      #[repr(C)]
+      enum AuthMethod {
+          Password(AuthPassword),
+          Token(AuthToken),
+      }
+
+  # Transport variants
+  - name: TransportTcp
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct TransportTcp {
+          tcp_port: u16,
+      }
+
+  - name: TransportUnix
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct TransportUnix {
+          socket_path: String,
+      }
+
+  - name: Transport
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      #[repr(C)]
+      enum Transport {
+          Tcp(TransportTcp),
+          Unix(TransportUnix),
+      }
+
+  # Storage variants
+  - name: StorageLocal
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct StorageLocal {
+          local_path: String,
+      }
+
+  - name: StorageRemote
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct StorageRemote {
+          remote_url: String,
+      }
+
+  - name: Storage
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      #[repr(C)]
+      enum Storage {
+          Local(StorageLocal),
+          Remote(StorageRemote),
+      }
+
+  # Logging variants
+  - name: LogFile
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct LogFile {
+          log_path: String,
+      }
+
+  - name: LogStdout
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct LogStdout {
+          log_color: bool,
+      }
+
+  - name: Logging
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      #[repr(C)]
+      enum Logging {
+          File(LogFile),
+          Stdout(LogStdout),
+      }
+
+  # 2-enum config (2×2 = 4 configurations)
+  - name: Config2Enums
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Config2Enums {
+          name: String,
+          #[facet(flatten)]
+          #[serde(flatten)]
+          auth: AuthMethod,
+          #[facet(flatten)]
+          #[serde(flatten)]
+          transport: Transport,
+      }
+
+  # 4-enum config (2^4 = 16 configurations)
+  - name: Config4Enums
+    code: |
+      #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+      struct Config4Enums {
+          name: String,
+          #[facet(flatten)]
+          #[serde(flatten)]
+          auth: AuthMethod,
+          #[facet(flatten)]
+          #[serde(flatten)]
+          transport: Transport,
+          #[facet(flatten)]
+          #[serde(flatten)]
+          storage: Storage,
+          #[facet(flatten)]
+          #[serde(flatten)]
+          logging: Logging,
+      }

@@ -73,7 +73,7 @@ pub mod builtin {
             #[storage(flag)]
             Flatten,
 
-            /// Marks a field as a child node (for hierarchical formats like KDL/XML).
+            /// Marks a field as a child node (for hierarchical formats like XML).
             ///
             /// Usage: `#[facet(child)]`
             #[storage(flag)]

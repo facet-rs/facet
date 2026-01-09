@@ -71,7 +71,7 @@ enum XtaskCommand {
     /// Interactive TUI to explore metrics from reports/metrics.jsonl
     Metrics,
 
-    /// Generate unified benchmark code from facet-json/benches/benchmarks.kdl
+    /// Generate unified benchmark code
     GenBenchmarks,
 
     /// Generate TypeScript types for the frontend SPA from run_types.rs

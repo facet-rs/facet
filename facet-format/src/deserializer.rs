@@ -671,12 +671,9 @@ where
 
     /// Check if a field matches the given name, namespace, and location constraints.
     ///
-    /// This implements format-specific field matching for XML and KDL:
+    /// This implements format-specific field matching for XML:
     ///
     /// Check if a type can be deserialized directly from a scalar value.
-    ///
-    /// This is used for KDL child nodes that contain only a single argument value,
-    /// allowing `#[facet(kdl::child)]` to work on primitive types like `bool`, `u64`, `String`.
     fn is_scalar_compatible_type(shape: &facet_core::Shape) -> bool {
         match &shape.def {
             Def::Scalar => true,
@@ -696,104 +693,14 @@ where
         }
     }
 
-    /// Deserialize a KDL child node that contains only a scalar argument into a scalar type.
-    ///
-    /// When a KDL node like `enabled #true` is parsed, it generates:
-    /// - `StructStart`
-    /// - `FieldKey("_node_name", Argument)` → `Scalar("enabled")`
-    /// - `FieldKey("_arg", Argument)` → `Scalar(true)`  ← this is what we want
-    /// - `StructEnd`
-    ///
-    /// This method consumes those events and extracts the scalar value.
-    fn deserialize_kdl_child_scalar(
-        &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Consume the StructStart
-        let event = self.expect_event("struct start for kdl child")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct start for kdl child node",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: None,
-            });
-        }
-
-        // Scan through the struct looking for _arg (single argument) or first argument
-        let mut found_scalar: Option<ScalarValue<'input>> = None;
-
-        loop {
-            let event = self.expect_event("field or struct end for kdl child")?;
-            match event {
-                ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(key) => {
-                    // Check if this is the argument field we're looking for
-                    if key.location == FieldLocationHint::Argument
-                        && (key.name == "_arg" || key.name == "0")
-                    {
-                        // Next event should be the scalar value
-                        let value_event = self.expect_event("scalar value for kdl child")?;
-                        if let ParseEvent::Scalar(scalar) = value_event {
-                            found_scalar = Some(scalar);
-                        } else {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "scalar value for kdl::child primitive",
-                                got: format!("{value_event:?}"),
-                                span: self.last_span,
-                                path: None,
-                            });
-                        }
-                    } else {
-                        // Skip this field's value (could be _node_name, _arguments, etc.)
-                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                    }
-                }
-                other => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "field key or struct end for kdl child",
-                        got: format!("{other:?}"),
-                        span: self.last_span,
-                        path: None,
-                    });
-                }
-            }
-        }
-
-        // Now deserialize the scalar value into the target type
-        if let Some(scalar) = found_scalar {
-            // Handle Option<T> types - we need to wrap the value in Some
-            if matches!(&wip.shape().def, Def::Option(_)) {
-                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
-                wip = self.set_scalar(wip, scalar)?;
-                wip = wip.end().map_err(DeserializeError::reflect)?;
-            } else {
-                wip = self.set_scalar(wip, scalar)?;
-            }
-            Ok(wip)
-        } else {
-            Err(DeserializeError::TypeMismatch {
-                expected: "argument value in kdl::child node",
-                got: "no argument found".to_string(),
-                span: self.last_span,
-                path: None,
-            })
-        }
-    }
-
     /// **XML matching:**
     /// - Text: Match fields with xml::text attribute (name is ignored - text content goes to the field)
     /// - Attributes: Only match if explicit xml::ns matches (no ns_all inheritance per XML spec)
     /// - Elements: Match if explicit xml::ns OR ns_all matches
     ///
-    /// **KDL matching:**
-    /// - Argument: Match fields with kdl::argument attribute
-    /// - Property: Match fields with kdl::property attribute
-    /// - Child: Match fields with kdl::child or kdl::children attribute
-    ///
     /// **Default (KeyValue):** Match by name/alias only (backwards compatible)
     ///
-    /// TODO: This function hardcodes knowledge of XML and KDL attributes.
+    /// TODO: This function hardcodes knowledge of XML attributes.
     /// See <https://github.com/facet-rs/facet/issues/1506> for discussion on
     /// making this more extensible.
     fn field_matches_with_namespace(
@@ -809,7 +716,6 @@ where
         }
 
         // === XML/HTML: Fields with xml::element/elements match only child elements
-        // === KDL: Fields with kdl::child/children match only child nodes
         if (field.is_element() || field.is_elements())
             && !matches!(location, FieldLocationHint::Child)
         {
@@ -827,39 +733,6 @@ where
         // This allows custom elements to capture the element's tag name
         if matches!(location, FieldLocationHint::Tag) {
             return field.is_tag();
-        }
-
-        // === KDL: Node name matching for kdl::node_name attribute ===
-        // The parser emits "_node_name" as the field key for node name
-        if matches!(location, FieldLocationHint::Argument) && name == "_node_name" {
-            return field.is_node_name();
-        }
-
-        // === KDL: Arguments (plural) matching for kdl::arguments attribute ===
-        // The parser emits "_arguments" as the field key for all arguments as a sequence
-        if matches!(location, FieldLocationHint::Argument) && name == "_arguments" {
-            return field.is_arguments_plural();
-        }
-
-        // === KDL: Argument location matches fields with kdl::argument attribute ===
-        // For kdl::argument (singular), we match by attribute presence, not by name
-        // (arguments are positional, name in FieldKey is just "_arg" or index)
-        // Skip fields that want plural (kdl::arguments) - they matched above
-        // If no kdl::argument attr, fall through to name matching
-        if matches!(location, FieldLocationHint::Argument) && field.is_argument() {
-            // Don't match singular _arg to kdl::arguments fields
-            if field.is_arguments_plural() {
-                return false;
-            }
-            return true;
-        }
-
-        // === KDL: Property location matches fields with kdl::property attribute ===
-        // For properties, we need BOTH the attribute AND name match
-        // If no kdl::property attr, fall through to name matching
-        if matches!(location, FieldLocationHint::Property) && field.is_property() {
-            let name_matches = field.name == name || field.alias.iter().any(|alias| *alias == name);
-            return name_matches;
         }
 
         // === Check name/alias ===
@@ -1443,46 +1316,19 @@ where
                             .begin_nth_field(idx)
                             .map_err(DeserializeError::reflect)?;
 
-                        // Special handling for kdl::child with scalar types
-                        // When a KDL child node contains only a scalar argument (e.g., `enabled #true`),
-                        // we need to extract the argument value instead of treating it as a struct.
-                        let use_kdl_child_scalar = key.location == FieldLocationHint::Child
-                            && field.has_attr(Some("kdl"), "child")
-                            && Self::is_scalar_compatible_type(wip.shape())
-                            && matches!(
-                                self.expect_peek("value for kdl::child field"),
-                                Ok(ParseEvent::StructStart(_))
-                            );
-
-                        wip = if use_kdl_child_scalar {
-                            match self.deserialize_kdl_child_scalar(wip) {
-                                Ok(wip) => wip,
-                                Err(e) => {
-                                    let result = if e.path().is_some() {
-                                        e
-                                    } else {
-                                        let path = self.path_clone();
-                                        e.with_path(path)
-                                    };
-                                    self.pop_path();
-                                    return Err(result);
-                                }
-                            }
-                        } else {
-                            match self.deserialize_into(wip) {
-                                Ok(wip) => wip,
-                                Err(e) => {
-                                    // Only add path if error doesn't already have one
-                                    // (inner errors already have more specific paths)
-                                    let result = if e.path().is_some() {
-                                        e
-                                    } else {
-                                        let path = self.path_clone();
-                                        e.with_path(path)
-                                    };
-                                    self.pop_path();
-                                    return Err(result);
-                                }
+                        wip = match self.deserialize_into(wip) {
+                            Ok(wip) => wip,
+                            Err(e) => {
+                                // Only add path if error doesn't already have one
+                                // (inner errors already have more specific paths)
+                                let result = if e.path().is_some() {
+                                    e
+                                } else {
+                                    let path = self.path_clone();
+                                    e.with_path(path)
+                                };
+                                self.pop_path();
+                                return Err(result);
                             }
                         };
 
@@ -1696,14 +1542,6 @@ where
             if Self::shape_accepts_element(item_shape, element_name, element_ns, ns_all) {
                 return Some((idx, field));
             }
-
-            // Also check singularization: if element_name is the singular of field.name
-            // This handles cases like: field `items: Vec<Item>` with `#[facet(kdl::children)]`
-            // accepting child nodes named "item"
-            #[cfg(feature = "singularize")]
-            if facet_singularize::is_singular_of(element_name, field.name) {
-                return Some((idx, field));
-            }
         }
         None
     }
@@ -1737,11 +1575,6 @@ where
                 enum_def.variants.iter().any(|v| v.is_custom_element())
             }
             Type::User(UserType::Struct(struct_def)) => {
-                // If the struct has a kdl::node_name field, it can accept any element name
-                // since the name will be captured into that field
-                if struct_def.fields.iter().any(|f| f.is_node_name()) {
-                    return true;
-                }
                 // Similarly, if the struct has a tag field (for HTML/XML custom elements),
                 // it can accept any element name
                 if struct_def.fields.iter().any(|f| f.is_tag()) {
@@ -1749,7 +1582,6 @@ where
                 }
                 // Otherwise, check if element name matches struct's name
                 // Use case-insensitive comparison since serializers may normalize case
-                // (e.g., KDL serializer lowercases "Server" to "server")
                 let display_name = Self::get_shape_display_name(shape);
                 display_name.eq_ignore_ascii_case(element_name)
             }
@@ -4603,7 +4435,6 @@ where
                 Ok(wip)
             }
             ParseEvent::StructStart(_container_kind) => {
-                // For KDL: a node like `host "value"` is emitted as a struct with _arg field.
                 // When deserializing into a scalar, extract the _arg value.
                 let mut found_scalar: Option<ScalarValue<'input>> = None;
 
@@ -5175,21 +5006,6 @@ pub enum DeserializeError<E> {
         /// Path through the type structure where the error occurred.
         path: Option<Path>,
     },
-    /// Expected a scalar value but got a struct/object.
-    ///
-    /// This typically happens when a format-specific mapping expects a scalar
-    /// (like a KDL property `name=value`) but receives a child node instead
-    /// (like KDL node with arguments `name "value"`).
-    ExpectedScalarGotStruct {
-        /// The shape that was expected (provides access to type info and attributes).
-        expected_shape: &'static facet_core::Shape,
-        /// The container kind that was received (Object, Array, Element).
-        got_container: crate::ContainerKind,
-        /// Source span where the mismatch occurred (if available).
-        span: Option<facet_reflect::Span>,
-        /// Path through the type structure where the error occurred.
-        path: Option<Path>,
-    },
     /// Field validation failed.
     #[cfg(feature = "validate")]
     Validation {
@@ -5224,18 +5040,6 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
                 field, type_name, ..
             } => {
                 write!(f, "missing field `{field}` in type `{type_name}`")
-            }
-            DeserializeError::ExpectedScalarGotStruct {
-                expected_shape,
-                got_container,
-                ..
-            } => {
-                write!(
-                    f,
-                    "expected `{}` value, got {}",
-                    expected_shape.type_identifier,
-                    got_container.name()
-                )
             }
             #[cfg(feature = "validate")]
             DeserializeError::Validation { field, message, .. } => {
@@ -5292,7 +5096,6 @@ impl<E> DeserializeError<E> {
             DeserializeError::TypeMismatch { path, .. } => path.as_ref(),
             DeserializeError::UnknownField { path, .. } => path.as_ref(),
             DeserializeError::MissingField { path, .. } => path.as_ref(),
-            DeserializeError::ExpectedScalarGotStruct { path, .. } => path.as_ref(),
             _ => None,
         }
     }
@@ -5329,17 +5132,6 @@ impl<E> DeserializeError<E> {
             } => DeserializeError::MissingField {
                 field,
                 type_name,
-                span,
-                path: Some(new_path),
-            },
-            DeserializeError::ExpectedScalarGotStruct {
-                expected_shape,
-                got_container,
-                span,
-                ..
-            } => DeserializeError::ExpectedScalarGotStruct {
-                expected_shape,
-                got_container,
                 span,
                 path: Some(new_path),
             },
@@ -5434,14 +5226,6 @@ impl<E: miette::Diagnostic + 'static> miette::Diagnostic for DeserializeError<E>
             } => Some(Box::new(core::iter::once(miette::LabeledSpan::at(
                 *span,
                 format!("missing field '{field}'"),
-            )))),
-            DeserializeError::ExpectedScalarGotStruct {
-                span: Some(span),
-                got_container,
-                ..
-            } => Some(Box::new(core::iter::once(miette::LabeledSpan::at(
-                *span,
-                format!("got {} here", got_container.name()),
             )))),
             _ => None,
         }
