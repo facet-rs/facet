@@ -21,12 +21,6 @@ impl fmt::Display for MsgPackError {
 
 impl std::error::Error for MsgPackError {}
 
-impl miette::Diagnostic for MsgPackError {
-    fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
-        Some(Box::new(format!("msgpack::error::{}", self.code)))
-    }
-}
-
 /// MsgPack JIT error codes.
 pub mod codes {
     /// Unexpected end of input

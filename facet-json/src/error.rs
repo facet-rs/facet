@@ -29,57 +29,6 @@ impl Display for JsonError {
 
 impl std::error::Error for JsonError {}
 
-#[cfg(feature = "miette")]
-impl miette::Diagnostic for JsonError {
-    fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
-        Some(Box::new(self.kind.code()))
-    }
-
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        self.source_code
-            .as_ref()
-            .map(|s| s as &dyn miette::SourceCode)
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        // Handle MissingField with multiple spans
-        if let JsonErrorKind::MissingField {
-            field,
-            object_start,
-            object_end,
-        } = &self.kind
-        {
-            let mut labels = Vec::new();
-            if let Some(start) = object_start {
-                labels.push(miette::LabeledSpan::new(
-                    Some("object started here".into()),
-                    start.offset,
-                    start.len,
-                ));
-            }
-            if let Some(end) = object_end {
-                labels.push(miette::LabeledSpan::new(
-                    Some(format!("object ended without field `{field}`")),
-                    end.offset,
-                    end.len,
-                ));
-            }
-            if labels.is_empty() {
-                return None;
-            }
-            return Some(Box::new(labels.into_iter()));
-        }
-
-        // Default: single span with label
-        let span = self.span?;
-        Some(Box::new(core::iter::once(miette::LabeledSpan::new(
-            Some(self.kind.label()),
-            span.offset,
-            span.len,
-        ))))
-    }
-}
-
 impl JsonError {
     /// Create a new error with span information
     pub fn new(kind: JsonErrorKind, span: Span) -> Self {

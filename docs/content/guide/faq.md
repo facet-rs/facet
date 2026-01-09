@@ -207,20 +207,6 @@ struct Config {
 }
 ```
 
-### How do I get better error messages?
-
-facet's format crates produce rich diagnostics with source locations when possible. Errors implement [miette](https://docs.rs/miette)'s `Diagnostic` trait for pretty printing:
-
-```rust,noexec
-use miette::Result;
-use facet_json::from_str;
-
-fn main() -> Result<()> {
-    let config: Config = from_str(input)?;
-    Ok(())
-}
-```
-
 ### How do I validate data after deserialization?
 
 Use the `invariants` attribute:

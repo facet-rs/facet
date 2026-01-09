@@ -86,20 +86,6 @@ impl fmt::Display for ShapeError {
 
 impl std::error::Error for ShapeError {}
 
-impl Diagnostic for ShapeError {
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        Some(&self.src)
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
-        Some(Box::new(std::iter::once(self.label.clone())))
-    }
-
-    fn severity(&self) -> Option<Severity> {
-        Some(Severity::Error)
-    }
-}
-
 // ============================================================================
 // Highlight Mode
 // ============================================================================

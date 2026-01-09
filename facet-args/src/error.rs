@@ -5,7 +5,6 @@ use core::fmt;
 use facet_core::{Field, Shape, Type, UserType, Variant};
 use facet_reflect::ReflectError;
 use heck::ToKebabCase;
-use miette::{Diagnostic, LabeledSpan};
 
 /// An args parsing error, with input info, so that it can be formatted nicely
 #[derive(Debug)]
@@ -40,61 +39,6 @@ impl core::fmt::Display for ArgsErrorWithInput {
 }
 
 impl core::error::Error for ArgsErrorWithInput {}
-
-impl Diagnostic for ArgsErrorWithInput {
-    fn code<'a>(&'a self) -> Option<Box<dyn core::fmt::Display + 'a>> {
-        Some(Box::new(self.inner.kind.code()))
-    }
-
-    fn severity(&self) -> Option<miette::Severity> {
-        if self.is_help_request() {
-            Some(miette::Severity::Advice)
-        } else {
-            Some(miette::Severity::Error)
-        }
-    }
-
-    fn help<'a>(&'a self) -> Option<Box<dyn core::fmt::Display + 'a>> {
-        self.inner.kind.help()
-    }
-
-    fn url<'a>(&'a self) -> Option<Box<dyn core::fmt::Display + 'a>> {
-        None
-    }
-
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        // Don't show source code for help requests - it's not an error
-        if self.is_help_request() {
-            None
-        } else if self.flattened_args.is_empty() {
-            // Don't show empty source code box
-            None
-        } else {
-            Some(&self.flattened_args)
-        }
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        // Don't show labels for help requests - it's not an error
-        if self.is_help_request() {
-            None
-        } else {
-            Some(Box::new(core::iter::once(LabeledSpan::new(
-                Some(self.inner.kind.label()),
-                self.inner.span.start,
-                self.inner.span.len(),
-            ))))
-        }
-    }
-
-    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn Diagnostic> + 'a>> {
-        None
-    }
-
-    fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
-        None
-    }
-}
 
 /// An args parsing error (without input info)
 #[derive(Debug)]

@@ -95,24 +95,6 @@ impl fmt::Display for Asn1Error {
 #[cfg(feature = "std")]
 impl std::error::Error for Asn1Error {}
 
-impl miette::Diagnostic for Asn1Error {
-    fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
-        let code = match &self.kind {
-            Asn1ErrorKind::UnexpectedEof => "asn1::unexpected_eof",
-            Asn1ErrorKind::UnknownTag { .. } => "asn1::unknown_tag",
-            Asn1ErrorKind::LengthMismatch { .. } => "asn1::length_mismatch",
-            Asn1ErrorKind::InvalidBool => "asn1::invalid_bool",
-            Asn1ErrorKind::InvalidReal => "asn1::invalid_real",
-            Asn1ErrorKind::InvalidString { .. } => "asn1::invalid_string",
-            Asn1ErrorKind::SequenceSizeMismatch { .. } => "asn1::sequence_size_mismatch",
-            Asn1ErrorKind::Unsupported { .. } => "asn1::unsupported",
-            Asn1ErrorKind::InvalidTypeTag { .. } => "asn1::invalid_type_tag",
-            Asn1ErrorKind::InvalidDiscriminant { .. } => "asn1::invalid_discriminant",
-        };
-        Some(Box::new(code))
-    }
-}
-
 impl Asn1Error {
     /// Create a new error with the given kind at the given position.
     pub fn new(kind: Asn1ErrorKind, pos: usize) -> Self {

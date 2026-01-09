@@ -46,27 +46,6 @@ impl Display for YamlError {
 
 impl core::error::Error for YamlError {}
 
-impl miette::Diagnostic for YamlError {
-    fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
-        Some(Box::new(self.kind.code()))
-    }
-
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        self.source_code
-            .as_ref()
-            .map(|s| s.as_ref() as &dyn miette::SourceCode)
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        let span = self.span?;
-        Some(Box::new(core::iter::once(miette::LabeledSpan::new(
-            Some(self.kind.label()),
-            span.offset,
-            span.len.max(1), // Ensure at least 1 character span for visibility
-        ))))
-    }
-}
-
 impl YamlError {
     /// Create a new error with span information
     pub fn new(kind: YamlErrorKind, span: Span) -> Self {
