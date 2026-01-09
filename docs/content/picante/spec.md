@@ -113,8 +113,42 @@ The mapping from Rust constructs (types/functions) to kinds is implementation-de
 
 ## Inputs
 
-r[input.get]
-Reading an input record at `(kind, key)` at revision `R` MUST return the value that was most recently written at or before `R`, or `None` if the record does not exist at `R`.
+### API (Rust, non-normative)
+
+Picante exposes input storage through an `InputIngredient<K, V>` with operations like:
+
+```rust
+impl<K, V> InputIngredient<K, V> {
+    pub fn get<DB: HasRuntime>(&self, db: &DB, key: &K) -> PicanteResult<Option<V>>;
+    pub fn set<DB: HasRuntime>(&self, db: &DB, key: K, value: V) -> Revision;
+    pub fn remove<DB: HasRuntime>(&self, db: &DB, key: &K) -> Revision;
+}
+```
+
+Some applications also benefit from batching multiple mutations. A batch API is not required, but if provided it might look like:
+
+```rust
+enum InputMutation<K, V> {
+    Set { key: K, value: V },
+    Remove { key: K },
+}
+
+impl<K, V> InputIngredient<K, V> {
+    pub fn apply_batch<DB: HasRuntime>(
+        &self,
+        db: &DB,
+        mutations: impl IntoIterator<Item = InputMutation<K, V>>,
+    ) -> Revision;
+}
+```
+
+> r[input.get]
+> Calling `InputIngredient::get(db, key)` MUST:
+>
+> - Return `Ok(Some(value))` if the record exists in the database state associated with `db`.
+> - Return `Ok(None)` if the record does not exist in that database state.
+>
+> If called during derived query evaluation, it MUST record a dependency on that input record (see `r[dep.recording]`).
 
 > r[input.set]
 > Setting an input record MUST behave as follows:
