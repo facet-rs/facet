@@ -8,6 +8,47 @@ This document specifies **observable semantics**: what a user of the API can rel
 
 ## Model and Terms
 
+### Walkthrough (non-normative)
+
+This short example illustrates how inputs, derived queries, revisions, and snapshots relate.
+
+Definitions:
+
+```rust
+use picante::PicanteResult;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+#[picante::input]
+pub struct FileDigest {
+    #[key]
+    pub path: PathBuf,
+    pub hash: [u8; 32],
+}
+
+#[picante::tracked]
+pub async fn read_file_bytes<DB: DatabaseTrait>(
+    _db: &DB,
+    path: PathBuf,
+    hash: [u8; 32],
+) -> PicanteResult<Arc<Vec<u8>>> {
+    // Read the file at `path` and return its bytes.
+    // `hash` is part of the query key: changing it forces a different cached entry.
+    # let _ = (path, hash);
+    Ok(Arc::new(vec![]))
+}
+```
+
+Timeline (conceptual):
+
+1. Start with a new database view at some initial revision.
+2. Set `FileDigest { path: "a.txt", hash: H1 }`. This advances the view to a later revision (because observable input state changed).
+3. Call `read_file_bytes(db, "a.txt", H1)`. The runtime computes it once and caches the result.
+4. If you call `read_file_bytes(db, "a.txt", H1)` again at a later time *without changing inputs*, the cached value may be returned.
+5. When the file changes, update `FileDigest { path: "a.txt", hash: H2 }`. This advances the revision again.
+6. A new call `read_file_bytes(db, "a.txt", H2)` uses a different key and is computed/cached independently of the `H1` entry.
+7. If you take a snapshot after step 5, the snapshot view “freezes” `FileDigest("a.txt") == H2` and continues to observe that value even if the primary view is later mutated.
+
 ### Database and views
 
 A **database** is the logical unit of Picante state you care about: a set of inputs and derived-query semantics, plus (optionally) any snapshots derived from it.
@@ -445,7 +486,9 @@ If a dependency’s ingredient is not available (e.g., the kind is not registere
 ## Cycles
 
 > r[cycle.detect]
-> If derived query evaluation would (directly or indirectly) require evaluating the same `(kind, key)` again at the same revision, the runtime MUST report a dependency cycle error rather than deadlocking or waiting indefinitely.
+> If, within a single logical derived-query evaluation (i.e., along one evaluation stack in one view), evaluation would (directly or indirectly) require evaluating the same `(kind, key)` again at the same revision, the runtime MUST report a dependency cycle error rather than deadlocking or waiting indefinitely.
+>
+> This requirement does not mandate detection of cross-task/cross-evaluation cycles. (Those may still deadlock and are considered a usage hazard; see `r[sharing.nonobservable]` for the “sharing is non-observable” boundary.)
 
 ---
 
