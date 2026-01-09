@@ -10,8 +10,8 @@ use core::{
 use std::hash::DefaultHasher;
 
 use facet_core::{
-    Def, DynDateTimeKind, DynValueKind, Facet, Field, PointerType, PrimitiveType, SequenceType,
-    Shape, StructKind, StructType, TextualType, Type, TypeNameOpts, UserType,
+    Def, DynDateTimeKind, DynValueKind, Facet, Field, PointerType, PrimitiveType, PtrUninit,
+    SequenceType, Shape, StructKind, StructType, TextualType, Type, TypeNameOpts, UserType,
 };
 use facet_reflect::{Peek, ValueId};
 
@@ -261,6 +261,10 @@ impl PrettyPrinter {
         {
             value = pointee;
         }
+
+        // Unwrap transparent wrappers (e.g., newtype wrappers like IntAsString(String))
+        // This matches serialization behavior where we serialize the inner value directly
+        let value = value.innermost_peek();
         let shape = value.shape();
 
         if let Some(prev_type_depth) = visited.insert(value.id(), type_depth) {
@@ -276,6 +280,19 @@ impl PrettyPrinter {
             )?;
             visited.remove(&value.id());
             return Ok(());
+        }
+
+        // Handle proxy types by converting to the proxy representation and formatting that
+        if let Some(proxy_def) = shape.proxy {
+            return self.format_via_proxy(
+                value,
+                proxy_def,
+                f,
+                visited,
+                format_depth,
+                type_depth,
+                short,
+            );
         }
 
         match (shape.def, shape.ty) {
@@ -840,10 +857,65 @@ impl PrettyPrinter {
                 }
             }
 
-            _ => write!(f, "unsupported peek variant: {value:?}")?,
+            (d, t) => write!(f, "unsupported peek variant: {value:?} ({d:?}, {t:?})")?,
         }
 
         Ok(())
+    }
+
+    /// Format a value through its proxy type representation.
+    ///
+    /// This allocates memory for the proxy type, converts the value to its proxy
+    /// representation, formats the proxy, then cleans up.
+    #[allow(clippy::too_many_arguments)]
+    fn format_via_proxy(
+        &self,
+        value: Peek<'_, '_>,
+        proxy_def: &'static facet_core::ProxyDef,
+        f: &mut dyn Write,
+        visited: &mut BTreeMap<ValueId, usize>,
+        format_depth: usize,
+        type_depth: usize,
+        short: bool,
+    ) -> fmt::Result {
+        let proxy_shape = proxy_def.shape;
+        let proxy_layout = match proxy_shape.layout.sized_layout() {
+            Ok(layout) => layout,
+            Err(_) => {
+                return write!(f, "/* proxy type must be sized for formatting */");
+            }
+        };
+
+        // Allocate memory for the proxy value
+        let proxy_mem = unsafe { alloc::alloc::alloc(proxy_layout) };
+        if proxy_mem.is_null() {
+            return write!(f, "/* failed to allocate proxy memory */");
+        }
+
+        // Convert target → proxy
+        let proxy_uninit = PtrUninit::new(proxy_mem);
+        let convert_result = unsafe { (proxy_def.convert_out)(value.data(), proxy_uninit) };
+
+        let proxy_ptr = match convert_result {
+            Ok(ptr) => ptr,
+            Err(msg) => {
+                unsafe { alloc::alloc::dealloc(proxy_mem, proxy_layout) };
+                return write!(f, "/* proxy conversion failed: {msg} */");
+            }
+        };
+
+        // Create a Peek to the proxy value and format it
+        let proxy_peek = unsafe { Peek::unchecked_new(proxy_ptr.as_const(), proxy_shape) };
+        let result =
+            self.format_peek_internal_(proxy_peek, f, visited, format_depth, type_depth, short);
+
+        // Clean up: drop the proxy value and deallocate
+        unsafe {
+            let _ = proxy_shape.call_drop_in_place(proxy_ptr);
+            alloc::alloc::dealloc(proxy_mem, proxy_layout);
+        }
+
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -862,8 +934,27 @@ impl PrettyPrinter {
         if let [field] = fields
             && field.doc.is_empty()
         {
-            let field = peek_field(0);
-            self.format_peek_internal_(field, f, visited, format_depth, type_depth, short)?;
+            let field_value = peek_field(0);
+            if let Some(proxy_def) = field.proxy() {
+                self.format_via_proxy(
+                    field_value,
+                    proxy_def,
+                    f,
+                    visited,
+                    format_depth,
+                    type_depth,
+                    short,
+                )?;
+            } else {
+                self.format_peek_internal_(
+                    field_value,
+                    f,
+                    visited,
+                    format_depth,
+                    type_depth,
+                    short,
+                )?;
+            }
 
             if force_trailing_comma {
                 self.write_punctuation(f, ",")?;
@@ -885,6 +976,17 @@ impl PrettyPrinter {
 
                 if fields[idx].is_sensitive() {
                     self.write_redacted(f, "[REDACTED]")?;
+                } else if let Some(proxy_def) = fields[idx].proxy() {
+                    // Field-level proxy: format through the proxy type
+                    self.format_via_proxy(
+                        peek_field(idx),
+                        proxy_def,
+                        f,
+                        visited,
+                        format_depth + 1,
+                        type_depth + 1,
+                        short,
+                    )?;
                 } else {
                     self.format_peek_internal_(
                         peek_field(idx),
@@ -954,6 +1056,17 @@ impl PrettyPrinter {
                 self.write_punctuation(f, ": ")?;
                 if fields[idx].is_sensitive() {
                     self.write_redacted(f, "[REDACTED]")?;
+                } else if let Some(proxy_def) = fields[idx].proxy() {
+                    // Field-level proxy: format through the proxy type
+                    self.format_via_proxy(
+                        peek_field(idx),
+                        proxy_def,
+                        f,
+                        visited,
+                        format_depth + 1,
+                        type_depth + 1,
+                        short,
+                    )?;
                 } else {
                     self.format_peek_internal_(
                         peek_field(idx),
