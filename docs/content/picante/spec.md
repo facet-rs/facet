@@ -475,6 +475,36 @@ When the file changes, updating `FileDigest` causes downstream recomputation; if
 >
 > Implementations MAY omit recording dependencies on records whose values are immutable for the lifetime of the process (for example, interned records addressed by an ID), since such dependencies can never affect revalidation.
 
+### Per-ingredient `changed_at` semantics
+
+The revalidation and invalidation rules depend on each dependency exposing a notion of “the most recent revision at which this dependency changed” (`changed_at`).
+
+> r[changed-at.meaning]
+> For any dependency record `(kind, key)` that participates in dependency tracking, the implementation MUST define a `changed_at` revision value with the following meaning:
+>
+> - If the record’s observable value has not changed between two revisions, its `changed_at` MUST be the same at both revisions.
+> - If the record’s observable value changes at some revision `R`, then for all later revisions `R' >= R`, the record’s `changed_at` MUST be `>= R`.
+>
+> `changed_at` MUST always be `<=` the view revision at which it is observed.
+>
+> Implementations MAY represent `changed_at` implicitly (e.g., via monotonic counters) as long as it satisfies the ordering properties above.
+
+> r[changed-at.input]
+> For an input record, `changed_at` MUST advance to the view’s new revision exactly when a `set`/`remove` operation changes the record’s observable value (per `r[equality.relation]` for `set`, and existence for `remove`).
+> No-op mutations MUST NOT change `changed_at`.
+
+> r[changed-at.derived]
+> For a derived record, `changed_at` MUST be updated according to early-cutoff (`r[revision.early-cutoff]`):
+>
+> - If a recomputation at revision `R` produces a value equal to the previous cached value (per `r[equality.relation]`), `changed_at` MUST NOT advance.
+> - If a recomputation at revision `R` produces a value not equal to the previous cached value, `changed_at` MUST become `R`.
+
+> r[changed-at.interned]
+> For interned records addressed by an intern ID, the record’s observable value is immutable once created.
+> Therefore, for purposes of dependency tracking, implementations MAY treat interned records as having a constant `changed_at` that never advances.
+>
+> Creation of new intern IDs MUST NOT change the observable value of any previously created interned record, and MUST NOT invalidate derived queries that depend only on existing intern IDs.
+
 ### Cell state and visibility
 
 Each derived query `(kind, key)` conceptually has a memo entry (“cell”) with:
