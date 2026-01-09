@@ -26,7 +26,6 @@ Pick at least one format crate. JSON is a good default:
 [dependencies]
 facet = "{{ data.versions.facet }}"
 facet-json = "{{ data.versions.facet }}"
-miette = { version = "7", features = ["fancy"] } # pretty diagnostics
 ```
 
 If you also need YAML/TOML/etc., add `facet-yaml`, `facet-toml`, `facet-msgpack`, etc.
@@ -42,7 +41,6 @@ If you also need YAML/TOML/etc., add `facet-yaml`, `facet-toml`, `facet-msgpack`
 // src/main.rs
 use facet::Facet;
 use facet_json::{from_str, to_string};
-use miette::{IntoDiagnostic, Result};
 
 #[derive(Facet)]
 struct Config {
@@ -70,25 +68,6 @@ Run it:
 ```bash
 cargo run
 ```
-
-## See the errors
-
-Break the input to observe diagnostics:
-
-```bash
-PORT=bad cargo run
-```
-
-Example output:
-```
-× invalid type: string "bad", expected u16
-  ┌─ <stdin>:1:23
-  │
-1 │ { "name": "app", "port": "bad" }
-  │                       ──── invalid type
-```
-
-Facet implements `miette::Diagnostic`, so you get spans, hints, and suggestions by default.
 
 ## Common tweaks
 - **Require strict inputs:** add `#[facet(deny_unknown_fields)]` to your structs.

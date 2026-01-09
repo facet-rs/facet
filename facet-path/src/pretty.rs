@@ -56,20 +56,6 @@ impl core::fmt::Display for TypeDiagnostic {
 
 impl std::error::Error for TypeDiagnostic {}
 
-impl Diagnostic for TypeDiagnostic {
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        Some(&self.source)
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
-        if self.labels.is_empty() {
-            None
-        } else {
-            Some(Box::new(self.labels.iter().cloned()))
-        }
-    }
-}
-
 /// A diagnostic error that shows the full type hierarchy with each step highlighted.
 /// Each type in the chain is shown as a separate related error.
 #[derive(Debug)]
@@ -93,34 +79,6 @@ impl core::fmt::Display for PathDiagnostic {
 }
 
 impl std::error::Error for PathDiagnostic {}
-
-impl Diagnostic for PathDiagnostic {
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        Some(&self.source)
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
-        if self.labels.is_empty() {
-            None
-        } else {
-            Some(Box::new(self.labels.iter().cloned()))
-        }
-    }
-
-    fn help<'a>(&'a self) -> Option<Box<dyn core::fmt::Display + 'a>> {
-        self.help
-            .as_ref()
-            .map(|h| Box::new(h.as_str()) as Box<dyn core::fmt::Display>)
-    }
-
-    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn Diagnostic> + 'a>> {
-        if self.related.is_empty() {
-            None
-        } else {
-            Some(Box::new(self.related.iter().map(|d| d as &dyn Diagnostic)))
-        }
-    }
-}
 
 /// A step in the path through types, recording the shape and local path at each user type.
 struct PathSegment {

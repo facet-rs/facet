@@ -254,8 +254,7 @@ fn test_missing_required_subcommand_error() {
     let err = result.unwrap_err();
     assert!(!err.is_help_request()); // This is an ERROR, not help
 
-    // Format the error using miette's Display
-    let display = format!("{:?}", miette::Report::new(err));
+    let display = format!("{:?}", err);
 
     // Should show error message
     assert!(display.contains("missing_subcommand") || display.contains("expected a subcommand"));
@@ -271,7 +270,7 @@ fn test_unknown_subcommand_error() {
     let err = result.unwrap_err();
     assert!(!err.is_help_request()); // This is an ERROR, not help
 
-    let display = format!("{:?}", miette::Report::new(err));
+    let display = format!("{:?}", err);
 
     // Should show the unknown subcommand
     assert!(display.contains("notacommand") || display.contains("unknown"));

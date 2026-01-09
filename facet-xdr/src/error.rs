@@ -21,12 +21,6 @@ impl fmt::Display for XdrError {
 
 impl std::error::Error for XdrError {}
 
-impl miette::Diagnostic for XdrError {
-    fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
-        Some(Box::new(format!("xdr::error::{}", self.code)))
-    }
-}
-
 /// XDR error codes.
 pub mod codes {
     /// Unexpected end of input

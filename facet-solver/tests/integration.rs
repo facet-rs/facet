@@ -1014,49 +1014,12 @@ struct AmbiguousJsonError {
     candidates: Vec<CandidateInfo>,
 }
 
-impl Diagnostic for AmbiguousJsonError {
-    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
-        Some(Box::new("facet_solver::ambiguous"))
-    }
-
-    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
-        Some(Box::new(
-            "Add a field that uniquely identifies one variant, or restructure your types",
-        ))
-    }
-
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        Some(&self.src)
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        Some(Box::new(std::iter::once(
-            miette::LabeledSpan::new_with_span(
-                Some("this JSON matches multiple configurations".into()),
-                self.span,
-            ),
-        )))
-    }
-
-    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn Diagnostic> + 'a>> {
-        Some(Box::new(
-            self.candidates.iter().map(|c| c as &dyn Diagnostic),
-        ))
-    }
-}
-
 /// Information about a candidate configuration.
 #[derive(Debug, thiserror::Error)]
 #[error("  • {description}")]
 struct CandidateInfo {
     description: String,
     help: String,
-}
-
-impl Diagnostic for CandidateInfo {
-    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
-        Some(Box::new(&self.help))
-    }
 }
 
 /// Error when a required field is missing.
@@ -1066,29 +1029,6 @@ struct NoMatchError {
     src: NamedSource<String>,
     span: Option<SourceSpan>,
     help: String,
-}
-
-impl Diagnostic for NoMatchError {
-    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
-        Some(Box::new("facet_solver::no_match"))
-    }
-
-    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
-        Some(Box::new(&self.help))
-    }
-
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        Some(&self.src)
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        self.span.as_ref().map(|span| {
-            Box::new(std::iter::once(miette::LabeledSpan::new_with_span(
-                Some("unknown field - not in any configuration".into()),
-                *span,
-            ))) as Box<dyn Iterator<Item = miette::LabeledSpan>>
-        })
-    }
 }
 
 /// Enhanced deserializer that returns miette diagnostics.

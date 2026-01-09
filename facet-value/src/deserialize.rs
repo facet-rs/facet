@@ -193,23 +193,6 @@ impl core::fmt::Display for SourceDiagnostic {
 #[cfg(feature = "diagnostics")]
 impl core::error::Error for SourceDiagnostic {}
 
-#[cfg(feature = "diagnostics")]
-impl miette::Diagnostic for SourceDiagnostic {
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        Some(&self.source_text as &dyn miette::SourceCode)
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        if self.labels.is_empty() {
-            None
-        } else {
-            Some(Box::new(self.labels.iter().map(|(start, end, label)| {
-                miette::LabeledSpan::at(*start..*end, label.as_str())
-            })))
-        }
-    }
-}
-
 /// A wrapper around ValueError that owns the diagnostic data for miette
 #[cfg(feature = "diagnostics")]
 pub struct ValueErrorReport {
@@ -345,23 +328,6 @@ impl core::fmt::Display for ValueErrorReport {
 
 #[cfg(feature = "diagnostics")]
 impl core::error::Error for ValueErrorReport {}
-
-#[cfg(feature = "diagnostics")]
-impl miette::Diagnostic for ValueErrorReport {
-    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn miette::Diagnostic> + 'a>> {
-        if self.related.is_empty() {
-            None
-        } else {
-            Some(Box::new(
-                self.related.iter().map(|d| d as &dyn miette::Diagnostic),
-            ))
-        }
-    }
-
-    fn severity(&self) -> Option<miette::Severity> {
-        Some(miette::Severity::Error)
-    }
-}
 
 /// Specific error kinds for Value deserialization.
 #[derive(Debug)]

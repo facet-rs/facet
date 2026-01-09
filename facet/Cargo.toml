@@ -126,7 +126,7 @@ facet-reflect = { path = "../facet-reflect", version = "0.42.0", optional = true
 static_assertions = { workspace = true, optional = true }
 
 [dev-dependencies]
-facet-reflect = { path = "../facet-reflect", features = ["miette"] }
+facet-reflect = { path = "../facet-reflect" }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 num-complex = "0.4.6"

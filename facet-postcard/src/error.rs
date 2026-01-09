@@ -72,43 +72,6 @@ impl PostcardError {
 
 impl std::error::Error for PostcardError {}
 
-#[cfg(feature = "pretty-errors")]
-impl miette::Diagnostic for PostcardError {
-    fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
-        let code_name = match self.code {
-            codes::UNEXPECTED_EOF => "postcard::unexpected_eof",
-            codes::INVALID_BOOL => "postcard::invalid_bool",
-            codes::VARINT_OVERFLOW => "postcard::varint_overflow",
-            codes::SEQ_UNDERFLOW => "postcard::seq_underflow",
-            codes::INVALID_UTF8 => "postcard::invalid_utf8",
-            codes::INVALID_OPTION_DISCRIMINANT => "postcard::invalid_option",
-            codes::INVALID_ENUM_DISCRIMINANT => "postcard::invalid_enum",
-            codes::UNSUPPORTED_OPAQUE_TYPE => "postcard::unsupported_opaque",
-            codes::UNEXPECTED_END_OF_INPUT => "postcard::eof",
-            codes::UNSUPPORTED => "postcard::unsupported",
-            _ => "postcard::unknown",
-        };
-        Some(Box::new(code_name))
-    }
-
-    fn help<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
-        let help = match self.code {
-            codes::UNEXPECTED_EOF | codes::UNEXPECTED_END_OF_INPUT => {
-                "The input data is truncated or incomplete"
-            }
-            codes::INVALID_BOOL => "Boolean values must be 0x00 (false) or 0x01 (true)",
-            codes::VARINT_OVERFLOW => "Varint encoding used too many continuation bytes",
-            codes::INVALID_UTF8 => "String data contains invalid UTF-8 bytes",
-            codes::INVALID_OPTION_DISCRIMINANT => {
-                "Option discriminant must be 0x00 (None) or 0x01 (Some)"
-            }
-            codes::INVALID_ENUM_DISCRIMINANT => "Enum variant index is out of range for this type",
-            _ => return None,
-        };
-        Some(Box::new(help))
-    }
-}
-
 /// Postcard JIT error codes.
 pub mod codes {
     /// Unexpected end of input
@@ -177,6 +140,3 @@ impl fmt::Display for SerializeError {
 }
 
 impl std::error::Error for SerializeError {}
-
-#[cfg(feature = "pretty-errors")]
-impl miette::Diagnostic for SerializeError {}

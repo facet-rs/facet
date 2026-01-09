@@ -26,56 +26,6 @@ impl Display for TomlError {
 
 impl std::error::Error for TomlError {}
 
-impl miette::Diagnostic for TomlError {
-    fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
-        Some(Box::new(self.kind.code()))
-    }
-
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        self.source_code
-            .as_ref()
-            .map(|s| s as &dyn miette::SourceCode)
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        // Handle MissingField with multiple spans
-        if let TomlErrorKind::MissingField {
-            field,
-            table_start,
-            table_end,
-        } = &self.kind
-        {
-            let mut labels = Vec::new();
-            if let Some(start) = table_start {
-                labels.push(miette::LabeledSpan::new(
-                    Some("table started here".into()),
-                    start.offset,
-                    start.len,
-                ));
-            }
-            if let Some(end) = table_end {
-                labels.push(miette::LabeledSpan::new(
-                    Some(format!("table ended without field `{field}`")),
-                    end.offset,
-                    end.len,
-                ));
-            }
-            if labels.is_empty() {
-                return None;
-            }
-            return Some(Box::new(labels.into_iter()));
-        }
-
-        // Default: single span with label
-        let span = self.span?;
-        Some(Box::new(core::iter::once(miette::LabeledSpan::new(
-            Some(self.kind.label()),
-            span.offset,
-            span.len,
-        ))))
-    }
-}
-
 impl TomlError {
     /// Create a new error with span information
     pub fn new(kind: TomlErrorKind, span: Span) -> Self {

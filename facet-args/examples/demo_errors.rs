@@ -2,7 +2,6 @@
 
 use facet::Facet;
 use facet_args as args;
-use miette::Report;
 
 /// Git-like CLI with subcommands
 #[derive(Facet, Debug)]
