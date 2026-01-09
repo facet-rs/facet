@@ -43,6 +43,13 @@ Every record is addressed by:
 
 Rust-centric intuition: a “kind” corresponds to a specific ingredient definition in your Rust program (an `#[picante::input]` type, an `#[picante::interned]` type, or an `#[picante::tracked]` function). Each such definition defines its own disjoint keyspace.
 
+Key shapes (Rust-centric):
+
+- `#[picante::input]` (keyed): the key is the `#[key]` field value (e.g. `Item { #[key] id: u32, .. }` is keyed by `id`).
+- `#[picante::input]` (singleton): the key is unit-like (there is exactly one record).
+- `#[picante::tracked]`: the key is the tuple of the function’s parameters after `db` (one parameter means a 1-tuple, e.g. `(item,)`).
+- `#[picante::interned]`: the stored records are addressed by the intern ID (the `Name(pub InternId)` handle). Creating an intern is conceptually a lookup/insert in a map keyed by the interned value; reading an intern uses its ID.
+
 Example:
 
 ```rust
@@ -66,7 +73,13 @@ pub async fn item_length<DB: DatabaseTrait>(db: &DB, item: Item) -> PicanteResul
 }
 ```
 
-In this example, there is one kind for the `Label` interner, one kind for the `item_length` derived query, and one (or more) kind(s) backing the `Item` input (the exact split is not semantically relevant; what matters is that `Item`’s keys never collide with `Label`’s keys or with `item_length`’s keys).
+In this example:
+
+- `Item`’s input record key is `id: u32` (e.g. `Item::new(&db, 1, ...)` addresses the `id == 1` record).
+- `item_length`’s derived-query key is `(item,)`, where `item` is the `Item` handle (its stable identity), not the mutable `ItemData` contents.
+- `Label`’s interned records are addressed by `Label(pub InternId)`; `Label::new(&db, "tag")` creates/returns a `Label` ID, and `label.text(&db)` reads back the interned value by that ID.
+
+There is one kind for the `Label` interner, one kind for the `item_length` derived query, and one (or more) kind(s) backing the `Item` input (the exact split is not semantically relevant; what matters is that these keyspaces do not collide).
 
 r[key.equality]
 Two uses of the same ingredient with equal key values MUST refer to the same record.
