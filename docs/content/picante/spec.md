@@ -104,19 +104,19 @@ The mapping from Rust constructs (types/functions) to kinds is implementation-de
 r[input.get]
 Reading an input record at `(kind, key)` at revision `R` MUST return the value that was most recently written at or before `R`, or `None` if the record does not exist at `R`.
 
-r[input.set]
-Setting an input record MUST behave as follows:
+> r[input.set]
+> Setting an input record MUST behave as follows:
+>
+> 1. If the record did not previously exist, it is created with the provided value.
+> 2. If the record exists and the value is byte-for-byte / structural-equality equal to the current value, the operation MUST be a no-op.
+> 3. If the record exists and the value differs from the current value, the value MUST be replaced.
+> 4. The runtime revision MUST advance to a fresh later revision iff the operation is not a no-op.
 
-1. If the record did not previously exist, it is created with the provided value.
-2. If the record exists and the value is byte-for-byte / structural-equality equal to the current value, the operation MUST be a no-op.
-3. If the record exists and the value differs from the current value, the value MUST be replaced.
-4. The runtime revision MUST advance to a fresh later revision iff the operation is not a no-op.
-
-r[input.remove]
-Removing an input record MUST behave as follows:
-
-1. If the record does not exist, the operation MUST be a no-op.
-2. If the record exists, it MUST be removed and the runtime revision MUST advance to a fresh later revision.
+> r[input.remove]
+> Removing an input record MUST behave as follows:
+>
+> 1. If the record does not exist, the operation MUST be a no-op.
+> 2. If the record exists, it MUST be removed and the runtime revision MUST advance to a fresh later revision.
 
 ## Derived queries
 
