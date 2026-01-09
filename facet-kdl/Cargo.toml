@@ -42,6 +42,9 @@ std = []
 fast = ["dep:zmij", "dep:itoa"]
 net = ["facet-format/net", "facet-core/net"]
 
+# Reader support (from_reader function)
+reader = ["std"]
+
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 

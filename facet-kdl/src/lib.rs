@@ -145,10 +145,16 @@ extern crate alloc;
 mod parser;
 mod serializer;
 
+#[cfg(feature = "std")]
+mod reader;
+
 #[cfg(feature = "axum")]
 mod axum;
 
 pub use parser::{KdlDeserializeError, KdlError, KdlParser, KdlProbe};
+
+#[cfg(feature = "std")]
+pub use reader::from_reader;
 
 #[cfg(feature = "axum")]
 pub use axum::{Kdl, KdlRejection};
