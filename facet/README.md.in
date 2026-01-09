@@ -43,7 +43,6 @@ In terms of data formats, we have:
 - [facet-msgpack](https://github.com/facet-rs/facet/tree/main/facet-msgpack): MessagePack deserialization
 - [facet-asn1](https://github.com/facet-rs/facet/tree/main/facet-asn1): ASN.1 format support
 - [facet-xdr](https://github.com/facet-rs/facet/tree/main/facet-xdr): XDR format support
-- [facet-kdl](https://github.com/facet-rs/facet/tree/main/facet-kdl): KDL format support
 - [facet-csv](https://github.com/facet-rs/facet/tree/main/facet-csv): CSV format support
 
 Still adjacent to serialization/deserialization, we have:

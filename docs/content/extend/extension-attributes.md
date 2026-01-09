@@ -12,47 +12,49 @@ For the full guide on creating extension attributes, see this page; for a quick 
 
 ```rust,noexec
 use facet::Facet;
-use facet_kdl as kdl;
+use facet_xml as xml;
 
 #[derive(Facet)]
 struct Server {
-    #[facet(kdl::argument)]
+    #[facet(xml::attribute)]
     name: String,
-    #[facet(kdl::property)]
+    #[facet(xml::element)]
     host: String,
 }
 ```
 
-The namespace (`kdl`) comes from how you import the crate:
+The namespace (`xml`) comes from how you import the crate:
 
 ```rust,noexec
-use facet_kdl as kdl;  // Enables kdl:: prefix
+use facet_xml as xml;  // Enables xml:: prefix
 use facet_args as args;  // Enables args:: prefix
 ```
 
 ## Declaring attributes with `define_attr_grammar!`
 
-Use the [`define_attr_grammar!`](https://docs.rs/facet/latest/facet/macro.define_attr_grammar.html) macro to declare your attribute grammar. Here's how [`facet-kdl`](https://docs.rs/facet-kdl) does it:
+Use the [`define_attr_grammar!`](https://docs.rs/facet/latest/facet/macro.define_attr_grammar.html) macro to declare your attribute grammar. Here's how [`facet-xml`](https://docs.rs/facet-xml) does it:
 
 ```rust,noexec
 facet::define_attr_grammar! {
-    ns "kdl";
-    crate_path ::facet_kdl;
+    ns "xml";
+    crate_path ::facet_xml;
 
-    /// KDL attribute types for field and container configuration.
+    /// XML attribute types for field and container configuration.
     pub enum Attr {
-        /// Marks a field as a single KDL child node
-        Child,
-        /// Marks a field as collecting multiple KDL children
-        Children,
-        /// Marks a field as a KDL property (key=value)
-        Property,
-        /// Marks a field as a single KDL positional argument
-        Argument,
-        /// Marks a field as collecting all KDL positional arguments
-        Arguments,
-        /// Marks a field as storing the KDL node name
-        NodeName,
+        /// Marks a field as a single XML child element
+        Element,
+        /// Marks a field as collecting multiple XML child elements
+        Elements,
+        /// Marks a field as an XML attribute (on the element tag)
+        Attribute,
+        /// Marks a field as the text content of the element
+        Text,
+        /// Marks a field as storing the XML element name dynamically
+        ElementName,
+        /// Specifies the XML namespace URI for this field.
+        Ns(&'static str),
+        /// Specifies the default XML namespace URI for all fields in this container.
+        NsAll(&'static str),
     }
 }
 ```
@@ -67,8 +69,8 @@ This generates:
 
 | Component | Purpose | Example |
 |-----------|---------|---------|
-| `ns "...";` | Namespace for attributes | `ns "kdl";` → `#[facet(kdl::child)]` |
-| `crate_path ...;` | Path to your crate for macro hygiene | `crate_path ::facet_kdl;` |
+| `ns "...";` | Namespace for attributes | `ns "xml";` → `#[facet(xml::element)]` |
+| `crate_path ...;` | Path to your crate for macro hygiene | `crate_path ::facet_xml;` |
 | `pub enum Attr { ... }` | The attribute variants | See above |
 
 ### Variant types
@@ -80,11 +82,11 @@ Simple flags with no arguments:
 ```rust,noexec
 pub enum Attr {
     /// A marker attribute
-    Child,
+    Element,
 }
 ```
 
-Usage: `#[facet(kdl::child)]`
+Usage: `#[facet(xml::element)]`
 
 #### String values
 
@@ -154,18 +156,18 @@ One of the major benefits of `define_attr_grammar!`: **typos are caught at compi
 ```rust,noexec
 #[derive(Facet)]
 struct Parent {
-    #[facet(kdl::chld)]  // Typo!
+    #[facet(xml::elemnt)]  // Typo!
     child: Child,
 }
 ```
 
 ```
-error: unknown attribute `chld`, did you mean `child`?
-       available attributes: child, children, property, argument, arguments, node_name
+error: unknown attribute `elemnt`, did you mean `element`?
+       available attributes: element, elements, attribute, text, element_name, ns, ns_all
  --> src/lib.rs:4:12
   |
-4 |     #[facet(kdl::chld)]
-  |            ^^^^^^^^^
+4 |     #[facet(xml::elemnt)]
+  |            ^^^^^^^^^^^
 ```
 
 The system uses string similarity to suggest corrections.
@@ -176,19 +178,19 @@ When your format crate needs to check for attributes, use the `get_as` method on
 
 ```rust,noexec
 use facet_core::{Field, FieldAttribute, Facet};
-use facet_kdl::Attr as KdlAttr;
+use facet_xml::Attr as XmlAttr;
 
 fn process_field(field: &Field) {
     for attr in field.attributes {
         if let FieldAttribute::Extension(ext) = attr {
             // Check namespace first
-            if ext.ns == Some("kdl") {
+            if ext.ns == Some("xml") {
                 // Get typed attribute data
-                if let Some(kdl_attr) = ext.get_as::<KdlAttr>() {
-                    match kdl_attr {
-                        KdlAttr::Child => { /* handle child */ }
-                        KdlAttr::Property => { /* handle property */ }
-                        KdlAttr::Argument => { /* handle argument */ }
+                if let Some(xml_attr) = ext.get_as::<XmlAttr>() {
+                    match xml_attr {
+                        XmlAttr::Element => { /* handle element */ }
+                        XmlAttr::Attribute => { /* handle attribute */ }
+                        XmlAttr::Text => { /* handle text content */ }
                         // ...
                     }
                 }
@@ -220,7 +222,7 @@ for attr in field.attributes {
 
 ## Namespacing
 
-- Use short aliases if desired: `use facet_kdl as k; #[facet(k::child)]`.
+- Use short aliases if desired: `use facet_xml as x; #[facet(x::element)]`.
 - Namespaces prevent collisions across format crates.
 - Built-in attributes remain short (`#[facet(rename = "...")]`, etc.).
 
@@ -266,20 +268,23 @@ struct Cli {
 }
 ```
 
-### facet-yaml (serde compatibility)
+### facet-xml
 
-[`facet-yaml`](https://docs.rs/facet-yaml) provides serde-compatible names:
+[`facet-xml`](https://docs.rs/facet-xml) provides XML-specific attributes:
 
 ```rust,noexec
-pub mod serde {
-    facet::define_attr_grammar! {
-        ns "serde";
-        crate_path ::facet_yaml::serde;
+facet::define_attr_grammar! {
+    ns "xml";
+    crate_path ::facet_xml;
 
-        pub enum Attr {
-            /// Rename a field
-            Rename(&'static str),
-        }
+    pub enum Attr {
+        Element,
+        Elements,
+        Attribute,
+        Text,
+        ElementName,
+        Ns(&'static str),
+        NsAll(&'static str),
     }
 }
 ```
@@ -287,12 +292,18 @@ pub mod serde {
 Usage:
 
 ```rust,noexec
-use facet_yaml::serde;
+use facet_xml as xml;
 
 #[derive(Facet)]
-struct Config {
-    #[facet(serde::rename = "serverName")]
-    server_name: String,
+struct Person {
+    #[facet(xml::attribute)]
+    id: u32,
+
+    #[facet(xml::element)]
+    name: String,
+
+    #[facet(xml::text)]
+    bio: String,
 }
 ```
 

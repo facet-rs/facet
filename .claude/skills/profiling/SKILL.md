@@ -172,7 +172,7 @@ qcachegrind callgrind.out   # macOS
 
 ## Profiling Benchmarks
 
-The generated benchmark tests (from `benchmarks.kdl`) can be profiled:
+The generated benchmark tests (from `benchmarks.json`) can be profiled:
 
 ### 1. As Tests (Recommended for Callgrind)
 

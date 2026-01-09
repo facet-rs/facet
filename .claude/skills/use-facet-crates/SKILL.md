@@ -13,7 +13,7 @@ When writing code in this workspace, prefer facet-based crates over serde-based 
 |--------------------|--------------------|-----------------------------------------|
 | `serde`            | `facet`            | Core derive and traits                  |
 | `serde_json`       | `facet-json`       | JSON serialization/deserialization      |
-| `toml`             | `facet-toml`       | TOML parsing (or consider `facet-kdl`)  |
+| `toml`             | `facet-toml`       | TOML parsing                            |
 | `serde_yaml`       | `facet-yaml`       | YAML support                            |
 | `clap`             | `facet-args`       | CLI argument parsing                    |
 | `serde_derive`     | `facet` (derive)   | `#[derive(Facet)]` replaces Serialize/Deserialize |

@@ -29,7 +29,7 @@ facet-json = "{{ data.versions.facet }}"
 miette = { version = "7", features = ["fancy"] } # pretty diagnostics
 ```
 
-If you also need YAML/TOML/KDL/etc., add `facet-yaml`, `facet-toml`, `facet-kdl`, `facet-msgpack`, etc.
+If you also need YAML/TOML/KDL/etc., add `facet-yaml`, `facet-toml`, `facet-msgpack`, etc.
 
 ### Optional feature flags
 - Time/UUID: enable the matching features on the format crate (check the crate docs).

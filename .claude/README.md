@@ -43,7 +43,7 @@ This directory contains Claude Code project configuration and guidance.
 ### Before Running Benchmarks
 1. Check CLAUDE.md "Benchmarking" section for quick commands
 2. Read `.claude/skills/benchmarking.md` for full documentation
-3. Remember: benchmarks are defined in `benchmarks.kdl`, not `.rs` files
+3. Remember: benchmarks are defined in `benchmarks.json`, not `.rs` files
 
 ### Before Debugging Crashes
 1. Check `.claude/skills/debug-with-valgrind.md`

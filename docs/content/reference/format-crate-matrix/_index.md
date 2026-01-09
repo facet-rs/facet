@@ -20,7 +20,6 @@ Note: S = Serialization, D = Deserialization
 | Crate | Direction | Format Type | Parser | Showcase |
 |-------|-----------|-------------|--------|----------|
 | [facet-json](https://docs.rs/facet-json) | SD | Text | Event-based (custom) | [View](/guide/showcases/json) |
-| [facet-kdl](https://docs.rs/facet-kdl) | SD | Text (node-based) | DOM ([kdl](https://docs.rs/kdl)) | [View](/guide/showcases/kdl) |
 | [facet-yaml](https://docs.rs/facet-yaml) | SD | Text | Event-based ([saphyr-parser](https://docs.rs/saphyr-parser)) | [View](/guide/showcases/yaml) |
 | [facet-toml](https://docs.rs/facet-toml) | SD | Text | Event-based ([toml_parser](https://docs.rs/toml_parser)) | [View](/guide/showcases/toml) |
 | [facet-xml](https://docs.rs/facet-xml) | SD | Text | Event-based ([quick-xml](https://docs.rs/quick-xml)) | 🚫 |

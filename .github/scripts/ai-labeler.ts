@@ -66,7 +66,7 @@ async function fetchPRDiff(
   octokit: Octokit,
   owner: string,
   repo: string,
-  prNumber: number
+  prNumber: number,
 ): Promise<string> {
   try {
     const { data } = await octokit.rest.pulls.get({
@@ -92,7 +92,7 @@ async function callGitHubModels(
   title: string,
   body: string,
   eventType: "issue" | "pull_request",
-  diff?: string
+  diff?: string,
 ): Promise<Label[]> {
   const itemType = eventType === "issue" ? "issue" : "pull request";
 
@@ -117,7 +117,6 @@ Format crates (pick if the ${itemType} is specifically about one of these):
 - "🐪 yaml": facet-yaml crate
 - "🍊 toml": facet-toml crate
 - "📄 xml": facet-xml crate
-- "🟣 kdl": facet-kdl crate
 - "📦 msgpack": facet-msgpack crate
 - "📬 postcard": facet-postcard crate
 - "📊 csv": facet-csv crate
@@ -146,20 +145,18 @@ Process labels:
     userContent += `\n\nPR Diff:\n${diff}`;
   }
 
-  const response = await fetch(
-    "https://models.github.ai/inference/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are a GitHub ${itemType} classifier for the "facet" Rust library.
+  const response = await fetch("https://models.github.ai/inference/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "openai/gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are a GitHub ${itemType} classifier for the "facet" Rust library.
 facet is a reflection and serialization framework for Rust.
 
 Analyze the ${itemType} and return a JSON array of applicable labels. Choose labels that accurately describe the ${itemType}.
@@ -174,17 +171,16 @@ Rules:
 5. For PRs with a diff: analyze the actual code changes to determine which crates are affected and whether changes are breaking
 
 Example response: ["🐛 bug", "🔵 json"]`,
-          },
-          {
-            role: "user",
-            content: userContent,
-          },
-        ],
-        max_tokens: 200,
-        temperature: 0.1, // Low temperature for consistent classification
-      }),
-    }
-  );
+        },
+        {
+          role: "user",
+          content: userContent,
+        },
+      ],
+      max_tokens: 200,
+      temperature: 0.1, // Low temperature for consistent classification
+    }),
+  });
 
   if (!response.ok) {
     const error = await response.text();
@@ -214,7 +210,7 @@ Example response: ["🐛 bug", "🔵 json"]`,
 
   // Validate labels against our allowed list
   const validLabels = labels.filter((label): label is Label =>
-    AVAILABLE_LABELS.includes(label as Label)
+    AVAILABLE_LABELS.includes(label as Label),
   );
 
   return validLabels;

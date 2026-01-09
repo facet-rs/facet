@@ -17,7 +17,7 @@ struct Config {
 
 From this single derive, you get:
 
-- **Serialization** — JSON, YAML, TOML, KDL, MessagePack
+- **Serialization** — JSON, YAML, TOML, MessagePack
 - **Pretty-printing** — Colored output with sensitive field redaction
 - **Diffing** — Structural comparison between values
 - **Introspection** — Query type information at runtime

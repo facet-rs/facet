@@ -36,7 +36,6 @@ use facet_args as args;  // Enables args:: prefix
 
 | Crate | Namespace | Example Attributes |
 |-------|-----------|-------------------|
-| [`facet-kdl`](https://docs.rs/facet-kdl) | `kdl` | `child`, `children`, `property`, `argument`, `arguments`, `node_name` |
 | [`facet-args`](https://docs.rs/facet-args) | `args` | `positional`, `named`, `short`, `subcommand` |
 | [`facet-yaml`](https://docs.rs/facet-yaml) | `serde` | `rename` |
 

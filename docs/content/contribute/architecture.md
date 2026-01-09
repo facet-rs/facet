@@ -38,7 +38,7 @@ insert_anchor_links = "heading"
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │              Format Crates & Utility Crates                     │
-│  facet-json, facet-yaml, facet-kdl, facet-toml, facet-args      │
+│  facet-json, facet-yaml, facet-toml, facet-args                 │
 │  facet-pretty, facet-diff, facet-assert, facet-value            │
 └─────────────────────────────────────────────────────────────────┘
 ```
