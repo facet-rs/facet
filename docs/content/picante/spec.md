@@ -137,7 +137,7 @@ Reading an input record at `(kind, key)` at revision `R` MUST return the value t
 r[derived.determinism]
 For Picante’s caching semantics to be meaningful, derived query computations SHOULD be observationally pure with respect to the database state they read: the returned value SHOULD be a deterministic function of the values of the records they depend on.
 
-If a derived query reads external state without routing that state through an input ingredient (e.g., reading a file directly), the runtime MAY return cached values that do not reflect changes in that external state until some input change causes recomputation.
+Note: If a derived query reads external state without routing that state through an input ingredient (e.g., reading a file directly), caching can return values that do not reflect changes in that external state until some input change causes recomputation.
 
 ### Dependency tracking
 
