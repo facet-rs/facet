@@ -8,54 +8,52 @@ This document specifies **observable semantics**: what a user of the API can rel
 
 ## Model and Terms
 
-### Runtime instance and runtime family
+### Database and views
 
-A **runtime instance** is the in-memory Picante state owned by one database object (created via `#[picante::db]`) or by one snapshot of that database.
-Concretely: if you have two distinct `Database` values in your Rust program, they are two distinct runtime instances.
-This is not “per task” or “per thread”; it is “per database object”.
+A **database** is the logical unit of Picante state you care about: a set of inputs and derived-query semantics, plus (optionally) any snapshots derived from it.
 
-A **runtime family** is a set of related runtime instances consisting of:
+A **view** is a particular handle you run queries against and apply mutations to. There are two common view kinds:
 
-- one “root” database instance, and
-- all snapshots created from that database instance (and snapshots-of-snapshots, if supported).
+- the **primary view** (the `Database` value you constructed with `Database::new()`), and
+- **snapshot views** (values like `DatabaseSnapshot` created from a view).
 
-Families matter only for allowed sharing optimizations; see “Sharing optimizations” below.
+This is not “per task” or “per thread”; it is “per database/view object”.
 
-#### Multiple runtime instances in one program (non-normative)
+#### Multiple databases and views in one program (non-normative)
 
-You can have multiple independent Picante databases in a single Rust program by constructing multiple `#[picante::db]` values:
+You can have multiple independent Picante databases in a single Rust program by constructing multiple primary views:
 
 ```rust
 #[picante::db(inputs(Item), interned(Label), tracked(item_length))]
 pub struct Database {}
 
-let db_a = Database::new(); // runtime instance A (family A)
-let db_b = Database::new(); // runtime instance B (family B), independent from A
+let db_a = Database::new(); // database A, primary view
+let db_b = Database::new(); // database B, primary view (independent from A)
 ```
 
-Each `Database::new()` creates a new runtime family with independent observable state.
-Operationally, this means mutations in `db_a` are not observable through `db_b`, and vice versa (they are independent databases).
-By contrast, cloning a shared reference to the same database (e.g. `Arc<Database>`) does not create a new runtime instance; it is still the same database object.
+Each `Database::new()` creates a new database with independent observable state.
+Operationally, this means mutations in `db_a` are not observable through `db_b`, and vice versa.
+By contrast, cloning a shared reference to the same view (e.g. `Arc<Database>`) does not create a new database or a new view; it is still the same database handle.
 
-You create additional runtime instances *within the same family* by taking snapshots:
+You create additional views *of the same database* by taking snapshots:
 
 ```rust
-let snap_a1 = DatabaseSnapshot::from_database(&db_a).await; // runtime instance A1 (family A)
-let snap_a2 = DatabaseSnapshot::from_database(&db_a).await; // runtime instance A2 (family A)
+let snap_a1 = DatabaseSnapshot::from_database(&db_a).await; // database A, snapshot view 1
+let snap_a2 = DatabaseSnapshot::from_database(&db_a).await; // database A, snapshot view 2
 ```
 
-Snapshots are separate runtime instances (they have their own memo tables and evolve independently), but they remain members of the parent’s family.
+Snapshots are separate views (they have their own memo tables and evolve independently), but they remain views of the same database.
 
 ### Revision
 
 r[revision.type]
-A **revision** is an opaque token that identifies a database state within a runtime instance.
+A **revision** is an opaque token that identifies a database state within a view.
 
 r[revision.order]
-Within a runtime instance, revisions MUST form a total order consistent with the “happens-after” ordering of successful input mutations that change observable state.
+Within a view, revisions MUST form a total order consistent with the “happens-after” ordering of successful input mutations that change observable state in that view.
 
 r[revision.advance]
-Any successful input mutation that changes observable input state MUST advance the runtime to a fresh revision that is greater than the prior revision.
+Any successful input mutation that changes observable input state MUST advance the view to a fresh revision that is greater than the prior revision.
 
 ### Ingredients and records
 
@@ -173,7 +171,7 @@ A kind MUST uniquely identify a specific ingredient definition within a database
 Two distinct ingredient definitions MUST NOT share the same kind.
 
 r[kind.mapping]
-The mapping from Rust constructs (types/functions) to kinds is implementation-defined, but it MUST be deterministic within a single runtime instance and MUST preserve `r[kind.identity]`.
+The mapping from Rust constructs (types/functions) to kinds is implementation-defined, but it MUST be deterministic within a single view and MUST preserve `r[kind.identity]`.
 
 ---
 
@@ -293,13 +291,13 @@ let config: Option<std::sync::Arc<ConfigData>> = db.get(ConfigKey)?;
 > 1. If the record did not previously exist, it is created with the provided value.
 > 2. If the record exists and the value is byte-for-byte / structural-equality equal to the current value, the operation MUST be a no-op.
 > 3. If the record exists and the value differs from the current value, the value MUST be replaced.
-> 4. The runtime revision MUST advance to a fresh later revision iff the operation is not a no-op.
+> 4. The view revision MUST advance to a fresh later revision iff the operation is not a no-op.
 
 > r[input.remove]
 > Removing an input record MUST behave as follows:
 >
 > 1. If the record does not exist, the operation MUST be a no-op.
-> 2. If the record exists, it MUST be removed and the runtime revision MUST advance to a fresh later revision.
+> 2. If the record exists, it MUST be removed and the view revision MUST advance to a fresh later revision.
 
 ### Batch mutations
 
@@ -334,7 +332,7 @@ The exact shape (builder vs. iterator vs. transactional closure) is up to the im
 >
 > - There MUST exist a single revision boundary such that observers see either all batch mutations applied or none.
 > - No observer MAY observe a state in which only a strict subset of the batch mutations have been applied.
-> - The runtime MUST advance to a fresh later revision iff at least one mutation in the batch changes observable input state; otherwise the batch is a no-op.
+> - The view MUST advance to a fresh later revision iff at least one mutation in the batch changes observable input state; otherwise the batch is a no-op.
 
 ## Derived queries
 
@@ -450,13 +448,13 @@ r[snapshot.memo-isolation]
 Derived query memoization performed by the snapshot MUST be isolated from the source database: caching a derived value in one MUST NOT mutate the other’s memo tables.
 
 r[snapshot.interned]
-Interned ingredients are exempt from snapshot isolation: the intern table is append-only and is shared across a runtime family. Newly interned values become visible to both the source database and snapshots.
+Interned ingredients are exempt from snapshot isolation: the intern table is append-only and is shared across all views of a database. Newly interned values become visible to both the source view and snapshot views.
 
 ---
 
 # Sharing optimizations (non-observable)
 
-Within a runtime family, implementations MAY share work across runtime instances (e.g., coalescing concurrent evaluations of the same derived query at the same revision, or adopting completed results) as an optimization.
+Within a database, implementations MAY share work across views (e.g., coalescing concurrent evaluations of the same derived query at the same revision, or adopting completed results) as an optimization.
 
 r[sharing.nonobservable]
-Such sharing MUST NOT change observable behavior: the values and errors returned MUST be indistinguishable from a correct, non-sharing implementation that evaluates each runtime instance independently under the semantics above.
+Such sharing MUST NOT change observable behavior: the values and errors returned MUST be indistinguishable from a correct, non-sharing implementation that evaluates each view independently under the semantics above.
