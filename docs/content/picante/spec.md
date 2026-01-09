@@ -141,10 +141,10 @@ Note: If a derived query reads external state without routing that state through
 
 ### Dependency tracking
 
-r[dep.recording]
-During evaluation of a derived query, each read of an input record or derived query result MUST be recorded as a dependency of the evaluating query for the purpose of future revalidation.
-
-Dependencies MUST be recorded with enough precision to revalidate: at minimum, the dependency’s `(kind, key)` identity.
+> r[dep.recording]
+> During evaluation of a derived query, each read of an input record or derived query result MUST be recorded as a dependency of the evaluating query for the purpose of future revalidation.
+>
+> Dependencies MUST be recorded with enough precision to revalidate: at minimum, the dependency’s `(kind, key)` identity.
 
 ### Cell state and visibility
 
@@ -160,29 +160,29 @@ When a derived query is recomputed at revision `R` and produces a value equal to
 
 ### Revalidation
 
-r[cell.revalidate]
-When accessing a cached derived value at revision `R`, if the cached value is not known-valid at `R`, the runtime MUST revalidate it by checking the stored dependencies:
-
-- If every dependency’s `changed_at` is `<=` the cached value’s `changed_at`, revalidation succeeds and the cached value MUST be returned (with `verified_at` updated to `R`).
-- Otherwise, revalidation fails and the query MUST be recomputed.
+> r[cell.revalidate]
+> When accessing a cached derived value at revision `R`, if the cached value is not known-valid at `R`, the runtime MUST revalidate it by checking the stored dependencies:
+>
+> - If every dependency’s `changed_at` is `<=` the cached value’s `changed_at`, revalidation succeeds and the cached value MUST be returned (with `verified_at` updated to `R`).
+> - Otherwise, revalidation fails and the query MUST be recomputed.
 
 r[cell.revalidate-missing]
 If a dependency’s ingredient is not available (e.g., the kind is not registered in the current database), revalidation MUST fail and recomputation MUST be attempted.
 
 ### Errors and poisoning
 
-r[cell.poison]
-If computation fails (returns an error or panics), the runtime MUST record a failure for that `(kind, key, revision)` such that:
-
-- Subsequent accesses at the same revision return the same error without rerunning the computation.
-- After the revision advances due to an input change, a new access MAY attempt recomputation.
+> r[cell.poison]
+> If computation fails (returns an error or panics), the runtime MUST record a failure for that `(kind, key, revision)` such that:
+>
+> - Subsequent accesses at the same revision return the same error without rerunning the computation.
+> - After the revision advances due to an input change, a new access MAY attempt recomputation.
 
 ## Invalidation semantics
 
-r[dep.invalidation]
-Whenever an input record changes at revision `R`, any derived query whose dependency set includes that input record MUST be treated as stale for revisions `>= R`.
-
-Staleness is a logical property: implementations MAY propagate invalidation eagerly or lazily, but MUST ensure the revalidation rules above are upheld.
+> r[dep.invalidation]
+> Whenever an input record changes at revision `R`, any derived query whose dependency set includes that input record MUST be treated as stale for revisions `>= R`.
+>
+> Staleness is a logical property: implementations MAY propagate invalidation eagerly or lazily, but MUST ensure the revalidation rules above are upheld.
 
 ## Cycles
 
@@ -197,11 +197,11 @@ This requirement is semantic: it constrains observable behavior (an error must b
 
 A **snapshot** is a fork of a database’s state at a single revision, with isolated subsequent mutations.
 
-r[snapshot.creation]
-Creating a snapshot MUST bind it to a single revision `R` of the source database such that:
-
-- For every input record, reads from the snapshot behave exactly as reads from the source database at revision `R`.
-- For derived queries, the snapshot MAY start with empty memo tables or with a copy of memoized values from the source, but in all cases results MUST be consistent with the snapshot’s view of inputs and the revalidation rules.
+> r[snapshot.creation]
+> Creating a snapshot MUST bind it to a single revision `R` of the source database such that:
+>
+> - For every input record, reads from the snapshot behave exactly as reads from the source database at revision `R`.
+> - For derived queries, the snapshot MAY start with empty memo tables or with a copy of memoized values from the source, but in all cases results MUST be consistent with the snapshot’s view of inputs and the revalidation rules.
 
 r[snapshot.isolation]
 After snapshot creation, subsequent input changes in the source database MUST NOT be visible in the snapshot, and subsequent input changes in the snapshot MUST NOT be visible in the source database.
