@@ -41,6 +41,33 @@ Every record is addressed by:
 - a **kind** identifying which ingredient it belongs to, and
 - a **key** identifying the record within that ingredient.
 
+Rust-centric intuition: a “kind” corresponds to a specific ingredient definition in your Rust program (an `#[picante::input]` type, an `#[picante::interned]` type, or an `#[picante::tracked]` function). Each such definition defines its own disjoint keyspace.
+
+Example:
+
+```rust
+use picante::PicanteResult;
+
+#[picante::input]
+pub struct Item {
+    #[key]
+    pub id: u32,
+    pub value: String,
+}
+
+#[picante::interned]
+pub struct Label {
+    pub text: String,
+}
+
+#[picante::tracked]
+pub async fn item_length<DB: DatabaseTrait>(db: &DB, item: Item) -> PicanteResult<u64> {
+    Ok(item.value(db)?.len() as u64)
+}
+```
+
+In this example, there is one kind for the `Label` interner, one kind for the `item_length` derived query, and one (or more) kind(s) backing the `Item` input (the exact split is not semantically relevant; what matters is that `Item`’s keys never collide with `Label`’s keys or with `item_length`’s keys).
+
 r[key.equality]
 Two uses of the same ingredient with equal key values MUST refer to the same record.
 Distinct key values MUST NOT alias the same record.
