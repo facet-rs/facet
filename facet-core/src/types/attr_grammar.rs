@@ -25,6 +25,6 @@
 /// }
 /// ```
 pub trait AttrEnum: 'static + Sized {
-    /// The name of this attribute grammar (e.g., "orm", "kdl")
+    /// The name of this attribute grammar (e.g., "orm", "xml")
     const NAME: &'static str;
 }

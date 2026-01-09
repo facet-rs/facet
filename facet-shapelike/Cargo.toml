@@ -25,7 +25,6 @@ facet-reflect = { path = "../facet-reflect", version = "0.42.0", default-feature
 facet-args = { path = "../facet-args" }
 facet-assert = { path = "../facet-assert" }
 facet-json = { path = "../facet-json" }
-facet-kdl = { path = "../facet-kdl" }
 facet-xml = { path = "../facet-xml" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 

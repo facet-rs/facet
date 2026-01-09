@@ -287,16 +287,16 @@ struct MyType { ... }
 Extension attributes require importing the crate with an alias:
 
 ```rust,noexec
-use facet_kdl as kdl;  // Enables kdl:: prefix
+use facet_xml as xml;  // Enables xml:: prefix
 
 #[derive(Facet)]
 struct Config {
-    #[facet(kdl::property)]  // Now works
+    #[facet(xml::property)]  // Now works
     name: String,
 }
 ```
 
-Without the import, `kdl::property` is not recognized.
+Without the import, `xml::property` is not recognized.
 
 ### Why do i get errors on the recursive data types
 Due to the current facet implementation you need to manually tag where we should introduce indirection,

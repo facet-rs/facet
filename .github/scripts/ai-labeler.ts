@@ -28,7 +28,6 @@ const AVAILABLE_LABELS = [
   "🐪 yaml",
   "🍊 toml",
   "📄 xml",
-  "🟣 kdl",
   "📦 msgpack",
   "📬 postcard",
   "📊 csv",

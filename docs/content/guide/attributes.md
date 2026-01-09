@@ -487,11 +487,9 @@ struct Query {
 
 ### `child`
 
-Mark a field as a child node for hierarchical formats like KDL or XML.
+Mark a field as a child node for hierarchical formats like  XML.
 
 ```rust,noexec
-use facet_kdl as kdl;
-
 #[derive(Facet)]
 struct Document {
     title: String,
@@ -802,36 +800,6 @@ assert_eq!(*parsed.counter, 42);
 ## Extension attributes
 
 Format crates can define their own namespaced attributes. See the [Extend guide](/extend/) for details.
-
-### KDL attributes
-
-```rust,noexec
-use facet_kdl as kdl;
-
-#[derive(Facet)]
-struct Dependency {
-    #[facet(kdl::node_name)]
-    name: String,
-
-    #[facet(kdl::argument)]
-    version: String,
-
-    #[facet(kdl::property)]
-    features: Vec<String>,
-}
-
-// For children collections, you can specify a custom node name:
-#[derive(Facet)]
-struct Config {
-    // Matches "dependency" nodes (auto-singularized from field name)
-    #[facet(kdl::children)]
-    dependencies: Vec<Dependency>,
-
-    // Matches "extra" nodes (custom node name)
-    #[facet(kdl::children = "extra")]
-    extras: Vec<Extra>,
-}
-```
 
 ### Args attributes
 
