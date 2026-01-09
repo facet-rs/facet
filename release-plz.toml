@@ -48,11 +48,6 @@ version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
 [[package]]
-name = "facet-miette"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
 name = "facet-default"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"

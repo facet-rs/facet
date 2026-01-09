@@ -1994,15 +1994,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-miette"
-version = "0.42.0"
-dependencies = [
- "facet",
- "facet-error",
- "miette",
-]
-
-[[package]]
 name = "facet-msgpack"
 version = "0.42.0"
 dependencies = [
