@@ -659,3 +659,55 @@ Within a database, implementations MAY share work across views (e.g., coalescing
 
 r[sharing.nonobservable]
 Such sharing MUST NOT change observable behavior: the values and errors returned MUST be indistinguishable from a correct, non-sharing implementation that evaluates each view independently under the semantics above.
+
+---
+
+# Memory bounds and eviction (non-observable)
+
+This section specifies which in-memory structures MAY be bounded and evicted without changing observable semantics.
+
+## Inputs are not implicitly evictable
+
+Input ingredients are part of the observable database state.
+
+> r[evict.inputs]
+> Implementations MUST NOT implicitly evict or forget input records as a result of memory pressure or cache policy.
+> The only way an input record becomes absent is via explicit user-visible mutation (e.g., `remove` or a batch that removes it).
+
+## Derived memoization may be evicted
+
+Cached derived-query results are an optimization and may be evicted.
+
+> r[evict.derived]
+> Implementations MAY evict cached derived-query entries (values and associated metadata) at any time, provided eviction is non-observable:
+>
+> - Eviction MUST NOT change the values or errors returned for any subsequent operations; it MAY only increase recomputation work.
+> - If a cached value has been evicted, a subsequent access MUST behave as if the value was not yet computed at that revision, and MUST recompute (subject to `r[derived.revision-binding]`).
+
+## Dependency metadata may be evicted conservatively
+
+Dependency metadata (stored dependency lists, reverse dependency graphs, durability watermarks) is also an optimization.
+
+> r[evict.deps]
+> Implementations MAY evict dependency metadata, but eviction MUST be conservative with respect to correctness:
+>
+> - If dependency metadata needed for revalidation is missing, revalidation MUST fail and recomputation MUST be attempted (equivalent to treating the cached entry as stale).
+> - If reverse-dependency metadata used for eager invalidation is missing, implementations MAY fall back to lazy invalidation, but MUST still satisfy `r[cell.revalidate]` and `r[dep.invalidation]`.
+
+## Poison is not evictable within a revision
+
+Poisoning is an observable behavior at a given revision (errors are memoized for that revision).
+
+> r[evict.poison]
+> If `(kind, key)` is in a poisoned/failed state for revision `R` (per `r[cell.poison]`), the implementation MUST NOT evict that failure information while the view remains at revision `R`.
+>
+> Equivalently: once an access has failed at revision `R` for `(kind, key, R)`, subsequent accesses at revision `R` MUST continue to return that same failure even under eviction pressure.
+>
+> After the view advances to a later revision due to an input change, the implementation MAY drop prior poisoned state consistent with `r[cell.poison]`.
+
+## Intern tables are unbounded
+
+Interned records are stable identity tokens.
+
+> r[evict.interned]
+> Intern tables MUST be treated as unbounded within a process: implementations MUST NOT evict or compact interned records in a way that changes the meaning of an existing intern ID.
