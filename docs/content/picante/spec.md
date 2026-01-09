@@ -58,7 +58,7 @@ pub struct Item {
 }
 ```
 
-Here, the key is `id: u32` (e.g. `Item::new(&db, 1, ...)` addresses the `id == 1` record).
+Here, the key is `id: u32` (e.g. `ItemKey(1)` addresses the `id == 1` record).
 
 Singleton inputs (no `#[key]` field) are conceptually keyed by a unit-like key: there is exactly one record.
 
@@ -78,6 +78,44 @@ pub async fn item_length<DB: DatabaseTrait>(db: &DB, item: Item) -> PicanteResul
 
 Here, the key is `(item,)`, where `item` is the `Item` handle (its stable identity), not the mutable `ItemData` contents.
 
+For multiple parameters after `db`, the key is the tuple of all arguments in order:
+
+```rust
+#[picante::tracked]
+pub async fn item_has_label<DB: DatabaseTrait>(
+    db: &DB,
+    item: Item,
+    label: Label,
+) -> PicanteResult<bool> {
+    // ...
+    # let _ = (db, item, label);
+    # Ok(false)
+}
+```
+
+Here, the key is `(item, label)`.
+This “argument tuple” rule means you can control key shape by choosing your function signature.
+If you want a single structured key rather than a multi-arg tuple, wrap it in a newtype:
+
+```rust
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct ItemLabelKey {
+    pub item: Item,
+    pub label: Label,
+}
+
+#[picante::tracked]
+pub async fn item_has_label2<DB: DatabaseTrait>(
+    db: &DB,
+    key: ItemLabelKey,
+) -> PicanteResult<bool> {
+    # let _ = (db, key);
+    Ok(false)
+}
+```
+
+In this second form, the key is `(ItemLabelKey,)`.
+
 #### Interned
 
 `#[picante::interned]` defines a kind for an append-only intern table.
@@ -93,12 +131,9 @@ pub struct Label {
 Creating an intern (`Label::new(&db, "tag".into())`) conceptually looks up or inserts by value and returns a `Label(pub InternId)`.
 Reading an intern (e.g. `label.text(&db)`) uses that ID as the key.
 
-r[key.equality]
-Two uses of the same ingredient with equal key values MUST refer to the same record.
-Distinct key values MUST NOT alias the same record.
+An intern handle is a stable identity token: you can store it, pass it between queries, and use it as part of derived-query keys (as in the tracked example above).
 
-r[key.hash]
-Implementations MAY expose a stable diagnostic identifier for keys, but any such identifier MUST NOT be used as a correctness boundary.
+In this specification, record identity is always the pair `(kind, key)`.
 
 r[kind.identity]
 A kind MUST uniquely identify a specific ingredient definition within a database type.
@@ -113,37 +148,106 @@ The mapping from Rust constructs (types/functions) to kinds is implementation-de
 
 ## Inputs
 
-### API (Rust, non-normative)
+### API direction (Rust, non-normative)
 
-Picante exposes input storage through an `InputIngredient<K, V>` with operations like:
+This section is intentionally Rust-centric and describes a plausible *user-facing* API shape.
+It is non-normative: implementations may expose different surface APIs, but the observable semantics are defined by the requirements below.
+
+#### Typed keys
+
+For keyed inputs, user code benefits from a distinct key type that:
+
+- is cheap to copy/clone and hash,
+- is unambiguous at call sites (you can’t accidentally pass a `u32` key for the wrong record type),
+- carries a link to the record type it addresses.
+
+One ergonomic pattern is to generate a `{Name}Key` type for each `#[picante::input]` kind:
 
 ```rust
-impl<K, V> InputIngredient<K, V> {
-    pub fn get<DB: HasRuntime>(&self, db: &DB, key: &K) -> PicanteResult<Option<V>>;
-    pub fn set<DB: HasRuntime>(&self, db: &DB, key: K, value: V) -> Revision;
-    pub fn remove<DB: HasRuntime>(&self, db: &DB, key: &K) -> Revision;
+#[picante::input]
+pub struct Item {
+    #[key]
+    pub id: u32,
+    pub value: String,
+}
+
+/// Generated (illustrative).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ItemKey(pub u32);
+```
+
+Singleton inputs can use a unit-like key (generated or implicit):
+
+```rust
+#[picante::input]
+pub struct Config {
+    pub debug: bool,
+}
+
+/// Generated (illustrative).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConfigKey;
+```
+
+In addition, inputs often benefit from a “data-only” type (no key fields) to represent the non-key portion of an input record:
+
+```rust
+/// Generated (illustrative).
+pub struct ItemData {
+    pub value: String,
+}
+
+/// Generated (illustrative).
+pub struct ConfigData {
+    pub debug: bool,
 }
 ```
 
-Some applications also benefit from batching multiple mutations. A batch API is not required, but if provided it might look like:
+This enables APIs like `db.get(ItemKey(1)) -> Option<Arc<ItemData>>` without repeating field names or allocating temporary structs.
+
+#### Core operations
+
+At the database level, one goal is to make the mutation/read operations feel like “normal Rust data access”:
+
+- `db.set(record)` for inserts/updates
+- `db.get(key)` to read
+- `db.remove(key)` to delete
+
+An illustrative shape (not required) looks like:
 
 ```rust
-enum InputMutation<K, V> {
-    Set { key: K, value: V },
-    Remove { key: K },
+pub trait InputKey: Copy + Eq + std::hash::Hash + Send + Sync + 'static {
+    /// The input record type addressed by this key.
+    type Record: InputRecord<Key = Self>;
 }
 
-impl<K, V> InputIngredient<K, V> {
-    pub fn apply_batch<DB: HasRuntime>(
-        &self,
-        db: &DB,
-        mutations: impl IntoIterator<Item = InputMutation<K, V>>,
-    ) -> Revision;
+pub trait InputRecord: Send + Sync + 'static {
+    type Key: InputKey<Record = Self>;
+    type Data: Send + Sync + 'static;
+
+    fn key(&self) -> Self::Key;
+    fn into_data(self) -> Self::Data;
 }
+
+pub trait DbInputs {
+    fn get<K: InputKey>(&self, key: K) -> PicanteResult<Option<std::sync::Arc<<K::Record as InputRecord>::Data>>>;
+    fn set<R: InputRecord>(&self, record: R) -> PicanteResult<Revision>;
+    fn remove<K: InputKey>(&self, key: K) -> PicanteResult<Revision>;
+}
+```
+
+This keeps `set` “obvious” (the record value carries its own key) while ensuring `get/remove` are type-safe (you must provide the correct key type).
+Implementations may also offer convenience methods on the generated types (e.g. `Item::set(&db, ...)`, `ItemKey::get(&db)`) layered on top of the same semantics.
+
+For singleton inputs, `set` can remain “obvious” while `get/remove` stay typed:
+
+```rust
+db.set(Config { debug: true })?;
+let config: Option<std::sync::Arc<ConfigData>> = db.get(ConfigKey)?;
 ```
 
 > r[input.get]
-> Calling `InputIngredient::get(db, key)` MUST:
+> Reading an input record by key MUST:
 >
 > - Return `Ok(Some(value))` if the record exists in the database state associated with `db`.
 > - Return `Ok(None)` if the record does not exist in that database state.
@@ -167,6 +271,30 @@ impl<K, V> InputIngredient<K, V> {
 ### Batch mutations
 
 Many real workloads update multiple inputs together (e.g., a filesystem scan updating digests for many paths).
+
+An ergonomic direction is to provide a batch builder that accepts typed operations and commits them together:
+
+```rust
+pub enum Mutation {
+    SetItem(Item),
+    RemoveItem(ItemKey),
+    // ... more generated variants, or a type-erased alternative ...
+}
+
+pub trait DbBatch {
+    type Batch;
+
+    fn batch(&self) -> Self::Batch;
+}
+
+pub trait BatchOps {
+    fn set_item(&mut self, item: Item);
+    fn remove_item(&mut self, key: ItemKey);
+    fn commit(self) -> PicanteResult<Revision>;
+}
+```
+
+The exact shape (builder vs. iterator vs. transactional closure) is up to the implementation; the semantics are captured by `r[input.batch]`.
 
 > r[input.batch]
 > If an implementation provides a batch input-mutation operation (i.e., an API that applies multiple `set`/`remove` mutations as one operation), it MUST be atomic with respect to observable database state:
