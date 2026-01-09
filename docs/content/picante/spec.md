@@ -49,6 +49,20 @@ Timeline (conceptual):
 6. A new call `read_file_bytes(db, "a.txt", H2)` uses a different key and is computed/cached independently of the `H1` entry.
 7. If you take a snapshot after step 5, the snapshot view “freezes” `FileDigest("a.txt") == H2` and continues to observe that value even if the primary view is later mutated.
 
+### Concurrency model (high level)
+
+This specification uses the standard notion of **linearizability** for concurrent operations.
+Informally: every operation behaves as if it took effect at a single instant between when it started and when it returned.
+
+> r[concurrency.linearizable]
+> All observable operations on a view (input reads, input mutations, snapshot creation, and derived-query accesses) MUST be linearizable:
+>
+> - For each operation call, there MUST exist a single linearization point between invocation and completion.
+> - There MUST exist a total order of all completed operations consistent with real-time ordering (if A completes before B starts, then A appears before B in that order).
+> - Each operation’s result MUST be the same as if operations executed sequentially in that total order.
+>
+> This requirement forbids “torn” observations: callers MUST NOT observe partial application of an operation.
+
 ### Database and views
 
 A **database** is the logical unit of Picante state you care about: a set of inputs and derived-query semantics, plus (optionally) any snapshots derived from it.
@@ -95,6 +109,10 @@ Within a view, revisions MUST form a total order consistent with the “happens-
 
 r[revision.advance]
 Any successful input mutation that changes observable input state MUST advance the view to a fresh revision that is greater than the prior revision.
+
+> r[revision.choose]
+> Each read or derived-query access on a view MUST be associated with a specific revision `R` of that view.
+> The revision `R` is the view’s current revision at the operation’s linearization point (see `r[concurrency.linearizable]`).
 
 ### Ingredients and records
 
@@ -389,9 +407,21 @@ The exact shape (builder vs. iterator vs. transactional closure) is up to the im
 >
 > - There MUST exist a single revision boundary such that observers see either all batch mutations applied or none.
 > - No observer MAY observe a state in which only a strict subset of the batch mutations have been applied.
+> - The batch MUST have the same final effect as applying its component mutations sequentially in the order provided, and then committing the resulting state atomically at the batch’s revision boundary.
 > - The view MUST advance to a fresh later revision iff at least one mutation in the batch changes observable input state; otherwise the batch is a no-op.
 
 ## Derived queries
+
+### Revision binding (per access)
+
+Derived queries are always evaluated “at” a revision of a view (even if the evaluation is asynchronous and takes time).
+
+> r[derived.revision-binding]
+> A derived-query access MUST be evaluated at its associated revision `R` (see `r[revision.choose]`):
+>
+> - All input reads and derived-query reads performed as part of that access MUST behave as reads at revision `R`.
+> - If the view advances to a later revision while evaluation is in progress, that MUST NOT change the results of the in-progress access; it remains an evaluation at revision `R`.
+> - A later access to the same derived query at a later associated revision `R' > R` is a distinct access and MAY yield a different result.
 
 ### Determinism contract
 
@@ -475,6 +505,19 @@ If a dependency’s ingredient is not available (e.g., the kind is not registere
 >
 > - Subsequent accesses at the same revision return the same error without rerunning the computation.
 > - After the revision advances due to an input change, a new access MAY attempt recomputation.
+
+### Cancellation (dropped evaluations)
+
+In Rust async, a computation can be *cancelled* by dropping its future. Cancellation is not the same as “the query returned an error”: it is an absence of a result.
+
+> r[derived.cancel]
+> If an in-progress derived-query evaluation at revision `R` is cancelled before it produces a successful value or an error (e.g., the future is dropped), the implementation MUST treat it as not having produced a result:
+>
+> - It MUST NOT update the cached value for `(kind, key)` based on the cancelled evaluation.
+> - It MUST NOT record a failure for revision `R` solely due to cancellation.
+> - A subsequent access at the same revision `R` MAY retry evaluation and complete successfully or with an error.
+>
+> Cancellation of one caller MUST NOT force other concurrent callers to observe a cancellation error; other callers MAY still obtain a normal value or error according to the semantics above.
 
 ## Invalidation semantics
 
