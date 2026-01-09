@@ -137,7 +137,7 @@ Reading an input record at `(kind, key)` at revision `R` MUST return the value t
 r[derived.determinism]
 For Picante’s caching semantics to be meaningful, derived query computations SHOULD be observationally pure with respect to the database state they read: the returned value SHOULD be a deterministic function of the values of the records they depend on.
 
-Note: If a derived query reads external state without routing that state through an input ingredient (e.g., reading a file directly), caching can return values that do not reflect changes in that external state until some input change causes recomputation.
+Note: Picante only tracks dependencies that flow through the database (inputs/derived queries/interned IDs). External state (filesystem contents, network responses, environment variables, clocks, etc.) is not automatically tracked or snapshotted. If a derived query reads external state without routing it through inputs, caching and snapshots can return values that do not reflect changes in that external state until some input change causes recomputation.
 
 ### Dependency tracking
 
@@ -199,7 +199,7 @@ A **snapshot** is a fork of a database’s state at a single revision, with isol
 > Creating a snapshot MUST bind it to a single revision `R` of the source database such that:
 >
 > - For every input record, reads from the snapshot behave exactly as reads from the source database at revision `R`.
-> - For derived queries, the snapshot MAY start with empty memo tables or with a copy of memoized values from the source, but in all cases results MUST be consistent with the snapshot’s view of inputs and the revalidation rules.
+> - For derived queries, evaluations performed against the snapshot MUST be consistent with the snapshot’s view of inputs and the derived-query semantics in this document.
 
 r[snapshot.isolation]
 After snapshot creation, subsequent input changes in the source database MUST NOT be visible in the snapshot, and subsequent input changes in the snapshot MUST NOT be visible in the source database.
@@ -208,7 +208,7 @@ r[snapshot.memo-isolation]
 Derived query memoization performed by the snapshot MUST be isolated from the source database: caching a derived value in one MUST NOT mutate the other’s memo tables.
 
 r[snapshot.interned]
-Interned ingredients are exempt from snapshot isolation: the intern table is append-only and MAY be shared across a runtime family. Newly interned values MAY become visible to both the source database and snapshots.
+Interned ingredients are exempt from snapshot isolation: the intern table is append-only and is shared across a runtime family. Newly interned values become visible to both the source database and snapshots.
 
 ---
 
