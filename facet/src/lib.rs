@@ -229,9 +229,29 @@ pub mod builtin {
             /// ```
             RecursiveType,
 
-            // Note: `traits(...)` and `auto_traits` are compile-time-only directives
+            // Note: `traits(...)`, `auto_traits`, and `bound` are compile-time-only directives
             // processed by the derive macro. They are not stored as runtime attributes.
             // See DeclaredTraits in facet-macros-impl/src/parsed.rs for their handling.
+
+            /// Adds custom trait bounds to the generated Facet impl.
+            /// The bounds are added to the where clause alongside auto-generated bounds.
+            ///
+            /// Usage: `#[facet(bound = "T: Clone + Send")]`
+            ///
+            /// This is useful when a generic type parameter needs additional bounds
+            /// for the Facet implementation, particularly with opaque types.
+            ///
+            /// # Example
+            ///
+            /// ```ignore
+            /// #[derive(Facet)]
+            /// #[facet(opaque)]
+            /// #[facet(bound = "T: Clone")]
+            /// struct Wrapper<T> {
+            ///     inner: T,
+            /// }
+            /// ```
+            Bound(&'static str),
         }
     }
 

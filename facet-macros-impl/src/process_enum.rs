@@ -169,6 +169,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         parsed.generics.as_ref(),
         opaque,
         &facet_crate,
+        &pe.container.attrs.custom_bounds,
     );
     let type_params_call = build_type_params_call(parsed.generics.as_ref(), opaque, &facet_crate);
 

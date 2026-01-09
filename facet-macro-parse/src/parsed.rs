@@ -1,4 +1,5 @@
-use crate::{BoundedGenericParams, RenameRule, unescape};
+use crate::{BoundedGenericParams, LiteralString, RenameRule, unescape};
+use crate::{IParse, ToTokenIter};
 use crate::{Ident, ReprInner, ToTokens, TokenStream};
 use proc_macro2::Span;
 use quote::{quote, quote_spanned};
@@ -535,6 +536,10 @@ pub struct PAttrs {
     /// When true, we use the old specialization-based detection.
     /// When false (and no declared_traits), we generate an empty vtable.
     pub auto_traits: bool,
+
+    /// Custom where clause bounds from `#[facet(bound = "...")]`
+    /// These are added to the generated Facet impl's where clause
+    pub custom_bounds: Vec<TokenStream>,
 }
 
 impl PAttrs {
@@ -617,9 +622,10 @@ impl PAttrs {
             }
         }
 
-        // Extract rename, rename_all, crate, traits, and auto_traits from parsed attrs
+        // Extract rename, rename_all, crate, traits, auto_traits, and bound from parsed attrs
         let mut declared_traits: Option<DeclaredTraits> = None;
         let mut auto_traits = false;
+        let mut custom_bounds: Vec<TokenStream> = Vec::new();
 
         for attr in &facet_attrs {
             if attr.is_builtin() {
@@ -659,6 +665,37 @@ impl PAttrs {
                         // #[facet(auto_traits)] enables specialization-based detection
                         auto_traits = true;
                     }
+                    "bound" => {
+                        // #[facet(bound = "T: Clone + Send")]
+                        // Parse the args as a LiteralString to properly extract the content
+                        let mut iter = attr.args.clone().to_token_iter();
+                        match iter.parse::<LiteralString>() {
+                            Ok(lit_str) if !lit_str.as_str().is_empty() => {
+                                // Parse the string content as a TokenStream
+                                let bound_str = lit_str.as_str();
+                                match bound_str.parse::<TokenStream>() {
+                                    Ok(tokens) => custom_bounds.push(tokens),
+                                    Err(_) => {
+                                        errors.push(CompileError {
+                                            message: format!(
+                                                "invalid bound syntax: `{bound_str}`. \
+                                                 Expected valid Rust where clause predicate."
+                                            ),
+                                            span: attr.key.span(),
+                                        });
+                                    }
+                                }
+                            }
+                            _ => {
+                                errors.push(CompileError {
+                                    message: "expected non-empty string literal for bound, e.g., \
+                                              #[facet(bound = \"T: Clone\")]"
+                                        .to_string(),
+                                    span: attr.key.span(),
+                                });
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -689,6 +726,7 @@ impl PAttrs {
             errors,
             declared_traits,
             auto_traits,
+            custom_bounds,
         }
     }
 
