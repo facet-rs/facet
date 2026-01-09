@@ -15,7 +15,7 @@ struct Config {
 }
 ```
 
-That single derive works with `facet-json`, `facet-yaml`, `facet-kdl`, `facet-args`, `facet-pretty`, `facet-diff`, `facet-assert`, and any future tools built on facet.
+That single derive works with `facet-json`, `facet-yaml`, `facet-args`, `facet-pretty`, `facet-diff`, `facet-assert`, and any future tools built on facet.
 
 ## Data, not code
 

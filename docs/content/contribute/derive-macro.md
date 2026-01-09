@@ -48,4 +48,4 @@ The generated code uses `offset_of!` to compute field offsets and closures to la
 
 ## Extension attributes
 
-The derive macro supports namespaced extension attributes like `#[facet(kdl::property)]`. See the [Extend guide](/extend/) for details.
+The derive macro supports namespaced extension attributes. See the [Extend guide](/extend/) for details.

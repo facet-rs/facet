@@ -56,9 +56,6 @@ let app = Router::new()
 - `yaml`: Enables `Yaml<T>` extractor/response using `facet-yaml`
 - `toml`: Enables `Toml<T>` extractor/response using `facet-toml`
 - `xml`: Enables `Xml<T>` extractor/response using `facet-xml`
-- `kdl`: Enables `Kdl<T>` extractor/response using `facet-kdl`
 - `msgpack`: Enables `MsgPack<T>` extractor/response using `facet-msgpack`
 - `postcard`: Enables `Postcard<T>` extractor/response using `facet-postcard`
 - `all`: Enables all format features
-
-

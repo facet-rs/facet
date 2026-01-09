@@ -76,7 +76,6 @@ members = [
     "facet-format-suite",
     "facet-asn1",
     "facet-csv",
-    "facet-kdl",
     "facet-xdr",
     "facet-html",
     "facet-html-dom",
