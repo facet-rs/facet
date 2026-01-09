@@ -164,7 +164,8 @@ pub async fn read_file<DB: DatabaseTrait>(
     hash: [u8; 32],
 ) -> picante::PicanteResult<std::sync::Arc<Vec<u8>>> {
     // Read from disk here; `hash` is part of the key so changing it forces a new cached entry.
-    // (You may optionally validate the bytes against `hash` and return an error on mismatch.)
+    // If you care about correctness in the presence of races (e.g. a stale watcher digest or
+    // TOCTOU), validate that the bytes you read actually match `hash` and return an error if not.
     let bytes: Vec<u8> = /* read bytes for `path` */;
     let _expected: [u8; 32] = hash;
     Ok(std::sync::Arc::new(bytes))
