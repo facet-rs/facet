@@ -186,10 +186,8 @@ If a dependency’s ingredient is not available (e.g., the kind is not registere
 
 ## Cycles
 
-r[cycle.detect]
-If derived query evaluation would (directly or indirectly) require evaluating the same `(kind, key)` again at the same revision, the runtime MUST report a dependency cycle error rather than deadlocking or waiting indefinitely.
-
-This requirement is semantic: it constrains observable behavior (an error must be produced) without requiring a specific detection mechanism.
+> r[cycle.detect]
+> If derived query evaluation would (directly or indirectly) require evaluating the same `(kind, key)` again at the same revision, the runtime MUST report a dependency cycle error rather than deadlocking or waiting indefinitely.
 
 ---
 
