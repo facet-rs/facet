@@ -88,11 +88,12 @@ Distinct key values MUST NOT alias the same record.
 r[key.hash]
 Implementations MAY expose a stable diagnostic identifier for keys, but any such identifier MUST NOT be used as a correctness boundary.
 
-r[kind.stability]
-Kind identifiers MUST be stable for a given ingredient definition across runtime instance restarts, as long as the ingredient’s canonical name does not change.
+r[kind.identity]
+A kind MUST uniquely identify a specific ingredient definition within a database type.
+Two distinct ingredient definitions MUST NOT share the same kind.
 
-r[kind.uniqueness]
-Within a single database type, kind identifiers MUST be unique.
+r[kind.mapping]
+The mapping from Rust constructs (types/functions) to kinds is implementation-defined, but it MUST be deterministic within a single runtime instance and MUST preserve `r[kind.identity]`.
 
 ---
 
