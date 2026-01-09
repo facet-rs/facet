@@ -42,10 +42,11 @@ Every record is addressed by:
 - a **key** identifying the record within that ingredient.
 
 r[key.equality]
-Key equality MUST be defined as exact byte equality of a deterministic canonical encoding of the key value.
+Two uses of the same ingredient with equal key values MUST refer to the same record.
+Distinct key values MUST NOT alias the same record.
 
 r[key.hash]
-Implementations MAY associate a stable diagnostic hash with keys, but hashes MUST NOT be used as a correctness boundary.
+Implementations MAY expose a stable diagnostic identifier for keys, but any such identifier MUST NOT be used as a correctness boundary.
 
 r[kind.stability]
 Kind identifiers MUST be stable for a given ingredient definition across runtime instance restarts, as long as the ingredient’s canonical name does not change.
