@@ -505,6 +505,36 @@ The revalidation and invalidation rules depend on each dependency exposing a not
 >
 > Creation of new intern IDs MUST NOT change the observable value of any previously created interned record, and MUST NOT invalidate derived queries that depend only on existing intern IDs.
 
+### Durability (change-frequency hint)
+
+Some systems (notably Salsa) annotate inputs with a **durability**: a coarse estimate of how often a value is expected to change.
+Durability is an optimization hint for revalidation; it is **not persistence** and it MUST NOT affect observable results.
+
+> r[durability.levels]
+> If an implementation supports durability, it MUST define three durability levels `LOW`, `MEDIUM`, and `HIGH` with a total order `LOW < MEDIUM < HIGH`.
+> Higher durability means “expected to change less frequently”.
+
+> r[durability.inputs]
+> If an implementation supports durability, each input record MUST have an associated durability level.
+> If the API does not allow specifying durability, implementations MUST behave as if all input records had durability `LOW`.
+
+> r[durability.interned]
+> If an implementation supports durability, interned records SHOULD be treated as `HIGH` durability, since they are immutable once created.
+> Creating new intern IDs MUST NOT reduce the durability of existing interned records.
+
+> r[durability.nonobservable]
+> Durability MUST be non-observable: changing durability annotations (if supported) MUST NOT change which values/errors are returned by inputs, derived queries, or snapshots.
+> Durability MAY affect performance by enabling the implementation to skip some revalidation work, but only in ways that are conservative with respect to correctness.
+
+> r[durability.revalidation-opt]
+> Implementations MAY use durability to optimize revalidation as follows:
+>
+> - Track, for each durability level `D`, a per-view revision watermark `last_changed_at_or_below[D]` equal to the most recent revision at which any input record with durability `<= D` changed.
+> - For each cached derived value, track an **effective durability** `eff_dur` that is `<=` the durability of every input record it (transitively) depends on.
+> - When revalidating a derived value whose cached `verified_at >= last_changed_at_or_below[eff_dur]`, the implementation MAY treat revalidation as having succeeded without checking individual dependencies.
+>
+> If these conditions are not met (or the implementation does not track them), it MUST fall back to dependency-based revalidation (`r[cell.revalidate]`).
+
 ### Cell state and visibility
 
 Each derived query `(kind, key)` conceptually has a memo entry (“cell”) with:
