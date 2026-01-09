@@ -101,7 +101,7 @@ let snap_a1 = DatabaseSnapshot::from_database(&db_a).await; // database A, snaps
 let snap_a2 = DatabaseSnapshot::from_database(&db_a).await; // database A, snapshot view 2
 ```
 
-Snapshots are separate views (they have their own memo tables and evolve independently), but they remain views of the same database.
+Snapshots are separate views (they can cache derived-query results independently and evolve independently), but they remain views of the same database.
 
 ### Revision
 
@@ -348,6 +348,13 @@ let config: Option<std::sync::Arc<ConfigData>> = db.get(ConfigKey)?;
 >
 > If called during derived query evaluation, it MUST record a dependency on that input record (see `r[dep.recording]`).
 
+> r[input.slot]
+> For purposes of dependency tracking and invalidation, each input kind defines an **input slot** for every possible key.
+> The observable value of an input slot is either `None` (absent) or `Some(value)` (present).
+>
+> A derived query that reads an input via `get(db, key)` MUST be treated as depending on that slot’s value (including absence).
+> Therefore, changing a slot from `None` to `Some(...)`, from `Some(...)` to `None`, or from `Some(v1)` to `Some(v2)` MUST be observable via invalidation and revalidation.
+
 > r[input.concurrent]
 > Input reads and input mutations on the same view MUST compose according to `r[concurrency.linearizable]`:
 >
@@ -364,7 +371,7 @@ Picante’s observable semantics depend on a notion of when a value “changed�
 To be implementable and predictable, this specification requires implementations to use a well-defined equality relation.
 
 > r[equality.relation]
-> For each input kind and derived kind, the implementation MUST define an equality relation `≈` over that kind’s stored values such that `≈` is an equivalence relation (reflexive, symmetric, transitive).
+> For each input kind, derived kind, and interned kind, the implementation MUST define an equality relation `≈` over that kind’s relevant values such that `≈` is an equivalence relation (reflexive, symmetric, transitive).
 >
 > The relation MUST be deterministic: for any two values `a` and `b`, whether `a ≈ b` holds MUST NOT depend on timing, concurrency, global mutable state, or external state.
 >
@@ -506,7 +513,7 @@ The revalidation and invalidation rules depend on each dependency exposing a not
 > Implementations MAY represent `changed_at` implicitly (e.g., via monotonic counters) as long as it satisfies the ordering properties above.
 
 > r[changed-at.input]
-> For an input record, `changed_at` MUST advance to the view’s new revision exactly when a `set`/`remove` operation changes the record’s observable value (per `r[equality.relation]` for `set`, and existence for `remove`).
+> For an input slot `(kind, key)`, `changed_at` MUST advance to the view’s new revision exactly when a `set`/`remove` operation changes the slot’s observable value (per `r[equality.relation]` for `set`, and existence/absence for `remove`).
 > No-op mutations MUST NOT change `changed_at`.
 
 > r[changed-at.derived]
@@ -615,6 +622,40 @@ In Rust async, a computation can be *cancelled* by dropping its future. Cancella
 
 ---
 
+## Interned values
+
+Interned values provide stable identity tokens (intern IDs) for immutable records. They are exempt from snapshot freezing and revision tracking.
+
+### API (Rust, non-normative)
+
+An interned ingredient typically exposes operations like:
+
+```rust
+impl Label {
+    pub fn new<DB: DatabaseTrait>(db: &DB, text: String) -> picante::PicanteResult<Label>;
+    pub fn text<DB: DatabaseTrait>(&self, db: &DB) -> picante::PicanteResult<std::sync::Arc<str>>;
+}
+```
+
+### Semantics
+
+> r[intern.dedup]
+> Interning MUST be value-deduplicating: if two calls intern values `v1` and `v2` such that `v1 ≈ v2` (per `r[equality.relation]` for that interned kind), they MUST return the same intern ID.
+
+> r[intern.immutable]
+> The observable value of an interned record addressed by an intern ID MUST be immutable for the lifetime of the process.
+> Reads through an intern ID MUST always return the same value.
+
+> r[intern.no-revision]
+> Interning and reading interned values MUST NOT advance a view’s revision and MUST NOT invalidate derived queries that depend only on existing intern IDs.
+
+> r[intern.shared-visibility]
+> The intern table for a database MUST be shared across all views of that database (primary and snapshots).
+> Intern operations performed through any view MUST append to this shared table.
+> Newly created interns MUST be immediately visible and usable from all views.
+
+---
+
 # Snapshots
 
 A **snapshot** is a fork of a database’s state at a single revision, with isolated subsequent mutations.
@@ -646,7 +687,8 @@ r[snapshot.isolation]
 After snapshot creation, subsequent input changes in the source database MUST NOT be visible in the snapshot, and subsequent input changes in the snapshot MUST NOT be visible in the source database.
 
 r[snapshot.memo-isolation]
-Derived query memoization performed by the snapshot MUST be isolated from the source database: caching a derived value in one MUST NOT mutate the other’s memo tables.
+Derived query memoization MUST be non-observable across views: memoization activity in one view MUST NOT change the values or errors returned by another view.
+Implementations MAY share work or reuse completed results across views as an optimization, provided it remains non-observable per `r[sharing.nonobservable]`.
 
 r[snapshot.interned]
 Interned ingredients are exempt from snapshot isolation: the intern table is append-only and is shared across all views of a database. Newly interned values become visible to both the source view and snapshot views.
