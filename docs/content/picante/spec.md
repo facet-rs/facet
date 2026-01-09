@@ -41,31 +41,34 @@ Every record is addressed by:
 - a **kind** identifying which ingredient it belongs to, and
 - a **key** identifying the record within that ingredient.
 
-Rust-centric intuition: a “kind” corresponds to a specific ingredient definition in your Rust program (an `#[picante::input]` type, an `#[picante::interned]` type, or an `#[picante::tracked]` function). Each such definition defines its own disjoint keyspace.
+Rust-centric intuition: a “kind” corresponds to a specific ingredient definition in your Rust program (an `#[picante::input]` type, an `#[picante::interned]` type, or an `#[picante::tracked]` function). Each kind defines its own disjoint keyspace.
 
-Key shapes (Rust-centric):
+#### Input
 
-- `#[picante::input]` (keyed): the key is the `#[key]` field value (e.g. `Item { #[key] id: u32, .. }` is keyed by `id`).
-- `#[picante::input]` (singleton): the key is unit-like (there is exactly one record).
-- `#[picante::tracked]`: the key is the tuple of the function’s parameters after `db` (one parameter means a 1-tuple, e.g. `(item,)`).
-- `#[picante::interned]`: the stored records are addressed by the intern ID (the `Name(pub InternId)` handle). Creating an intern is conceptually a lookup/insert in a map keyed by the interned value; reading an intern uses its ID.
+`#[picante::input]` defines a kind for input records.
 
-Example:
+Keyed inputs use the `#[key]` field value as the key:
 
 ```rust
-use picante::PicanteResult;
-
 #[picante::input]
 pub struct Item {
     #[key]
     pub id: u32,
     pub value: String,
 }
+```
 
-#[picante::interned]
-pub struct Label {
-    pub text: String,
-}
+Here, the key is `id: u32` (e.g. `Item::new(&db, 1, ...)` addresses the `id == 1` record).
+
+Singleton inputs (no `#[key]` field) are conceptually keyed by a unit-like key: there is exactly one record.
+
+#### Tracked (derived query)
+
+`#[picante::tracked]` defines a kind for derived-query results.
+The key is the tuple of the function’s parameters after `db` (one parameter means a 1-tuple):
+
+```rust
+use picante::PicanteResult;
 
 #[picante::tracked]
 pub async fn item_length<DB: DatabaseTrait>(db: &DB, item: Item) -> PicanteResult<u64> {
@@ -73,13 +76,22 @@ pub async fn item_length<DB: DatabaseTrait>(db: &DB, item: Item) -> PicanteResul
 }
 ```
 
-In this example:
+Here, the key is `(item,)`, where `item` is the `Item` handle (its stable identity), not the mutable `ItemData` contents.
 
-- `Item`’s input record key is `id: u32` (e.g. `Item::new(&db, 1, ...)` addresses the `id == 1` record).
-- `item_length`’s derived-query key is `(item,)`, where `item` is the `Item` handle (its stable identity), not the mutable `ItemData` contents.
-- `Label`’s interned records are addressed by `Label(pub InternId)`; `Label::new(&db, "tag")` creates/returns a `Label` ID, and `label.text(&db)` reads back the interned value by that ID.
+#### Interned
 
-There is one kind for the `Label` interner, one kind for the `item_length` derived query, and one (or more) kind(s) backing the `Item` input (the exact split is not semantically relevant; what matters is that these keyspaces do not collide).
+`#[picante::interned]` defines a kind for an append-only intern table.
+Interned records are addressed by the intern ID handle:
+
+```rust
+#[picante::interned]
+pub struct Label {
+    pub text: String,
+}
+```
+
+Creating an intern (`Label::new(&db, "tag".into())`) conceptually looks up or inserts by value and returns a `Label(pub InternId)`.
+Reading an intern (e.g. `label.text(&db)`) uses that ID as the key.
 
 r[key.equality]
 Two uses of the same ingredient with equal key values MUST refer to the same record.
