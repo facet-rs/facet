@@ -130,6 +130,17 @@ Reading an input record at `(kind, key)` at revision `R` MUST return the value t
 > 1. If the record does not exist, the operation MUST be a no-op.
 > 2. If the record exists, it MUST be removed and the runtime revision MUST advance to a fresh later revision.
 
+### Batch mutations
+
+Many real workloads update multiple inputs together (e.g., a filesystem scan updating digests for many paths).
+
+> r[input.batch]
+> If an implementation provides a batch input-mutation operation (i.e., an API that applies multiple `set`/`remove` mutations as one operation), it MUST be atomic with respect to observable database state:
+>
+> - There MUST exist a single revision boundary such that observers see either all batch mutations applied or none.
+> - No observer MAY observe a state in which only a strict subset of the batch mutations have been applied.
+> - The runtime MUST advance to a fresh later revision iff at least one mutation in the batch changes observable input state; otherwise the batch is a no-op.
+
 ## Derived queries
 
 ### Determinism contract
