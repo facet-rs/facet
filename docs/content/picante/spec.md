@@ -139,6 +139,41 @@ For Picante’s caching semantics to be meaningful, derived query computations S
 
 Note: Picante only tracks dependencies that flow through the database (inputs/derived queries/interned IDs). External state (filesystem contents, network responses, environment variables, clocks, etc.) is not automatically tracked or snapshotted. If a derived query reads external state without routing it through inputs, caching and snapshots can return values that do not reflect changes in that external state until some input change causes recomputation.
 
+### Modeling external state (non-normative)
+
+A common way to use Picante in tools that must read from disk is to make “what files exist and what version of each file exists” an explicit part of database state, and then key disk-reading queries by that version.
+
+For example, treat the filesystem’s *current digest* as an input, updated by a watcher or scanner:
+
+```rust
+#[picante::input]
+pub struct FileDigest {
+    #[key]
+    pub path: std::path::PathBuf,
+    pub hash: [u8; 32],
+}
+```
+
+Then make disk reads a derived query keyed by `(path, hash)` so the cached result is specific to a particular content hash:
+
+```rust
+#[picante::tracked]
+pub async fn read_file<DB: DatabaseTrait>(
+    _db: &DB,
+    path: std::path::PathBuf,
+    hash: [u8; 32],
+) -> picante::PicanteResult<std::sync::Arc<Vec<u8>>> {
+    // Read from disk here; `hash` is part of the key so changing it forces a new cached entry.
+    // (You may optionally validate the bytes against `hash` and return an error on mismatch.)
+    let bytes: Vec<u8> = /* read bytes for `path` */;
+    let _expected: [u8; 32] = hash;
+    Ok(std::sync::Arc::new(bytes))
+}
+```
+
+Higher-level queries can then depend on `FileDigest(path)` to obtain the current `(path, hash)` pair and call `read_file(path, hash)`.
+When the file changes, updating `FileDigest` causes downstream recomputation; if a file reverts to a previous hash, the `(path, hash)`-keyed cache allows reuse.
+
 ### Dependency tracking
 
 > r[dep.recording]
