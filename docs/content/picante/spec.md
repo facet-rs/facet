@@ -16,16 +16,13 @@ This document specifies **observable semantics**: what a user of the API can rel
 ### Revision
 
 r[revision.type]
-A **revision** is a monotonically increasing 64-bit logical clock (`u64`) used to totally order changes within a single runtime instance.
+A **revision** is an opaque token that identifies a database state within a runtime instance.
 
-r[revision.scope]
-Revisions are comparable only within a single runtime instance. Revisions from different runtime instances (including after restart) MUST NOT be treated as comparable.
+r[revision.order]
+Within a runtime instance, revisions MUST form a total order consistent with the “happens-after” ordering of successful input mutations that change observable state.
 
-r[revision.monotonic]
-Within a runtime instance, the revision MUST never decrease.
-
-r[revision.bump]
-Any operation that mutates an input in a way that changes its value MUST advance the revision by exactly 1.
+r[revision.advance]
+Any successful input mutation that changes observable input state MUST advance the runtime to a fresh revision that is greater than the prior revision.
 
 ### Ingredients and records
 
@@ -71,13 +68,13 @@ Setting an input record MUST behave as follows:
 1. If the record did not previously exist, it is created with the provided value.
 2. If the record exists and the value is byte-for-byte / structural-equality equal to the current value, the operation MUST be a no-op.
 3. If the record exists and the value differs from the current value, the value MUST be replaced.
-4. The runtime revision MUST advance by exactly 1 iff the operation is not a no-op.
+4. The runtime revision MUST advance to a fresh later revision iff the operation is not a no-op.
 
 r[input.remove]
 Removing an input record MUST behave as follows:
 
 1. If the record does not exist, the operation MUST be a no-op.
-2. If the record exists, it MUST be removed and the runtime revision MUST advance by exactly 1.
+2. If the record exists, it MUST be removed and the runtime revision MUST advance to a fresh later revision.
 
 ## Derived queries
 
@@ -169,4 +166,3 @@ Within a runtime family, implementations MAY share work across runtime instances
 
 r[sharing.nonobservable]
 Such sharing MUST NOT change observable behavior: the values and errors returned MUST be indistinguishable from a correct, non-sharing implementation that evaluates each runtime instance independently under the semantics above.
-
