@@ -63,6 +63,10 @@ Informally: every operation behaves as if it took effect at a single instant bet
 >
 > This requirement forbids “torn” observations: callers MUST NOT observe partial application of an operation.
 
+> r[liveness.scope]
+> This specification primarily defines safety properties for completed operations (what results are permitted).
+> It does not guarantee liveness: an operation is permitted to block indefinitely (for example due to user-level deadlocks, executor starvation, or infinite recursion), except where explicitly stated otherwise.
+
 ### Database and views
 
 A **database** is the logical unit of Picante state you care about: a set of inputs and derived-query semantics, plus (optionally) any snapshots derived from it.
@@ -344,6 +348,12 @@ let config: Option<std::sync::Arc<ConfigData>> = db.get(ConfigKey)?;
 >
 > If called during derived query evaluation, it MUST record a dependency on that input record (see `r[dep.recording]`).
 
+> r[input.concurrent]
+> Input reads and input mutations on the same view MUST compose according to `r[concurrency.linearizable]`:
+>
+> - A concurrent `get` racing with a `set`/`remove` MUST behave as if either the `get` happened before the mutation (returning the old value) or after the mutation (returning the new value).
+> - A `get` MUST NOT observe partial effects of a mutation.
+
 ### Equality and change detection
 
 Picante’s observable semantics depend on a notion of when a value “changed”:
@@ -422,6 +432,12 @@ Derived queries are always evaluated “at” a revision of a view (even if the 
 > - All input reads and derived-query reads performed as part of that access MUST behave as reads at revision `R`.
 > - If the view advances to a later revision while evaluation is in progress, that MUST NOT change the results of the in-progress access; it remains an evaluation at revision `R`.
 > - A later access to the same derived query at a later associated revision `R' > R` is a distinct access and MAY yield a different result.
+
+> r[derived.concurrent]
+> Derived-query accesses and input mutations on the same view MUST compose according to `r[concurrency.linearizable]` and the revision-binding rules:
+>
+> - If a derived-query access linearizes at revision `R`, it MUST evaluate as-of `R` even if the view advances to `R+1` while the access is in progress.
+> - Therefore, an input mutation that linearizes after the derived-query access MUST NOT affect the in-progress access.
 
 ### Determinism contract
 
@@ -579,6 +595,10 @@ In Rust async, a computation can be *cancelled* by dropping its future. Cancella
 >
 > Cancellation of one caller MUST NOT force other concurrent callers to observe a cancellation error; other callers MAY still obtain a normal value or error according to the semantics above.
 
+> r[derived.cancel-progress]
+> Cancellation MUST NOT permanently block progress for the affected `(kind, key, revision)`:
+> after a cancellation, a subsequent access at the same revision MUST be able to either (a) observe a completed value/error from some other in-progress evaluation, or (b) start a fresh evaluation.
+
 ## Invalidation semantics
 
 > r[dep.invalidation]
@@ -613,6 +633,14 @@ A **snapshot** is a fork of a database’s state at a single revision, with isol
 > - Any input mutation that completes after `R` MUST NOT be visible in the snapshot.
 >
 > In particular, the snapshot MUST NOT observe a “torn” state that could not exist at any single revision (i.e., different input records MUST NOT reflect different revisions).
+
+> r[snapshot.revisions]
+> A snapshot view has its own independent revision timeline:
+>
+> - Mutations performed on a snapshot view MUST advance the snapshot view’s revision (per `r[revision.advance]`).
+> - Revisions of a snapshot view MUST NOT be compared to revisions of the source view for correctness.
+>
+> The snapshot’s binding to the source revision `R` is defined by the snapshot creation requirements above; after creation, the snapshot evolves independently.
 
 r[snapshot.isolation]
 After snapshot creation, subsequent input changes in the source database MUST NOT be visible in the snapshot, and subsequent input changes in the snapshot MUST NOT be visible in the source database.
