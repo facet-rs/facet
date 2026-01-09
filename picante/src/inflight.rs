@@ -43,12 +43,12 @@ pub(crate) struct SharedCacheRecord {
 }
 
 // r[inflight.shared-cache-key]
+/// Key for shared-cache entries; intentionally does not include a revision.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct SharedCacheKey {
     runtime_id: RuntimeId,
     kind: QueryKindId,
     key: Key,
-    // Note: no revision in the key
 }
 
 static SHARED_CACHE: std::sync::LazyLock<DashMap<SharedCacheKey, SharedCacheRecord>> =

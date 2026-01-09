@@ -21,7 +21,8 @@ This document has two parts: **Core** (fundamental concepts and behaviors) and *
 ## Nomenclature
 
 **Revision**
-A monotonically increasing 64-bit logical clock (u64) used to track changes. Higher revisions represent more recent states.
+A monotonically increasing 64-bit logical clock (u64) used to track changes within a single runtime instance.
+Within that instance, higher revisions represent later logical times, but revisions are not comparable across different runtime instances or persisted cache files.
 
 **Ingredient**
 A storage and computation unit for one category of data. Three types exist: Input, Derived, and Interned.
@@ -272,7 +273,7 @@ Creating a new `Runtime` MUST initialize the revision to 0 and create empty depe
 > 1. Look up all queries that depend on `(kind, key)` via the reverse dep graph
 > 2. For each dependent query, emit a `QueryInvalidated` event
 > 3. Recursively propagate to queries depending on those queries
-> 4. This is a depth-first traversal; cycles are handled by tracking visited nodes
+> 4. Cycles MUST be handled by tracking visited nodes (each query is visited at most once per propagation)
 
 ---
 
@@ -359,7 +360,7 @@ A `Ready` cell is considered "stale" when `verified_at != current_revision`. It 
 > 3. If any dep fails (changed or missing), proceed to recomputation
 
 r[cell.revalidate-missing]
-If `IngredientLookup` cannot find a dependency's ingredient (kind not registered), revalidation MUST fail.
+If `IngredientLookup` cannot find a dependency's ingredient (kind not registered), revalidation MUST fail and the caller MUST treat this as a generic revalidation failure (i.e., proceed to recomputation as in `r[cell.access]` step 3).
 
 ### Computation
 
@@ -371,11 +372,11 @@ If `IngredientLookup` cannot find a dependency's ingredient (kind not registered
 > 3. Release lock and execute the compute function
 > 4. Compare result with previous value:
 >    - Fast path: `Arc::ptr_eq(prev, new)` for same allocation
->    - Slow path: deep equality via `facet_assert::check_same`
+>    - Slow path: deep structural equality (any equivalent deep-equality helper MAY be used)
 > 5. Update cell to `Ready { value, deps, verified_at: rev, changed_at }`
 >    - If value changed: `changed_at = rev`
 >    - If value unchanged: `changed_at = prev.changed_at` (early cutoff)
-> 6. Notify waiters via `Notify::notify_waiters()`
+> 6. Wake all tasks waiting on this cell's completion
 
 ### Leader Election
 
@@ -400,7 +401,8 @@ The leader MUST NOT hold the cell lock while awaiting the compute future. Only s
 > 3. Subsequent accesses at the same revision observe the poison and return the error
 
 > r[cell.poison-scoped]
-> Poisoning is revision-scoped. At a later revision (after an input change), the cell is treated as stale and can be recomputed. This allows transient failures to be retried.
+> Poisoning persists only for the current revision and is cleared when the revision advances.
+> At a later revision (after an input change), the cell is treated as stale and can be recomputed. This allows transient failures to be retried.
 
 ---
 
@@ -411,7 +413,7 @@ This section specifies cross-snapshot query coalescing.
 ### Purpose
 
 r[inflight.purpose]
-When multiple tasks across a database and its snapshots request the same derived query `(kind, key)` at the same revision, picante SHOULD coalesce them into a single computation.
+When multiple tasks across a database and its snapshots request the same derived query `(kind, key)` at the same revision, picante MUST coalesce them into a single computation, subject to the scoping rules below.
 
 ### Scope
 
@@ -477,13 +479,14 @@ r[inflight.shared-cache]
 A bounded shared cache of completed results MAY allow snapshots to adopt work even if they didn't overlap as waiters.
 
 > r[inflight.shared-cache-key]
-> The shared cache MUST be keyed by `(runtime_id, kind, key)` — note: no revision in the key.
+> If a shared completed cache is implemented, it MUST be keyed by `(runtime_id, kind, key)` — note: no revision in the key.
 
 r[inflight.shared-cache-size]
-The cache size MUST be configurable via `PICANTE_SHARED_CACHE_MAX_ENTRIES` environment variable. Default: 20,000 entries.
+If a shared completed cache is implemented, its size MUST be configurable via `PICANTE_SHARED_CACHE_MAX_ENTRIES` environment variable.
+The value of this variable MUST be a base-10 integer representing the maximum number of entries in the shared cache. If `PICANTE_SHARED_CACHE_MAX_ENTRIES` is unset, cannot be parsed as an integer, or is less than 1, implementations MUST fall back to the default of 20,000 entries.
 
 > r[inflight.shared-cache-adopt]
-> Adoption from shared cache MUST:
+> If a shared completed cache is implemented, adoption from the shared cache MUST:
 > 1. Check if `record.verified_at == current_revision` — if so, adopt immediately
 > 2. Otherwise, run revalidation against `record.deps` / `record.changed_at`
 > 3. On successful adoption, update the local cell and reinsert with updated `verified_at`
@@ -500,12 +503,14 @@ r[snapshot.creation]
 Snapshots MUST be created via `DatabaseSnapshot::from_database(&db).await`.
 
 r[snapshot.async]
-Snapshot creation is async because it needs to lock cells to clone their state.
+Snapshot creation is async because it needs to lock cells to clone their state, but this MUST NOT affect the observable atomicity of the snapshot.
+Implementations MUST treat `DatabaseSnapshot::from_database(&db).await` as a linearizable operation: there MUST exist a single revision `R` between the invocation of `from_database` and the completion of the `await` such that the snapshot's contents are exactly the database state at revision `R`.
+Concurrent writes that commit before `R` MUST be visible in the snapshot; writes that commit after `R` MUST NOT be visible in the snapshot.
 
 ### Semantics
 
 r[snapshot.frozen]
-A snapshot MUST freeze the database state at creation time. Subsequent modifications to the database MUST NOT be visible in the snapshot.
+A snapshot MUST freeze the database state at its bound revision `R` (as defined in `r[snapshot.async]`). Subsequent modifications to the database MUST NOT be visible in the snapshot.
 
 r[snapshot.independent]
 Queries run on a snapshot MUST use the snapshot's cached values and MUST cache new computations in the snapshot's own memo tables.
@@ -516,10 +521,14 @@ Queries run on a snapshot MUST use the snapshot's cached values and MUST cache n
 > `InputIngredient` snapshots MUST use O(1) structural sharing via `im::HashMap`. The snapshot shares structure with the original; only modified paths are copied (copy-on-write).
 
 > r[snapshot.derived]
-> `DerivedIngredient` snapshots MUST deep-clone cached cells into new `ErasedCell` instances. Values remain cheap to clone (they are `Arc<dyn Any>`).
+> `DerivedIngredient` snapshots MUST deep-clone cached cells into new `ErasedCell` instances. Cloning snapshot cells MUST be efficient by sharing underlying value storage rather than eagerly duplicating values.
 
 > r[snapshot.interned]
-> `InternedIngredient` snapshots MUST share the same `Arc` with the original. New interns after snapshot creation are visible to both (append-only semantics).
+> `InternedIngredient` snapshots MUST share the same intern table with the original database. The intern table is append-only and is shared across the parent database and all of its snapshots.
+>
+> Interner operations performed through either the parent or any snapshot MUST append to this shared table. Newly created interns MUST be immediately visible and usable from both the parent and all snapshots (bidirectional visibility).
+>
+> This shared, append-only intern table is exempt from `r[snapshot.frozen]`: snapshots freeze the values of inputs and derived queries, but they do NOT freeze the set of interned keys. Appending new interns MUST NOT change the meaning of previously existing intern IDs.
 
 ### Multiple Snapshots
 
@@ -602,7 +611,8 @@ r[persist.load-version]
 The format version MUST match exactly. Version mismatch is treated as corruption.
 
 r[persist.load-kind-match]
-Each section's `kind_id` MUST match a provided ingredient. Unknown sections MUST be ignored with a warning.
+Each section's `kind_id` MUST match a provided ingredient. Unknown sections MUST be ignored, and a warning MUST be emitted.
+A "warning" in this context is an implementation-defined, non-fatal diagnostic that is made observable to the caller or operator (for example via logging, tracing, or a diagnostic channel) and MUST NOT cause the load operation to fail.
 
 r[persist.load-name-match]
 For known sections, `kind_name` MUST match exactly. Mismatch is an error.
@@ -665,7 +675,10 @@ The `#[picante::input]` macro generates keyed or singleton input storage.
 > - Per-field getters: `{field}(db) -> PicanteResult<Option<T>>`
 
 r[macro.input.kind-id]
-Kind ids MUST be generated via `QueryKindId::from_str(...)` using the full module path and struct name.
+Kind ids MUST be generated via `QueryKindId::from_str(...)` using stable, fully qualified Rust paths.
+This MUST match the macro expansion rules:
+- For `#[picante::tracked]` and `#[picante::interned]`: `concat!(module_path!(), "::", stringify!(Name))`
+- For `#[picante::input]` keyed inputs: the key interner uses `concat!(module_path!(), "::", stringify!(Name), "::keys")` and the data storage uses `concat!(module_path!(), "::", stringify!(Name), "::data")`
 
 ### `#[picante::interned]`
 
@@ -714,7 +727,7 @@ r[macro.tracked.key-tuple]
 If the function has multiple parameters after `db`, the query key MUST be a tuple of those parameters.
 
 r[macro.tracked.return-wrap]
-If the return type is `T` (not `PicanteResult<T>`), the macro MUST wrap it in `Ok(T)`.
+If the return type is `T` (not `PicanteResult<T>`), the macro MUST wrap it in `Ok(T)`. This wrapping applies only to infallible queries: if the function body can produce errors (for example, by using `?` on a `Result` or `PicanteResult`), the function's declared return type MUST be `PicanteResult<T>` and the macro MUST NOT add an extra `Ok` around the result.
 
 ### `#[picante::db]`
 
@@ -749,7 +762,10 @@ r[event.channel]
 - `subscribe_events() -> broadcast::Receiver<RuntimeEvent>`
 
 r[event.broadcast-capacity]
-The event broadcast channel MUST have capacity 1024. Lagging receivers may miss events.
+The event broadcast channel MUST have capacity 1024. Lagging receivers may miss events once the buffer is full.
+Implementations MUST surface event loss to receivers (for example, via an explicit "lagged" error that indicates how many events were skipped).
+Applications MUST treat missed events as a signal that any local view derived solely from events is potentially stale and MUST resynchronize from an authoritative source (for example, by taking a fresh snapshot or re-querying relevant keys) before continuing to consume events.
+Applications MUST NOT rely on seeing every intermediate event and SHOULD treat events as best-effort, ordered hints layered on top of direct queries and snapshots, rather than as the sole source of truth.
 
 ### Event Types
 
@@ -838,7 +854,7 @@ Picante MUST use type erasure to avoid monomorphization bloat. The derived query
 > - Function pointers for equality checking: `eq_erased: fn(&dyn Any, &dyn Any) -> bool`
 
 r[type-erasure.benefit]
-This SHOULD achieve ~96% reduction in LLVM IR for the state machine and ~36% faster clean builds.
+In the reference implementation, type erasure has been observed to achieve ~96% reduction in LLVM IR for the state machine and ~36% faster clean builds; these figures are informational and not normative requirements.
 
 > r[type-erasure.tradeoffs]
 > Acceptable runtime costs:

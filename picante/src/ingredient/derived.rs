@@ -113,7 +113,7 @@ where
     V: Send + Sync + 'static,
 {
     fn compute<'a>(&'a self, db: &'a DB, key: Key) -> ComputeFut<'a> {
-        // Tradeoffs: vtable dispatch, BoxFuture allocation, key decode per compute
+        // r[type-erasure.tradeoffs]
         Box::pin(async move {
             let k: K = key.decode_facet()?;
             let v: V = (self.f)(db, k).await?;
@@ -570,7 +570,7 @@ impl DerivedCore {
                     );
 
                     // r[cell.no-lock-await]
-                    // Run compute under an active frame (no lock held during compute).
+                    // Run compute under an active frame.
                     let frame = ActiveFrameHandle::new(requested.clone(), rev);
                     let _frame_guard = frame::push_frame(frame.clone());
 

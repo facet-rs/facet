@@ -29,11 +29,11 @@ impl QueryKindId {
     /// The hash algorithm is a 32-bit FNV-1a over UTF-8 bytes.
     pub const fn from_str(s: &str) -> Self {
         let bytes = s.as_bytes();
-        let mut hash: u32 = 0x811c9dc5; // FNV offset basis
+        let mut hash: u32 = 0x811c9dc5; // FNV_OFFSET
         let mut i = 0usize;
         while i < bytes.len() {
             hash ^= bytes[i] as u32;
-            hash = hash.wrapping_mul(0x0100_0193); // FNV prime
+            hash = hash.wrapping_mul(0x0100_0193); // FNV_PRIME
             i += 1;
         }
         QueryKindId(hash)
@@ -104,7 +104,8 @@ impl Key {
 // r[key.equality]
 impl PartialEq for Key {
     fn eq(&self, other: &Self) -> bool {
-        self.bytes == other.bytes // exact byte equality, not hash
+        // exact byte equality, not hash
+        self.bytes == other.bytes
     }
 }
 
