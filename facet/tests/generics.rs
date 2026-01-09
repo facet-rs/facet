@@ -361,9 +361,9 @@ fn custom_bound_with_proxy() {
     // additional bounds (Clone) that aren't automatically inferred.
 
     // A wrapper type that does NOT implement Facet
-    struct NonFacetWrapper<T>(T);
+    struct NonFacetSmartPtr<T>(T);
 
-    impl<T> NonFacetWrapper<T> {
+    impl<T> NonFacetSmartPtr<T> {
         fn new(value: T) -> Self {
             Self(value)
         }
@@ -375,56 +375,56 @@ fn custom_bound_with_proxy() {
 
     // The proxy type that IS serializable - it just holds the inner value
     #[derive(Facet, Clone)]
-    struct StateManagerProxy<I>(I);
+    struct SmartPtrProxy<I>(I);
 
-    // The main type - opaque because NonFacetWrapper doesn't implement Facet
+    // The main type - opaque because NonFacetSmartPtr doesn't implement Facet
     // We need custom bounds because:
     // - `I: Clone` is required by the From impls
-    // - `I: Facet<'ʄ>` is required because StateManagerProxy<I> needs it for its Facet impl
+    // - `I: Facet<'ʄ>` is required because SmartPtrProxy<I> needs it for its Facet impl
     #[derive(Facet)]
-    #[facet(opaque, proxy = StateManagerProxy<I>)]
+    #[facet(opaque, proxy = SmartPtrProxy<I>)]
     #[facet(bound = "I: Clone + Facet<'ʄ>")]
-    struct StateManager<I> {
-        internal: NonFacetWrapper<I>,
+    struct SmartPtr<I> {
+        inner: NonFacetSmartPtr<I>,
     }
 
-    impl<I> StateManager<I> {
+    impl<I> SmartPtr<I> {
         fn new(value: I) -> Self {
             Self {
-                internal: NonFacetWrapper::new(value),
+                inner: NonFacetSmartPtr::new(value),
             }
         }
     }
 
-    // Serialize: StateManager -> StateManagerProxy (needs Clone to extract value)
-    impl<I: Clone> From<&StateManager<I>> for StateManagerProxy<I> {
-        fn from(value: &StateManager<I>) -> Self {
-            StateManagerProxy(value.internal.read().clone())
+    // Serialize: SmartPtr -> SmartPtrProxy (needs Clone to extract value)
+    impl<I: Clone> From<&SmartPtr<I>> for SmartPtrProxy<I> {
+        fn from(value: &SmartPtr<I>) -> Self {
+            SmartPtrProxy(value.inner.read().clone())
         }
     }
 
-    // Deserialize: StateManagerProxy -> StateManager
-    impl<I> From<StateManagerProxy<I>> for StateManager<I> {
-        fn from(proxy: StateManagerProxy<I>) -> Self {
-            StateManager::new(proxy.0)
+    // Deserialize: SmartPtrProxy -> SmartPtr
+    impl<I> From<SmartPtrProxy<I>> for SmartPtr<I> {
+        fn from(proxy: SmartPtrProxy<I>) -> Self {
+            SmartPtr::new(proxy.0)
         }
     }
 
     // Verify the shape is correct
-    let shape = StateManager::<String>::SHAPE;
+    let shape = SmartPtr::<String>::SHAPE;
     match shape.ty {
         Type::User(UserType::Opaque) => {
             assert!(shape.proxy.is_some(), "proxy should be set");
-            eprintln!("StateManager shape {shape} looks correct");
+            eprintln!("SmartPtr shape {shape} looks correct");
         }
         _ => unreachable!(),
     }
 
     // Verify the proxy shape is also correct
-    let proxy_shape = StateManagerProxy::<String>::SHAPE;
+    let proxy_shape = SmartPtrProxy::<String>::SHAPE;
     match proxy_shape.ty {
         Type::User(UserType::Struct(_)) => {
-            eprintln!("StateManagerProxy shape {proxy_shape} looks correct");
+            eprintln!("SmartPtrProxy shape {proxy_shape} looks correct");
         }
         _ => unreachable!(),
     }

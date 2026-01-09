@@ -238,19 +238,11 @@ pub mod builtin {
             ///
             /// Usage: `#[facet(bound = "T: Clone + Send")]`
             ///
-            /// This is useful when a generic type parameter needs additional bounds
-            /// for the Facet implementation, particularly with opaque types.
+            /// When you need a type parameter to implement Facet (e.g., for proxy types),
+            /// use a higher-ranked trait bound: `#[facet(bound = "T: for<'f> Facet<'f>")]`
             ///
-            /// # Example
-            ///
-            /// ```ignore
-            /// #[derive(Facet)]
-            /// #[facet(opaque)]
-            /// #[facet(bound = "T: Clone")]
-            /// struct Wrapper<T> {
-            ///     inner: T,
-            /// }
-            /// ```
+            /// If HRTB is too restrictive, you can use the internal lifetime `'ʄ` directly:
+            /// `#[facet(bound = "T: Facet<'ʄ>")]` (note: `'ʄ` is internal and may change).
             Bound(&'static str),
         }
     }
