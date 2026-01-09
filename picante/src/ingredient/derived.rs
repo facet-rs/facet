@@ -113,7 +113,7 @@ where
     V: Send + Sync + 'static,
 {
     fn compute<'a>(&'a self, db: &'a DB, key: Key) -> ComputeFut<'a> {
-        // r[type-erasure.tradeoffs]
+        // Tradeoffs: vtable dispatch, boxed future allocation, and key decode per compute.
         Box::pin(async move {
             let k: K = key.decode_facet()?;
             let v: V = (self.f)(db, k).await?;

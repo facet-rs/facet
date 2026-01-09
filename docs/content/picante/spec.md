@@ -1,864 +1,172 @@
-# Picante Specification
+# Picante Semantics Specification
 
-## Introduction
+Picante is an incremental query runtime for Rust: you declare **inputs** and **derived queries**, and the runtime memoizes query results, tracks dependencies automatically, and recomputes only when the dependencies’ values change.
 
-Picante is an async incremental query runtime for Rust, providing automatic dependency tracking, memoization, and cache invalidation for Tokio-first async pipelines.
-
-This specification defines the behavior of:
-- **Core concepts**: revisions, keys, dependency tracking
-- **Ingredients**: input, derived (tracked), and interned storage types
-- **Runtime**: revision management, dependency graphs, event notification
-- **Execution frames**: task-local dependency recording
-- **Derived query lifecycle**: memoization, revalidation, early cutoff
-- **In-flight deduplication**: cross-snapshot query coalescing
-- **Snapshots**: MVCC point-in-time views
-- **Persistence**: cache file encoding and semantics
-- **Macros**: code generation for ergonomic API
-- **Events and observability**: notifications, tracing, debugging
-
-This document has two parts: **Core** (fundamental concepts and behaviors) and **Tooling** (macros, persistence, debugging).
-
-## Nomenclature
-
-**Revision**
-A monotonically increasing 64-bit logical clock (u64) used to track changes within a single runtime instance.
-Within that instance, higher revisions represent later logical times, but revisions are not comparable across different runtime instances or persisted cache files.
-
-**Ingredient**
-A storage and computation unit for one category of data. Three types exist: Input, Derived, and Interned.
-
-**Input**
-A mutable key-value store where values are set by user code. Changing an input bumps the global revision.
-
-**Derived** (or **Tracked**)
-An async memoized query that computes values from inputs or other derived queries. Dependencies are recorded automatically during execution.
-
-**Interned**
-An immutable value-to-id mapping. Values are interned once and never change; interning does not bump revision.
-
-**Query Kind**
-A stable 32-bit identifier (`QueryKindId`) for an ingredient type, computed from a name string via FNV-1a hash.
-
-**Key**
-A `facet-postcard` encoded byte sequence identifying a specific record within an ingredient.
-
-**DynKey**
-A `(kind, key)` pair that globally identifies one specific query or input record.
-
-**Dependency (Dep)**
-A recorded edge from a derived query to another ingredient's record, captured during query execution.
-
-**Cell**
-The memo table entry for a single derived query `(kind, key)`. Tracks state, cached value, and dependencies.
-
-**Snapshot**
-A point-in-time view of a database that can be queried independently. Created via MVCC structural sharing.
-
-**Early Cutoff**
-An optimization where recomputing a query that produces the same value does not bump `changed_at`, preventing unnecessary downstream recomputation.
+This document specifies **observable semantics**: what a user of the API can rely on (values, errors, and visibility across revisions/snapshots). It intentionally avoids prescribing implementation techniques, data structures, async primitives, logging/tracing backends, or performance tradeoffs.
 
 ---
 
-# Core
+## Model and Terms
 
-This section specifies the fundamental concepts and behaviors of the picante runtime.
+### Runtime instance and runtime family
 
-## Revisions
+- A **runtime instance** is one live in-memory execution of a database (or a snapshot) with its own revision counter and memo tables.
+- A **runtime family** is a database plus any snapshots derived from it. Families are relevant only for allowed sharing optimizations; see “Sharing optimizations” below.
+
+### Revision
 
 r[revision.type]
-A revision MUST be represented as a 64-bit unsigned integer (`Revision(u64)`).
+A **revision** is a monotonically increasing 64-bit logical clock (`u64`) used to totally order changes within a single runtime instance.
+
+r[revision.scope]
+Revisions are comparable only within a single runtime instance. Revisions from different runtime instances (including after restart) MUST NOT be treated as comparable.
 
 r[revision.monotonic]
-The revision counter MUST be monotonically increasing within a runtime instance. It MUST never decrease.
+Within a runtime instance, the revision MUST never decrease.
 
-r[revision.initial]
-A new runtime MUST start at `Revision(0)`.
+r[revision.bump]
+Any operation that mutates an input in a way that changes its value MUST advance the revision by exactly 1.
 
-> r[revision.bump]
-> Calling `Runtime::bump_revision()` MUST atomically increment the revision counter by exactly 1 and return the new revision value.
+### Ingredients and records
 
-> r[revision.set]
-> Calling `Runtime::set_current_revision(rev)` MUST set the current revision to the specified value. This is intended for cache restoration only and MUST NOT be called during normal operation.
+An **ingredient** is a category of stored/computed data. Picante defines three ingredient kinds:
 
-### Change Tracking
+- **Input ingredient**: mutable key-value storage set by user code.
+- **Derived ingredient**: an async query whose value is computed from inputs and other derived queries.
+- **Interned ingredient**: a value-to-ID mapping that is append-only (interned values never change once created).
 
-Each cached value tracks two revisions:
+Each ingredient stores **records** addressed by a **key**.
 
-r[revision.verified-at]
-`verified_at` MUST record the revision at which the cached value was last confirmed to be valid.
+### Keys and kinds
 
-r[revision.changed-at]
-`changed_at` MUST record the revision at which the value actually changed. This MAY be older than `verified_at` if the value was revalidated without recomputation.
+Every record is addressed by:
 
-> r[revision.early-cutoff]
-> When a derived query recomputes and produces a value equal to the previous cached value, `changed_at` MUST NOT advance. Only `verified_at` MUST be updated to the current revision.
->
-> This enables early cutoff: downstream queries see that their dependency's `changed_at` hasn't advanced past their own `changed_at`, so they don't need to recompute.
-
-## Query Kind IDs
-
-r[kind.type]
-A query kind id MUST be represented as a 32-bit unsigned integer (`QueryKindId(u32)`).
-
-> r[kind.hash]
-> `QueryKindId::from_str(name)` MUST compute the kind id using the FNV-1a hash algorithm over the UTF-8 bytes of the name string.
->
-> ```rust
-> // FNV-1a with 32-bit output
-> const FNV_OFFSET: u32 = 2166136261;
-> const FNV_PRIME: u32 = 16777619;
->
-> fn fnv1a(bytes: &[u8]) -> u32 {
->     bytes.iter().fold(FNV_OFFSET, |hash, &byte| {
->         (hash ^ byte as u32).wrapping_mul(FNV_PRIME)
->     })
-> }
-> ```
-
-r[kind.stability]
-The kind id MUST remain stable across builds as long as the name string does not change. Cache files rely on this stability.
-
-r[kind.uniqueness]
-Within a single database instance, kind ids MUST be unique. The persistence layer MUST reject duplicate kind ids during save and load.
-
-r[kind.collision]
-While collisions are theoretically possible (32-bit hash space), they are treated as "should not happen" in practice.
-
-## Keys
-
-r[key.encoding]
-Keys MUST be encoded using `facet-postcard` format. The encoded bytes are stored as `Arc<[u8]>`.
+- a **kind** identifying which ingredient it belongs to, and
+- a **key** identifying the record within that ingredient.
 
 r[key.equality]
-Key equality MUST be determined by exact byte equality of the encoded representation, not hash equality.
+Key equality MUST be defined as exact byte equality of a deterministic canonical encoding of the key value.
 
-> r[key.hash]
-> Each key MUST include a deterministic hash of its encoded bytes for diagnostics and tracing. This hash MUST NOT be used as a correctness boundary.
+r[key.hash]
+Implementations MAY associate a stable diagnostic hash with keys, but hashes MUST NOT be used as a correctness boundary.
 
-r[key.dyn-key]
-A `DynKey` MUST consist of a `(kind: QueryKindId, key: Key)` pair that globally identifies one specific query or input record.
+r[kind.stability]
+Kind identifiers MUST be stable for a given ingredient definition across runtime instance restarts, as long as the ingredient’s canonical name does not change.
 
-r[key.dep]
-A `Dep` MUST use the same structure as `DynKey` and represents a recorded dependency edge.
+r[kind.uniqueness]
+Within a single database type, kind identifiers MUST be unique.
 
-## Dependency Tracking
+---
 
-r[dep.forward]
-Picante MUST maintain forward dependencies: each derived query records which keys it read during computation.
+# Core Semantics
 
-r[dep.reverse]
-Picante MUST maintain reverse dependencies: a map from each key to the set of queries that depend on it.
+## Inputs
 
-> r[dep.invalidation]
-> When an input changes, `propagate_invalidation()` MUST walk the reverse dependency graph to find all affected queries. Only those queries need revalidation; everything else remains untouched.
+r[input.get]
+Reading an input record at `(kind, key)` at revision `R` MUST return the value that was most recently written at or before `R`, or `None` if the record does not exist at `R`.
+
+r[input.set]
+Setting an input record MUST behave as follows:
+
+1. If the record did not previously exist, it is created with the provided value.
+2. If the record exists and the value is byte-for-byte / structural-equality equal to the current value, the operation MUST be a no-op.
+3. If the record exists and the value differs from the current value, the value MUST be replaced.
+4. The runtime revision MUST advance by exactly 1 iff the operation is not a no-op.
+
+r[input.remove]
+Removing an input record MUST behave as follows:
+
+1. If the record does not exist, the operation MUST be a no-op.
+2. If the record exists, it MUST be removed and the runtime revision MUST advance by exactly 1.
+
+## Derived queries
+
+### Determinism contract
+
+r[derived.determinism]
+For Picante’s caching semantics to be meaningful, derived query computations SHOULD be observationally pure with respect to the database state they read: the returned value SHOULD be a deterministic function of the values of the records they depend on.
+
+If a derived query reads external state without routing that state through an input ingredient (e.g., reading a file directly), the runtime MAY return cached values that do not reflect changes in that external state until some input change causes recomputation.
+
+### Dependency tracking
 
 r[dep.recording]
-Dependencies MUST be recorded automatically during query execution via task-local frames. User code does not need to explicitly declare dependencies.
+During evaluation of a derived query, each read of an input record or derived query result MUST be recorded as a dependency of the evaluating query for the purpose of future revalidation.
 
----
+Dependencies MUST be recorded with enough precision to revalidate: at minimum, the dependency’s `(kind, key)` identity.
 
-## Ingredients
+### Cell state and visibility
 
-This section specifies the behavior of each ingredient type.
+Each derived query `(kind, key)` conceptually has a memo entry (“cell”) with:
 
-### Input Ingredient
+- the last computed value (if any),
+- a dependency set (from the last successful computation),
+- `verified_at`: the revision at which the cached value was last confirmed valid,
+- `changed_at`: the revision at which the cached value last changed.
 
-r[input.type]
-An `InputIngredient<K, V>` MUST provide mutable key-value storage where `K` is the key type and `V` is the value type.
-
-r[input.constraints]
-Both `K` and `V` MUST implement `facet::Facet<'static> + Send + Sync + 'static`. `V` MUST also implement `Clone`.
-
-> r[input.set]
-> `InputIngredient::set(db, key, value)` MUST:
-> 1. Encode the key using `facet-postcard`
-> 2. Compare the new value with any existing value
-> 3. If the value changed, bump the runtime revision
-> 4. Store the value with `changed_at` set to the new revision
-> 5. Notify the runtime to propagate invalidation via reverse deps
-> 6. Emit an `InputSet` event
-
-> r[input.get]
-> `InputIngredient::get(db, key)` MUST:
-> 1. Return `Ok(Some(value))` if the key exists
-> 2. Return `Ok(None)` if the key does not exist
-> 3. Record a dependency if called within an active derived query frame
-
-> r[input.remove]
-> `InputIngredient::remove(db, key)` MUST:
-> 1. Remove the key-value pair if it exists
-> 2. If a value was removed, bump the runtime revision
-> 3. Notify the runtime to propagate invalidation
-> 4. Emit an `InputRemoved` event
-
-r[input.revision-on-change]
-The revision MUST only be bumped when the value actually changes. Setting an input to its current value MUST NOT bump the revision.
-
-### Derived Ingredient
-
-r[derived.type]
-A `DerivedIngredient<DB, K, V>` MUST provide async memoized query computation where `DB` is the database type, `K` is the key type, and `V` is the value type.
-
-r[derived.compute-fn]
-The derived ingredient MUST be constructed with a compute function that takes `(&DB, K)` and returns a future yielding `PicanteResult<V>`.
-
-> r[derived.get]
-> `DerivedIngredient::get(db, key)` MUST:
-> 1. Look up the cell for `(kind, key)` in the memo table
-> 2. If the cell is `Ready` with `verified_at == current_revision`, return the cached value immediately
-> 3. Otherwise, attempt revalidation or recomputation (see derived query lifecycle)
-> 4. Record a dependency if called within an active derived query frame
-
-r[derived.memoization]
-Derived queries MUST be memoized: the same `(kind, key)` at the same revision MUST NOT compute more than once within a single database instance.
-
-### Interned Ingredient
-
-r[interned.type]
-An `InternedIngredient<K>` MUST provide immutable value interning where `K` is the interned value type.
-
-r[interned.constraints]
-`K` MUST implement `facet::Facet<'static> + Send + Sync + Clone + Eq + Hash + 'static`.
-
-> r[interned.intern]
-> `InternedIngredient::intern(value)` MUST:
-> 1. If the value is already interned, return the existing `InternId`
-> 2. Otherwise, allocate a new `InternId` and store the mapping
-> 3. NOT bump the runtime revision (interning is append-only and does not invalidate)
-
-> r[interned.get]
-> `InternedIngredient::get(db, id)` MUST:
-> 1. Return `Ok(Arc<K>)` containing the interned value
-> 2. Record a dependency if called within an active derived query frame
-> 3. Error if the id is invalid
-
-r[interned.id-type]
-`InternId` MUST be a 32-bit unsigned integer wrapper (`InternId(u32)`).
-
-r[interned.stability]
-Once a value is interned, its `InternId` MUST remain stable for the lifetime of the database (including across snapshots).
-
----
-
-## Runtime
-
-r[runtime.components]
-A `Runtime` MUST own:
-- The current revision counter
-- Forward and reverse dependency graphs
-- Event broadcast channels
-
-r[runtime.new]
-Creating a new `Runtime` MUST initialize the revision to 0 and create empty dependency graphs.
-
-### Dependency Graph Operations
-
-> r[runtime.update-deps]
-> `Runtime::update_query_deps(dyn_key, deps)` MUST:
-> 1. Store the forward dependencies for the query
-> 2. Update the reverse dependency graph to point from each dep back to the query
-
-> r[runtime.clear-deps]
-> `Runtime::clear_dependency_graph()` MUST remove all forward and reverse dependencies. This is used during cache load to start fresh.
-
-### Invalidation
-
-> r[runtime.notify-input-set]
-> `Runtime::notify_input_set(kind, key, changed_at)` MUST:
-> 1. Emit an `InputSet` event
-> 2. Call `propagate_invalidation` to find and invalidate all dependent queries
-
-> r[runtime.propagate-invalidation]
-> `Runtime::propagate_invalidation(kind, key)` MUST:
-> 1. Look up all queries that depend on `(kind, key)` via the reverse dep graph
-> 2. For each dependent query, emit a `QueryInvalidated` event
-> 3. Recursively propagate to queries depending on those queries
-> 4. Cycles MUST be handled by tracking visited nodes (each query is visited at most once per propagation)
-
----
-
-## Execution Frames
-
-r[frame.task-local]
-Picante MUST use Tokio task-local storage for execution frames. Frames are installed when a derived query starts computing and removed when it completes.
-
-r[frame.purpose]
-An active frame MUST:
-- Record dependencies when inputs or derived queries are read
-- Track the current query stack for cycle detection
-- Provide the context for automatic dependency recording
-
-### Dependency Recording
-
-> r[frame.record-dep]
-> When a derived query or input is accessed during computation, the active frame MUST record a `Dep` entry containing the accessed `(kind, key)`.
-
-r[frame.no-lock-await]
-Frames MUST NOT hold any locks across `.await` points. Dependency recording is single-threaded within a task.
-
-### Cycle Detection
-
-r[frame.cycle-stack]
-Each frame MUST maintain a stack of currently executing queries within the current task.
-
-> r[frame.cycle-detect]
-> Before starting to compute a query, the frame MUST check if that query is already in the stack. If so, a cycle error MUST be returned immediately.
->
-> Example cycle error:
-> ```text
-> dependency cycle detected
->   → kind_1, key_0000000000000001  (initial)
->   → kind_2, key_0000000000000002
->   → kind_3, key_0000000000000003
->   → kind_1, key_0000000000000001  ← cycle (already in stack)
-> ```
-
-r[frame.cycle-per-task]
-Cycle detection is per-task (task-local stack). Cross-task cycles are not directly detected but will manifest as deadlocks.
-
----
-
-## Derived Query Lifecycle
-
-This section specifies the state machine and lifecycle of derived query cells.
-
-### Cell States
-
-r[cell.states]
-Each cell MUST be in exactly one of these states:
-
-| State | Description |
-|-------|-------------|
-| `Vacant` | No cached value exists |
-| `Running { started_at }` | A task is currently computing the value |
-| `Ready { value, deps, verified_at, changed_at }` | A cached value with its dependency list |
-| `Poisoned { error, verified_at }` | Previous compute failed at this revision |
-
-r[cell.stale]
-A `Ready` cell is considered "stale" when `verified_at != current_revision`. It has a cached value but must be revalidated before use.
-
-### Access Algorithm
-
-> r[cell.access]
-> When accessing a derived query `(kind, key)` at revision `rev`:
->
-> 1. If cell is `Ready` with `verified_at == rev`, return cached value immediately
-> 2. If cell is `Ready` but stale, attempt revalidation
-> 3. If cell is `Vacant`, `Poisoned`, or revalidation failed, attempt computation
-> 4. If cell is `Running`, wait for completion and retry
+r[revision.early-cutoff]
+When a derived query is recomputed at revision `R` and produces a value equal to the previously cached value, `changed_at` MUST NOT advance (it remains the prior `changed_at`), while `verified_at` MUST advance to `R`.
 
 ### Revalidation
 
-> r[cell.revalidate]
-> Revalidation MUST check each stored dependency:
->
-> 1. For each `Dep` in the stored dependency list:
->    - Look up the ingredient via `IngredientLookup`
->    - Call the ingredient's `touch()` method to get its `changed_at`
->    - If any dep's `changed_at > self.changed_at`, revalidation fails
-> 2. If all deps pass, bump `verified_at` to current revision and return cached value
-> 3. If any dep fails (changed or missing), proceed to recomputation
+r[cell.revalidate]
+When accessing a cached derived value at revision `R`, if the cached value is not known-valid at `R`, the runtime MUST revalidate it by checking the stored dependencies:
+
+- If every dependency’s `changed_at` is `<=` the cached value’s `changed_at`, revalidation succeeds and the cached value MUST be returned (with `verified_at` updated to `R`).
+- Otherwise, revalidation fails and the query MUST be recomputed.
 
 r[cell.revalidate-missing]
-If `IngredientLookup` cannot find a dependency's ingredient (kind not registered), revalidation MUST fail and the caller MUST treat this as a generic revalidation failure (i.e., proceed to recomputation as in `r[cell.access]` step 3).
+If a dependency’s ingredient is not available (e.g., the kind is not registered in the current database), revalidation MUST fail and recomputation MUST be attempted.
 
-### Computation
+### Errors and poisoning
 
-> r[cell.compute]
-> When computation is needed:
->
-> 1. Transition cell to `Running { started_at: current_revision }` under lock
-> 2. Capture any previous cached value for early cutoff comparison
-> 3. Release lock and execute the compute function
-> 4. Compare result with previous value:
->    - Fast path: `Arc::ptr_eq(prev, new)` for same allocation
->    - Slow path: deep structural equality (any equivalent deep-equality helper MAY be used)
-> 5. Update cell to `Ready { value, deps, verified_at: rev, changed_at }`
->    - If value changed: `changed_at = rev`
->    - If value unchanged: `changed_at = prev.changed_at` (early cutoff)
-> 6. Wake all tasks waiting on this cell's completion
+r[cell.poison]
+If computation fails (returns an error or panics), the runtime MUST record a failure for that `(kind, key, revision)` such that:
 
-### Leader Election
+- Subsequent accesses at the same revision return the same error without rerunning the computation.
+- After the revision advances due to an input change, a new access MAY attempt recomputation.
 
-r[cell.leader-local]
-Within a single database instance, the first task to transition a cell to `Running` becomes the "leader" for that computation.
+## Invalidation semantics
 
-> r[cell.waiter]
-> Tasks that observe a `Running` cell MUST:
-> 1. Create a `notified` future from the cell's `Notify` *before* checking state (to avoid race)
-> 2. Wait on the `notified` future
-> 3. Retry the access loop when notified
+r[dep.invalidation]
+Whenever an input record changes at revision `R`, any derived query whose dependency set includes that input record MUST be treated as stale for revisions `>= R`.
 
-r[cell.no-lock-await]
-The leader MUST NOT hold the cell lock while awaiting the compute future. Only state transitions happen under lock.
+Staleness is a logical property: implementations MAY propagate invalidation eagerly or lazily, but MUST ensure the revalidation rules above are upheld.
 
-### Poisoning
+## Cycles
 
-> r[cell.poison]
-> If compute returns an error or panics:
-> 1. Transition cell to `Poisoned { error, verified_at: current_revision }`
-> 2. Notify waiters
-> 3. Subsequent accesses at the same revision observe the poison and return the error
+r[cycle.detect]
+If derived query evaluation would (directly or indirectly) require evaluating the same `(kind, key)` again at the same revision, the runtime MUST report a dependency cycle error rather than deadlocking or waiting indefinitely.
 
-> r[cell.poison-scoped]
-> Poisoning persists only for the current revision and is cleared when the revision advances.
-> At a later revision (after an input change), the cell is treated as stale and can be recomputed. This allows transient failures to be retried.
+This requirement is semantic: it constrains observable behavior (an error must be produced) without requiring a specific detection mechanism.
 
 ---
 
-## In-flight Deduplication
+# Snapshots
 
-This section specifies cross-snapshot query coalescing.
-
-### Purpose
-
-r[inflight.purpose]
-When multiple tasks across a database and its snapshots request the same derived query `(kind, key)` at the same revision, picante MUST coalesce them into a single computation, subject to the scoping rules below.
-
-### Scope
-
-r[inflight.scope]
-Coalescing MUST be scoped to:
-- Same `RuntimeId` (shared by database and its snapshots)
-- Same `Revision`
-- Same `QueryKindId`
-- Exact `Key` bytes
-
-### Global Registry
-
-r[inflight.registry]
-The in-flight registry MUST be a process-global `DashMap<InFlightKey, Arc<InFlightEntry>>`.
-
-> r[inflight.key]
-> An `InFlightKey` MUST contain:
-> - `runtime_id: RuntimeId`
-> - `revision: Revision`
-> - `kind: QueryKindId`
-> - `key: Key`
-
-### Leader Election
-
-> r[inflight.try-lead]
-> `InFlightRegistry::try_lead(key)` MUST:
-> 1. Atomically check if an entry exists for the key
-> 2. If not, insert a new entry and return `Leader(InFlightGuard)`
-> 3. If exists, return `Follower(Arc<InFlightEntry>)`
-
-### Completion
-
-> r[inflight.complete]
-> The leader MUST call `guard.complete(value, deps, changed_at)` on success:
-> 1. Store the result in the entry
-> 2. Transition state to `Done`
-> 3. Notify all waiters
-> 4. Remove the entry from the registry
-
-> r[inflight.fail]
-> The leader MUST call `guard.fail(error)` on failure:
-> 1. Store the error in the entry
-> 2. Transition state to `Failed`
-> 3. Notify all waiters
-> 4. Remove the entry from the registry
-
-> r[inflight.cancel]
-> If the guard is dropped without completion, the entry MUST be marked `Cancelled` and removed. Followers should retry and may become the new leader.
-
-### Follower Behavior
-
-> r[inflight.follower]
-> Followers MUST:
-> 1. Wait on `entry.notified()`
-> 2. Read `entry.state()` after notification
-> 3. On `Done`: adopt the value into their local cell
-> 4. On `Failed`: propagate the error as `Poisoned` into their local cell
-> 5. On `Cancelled`: retry the entire access (may become leader)
-
-### Shared Completed Cache
-
-r[inflight.shared-cache]
-A bounded shared cache of completed results MAY allow snapshots to adopt work even if they didn't overlap as waiters.
-
-> r[inflight.shared-cache-key]
-> If a shared completed cache is implemented, it MUST be keyed by `(runtime_id, kind, key)` — note: no revision in the key.
-
-r[inflight.shared-cache-size]
-If a shared completed cache is implemented, its size MUST be configurable via `PICANTE_SHARED_CACHE_MAX_ENTRIES` environment variable.
-The value of this variable MUST be a base-10 integer representing the maximum number of entries in the shared cache. If `PICANTE_SHARED_CACHE_MAX_ENTRIES` is unset, cannot be parsed as an integer, or is less than 1, implementations MUST fall back to the default of 20,000 entries.
-
-> r[inflight.shared-cache-adopt]
-> If a shared completed cache is implemented, adoption from the shared cache MUST:
-> 1. Check if `record.verified_at == current_revision` — if so, adopt immediately
-> 2. Otherwise, run revalidation against `record.deps` / `record.changed_at`
-> 3. On successful adoption, update the local cell and reinsert with updated `verified_at`
-
----
-
-## Snapshots
-
-This section specifies database snapshot behavior.
-
-### Creation
+A **snapshot** is a fork of a database’s state at a single revision, with isolated subsequent mutations.
 
 r[snapshot.creation]
-Snapshots MUST be created via `DatabaseSnapshot::from_database(&db).await`.
+Creating a snapshot MUST bind it to a single revision `R` of the source database such that:
 
-r[snapshot.async]
-Snapshot creation is async because it needs to lock cells to clone their state, but this MUST NOT affect the observable atomicity of the snapshot.
-Implementations MUST treat `DatabaseSnapshot::from_database(&db).await` as a linearizable operation: there MUST exist a single revision `R` between the invocation of `from_database` and the completion of the `await` such that the snapshot's contents are exactly the database state at revision `R`.
-Concurrent writes that commit before `R` MUST be visible in the snapshot; writes that commit after `R` MUST NOT be visible in the snapshot.
+- For every input record, reads from the snapshot behave exactly as reads from the source database at revision `R`.
+- For derived queries, the snapshot MAY start with empty memo tables or with a copy of memoized values from the source, but in all cases results MUST be consistent with the snapshot’s view of inputs and the revalidation rules.
 
-### Semantics
+r[snapshot.isolation]
+After snapshot creation, subsequent input changes in the source database MUST NOT be visible in the snapshot, and subsequent input changes in the snapshot MUST NOT be visible in the source database.
 
-r[snapshot.frozen]
-A snapshot MUST freeze the database state at its bound revision `R` (as defined in `r[snapshot.async]`). Subsequent modifications to the database MUST NOT be visible in the snapshot.
+r[snapshot.memo-isolation]
+Derived query memoization performed by the snapshot MUST be isolated from the source database: caching a derived value in one MUST NOT mutate the other’s memo tables.
 
-r[snapshot.independent]
-Queries run on a snapshot MUST use the snapshot's cached values and MUST cache new computations in the snapshot's own memo tables.
-
-### Per-Ingredient Behavior
-
-> r[snapshot.input]
-> `InputIngredient` snapshots MUST use O(1) structural sharing via `im::HashMap`. The snapshot shares structure with the original; only modified paths are copied (copy-on-write).
-
-> r[snapshot.derived]
-> `DerivedIngredient` snapshots MUST deep-clone cached cells into new `ErasedCell` instances. Cloning snapshot cells MUST be efficient by sharing underlying value storage rather than eagerly duplicating values.
-
-> r[snapshot.interned]
-> `InternedIngredient` snapshots MUST share the same intern table with the original database. The intern table is append-only and is shared across the parent database and all of its snapshots.
->
-> Interner operations performed through either the parent or any snapshot MUST append to this shared table. Newly created interns MUST be immediately visible and usable from both the parent and all snapshots (bidirectional visibility).
->
-> This shared, append-only intern table is exempt from `r[snapshot.frozen]`: snapshots freeze the values of inputs and derived queries, but they do NOT freeze the set of interned keys. Appending new interns MUST NOT change the meaning of previously existing intern IDs.
-
-### Multiple Snapshots
-
-r[snapshot.multiple]
-Multiple snapshots MAY be created at different points in time. Each sees its respective version of the data.
-
-### Runtime Identity
-
-r[snapshot.runtime-id]
-A snapshot MUST share the same `RuntimeId` as its parent database. This enables in-flight deduplication across snapshots.
+r[snapshot.interned]
+Interned ingredients are exempt from snapshot isolation: the intern table is append-only and MAY be shared across a runtime family. Newly interned values MAY become visible to both the source database and snapshots.
 
 ---
 
-# Tooling
+# Sharing optimizations (non-observable)
 
-This section specifies the tooling layer: persistence, macros, events, and debugging.
+Within a runtime family, implementations MAY share work across runtime instances (e.g., coalescing concurrent evaluations of the same derived query at the same revision, or adopting completed results) as an optimization.
 
-## Persistence
+r[sharing.nonobservable]
+Such sharing MUST NOT change observable behavior: the values and errors returned MUST be indistinguishable from a correct, non-sharing implementation that evaluates each runtime instance independently under the semantics above.
 
-r[persist.format]
-Cache files MUST be encoded using `facet-postcard` format.
-
-### Cache File Structure
-
-> r[persist.structure]
-> A cache file MUST contain:
-> - Format version (for forward compatibility checks)
-> - Current revision at save time
-> - Per-ingredient sections
-
-> r[persist.section]
-> Each section MUST contain:
-> - `kind_id: u32` (QueryKindId)
-> - `kind_name: String` (for mismatch detection)
-> - `section_type: SectionType` (Input, Derived, or Interned)
-> - `records: Vec<Vec<u8>>` (opaque facet-postcard blobs)
-
-> r[persist.not-stored]
-> Cache files MUST NOT store:
-> - Custom fields on the database struct
-> - The dependency graph as a separate section (it is reconstructed during load)
-
-### Save API
-
-r[persist.save-fn]
-`save_cache(path, runtime, ingredients)` MUST save all persistable ingredients to the specified path.
-
-> r[persist.save-options]
-> `save_cache_with_options` MUST support:
-> - `max_bytes: Option<u64>` — best-effort total size cap
-> - `max_records_per_section: Option<usize>` — limit records per ingredient
-> - `max_record_bytes: Option<usize>` — skip oversized records
-
-> r[persist.save-atomic]
-> Save MUST write to a temporary file then rename atomically into place.
-
-> r[persist.save-unique-kinds]
-> Save MUST reject duplicate kind ids in the ingredient list.
-
-### Load API
-
-r[persist.load-fn]
-`load_cache(path, runtime, ingredients)` MUST load cached state from the specified path.
-
-> r[persist.load-return]
-> Load MUST return:
-> - `Ok(true)` — file existed and was loaded successfully
-> - `Ok(false)` — file did not exist
-> - `Ok(false)` — file was corrupt and `on_corrupt` was `Ignore` or `Delete`
-> - `Err(...)` — file was corrupt and `on_corrupt` was `Error`
-
-> r[persist.load-options]
-> `load_cache_with_options` MUST support:
-> - `max_bytes: Option<u64>` — refuse files larger than this
-> - `on_corrupt: OnCorruptCache` — `Error`, `Ignore`, or `Delete`
-
-### Load Validation
-
-r[persist.load-version]
-The format version MUST match exactly. Version mismatch is treated as corruption.
-
-r[persist.load-kind-match]
-Each section's `kind_id` MUST match a provided ingredient. Unknown sections MUST be ignored, and a warning MUST be emitted.
-A "warning" in this context is an implementation-defined, non-fatal diagnostic that is made observable to the caller or operator (for example via logging, tracing, or a diagnostic channel) and MUST NOT cause the load operation to fail.
-
-r[persist.load-name-match]
-For known sections, `kind_name` MUST match exactly. Mismatch is an error.
-
-r[persist.load-type-match]
-For known sections, `section_type` MUST match exactly. Mismatch is an error.
-
-### Load Order
-
-> r[persist.load-order]
-> Load MUST proceed in this order:
-> 1. `runtime.clear_dependency_graph()` — clear existing deps
-> 2. `ingredient.clear()` for every ingredient — prevent partial state blending
-> 3. `ingredient.load_records(...)` for each found section
-> 4. `ingredient.restore_runtime_state(runtime)` for every ingredient — rebuild reverse deps
-> 5. `runtime.set_current_revision(cache.current_revision)`
-
----
-
-## Macros
-
-This section specifies the code generation performed by picante's procedural macros.
-
-### `#[picante::input]`
-
-r[macro.input.purpose]
-The `#[picante::input]` macro generates keyed or singleton input storage.
-
-> r[macro.input.keyed]
-> For keyed inputs (struct with `#[key]` field):
-> ```rust
-> #[picante::input]
-> pub struct SourceFile {
->     #[key]
->     pub path: String,
->     pub content: String,
-> }
-> ```
->
-> MUST generate:
-> - Two ingredients: `{Name}KeysIngredient` (Interned) and `{Name}DataIngredient` (Input)
-> - A `{Name}Data` struct for non-key fields
-> - A `Has{Name}Ingredient` trait for database bounds
-> - A `{Name}` newtype wrapper around `InternId`
-> - Methods: `new(db, key, fields...) -> PicanteResult<Self>`
-> - Getters: `{field}(db) -> PicanteResult<T>` for each field
-
-> r[macro.input.singleton]
-> For singleton inputs (no `#[key]` field):
-> ```rust
-> #[picante::input]
-> pub struct Config {
->     pub debug: bool,
-> }
-> ```
->
-> MUST generate:
-> - Methods: `set(db, fields...) -> PicanteResult<()>`
-> - Methods: `get(db) -> PicanteResult<Option<Arc<ConfigData>>>`
-> - Per-field getters: `{field}(db) -> PicanteResult<Option<T>>`
-
-r[macro.input.kind-id]
-Kind ids MUST be generated via `QueryKindId::from_str(...)` using stable, fully qualified Rust paths.
-This MUST match the macro expansion rules:
-- For `#[picante::tracked]` and `#[picante::interned]`: `concat!(module_path!(), "::", stringify!(Name))`
-- For `#[picante::input]` keyed inputs: the key interner uses `concat!(module_path!(), "::", stringify!(Name), "::keys")` and the data storage uses `concat!(module_path!(), "::", stringify!(Name), "::data")`
-
-### `#[picante::interned]`
-
-r[macro.interned.purpose]
-The `#[picante::interned]` macro generates immutable value interning.
-
-> r[macro.interned.output]
-> ```rust
-> #[picante::interned]
-> pub struct CharSet {
->     pub chars: Vec<char>,
-> }
-> ```
->
-> MUST generate:
-> - A `{Name}Ingredient` type alias for `InternedIngredient<{Name}Value>`
-> - A `{Name}Value` struct with all fields
-> - A `Has{Name}Ingredient` trait
-> - A `{Name}` newtype wrapper around `InternId`
-> - Methods: `new(db, fields...) -> PicanteResult<Self>`
-> - Methods: `value(db) -> PicanteResult<Arc<{Name}Value>>`
-
-### `#[picante::tracked]`
-
-r[macro.tracked.purpose]
-The `#[picante::tracked]` macro generates async memoized derived queries.
-
-> r[macro.tracked.output]
-> ```rust
-> #[picante::tracked]
-> pub async fn line_count<DB: DatabaseTrait>(db: &DB, file: SourceFile)
->     -> picante::PicanteResult<usize>
-> {
->     Ok(file.content(db)?.lines().count())
-> }
-> ```
->
-> MUST generate:
-> - A `{NAME}_KIND` constant with stable QueryKindId
-> - A `{Name}Query<DB>` type alias for `DerivedIngredient<DB, K, V>`
-> - A `Has{Name}Query` trait
-> - A `make_{name}_query<DB>() -> Arc<{Name}Query<DB>>` constructor
-> - The public function calling through the ingredient
-
-r[macro.tracked.key-tuple]
-If the function has multiple parameters after `db`, the query key MUST be a tuple of those parameters.
-
-r[macro.tracked.return-wrap]
-If the return type is `T` (not `PicanteResult<T>`), the macro MUST wrap it in `Ok(T)`. This wrapping applies only to infallible queries: if the function body can produce errors (for example, by using `?` on a `Result` or `PicanteResult`), the function's declared return type MUST be `PicanteResult<T>` and the macro MUST NOT add an extra `Ok` around the result.
-
-### `#[picante::db]`
-
-r[macro.db.purpose]
-The `#[picante::db]` macro generates the database struct with all ingredients.
-
-> r[macro.db.output]
-> ```rust
-> #[picante::db(inputs(SourceFile), tracked(line_count))]
-> pub struct Database {}
-> ```
->
-> MUST generate:
-> - Reserved fields: `runtime: Runtime`, `ingredients: IngredientRegistry<Database>`
-> - Ingredient fields for each declared input/interned/tracked
-> - `impl HasRuntime for Database`
-> - `impl IngredientLookup for Database`
-> - `impl Has*` for each ingredient trait
-> - A `Database::new()` constructor
-> - A combined trait `DatabaseTrait` (or custom via `db_trait(Name)`)
-
-> r[macro.db.snapshot]
-> The macro MUST also generate a `{Name}Snapshot` struct with the same trait implementations.
-
----
-
-## Runtime Events
-
-r[event.channel]
-`Runtime` MUST expose two subscription channels:
-- `subscribe_revisions() -> watch::Receiver<Revision>`
-- `subscribe_events() -> broadcast::Receiver<RuntimeEvent>`
-
-r[event.broadcast-capacity]
-The event broadcast channel MUST have capacity 1024. Lagging receivers may miss events once the buffer is full.
-Implementations MUST surface event loss to receivers (for example, via an explicit "lagged" error that indicates how many events were skipped).
-Applications MUST treat missed events as a signal that any local view derived solely from events is potentially stale and MUST resynchronize from an authoritative source (for example, by taking a fresh snapshot or re-querying relevant keys) before continuing to consume events.
-Applications MUST NOT rely on seeing every intermediate event and SHOULD treat events as best-effort, ordered hints layered on top of direct queries and snapshots, rather than as the sole source of truth.
-
-### Event Types
-
-> r[event.types]
-> `RuntimeEvent` MUST include:
->
-> | Event | When emitted |
-> |-------|--------------|
-> | `RevisionBumped { revision }` | `Runtime::bump_revision()` called |
-> | `RevisionSet { revision }` | `Runtime::set_current_revision()` called (cache load) |
-> | `InputSet { kind, key_hash, key, changed_at }` | Input value changed |
-> | `InputRemoved { kind, key_hash, key }` | Input value removed |
-> | `QueryInvalidated { kind, key_hash, key, by_kind }` | Derived query invalidated via reverse deps |
-> | `QueryChanged { kind, key_hash, key, changed_at }` | Derived query recomputed with different value |
-
-r[event.query-changed-cutoff]
-`QueryChanged` MUST NOT be emitted if the recompute produces the same value (early cutoff).
-
-r[event.key-fields]
-All key references MUST include `kind`, `key_hash` (deterministic diagnostic hash), and `key` (full encoded bytes).
-
----
-
-## Debugging and Observability
-
-### Tracing
-
-r[trace.crate]
-Picante MUST use the `tracing` crate for structured instrumentation.
-
-r[trace.no-subscriber]
-Picante MUST NOT install a tracing subscriber. Applications choose their own logging setup.
-
-> r[trace.levels]
-> Instrumentation levels MUST be:
-> - `debug`: set, remove, intern operations
-> - `trace`: get operations, dep recording, revalidation steps
-> - `info`: persistence completion
-> - `warn`: corruption policy actions, unknown sections, record dropping
-
-### Debug Module
-
-r[debug.graph]
-`DependencyGraph::from_runtime(runtime)` MUST capture the current dependency graph and support export to Graphviz DOT format via `write_dot(path)`.
-
-r[debug.trace-collector]
-`TraceCollector::start(runtime)` MUST record runtime events. `collector.stop().await` MUST return the collected trace.
-
-r[debug.trace-analysis]
-`TraceAnalysis::from_trace(trace)` MUST compute summary statistics: total events, input changes, invalidations, recomputations, duration.
-
-r[debug.cache-stats]
-`CacheStats::collect(runtime)` MUST return statistics about the dependency graph: forward deps, reverse deps, total edges, root queries.
-
----
-
-## Error Handling
-
-r[error.type]
-`PicanteError` MUST be the error type returned by all fallible operations.
-
-> r[error.variants]
-> Error variants MUST include:
-> - `Cycle { ... }` — dependency cycle detected
-> - `InputNotFound { ... }` — input key does not exist
-> - `InternIdNotFound { ... }` — invalid intern id
-> - `IngredientNotFound { ... }` — ingredient not registered
-> - `QueryPoisoned { ... }` — previous compute failed
-> - `Persistence { ... }` — cache file errors
-> - Other internal errors as needed
-
-r[error.result]
-`PicanteResult<T>` MUST be an alias for `Result<T, PicanteError>`.
-
----
-
-## Type Erasure (Compile-Time Optimization)
-
-r[type-erasure.purpose]
-Picante MUST use type erasure to avoid monomorphization bloat. The derived query state machine compiles once per database type, not once per query.
-
-> r[type-erasure.mechanism]
-> Type erasure MUST use:
-> - `trait ErasedCompute<DB>` — trait object for compute functions
-> - `Arc<dyn Any + Send + Sync>` — type-erased values
-> - Function pointers for equality checking: `eq_erased: fn(&dyn Any, &dyn Any) -> bool`
-
-r[type-erasure.benefit]
-In the reference implementation, type erasure has been observed to achieve ~96% reduction in LLVM IR for the state machine and ~36% faster clean builds; these figures are informational and not normative requirements.
-
-> r[type-erasure.tradeoffs]
-> Acceptable runtime costs:
-> - One vtable dispatch per compute
-> - One `BoxFuture` allocation per compute
-> - Key decode per compute
-> - Deep equality check on recompute
