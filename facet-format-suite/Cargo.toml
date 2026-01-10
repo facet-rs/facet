@@ -17,7 +17,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-arborium = { workspace = true, features = ["lang-kdl", "lang-rust", "lang-xml", "lang-yaml"] }
+arborium = { workspace = true, features = ["lang-rust", "lang-xml", "lang-yaml"] }
 bytes = { workspace = true, optional = true }
 bytestring = { workspace = true, optional = true }
 camino = { workspace = true, optional = true }

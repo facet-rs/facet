@@ -23,7 +23,7 @@ The `Justfile` is the source of truth for local/CI commands. Start with:
 This repo uses [Captain](https://github.com/bearcove/captain) for pre-commit/pre-push automation.
 
 - Hook scripts live in `hooks/` and invoke `captain` / `captain pre-push`.
-- Configuration lives in `.config/captain/config.kdl`.
+- Configuration lives in `.config/captain/config.yaml`.
 - Install hooks for the main repo and all git worktrees with `hooks/install.sh` (also wired via `conductor.json`).
 
 If you bypass hooks with `--no-verify`, CI will still enforce the checks.

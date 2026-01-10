@@ -2220,7 +2220,6 @@ fn wip_deferred_drop_with_stored_frames() {
 // =============================================================================
 
 /// Tests that deferred mode works correctly when started from a nested position.
-/// This simulates what facet-kdl does with flatten fields.
 #[test]
 fn deferred_started_from_nested_position() -> Result<(), IPanic> {
     #[derive(Facet, Debug, PartialEq)]

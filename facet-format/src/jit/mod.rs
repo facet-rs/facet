@@ -11,7 +11,7 @@
 //! directly to struct memory at known offsets.
 //!
 //! This works with **any** format that implements `FormatParser` - JSON, YAML,
-//! KDL, TOML, etc. - because they all produce the same event stream.
+//! TOML, etc. - because they all produce the same event stream.
 //!
 //! ### Tier 2: Format JIT (new)
 //! For the "full slice available upfront" case, format crates can provide

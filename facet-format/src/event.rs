@@ -10,14 +10,10 @@ pub enum FieldLocationHint {
     KeyValue,
     /// XML attribute.
     Attribute,
-    /// XML/KDL text node.
+    /// XML text node.
     Text,
-    /// XML/KDL child element/node.
+    /// XML child element.
     Child,
-    /// KDL property.
-    Property,
-    /// KDL positional argument.
-    Argument,
     /// Element tag name (for custom elements in XML/HTML).
     Tag,
 }
@@ -62,7 +58,7 @@ pub enum ContainerKind {
     /// JSON/YAML array: definitely sequence-like.
     /// Type mismatches (e.g., array where object expected) should produce errors.
     Array,
-    /// XML/KDL element: semantically ambiguous.
+    /// XML element: semantically ambiguous.
     /// Could be interpreted as struct, sequence, or scalar wrapper depending on target type.
     /// The deserializer decides based on what type it's deserializing into.
     Element,
