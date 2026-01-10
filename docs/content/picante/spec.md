@@ -391,6 +391,11 @@ To be implementable and predictable, this specification requires implementations
 > 1. If the record does not exist, the operation MUST be a no-op.
 > 2. If the record exists, it MUST be removed and the view revision MUST advance to a fresh later revision.
 
+> r[input.missing-access]
+> If the public API provides a “required” read of an input record (i.e., an operation that does not return `Option`/`None` for absence), then attempting to read a missing/removed input slot MUST return an explicit error indicating a missing input value.
+>
+> This error MUST be stable and deterministic, and MUST NOT be silently mapped to a default value.
+
 ### Batch mutations
 
 Many real workloads update multiple inputs together (e.g., a filesystem scan updating digests for many paths).
@@ -426,6 +431,12 @@ The exact shape (builder vs. iterator vs. transactional closure) is up to the im
 > - No observer MAY observe a state in which only a strict subset of the batch mutations have been applied.
 > - The batch MUST have the same final effect as applying its component mutations sequentially in the order provided, and then committing the resulting state atomically at the batch’s revision boundary.
 > - The view MUST advance to a fresh later revision iff at least one mutation in the batch changes observable input state; otherwise the batch is a no-op.
+
+> r[input.batch-conflicts]
+> If a batch contains multiple mutations to the same input slot `(kind, key)`, the sequential “apply in order” rule in `r[input.batch]` determines the outcome:
+>
+> - Later mutations in the batch override earlier ones.
+> - The final state of that slot after the batch MUST be the result of applying all of its mutations in order.
 
 ## Derived queries
 
@@ -528,6 +539,13 @@ The revalidation and invalidation rules depend on each dependency exposing a not
 >
 > Creation of new intern IDs MUST NOT change the observable value of any previously created interned record, and MUST NOT invalidate derived queries that depend only on existing intern IDs.
 
+> r[changed-at.poison]
+> A derived record’s failure state (poison) is revision-scoped (see `r[cell.poison]`).
+> Therefore, if `(kind, key)` failed at revision `R` and a later access occurs at revision `R' > R`, the earlier failure MUST NOT be treated as a valid cached result for `R'`.
+>
+> Implementations MUST ensure that dependents are not “stuck” on an earlier failure:
+> when a dependent revalidates against a dependency that is only known to have failed at an earlier revision, revalidation MUST fail (causing recomputation) unless the dependency has been successfully recomputed/validated at the dependent’s revision.
+
 ### Durability (change-frequency hint)
 
 Some systems (notably Salsa) annotate inputs with a **durability**: a coarse estimate of how often a value is expected to change.
@@ -588,6 +606,8 @@ If a dependency’s ingredient is not available (e.g., the kind is not registere
 >
 > - Subsequent accesses at the same revision return the same error without rerunning the computation.
 > - After the revision advances due to an input change, a new access MAY attempt recomputation.
+>
+> Failures propagate through dependency edges: if a derived query attempts to read another derived query and that dependency fails, the read MUST return an error and the dependent query’s evaluation MUST fail (unless user code explicitly handles the error as data).
 
 ### Cancellation (dropped evaluations)
 
@@ -653,6 +673,12 @@ impl Label {
 > The intern table for a database MUST be shared across all views of that database (primary and snapshots).
 > Intern operations performed through any view MUST append to this shared table.
 > Newly created interns MUST be immediately visible and usable from all views.
+
+> r[intern.concurrent]
+> Interning operations across views of the same database MUST be linearizable with respect to one another:
+> there MUST exist a single total order of successful intern operations such that each operation returns the intern ID that would result from applying them sequentially in that order.
+>
+> In particular, concurrent attempts to intern equal values MUST always return the same intern ID (per `r[intern.dedup]`).
 
 ---
 
