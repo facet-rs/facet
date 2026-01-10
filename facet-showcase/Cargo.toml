@@ -14,7 +14,7 @@ categories = ["development-tools"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-arborium = { workspace = true, features = ["lang-kdl", "lang-rust", "lang-xml", "lang-yaml"] }
+arborium = { workspace = true, features = ["lang-rust", "lang-xml", "lang-yaml"] }
 facet = { path = "../facet", version = "0.42.0", features = ["all-impls", "doc"] }
 facet-pretty = { path = "../facet-pretty", version = "0.42.0" }
 

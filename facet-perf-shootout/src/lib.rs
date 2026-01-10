@@ -3,9 +3,9 @@
 //! This crate contains benchmarks comparing facet format implementations
 //! against their reference counterparts (serde_json, postcard, rmp-serde, etc.)
 //!
-//! Benchmark suites are defined in KDL files under `benches/`:
-//! - `json.kdl` - JSON format benchmarks
-//! - `postcard.kdl` - Postcard format benchmarks
+//! Benchmark suites are defined in YAML files under `benches/`:
+//! - `json.yaml` - JSON format benchmarks
+//! - `postcard.yaml` - Postcard format benchmarks
 //!
 //! Run benchmarks with:
 //! ```sh

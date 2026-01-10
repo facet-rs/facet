@@ -2242,7 +2242,7 @@ fn deferred_started_from_nested_position() -> Result<(), IPanic> {
     let resolution = Resolution::new();
     let mut partial: Partial<'_> = Partial::alloc::<Config>()?;
 
-    // Navigate into server first (simulating what facet-kdl does)
+    // Navigate into server first
     partial = partial.begin_field("server")?;
 
     // Now start deferred mode from the nested position

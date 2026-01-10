@@ -79,13 +79,13 @@ impl quote::ToTokens for IdentOrLiteral {
 
 /// A parsed facet attribute.
 ///
-/// All attributes are now stored uniformly - either with a namespace (`kdl::child`)
+/// All attributes are now stored uniformly - either with a namespace (`xml::element`)
 /// or without (`sensitive`). The grammar system handles validation and semantics.
 #[derive(Clone)]
 pub struct PFacetAttr {
-    /// The namespace (e.g., "kdl", "args"). None for builtin attributes.
+    /// The namespace (e.g., "xml", "args"). None for builtin attributes.
     pub ns: Option<Ident>,
-    /// The key (e.g., "child", "sensitive", "rename")
+    /// The key (e.g., "element", "sensitive", "rename")
     pub key: Ident,
     /// The arguments as a TokenStream
     pub args: TokenStream,
@@ -101,7 +101,7 @@ impl PFacetAttr {
 
         for attr in facet_attr.inner.content.iter().map(|d| &d.value) {
             match attr {
-                // Namespaced attributes like `kdl::child` or `args::short = 'v'`
+                // Namespaced attributes like `xml::element` or `xml::ns = "http://example.com"`
                 FacetInner::Namespaced(ext) => {
                     let args = match &ext.args {
                         Some(AttrArgs::Parens(p)) => p.content.to_token_stream(),
@@ -719,7 +719,7 @@ impl PAttrs {
             .unwrap_or_else(|| quote! { ::facet })
     }
 
-    /// Check if any namespaced attribute exists (e.g., `kdl::child`, `args::short`)
+    /// Check if any namespaced attribute exists (e.g., `xml::element`, `args::short`)
     ///
     /// When a namespaced attribute is present, `rename` on a container may be valid
     /// because it controls how the type appears in that specific context.
@@ -964,8 +964,8 @@ impl PStruct {
         let attrs = PAttrs::parse(&s.attributes, &mut container_display_name);
 
         // Note: #[facet(rename = "...")] on structs is allowed. While for formats like JSON
-        // the container name is determined by the parent field, formats like XML and KDL
-        // use the container's rename as the element/node name (especially for root elements).
+        // the container name is determined by the parent field, formats like XML
+        // use the container's rename as the element name (especially for root elements).
         // See: https://github.com/facet-rs/facet/issues/1018
 
         // Extract the rename_all rule *after* parsing all attributes.

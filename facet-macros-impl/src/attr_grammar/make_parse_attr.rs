@@ -61,8 +61,8 @@ unsynn! {
     ///
     /// Format:
     /// ```ignore
-    /// ns "kdl";
-    /// crate_path ::facet_kdl;
+    /// ns "xml";
+    /// crate_path ::facet_xml;
     /// pub enum Attr { ... }
     /// pub struct Column { ... }
     /// ```
@@ -90,14 +90,14 @@ unsynn! {
         _semi: Semicolon,
     }
 
-    /// Namespace declaration: `ns "kdl";`
+    /// Namespace declaration: `ns "xml";`
     struct NsDecl {
         _kw: KNs,
         ns_literal: Literal,
         _semi: Semicolon,
     }
 
-    /// Crate path declaration: `crate_path ::facet_kdl;`
+    /// Crate path declaration: `crate_path ::facet_xml;`
     /// The path is captured as raw tokens until the semicolon.
     struct CratePathDecl {
         _kw: KCratePath,
@@ -248,9 +248,9 @@ struct ParsedGrammar {
     /// Whether this grammar is for built-in attrs defined inside the facet crate.
     /// When true, definition-time code uses `crate::` instead of `::facet::`.
     builtin: bool,
-    /// Namespace string (e.g., "kdl"), or empty string for built-in attrs
+    /// Namespace string (e.g., "xml"), or empty string for built-in attrs
     ns: Option<String>,
-    /// Crate path tokens (e.g., `::facet_kdl`), required for non-unit variants
+    /// Crate path tokens (e.g., `::facet_xml`), required for non-unit variants
     crate_path: Option<TokenStream2>,
     attr_enum: ParsedEnum,
     structs: Vec<ParsedStruct>,
@@ -346,8 +346,8 @@ enum VariantKind {
     ShapeType,
     /// Optional `&'static str` - can be used with or without a value.
     /// Grammar syntax: `Children(Option<&'static str>)`
-    /// - `#[facet(kdl::children)]` → None
-    /// - `#[facet(kdl::children = "kiddo")]` → Some("kiddo")
+    /// - `#[facet(xml::children)]` → None
+    /// - `#[facet(xml::children = "kiddo")]` → Some("kiddo")
     OptionalStr,
 }
 
@@ -383,14 +383,14 @@ impl Grammar {
         // Check for `builtin;` declaration
         let builtin = self.builtin_decl.is_some();
 
-        // Extract namespace from `ns "kdl";` declaration
+        // Extract namespace from `ns "xml";` declaration
         let ns = self.ns_decl.as_ref().map(|decl| {
             // Strip quotes from the literal
             let s = decl.ns_literal.to_string();
             s.trim_matches('"').to_string()
         });
 
-        // Extract crate path from `crate_path ::facet_kdl;` declaration
+        // Extract crate path from `crate_path ::facet_xml;` declaration
         let crate_path = self.crate_path_decl.as_ref().map(|decl| {
             let mut tokens = TokenStream2::new();
             for item in decl.path_tokens.iter() {

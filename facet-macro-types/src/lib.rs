@@ -132,23 +132,23 @@ unsynn! {
 
     /// Represents the inner content of a facet attribute.
     ///
-    /// All attributes are now parsed uniformly - either namespaced (`kdl::child`)
+    /// All attributes are now parsed uniformly - either namespaced (`xml::element`)
     /// or simple (`sensitive`, `rename = "foo"`). The grammar system determines
     /// what's valid, not hardcoded keywords.
     pub enum FacetInner {
-        /// A namespaced attribute like `kdl::child` or `args::short = 'v'`
+        /// A namespaced attribute like `xml::element` or `xml::ns = "http://example.com"`
         Namespaced(NamespacedAttr),
         /// A non-namespaced (builtin) attribute like `sensitive` or `rename = "foo"`
         Simple(SimpleAttr),
     }
 
-    /// A namespaced attribute like `kdl::child` or `args::short = 'v'`
+    /// A namespaced attribute like `xml::element` or `xml::ns = "http://example.com"`
     pub struct NamespacedAttr {
-        /// The namespace (e.g., "kdl", "args")
+        /// The namespace (e.g., "xml", "args")
         pub ns: Ident,
         /// The path separator ::
         pub _sep: PathSep,
-        /// The key (e.g., "child", "short")
+        /// The key (e.g., "element", "short")
         pub key: Ident,
         /// Optional arguments - either in parentheses like `(args)` or with equals like `= value`
         pub args: Option<AttrArgs>,
