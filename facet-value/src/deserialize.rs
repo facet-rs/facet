@@ -193,7 +193,7 @@ impl core::fmt::Display for SourceDiagnostic {
 #[cfg(feature = "diagnostics")]
 impl core::error::Error for SourceDiagnostic {}
 
-/// A wrapper around ValueError that owns the diagnostic data for miette
+/// A wrapper around ValueError that owns the diagnostic data
 #[cfg(feature = "diagnostics")]
 pub struct ValueErrorReport {
     /// The original error

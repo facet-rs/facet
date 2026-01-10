@@ -28,7 +28,7 @@ pub type Span = (usize, usize);
 /// Result of formatting a value with span tracking
 #[derive(Debug)]
 pub struct FormattedValue {
-    /// The formatted text (plain text, suitable for miette)
+    /// The formatted text (plain text)
     pub text: String,
     /// Map from paths to their byte spans in `text`
     pub spans: BTreeMap<Path, Span>,

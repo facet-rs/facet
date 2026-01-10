@@ -14,7 +14,6 @@ use std::{
 use facet::Facet;
 use facet_args as args;
 use facet_json::to_string;
-use miette::Report;
 
 /// xtask commands for the facet workspace.
 #[derive(Facet, Debug)]
@@ -93,7 +92,7 @@ fn main() {
         Ok(args) => args,
         Err(e) => {
             let is_help = e.is_help_request();
-            eprintln!("{:?}", Report::new(e));
+            eprintln!("{e}");
             // Exit with code 0 for help requests, 1 for actual errors
             std::process::exit(if is_help { 0 } else { 1 });
         }

@@ -32,7 +32,6 @@ facet-json-schema = { path = "../../facet-json-schema" }
 console = "0.16"
 unicode-width = "0.2"
 owo-colors = "4"
-miette = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 indexmap = "2"
 

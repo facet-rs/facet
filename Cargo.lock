@@ -453,12 +453,11 @@ dependencies = [
  "facet-typescript",
  "if-addrs",
  "indexmap 2.12.1",
- "miette",
  "owo-colors",
  "serde_json",
  "tokio",
  "tower-http",
- "unicode-width 0.2.2",
+ "unicode-width",
 ]
 
 [[package]]
@@ -738,7 +737,7 @@ dependencies = [
  "terminal_size",
  "textwrap",
  "thiserror",
- "unicode-width 0.2.2",
+ "unicode-width",
 ]
 
 [[package]]
@@ -1034,7 +1033,7 @@ dependencies = [
  "encode_unicode",
  "libc",
  "once_cell",
- "unicode-width 0.2.2",
+ "unicode-width",
  "windows-sys 0.61.2",
 ]
 
@@ -1657,7 +1656,6 @@ dependencies = [
  "facet-showcase",
  "heck",
  "insta",
- "miette",
  "owo-colors",
  "tracing",
 ]
@@ -1673,7 +1671,6 @@ dependencies = [
  "facet-reflect",
  "facet-testhelpers",
  "libtest-mimic",
- "miette",
 ]
 
 [[package]]
@@ -1808,7 +1805,7 @@ dependencies = [
  "owo-colors",
  "palette",
  "tracing",
- "unicode-width 0.2.2",
+ "unicode-width",
 ]
 
 [[package]]
@@ -1833,7 +1830,6 @@ dependencies = [
  "facet-solver",
  "facet-validate",
  "libc",
- "miette",
  "museair",
  "parking_lot",
 ]
@@ -1916,7 +1912,6 @@ dependencies = [
  "lexical-parse-integer",
  "libtest-mimic",
  "memchr",
- "miette",
  "mime",
  "serde",
  "serde_json",
@@ -1986,7 +1981,6 @@ dependencies = [
  "http",
  "http-body-util",
  "libtest-mimic",
- "miette",
  "rmp-serde",
  "serde",
  "serde_bytes",
@@ -1996,14 +1990,10 @@ dependencies = [
 name = "facet-path"
 version = "0.42.0"
 dependencies = [
- "arborium",
  "facet",
  "facet-core",
- "facet-pretty",
  "facet-testhelpers",
  "insta",
- "miette",
- "miette-arborium",
 ]
 
 [[package]]
@@ -2043,7 +2033,6 @@ dependencies = [
  "http",
  "http-body-util",
  "jiff",
- "miette",
  "ordered-float",
  "postcard",
  "serde",
@@ -2066,7 +2055,6 @@ dependencies = [
  "facet-showcase",
  "facet-testhelpers",
  "insta",
- "miette",
  "owo-colors",
 ]
 
@@ -2082,7 +2070,6 @@ dependencies = [
  "facet-value",
  "insta",
  "log",
- "miette",
  "proptest",
  "tempfile",
  "ulid",
@@ -2111,8 +2098,6 @@ dependencies = [
  "arborium",
  "facet",
  "facet-pretty",
- "miette",
- "miette-arborium",
  "owo-colors",
 ]
 
@@ -2132,7 +2117,6 @@ dependencies = [
  "facet-core",
  "facet-reflect",
  "json-event-parser",
- "miette",
  "strsim",
  "thiserror",
  "tracing",
@@ -2203,7 +2187,6 @@ dependencies = [
  "indoc",
  "itoa",
  "libtest-mimic",
- "miette",
  "toml_parser",
  "toml_writer",
  "zmij",
@@ -2247,7 +2230,6 @@ dependencies = [
 name = "facet-value"
 version = "0.42.0"
 dependencies = [
- "arborium",
  "bolero",
  "divan",
  "facet",
@@ -2260,7 +2242,6 @@ dependencies = [
  "facet-testhelpers",
  "indexmap 2.12.1",
  "kstring",
- "miette",
  "serde_json",
 ]
 
@@ -2272,7 +2253,6 @@ dependencies = [
  "facet-core",
  "facet-format",
  "facet-reflect",
- "miette",
  "xdr-codec",
 ]
 
@@ -2318,7 +2298,6 @@ dependencies = [
  "itoa",
  "libtest-mimic",
  "log",
- "miette",
  "saphyr-parser",
  "zmij",
 ]
@@ -3129,12 +3108,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "is_ci"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7655c9839580ee829dfacba1d1278c2b7883e50a277ff7541299489d6bdfdc45"
-
-[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3471,47 +3444,6 @@ dependencies = [
  "facet",
  "facet-json",
  "ratatui",
-]
-
-[[package]]
-name = "miette"
-version = "7.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f98efec8807c63c752b5bd61f862c165c115b0a35685bdcfd9238c7aeb592b7"
-dependencies = [
- "cfg-if",
- "miette-derive",
- "owo-colors",
- "supports-color",
- "supports-hyperlinks",
- "supports-unicode",
- "terminal_size",
- "textwrap",
- "unicode-width 0.1.14",
-]
-
-[[package]]
-name = "miette-arborium"
-version = "2.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03b12314e8eee2a5b4ba79bef82123bacc5c656e8b89e456780ab7c710cf3148"
-dependencies = [
- "arborium",
- "arborium-highlight",
- "arborium-theme",
- "miette",
- "owo-colors",
-]
-
-[[package]]
-name = "miette-derive"
-version = "7.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db5b29714e950dbb20d5e6f74f9dcec4edbcc1067bb7f8ed198c097b8c1a818b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.113",
 ]
 
 [[package]]
@@ -4260,7 +4192,7 @@ dependencies = [
  "thiserror",
  "unicode-segmentation",
  "unicode-truncate",
- "unicode-width 0.2.2",
+ "unicode-width",
 ]
 
 [[package]]
@@ -4291,7 +4223,7 @@ dependencies = [
  "strum",
  "time",
  "unicode-segmentation",
- "unicode-width 0.2.2",
+ "unicode-width",
 ]
 
 [[package]]
@@ -5081,27 +5013,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "supports-color"
-version = "3.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c64fc7232dd8d2e4ac5ce4ef302b1d81e0b80d055b9d77c7c4f51f6aa4c867d6"
-dependencies = [
- "is_ci",
-]
-
-[[package]]
-name = "supports-hyperlinks"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e396b6523b11ccb83120b115a0b7366de372751aa6edf19844dfb13a6af97e91"
-
-[[package]]
-name = "supports-unicode"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7401a30af6cb5818bb64852270bb722533397edcfc7344954a38f420819ece2"
-
-[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5222,7 +5133,7 @@ checksum = "c13547615a44dc9c452a8a534638acdf07120d4b6847c8178705da06306a3057"
 dependencies = [
  "smawk",
  "unicode-linebreak",
- "unicode-width 0.2.2",
+ "unicode-width",
 ]
 
 [[package]]
@@ -5684,14 +5595,8 @@ checksum = "8fbf03860ff438702f3910ca5f28f8dac63c1c11e7efb5012b8b175493606330"
 dependencies = [
  "itertools 0.13.0",
  "unicode-segmentation",
- "unicode-width 0.2.2",
+ "unicode-width",
 ]
-
-[[package]]
-name = "unicode-width"
-version = "0.1.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
 
 [[package]]
 name = "unicode-width"
@@ -6322,7 +6227,6 @@ dependencies = [
  "facet-args",
  "facet-json",
  "flate2",
- "miette",
  "rmpv",
  "serde",
  "serde_json",

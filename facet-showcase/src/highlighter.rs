@@ -4,7 +4,6 @@ use std::cell::RefCell;
 
 use arborium::theme::Theme;
 use arborium::{AnsiHighlighter, Highlighter as ArboriumHighlighter};
-use miette_arborium::MietteHighlighter;
 use owo_colors::OwoColorize;
 
 const INDENT: &str = "    ";
@@ -144,11 +143,6 @@ impl Highlighter {
             }
             Err(_) => self.plain_text_with_line_numbers(code),
         }
-    }
-
-    /// Build a miette highlighter using arborium.
-    pub fn build_miette_highlighter(&self, _lang: Language) -> MietteHighlighter {
-        MietteHighlighter::new()
     }
 
     /// Highlight code and return HTML with inline styles.

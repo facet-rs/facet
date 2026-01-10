@@ -22,16 +22,16 @@ use quote::quote;
 /// A plugin reference - either a simple name or a full path.
 ///
 /// - `Error` → convention-based lookup (`::facet_error`)
-/// - `facet_miette::Diagnostic` → explicit path (`::facet_miette`)
+/// - `some_crate::SomeTrait` → explicit path (`::some_crate`)
 #[derive(Debug, Clone)]
 pub enum PluginRef {
     /// Simple name like `Error` - uses convention `::facet_{snake_case}`
     Simple(String),
-    /// Explicit path like `facet_miette::Diagnostic` - uses the crate part directly
+    /// Explicit path like `some_crate::SomeTrait` - uses the crate part directly
     Path {
-        /// The crate name (e.g., `facet_miette`)
+        /// The crate name (e.g., `some_crate`)
         crate_name: String,
-        /// The plugin/trait name (e.g., `Diagnostic`)
+        /// The plugin/trait name (e.g., `SomeTrait`)
         plugin_name: String,
     },
 }
@@ -58,7 +58,7 @@ impl PluginRef {
 ///
 /// Supports both simple names and explicit paths:
 /// - `#[facet(derive(Error))]` → `PluginRef::Simple("Error")`
-/// - `#[facet(derive(facet_miette::Diagnostic))]` → `PluginRef::Path { crate_name: "facet_miette", plugin_name: "Diagnostic" }`
+/// - `#[facet(derive(some_crate::SomeTrait))]` → `PluginRef::Path { crate_name: "some_crate", plugin_name: "SomeTrait" }`
 pub fn extract_derive_plugins(attrs: &[Attribute]) -> Vec<PluginRef> {
     let mut plugins = Vec::new();
 
@@ -1492,7 +1492,7 @@ mod tests {
     #[test]
     fn test_extract_path_plugins() {
         let input = quote! {
-            #[facet(derive(Error, facet_miette::Diagnostic))]
+            #[facet(derive(Error, facet_default::Default))]
             pub enum MyError {
                 Unknown,
             }
@@ -1505,7 +1505,7 @@ mod tests {
         assert_eq!(plugins.len(), 2);
         assert!(matches!(&plugins[0], PluginRef::Simple(name) if name == "Error"));
         assert!(
-            matches!(&plugins[1], PluginRef::Path { crate_name, plugin_name } if crate_name == "facet_miette" && plugin_name == "Diagnostic")
+            matches!(&plugins[1], PluginRef::Path { crate_name, plugin_name } if crate_name == "facet_default" && plugin_name == "Default")
         );
     }
 
@@ -1515,10 +1515,10 @@ mod tests {
         assert_eq!(simple.crate_path().to_string(), ":: facet_error");
 
         let path = PluginRef::Path {
-            crate_name: "facet_miette".to_string(),
-            plugin_name: "Diagnostic".to_string(),
+            crate_name: "facet_default".to_string(),
+            plugin_name: "Default".to_string(),
         };
-        assert_eq!(path.crate_path().to_string(), ":: facet_miette");
+        assert_eq!(path.crate_path().to_string(), ":: facet_default");
     }
 
     /// Test for issue #1679: derive(Default) combined with other attributes on the same line

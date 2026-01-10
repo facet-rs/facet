@@ -52,7 +52,7 @@ The error points to the exact location in the input, suggests corrections for ty
 
 serde's generated code is optimized for speed. Tracking source locations would require allocating memory and recording state, which adds overhead in the common case where nothing goes wrong.
 
-facet's shape data is static. Keeping references to it is cheap. Errors store byte offsets and pointers to shapes, and formatting happens lazily when you actually render the error. The ecosystem has standardized on [miette](https://docs.rs/miette) for this.
+facet's shape data is static. Keeping references to it is cheap. Errors store byte offsets and pointers to shapes, and formatting happens lazily when you actually render the error.
 
 ### Specialization
 
@@ -125,7 +125,7 @@ facet's goal is not speed. It's expressiveness, diagnostics, and flexibility. If
 ## Why now
 
 - The **attribute grammar system** just landed — extension crates can define custom attributes without writing proc-macros
-- Format crates have matured: JSON, YAML, TOML, MessagePack, CSV, and more
+- Format crates have matured: JSON, YAML, TOML, MessagePack, CSV, XDR, and more
 - facet-args provides CLI parsing, facet-pretty does debug output, facet-diff does structural comparison
 
 The ecosystem is here. The tooling is here.

@@ -2,14 +2,12 @@
 
 extern crate alloc;
 
-use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt::{self, Display};
 
 use facet_reflect::ReflectError;
-use miette::NamedSource;
 
 // Re-export Span from facet-reflect for consistency across format crates
 pub use facet_reflect::Span;
@@ -33,9 +31,8 @@ pub struct YamlError {
     pub kind: YamlErrorKind,
     /// Source span where the error occurred
     pub span: Option<Span>,
-    /// The source input (for diagnostics) - wrapped in NamedSource for syntax highlighting
-    /// Boxed to reduce the size of the error type
-    pub source_code: Option<Box<NamedSource<String>>>,
+    /// The source input (for diagnostics)
+    pub source_code: Option<String>,
 }
 
 impl Display for YamlError {
@@ -65,9 +62,9 @@ impl YamlError {
         }
     }
 
-    /// Attach source code for rich diagnostics with syntax highlighting
+    /// Attach source code for rich diagnostics
     pub fn with_source(mut self, source: &str) -> Self {
-        self.source_code = Some(Box::new(NamedSource::new("input.yaml", source.to_string())));
+        self.source_code = Some(source.to_string());
         self
     }
 }
