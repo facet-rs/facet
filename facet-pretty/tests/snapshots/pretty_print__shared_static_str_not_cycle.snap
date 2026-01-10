@@ -1,0 +1,8 @@
+---
+source: facet-pretty/tests/pretty_print.rs
+expression: printer.format(&val)
+---
+MultipleStaticStr {
+  a: "same",
+  b: "same",
+}
