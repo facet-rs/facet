@@ -1247,6 +1247,28 @@ where
         self.parser.hint_struct_fields(struct_def.fields.len());
 
         let struct_has_default = wip.shape().has_default_attr();
+        let struct_type_has_default = wip.shape().is(Characteristic::Default);
+
+        // Peek at the next event first to handle EOF and null gracefully
+        let maybe_event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+
+        // Handle EOF (empty input / comment-only files): use Default if available
+        if maybe_event.is_none() {
+            if struct_type_has_default {
+                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                return Ok(wip);
+            }
+            return Err(DeserializeError::UnexpectedEof { expected: "value" });
+        }
+
+        // Handle Scalar(Null): use Default if available
+        if let Some(ParseEvent::Scalar(ScalarValue::Null)) = &maybe_event
+            && struct_type_has_default
+        {
+            let _ = self.expect_event("null")?;
+            wip = wip.set_default().map_err(DeserializeError::reflect)?;
+            return Ok(wip);
+        }
 
         // Expect StructStart, but for XML/HTML, a scalar means text-only element
         let event = self.expect_event("value")?;
@@ -1804,6 +1826,28 @@ where
         };
 
         let struct_has_default = wip.shape().has_default_attr();
+        let struct_type_has_default = wip.shape().is(Characteristic::Default);
+
+        // Peek at the next event first to handle EOF and null gracefully
+        let maybe_event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+
+        // Handle EOF (empty input / comment-only files): use Default if available
+        if maybe_event.is_none() {
+            if struct_type_has_default {
+                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                return Ok(wip);
+            }
+            return Err(DeserializeError::UnexpectedEof { expected: "value" });
+        }
+
+        // Handle Scalar(Null): use Default if available
+        if let Some(ParseEvent::Scalar(ScalarValue::Null)) = &maybe_event
+            && struct_type_has_default
+        {
+            let _ = self.expect_event("null")?;
+            wip = wip.set_default().map_err(DeserializeError::reflect)?;
+            return Ok(wip);
+        }
 
         // Expect StructStart, but for XML/HTML, a scalar means text-only element
         let event = self.expect_event("value")?;
@@ -2603,6 +2647,28 @@ where
         use facet_solver::{PathSegment, Schema, Solver};
 
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
+        let struct_type_has_default = wip.shape().is(Characteristic::Default);
+
+        // Peek at the next event first to handle EOF and null gracefully
+        let maybe_event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+
+        // Handle EOF (empty input / comment-only files): use Default if available
+        if maybe_event.is_none() {
+            if struct_type_has_default {
+                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                return Ok(wip);
+            }
+            return Err(DeserializeError::UnexpectedEof { expected: "value" });
+        }
+
+        // Handle Scalar(Null): use Default if available
+        if let Some(ParseEvent::Scalar(ScalarValue::Null)) = &maybe_event
+            && struct_type_has_default
+        {
+            let _ = self.expect_event("null")?;
+            wip = wip.set_default().map_err(DeserializeError::reflect)?;
+            return Ok(wip);
+        }
 
         // Build the schema for this type - this recursively expands all flatten fields
         let schema = Schema::build_auto(wip.shape())

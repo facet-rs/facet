@@ -136,8 +136,8 @@ macro_rules! __facet_invoke {
                                                     Self::@variant_name {
                                                         @field_name: source,
                                                         @for_field {
-                                                            @if_attr(default::value) {
-                                                                @field_name: (@attr_args).into(),
+                                                            @if_attr(default) {
+                                                                @field_name: @attr_args,
                                                             }
                                                         }
                                                     }

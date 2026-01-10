@@ -2339,6 +2339,7 @@ dependencies = [
  "datatest-stable",
  "facet",
  "facet-core",
+ "facet-default",
  "facet-format",
  "facet-format-suite",
  "facet-reflect",

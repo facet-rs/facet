@@ -44,8 +44,9 @@ struct ArgsAttributes {
     pos: String,
     #[facet(args::named)]
     named: bool,
-    #[facet(args::short = 'f')]
-    flag: bool,
+    // FIXME: https://github.com/facet-rs/facet/issues/1732
+    // #[facet(args::short = 'f')]
+    // flag: bool,
 }
 
 #[test]

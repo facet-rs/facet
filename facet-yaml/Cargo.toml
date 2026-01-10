@@ -35,6 +35,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 [dev-dependencies]
 datatest-stable = "0.3"
 facet = { path = "../facet", features = ["doc", "net"] }
+facet-default = { path = "../facet-default" }
 facet-format = { path = "../facet-format", features = ["net"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net"] }
 indoc = { workspace = true }

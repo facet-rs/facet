@@ -6,23 +6,17 @@
 //!
 //! ```ignore
 //! use facet::Facet;
-//! use facet_default as default;
+//! use facet_default as _;
 //!
 //! #[derive(Facet, Debug)]
 //! #[facet(derive(Default))]
 //! pub struct Config {
-//!     #[facet(default::value = "localhost")]
+//!     #[facet(default = "localhost")]
 //!     host: String,
-//!     #[facet(default::value = 8080u16)]
+//!     #[facet(default = 8080u16)]
 //!     port: u16,
-//!     #[facet(default::func = "default_timeout")]
-//!     timeout: std::time::Duration,
 //!     // No attribute = uses Default::default()
 //!     debug: bool,
-//! }
-//!
-//! fn default_timeout() -> std::time::Duration {
-//!     std::time::Duration::from_secs(30)
 //! }
 //! ```
 //!
@@ -30,13 +24,10 @@
 //!
 //! ### Field Level
 //!
-//! - `#[facet(default::value = literal)]` - Use a literal value (converted via `.into()`)
-//! - `#[facet(default::func = "path")]` - Call a function to get the default value (path as string)
+//! - `#[facet(default = literal)]` - Use a literal value
+//! - `#[facet(default)]` - Use `Default::default()` for the field type
 //!
 //! Fields without attributes use `Default::default()`.
-//!
-//! **Note:** For numeric literals, use type suffixes to ensure correct types (e.g., `8080u16`
-//! instead of `8080` for a `u16` field). String literals are automatically converted via `.into()`.
 //!
 //! ## Enums
 //!
@@ -64,23 +55,6 @@ facet::define_attr_grammar! {
 
     /// Default attribute types for configuring Default implementation.
     pub enum Attr {
-        /// Use a literal value for the field default (converted via `.into()`).
-        ///
-        /// Usage: `#[facet(default::value = "hello")]`
-        /// Usage: `#[facet(default::value = 42)]`
-        ///
-        /// Note: The type here is nominally `&'static str` but the plugin template
-        /// uses `@attr_args` which captures the raw tokens, so any value works.
-        Value(&'static str),
-
-        /// Call a function to get the default value.
-        ///
-        /// Usage: `#[facet(default::func = my_default_fn)]`
-        ///
-        /// Note: The type here is nominally `&'static str` but the plugin template
-        /// uses `@attr_args` which captures the raw tokens, so any path works.
-        Func(&'static str),
-
         /// Mark an enum variant as the default.
         ///
         /// Usage: `#[facet(default::variant)]`
