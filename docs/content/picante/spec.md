@@ -574,11 +574,52 @@ Durability is an optimization hint for revalidation; it is **not persistence** a
 > r[durability.revalidation-opt]
 > Implementations MAY use durability to optimize revalidation as follows:
 >
-> - Track, for each durability level `D`, a per-view revision watermark `last_changed_at_or_below[D]` equal to the most recent revision at which any input slot whose input kind has durability `<= D` changed.
-> - For each cached derived value, track an **effective durability** `eff_dur` that is `<=` the durability of every input kind it (transitively) depends on.
-> - When revalidating a derived value whose cached `verified_at >= last_changed_at_or_below[eff_dur]`, the implementation MAY treat revalidation as having succeeded without checking individual dependencies.
+> - Track, for each durability level `D`, a per-view revision watermark `last_changed_at_at_or_above[D]` equal to the most recent revision at which any input slot whose input kind has durability `>= D` changed.
+> - For each cached derived value, track an **effective durability** `eff_dur` equal to the minimum durability of all input kinds it (transitively) depends on.
+> - When revalidating a derived value whose cached `verified_at >= last_changed_at_at_or_above[eff_dur]`, the implementation MAY treat revalidation as having succeeded without checking individual dependencies.
 >
 > If these conditions are not met (or the implementation does not track them), it MUST fall back to dependency-based revalidation (`r[cell.revalidate]`).
+
+#### Examples (non-normative)
+
+Dependency graph with per-input-kind durabilities and derived effective durability:
+
+```aasvg
+.---------------------------.
+| Input kinds (durability)  |
+|  SourceFile      (LOW)    |
+|  CargoToml       (MEDIUM) |
+|  StdLib          (HIGH)   |
+'-------------+-------------'
+              |
+              v
+.---------------------------.
+| q_cfg (eff = MEDIUM)      |
+| depends on: CargoToml     |
+'-------------+-------------'
+              |
+              v
+.---------------------------.
+| q_parse (eff = LOW)       |
+| depends on: SourceFile,   |
+|            q_cfg          |
+'---------------------------'
+```
+
+If only `SourceFile` changes (LOW), `q_cfg` can often be treated as still valid without walking its dependencies, because it depends only on inputs with durability `>= MEDIUM`.
+`q_parse` cannot, because its effective durability is LOW.
+
+Timeline sketch illustrating the durability watermark:
+
+```aasvg
+revision:                 R0        R1             R2
+change:                   -     SourceFile(LOW)   CargoToml(MEDIUM)
+last_changed_at_at_or_above[MEDIUM]:
+                           R0        R0             R2
+
+q_cfg.verified_at:        R0     (skip dep walk)   must revalidate
+q_parse.verified_at:      R0     must revalidate   must revalidate
+```
 
 ### Cell state and visibility
 
