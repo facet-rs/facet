@@ -1815,7 +1815,6 @@ dependencies = [
  "facet-core",
  "facet-path",
  "facet-reflect",
- "facet-singularize",
  "facet-solver",
  "facet-validate",
  "libc",
@@ -2088,13 +2087,6 @@ dependencies = [
  "facet",
  "facet-pretty",
  "owo-colors",
-]
-
-[[package]]
-name = "facet-singularize"
-version = "0.42.0"
-dependencies = [
- "divan",
 ]
 
 [[package]]
@@ -6217,8 +6209,6 @@ dependencies = [
  "facet-json",
  "flate2",
  "rmpv",
- "serde",
- "serde_json",
  "ureq 2.12.1",
  "wordfreq",
  "zip",
