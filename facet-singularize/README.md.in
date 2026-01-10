@@ -31,13 +31,13 @@ assert!(is_singular_of("child", "children"));
 
 ## Use Case
 
-This crate is primarily used by `facet-kdl` for matching KDL node names to Rust field names:
+This crate is used by format-specific deserializers for matching serialized names to Rust field names:
 
 ```rust
 #[derive(Facet)]
 struct Config {
-    #[facet(kdl::children)]
-    dependencies: Vec<Dependency>,  // Matches "dependency" nodes
+    #[facet(xml::elements)]
+    dependencies: Vec<Dependency>,  // Matches "dependency" elements
 }
 ```
 

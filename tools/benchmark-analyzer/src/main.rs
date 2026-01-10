@@ -597,7 +597,7 @@ fn export_run_json(
     for f in format_configs {
         let format_target_keys: Vec<&str> = f.targets.iter().map(|(k, _, _)| *k).collect();
 
-        // Get benchmarks for this format from KDL definitions
+        // Get benchmarks for this format from definitions
         let (_, benchmarks_by_section) = all_formats
             .get(f.key)
             .cloned()
@@ -637,7 +637,7 @@ fn export_run_json(
         }
     }
 
-    // Also collect any benchmarks from actual data that weren't in KDL definitions
+    // Also collect any benchmarks from actual data that weren't in definitions
     for bench_key in data.divan.keys().chain(data.gungraun.keys()) {
         if !benchmarks_catalog.contains_key(bench_key) {
             // Parse format from key
@@ -1031,7 +1031,7 @@ fn main() {
     // Export gungraun instruction counts to JSON (for perf delta tracking)
     export_perf_json(&data, &report_dir, &timestamp);
 
-    // Load ordered benchmark definitions from KDL (multi-format)
+    // Load ordered benchmark definitions
     let all_formats = benchmark_defs::load_ordered_benchmarks(&workspace_root);
     let total_benchmarks: usize = all_formats
         .values()
