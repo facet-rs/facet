@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0](https://github.com/facet-rs/facet/compare/facet-core-v0.42.0...facet-core-v0.43.0) - 2026-01-10
+
+### Added
+
+- *(shape)* add DeclId for identifying type declarations
+- *(facet-core)* add module_path to foreign type implementations
+- *(shape)* add module_path and source location fields
+
+### Fixed
+
+- *(variance)* &'a mut T is covariant in 'a when T is bivariant
+- prevent exponential variance computation for recursive types
+- *(soundness)* propagate variance correctly for reference types
+- resolve rustdoc links and clippy auto-deref warnings
+- *(soundness)* introduce TryFromOutcome enum for explicit ownership semantics
+- *(soundness)* return Invariant when variance depth limit is hit
+- *(soundness)* make shape field private on Ox* types
+
+### Other
+
+- *(decl_id)* auto-compute from module_path + kind + type_identifier
+- *(decl_id)* auto-compute for non-generic types
+- *(variance)* replace function-based variance with declarative model
+
 ## [0.42.0](https://github.com/facet-rs/facet/compare/facet-core-v0.41.0...facet-core-v0.42.0) - 2026-01-06
 
 ### Added
