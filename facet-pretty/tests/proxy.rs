@@ -15,6 +15,13 @@ pub struct ProxyInt {
     pub value: i32,
 }
 
+/// Struct that aliases the same proxied value twice.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct ProxyIntAliased {
+    pub a: std::rc::Rc<ProxyInt>,
+    pub b: std::rc::Rc<ProxyInt>,
+}
+
 /// Convert from proxy (deserialization): string -> ProxyInt
 impl TryFrom<IntAsString> for ProxyInt {
     type Error = std::num::ParseIntError;
@@ -93,6 +100,31 @@ fn test_proxy_container_format_peek_with_spans() {
 
     // Check that we have spans recorded
     assert!(!formatted.spans.is_empty());
+}
+
+#[test]
+fn test_proxy_container_aliasing_format_peek_with_spans() {
+    use facet_reflect::Peek;
+    use std::rc::Rc;
+
+    let shared = Rc::new(ProxyInt { value: 42 });
+    let value = ProxyIntAliased {
+        a: shared.clone(),
+        b: shared,
+    };
+
+    let formatted = PrettyPrinter::new().format_peek_with_spans(Peek::new(&value));
+    assert!(
+        !formatted.text.contains("cycle detected"),
+        "aliasing a proxied value should not be treated as a cycle"
+    );
+
+    assert_snapshot!(formatted.text, @r#"
+    ProxyIntAliased {
+      a: "42",
+      b: "42",
+    }
+    "#);
 }
 
 #[test]
