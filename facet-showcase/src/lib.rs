@@ -1,7 +1,7 @@
 //! Unified showcase infrastructure for facet format crates.
 //!
 //! This crate provides consistent rendering for showcases across all facet
-//! format crates (JSON, YAML, KDL, etc.), supporting both terminal output
+//! format crates (JSON, YAML, TOML, etc.), supporting both terminal output
 //! and HTML generation for the website.
 //!
 //! # Example

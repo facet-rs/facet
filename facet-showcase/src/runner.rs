@@ -119,12 +119,6 @@ impl ShowcaseRunner {
         self
     }
 
-    /// Add KDL syntax support from a directory.
-    pub fn with_kdl_syntaxes(mut self, syntax_dir: &str) -> Self {
-        self.highlighter = std::mem::take(&mut self.highlighter).with_kdl_syntaxes(syntax_dir);
-        self
-    }
-
     /// Print the showcase header.
     pub fn header(&self) {
         match self.mode {
