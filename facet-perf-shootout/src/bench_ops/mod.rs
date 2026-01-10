@@ -3,5 +3,5 @@
 //! Shared benchmark operations used by both divan and gungraun.
 //! Each format module contains inline functions for serialize/deserialize.
 
-pub mod json;
 pub mod postcard;
+pub mod json;
