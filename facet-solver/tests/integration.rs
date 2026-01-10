@@ -17,7 +17,7 @@ use std::sync::Once;
 use facet::Facet;
 use facet_core::Shape;
 use facet_solver::{
-    KeyResult, ProbeResult, ProbingSolver, Resolution, SatisfyResult, Schema, Solver,
+    KeyResult, Resolution, SatisfyResult, Schema, Solver,
 };
 use json_event_parser::{JsonEvent, ReaderJsonParser};
 

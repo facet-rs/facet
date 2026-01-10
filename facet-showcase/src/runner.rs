@@ -598,6 +598,45 @@ impl<'a> Scenario<'a> {
         self
     }
 
+    /// Display an error message.
+    pub fn error<E: core::fmt::Display>(mut self, err: &E) -> Self {
+        if self.skipped {
+            return self;
+        }
+        self.ensure_header();
+
+        let error_text = err.to_string();
+
+        match self.runner.mode {
+            OutputMode::Terminal => {
+                println!();
+                println!("{}", "Error:".bold().red());
+                println!("{error_text}");
+            }
+            OutputMode::Markdown => {
+                println!("<div class=\"error\">");
+                println!("<h4>Error</h4>");
+                println!(
+                    "<pre><code>{}</code></pre>",
+                    crate::highlighter::html_escape(&error_text)
+                );
+                println!("</div>");
+            }
+        }
+        self
+    }
+
+    /// Display a result (either success or error).
+    pub fn result<'b, T: facet::Facet<'b>, E: core::fmt::Display>(
+        self,
+        result: &'b Result<T, E>,
+    ) -> Self {
+        match result {
+            Ok(value) => self.success(value),
+            Err(err) => self.error(err),
+        }
+    }
+
     /// Display output with ANSI color codes, automatically converted to HTML in markdown mode.
     ///
     /// In terminal mode, the ANSI codes are printed as-is.

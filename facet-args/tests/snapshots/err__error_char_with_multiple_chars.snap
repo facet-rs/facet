@@ -1,12 +1,5 @@
 ---
 source: facet-args/tests/err.rs
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::reflect_error
-
-  × Could not parse CLI arguments
-   ╭────
- 1 │ --letter abc 
-   ·          ─┬─
-   ·           ╰── invalid value for `char`
-   ╰────
+error: invalid value for `char`

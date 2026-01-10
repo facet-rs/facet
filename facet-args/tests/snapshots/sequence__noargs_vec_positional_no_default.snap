@@ -1,8 +1,7 @@
 ---
 source: facet-args/tests/sequence.rs
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::missing_argument
+error: missing required argument `<strings>`
 
-  × Could not parse CLI arguments
-  help: provide a value for `<strings>`
+provide a value for `<strings>`

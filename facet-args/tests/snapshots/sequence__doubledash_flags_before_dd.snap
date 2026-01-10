@@ -1,13 +1,7 @@
 ---
 source: facet-args/tests/sequence.rs
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::unknown_long_flag
+error: unknown flag `--baz`
 
-  × Could not parse CLI arguments
-   ╭────
- 1 │ --foo --bar --baz 
-   ·             ──┬──
-   ·               ╰── unknown flag `--baz`
-   ╰────
-  help: did you mean `--bar`?
+did you mean `--bar`?

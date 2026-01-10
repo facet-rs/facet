@@ -1,12 +1,5 @@
 ---
 source: facet-args/tests/subcommand.rs
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::reflect_error
-
-  × Could not parse CLI arguments
-   ╭────
- 1 │ ci --action gen 
-   ·             ─┬─
-   ·              ╰── Subcommands must be provided as positional arguments, not as flag values. Use the subcommand name directly instead of --flag <value>.
-   ╰────
+error: Subcommands must be provided as positional arguments, not as flag values. Use the subcommand name directly instead of --flag <value>.

@@ -1,13 +1,7 @@
 ---
 source: facet-args/tests/err.rs
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::expected_value
+error: expected `usize` value
 
-  × Could not parse CLI arguments
-   ╭────
- 1 │ --concurrency 
-   · ──────┬──────
-   ·       ╰── expected `usize` value
-   ╰────
-  help: provide a value after the flag
+provide a value after the flag

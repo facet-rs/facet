@@ -13,6 +13,7 @@ pub struct ArgsErrorWithInput {
     pub(crate) inner: ArgsError,
 
     /// All CLI arguments joined by a space
+    #[allow(unused)]
     pub(crate) flattened_args: String,
 }
 
@@ -53,6 +54,7 @@ impl core::error::Error for ArgsErrorWithInput {}
 #[derive(Debug)]
 pub struct ArgsError {
     /// Where the error occurred
+    #[allow(unused)]
     pub span: Span,
 
     /// The specific error that occurred while parsing arguments.

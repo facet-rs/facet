@@ -1,15 +1,8 @@
 ---
 source: facet-args/tests/err.rs
-assertion_line: 170
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::unexpected_positional
+error: unexpected positional argument
 
-  × Could not parse CLI arguments
-   ╭────
- 1 │ --maybe value1 value2 
-   ·                ───┬──
-   ·                   ╰── unexpected positional argument
-   ╰────
-  help: available options:
-              --maybe
+available options:
+      --maybe
