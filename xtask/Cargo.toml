@@ -17,8 +17,6 @@ facet-args = { path = "../facet-args", version = "0.42.0" }
 facet-json = { path = "../facet-json", version = "0.42.0" }
 flate2 = "1.1"
 rmpv = "1.3"
-serde = { workspace = true }
-serde_json = { workspace = true }
 ureq = "2.12"
 wordfreq = "0.2.3"
 zip = "2.4"
