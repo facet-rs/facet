@@ -29,12 +29,7 @@
 
 use alloc::format;
 use alloc::string::{String, ToString};
-#[cfg(feature = "diagnostics")]
-use alloc::vec;
 use alloc::vec::Vec;
-
-#[cfg(feature = "diagnostics")]
-use alloc::boxed::Box;
 
 use facet_core::{
     Def, Facet, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType, Variant,
@@ -42,11 +37,6 @@ use facet_core::{
 use facet_reflect::{Partial, ReflectError};
 
 use crate::{VNumber, Value, ValueType};
-
-#[cfg(feature = "diagnostics")]
-use alloc::borrow::Cow;
-#[cfg(feature = "diagnostics")]
-use facet_pretty::{PathSegment as ShapePathSegment, format_shape_with_spans};
 
 /// A segment in a deserialization path
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,178 +146,6 @@ impl ValueError {
 
 #[cfg(feature = "std")]
 impl core::error::Error for ValueError {}
-
-#[cfg(feature = "diagnostics")]
-impl ValueError {
-    /// Convert this error into a report that owns its diagnostic data
-    pub fn into_report(self) -> ValueErrorReport {
-        ValueErrorReport::new(self)
-    }
-}
-
-/// A sub-diagnostic for a single source (JSON input or Rust target)
-#[cfg(feature = "diagnostics")]
-struct SourceDiagnostic {
-    /// The source text (with syntax highlighting)
-    source_text: String,
-    /// The source name (e.g., "input.json" or "target.rs")
-    source_name: String,
-    /// Labels for this source
-    labels: Vec<(usize, usize, String)>,
-}
-
-#[cfg(feature = "diagnostics")]
-impl core::fmt::Debug for SourceDiagnostic {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.source_name)
-    }
-}
-
-#[cfg(feature = "diagnostics")]
-impl core::fmt::Display for SourceDiagnostic {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.source_name)
-    }
-}
-
-#[cfg(feature = "diagnostics")]
-impl core::error::Error for SourceDiagnostic {}
-
-/// A wrapper around ValueError that owns the diagnostic data
-#[cfg(feature = "diagnostics")]
-pub struct ValueErrorReport {
-    /// The original error
-    error: ValueError,
-    /// Related diagnostics (input JSON, target Rust type)
-    related: Vec<SourceDiagnostic>,
-}
-
-#[cfg(feature = "diagnostics")]
-impl ValueErrorReport {
-    /// Create a new report from a ValueError
-    pub fn new(error: ValueError) -> Self {
-        use crate::format::{PathSegment as ValuePathSegment, format_value_with_spans};
-        use crate::highlight::{highlight_json_with_spans, highlight_rust_with_spans};
-
-        let mut related = Vec::new();
-
-        // Format the source value with spans and syntax highlighting
-        if let Some(ref value) = error.source_value {
-            let result = format_value_with_spans(value);
-
-            // Convert our PathSegment to format's PathSegment
-            let value_path: Vec<ValuePathSegment> = error
-                .source_path
-                .iter()
-                .map(|seg| match seg {
-                    PathSegment::Field(name) => ValuePathSegment::Key(name.clone()),
-                    PathSegment::Variant(name) => ValuePathSegment::Key(name.clone()),
-                    PathSegment::Index(i) => ValuePathSegment::Index(*i),
-                })
-                .collect();
-
-            let span = result
-                .spans
-                .get(&value_path)
-                .copied()
-                .unwrap_or((0, result.text.len().saturating_sub(1).max(1)));
-
-            let label = match &error.kind {
-                ValueErrorKind::TypeMismatch { got, .. } => {
-                    alloc::format!("got {got:?}")
-                }
-                ValueErrorKind::NumberOutOfRange { message } => {
-                    alloc::format!("this value: {message}")
-                }
-                ValueErrorKind::UnknownField { field } => {
-                    alloc::format!("unknown field `{field}`")
-                }
-                _ => "this value".into(),
-            };
-
-            // Apply JSON syntax highlighting and convert span positions
-            let plain_spans = vec![(span.0, span.1, label)];
-            let (highlighted_text, converted_spans) =
-                highlight_json_with_spans(&result.text, &plain_spans);
-
-            related.push(SourceDiagnostic {
-                source_text: highlighted_text,
-                source_name: "input.json".into(),
-                labels: converted_spans,
-            });
-        }
-
-        // Format the target shape with spans and syntax highlighting
-        if let Some(shape) = error.target_shape {
-            let result = format_shape_with_spans(shape);
-
-            // Only add if there's actual content
-            if !result.text.is_empty() {
-                // Convert our PathSegment to facet_pretty's PathSegment
-                let shape_path: Vec<ShapePathSegment> = error
-                    .dest_path
-                    .iter()
-                    .filter_map(|seg| match seg {
-                        PathSegment::Field(name) => {
-                            Some(ShapePathSegment::Field(Cow::Owned(name.clone())))
-                        }
-                        PathSegment::Variant(name) => {
-                            Some(ShapePathSegment::Variant(Cow::Owned(name.clone())))
-                        }
-                        PathSegment::Index(_) => None,
-                    })
-                    .collect();
-
-                let span = result
-                    .spans
-                    .get(&shape_path)
-                    .map(|s| s.value)
-                    .unwrap_or((0, result.text.len().saturating_sub(1).max(1)));
-
-                let label = match &error.kind {
-                    ValueErrorKind::TypeMismatch { expected, .. } => {
-                        alloc::format!("expected {expected}")
-                    }
-                    ValueErrorKind::MissingField { field } => {
-                        alloc::format!("missing field `{field}`")
-                    }
-                    ValueErrorKind::NumberOutOfRange { .. } => "for this type".into(),
-                    _ => "target type".into(),
-                };
-
-                // Apply Rust syntax highlighting and convert span positions
-                let plain_spans = vec![(span.0, span.1, label)];
-                let (highlighted_text, converted_spans) =
-                    highlight_rust_with_spans(&result.text, &plain_spans);
-
-                related.push(SourceDiagnostic {
-                    source_text: highlighted_text,
-                    source_name: "target.rs".into(),
-                    labels: converted_spans,
-                });
-            }
-        }
-
-        Self { error, related }
-    }
-}
-
-#[cfg(feature = "diagnostics")]
-impl core::fmt::Debug for ValueErrorReport {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(&self.error, f)
-    }
-}
-
-#[cfg(feature = "diagnostics")]
-impl core::fmt::Display for ValueErrorReport {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Display::fmt(&self.error, f)
-    }
-}
-
-#[cfg(feature = "diagnostics")]
-impl core::error::Error for ValueErrorReport {}
 
 /// Specific error kinds for Value deserialization.
 #[derive(Debug)]
