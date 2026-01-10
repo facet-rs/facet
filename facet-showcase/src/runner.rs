@@ -2,7 +2,6 @@
 
 use crate::highlighter::{Highlighter, Language, ansi_to_html};
 use crate::output::OutputMode;
-use miette::{Diagnostic, GraphicalReportHandler, GraphicalTheme};
 use owo_colors::OwoColorize;
 
 /// Build provenance information for tracking where showcase output came from.
@@ -556,48 +555,6 @@ impl<'a> Scenario<'a> {
         self
     }
 
-    /// Display an error using miette's graphical reporter.
-    pub fn error(mut self, err: &dyn Diagnostic) -> Self {
-        if self.skipped {
-            return self;
-        }
-        self.ensure_header();
-
-        match self.runner.mode {
-            OutputMode::Terminal => {
-                println!();
-                println!("{}", "Error:".bold().red());
-
-                let mut output = String::new();
-                let highlighter = self
-                    .runner
-                    .highlighter
-                    .build_miette_highlighter(self.runner.primary_language);
-                let handler = GraphicalReportHandler::new_themed(GraphicalTheme::unicode())
-                    .with_syntax_highlighting(highlighter);
-                handler.render_report(&mut output, err).unwrap();
-                println!("{output}");
-            }
-            OutputMode::Markdown => {
-                // Render the error with ANSI colors, then convert to HTML
-                let mut output = String::new();
-                let highlighter = self
-                    .runner
-                    .highlighter
-                    .build_miette_highlighter(self.runner.primary_language);
-                let handler = GraphicalReportHandler::new_themed(GraphicalTheme::unicode())
-                    .with_syntax_highlighting(highlighter);
-                handler.render_report(&mut output, err).unwrap();
-
-                println!("<div class=\"error\">");
-                println!("<h4>Error</h4>");
-                println!("<pre><code>{}</code></pre>", ansi_to_html(&output));
-                println!("</div>");
-            }
-        }
-        self
-    }
-
     /// Display a compiler error from raw ANSI output (e.g., from `cargo check`).
     pub fn compiler_error(mut self, ansi_output: &str) -> Self {
         if self.skipped {
@@ -645,14 +602,6 @@ impl<'a> Scenario<'a> {
             }
         }
         self
-    }
-
-    /// Display a result (either success or error).
-    pub fn result<'b, T: facet::Facet<'b>, E: Diagnostic>(self, result: &'b Result<T, E>) -> Self {
-        match result {
-            Ok(value) => self.success(value),
-            Err(err) => self.error(err),
-        }
     }
 
     /// Display output with ANSI color codes, automatically converted to HTML in markdown mode.

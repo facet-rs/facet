@@ -9,7 +9,7 @@ mod server;
 use chrono::Local;
 use console::Term;
 use facet_args as args;
-use miette::Report;
+
 use owo_colors::OwoColorize;
 use std::collections::VecDeque;
 use std::fs;
@@ -836,7 +836,7 @@ fn main() {
     let args: Args = match args::from_std_args() {
         Ok(args) => args,
         Err(e) => {
-            eprintln!("{:?}", Report::new(e));
+            eprintln!("{e}");
             std::process::exit(1);
         }
     };

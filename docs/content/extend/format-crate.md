@@ -6,7 +6,7 @@ insert_anchor_links = "heading"
 
 Outline (to be expanded):
 
-- Architecture: reader/writer, solver integration, error strategy (`miette::Diagnostic`).
+- Architecture: reader/writer, solver integration, error strategy.
 - Using `Shape`/`Peek` to read; `Partial` to construct.
 - Attribute plumbing: parse extension attributes, map to behavior.
 - Testing patterns: golden files, round-trips, fuzzing, span assertions.

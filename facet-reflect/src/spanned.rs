@@ -35,23 +35,6 @@ impl Span {
     }
 }
 
-#[cfg(feature = "miette")]
-impl From<Span> for miette::SourceSpan {
-    fn from(span: Span) -> Self {
-        miette::SourceSpan::new(span.offset.into(), span.len)
-    }
-}
-
-#[cfg(feature = "miette")]
-impl From<miette::SourceSpan> for Span {
-    fn from(span: miette::SourceSpan) -> Self {
-        Self {
-            offset: span.offset(),
-            len: span.len(),
-        }
-    }
-}
-
 // SAFETY: Span is a simple struct with two usize fields, properly laid out
 unsafe impl Facet<'_> for Span {
     const SHAPE: &'static Shape = &const {

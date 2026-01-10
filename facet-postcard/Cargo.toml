@@ -20,7 +20,6 @@ facet-core = { path = "../facet-core", version = "0.42.0", default-features = fa
 facet-format = { path = "../facet-format", version = "0.42.0" }
 facet-path = { path = "../facet-path", version = "0.42.0", default-features = false, features = ["alloc"] }
 facet-reflect = { path = "../facet-reflect", version = "0.42.0", default-features = false }
-miette = { workspace = true, optional = true }
 tracing = { workspace = true }
 
 # Axum integration (optional)
@@ -63,10 +62,9 @@ name = "vs_postcard"
 harness = false
 
 [features]
-default = ["std", "pretty-errors"]
+default = ["std"]
 std = ["alloc", "facet-core/std", "facet-reflect/std", "facet-path/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-path/alloc"]
-pretty-errors = ["facet-path/pretty", "facet-reflect/miette", "dep:miette"]
 jit = ["facet-format/jit"]
 ci = ["jit"]  # CI feature enables JIT tests
 

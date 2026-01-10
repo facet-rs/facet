@@ -19,7 +19,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 facet-core = { path = "../facet-core", version = "0.42.0" }
 facet-format = { path = "../facet-format", version = "0.42.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
-miette = { workspace = true }
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }

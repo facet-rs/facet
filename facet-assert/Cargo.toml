@@ -19,7 +19,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 facet-core = { path = "../facet-core", version = "0.42.0" }
 facet-diff = { path = "../facet-diff", version = "0.42.0" }
 facet-diff-core = { path = "../facet-diff-core", version = "0.42.0" }
-facet-reflect = { path = "../facet-reflect", features = ["miette"] }
+facet-reflect = { path = "../facet-reflect" }
 
 [dev-dependencies]
 facet = { path = "../facet" }

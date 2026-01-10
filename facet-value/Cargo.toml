@@ -17,16 +17,12 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 default = ["std"]
 std = ["alloc", "dep:indexmap"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc", "dep:facet-reflect"]
-diagnostics = ["alloc", "dep:miette", "dep:facet-pretty", "dep:arborium"]
 bolero-inline-tests = ["alloc"]
 
 [dependencies]
-arborium = { workspace = true, features = ["lang-kdl", "lang-rust", "lang-xml", "lang-yaml"], optional = true }
 facet-core = { path = "../facet-core", version = "0.42.0", default-features = false }
-facet-pretty = { path = "../facet-pretty", version = "0.42.0", optional = true }
 facet-reflect = { path = "../facet-reflect", version = "0.42.0", default-features = false, optional = true }
 indexmap = { version = "2", optional = true }
-miette = { version = "7", optional = true, default-features = false }
 
 [dev-dependencies]
 bolero = { workspace = true }
@@ -35,17 +31,12 @@ facet = { path = "../facet", features = ["all-impls", "doc"] }
 facet-assert = { path = "../facet-assert" }
 facet-diff = { path = "../facet-diff" }
 facet-pretty = { path = "../facet-pretty" }
-facet-reflect = { path = "../facet-reflect", features = ["miette"] }
+facet-reflect = { path = "../facet-reflect" }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 indexmap = { workspace = true }
 kstring = "2"
-miette = { workspace = true }
 serde_json = { workspace = true }
-
-[[example]]
-name = "from_value_showcase"
-required-features = ["diagnostics"]
 
 [[bench]]
 name = "map_keys"

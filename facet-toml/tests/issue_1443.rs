@@ -1,7 +1,7 @@
 /// Test for issue #1443: Reflection errors don't preserve span info for diagnostics
 ///
 /// When facet-toml encounters a reflection error (e.g., type mismatch),
-/// it should preserve span information for nice miette-style diagnostics.
+/// it should preserve span information for nice diagnostics.
 use facet::Facet;
 use facet_toml::{self as toml, DeserializeError, TomlError};
 
@@ -43,7 +43,7 @@ readme = false
     match result {
         Ok(_) => panic!("Should have failed with type mismatch error"),
         Err(e) => {
-            // Print the error using miette's diagnostic formatting
+            // Print the error
             let error_msg = format!("{}", e);
             eprintln!("Simple error: {}", error_msg);
 

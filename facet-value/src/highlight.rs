@@ -1,7 +1,7 @@
 //! Syntax highlighting with span position conversion powered by arborium.
 //!
 //! These helpers convert diagnostics spans expressed in plain-text byte positions
-//! into offsets within ANSI-colored strings so `miette` can keep labels aligned.
+//! into offsets within ANSI-colored strings so labels stay aligned.
 
 use alloc::string::String;
 use alloc::vec::Vec;

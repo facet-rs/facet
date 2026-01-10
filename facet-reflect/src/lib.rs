@@ -32,8 +32,6 @@ mod scalar;
 pub use scalar::*;
 
 mod spanned;
-#[cfg(feature = "miette")]
-pub use miette::SourceSpan;
 pub use spanned::{
     Span, Spanned, find_span_metadata_field, get_spanned_inner_shape, is_spanned_shape,
 };
