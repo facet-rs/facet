@@ -129,25 +129,60 @@ pub type BorrowFn = unsafe fn(this: PtrConst) -> PtrConst;
 /// with [`core::mem::forget`]) but NOT dropped).
 pub type NewIntoFn = unsafe fn(this: PtrUninit, ptr: PtrMut) -> PtrMut;
 
-/// Type-erased result of locking a mutex-like pointer
-pub struct LockResult {
+/// Type-erased result of locking a mutex-like or reader-writer lock pointer.
+///
+/// The type parameter `P` determines the capability of the returned pointer:
+/// - `PtrConst` for read locks (shared access)
+/// - `PtrMut` for write/mutex locks (exclusive access)
+pub struct LockResult<P> {
     /// The data that was locked
-    data: PtrMut,
+    data: P,
     /// The guard that protects the data
     guard: PtrConst,
     /// The vtable for the guard
     guard_vtable: &'static LockGuardVTable,
 }
 
-impl LockResult {
+/// Result of acquiring a read lock (shared access) - data is immutable
+pub type ReadLockResult = LockResult<PtrConst>;
+
+/// Result of acquiring a write/mutex lock (exclusive access) - data is mutable
+pub type WriteLockResult = LockResult<PtrMut>;
+
+impl<P> LockResult<P> {
+    /// Creates a new `LockResult` from its components.
+    ///
+    /// # Safety
+    ///
+    /// - `data` must point to valid data protected by the guard
+    /// - `guard` must point to a valid guard that, when dropped via `guard_vtable.drop_in_place`,
+    ///   will release the lock
+    /// - The guard must outlive any use of `data`
+    #[must_use]
+    pub unsafe fn new(data: P, guard: PtrConst, guard_vtable: &'static LockGuardVTable) -> Self {
+        Self {
+            data,
+            guard,
+            guard_vtable,
+        }
+    }
+
     /// Returns a reference to the locked data
     #[must_use]
-    pub fn data(&self) -> &PtrMut {
+    pub fn data(&self) -> &P {
         &self.data
     }
 }
 
-impl Drop for LockResult {
+impl WriteLockResult {
+    /// Returns a const pointer to the locked data (convenience for write locks)
+    #[must_use]
+    pub fn data_const(&self) -> PtrConst {
+        self.data.as_const()
+    }
+}
+
+impl<P> Drop for LockResult<P> {
     fn drop(&mut self) {
         unsafe {
             (self.guard_vtable.drop_in_place)(self.guard);
@@ -161,14 +196,14 @@ pub struct LockGuardVTable {
     pub drop_in_place: unsafe fn(guard: PtrConst),
 }
 
-/// Acquires a lock on a mutex-like pointer
-pub type LockFn = unsafe fn(opaque: PtrConst) -> Result<LockResult, ()>;
+/// Acquires a lock on a mutex-like pointer (exclusive access)
+pub type LockFn = unsafe fn(opaque: PtrConst) -> Result<WriteLockResult, ()>;
 
-/// Acquires a read lock on a reader-writer lock-like pointer
-pub type ReadFn = unsafe fn(opaque: PtrConst) -> Result<LockResult, ()>;
+/// Acquires a read lock on a reader-writer lock-like pointer (shared access)
+pub type ReadFn = unsafe fn(opaque: PtrConst) -> Result<ReadLockResult, ()>;
 
-/// Acquires a write lock on a reader-writer lock-like pointer
-pub type WriteFn = unsafe fn(opaque: PtrConst) -> Result<LockResult, ()>;
+/// Acquires a write lock on a reader-writer lock-like pointer (exclusive access)
+pub type WriteFn = unsafe fn(opaque: PtrConst) -> Result<WriteLockResult, ()>;
 
 /// Creates a new slice builder for a pointer: ie. for `Arc<[u8]>`, it builds a
 /// `Vec<u8>` internally, to which you can push, and then turn into an `Arc<[u8]>` at
