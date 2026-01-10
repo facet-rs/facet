@@ -57,8 +57,6 @@ pub use facet_impl::VALUE_SHAPE;
 
 #[cfg(feature = "alloc")]
 mod deserialize;
-#[cfg(feature = "diagnostics")]
-pub use deserialize::ValueErrorReport;
 #[cfg(feature = "alloc")]
 pub use deserialize::{PathSegment, ValueError, ValueErrorKind, from_value};
 
@@ -66,9 +64,6 @@ pub use deserialize::{PathSegment, ValueError, ValueErrorKind, from_value};
 mod format;
 #[cfg(feature = "alloc")]
 pub use format::{FormattedValue, format_value, format_value_with_spans};
-
-#[cfg(feature = "diagnostics")]
-mod highlight;
 
 #[cfg(all(test, feature = "alloc"))]
 mod inline_roundtrip_tests;
