@@ -1,9 +1,8 @@
-#![cfg(feature = "lock_api")]
+//! Facet implementations for std::sync::{Mutex, RwLock} and their guard types.
 
 use alloc::boxed::Box;
 use core::ptr::NonNull;
-
-use lock_api::{Mutex, MutexGuard, RawMutex, RawRwLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{
     DeclId, Def, Facet, KnownPointer, LockGuardVTable, OxPtrMut, PointerDef, PointerFlags,
@@ -13,7 +12,7 @@ use crate::{
 };
 
 // ============================================================================
-// Mutex<R, T> Implementation
+// Mutex<T> Implementation
 // ============================================================================
 
 fn type_name_mutex<'a, T: Facet<'a>>(
@@ -32,23 +31,26 @@ fn type_name_mutex<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn mutex_new_into<R: RawMutex, T>(this: PtrUninit, value: PtrMut) -> PtrMut {
+unsafe fn mutex_new_into<T>(this: PtrUninit, value: PtrMut) -> PtrMut {
     unsafe {
         let t = value.read::<T>();
-        this.put(Mutex::<R, T>::new(t))
+        this.put(Mutex::<T>::new(t))
     }
 }
 
-unsafe fn mutex_drop<R: RawMutex, T>(ox: OxPtrMut) {
-    unsafe { core::ptr::drop_in_place(ox.ptr().as_ptr::<Mutex<R, T>>() as *mut Mutex<R, T>) }
+unsafe fn mutex_drop<T>(ox: OxPtrMut) {
+    unsafe { core::ptr::drop_in_place(ox.ptr().as_ptr::<Mutex<T>>() as *mut Mutex<T>) }
 }
 
-unsafe fn mutex_lock<'a, R: RawMutex, T: Facet<'a>>(
-    opaque: PtrConst,
-) -> Result<WriteLockResult, ()> {
+unsafe fn mutex_lock<'a, T: Facet<'a>>(opaque: PtrConst) -> Result<WriteLockResult, ()> {
     unsafe {
-        let mutex = &*opaque.as_ptr::<Mutex<R, T>>();
-        let guard = mutex.lock();
+        let mutex = &*opaque.as_ptr::<Mutex<T>>();
+
+        // Handle poisoning by ignoring it and proceeding with the inner guard
+        let guard = match mutex.lock() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
 
         // Get pointer to the data through the guard (exclusive access)
         let data_ptr = &*guard as *const T as *mut T;
@@ -60,35 +62,35 @@ unsafe fn mutex_lock<'a, R: RawMutex, T: Facet<'a>>(
         Ok(WriteLockResult::new(
             PtrMut::new(data_ptr as *mut u8),
             PtrConst::new(guard_ptr),
-            &const { mutex_guard_vtable::<R, T>() },
+            &const { mutex_guard_vtable::<T>() },
         ))
     }
 }
 
-const fn mutex_guard_vtable<R: RawMutex, T>() -> LockGuardVTable {
-    unsafe fn drop_guard<R: RawMutex, T>(guard: PtrConst) {
+const fn mutex_guard_vtable<T>() -> LockGuardVTable {
+    unsafe fn drop_guard<T>(guard: PtrConst) {
         unsafe {
             drop(Box::from_raw(
-                guard.as_ptr::<MutexGuard<'_, R, T>>() as *mut MutexGuard<'_, R, T>
+                guard.as_ptr::<MutexGuard<'_, T>>() as *mut MutexGuard<'_, T>
             ));
         }
     }
 
     LockGuardVTable {
-        drop_in_place: drop_guard::<R, T>,
+        drop_in_place: drop_guard::<T>,
     }
 }
 
-unsafe impl<'a, R: RawMutex + 'a, T: Facet<'a>> Facet<'a> for Mutex<R, T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for Mutex<T> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Self>("Mutex")
-            .decl_id(DeclId::new(decl_id_hash("#lock_api#Mutex")))
+            .decl_id(DeclId::new(decl_id_hash("#std#Mutex")))
             .type_name(type_name_mutex::<T>)
             .vtable_indirect(&VTableIndirect::EMPTY)
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {
-                        drop_in_place: mutex_drop::<R, T>,
+                        drop_in_place: mutex_drop::<T>,
                         default_in_place: None,
                         clone_into: None,
                         is_truthy: None,
@@ -99,8 +101,8 @@ unsafe impl<'a, R: RawMutex + 'a, T: Facet<'a>> Facet<'a> for Mutex<R, T> {
             .def(Def::Pointer(PointerDef {
                 vtable: &const {
                     PointerVTable {
-                        lock_fn: Some(mutex_lock::<R, T>),
-                        new_into_fn: Some(mutex_new_into::<R, T>),
+                        lock_fn: Some(mutex_lock::<T>),
+                        new_into_fn: Some(mutex_new_into::<T>),
                         ..PointerVTable::new()
                     }
                 },
@@ -125,7 +127,7 @@ unsafe impl<'a, R: RawMutex + 'a, T: Facet<'a>> Facet<'a> for Mutex<R, T> {
 }
 
 // ============================================================================
-// RwLock<R, T> Implementation
+// RwLock<T> Implementation
 // ============================================================================
 
 fn type_name_rwlock<'a, T: Facet<'a>>(
@@ -144,51 +146,54 @@ fn type_name_rwlock<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn rwlock_new_into<R: RawRwLock, T>(this: PtrUninit, value: PtrMut) -> PtrMut {
+unsafe fn rwlock_new_into<T>(this: PtrUninit, value: PtrMut) -> PtrMut {
     unsafe {
         let t = value.read::<T>();
-        this.put(RwLock::<R, T>::new(t))
+        this.put(RwLock::<T>::new(t))
     }
 }
 
-unsafe fn rwlock_drop<R: RawRwLock, T>(ox: OxPtrMut) {
-    unsafe { core::ptr::drop_in_place(ox.ptr().as_ptr::<RwLock<R, T>>() as *mut RwLock<R, T>) }
+unsafe fn rwlock_drop<T>(ox: OxPtrMut) {
+    unsafe { core::ptr::drop_in_place(ox.ptr().as_ptr::<RwLock<T>>() as *mut RwLock<T>) }
 }
 
-const fn rwlock_read_guard_vtable<R: RawRwLock, T>() -> LockGuardVTable {
-    unsafe fn drop_guard<R: RawRwLock, T>(guard: PtrConst) {
+const fn rwlock_read_guard_vtable<T>() -> LockGuardVTable {
+    unsafe fn drop_guard<T>(guard: PtrConst) {
         unsafe {
             drop(Box::from_raw(
-                guard.as_ptr::<RwLockReadGuard<'_, R, T>>() as *mut RwLockReadGuard<'_, R, T>
+                guard.as_ptr::<RwLockReadGuard<'_, T>>() as *mut RwLockReadGuard<'_, T>
             ));
         }
     }
 
     LockGuardVTable {
-        drop_in_place: drop_guard::<R, T>,
+        drop_in_place: drop_guard::<T>,
     }
 }
 
-const fn rwlock_write_guard_vtable<R: RawRwLock, T>() -> LockGuardVTable {
-    unsafe fn drop_guard<R: RawRwLock, T>(guard: PtrConst) {
+const fn rwlock_write_guard_vtable<T>() -> LockGuardVTable {
+    unsafe fn drop_guard<T>(guard: PtrConst) {
         unsafe {
             drop(Box::from_raw(
-                guard.as_ptr::<RwLockWriteGuard<'_, R, T>>() as *mut RwLockWriteGuard<'_, R, T>
+                guard.as_ptr::<RwLockWriteGuard<'_, T>>() as *mut RwLockWriteGuard<'_, T>
             ));
         }
     }
 
     LockGuardVTable {
-        drop_in_place: drop_guard::<R, T>,
+        drop_in_place: drop_guard::<T>,
     }
 }
 
-unsafe fn rwlock_read<'a, R: RawRwLock, T: Facet<'a>>(
-    opaque: PtrConst,
-) -> Result<ReadLockResult, ()> {
+unsafe fn rwlock_read<'a, T: Facet<'a>>(opaque: PtrConst) -> Result<ReadLockResult, ()> {
     unsafe {
-        let rwlock = &*opaque.as_ptr::<RwLock<R, T>>();
-        let guard = rwlock.read();
+        let rwlock = &*opaque.as_ptr::<RwLock<T>>();
+
+        // Handle poisoning by ignoring it and proceeding with the inner guard
+        let guard = match rwlock.read() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
 
         // SAFETY: Read lock only provides shared access - use PtrConst
         let data_ptr = &*guard as *const T;
@@ -198,17 +203,20 @@ unsafe fn rwlock_read<'a, R: RawRwLock, T: Facet<'a>>(
         Ok(ReadLockResult::new(
             PtrConst::new(data_ptr as *const u8),
             PtrConst::new(guard_ptr),
-            &const { rwlock_read_guard_vtable::<R, T>() },
+            &const { rwlock_read_guard_vtable::<T>() },
         ))
     }
 }
 
-unsafe fn rwlock_write<'a, R: RawRwLock, T: Facet<'a>>(
-    opaque: PtrConst,
-) -> Result<WriteLockResult, ()> {
+unsafe fn rwlock_write<'a, T: Facet<'a>>(opaque: PtrConst) -> Result<WriteLockResult, ()> {
     unsafe {
-        let rwlock = &*opaque.as_ptr::<RwLock<R, T>>();
-        let guard = rwlock.write();
+        let rwlock = &*opaque.as_ptr::<RwLock<T>>();
+
+        // Handle poisoning by ignoring it and proceeding with the inner guard
+        let guard = match rwlock.write() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
 
         // Write lock provides exclusive access - use PtrMut
         let data_ptr = &*guard as *const T as *mut T;
@@ -218,21 +226,21 @@ unsafe fn rwlock_write<'a, R: RawRwLock, T: Facet<'a>>(
         Ok(WriteLockResult::new(
             PtrMut::new(data_ptr as *mut u8),
             PtrConst::new(guard_ptr),
-            &const { rwlock_write_guard_vtable::<R, T>() },
+            &const { rwlock_write_guard_vtable::<T>() },
         ))
     }
 }
 
-unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLock<R, T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for RwLock<T> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Self>("RwLock")
-            .decl_id(DeclId::new(decl_id_hash("#lock_api#RwLock")))
+            .decl_id(DeclId::new(decl_id_hash("#std#RwLock")))
             .type_name(type_name_rwlock::<T>)
             .vtable_indirect(&VTableIndirect::EMPTY)
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {
-                        drop_in_place: rwlock_drop::<R, T>,
+                        drop_in_place: rwlock_drop::<T>,
                         default_in_place: None,
                         clone_into: None,
                         is_truthy: None,
@@ -243,9 +251,9 @@ unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLock<R, T> {
             .def(Def::Pointer(PointerDef {
                 vtable: &const {
                     PointerVTable {
-                        read_fn: Some(rwlock_read::<R, T>),
-                        write_fn: Some(rwlock_write::<R, T>),
-                        new_into_fn: Some(rwlock_new_into::<R, T>),
+                        read_fn: Some(rwlock_read::<T>),
+                        write_fn: Some(rwlock_write::<T>),
+                        new_into_fn: Some(rwlock_new_into::<T>),
                         ..PointerVTable::new()
                     }
                 },
@@ -270,7 +278,7 @@ unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLock<R, T> {
 }
 
 // ============================================================================
-// MutexGuard<'a, R, T> Implementation
+// Guard implementations
 // ============================================================================
 
 fn type_name_mutex_guard<'a, T: Facet<'a>>(
@@ -289,32 +297,29 @@ fn type_name_mutex_guard<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn mutex_guard_borrow<'a, R: RawMutex, T: Facet<'a>>(this: PtrConst) -> PtrConst {
+unsafe fn mutex_guard_drop<T>(ox: OxPtrMut) {
     unsafe {
-        let guard = this.get::<MutexGuard<'_, R, T>>();
-        let data: &T = guard;
-        PtrConst::new(NonNull::from(data).as_ptr())
+        core::ptr::drop_in_place(ox.ptr().as_ptr::<MutexGuard<'_, T>>() as *mut MutexGuard<'_, T>)
     }
 }
 
-unsafe fn mutex_guard_drop_impl<R: RawMutex, T>(ox: OxPtrMut) {
+unsafe fn mutex_guard_borrow<'a, T: Facet<'a>>(opaque: PtrConst) -> PtrConst {
     unsafe {
-        core::ptr::drop_in_place(
-            ox.ptr().as_ptr::<MutexGuard<'_, R, T>>() as *mut MutexGuard<'_, R, T>
-        )
+        let guard = &*opaque.as_ptr::<MutexGuard<'_, T>>();
+        PtrConst::new(NonNull::from(&**guard).as_ptr())
     }
 }
 
-unsafe impl<'a, R: RawMutex + 'a, T: Facet<'a>> Facet<'a> for MutexGuard<'a, R, T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for MutexGuard<'a, T> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Self>("MutexGuard")
-            .decl_id(DeclId::new(decl_id_hash("#lock_api#MutexGuard")))
+            .decl_id(DeclId::new(decl_id_hash("#std#MutexGuard")))
             .type_name(type_name_mutex_guard::<T>)
             .vtable_indirect(&VTableIndirect::EMPTY)
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {
-                        drop_in_place: mutex_guard_drop_impl::<R, T>,
+                        drop_in_place: mutex_guard_drop::<T>,
                         default_in_place: None,
                         clone_into: None,
                         is_truthy: None,
@@ -325,14 +330,14 @@ unsafe impl<'a, R: RawMutex + 'a, T: Facet<'a>> Facet<'a> for MutexGuard<'a, R, 
             .def(Def::Pointer(PointerDef {
                 vtable: &const {
                     PointerVTable {
-                        borrow_fn: Some(mutex_guard_borrow::<R, T>),
+                        borrow_fn: Some(mutex_guard_borrow::<T>),
                         ..PointerVTable::new()
                     }
                 },
                 pointee: Some(T::SHAPE),
                 weak: None,
                 strong: None,
-                flags: PointerFlags::EMPTY,
+                flags: PointerFlags::empty(),
                 known: None,
             }))
             .type_params(&[TypeParam {
@@ -340,7 +345,7 @@ unsafe impl<'a, R: RawMutex + 'a, T: Facet<'a>> Facet<'a> for MutexGuard<'a, R, 
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            // MutexGuard<T> is invariant w.r.t. T (provides mutable access)
+            // MutexGuard<T> is invariant w.r.t. T because it provides mutable access
             .variance(VarianceDesc {
                 base: Variance::Bivariant,
                 deps: &const { [VarianceDep::invariant(T::SHAPE)] },
@@ -348,10 +353,6 @@ unsafe impl<'a, R: RawMutex + 'a, T: Facet<'a>> Facet<'a> for MutexGuard<'a, R, 
             .build()
     };
 }
-
-// ============================================================================
-// RwLockReadGuard<'a, R, T> Implementation
-// ============================================================================
 
 fn type_name_rwlock_read_guard<'a, T: Facet<'a>>(
     _shape: &'static Shape,
@@ -369,32 +370,31 @@ fn type_name_rwlock_read_guard<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn rwlock_read_guard_borrow<'a, R: RawRwLock, T: Facet<'a>>(this: PtrConst) -> PtrConst {
-    unsafe {
-        let guard = this.get::<RwLockReadGuard<'_, R, T>>();
-        let data: &T = guard;
-        PtrConst::new(NonNull::from(data).as_ptr())
-    }
-}
-
-unsafe fn rwlock_read_guard_drop_impl<R: RawRwLock, T>(ox: OxPtrMut) {
+unsafe fn rwlock_read_guard_drop<T>(ox: OxPtrMut) {
     unsafe {
         core::ptr::drop_in_place(
-            ox.ptr().as_ptr::<RwLockReadGuard<'_, R, T>>() as *mut RwLockReadGuard<'_, R, T>
+            ox.ptr().as_ptr::<RwLockReadGuard<'_, T>>() as *mut RwLockReadGuard<'_, T>
         )
     }
 }
 
-unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLockReadGuard<'a, R, T> {
+unsafe fn rwlock_read_guard_borrow<'a, T: Facet<'a>>(opaque: PtrConst) -> PtrConst {
+    unsafe {
+        let guard = &*opaque.as_ptr::<RwLockReadGuard<'_, T>>();
+        PtrConst::new(NonNull::from(&**guard).as_ptr())
+    }
+}
+
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for RwLockReadGuard<'a, T> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Self>("RwLockReadGuard")
-            .decl_id(DeclId::new(decl_id_hash("#lock_api#RwLockReadGuard")))
+            .decl_id(DeclId::new(decl_id_hash("#std#RwLockReadGuard")))
             .type_name(type_name_rwlock_read_guard::<T>)
             .vtable_indirect(&VTableIndirect::EMPTY)
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {
-                        drop_in_place: rwlock_read_guard_drop_impl::<R, T>,
+                        drop_in_place: rwlock_read_guard_drop::<T>,
                         default_in_place: None,
                         clone_into: None,
                         is_truthy: None,
@@ -405,14 +405,14 @@ unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLockReadGuard<'
             .def(Def::Pointer(PointerDef {
                 vtable: &const {
                     PointerVTable {
-                        borrow_fn: Some(rwlock_read_guard_borrow::<R, T>),
+                        borrow_fn: Some(rwlock_read_guard_borrow::<T>),
                         ..PointerVTable::new()
                     }
                 },
                 pointee: Some(T::SHAPE),
                 weak: None,
                 strong: None,
-                flags: PointerFlags::EMPTY,
+                flags: PointerFlags::empty(),
                 known: None,
             }))
             .type_params(&[TypeParam {
@@ -420,7 +420,7 @@ unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLockReadGuard<'
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            // RwLockReadGuard<T> is covariant w.r.t. T (only provides shared access)
+            // RwLockReadGuard<T> could be covariant but we keep it bivariant for consistency
             .variance(VarianceDesc {
                 base: Variance::Bivariant,
                 deps: &const { [VarianceDep::covariant(T::SHAPE)] },
@@ -428,10 +428,6 @@ unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLockReadGuard<'
             .build()
     };
 }
-
-// ============================================================================
-// RwLockWriteGuard<'a, R, T> Implementation
-// ============================================================================
 
 fn type_name_rwlock_write_guard<'a, T: Facet<'a>>(
     _shape: &'static Shape,
@@ -449,32 +445,31 @@ fn type_name_rwlock_write_guard<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn rwlock_write_guard_borrow<'a, R: RawRwLock, T: Facet<'a>>(this: PtrConst) -> PtrConst {
-    unsafe {
-        let guard = this.get::<RwLockWriteGuard<'_, R, T>>();
-        let data: &T = guard;
-        PtrConst::new(NonNull::from(data).as_ptr())
-    }
-}
-
-unsafe fn rwlock_write_guard_drop_impl<R: RawRwLock, T>(ox: OxPtrMut) {
+unsafe fn rwlock_write_guard_drop<T>(ox: OxPtrMut) {
     unsafe {
         core::ptr::drop_in_place(
-            ox.ptr().as_ptr::<RwLockWriteGuard<'_, R, T>>() as *mut RwLockWriteGuard<'_, R, T>
+            ox.ptr().as_ptr::<RwLockWriteGuard<'_, T>>() as *mut RwLockWriteGuard<'_, T>
         )
     }
 }
 
-unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLockWriteGuard<'a, R, T> {
+unsafe fn rwlock_write_guard_borrow<'a, T: Facet<'a>>(opaque: PtrConst) -> PtrConst {
+    unsafe {
+        let guard = &*opaque.as_ptr::<RwLockWriteGuard<'_, T>>();
+        PtrConst::new(NonNull::from(&**guard).as_ptr())
+    }
+}
+
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for RwLockWriteGuard<'a, T> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Self>("RwLockWriteGuard")
-            .decl_id(DeclId::new(decl_id_hash("#lock_api#RwLockWriteGuard")))
+            .decl_id(DeclId::new(decl_id_hash("#std#RwLockWriteGuard")))
             .type_name(type_name_rwlock_write_guard::<T>)
             .vtable_indirect(&VTableIndirect::EMPTY)
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {
-                        drop_in_place: rwlock_write_guard_drop_impl::<R, T>,
+                        drop_in_place: rwlock_write_guard_drop::<T>,
                         default_in_place: None,
                         clone_into: None,
                         is_truthy: None,
@@ -485,14 +480,14 @@ unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLockWriteGuard<
             .def(Def::Pointer(PointerDef {
                 vtable: &const {
                     PointerVTable {
-                        borrow_fn: Some(rwlock_write_guard_borrow::<R, T>),
+                        borrow_fn: Some(rwlock_write_guard_borrow::<T>),
                         ..PointerVTable::new()
                     }
                 },
                 pointee: Some(T::SHAPE),
                 weak: None,
                 strong: None,
-                flags: PointerFlags::EMPTY,
+                flags: PointerFlags::empty(),
                 known: None,
             }))
             .type_params(&[TypeParam {
@@ -500,7 +495,7 @@ unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLockWriteGuard<
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            // RwLockWriteGuard<T> is invariant w.r.t. T (provides mutable access)
+            // RwLockWriteGuard<T> is invariant w.r.t. T because it provides mutable access
             .variance(VarianceDesc {
                 base: Variance::Bivariant,
                 deps: &const { [VarianceDep::invariant(T::SHAPE)] },
@@ -509,15 +504,14 @@ unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLockWriteGuard<
     };
 }
 
+// ============================================================================
+// Tests
+// ============================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloc::string::String;
-    use parking_lot::{RawMutex as ParkingLotRawMutex, RawRwLock as ParkingLotRawRwLock};
-
-    // Type aliases for testing with parking_lot's raw lock implementations
-    type TestMutex<T> = Mutex<ParkingLotRawMutex, T>;
-    type TestRwLock<T> = RwLock<ParkingLotRawRwLock, T>;
 
     // ========================================================================
     // Shape verification tests
@@ -527,7 +521,7 @@ mod tests {
     fn test_mutex_shape() {
         facet_testhelpers::setup();
 
-        let shape = <TestMutex<i32>>::SHAPE;
+        let shape = <Mutex<i32>>::SHAPE;
         assert_eq!(shape.type_identifier, "Mutex");
 
         // Verify type params
@@ -542,7 +536,7 @@ mod tests {
     fn test_rwlock_shape() {
         facet_testhelpers::setup();
 
-        let shape = <TestRwLock<String>>::SHAPE;
+        let shape = <RwLock<String>>::SHAPE;
         assert_eq!(shape.type_identifier, "RwLock");
 
         // Verify type params
@@ -557,7 +551,7 @@ mod tests {
     fn test_mutex_guard_shape() {
         facet_testhelpers::setup();
 
-        let shape = <MutexGuard<'_, ParkingLotRawMutex, i32>>::SHAPE;
+        let shape = <MutexGuard<'_, i32>>::SHAPE;
         assert_eq!(shape.type_identifier, "MutexGuard");
 
         let [type_param] = shape.type_params else {
@@ -570,7 +564,7 @@ mod tests {
     fn test_rwlock_read_guard_shape() {
         facet_testhelpers::setup();
 
-        let shape = <RwLockReadGuard<'_, ParkingLotRawRwLock, i32>>::SHAPE;
+        let shape = <RwLockReadGuard<'_, i32>>::SHAPE;
         assert_eq!(shape.type_identifier, "RwLockReadGuard");
 
         let [type_param] = shape.type_params else {
@@ -583,7 +577,7 @@ mod tests {
     fn test_rwlock_write_guard_shape() {
         facet_testhelpers::setup();
 
-        let shape = <RwLockWriteGuard<'_, ParkingLotRawRwLock, i32>>::SHAPE;
+        let shape = <RwLockWriteGuard<'_, i32>>::SHAPE;
         assert_eq!(shape.type_identifier, "RwLockWriteGuard");
 
         let [type_param] = shape.type_params else {
@@ -600,7 +594,7 @@ mod tests {
     fn test_mutex_vtable() {
         facet_testhelpers::setup();
 
-        let shape = <TestMutex<i32>>::SHAPE;
+        let shape = <Mutex<i32>>::SHAPE;
         let pointer_def = shape
             .def
             .into_pointer()
@@ -616,7 +610,7 @@ mod tests {
             "Mutex should have new_into_fn"
         );
 
-        // Mutex should NOT have read_fn or write_fn (those are for RwLock)
+        // Mutex should NOT have read_fn or write_fn
         assert!(
             pointer_def.vtable.read_fn.is_none(),
             "Mutex should not have read_fn"
@@ -638,7 +632,7 @@ mod tests {
     fn test_rwlock_vtable() {
         facet_testhelpers::setup();
 
-        let shape = <TestRwLock<i32>>::SHAPE;
+        let shape = <RwLock<i32>>::SHAPE;
         let pointer_def = shape
             .def
             .into_pointer()
@@ -658,7 +652,7 @@ mod tests {
             "RwLock should have new_into_fn"
         );
 
-        // RwLock should NOT have lock_fn (that's for Mutex)
+        // RwLock should NOT have lock_fn
         assert!(
             pointer_def.vtable.lock_fn.is_none(),
             "RwLock should not have lock_fn"
@@ -677,7 +671,7 @@ mod tests {
         facet_testhelpers::setup();
 
         // MutexGuard
-        let mutex_guard_shape = <MutexGuard<'_, ParkingLotRawMutex, i32>>::SHAPE;
+        let mutex_guard_shape = <MutexGuard<'_, i32>>::SHAPE;
         let mutex_guard_def = mutex_guard_shape
             .def
             .into_pointer()
@@ -688,7 +682,7 @@ mod tests {
         );
 
         // RwLockReadGuard
-        let read_guard_shape = <RwLockReadGuard<'_, ParkingLotRawRwLock, i32>>::SHAPE;
+        let read_guard_shape = <RwLockReadGuard<'_, i32>>::SHAPE;
         let read_guard_def = read_guard_shape
             .def
             .into_pointer()
@@ -699,7 +693,7 @@ mod tests {
         );
 
         // RwLockWriteGuard
-        let write_guard_shape = <RwLockWriteGuard<'_, ParkingLotRawRwLock, i32>>::SHAPE;
+        let write_guard_shape = <RwLockWriteGuard<'_, i32>>::SHAPE;
         let write_guard_def = write_guard_shape
             .def
             .into_pointer()
@@ -718,10 +712,10 @@ mod tests {
     fn test_mutex_lock_and_access() {
         facet_testhelpers::setup();
 
-        let mutex = TestMutex::new(42i32);
+        let mutex = Mutex::new(42i32);
 
         // Get the shape and pointer def
-        let shape = <TestMutex<i32>>::SHAPE;
+        let shape = <Mutex<i32>>::SHAPE;
         let pointer_def = shape.def.into_pointer().unwrap();
         let lock_fn = pointer_def.vtable.lock_fn.unwrap();
 
@@ -746,9 +740,9 @@ mod tests {
     fn test_rwlock_read_access() {
         facet_testhelpers::setup();
 
-        let rwlock = TestRwLock::new(String::from("hello"));
+        let rwlock = RwLock::new(String::from("hello"));
 
-        let shape = <TestRwLock<String>>::SHAPE;
+        let shape = <RwLock<String>>::SHAPE;
         let pointer_def = shape.def.into_pointer().unwrap();
         let read_fn = pointer_def.vtable.read_fn.unwrap();
 
@@ -769,9 +763,9 @@ mod tests {
     fn test_rwlock_write_access() {
         facet_testhelpers::setup();
 
-        let rwlock = TestRwLock::new(100i32);
+        let rwlock = RwLock::new(100i32);
 
-        let shape = <TestRwLock<i32>>::SHAPE;
+        let shape = <RwLock<i32>>::SHAPE;
         let pointer_def = shape.def.into_pointer().unwrap();
         let write_fn = pointer_def.vtable.write_fn.unwrap();
 
@@ -797,27 +791,60 @@ mod tests {
     }
 
     #[test]
-    fn test_mutex_multiple_read_locks_blocked() {
+    fn test_poisoned_mutex_still_works() {
         facet_testhelpers::setup();
 
-        // This test verifies the basic mutex behavior (exclusive access)
-        let mutex = TestMutex::new(42i32);
+        let mutex = Mutex::new(42i32);
 
-        let shape = <TestMutex<i32>>::SHAPE;
+        // Poison the mutex by panicking while holding the lock
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = mutex.lock().unwrap();
+            panic!("Intentional panic to poison the mutex");
+        }));
+
+        // The mutex is now poisoned, but we should still be able to access it via vtable
+        let shape = <Mutex<i32>>::SHAPE;
         let pointer_def = shape.def.into_pointer().unwrap();
         let lock_fn = pointer_def.vtable.lock_fn.unwrap();
 
         let mutex_ptr = PtrConst::new(&mutex as *const _ as *const u8);
 
-        // First lock
-        let lock1 = unsafe { lock_fn(mutex_ptr) }.expect("First lock should succeed");
+        // Lock should still succeed (poisoning is ignored)
+        let lock_result =
+            unsafe { lock_fn(mutex_ptr) }.expect("Lock should succeed even when poisoned");
 
-        // The mutex is now held - in a single-threaded test, we can't test blocking,
-        // but we can verify the lock was acquired and data is accessible
-        let value = unsafe { lock1.data().as_const().get::<i32>() };
+        // Data should still be accessible
+        let data_ptr = lock_result.data();
+        let value = unsafe { data_ptr.as_const().get::<i32>() };
         assert_eq!(*value, 42);
+    }
 
-        // Release the lock
-        drop(lock1);
+    #[test]
+    fn test_poisoned_rwlock_still_works() {
+        facet_testhelpers::setup();
+
+        let rwlock = RwLock::new(String::from("hello"));
+
+        // Poison the rwlock by panicking while holding the write lock
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = rwlock.write().unwrap();
+            panic!("Intentional panic to poison the rwlock");
+        }));
+
+        // The rwlock is now poisoned, but we should still be able to access it via vtable
+        let shape = <RwLock<String>>::SHAPE;
+        let pointer_def = shape.def.into_pointer().unwrap();
+        let read_fn = pointer_def.vtable.read_fn.unwrap();
+
+        let rwlock_ptr = PtrConst::new(&rwlock as *const _ as *const u8);
+
+        // Read should still succeed (poisoning is ignored)
+        let read_result =
+            unsafe { read_fn(rwlock_ptr) }.expect("Read should succeed even when poisoned");
+
+        // Data should still be accessible
+        let data_ptr = read_result.data();
+        let value = unsafe { data_ptr.get::<String>() };
+        assert_eq!(value.as_str(), "hello");
     }
 }
