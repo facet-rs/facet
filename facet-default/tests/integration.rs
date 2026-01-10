@@ -9,9 +9,9 @@ fn test_struct_default() {
     #[derive(Facet, Debug, PartialEq)]
     #[facet(derive(Default))]
     pub struct Config {
-        #[facet(default::value = "localhost")]
+        #[facet(default = String::from("localhost"))]
         host: String,
-        #[facet(default::value = 8080u16)]
+        #[facet(default = 8080u16)]
         port: u16,
         // No attribute = uses Default::default()
         debug: bool,
@@ -37,9 +37,9 @@ fn test_struct_with_func_default() {
     #[derive(Facet, Debug, PartialEq)]
     #[facet(derive(Default))]
     pub struct User {
-        #[facet(default::func = "default_name")]
+        #[facet(default = default_name())]
         name: String,
-        #[facet(default::func = "default_count")]
+        #[facet(default = default_count())]
         count: usize,
     }
 
@@ -74,7 +74,7 @@ fn test_enum_default_tuple_variant() {
     pub enum Value {
         Empty,
         #[facet(default::variant)]
-        Number(#[facet(default::value = 0)] i32),
+        Number(#[facet(default = 0)] i32),
         Text(String),
     }
 
@@ -91,9 +91,9 @@ fn test_enum_default_struct_variant() {
     pub enum Request {
         #[facet(default::variant)]
         Get {
-            #[facet(default::value = "/")]
+            #[facet(default = String::from("/"))]
             path: String,
-            #[facet(default::value = 80u16)]
+            #[facet(default = 80u16)]
             port: u16,
         },
         Post {
@@ -122,11 +122,11 @@ fn test_mixed_defaults() {
     #[derive(Facet, Debug)]
     #[facet(derive(Default))]
     pub struct Record {
-        #[facet(default::func = "compute_id")]
+        #[facet(default = compute_id())]
         id: u64,
-        #[facet(default::value = "untitled")]
+        #[facet(default = String::from("untitled"))]
         title: String,
-        #[facet(default::value = true)]
+        #[facet(default = true)]
         active: bool,
     }
 
