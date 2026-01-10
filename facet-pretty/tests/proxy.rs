@@ -78,3 +78,53 @@ fn test_proxy_field_level_pretty_print() {
     }
     "#);
 }
+
+// Tests for format_peek_with_spans
+
+#[test]
+fn test_proxy_container_format_peek_with_spans() {
+    use facet_reflect::Peek;
+
+    let proxy_int = ProxyInt { value: 42 };
+    let formatted = PrettyPrinter::new().format_peek_with_spans(Peek::new(&proxy_int));
+
+    // The proxy should convert the integer to a string representation
+    assert_snapshot!(formatted.text, @r#""42""#);
+
+    // Check that we have spans recorded
+    assert!(!formatted.spans.is_empty());
+}
+
+#[test]
+fn test_proxy_field_level_format_peek_with_spans() {
+    use facet_pretty::PathSegment;
+    use facet_reflect::Peek;
+    use std::borrow::Cow;
+
+    let data = ProxyFieldLevel {
+        name: "test".to_string(),
+        count: 100,
+    };
+    let formatted = PrettyPrinter::new().format_peek_with_spans(Peek::new(&data));
+
+    // The output should show count as a string
+    assert_snapshot!(formatted.text, @r#"
+    ProxyFieldLevel {
+      name: "test",
+      count: "100",
+    }
+    "#);
+
+    // Check that we have spans for the fields
+    let count_path = vec![PathSegment::Field(Cow::Borrowed("count"))];
+    assert!(
+        formatted.spans.contains_key(&count_path),
+        "count field span not found"
+    );
+
+    // Verify the count field value is "100" (as a string via proxy)
+    if let Some(span) = formatted.spans.get(&count_path) {
+        let value_text = &formatted.text[span.value.0..span.value.1];
+        assert_eq!(value_text, "\"100\"");
+    }
+}

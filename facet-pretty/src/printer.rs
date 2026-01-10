@@ -918,6 +918,69 @@ impl PrettyPrinter {
         result
     }
 
+    /// Format a value through its proxy type representation (unified version for FormatOutput).
+    ///
+    /// This allocates memory for the proxy type, converts the value to its proxy
+    /// representation, formats the proxy, then cleans up.
+    #[allow(clippy::too_many_arguments)]
+    fn format_via_proxy_unified<O: FormatOutput>(
+        &self,
+        value: Peek<'_, '_>,
+        proxy_def: &'static facet_core::ProxyDef,
+        out: &mut O,
+        visited: &mut BTreeMap<ValueId, usize>,
+        format_depth: usize,
+        type_depth: usize,
+        short: bool,
+        current_path: Path,
+    ) -> fmt::Result {
+        let proxy_shape = proxy_def.shape;
+        let proxy_layout = match proxy_shape.layout.sized_layout() {
+            Ok(layout) => layout,
+            Err(_) => {
+                return write!(out, "/* proxy type must be sized for formatting */");
+            }
+        };
+
+        // Allocate memory for the proxy value
+        let proxy_mem = unsafe { alloc::alloc::alloc(proxy_layout) };
+        if proxy_mem.is_null() {
+            return write!(out, "/* failed to allocate proxy memory */");
+        }
+
+        // Convert target → proxy
+        let proxy_uninit = PtrUninit::new(proxy_mem);
+        let convert_result = unsafe { (proxy_def.convert_out)(value.data(), proxy_uninit) };
+
+        let proxy_ptr = match convert_result {
+            Ok(ptr) => ptr,
+            Err(msg) => {
+                unsafe { alloc::alloc::dealloc(proxy_mem, proxy_layout) };
+                return write!(out, "/* proxy conversion failed: {msg} */");
+            }
+        };
+
+        // Create a Peek to the proxy value and format it
+        let proxy_peek = unsafe { Peek::unchecked_new(proxy_ptr.as_const(), proxy_shape) };
+        let result = self.format_unified(
+            proxy_peek,
+            out,
+            visited,
+            format_depth,
+            type_depth,
+            short,
+            current_path,
+        );
+
+        // Clean up: drop the proxy value and deallocate
+        unsafe {
+            let _ = proxy_shape.call_drop_in_place(proxy_ptr);
+            alloc::alloc::dealloc(proxy_mem, proxy_layout);
+        }
+
+        result
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn format_tuple_fields<'mem, 'facet>(
         &self,
@@ -1307,6 +1370,10 @@ impl PrettyPrinter {
         {
             value = pointee;
         }
+
+        // Unwrap transparent wrappers (e.g., newtype wrappers like IntAsString(String))
+        // This matches serialization behavior where we serialize the inner value directly
+        let value = value.innermost_peek();
         let shape = value.shape();
 
         // Record the start of this value
@@ -1324,6 +1391,20 @@ impl PrettyPrinter {
             let value_end = out.position();
             out.record_span(current_path, (value_start, value_end));
             return Ok(());
+        }
+
+        // Handle proxy types by converting to the proxy representation and formatting that
+        if let Some(proxy_def) = shape.proxy {
+            return self.format_via_proxy_unified(
+                value,
+                proxy_def,
+                out,
+                visited,
+                format_depth,
+                type_depth,
+                short,
+                current_path,
+            );
         }
 
         match (shape.def, shape.ty) {
@@ -1387,15 +1468,29 @@ impl PrettyPrinter {
                         // Record field value span
                         let field_value_start = out.position();
                         if let Ok(field_value) = struct_peek.field(i) {
-                            self.format_unified(
-                                field_value,
-                                out,
-                                visited,
-                                format_depth + 1,
-                                type_depth + 1,
-                                short,
-                                field_path.clone(),
-                            )?;
+                            // Check for field-level proxy
+                            if let Some(proxy_def) = field.proxy() {
+                                self.format_via_proxy_unified(
+                                    field_value,
+                                    proxy_def,
+                                    out,
+                                    visited,
+                                    format_depth + 1,
+                                    type_depth + 1,
+                                    short,
+                                    field_path.clone(),
+                                )?;
+                            } else {
+                                self.format_unified(
+                                    field_value,
+                                    out,
+                                    visited,
+                                    format_depth + 1,
+                                    type_depth + 1,
+                                    short,
+                                    field_path.clone(),
+                                )?;
+                            }
                         }
                         let field_value_end = out.position();
 
@@ -1432,7 +1527,7 @@ impl PrettyPrinter {
                 }
                 let struct_peek = value.into_struct().unwrap();
                 write!(out, "(")?;
-                for (i, _field) in ty.fields.iter().enumerate() {
+                for (i, field) in ty.fields.iter().enumerate() {
                     if i > 0 {
                         write!(out, ", ")?;
                     }
@@ -1441,15 +1536,29 @@ impl PrettyPrinter {
 
                     let elem_start = out.position();
                     if let Ok(field_value) = struct_peek.field(i) {
-                        self.format_unified(
-                            field_value,
-                            out,
-                            visited,
-                            format_depth + 1,
-                            type_depth + 1,
-                            short,
-                            elem_path.clone(),
-                        )?;
+                        // Check for field-level proxy
+                        if let Some(proxy_def) = field.proxy() {
+                            self.format_via_proxy_unified(
+                                field_value,
+                                proxy_def,
+                                out,
+                                visited,
+                                format_depth + 1,
+                                type_depth + 1,
+                                short,
+                                elem_path.clone(),
+                            )?;
+                        } else {
+                            self.format_unified(
+                                field_value,
+                                out,
+                                visited,
+                                format_depth + 1,
+                                type_depth + 1,
+                                short,
+                                elem_path.clone(),
+                            )?;
+                        }
                     }
                     let elem_end = out.position();
                     out.record_span(elem_path, (elem_start, elem_end));
@@ -1490,15 +1599,29 @@ impl PrettyPrinter {
 
                                     let field_value_start = out.position();
                                     if let Ok(Some(field_value)) = enum_peek.field(i) {
-                                        self.format_unified(
-                                            field_value,
-                                            out,
-                                            visited,
-                                            format_depth + 1,
-                                            type_depth + 1,
-                                            short,
-                                            field_path.clone(),
-                                        )?;
+                                        // Check for field-level proxy
+                                        if let Some(proxy_def) = field.proxy() {
+                                            self.format_via_proxy_unified(
+                                                field_value,
+                                                proxy_def,
+                                                out,
+                                                visited,
+                                                format_depth + 1,
+                                                type_depth + 1,
+                                                short,
+                                                field_path.clone(),
+                                            )?;
+                                        } else {
+                                            self.format_unified(
+                                                field_value,
+                                                out,
+                                                visited,
+                                                format_depth + 1,
+                                                type_depth + 1,
+                                                short,
+                                                field_path.clone(),
+                                            )?;
+                                        }
                                     }
                                     let field_value_end = out.position();
 
@@ -1520,7 +1643,7 @@ impl PrettyPrinter {
                             }
                             _ => {
                                 write!(out, "(")?;
-                                for (i, _field) in variant.data.fields.iter().enumerate() {
+                                for (i, field) in variant.data.fields.iter().enumerate() {
                                     if i > 0 {
                                         write!(out, ", ")?;
                                     }
@@ -1531,15 +1654,29 @@ impl PrettyPrinter {
 
                                     let elem_start = out.position();
                                     if let Ok(Some(field_value)) = enum_peek.field(i) {
-                                        self.format_unified(
-                                            field_value,
-                                            out,
-                                            visited,
-                                            format_depth + 1,
-                                            type_depth + 1,
-                                            short,
-                                            elem_path.clone(),
-                                        )?;
+                                        // Check for field-level proxy
+                                        if let Some(proxy_def) = field.proxy() {
+                                            self.format_via_proxy_unified(
+                                                field_value,
+                                                proxy_def,
+                                                out,
+                                                visited,
+                                                format_depth + 1,
+                                                type_depth + 1,
+                                                short,
+                                                elem_path.clone(),
+                                            )?;
+                                        } else {
+                                            self.format_unified(
+                                                field_value,
+                                                out,
+                                                visited,
+                                                format_depth + 1,
+                                                type_depth + 1,
+                                                short,
+                                                elem_path.clone(),
+                                            )?;
+                                        }
                                     }
                                     let elem_end = out.position();
                                     out.record_span(elem_path, (elem_start, elem_end));
