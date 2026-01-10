@@ -1,12 +1,5 @@
 ---
 source: facet-args/tests/err.rs
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::reflect_error
-
-  × Could not parse CLI arguments
-   ╭────
- 1 │ error wrong type 
-   · ──┬──
-   ·   ╰── `Args`: Top-level enums must be wrapped in a struct with #[facet(args::subcommand)] attribute to be used as subcommands.
-   ╰────
+error: `Args`: Top-level enums must be wrapped in a struct with #[facet(args::subcommand)] attribute to be used as subcommands.

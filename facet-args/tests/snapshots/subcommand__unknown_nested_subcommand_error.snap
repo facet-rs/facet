@@ -1,14 +1,8 @@
 ---
 source: facet-args/tests/subcommand.rs
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::unknown_subcommand
+error: unknown subcommand `unknown`
 
-  × Could not parse CLI arguments
-   ╭────
- 1 │ ci unknown 
-   ·    ───┬───
-   ·       ╰── unknown subcommand `unknown`
-   ╰────
-  help: available subcommands:
-          generate  Generate CI workflow files from Rust code
+available subcommands:
+  generate  Generate CI workflow files from Rust code

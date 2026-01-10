@@ -1,12 +1,5 @@
 ---
 source: facet-args/tests/err.rs
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::reflect_error
-
-  × Could not parse CLI arguments
-   ╭────
- 1 │ --config simple 
-   ·          ───┬──
-   ·             ╰── `Config` cannot be parsed from a string value
-   ╰────
+error: `Config` cannot be parsed from a string value

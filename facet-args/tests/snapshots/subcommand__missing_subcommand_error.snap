@@ -1,10 +1,9 @@
 ---
 source: facet-args/tests/subcommand.rs
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::missing_subcommand
+error: expected a subcommand
 
-  × Could not parse CLI arguments
-  help: available subcommands:
-          start  Start the service
-          stop   Stop the service
+available subcommands:
+  start  Start the service
+  stop   Stop the service

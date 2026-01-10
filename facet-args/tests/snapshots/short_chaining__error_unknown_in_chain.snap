@@ -1,16 +1,9 @@
 ---
 source: facet-args/tests/short_chaining.rs
-assertion_line: 119
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::unknown_short_flag
+error: unknown flag `-x`
 
-  × Could not parse CLI arguments
-   ╭────
- 1 │ -axc 
-   ·   ┬
-   ·   ╰── unknown flag `-x`
-   ╰────
-  help: available options:
-          -a, --flag-a
-          -c, --flag-c
+available options:
+  -a, --flag-a
+  -c, --flag-c

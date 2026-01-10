@@ -1,12 +1,5 @@
 ---
 source: facet-args/tests/err.rs
-expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+expression: err.to_string()
 ---
-args::reflect_error
-
-  × Could not parse CLI arguments
-   ╭────
- 1 │ --config {server={port=8080,host=localhost},database={url=postgresql://,pool_size=10}} 
-   ·          ──────────────────────────────────────┬──────────────────────────────────────
-   ·                                                ╰── `AppConfig` cannot be parsed from a string value
-   ╰────
+error: `AppConfig` cannot be parsed from a string value

@@ -254,10 +254,10 @@ fn test_missing_required_subcommand_error() {
     let err = result.unwrap_err();
     assert!(!err.is_help_request()); // This is an ERROR, not help
 
-    let display = format!("{:?}", err);
+    let display = format!("{}", err);
 
     // Should show error message
-    assert!(display.contains("missing_subcommand") || display.contains("expected a subcommand"));
+    assert!(display.contains("expected a subcommand"));
     // Should suggest available subcommands in the help text
     assert!(display.contains("clone") || display.contains("log") || display.contains("remote"));
 }
@@ -270,7 +270,7 @@ fn test_unknown_subcommand_error() {
     let err = result.unwrap_err();
     assert!(!err.is_help_request()); // This is an ERROR, not help
 
-    let display = format!("{:?}", err);
+    let display = format!("{}", err);
 
     // Should show the unknown subcommand
     assert!(display.contains("notacommand") || display.contains("unknown"));

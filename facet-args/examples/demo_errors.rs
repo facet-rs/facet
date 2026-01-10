@@ -110,7 +110,7 @@ fn main() {
                         "(exit code: 1)"
                     }
                 );
-                println!("\n{:?}\n", Report::new(e));
+                println!("\n{e}\n");
             }
         }
     }
