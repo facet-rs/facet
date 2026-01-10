@@ -172,7 +172,6 @@ checksum = "afefe0e8151f8e52eff34aed752fc8c27318b109351cfff79c56971754eac990"
 dependencies = [
  "arborium-highlight",
  "arborium-json",
- "arborium-kdl",
  "arborium-rust",
  "arborium-theme",
  "arborium-tree-sitter",
@@ -197,17 +196,6 @@ name = "arborium-json"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c6c46a4aafff6d23ec83d1315cc58d0065012c462782fe323138de52d7b968d"
-dependencies = [
- "arborium-sysroot",
- "cc",
- "tree-sitter-language",
-]
-
-[[package]]
-name = "arborium-kdl"
-version = "2.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c612bc9e6722e220891ae7ddefc7a2e0092814e9d85941e78f095fc57500d284"
 dependencies = [
  "arborium-sysroot",
  "cc",

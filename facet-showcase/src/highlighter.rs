@@ -19,8 +19,6 @@ pub enum Language {
     Xml,
     /// HTML format
     Html,
-    /// KDL format
-    Kdl,
     /// Rust code (for type definitions)
     Rust,
     /// Plain text (no syntax highlighting)
@@ -35,7 +33,6 @@ impl Language {
             Language::Yaml => "yaml",
             Language::Xml => "xml",
             Language::Html => "html",
-            Language::Kdl => "kdl",
             Language::Rust => "rs",
             Language::Plain => "txt",
         }
@@ -48,7 +45,6 @@ impl Language {
             Language::Yaml => "YAML",
             Language::Xml => "XML",
             Language::Html => "HTML",
-            Language::Kdl => "KDL",
             Language::Rust => "Rust",
             Language::Plain => "Output",
         }
@@ -60,7 +56,6 @@ impl Language {
             Language::Yaml => Some("yaml"),
             Language::Xml => Some("xml"),
             Language::Html => Some("html"),
-            Language::Kdl => Some("kdl"),
             Language::Rust => Some("rust"),
             Language::Plain => None, // No syntax highlighting
         }
@@ -89,11 +84,6 @@ impl Highlighter {
             ansi_highlighter: RefCell::new(AnsiHighlighter::new(theme.clone())),
             theme,
         }
-    }
-
-    /// KDL grammars ship with arborium, so this is a no-op retained for API compatibility.
-    pub fn with_kdl_syntaxes(self, _syntax_dir: &str) -> Self {
-        self
     }
 
     /// Get a reference to the theme.
