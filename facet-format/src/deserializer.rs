@@ -1517,10 +1517,10 @@ where
             // First check if element name matches the field's rename attribute
             // This handles cases like: `#[facet(xml::elements, rename = "author")] authors: Vec<Person>`
             // where XML element <author> should match the `authors` field
-            if let Some(renamed) = field.rename {
-                if renamed.eq_ignore_ascii_case(element_name) {
-                    return Some((idx, field));
-                }
+            if let Some(renamed) = field.rename
+                && renamed.eq_ignore_ascii_case(element_name)
+            {
+                return Some((idx, field));
             }
 
             // Also check field aliases
