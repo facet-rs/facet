@@ -1395,7 +1395,7 @@ impl PrettyPrinter {
 
         // Handle proxy types by converting to the proxy representation and formatting that
         if let Some(proxy_def) = shape.proxy {
-            return self.format_via_proxy_unified(
+            let result = self.format_via_proxy_unified(
                 value,
                 proxy_def,
                 out,
@@ -1403,8 +1403,16 @@ impl PrettyPrinter {
                 format_depth,
                 type_depth,
                 short,
-                current_path,
+                current_path.clone(),
             );
+
+            visited.remove(&value.id());
+
+            // Record span for this value
+            let value_end = out.position();
+            out.record_span(current_path, (value_start, value_end));
+
+            return result;
         }
 
         match (shape.def, shape.ty) {
