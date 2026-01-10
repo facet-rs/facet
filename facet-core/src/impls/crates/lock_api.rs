@@ -48,10 +48,11 @@ unsafe fn mutex_lock<'a, R: RawMutex, T: Facet<'a>>(
 ) -> Result<WriteLockResult, ()> {
     unsafe {
         let mutex = &*opaque.as_ptr::<Mutex<R, T>>();
-        let guard = mutex.lock();
+        let mut guard = mutex.lock();
 
         // Get pointer to the data through the guard (exclusive access)
-        let data_ptr = &*guard as *const T as *mut T;
+        // Use &mut to get a valid mutable pointer
+        let data_ptr = &mut *guard as *mut T;
 
         // Box the guard to keep it alive (type-erased)
         let guard_box = Box::new(guard);
@@ -208,10 +209,10 @@ unsafe fn rwlock_write<'a, R: RawRwLock, T: Facet<'a>>(
 ) -> Result<WriteLockResult, ()> {
     unsafe {
         let rwlock = &*opaque.as_ptr::<RwLock<R, T>>();
-        let guard = rwlock.write();
+        let mut guard = rwlock.write();
 
-        // Write lock provides exclusive access - use PtrMut
-        let data_ptr = &*guard as *const T as *mut T;
+        // Write lock provides exclusive access - use &mut to get a valid mutable pointer
+        let data_ptr = &mut *guard as *mut T;
         let guard_box = Box::new(guard);
         let guard_ptr = Box::into_raw(guard_box) as *const u8;
 

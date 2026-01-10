@@ -47,13 +47,14 @@ unsafe fn mutex_lock<'a, T: Facet<'a>>(opaque: PtrConst) -> Result<WriteLockResu
         let mutex = &*opaque.as_ptr::<Mutex<T>>();
 
         // Handle poisoning by ignoring it and proceeding with the inner guard
-        let guard = match mutex.lock() {
+        let mut guard = match mutex.lock() {
             Ok(g) => g,
             Err(e) => e.into_inner(),
         };
 
         // Get pointer to the data through the guard (exclusive access)
-        let data_ptr = &*guard as *const T as *mut T;
+        // Use &mut to get a valid mutable pointer
+        let data_ptr = &mut *guard as *mut T;
 
         // Box the guard to keep it alive (type-erased)
         let guard_box = Box::new(guard);
@@ -213,13 +214,13 @@ unsafe fn rwlock_write<'a, T: Facet<'a>>(opaque: PtrConst) -> Result<WriteLockRe
         let rwlock = &*opaque.as_ptr::<RwLock<T>>();
 
         // Handle poisoning by ignoring it and proceeding with the inner guard
-        let guard = match rwlock.write() {
+        let mut guard = match rwlock.write() {
             Ok(g) => g,
             Err(e) => e.into_inner(),
         };
 
-        // Write lock provides exclusive access - use PtrMut
-        let data_ptr = &*guard as *const T as *mut T;
+        // Write lock provides exclusive access - use &mut to get a valid mutable pointer
+        let data_ptr = &mut *guard as *mut T;
         let guard_box = Box::new(guard);
         let guard_ptr = Box::into_raw(guard_box) as *const u8;
 
@@ -797,7 +798,7 @@ mod tests {
         let mutex = Mutex::new(42i32);
 
         // Poison the mutex by panicking while holding the lock
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
             let _guard = mutex.lock().unwrap();
             panic!("Intentional panic to poison the mutex");
         }));
@@ -826,7 +827,7 @@ mod tests {
         let rwlock = RwLock::new(String::from("hello"));
 
         // Poison the rwlock by panicking while holding the write lock
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
             let _guard = rwlock.write().unwrap();
             panic!("Intentional panic to poison the rwlock");
         }));
