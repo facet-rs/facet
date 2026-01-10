@@ -53,9 +53,6 @@ tokio = { version = "1", features = ["rt", "macros"] }
 name = "format_suite"
 harness = false
 
-[[test]]
-name = "generated_benchmark_tests"
-
 [[example]]
 name = "profile_jit_vec"
 required-features = ["jit"]
