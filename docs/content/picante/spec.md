@@ -337,7 +337,7 @@ For singleton inputs, `set` can remain “obvious” while `get/remove` stay typ
 
 ```rust
 db.set(Config { debug: true })?;
-let config: Option<std::sync::Arc<ConfigData>> = db.get(ConfigKey)?;
+let config = db.get(ConfigKey)?;
 ```
 
 > r[input.get]
@@ -422,10 +422,12 @@ pub trait BatchOps {
 }
 ```
 
-The exact shape (builder vs. iterator vs. transactional closure) is up to the implementation; the semantics are captured by `r[input.batch]`.
+Picante MUST provide some batch input-mutation operation; the exact surface shape (builder vs. iterator vs. transactional closure) is up to the implementation.
+The semantics are captured by `r[input.batch]`.
 
 > r[input.batch]
-> If an implementation provides a batch input-mutation operation (i.e., an API that applies multiple `set`/`remove` mutations as one operation), it MUST be atomic with respect to observable database state:
+> Picante MUST provide a batch input-mutation operation that applies multiple `set`/`remove` mutations as one operation.
+> The operation MUST be atomic with respect to observable database state:
 >
 > - There MUST exist a single revision boundary such that observers see either all batch mutations applied or none.
 > - No observer MAY observe a state in which only a strict subset of the batch mutations have been applied.
@@ -552,26 +554,28 @@ Some systems (notably Salsa) annotate inputs with a **durability**: a coarse est
 Durability is an optimization hint for revalidation; it is **not persistence** and it MUST NOT affect observable results.
 
 > r[durability.levels]
-> If an implementation supports durability, it MUST define three durability levels `LOW`, `MEDIUM`, and `HIGH` with a total order `LOW < MEDIUM < HIGH`.
+> Picante MUST define three durability levels `LOW`, `MEDIUM`, and `HIGH` with a total order `LOW < MEDIUM < HIGH`.
 > Higher durability means “expected to change less frequently”.
 
 > r[durability.inputs]
-> If an implementation supports durability, each input record MUST have an associated durability level.
-> If the API does not allow specifying durability, implementations MUST behave as if all input records had durability `LOW`.
+> Each input kind MUST have an associated durability level.
+> Every input slot `(kind, key)` of that kind inherits the kind’s durability level.
+>
+> The durability level for an input kind MUST be specified as part of the ingredient definition (for example via a macro attribute parameter), and defaults to `LOW` if unspecified.
 
 > r[durability.interned]
-> If an implementation supports durability, interned records SHOULD be treated as `HIGH` durability, since they are immutable once created.
+> Interned records MUST be treated as `HIGH` durability, since they are immutable once created.
 > Creating new intern IDs MUST NOT reduce the durability of existing interned records.
 
 > r[durability.nonobservable]
-> Durability MUST be non-observable: changing durability annotations (if supported) MUST NOT change which values/errors are returned by inputs, derived queries, or snapshots.
+> Durability MUST be non-observable: changing durability annotations MUST NOT change which values/errors are returned by inputs, derived queries, or snapshots.
 > Durability MAY affect performance by enabling the implementation to skip some revalidation work, but only in ways that are conservative with respect to correctness.
 
 > r[durability.revalidation-opt]
 > Implementations MAY use durability to optimize revalidation as follows:
 >
-> - Track, for each durability level `D`, a per-view revision watermark `last_changed_at_or_below[D]` equal to the most recent revision at which any input record with durability `<= D` changed.
-> - For each cached derived value, track an **effective durability** `eff_dur` that is `<=` the durability of every input record it (transitively) depends on.
+> - Track, for each durability level `D`, a per-view revision watermark `last_changed_at_or_below[D]` equal to the most recent revision at which any input slot whose input kind has durability `<= D` changed.
+> - For each cached derived value, track an **effective durability** `eff_dur` that is `<=` the durability of every input kind it (transitively) depends on.
 > - When revalidating a derived value whose cached `verified_at >= last_changed_at_or_below[eff_dur]`, the implementation MAY treat revalidation as having succeeded without checking individual dependencies.
 >
 > If these conditions are not met (or the implementation does not track them), it MUST fall back to dependency-based revalidation (`r[cell.revalidate]`).
