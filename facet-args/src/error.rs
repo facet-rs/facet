@@ -34,7 +34,16 @@ impl core::fmt::Display for ArgsErrorWithInput {
         if let Some(help) = self.help_text() {
             return write!(f, "{}", help);
         }
-        write!(f, "Could not parse CLI arguments")
+
+        // Write the main error message
+        write!(f, "error: {}", self.inner.kind.label())?;
+
+        // If we have help text, add it
+        if let Some(help) = self.inner.kind.help() {
+            write!(f, "\n\n{help}")?;
+        }
+
+        Ok(())
     }
 }
 
