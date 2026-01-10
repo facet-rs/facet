@@ -752,7 +752,7 @@ impl<'a> Solver<'a> {
     ///
     /// This filters the candidates to only those resolutions where at least one
     /// variant selection has the given variant name. This is useful for explicit
-    /// type disambiguation via annotations (e.g., KDL type annotations like `(Http)node`).
+    /// type disambiguation via annotations (e.g., type annotations in various formats).
     ///
     /// Returns `true` if at least one candidate remains after filtering, `false` if
     /// no candidates match the variant name (in which case candidates are unchanged).
@@ -1805,7 +1805,7 @@ impl VariantsByFormat {
 pub enum EnumRepr {
     /// Variant fields are flattened to the same level as other fields.
     /// Also used for `#[facet(untagged)]` enums where there's no tag at all.
-    /// Used by formats like KDL, TOML where all fields appear at one level.
+    /// Used by formats like TOML where all fields appear at one level.
     /// Example: `{"name": "...", "host": "...", "port": 8080}`
     #[default]
     Flattened,
@@ -2549,7 +2549,7 @@ impl SchemaBuilder {
             //
             // Previously we pushed a synthetic `"0"` segment onto the path. That made the
             // solver think there was an extra field between the variant and the inner
-            // struct (e.g., `backend.backend::Local.0.cache`). KDL flattening does not
+            // struct (e.g., `backend.backend::Local.0.cache`). Format-specific flattening does not
             // expose that tuple wrapper, so the deserializer would try to open a field
             // named `"0"` on the inner struct/enum, causing "no such field" errors when
             // navigating paths like `backend::Local.cache`.

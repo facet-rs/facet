@@ -189,11 +189,6 @@ version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
 [[package]]
-name = "facet-kdl"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
 name = "facet-xdr"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"

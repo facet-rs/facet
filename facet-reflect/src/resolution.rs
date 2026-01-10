@@ -413,16 +413,16 @@ impl Resolution {
 
     /// Get all child fields (fields with the CHILD flag).
     ///
-    /// This is useful for KDL deserialization where child nodes need to be
-    /// processed separately from properties.
+    /// This is useful for formats like XML where child elements need to be
+    /// processed separately from attributes.
     pub fn child_fields(&self) -> impl Iterator<Item = &FieldInfo> {
         self.fields.values().filter(|f| f.field.is_child())
     }
 
     /// Get all property fields (fields without the child attribute).
     ///
-    /// This is useful for KDL deserialization where properties are processed
-    /// separately from child nodes.
+    /// This is useful for formats like XML where attributes are processed
+    /// separately from child elements.
     pub fn property_fields(&self) -> impl Iterator<Item = &FieldInfo> {
         self.fields.values().filter(|f| !f.field.is_child())
     }
