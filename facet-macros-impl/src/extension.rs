@@ -8,9 +8,9 @@ use quote::{ToTokens, quote, quote_spanned};
 /// This generates code that calls our `__ext!` proc macro, which then
 /// forwards to the extension crate's dispatcher macro with proper spans.
 ///
-/// For `#[facet(kdl::child)]` on field `server: Server`:
+/// For `#[facet(xml::element)]` on field `server: Server`:
 /// ```ignore
-/// ::facet::__ext!(kdl::child { server : Server })
+/// ::facet::__ext!(xml::element { server : Server })
 /// ```
 ///
 /// For `#[facet(args::short = 'v')]` on field `verbose: bool`:
