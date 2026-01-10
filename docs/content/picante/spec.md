@@ -662,6 +662,11 @@ impl Label {
 > r[intern.dedup]
 > Interning MUST be value-deduplicating: if two calls intern values `v1` and `v2` such that `v1 ≈ v2` (per `r[equality.relation]` for that interned kind), they MUST return the same intern ID.
 
+> r[intern.limits]
+> If interning a value would require creating a new unique intern entry and doing so would exceed the configured state-byte limit (see `r[limit.enforced]`), the intern operation MUST fail with `LimitExceeded` and MUST have no observable effects.
+>
+> If the value is already present in the intern table, the intern operation MUST succeed and return the existing intern ID regardless of the current state-byte usage.
+
 > r[intern.immutable]
 > The observable value of an interned record addressed by an intern ID MUST be immutable for the lifetime of the process.
 > Reads through an intern ID MUST always return the same value.
@@ -734,6 +739,36 @@ Such sharing MUST NOT change observable behavior: the values and errors returned
 
 This section specifies which in-memory structures MAY be bounded and evicted without changing observable semantics.
 
+## Hard size limits (non-evictable state)
+
+To avoid unbounded growth of long-lived in-memory database state, Picante MUST support a hard limit on the size of the non-evictable portion of the database.
+
+The **non-evictable state** is:
+
+- all input slots and their stored values (including keys and metadata needed to preserve their observable behavior), and
+- the intern table (including values needed to preserve the meaning of existing intern IDs).
+
+Derived-query memoization, dependency metadata, and other caches are not part of the non-evictable state (they may be evicted per the rules below).
+
+> r[limit.state-bytes]
+> The implementation MUST define a byte accounting scheme for the non-evictable state (“state bytes”).
+> The accounting is implementation-defined but MUST be deterministic and conservative:
+>
+> - If an operation would increase the implementation’s actual retained memory for non-evictable state, it MUST NOT decrease the accounted state bytes.
+> - State bytes MUST be measured per database (shared across views).
+>
+> The accounting MUST include keys and values (or their retained representations) for input slots and interned values.
+
+> r[limit.enforced]
+> The implementation MUST allow configuring a maximum number of state bytes per database.
+> If a mutation would cause state bytes to exceed the configured maximum, the mutation MUST fail with a `LimitExceeded` error and MUST have no observable effects:
+>
+> - No partial state changes are permitted.
+> - The view revision MUST NOT advance.
+> - No invalidation or events may be emitted as a result of the failed mutation.
+>
+> This applies equally to single mutations and batches.
+
 ## Inputs are not implicitly evictable
 
 Input ingredients are part of the observable database state.
@@ -778,4 +813,6 @@ Poisoning is an observable behavior at a given revision (errors are memoized for
 Interned records are stable identity tokens.
 
 > r[evict.interned]
-> Intern tables MUST be treated as unbounded within a process: implementations MUST NOT evict or compact interned records in a way that changes the meaning of an existing intern ID.
+> Intern tables are part of the non-evictable state and MUST NOT be evicted or compacted in a way that changes the meaning of an existing intern ID.
+>
+> Intern tables MAY still be bounded via `r[limit.enforced]` by refusing to create new unique intern entries once the configured state-byte limit would be exceeded.
