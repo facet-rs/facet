@@ -223,7 +223,8 @@ title = "HTML"
       <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">BodyElement</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">div</span><span style="opacity:0.7">(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">DivElement</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
         <span style="color:rgb(115,218,202)">id</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">container</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
         <span style="color:rgb(115,218,202)">class</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">wrapper</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-        <span style="color:rgb(115,218,202)">content</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)"></span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+        <span style="color:rgb(115,218,202)">content</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">
+        </span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
       <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
     <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
@@ -418,9 +419,9 @@ title = "HTML"
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/c5842bc4cd833fedc52522b20f09daedff260a0e/facet-html/examples/html_showcase.rs"><code>facet-html/examples/html_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/c5842bc4cd833fedc52522b20f09daedff260a0e"><code>c5842bc4c</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-04T12:56:12+01:00">2026-01-04T12:56:12+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/3e6fd5971d603bc93a9cbaed73a42d60f93a615a/facet-html/examples/html_showcase.rs"><code>facet-html/examples/html_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/3e6fd5971d603bc93a9cbaed73a42d60f93a615a"><code>3e6fd5971</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-10T07:06:01+01:00">2026-01-10T07:06:01+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

@@ -669,30 +669,6 @@ where
         Ok(wip)
     }
 
-    /// Check if a field matches the given name, namespace, and location constraints.
-    ///
-    /// This implements format-specific field matching for XML:
-    ///
-    /// Check if a type can be deserialized directly from a scalar value.
-    fn is_scalar_compatible_type(shape: &facet_core::Shape) -> bool {
-        match &shape.def {
-            Def::Scalar => true,
-            Def::Option(opt) => Self::is_scalar_compatible_type(opt.t),
-            Def::Pointer(ptr) => ptr.pointee.is_some_and(Self::is_scalar_compatible_type),
-            _ => {
-                // Also check for transparent wrappers (newtypes)
-                if !matches!(
-                    &shape.def,
-                    Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
-                ) && let Some(inner) = shape.inner
-                {
-                    return Self::is_scalar_compatible_type(inner);
-                }
-                false
-            }
-        }
-    }
-
     /// **XML matching:**
     /// - Text: Match fields with xml::text attribute (name is ignored - text content goes to the field)
     /// - Attributes: Only match if explicit xml::ns matches (no ns_all inheritance per XML spec)
@@ -1335,6 +1311,9 @@ where
                         // Run validation on the field value before finalizing
                         #[cfg(feature = "validate")]
                         self.run_field_validators(field, &wip)?;
+
+                        #[cfg(not(feature = "validate"))]
+                        let _ = field;
 
                         wip = wip.end().map_err(DeserializeError::reflect)?;
 

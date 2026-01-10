@@ -464,6 +464,7 @@ dependencies = [
 name = "benchmark-defs"
 version = "0.42.0"
 dependencies = [
+ "facet",
  "serde",
  "serde_yaml",
 ]

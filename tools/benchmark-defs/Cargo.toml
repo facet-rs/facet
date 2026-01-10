@@ -11,6 +11,7 @@ publish = false
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+facet = { version = "0.42.0", path = "../../facet" }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 

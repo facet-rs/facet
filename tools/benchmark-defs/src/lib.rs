@@ -3,12 +3,13 @@
 //! Supports multiple serialization formats (JSON, Postcard, MessagePack, etc.)
 //! Each format has its own YAML file defining benchmarks and types.
 
+use facet::Facet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
 /// Arguments for the bench command, shared between xtask and benchmark-analyzer.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Facet, Debug, Default, Serialize, Deserialize)]
 pub struct BenchReportArgs {
     /// Filter to run only specific benchmark(s), e.g., "booleans"
     pub filter: Option<String>,
