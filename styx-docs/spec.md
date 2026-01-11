@@ -71,7 +71,7 @@ STYX values are one of:
 ### Multiline strings (heredoc)
 
 > r[scalar.string.heredoc]
-> Multiline strings are explicitly delimited and preserve content:
+> Multiline strings are explicitly delimited using `<<DELIM` ... `DELIM` syntax:
 >
 > ```styx
 > <<EOF
@@ -79,6 +79,40 @@ STYX values are one of:
 > line two
 > EOF
 > ```
+
+> r[scalar.string.heredoc.delimiter]
+> The delimiter MUST consist of one or more uppercase letters and underscores (`[A-Z_]+`).
+
+> r[scalar.string.heredoc.indent]
+> The closing delimiter's indentation determines the base indent.
+> That amount of leading whitespace is stripped from all content lines.
+>
+> ```styx
+> server {
+>   script <<EOF
+>     #!/bin/bash
+>     echo "hello"
+>     EOF
+> }
+> ```
+>
+> Produces:
+>
+> ```
+> #!/bin/bash
+> echo "hello"
+> ```
+
+> r[scalar.string.heredoc.indent.minimum]
+> All content lines MUST be indented at least as much as the closing delimiter.
+> A line with less indentation than the closing delimiter is a syntax error.
+
+> r[scalar.string.heredoc.closing]
+> The closing delimiter MUST appear on its own line, with only whitespace preceding it.
+
+> r[scalar.string.heredoc.chomp]
+> The trailing newline immediately before the closing delimiter is stripped.
+> All other newlines within the content are preserved.
 
 ### Scalar interpretation
 
