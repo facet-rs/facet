@@ -163,10 +163,11 @@ Bare scalars are delimited by whitespace and structural characters.
 >
 > When `=` terminates a bare scalar in value position, it triggers attribute object
 > parsing (see r[object.attr.binding]).
->
-> When `(` or `{` immediately follows a bare scalar (no whitespace), the scalar
-> becomes a tag for a tagged sequence or tagged object (see r[sequence.tagged]
-> and r[object.tagged]).
+
+> r[scalar.bare.tag]
+> When `(` or `{` immediately follows a bare scalar (no whitespace), the characters
+> preceding `(` or `{` form a tag rather than a standalone scalar. The result is
+> a tagged sequence or tagged object (see r[sequence.tagged] and r[object.tagged]).
 >
 > ```styx
 > items tag(a b c)   // "items" is key, tag(a b c) is a tagged sequence
@@ -265,7 +266,8 @@ EOF
 ```
 
 > r[scalar.heredoc.delimiter]
-> The delimiter MUST match the pattern `[A-Z][A-Z0-9_]*`.
+> The delimiter MUST match the pattern `[A-Z][A-Z0-9_]*` (uppercase letters,
+> digits, and underscores only; must start with an uppercase letter).
 >
 > Examples: `EOF`, `SQL`, `EOF2`, `BASE64_DATA`
 
@@ -352,7 +354,7 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 > Sequences MUST start with `(` and end with `)`.
 
 > r[sequence.separators]
-> Elements MUST be separated by whitespace. Commas are NOT allowed in sequences.
+> Elements MUST be separated by whitespace.
 >
 > ```styx
 > (a b c)
@@ -361,10 +363,16 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 >   b
 >   c
 > )
-> (a, b, c)    // ERROR: commas not allowed in sequences
 > ```
 >
 > A single-element sequence is valid: `(foo)` contains one element.
+
+> r[sequence.no-commas]
+> Commas are NOT allowed in sequences.
+>
+> ```styx
+> (a, b, c)    // ERROR: commas not allowed in sequences
+> ```
 
 > r[sequence.elements]
 > Sequence elements MAY be scalars, block objects, or nested sequences.
@@ -469,6 +477,8 @@ or `None` in Python.
 
 > r[value.unit]
 > The token `@` not immediately followed by an identifier character is the **unit value**.
+> Identifier characters are `[A-Za-z_]` for the first character, `[A-Za-z0-9_-]` thereafter
+> (see r[object.key.syntax]).
 >
 > ```styx
 > field @              // unit value
@@ -652,6 +662,23 @@ Nested objects:
 > r[object.block.separators]
 > Entries MUST be separated by newlines or commas.
 > Trailing commas are allowed: `{ a 1, b 2, }` is valid.
+
+> r[object.block.separators.no-mixing]
+> Mixing newlines and commas as separators within the same object is forbidden.
+> Choose one style and use it consistently.
+>
+> ```styx
+> { a 1, b 2, c 3 }      // OK: all commas
+> {
+>   a 1
+>   b 2
+>   c 3
+> }                       // OK: all newlines
+> {
+>   a 1,
+>   b 2
+> }                       // ERROR: mixed separators
+> ```
 
 > r[object.block.no-equals]
 > In block objects, entries use `key value` syntax, not `key=value`.
@@ -893,7 +920,7 @@ A conforming deserializer SHOULD recognize the following standard scalar forms:
 
 Implementations commonly support additional forms like paths, URLs, IPs, and semver.
 
-## Enums
+## Enum deserialization
 
 Enums are represented as objects with exactly one key (the variant tag) whose value
 is the variant payload.
@@ -1003,7 +1030,7 @@ server {
 > version @integer   // must be an integer (1, 2, 42, etc.)
 > ```
 
-> r[schema.type-ref.literal]
+> r[schema.type-ref.escape]
 > To represent a literal value starting with `@`, use any non-bare scalar form.
 > Only bare scalars are interpreted as type references (see r[scalar.form]).
 >
@@ -1106,6 +1133,15 @@ id @union(@integer @string)
 // Duration, integer, or unit
 timeout @union(@duration @integer @unit)
 ```
+
+> r[schema.union.syntax]
+> A union type uses the `@union` tagged sequence containing type references:
+>
+> ```
+> union = "@union" "(" type-ref+ ")"
+> ```
+>
+> The union must contain at least one type reference.
 
 > r[schema.union]
 > `@union(@type1 @type2 ...)` matches a value if it matches any of the
@@ -1261,6 +1297,20 @@ Admin {
 > ```
 >
 > deserializes into an `Admin` with `name` and `email` routed to the nested `User`.
+
+> r[schema.flatten.collision]
+> Key collisions between flattened fields and the containing object's own fields
+> are forbidden. The schema validator MUST reject schemas where a flattened type
+> introduces a key that already exists in the containing object.
+>
+> ```styx
+> Base { name @string }
+> 
+> Derived {
+>   base @flatten(@Base)
+>   name @string            // ERROR: "name" collides with Base.name
+> }
+> ```
 
 ## Enums
 
