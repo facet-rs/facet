@@ -890,3 +890,85 @@ fn issue_1737_style_with_html_like_content() {
         style.text
     );
 }
+
+// Test full Html document with custom elements (like arborium syntax highlighting)
+#[test]
+fn custom_elements_in_full_html_document() {
+    let html = r#"<!DOCTYPE html>
+<html lang="en">
+<head><title>Test</title></head>
+<body>
+<pre><code><a-c>/// Comment</a-c></code></pre>
+</body>
+</html>"#;
+
+    let result = facet_html::from_str::<Html>(html);
+    match &result {
+        Ok(doc) => {
+            eprintln!("Parse succeeded!");
+            eprintln!("head is_some: {}", doc.head.is_some());
+            eprintln!("body is_some: {}", doc.body.is_some());
+        }
+        Err(e) => {
+            eprintln!("Parse failed: {}", e);
+        }
+    }
+    
+    assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
+    let doc = result.unwrap();
+    assert!(doc.head.is_some(), "head should be present");
+    assert!(doc.body.is_some(), "body should be present");
+}
+
+// Test nested pre/code blocks (malformed but should not produce empty document)
+#[test]
+fn nested_pre_code_blocks() {
+    let html = r#"<!DOCTYPE html>
+<html lang="en">
+<head><title>Test</title></head>
+<body>
+<pre><code>outer code
+<pre><code>inner code</code></pre>
+more outer code
+</code></pre>
+</body>
+</html>"#;
+
+    let result = facet_html::from_str::<Html>(html);
+    match &result {
+        Ok(doc) => {
+            eprintln!("Parse succeeded!");
+            eprintln!("head is_some: {}", doc.head.is_some());
+            eprintln!("body is_some: {}", doc.body.is_some());
+        }
+        Err(e) => {
+            eprintln!("Parse failed: {}", e);
+        }
+    }
+    
+    // Even if the HTML is malformed, we should get a valid document structure
+    assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
+    let doc = result.unwrap();
+    assert!(doc.head.is_some(), "head should be present");
+    assert!(doc.body.is_some(), "body should be present");
+}
+
+// Stray end tag for custom element should not corrupt document structure
+// This was causing the entire document to become empty when an end tag
+// like </a-c> appeared with no matching start tag.
+#[test]
+fn stray_end_tag_does_not_corrupt_document() {
+    // This HTML has a stray </a-c> end tag after nested pre/code
+    // (two <a-c> elements already closed, then stray </a-c>)
+    let html = r#"<!DOCTYPE html>
+<html><head><title>T</title></head><body>
+<pre><code><a-c>x</a-c><a-c>z</a-c><pre><code>q</code></pre></a-c><a-at>m</a-at></code></pre>
+</body></html>"#;
+
+    let result = facet_html::from_str::<Html>(html);
+    assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
+    
+    let doc = result.unwrap();
+    assert!(doc.head.is_some(), "head should be present despite stray end tag");
+    assert!(doc.body.is_some(), "body should be present despite stray end tag");
+}
