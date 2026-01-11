@@ -3,7 +3,7 @@
 //! r[impl transport.bytestream.cobs] - Messages are COBS-encoded with 0x00 delimiter.
 //! r[impl transport.message.binary] - All messages are binary (not text).
 //! r[impl transport.message.one-to-one] - Each frame contains exactly one roam message.
-//! r[impl transport.message.multiplexing] - stream_id field provides multiplexing.
+//! r[impl transport.message.multiplexing] - channel_id field provides multiplexing.
 //!
 //! This module is generic over the transport type - it works with any type that
 //! implements `AsyncRead + AsyncWrite + Unpin`, including:
@@ -15,6 +15,7 @@
 //! and two passes over the data. Should switch to a streaming encoder that does a single pass.
 
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
@@ -22,6 +23,37 @@ use roam_wire::Message;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::transport::MessageTransport;
+
+/// Enable wire-level message logging for debugging.
+/// Set ROAM_WIRE_SPY=1 to enable.
+static WIRE_SPY_ENABLED: AtomicBool = AtomicBool::new(false);
+
+#[ctor::ctor]
+fn init_wire_spy() {
+    if std::env::var("ROAM_WIRE_SPY").is_ok() {
+        WIRE_SPY_ENABLED.store(true, Ordering::Relaxed);
+    }
+}
+
+fn wire_spy_enabled() -> bool {
+    WIRE_SPY_ENABLED.load(Ordering::Relaxed)
+}
+
+fn wire_spy_log(direction: &str, msg: &Message) {
+    if wire_spy_enabled() {
+        eprintln!("[WIRE] {direction} {msg:?}");
+    }
+}
+
+fn wire_spy_bytes(direction: &str, bytes: &[u8]) {
+    if wire_spy_enabled() {
+        eprintln!(
+            "[WIRE] {direction} {} bytes: {:02x?}",
+            bytes.len(),
+            &bytes[..bytes.len().min(64)]
+        );
+    }
+}
 
 /// A COBS-framed async stream connection.
 ///
@@ -72,10 +104,12 @@ where
     ///
     /// r[impl transport.bytestream.cobs] - COBS encode with 0x00 delimiter.
     pub async fn send(&mut self, msg: &Message) -> io::Result<()> {
+        wire_spy_log("-->", msg);
         let payload = facet_postcard::to_vec(msg)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         let mut framed = cobs_encode_vec(&payload);
         framed.push(0x00);
+        wire_spy_bytes("-->", &framed);
         self.stream.write_all(&framed).await?;
         self.stream.flush().await?;
         Ok(())
@@ -105,15 +139,20 @@ where
                 let frame = self.buf.drain(..idx).collect::<Vec<_>>();
                 self.buf.drain(..1); // Remove delimiter
 
+                wire_spy_bytes("<-- frame", &frame);
+
                 // r[impl transport.bytestream.cobs] - decode COBS-encoded frame
                 let decoded = cobs_decode_vec(&frame).map_err(|e| {
                     io::Error::new(io::ErrorKind::InvalidData, format!("cobs: {e}"))
                 })?;
                 self.last_decoded = decoded.clone();
 
+                wire_spy_bytes("<-- decoded", &decoded);
+
                 let msg: Message = facet_postcard::from_slice(&decoded).map_err(|e| {
                     io::Error::new(io::ErrorKind::InvalidData, format!("postcard: {e}"))
                 })?;
+                wire_spy_log("<--", &msg);
                 return Ok(Some(msg));
             }
 
@@ -121,7 +160,13 @@ where
             let mut tmp = [0u8; 4096];
             let n = self.stream.read(&mut tmp).await?;
             if n == 0 {
+                if wire_spy_enabled() {
+                    eprintln!("[WIRE] <-- EOF (read 0 bytes)");
+                }
                 return Ok(None);
+            }
+            if wire_spy_enabled() {
+                eprintln!("[WIRE] <-- read {} bytes: {:02x?}", n, &tmp[..n.min(64)]);
             }
             self.buf.extend_from_slice(&tmp[..n]);
         }

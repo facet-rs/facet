@@ -16,7 +16,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 roam-session = { path = "../roam-session" }
 roam-schema = { path = "../roam-schema" }
 roam-hash = { path = "../roam-hash" }
-roam-reflect = { path = "../roam-reflect" }
 
 # Proc macros (re-exported as #[roam::service])
 roam-service-macros = { path = "../roam-macros" }

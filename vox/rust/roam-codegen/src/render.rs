@@ -1,11 +1,12 @@
+use heck::ToKebabCase;
 use roam_schema::MethodDetail;
 
 pub fn normalized_service(name: &str) -> String {
-    roam_hash::kebab(name)
+    name.to_kebab_case()
 }
 
 pub fn normalized_method(name: &str) -> String {
-    roam_hash::kebab(name)
+    name.to_kebab_case()
 }
 
 pub fn fq_name(detail: &MethodDetail) -> String {

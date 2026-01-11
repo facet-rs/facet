@@ -22,8 +22,8 @@ pub use roam_session as session;
 
 // Re-export streaming types for user-facing API
 pub use roam_session::{
-    OutgoingMessage, OutgoingPoll, OutgoingSender, Pull, PullError, Push, PushError, Role,
-    StreamError, StreamId, StreamIdAllocator, StreamRegistry,
+    ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, ReceiverSlot, Role, Rx, RxError,
+    SenderSlot, TaskMessage, Tx, TxError, channel,
 };
 
 // Re-export schema types
@@ -31,9 +31,6 @@ pub use roam_schema as schema;
 
 // Re-export hash utilities
 pub use roam_hash as hash;
-
-// Re-export reflection utilities
-pub use roam_reflect as reflect;
 
 // Re-export facet for derive macros in service types
 pub use facet;

@@ -33,11 +33,11 @@ impl<T: 'static + facet::Facet<'static>> OwnedMessage<T> {
         frame: Frame,
         builder: impl FnOnce(&'static [u8]) -> Result<T, E>,
     ) -> Result<Self, E> {
-        let variance = (T::SHAPE.variance)(T::SHAPE);
+        let variance = T::SHAPE.computed_variance();
         assert!(
             variance.can_shrink(),
             "OwnedMessage<T> requires T to be covariant (lifetime can shrink safely). Type {:?} has variance {:?}",
-            T::SHAPE.id,
+            T::SHAPE.type_identifier,
             variance
         );
 

@@ -1,0 +1,13 @@
+{
+  "name": "@bearcove/roam-typescript",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "pnpm -r run check",
+    "test": "pnpm -r run test"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@typescript/native-preview": "7.0.0-dev.20260109.1"
+  }
+}

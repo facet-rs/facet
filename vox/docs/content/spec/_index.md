@@ -6,7 +6,7 @@ weight = 10
 
 # Introduction
 
-This is roam specification v1.1.0, last updated January 7, 2026. It canonically
+This is roam specification v1.2.0, last updated January 7, 2026. It canonically
 lives at <https://github.com/bearcove/roam> — where you can get the latest version.
 
 roam is a **Rust-native** RPC protocol. We don't claim to be language-neutral —
@@ -15,7 +15,7 @@ Rust traits *are* the schema. Implementations for other languages (Swift,
 TypeScript, etc.) are generated from Rust definitions.
 
 This means:
-- The Rust Implementation Specification [RUST-SPEC] is essential
+- The Rust Implementation Specification[^RUST-SPEC] is essential
 - Other implementations use Rust tooling for code generation
 - Fully independent implementations are a non-goal
 
@@ -43,7 +43,7 @@ pub trait TemplateHost {
 
 All types that occur as arguments or in return position must implement
 [Facet](https://facet.rs), so that they might be serialized and deserialized
-with facet-postcard (see [POSTCARD]).
+with facet-postcard (see [^POSTCARD]).
 
 Bindings for other languages (Swift, TypeScript) are generated using
 a Rust codegen package which is linked together with the "proto" crate to
@@ -102,72 +102,72 @@ The following abstract messages relate to calls:
 > the completed result or a `Cancelled` error). Implementations MUST
 > handle late Responses gracefully.
 
-## Streams (Push/Pull)
+## Channels (Tx/Rx)
 
-A **stream** is a unidirectional, ordered sequence of typed values. At the
-type level, roam provides `Push<T>` and `Pull<T>` to indicate direction.
+A **channel** is a unidirectional, ordered sequence of typed values. At the
+type level, roam provides `Tx<T>` and `Rx<T>` to indicate direction.
 
-> r[core.stream]
+> r[core.channel]
 >
-> `Push<T>` represents data flowing from **caller to callee** (input).
-> `Pull<T>` represents data flowing from **callee to caller** (output).
+> `Tx<T>` represents data flowing from **caller to callee** (input).
+> `Rx<T>` represents data flowing from **callee to caller** (output).
 > Each has exactly one sender and one receiver.
 
-On the wire, both `Push<T>` and `Pull<T>` serialize as a `stream_id`
+On the wire, both `Tx<T>` and `Rx<T>` serialize as a `channel_id`
 (u64). The direction is determined by the type, not the ID.
-See `r[streaming.type]` for details.
+See `r[channeling.type]` for details.
 
-> r[core.stream.return-forbidden]
+> r[core.channel.return-forbidden]
 >
-> `Push<T>` and `Pull<T>` MUST NOT appear in return types. They may
+> `Tx<T>` and `Rx<T>` MUST NOT appear in return types. They may
 > only appear in argument position. The return type is always a plain
-> value (possibly `()` for methods that only produce output via Pull).
+> value (possibly `()` for methods that only produce output via Rx).
 
-For bidirectional communication, use one Push (input) and one Pull (output).
+For bidirectional communication, use one Tx (input) and one Rx (output).
 
-### Stream Messages
+### Channel Messages
 
-The following abstract messages relate to streams:
+The following abstract messages relate to channels:
 
 | Message | Sender | Meaning |
 |---------|--------|---------|
-| **Data** | stream sender | Deliver one value of type `T` |
-| **Close** | caller (for Push) | End of stream (no more Data from caller) |
-| **Reset** | either peer | Abort the stream immediately |
+| **Data** | channel sender | Deliver one value of type `T` |
+| **Close** | caller (for Push) | End of channel (no more Data from caller) |
+| **Reset** | either peer | Abort the channel immediately |
 | **Credit** | receiver | Grant permission to send more bytes |
 
-For `Push<T>` (caller→callee), the caller sends Close when done sending.
-After sending Close, the caller MUST NOT send more Data on that stream.
-See `r[streaming.close]` for details.
+For `Tx<T>` (caller→callee), the caller sends Close when done sending.
+After sending Close, the caller MUST NOT send more Data on that channel.
+See `r[channeling.close]` for details.
 
-For `Pull<T>` (callee→caller), the stream is implicitly closed when the
+For `Rx<T>` (callee→caller), the channel is implicitly closed when the
 callee sends the Response. No explicit Close message is sent.
-See `r[streaming.lifecycle.response-closes-pulls]`.
+See `r[channeling.lifecycle.response-closes-pulls]`.
 
-Reset forcefully terminates a stream. After sending or receiving Reset,
+Reset forcefully terminates a channel. After sending or receiving Reset,
 both peers MUST discard any pending data and consider it dead.
-Any outstanding credit is lost. See `r[streaming.reset]` for details.
+Any outstanding credit is lost. See `r[channeling.reset]` for details.
 
-### Stream ID Allocation
+### Channel ID Allocation
 
-Stream IDs must be unique within a connection (`r[streaming.id.uniqueness]`).
-ID 0 is reserved (`r[streaming.id.zero-reserved]`). The **caller** allocates
-all stream IDs for a call (`r[streaming.allocation.caller]`).
+Channel IDs must be unique within a connection (`r[channeling.id.uniqueness]`).
+ID 0 is reserved (`r[channeling.id.zero-reserved]`). The **caller** allocates
+all channel IDs for a call (`r[channeling.allocation.caller]`).
 
 For peer-to-peer transports, the **initiator** (who opened the connection)
 uses odd IDs (1, 3, 5, ...) and the **acceptor** uses even IDs (2, 4, 6, ...).
-See `r[streaming.id.parity]` for details.
+See `r[channeling.id.parity]` for details.
 
 Note: "Initiator" and "acceptor" refer to who opened the connection, not
 who is calling whom. If the initiator calls, they use odd IDs. If the
 acceptor calls back, they use even IDs.
 
-### Streams and Calls
+### Channels and Calls
 
-Streams are established via method calls. `Push<T>` streams may outlive
+Channels are established via method calls. `Tx<T>` channels may outlive
 the Response — the caller continues sending until they send Close.
-`Pull<T>` streams are implicitly closed when Response is sent.
-See `r[streaming.call-complete]` and `r[streaming.streams-outlive-response]`.
+`Rx<T>` channels are implicitly closed when Response is sent.
+See `r[channeling.call-complete]` and `r[channeling.channels-outlive-response]`.
 
 ## Errors
 
@@ -198,23 +198,23 @@ See `r[streaming.call-complete]` and `r[streaming.streams-outlive-response]`.
 > detecting the error MUST send a **Goodbye** message with a reason
 > and close the connection.
 
-Examples: duplicate request ID, data after Close, unknown stream ID.
+Examples: duplicate request ID, data after Close, unknown channel ID.
 
 > r[core.error.goodbye-reason]
 >
 > The Goodbye reason MUST contain the rule ID that was violated
-> (e.g., `core.stream.close`), optionally followed by context.
+> (e.g., `core.channel.close`), optionally followed by context.
 
 ## Flow Control
 
-Streams use credit-based flow control (`r[flow.stream.credit-based]`). A sender
+Channels use credit-based flow control (`r[flow.channel.credit-based]`). A sender
 MUST NOT send data exceeding the receiver's granted credit. Credit is measured
-in bytes (`r[flow.stream.byte-accounting]`). Initial credit is established at
-connection setup (`r[flow.stream.initial-credit]`).
+in bytes (`r[flow.channel.byte-accounting]`). Initial credit is established at
+connection setup (`r[flow.channel.initial-credit]`).
 
 The receiver grants additional credit via Credit messages
-(`r[flow.stream.credit-grant]`). If a sender exceeds granted credit, this is
-a connection error (`r[flow.stream.credit-overrun]`).
+(`r[flow.channel.credit-grant]`). If a sender exceeds granted credit, this is
+a connection error (`r[flow.channel.credit-overrun]`).
 
 See the [Flow Control](#flow-control-1) section for complete details.
 
@@ -235,7 +235,7 @@ Transports may have different topologies:
 - **Peer-to-peer** (TCP, WebSocket, QUIC): Two peers, either can call.
 - **Hub** (SHM Hub): One host, multiple peers. Routing is required.
 
-The shared memory transport [SHM-SPEC] specifies its topology separately.
+The shared memory transport[^SHM-SPEC] specifies its topology separately.
 
 ---
 
@@ -243,7 +243,7 @@ The shared memory transport [SHM-SPEC] specifies its topology separately.
 
 The following sections define how Core Semantics are encoded for specific
 transport categories. Each binding specifies message encoding, framing,
-connection establishment, and stream ID allocation.
+connection establishment, and channel ID allocation.
 
 ## Service Definitions
 
@@ -281,7 +281,7 @@ that accidental collisions between legitimately different methods won't happen
 in practice.
 
 The exact algorithm for computing method IDs is defined in the
-[RUST-SPEC]. Other language
+[^RUST-SPEC]. Other language
 implementations receive pre-computed method IDs from code generation.
 
 ## Schema Evolution
@@ -308,19 +308,19 @@ returns `Result<User, UserError>::Err(NotFound)` is a *successful* RPC —
 the method ran and returned a value. These are not RPC errors.
 
 **Call errors** mean an RPC failed, but only that specific call is affected.
-Other in-flight calls and streams continue normally. Examples:
+Other in-flight calls and channels continue normally. Examples:
   * `UnknownMethod` — no handler for this method ID
   * `InvalidPayload` — couldn't deserialize the arguments
   * `Cancelled` — caller cancelled the request
 
-**Stream errors** affect a single stream. The stream is closed but other
-streams and calls are unaffected. A peer signals stream errors by sending
+**Channel errors** affect a single channel. The channel is closed but other
+channels and calls are unaffected. A peer signals channel errors by sending
 Reset.
 
 **Connection errors** are protocol violations. The peer sends a Goodbye
 message (citing the violated rule) and closes the connection. Everything
 on this connection is torn down. Examples:
-  * Data/Close/Reset on an unknown stream ID
+  * Data/Close/Reset on an unknown channel ID
   * Data after Close
   * Duplicate in-flight request ID
 
@@ -353,9 +353,9 @@ This section specifies the complete lifecycle.
 > The request remains in-flight until a Response is received (which may be
 > a `Cancelled` error, a completed result, or any other response).
 
-For streaming methods, the Request/Response exchange negotiates streams,
-but those streams have their own lifecycle independent of the call. See
-[Streaming RPC](#streaming-rpc) for details.
+For channeling methods, the Request/Response exchange negotiates channels,
+but those channels have their own lifecycle independent of the call. See
+[Channeling RPC](#channeling-rpc) for details.
 
 ## Initiating a Call
 
@@ -370,17 +370,17 @@ Request {
     request_id: u64,
     method_id: u64,
     metadata: Vec<(String, MetadataValue)>,
-    payload: Vec<u8>,  // [POSTCARD]-encoded arguments
+    payload: Vec<u8>,  // [^POSTCARD]-encoded arguments
 }
 ```
 
 > r[unary.request.payload-encoding]
 >
-> The payload MUST be the [POSTCARD] encoding of a tuple containing all
+> The payload MUST be the [^POSTCARD] encoding of a tuple containing all
 > method arguments in declaration order.
 
 For example, a method `fn add(a: i32, b: i32) -> i64` with arguments `(3, 5)`
-would have a payload that is the [POSTCARD] encoding of the tuple `(3i32, 5i32)`.
+would have a payload that is the [^POSTCARD] encoding of the tuple `(3i32, 5i32)`.
 
 ## Completing a Call
 
@@ -395,7 +395,7 @@ A Response contains:
 Response {
     request_id: u64,
     metadata: Vec<(String, MetadataValue)>,
-    payload: Vec<u8>,  // [POSTCARD]-encoded Result<T, RoamError<E>>
+    payload: Vec<u8>,  // [^POSTCARD]-encoded Result<T, RoamError<E>>
 }
 ```
 
@@ -406,7 +406,7 @@ Where `T` is the method's success type and `E` is the method's error type
 
 > r[unary.response.encoding]
 >
-> The response payload MUST be the [POSTCARD] encoding of `Result<T, RoamError<E>>`,
+> The response payload MUST be the [^POSTCARD] encoding of `Result<T, RoamError<E>>`,
 > where `T` and `E` come from the method signature.
 
 For a method declared as:
@@ -490,7 +490,7 @@ Metadata is application-defined. Common uses include:
 > r[unary.error.roam-error]
 >
 > `RoamError<E>` distinguishes application errors from protocol errors.
-> The variant order defines wire discriminants ([POSTCARD] varint encoding):
+> The variant order defines wire discriminants ([^POSTCARD] varint encoding):
 
 | Discriminant | Variant | Payload | Meaning |
 |--------------|---------|---------|---------|
@@ -613,29 +613,29 @@ Cancel {
 This enables efficient batching — a caller can send 10 requests, then
 await all 10 responses, rather than round-tripping each one sequentially.
 
-# Streaming RPC
+# Channeling RPC
 
-Streaming methods have `Push<T>` (caller→callee) or `Pull<T>` (callee→caller)
+Channeling methods have `Tx<T>` (caller→callee) or `Rx<T>` (callee→caller)
 in argument position. Unlike unary RPC, data flows continuously over dedicated
-streams.
+channels.
 
-## Push and Pull Types
+## Tx and Rx Types
 
-> r[streaming.type]
+> r[channeling.type]
 >
-> `Push<T>` and `Pull<T>` are roam-provided types recognized by the
-> `#[roam::service]` macro. On the wire, both serialize as a `u64` stream ID.
+> `Tx<T>` and `Rx<T>` are roam-provided types recognized by the
+> `#[roam::service]` macro. On the wire, both serialize as a `u64` channel ID.
 
-> r[streaming.caller-pov]
+> r[channeling.caller-pov]
 >
 > Service definitions are written from the **caller's perspective**.
-> `Push<T>` means "caller pushes data to callee". `Pull<T>` means
-> "caller pulls data from callee".
+> `Tx<T>` means "caller transmits data to callee". `Rx<T>` means
+> "caller receives data from callee".
 
-> r[streaming.holder-semantics]
+> r[channeling.holder-semantics]
 >
-> From the holder's perspective: `Push<T>` means "I send on this",
-> `Pull<T>` means "I receive from this". Generated callee handlers
+> From the holder's perspective: `Tx<T>` means "I send on this",
+> `Rx<T>` means "I receive from this". Generated callee handlers
 > have the types flipped relative to the service definition.
 
 Example:
@@ -643,306 +643,306 @@ Example:
 ```rust
 // Service definition (caller's perspective)
 #[roam::service]
-pub trait Streaming {
-    async fn sum(&self, numbers: Push<u32>) -> u32;       // caller→callee
-    async fn range(&self, n: u32, output: Pull<u32>);     // callee→caller
+pub trait Channeling {
+    async fn sum(&self, numbers: Tx<u32>) -> u32;       // caller→callee
+    async fn range(&self, n: u32, output: Rx<u32>);     // callee→caller
 }
 
 // Generated caller stub — same types as definition
-impl StreamingClient {
-    async fn sum(&self, numbers: Push<u32>) -> u32;       // caller sends
-    async fn range(&self, n: u32, output: Pull<u32>);     // caller receives
+impl ChannelingClient {
+    async fn sum(&self, numbers: Tx<u32>) -> u32;       // caller sends
+    async fn range(&self, n: u32, output: Rx<u32>);     // caller receives
 }
 
 // Generated callee handler — types flipped
-trait StreamingHandler {
-    async fn sum(&self, numbers: Pull<u32>) -> u32;       // callee receives
-    async fn range(&self, n: u32, output: Push<u32>);     // callee sends
+trait ChannelingHandler {
+    async fn sum(&self, numbers: Rx<u32>) -> u32;       // callee receives
+    async fn range(&self, n: u32, output: Tx<u32>);     // callee sends
 }
 ```
 
-The number of streams in a call is not always obvious from the method
+The number of channels in a call is not always obvious from the method
 signature — they may appear inside enums, so the actual IDs present depend
 on which variant is passed.
 
-## Stream ID Allocation
+## Channel ID Allocation
 
-> r[streaming.allocation.caller]
+> r[channeling.allocation.caller]
 >
-> The **caller** allocates ALL stream IDs (both Push and Pull). All are
+> The **caller** allocates ALL channel IDs (both Tx and Rx). All are
 > serialized in the Request payload. The callee does not allocate any IDs.
 
-> r[streaming.id.uniqueness]
+> r[channeling.id.uniqueness]
 >
-> A stream ID MUST be unique within a connection.
+> A channel ID MUST be unique within a connection.
 
-> r[streaming.id.zero-reserved]
+> r[channeling.id.zero-reserved]
 >
-> Stream ID 0 is reserved. If a peer receives a stream message with
-> `stream_id` of 0, it MUST send a Goodbye message (reason:
-> `streaming.id.zero-reserved`) and close the connection.
+> Channel ID 0 is reserved. If a peer receives a channel message with
+> `channel_id` of 0, it MUST send a Goodbye message (reason:
+> `channeling.id.zero-reserved`) and close the connection.
 
-> r[streaming.id.parity]
+> r[channeling.id.parity]
 >
 > For peer-to-peer transports, the **initiator** (who opened the connection)
-> MUST allocate odd stream IDs (1, 3, 5, ...). The **acceptor** MUST allocate
-> even stream IDs (2, 4, 6, ...). This prevents collisions when both peers
+> MUST allocate odd channel IDs (1, 3, 5, ...). The **acceptor** MUST allocate
+> even channel IDs (2, 4, 6, ...). This prevents collisions when both peers
 > make concurrent calls.
 
 Note: "Initiator" and "acceptor" refer to who opened the connection, not
-who is calling whom. If the initiator calls with a Push and Pull, both
-use odd IDs (e.g., push=1, pull=3). If the acceptor calls, both use even
-IDs (e.g., push=2, pull=4).
+who is calling whom. If the initiator calls with a Tx and Rx, both
+use odd IDs (e.g., tx=1, rx=3). If the acceptor calls back, both use even
+IDs (e.g., tx=2, rx=4).
 
-## Call Lifecycle with Streams
+## Call Lifecycle with Channels
 
-### Caller Streaming (Push): `sum(numbers: Push<u32>) -> u32`
+### Caller Channeling (Tx): `sum(numbers: Tx<u32>) -> u32`
 
 ```
 Caller (initiator)                         Callee (acceptor)
     |                                          |
-    |-- Request(sum, push=1) ----------------->|
-    |-- Data(stream=1, 10) ------------------->|
-    |-- Data(stream=1, 20) ------------------->|
-    |-- Close(stream=1) ---------------------->|
+    |-- Request(sum, tx=1) ------------------->|
+    |-- Data(channel=1, 10) ------------------>|
+    |-- Data(channel=1, 20) ------------------>|
+    |-- Close(channel=1) --------------------->|
     |                                          |
     |<-- Response(Ok, 30) --------------------|
 ```
 
-### Callee Streaming (Pull): `range(n, output: Pull<u32>)`
+### Callee Channeling (Rx): `range(n, output: Rx<u32>)`
 
 ```
 Caller (initiator)                         Callee (acceptor)
     |                                          |
-    |-- Request(range, n=3, pull=1) ---------->|
+    |-- Request(range, n=3, rx=1) ------------>|
     |                                          |
-    |<-- Data(stream=1, 0) --------------------|
-    |<-- Data(stream=1, 1) --------------------|
-    |<-- Data(stream=1, 2) --------------------|
-    |<-- Response(Ok, ()) --------------------|  // pull stream implicitly closed
+    |<-- Data(channel=1, 0) -------------------|
+    |<-- Data(channel=1, 1) -------------------|
+    |<-- Data(channel=1, 2) -------------------|
+    |<-- Response(Ok, ()) --------------------|  // rx channel implicitly closed
 ```
 
-### Bidirectional: `pipe(input: Push, output: Pull)`
+### Bidirectional: `pipe(input: Tx, output: Rx)`
 
 ```
 Caller (initiator)                         Callee (acceptor)
     |                                          |
-    |-- Request(pipe, push=1, pull=3) -------->|
-    |-- Data(stream=1, "a") ------------------>|
-    |<-- Data(stream=3, "a") ------------------|
-    |-- Data(stream=1, "b") ------------------>|
-    |<-- Data(stream=3, "b") ------------------|
-    |-- Close(stream=1) ---------------------->|
-    |<-- Response(Ok, ()) --------------------|  // pull=3 closed
+    |-- Request(pipe, tx=1, rx=3) ------------>|
+    |-- Data(channel=1, "a") ----------------->|
+    |<-- Data(channel=3, "a") -----------------|
+    |-- Data(channel=1, "b") ----------------->|
+    |<-- Data(channel=3, "b") -----------------|
+    |-- Close(channel=1) --------------------->|
+    |<-- Response(Ok, ()) --------------------|  // rx=3 closed
 ```
 
-> r[streaming.lifecycle.immediate-data]
+> r[channeling.lifecycle.immediate-data]
 >
-> The caller MAY send Data on `Push<T>` streams immediately after sending
+> The caller MAY send Data on `Tx<T>` channels immediately after sending
 > the Request, without waiting for Response. This enables pipelining for
 > lower latency.
 
-> r[streaming.lifecycle.speculative]
+> r[channeling.lifecycle.speculative]
 >
 > If the caller sends Data before receiving Response, and the Response
 > is an error (`Err(RoamError::UnknownMethod)`, `Err(RoamError::InvalidPayload)`,
-> etc.), the Data was wasted. The stream IDs are "burned" — they were
+> etc.), the Data was wasted. The channel IDs are "burned" — they were
 > never successfully opened and MUST NOT be reused.
 
-> r[streaming.lifecycle.response-closes-pulls]
+> r[channeling.lifecycle.response-closes-pulls]
 >
-> When the callee sends Response, all `Pull<T>` streams are implicitly
-> closed. The callee MUST NOT send Data on any Pull stream after sending Response.
+> When the callee sends Response, all `Rx<T>` channels are implicitly
+> closed. The callee MUST NOT send Data on any Rx channel after sending Response.
 
-> r[streaming.lifecycle.caller-closes-pushes]
+> r[channeling.lifecycle.caller-closes-pushes]
 >
-> The caller MUST send Close on each `Push<T>` stream when done sending.
+> The caller MUST send Close on each `Tx<T>` channel when done sending.
 > The callee waits for Close before it knows all input has arrived.
 
-> r[streaming.error-no-streams]
+> r[channeling.error-no-channels]
 >
-> `Push<T>` and `Pull<T>` MUST NOT appear inside error types. A method's
-> error type `E` in `Result<T, E>` MUST NOT contain `Push<T>` or `Pull<T>`
+> `Tx<T>` and `Rx<T>` MUST NOT appear inside error types. A method's
+> error type `E` in `Result<T, E>` MUST NOT contain `Tx<T>` or `Rx<T>`
 > at any nesting level.
 
-## Stream Data Flow
+## Channel Data Flow
 
-> r[streaming.data]
+> r[channeling.data]
 >
-> The sending peer sends Data messages containing [POSTCARD]-encoded values
-> of the stream's element type `T`. Each Data message contains exactly
+> The sending peer sends Data messages containing [^POSTCARD]-encoded values
+> of the channel's element type `T`. Each Data message contains exactly
 > one value.
 
-> r[streaming.data.size-limit]
+> r[channeling.data.size-limit]
 >
-> Each stream element MUST NOT exceed `max_payload_size` bytes (the same
+> Each channel element MUST NOT exceed `max_payload_size` bytes (the same
 > limit that applies to Request/Response payloads). If a peer receives
-> a stream element exceeding this limit, it MUST send a Goodbye message
-> (reason: `streaming.data.size-limit`) and close the connection.
+> a channel element exceeding this limit, it MUST send a Goodbye message
+> (reason: `channeling.data.size-limit`) and close the connection.
 
-> r[streaming.data.invalid]
+> r[channeling.data.invalid]
 >
 > If a peer receives a Data message that cannot be deserialized as the
-> stream's element type, it MUST send a Goodbye message (reason:
-> `streaming.data.invalid`) and close the connection.
+> channel's element type, it MUST send a Goodbye message (reason:
+> `channeling.data.invalid`) and close the connection.
 
-> r[streaming.close]
+> r[channeling.close]
 >
-> For `Push<T>` (caller→callee), the caller sends Close when done.
-> For `Pull<T>` (callee→caller), the stream closes implicitly with Response.
+> For `Tx<T>` (caller→callee), the caller sends Close when done.
+> For `Rx<T>` (callee→caller), the channel closes implicitly with Response.
 
-> r[streaming.data-after-close]
+> r[channeling.data-after-close]
 >
-> If a peer receives a Data message on a stream after it has been
-> closed, it MUST send a Goodbye message (reason: `streaming.data-after-close`)
+> If a peer receives a Data message on a channel after it has been
+> closed, it MUST send a Goodbye message (reason: `channeling.data-after-close`)
 > and close the connection.
 
-## Resetting a Stream
+## Resetting a Channel
 
-> r[streaming.reset]
+> r[channeling.reset]
 >
-> Either peer MAY send Reset to forcefully terminate a stream.
+> Either peer MAY send Reset to forcefully terminate a channel.
 > The sender uses Reset to abandon early; the receiver uses Reset to signal
 > it no longer wants data.
 
-> r[streaming.reset.effect]
+> r[channeling.reset.effect]
 >
-> Upon receiving Reset, the peer MUST consider the stream terminated.
+> Upon receiving Reset, the peer MUST consider the channel terminated.
 > Any further Data, Close, or Credit messages for that ID MUST be ignored
 > (they may arrive due to race conditions).
 
-> r[streaming.reset.credit]
+> r[channeling.reset.credit]
 >
-> When a stream is reset, any outstanding credit is lost.
+> When a channel is reset, any outstanding credit is lost.
 
-> r[streaming.unknown]
+> r[channeling.unknown]
 >
-> If a peer receives a stream message (Data, Close, Reset, Credit) with a
-> `stream_id` that was never opened, it MUST send a Goodbye message
-> (reason: `streaming.unknown`) and close the connection.
+> If a peer receives a channel message (Data, Close, Reset, Credit) with a
+> `channel_id` that was never opened, it MUST send a Goodbye message
+> (reason: `channeling.unknown`) and close the connection.
 
-## Streams and Call Completion
+## Channels and Call Completion
 
-> r[streaming.call-complete]
+> r[channeling.call-complete]
 >
 > The RPC call completes when the Response is received. At that point:
-> - All `Pull<T>` streams are closed (callee can no longer send)
-> - `Push<T>` streams may still be open (caller may still be sending)
+> - All `Rx<T>` channels are closed (callee can no longer send)
+> - `Tx<T>` channels may still be open (caller may still be sending)
 > - The request ID is no longer in-flight
 
-> r[streaming.streams-outlive-response]
+> r[channeling.channels-outlive-response]
 >
-> `Push<T>` streams (caller→callee) may outlive the Response. The caller
+> `Tx<T>` channels (caller→callee) may outlive the Response. The caller
 > continues sending until they send Close. The callee processes the final
-> return value only after all input streams are closed.
+> return value only after all input channels are closed.
 
 # Flow Control
 
 Flow control prevents fast senders from overwhelming slow receivers.
-roam uses credit-based flow control for streams on all transports.
+roam uses credit-based flow control for channels on all transports.
 
-## Stream Flow Control
+## Channel Flow Control
 
-> r[flow.stream.credit-based]
+> r[flow.channel.credit-based]
 >
-> Streams use credit-based flow control. A sender MUST NOT send
+> Channels use credit-based flow control. A sender MUST NOT send
 > a Data message if doing so would exceed the remaining credit for that
-> stream — even if the underlying transport would accept the data.
+> channel — even if the underlying transport would accept the data.
 
-> r[flow.stream.all-transports]
+> r[flow.channel.all-transports]
 >
-> Credit-based flow control applies to all transports for both `Push<T>`
-> and `Pull<T>` streams. On multi-stream transports (QUIC, WebTransport),
+> Credit-based flow control applies to all transports for both `Tx<T>`
+> and `Rx<T>` channels. On multi-stream transports (QUIC, WebTransport),
 > roam credit operates independently of any transport-level flow control.
 > The transport may additionally block writes, but that is transparent
 > to the roam layer.
 
 ### Byte Accounting
 
-> r[flow.stream.byte-accounting]
+> r[flow.channel.byte-accounting]
 >
-> Credits are measured in bytes. The byte count for a stream element is
-> the length of its [POSTCARD] encoding — the same bytes that appear in
+> Credits are measured in bytes. The byte count for a channel element is
+> the length of its [^POSTCARD] encoding — the same bytes that appear in
 > `Data.payload`, or on multi-stream transports, the bytes written to the
-> dedicated transport stream before [COBS] framing. Framing overhead
-> ([COBS], transport headers) is NOT counted.
+> dedicated transport stream before [^COBS] framing. Framing overhead
+> ([^COBS], transport headers) is NOT counted.
 
 ### Initial Credit
 
-> r[flow.stream.initial-credit]
+> r[flow.channel.initial-credit]
 >
-> The initial stream credit MUST be negotiated during handshake. Each
-> stream starts with this amount of credit independently.
+> The initial channel credit MUST be negotiated during handshake. Each
+> channel starts with this amount of credit independently.
 
-Both peers advertise their `initial_stream_credit` in Hello. The effective
-initial credit is the minimum of both values. Each stream ID gets its
+Both peers advertise their `initial_channel_credit` in Hello. The effective
+initial credit is the minimum of both values. Each channel ID gets its
 own independent credit counter starting at this value.
 
 ### Granting Credit
 
 ```rust
 Credit {
-    stream_id: u64,
+    channel_id: u64,
     bytes: u32,  // additional bytes granted
 }
 ```
 
-> r[flow.stream.credit-grant]
+> r[flow.channel.credit-grant]
 >
 > A receiver grants additional credit by sending a Credit message. The
-> `bytes` field is added to the sender's available credit for that stream.
+> `bytes` field is added to the sender's available credit for that channel.
 
-> r[flow.stream.credit-additive]
+> r[flow.channel.credit-additive]
 >
 > Credits are additive. If a receiver grants 1000 bytes, then grants 500
 > more, the sender has 1500 bytes available.
 
-> r[flow.stream.credit-prompt]
+> r[flow.channel.credit-prompt]
 >
 > Credit messages SHOULD be processed in receive order without intentional
 > delay. Starving Credit processing can cause unnecessary stalls.
 
 ### Consuming Credit
 
-> r[flow.stream.credit-consume]
+> r[flow.channel.credit-consume]
 >
-> Sending a stream element consumes credits equal to its byte count (see
-> `r[flow.stream.byte-accounting]`). The sender MUST track remaining
+> Sending a channel element consumes credits equal to its byte count (see
+> `r[flow.channel.byte-accounting]`). The sender MUST track remaining
 > credit and MUST NOT send if it would result in negative credit.
 
 ### Credit Overrun
 
-> r[flow.stream.credit-overrun]
+> r[flow.channel.credit-overrun]
 >
-> If a receiver receives a stream element whose byte count exceeds the
-> remaining credit for that stream, it MUST send a Goodbye message
-> (reason: `flow.stream.credit-overrun`) and close the connection.
+> If a receiver receives a channel element whose byte count exceeds the
+> remaining credit for that channel, it MUST send a Goodbye message
+> (reason: `flow.channel.credit-overrun`) and close the connection.
 
 Credit overrun indicates a buggy or malicious peer.
 
 ### Zero Credit
 
-> r[flow.stream.zero-credit]
+> r[flow.channel.zero-credit]
 >
-> If a sender has zero remaining credit for a stream, it MUST wait for
+> If a sender has zero remaining credit for a channel, it MUST wait for
 > a Credit message before sending more data. This is not a protocol
 > error — the receiver controls the pace.
 
 If progress stops entirely, implementations should use application-level
-timeouts. A sender may Reset the stream or close the connection if no
+timeouts. A sender may Reset the channel or close the connection if no
 credit arrives within a reasonable time.
 
 ### Close and Credit
 
-> r[flow.stream.close-exempt]
+> r[flow.channel.close-exempt]
 >
 > Close messages (and Reset) do not consume credit. A sender MAY always
-> send Close regardless of credit state. This ensures streams can always
+> send Close regardless of credit state. This ensures channels can always
 > be closed.
 
 ### Infinite Credit Mode
 
-> r[flow.stream.infinite-credit]
+> r[flow.channel.infinite-credit]
 >
 > Implementations MAY use "infinite credit" mode by setting a very large
 > initial credit (e.g., `u32::MAX`). This disables backpressure but
@@ -976,7 +976,7 @@ flow control for unary calls.
 
 # Messages
 
-Everything roam does — method calls, streams, control signals — is
+Everything roam does — method calls, channels, control signals — is
 built on messages exchanged between peers.
 
 ```rust
@@ -990,15 +990,15 @@ enum Message {
     Response { request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> },
     Cancel { request_id: u64 },
     
-    // Streams
-    Data { stream_id: u64, payload: Vec<u8> },
-    Close { stream_id: u64 },
-    Reset { stream_id: u64 },
-    Credit { stream_id: u64, bytes: u32 },
+    // Channels
+    Data { channel_id: u64, payload: Vec<u8> },
+    Close { channel_id: u64 },
+    Reset { channel_id: u64 },
+    Credit { channel_id: u64, bytes: u32 },
 }
 ```
 
-Messages are [POSTCARD]-encoded. The enum discriminant identifies the message
+Messages are [^POSTCARD]-encoded. The enum discriminant identifies the message
 type, and each variant contains only the fields it needs.
 
 > r[message.unknown-variant]
@@ -1009,8 +1009,8 @@ type, and each variant contains only the fields it needs.
 
 > r[message.decode-error]
 >
-> If a peer cannot decode a received message (invalid [POSTCARD] encoding,
-> [COBS] framing error, or malformed fields), it MUST send a Goodbye
+> If a peer cannot decode a received message (invalid [^POSTCARD] encoding,
+> [^COBS] framing error, or malformed fields), it MUST send a Goodbye
 > message (reason: `message.decode-error`) and close the connection.
 
 ## Message Types
@@ -1041,7 +1041,7 @@ type, and each variant contains only the fields it needs.
 enum Hello {
     V1 {
         max_payload_size: u32,
-        initial_stream_credit: u32,
+        initial_channel_credit: u32,
     },
 }
 ```
@@ -1049,7 +1049,7 @@ enum Hello {
 | Field | Description |
 |-------|-------------|
 | `max_payload_size` | Maximum bytes in a Request/Response payload |
-| `initial_stream_credit` | Bytes of credit each stream starts with |
+| `initial_channel_credit` | Bytes of credit each channel starts with |
 
 > r[message.hello.negotiation]
 >
@@ -1068,7 +1068,7 @@ enum Hello {
 >
 > A peer MUST send a Goodbye message before closing the connection due to
 > a protocol error. The `reason` field MUST contain the rule ID that was
-> violated (e.g., `streaming.id.zero-reserved`), optionally followed by
+> violated (e.g., `channeling.id.zero-reserved`), optionally followed by
 > additional context.
 
 > r[message.goodbye.receive]
@@ -1076,7 +1076,7 @@ enum Hello {
 > Upon receiving a Goodbye message, a peer MUST stop sending messages
 > and close the connection. All in-flight requests fail with a
 > connection error (not `RoamError` — the connection itself is gone).
-> All open streams are terminated.
+> All open channels are terminated.
 
 ### Request / Response / Cancel
 
@@ -1088,20 +1088,20 @@ calls to be in flight simultaneously (pipelining).
 
 ### Data / Close / Reset
 
-`Data` carries payload bytes on a stream, identified by `stream_id`.
-`Close` signals end-of-stream — the sender is done (see `r[core.stream.close]`).
-`Reset` forcefully terminates a stream.
+`Data` carries payload bytes on a channel, identified by `channel_id`.
+`Close` signals end-of-channel — the sender is done (see `r[core.channel.close]`).
+`Reset` forcefully terminates a channel.
 
 
 # Transports
 
 Different transports require different handling:
 
-| Kind | Example | Framing | Streams |
+| Kind | Example | Framing | Channels |
 |------|---------|---------|---------|
 | Message | WebSocket | Transport provides | All in one |
 | Multi-stream | QUIC | Per stream | Can map to transport streams |
-| Byte stream | TCP | [COBS] | All in one |
+| Byte stream | TCP | [^COBS] | All in one |
 
 ## Message Transports
 
@@ -1110,7 +1110,7 @@ Message transports (like WebSocket) deliver discrete messages.
 > r[transport.message.one-to-one]
 >
 > Each transport message MUST contain exactly one roam message,
-> [POSTCARD]-encoded. Fragmentation and reassembly are not supported.
+> [^POSTCARD]-encoded. Fragmentation and reassembly are not supported.
 
 > r[transport.message.binary]
 >
@@ -1119,8 +1119,8 @@ Message transports (like WebSocket) deliver discrete messages.
 
 > r[transport.message.multiplexing]
 >
-> All messages (control, RPC, stream data) flow through the same
-> transport connection. The `stream_id` field provides multiplexing.
+> All messages (control, RPC, channel data) flow through the same
+> transport connection. The `channel_id` field provides multiplexing.
 
 ## Multi-stream Transports
 
@@ -1137,15 +1137,15 @@ Byte stream transports (like TCP) provide a single ordered byte stream.
 
 > r[transport.bytestream.cobs]
 >
-> Messages MUST be framed using [COBS]. Each message MUST be followed by
+> Messages MUST be framed using [^COBS]. Each message MUST be followed by
 > a 0x00 delimiter byte.
 > 
 > ```
 > [COBS-encoded message][0x00][COBS-encoded message][0x00]...
 > ```
 
-All messages flow through the single byte stream. The `stream_id` field
-in stream messages provides multiplexing.
+All messages flow through the single byte stream. The `channel_id` field
+in channel messages provides multiplexing.
 
 # Wire Examples (Non-normative)
 
@@ -1187,51 +1187,51 @@ These examples illustrate protocol behavior on byte-stream transports.
     |                                                       |
 ```
 
-## Caller Streaming (Push) with Credit
+## Caller Channeling (Push) with Credit
 
 ```aasvg
 .--------.                                              .--------.
 | Caller |                                              | Callee |
 '---+----'                                              '---+----'
     |                                                       |
-    |-------- Request { id=3, stream_id=1 } --------------->|
+    |-------- Request { id=3, channel_id=1 } -------------->|
     |                                                       |
     |         .---------------------------------.            |
-    |         | stream 1 open; credit=8KB      |            |
+    |         | channel 1 open; credit=8KB     |            |
     |         '---------------------------------'            |
     |                                                       |
-    |-------- Data { stream=1, 4KB } ---------------------->| credit: 8K->4K
-    |-------- Data { stream=1, 4KB } ---------------------->| credit: 4K->0K
+    |-------- Data { channel=1, 4KB } --------------------->| credit: 8K->4K
+    |-------- Data { channel=1, 4KB } --------------------->| credit: 4K->0K
     |                                                       |
     |         .---------------------------------.            |
     |         | sender blocks, no credit       |            |
     |         '---------------------------------'            |
     |                                                       |
-    |<------- Credit { stream=1, bytes=8KB } ---------------|
+    |<------- Credit { channel=1, bytes=8KB } --------------|
     |                                                       |
-    |-------- Data { stream=1, 2KB } ---------------------->|
-    |-------- Close { stream=1 } -------------------------->|
+    |-------- Data { channel=1, 2KB } --------------------->|
+    |-------- Close { channel=1 } ------------------------>|
     |                                                       |
     |<------- Response { id=3, Ok(result) } ----------------|
     |                                                       |
 ```
 
-## Callee Streaming (Pull)
+## Callee Channeling (Pull)
 
 ```aasvg
 .--------.                                              .--------.
 | Caller |                                              | Callee |
 '---+----'                                              '---+----'
     |                                                       |
-    |-------- Request { id=4, stream_id=1 } --------------->|
+    |-------- Request { id=4, channel_id=1 } -------------->|
     |                                                       |
-    |<------- Data { stream=1, value } ---------------------|
-    |<------- Data { stream=1, value } ---------------------|
-    |<------- Data { stream=1, value } ---------------------|
+    |<------- Data { channel=1, value } --------------------|
+    |<------- Data { channel=1, value } --------------------|
+    |<------- Data { channel=1, value } --------------------|
     |<------- Response { id=4, Ok(()) } --------------------|
     |                                                       |
     |         .---------------------------------.            |
-    |         | stream 1 implicitly closed     |            |
+    |         | channel 1 implicitly closed    |            |
     |         '---------------------------------'            |
     |                                                       |
 ```
@@ -1243,16 +1243,16 @@ These examples illustrate protocol behavior on byte-stream transports.
 | Caller |                                              | Callee |
 '---+----'                                              '---+----'
     |                                                       |
-    |-- Request { id=5, stream_ids=[1,3] } ---------------->|
-    |-- Data { stream=1, "hello" } ------------------------>|
-    |<- Data { stream=3, "hello" } -------------------------|
-    |-- Data { stream=1, "world" } ------------------------>|
-    |<- Data { stream=3, "world" } -------------------------|
-    |-- Close { stream=1 } -------------------------------->|
+    |-- Request { id=5, channel_ids=[1,3] } --------------->|
+    |-- Data { channel=1, "hello" } ----------------------->|
+    |<- Data { channel=3, "hello" } ------------------------|
+    |-- Data { channel=1, "world" } ----------------------->|
+    |<- Data { channel=3, "world" } ------------------------|
+    |-- Close { channel=1 } ------------------------------->|
     |<- Response { id=5, Ok(()) } --------------------------|
     |                                                       |
     |         .---------------------------------.            |
-    |         | stream 3 closed with Response  |            |
+    |         | channel 3 closed with Response |            |
     |         '---------------------------------'            |
     |                                                       |
 ```
@@ -1264,14 +1264,14 @@ These examples illustrate protocol behavior on byte-stream transports.
 | Sender |                                              | Receiver |
 '---+----'                                              '----+-----'
     |                                                        |
-    |-------- Data { stream=5, chunk } --------------------->|
+    |-------- Data { channel=5, chunk } -------------------->|
     |                                                        |
-    |<------- Reset { stream=5 } ----------------------------|
+    |<------- Reset { channel=5 } ---------------------------|
     |                                                        |
-    |         .---------------------------------.             |
+    |         .---------------------------------.            |
     |         | sender stops; in-flight msgs   |             |
-    |         | for stream 5 are ignored       |             |
-    |         '---------------------------------'             |
+    |         | for channel 5 are ignored      |             |
+    |         '---------------------------------'            |
     |                                                        |
 ```
 
@@ -1282,13 +1282,13 @@ These examples illustrate protocol behavior on byte-stream transports.
 | Peer |                                                | Peer |
 '--+---'                                                '--+---'
    |                                                       |
-   |-------- Data { stream=99, ... } --------------------->|
+   |-------- Data { channel=99, ... } -------------------->|
    |                                                       |
-   |          .---------------------------------.           |
-   |          | stream 99 was never opened!    |           |
-   |          '---------------------------------'           |
+   |          .---------------------------------.          |
+   |          | channel 99 was never opened!   |           |
+   |          '---------------------------------'          |
    |                                                       |
-   |<------- Goodbye { reason="streaming.unknown" } -------|
+   |<------- Goodbye { reason="channeling.unknown" } ------|
    |                                                       |
    X                [connection closed]                    X
    |                                                       |
@@ -1330,26 +1330,22 @@ If you need to rename a field, add a new method instead.
 
 ## Why Connection-Level Errors for Some Violations?
 
-Some errors (like data on an unknown stream) are connection errors
-rather than stream errors because:
+Some errors (like data on an unknown channel) are connection errors
+rather than channel errors because:
 
 - They indicate a fundamental protocol mismatch or bug
 - Recovery is unlikely to succeed
 - Continuing could cause cascading confusion
 
-Stream-scoped errors (Reset) are for application-level issues where
-the connection can continue serving other streams.
+Channel-scoped errors (Reset) are for application-level issues where
+the connection can continue serving other channels.
 
 # References
 
-- **[POSTCARD]** Postcard Wire Format Specification  
-  <https://postcard.jamesmunns.com/wire-format>
+[^POSTCARD]: Postcard Wire Format Specification - <https://postcard.jamesmunns.com/wire-format>
 
-- **[RUST-SPEC]** roam Rust Implementation Specification  
-  <@/rust-spec/_index.md>
+[^RUST-SPEC]: roam Rust Implementation Specification - <@/rust-spec/_index.md>
 
-- **[SHM-SPEC]** roam Shared Memory Transport Specification  
-  <@/shm-spec/_index.md>
+[^SHM-SPEC]: roam Shared Memory Transport Specification - <@/shm-spec/_index.md>
 
-- **[COBS]** Consistent Overhead Byte Stuffing  
-  <https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing>
+[^COBS]: Consistent Overhead Byte Stuffing - <https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing>

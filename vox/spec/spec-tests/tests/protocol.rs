@@ -192,10 +192,10 @@ fn unary_payload_over_max_triggers_goodbye() {
     .unwrap();
 }
 
-// r[verify streaming.id.zero-reserved] - Stream ID 0 is reserved; if a peer
-// receives a stream message with stream_id of 0, it MUST send a Goodbye message.
+// r[verify channeling.id.zero-reserved] - Stream ID 0 is reserved; if a peer
+// receives a stream message with channel_id of 0, it MUST send a Goodbye message.
 #[test]
-fn stream_id_zero_triggers_goodbye() {
+fn channel_id_zero_triggers_goodbye() {
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
 
@@ -212,7 +212,7 @@ fn stream_id_zero_triggers_goodbye() {
             .map_err(|e| e.to_string())?;
 
         // Violate stream-id=0 reserved.
-        io.send(&Message::Close { stream_id: 0 })
+        io.send(&Message::Close { channel_id: 0 })
             .await
             .map_err(|e| e.to_string())?;
 
@@ -232,8 +232,8 @@ fn stream_id_zero_triggers_goodbye() {
             }
         }
 
-        let reason = reason.ok_or_else(|| "expected Goodbye after stream_id=0".to_string())?;
-        let ok = reason.contains("streaming.id.zero-reserved")
+        let reason = reason.ok_or_else(|| "expected Goodbye after channel_id=0".to_string())?;
+        let ok = reason.contains("channeling.id.zero-reserved")
             || reason.contains("core.stream.id.zero-reserved");
         if !ok {
             return Err(format!(
@@ -247,8 +247,8 @@ fn stream_id_zero_triggers_goodbye() {
     .unwrap();
 }
 
-// r[verify streaming.unknown] - If a peer receives a stream message with a
-// stream_id that was never opened, it MUST send a Goodbye message.
+// r[verify channeling.unknown] - If a peer receives a stream message with a
+// channel_id that was never opened, it MUST send a Goodbye message.
 #[test]
 fn stream_unknown_id_triggers_goodbye() {
     run_async(async {
@@ -268,7 +268,7 @@ fn stream_unknown_id_triggers_goodbye() {
         // Send Data on a stream ID that was never opened.
         // (Stream ID 42 was never established via Request/Response)
         io.send(&Message::Data {
-            stream_id: 42,
+            channel_id: 42,
             payload: vec![0u8; 4],
         })
         .await
@@ -291,10 +291,10 @@ fn stream_unknown_id_triggers_goodbye() {
         }
 
         let reason =
-            reason.ok_or_else(|| "expected Goodbye after unknown stream_id".to_string())?;
-        if !reason.contains("streaming.unknown") {
+            reason.ok_or_else(|| "expected Goodbye after unknown channel_id".to_string())?;
+        if !reason.contains("channeling.unknown") {
             return Err(format!(
-                "Goodbye reason must mention streaming.unknown, got {reason:?}"
+                "Goodbye reason must mention channeling.unknown, got {reason:?}"
             ));
         }
 
@@ -304,7 +304,7 @@ fn stream_unknown_id_triggers_goodbye() {
     .unwrap();
 }
 
-// r[verify streaming.id.zero-reserved] - Verify Data message with stream_id=0
+// r[verify channeling.id.zero-reserved] - Verify Data message with channel_id=0
 // also triggers Goodbye (not just Close).
 #[test]
 fn stream_data_id_zero_triggers_goodbye() {
@@ -322,9 +322,9 @@ fn stream_data_id_zero_triggers_goodbye() {
             .await
             .map_err(|e| e.to_string())?;
 
-        // Send Data with stream_id=0 (reserved).
+        // Send Data with channel_id=0 (reserved).
         io.send(&Message::Data {
-            stream_id: 0,
+            channel_id: 0,
             payload: vec![0u8; 4],
         })
         .await
@@ -346,8 +346,9 @@ fn stream_data_id_zero_triggers_goodbye() {
             }
         }
 
-        let reason = reason.ok_or_else(|| "expected Goodbye after stream_id=0 Data".to_string())?;
-        let ok = reason.contains("streaming.id.zero-reserved")
+        let reason =
+            reason.ok_or_else(|| "expected Goodbye after channel_id=0 Data".to_string())?;
+        let ok = reason.contains("channeling.id.zero-reserved")
             || reason.contains("core.stream.id.zero-reserved");
         if !ok {
             return Err(format!(

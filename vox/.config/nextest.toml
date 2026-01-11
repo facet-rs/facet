@@ -4,6 +4,9 @@ experimental = ["setup-scripts"]
 [scripts.setup.build-subject-rust]
 command = "cargo build --release -p subject-rust"
 
+[profile.loom]
+slow-timeout = { period = "10s", terminate-after = 3 }
+
 [profile.default]
 # Fail fast - stop on first failure
 fail-fast = true
@@ -11,8 +14,11 @@ fail-fast = true
 # Status level
 status-level = "pass"
 
-# Timeout: 10s per attempt, 3 attempts max
-slow-timeout = { period = "10s", terminate-after = 3 }
+# Base timeout per test
+test-timeout = "5s"
+
+# Slow test warning threshold
+slow-timeout = { period = "2s", terminate-after = 2 }
 
 [[profile.default.scripts]]
 filter = "package(spec-tests)"

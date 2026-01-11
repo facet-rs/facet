@@ -1,0 +1,6 @@
+packages:
+  - "typescript/packages/*"
+  - "typescript/subject"
+  - "typescript/generated"
+  - "typescript/tests/browser"
+  - "typescript/tests/playwright"

@@ -7,6 +7,14 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check": "pnpx --package @typescript/native-preview tsgo --noEmit"
+    "check": "tsgo --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bearcove/roam-postcard": "workspace:*",
+    "@bearcove/roam-wire": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
   }
 }

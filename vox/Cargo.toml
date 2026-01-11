@@ -1,10 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    # New Rust implementation
     "rust/roam",
     "rust/roam-wire",
-    "rust/roam-codec",
     "rust/roam-frame",
     "rust/roam-session",
     "rust/roam-hash",
@@ -12,15 +10,15 @@ members = [
     "rust/roam-shm",
     "rust/roam-codegen",
     "rust/roam-macros",
+    "rust/roam-macros-parse",
     "rust/roam-stream",
     "rust/roam-websocket",
     "rust/subject-rust",
-    # Test crates for build.rs codegen validation
-    "rust/codegen-test-proto",
-    "rust/codegen-test-consumer",
-    # New compliance suite
+    "rust/shm-primitives",
+    # Compliance suite
     "spec/spec-proto",
     "spec/spec-tests",
+    # xtask
     "xtask",
 ]
 exclude = ["fuzz"]
@@ -28,7 +26,6 @@ exclude = ["fuzz"]
 default-members = [
     "rust/roam",
     "rust/roam-wire",
-    "rust/roam-codec",
     "rust/roam-frame",
     "rust/roam-session",
     "rust/roam-hash",
@@ -36,6 +33,7 @@ default-members = [
     "rust/roam-shm",
     "rust/roam-codegen",
     "rust/roam-macros",
+    "rust/roam-macros-parse",
     "rust/roam-stream",
 ]
 
@@ -54,22 +52,21 @@ blake3 = "1.8"
 cobs = "0.5.0"
 tokio = { version = "1", features = ["sync", "rt", "time", "macros"] }
 tokio-tungstenite = "0.26"
+libc = "0.2.180"
 
 # facet ecosystem
-facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
+facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino", "reflect"] }
 facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["jit", "camino"] }
 facet-cargo-toml = { git = "https://github.com/bearcove/facet-cargo-toml", branch = "main" }
 
 # Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 static_assertions = "1.1.0"
 
 # Test utilities
 ctor = "0.4"
-
-[workspace.metadata.cargo-shear]
-# `roam` is used by generated code via include!() macro - cargo-shear can't see it
-ignored = ["roam"]
 
 [profile.release]
 debug = 1

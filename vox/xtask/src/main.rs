@@ -44,15 +44,6 @@ enum Commands {
         /// Generate Swift bindings into `swift/generated/`
         #[facet(args::named, default)]
         swift: bool,
-        /// Generate Go bindings into `go/generated/`
-        #[facet(args::named, default)]
-        go: bool,
-        /// Generate Java bindings into `java/generated/`
-        #[facet(args::named, default)]
-        java: bool,
-        /// Generate Python bindings into `python/generated/`
-        #[facet(args::named, default)]
-        python: bool,
     },
 }
 
@@ -187,27 +178,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Codegen {
-            typescript,
-            swift,
-            go,
-            java,
-            python,
-        } => {
+        Commands::Codegen { typescript, swift } => {
             if typescript {
                 codegen_typescript(&workspace_root)?;
             }
             if swift {
                 codegen_swift(&workspace_root)?;
-            }
-            if go {
-                codegen_go(&workspace_root)?;
-            }
-            if java {
-                codegen_java(&workspace_root)?;
-            }
-            if python {
-                codegen_python(&workspace_root)?;
             }
         }
     }
@@ -232,56 +208,19 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
 }
 
 fn codegen_swift(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let out_dir = workspace_root.join("swift").join("generated");
+    // Output directly to subject sources
+    let out_dir = workspace_root
+        .join("swift")
+        .join("subject")
+        .join("Sources")
+        .join("subject-swift");
     std::fs::create_dir_all(&out_dir)?;
 
-    let echo = spec_proto::echo_service_detail();
-    let swift = roam_codegen::targets::swift::generate_service(&echo);
+    let testbed = spec_proto::testbed_service_detail();
+    let swift = roam_codegen::targets::swift::generate_service(&testbed);
 
-    let out_path = out_dir.join("Echo.swift");
+    let out_path = out_dir.join("Testbed.swift");
     std::fs::write(&out_path, swift)?;
-    println!("Wrote {}", out_path.display());
-
-    Ok(())
-}
-
-fn codegen_go(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let out_dir = workspace_root.join("go").join("generated");
-    std::fs::create_dir_all(&out_dir)?;
-
-    let echo = spec_proto::echo_service_detail();
-    let go = roam_codegen::targets::go::generate_service(&echo);
-
-    let out_path = out_dir.join("echo.go");
-    std::fs::write(&out_path, go)?;
-    println!("Wrote {}", out_path.display());
-
-    Ok(())
-}
-
-fn codegen_java(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let out_dir = workspace_root.join("java").join("generated");
-    std::fs::create_dir_all(&out_dir)?;
-
-    let echo = spec_proto::echo_service_detail();
-    let java = roam_codegen::targets::java::generate_service(&echo);
-
-    let out_path = out_dir.join("Echo.java");
-    std::fs::write(&out_path, java)?;
-    println!("Wrote {}", out_path.display());
-
-    Ok(())
-}
-
-fn codegen_python(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let out_dir = workspace_root.join("python").join("generated");
-    std::fs::create_dir_all(&out_dir)?;
-
-    let echo = spec_proto::echo_service_detail();
-    let python = roam_codegen::targets::python::generate_service(&echo);
-
-    let out_path = out_dir.join("echo.py");
-    std::fs::write(&out_path, python)?;
     println!("Wrote {}", out_path.display());
 
     Ok(())

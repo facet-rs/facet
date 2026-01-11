@@ -8,6 +8,8 @@ spec {
       include "rust/**/*.rs"
       include "spec/**/*.rs"
       exclude "target/**"
+      exclude "rust/roam-hash/**"
+      exclude "rust/roam-wire/**"
    }
    impl {
       name "swift"

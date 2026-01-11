@@ -1,0 +1,25 @@
+[package]
+name = "roam-macros-parse"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Parser grammar for roam RPC service trait definitions"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+unsynn = "0.3"
+proc-macro2 = "1"
+
+[dev-dependencies]
+datatest-stable = "0.3"
+insta = "1"
+
+[[test]]
+name = "parser"
+harness = false

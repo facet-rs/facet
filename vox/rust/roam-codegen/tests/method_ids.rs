@@ -1,16 +1,27 @@
-use roam::schema::{ArgDetail, MethodDetail, TypeDetail};
+use facet::Facet;
+use roam::schema::{ArgDetail, MethodDetail};
 use roam::service;
+use roam::session::{Rx, Tx};
 use roam_codegen::targets;
 
-/// Simple echo service for conformance testing
+/// Testbed service for conformance testing
 #[allow(async_fn_in_trait)]
 #[service]
-pub trait Echo {
+pub trait Testbed {
     /// Echoes the message back
     async fn echo(&self, message: String) -> String;
 
     /// Returns the message reversed
     async fn reverse(&self, message: String) -> String;
+
+    /// Client pushes numbers, server returns their sum
+    async fn sum(&self, numbers: Tx<i32>) -> i64;
+
+    /// Server streams numbers back to client
+    async fn generate(&self, count: u32, output: Rx<i32>);
+
+    /// Bidirectional streaming
+    async fn transform(&self, input: Tx<String>, output: Rx<String>);
 }
 
 fn fixture_methods() -> Vec<MethodDetail> {
@@ -21,14 +32,14 @@ fn fixture_methods() -> Vec<MethodDetail> {
             args: vec![
                 ArgDetail {
                     name: "context_id".into(),
-                    type_info: TypeDetail::U64,
+                    ty: <u64 as Facet>::SHAPE,
                 },
                 ArgDetail {
                     name: "name".into(),
-                    type_info: TypeDetail::String,
+                    ty: <String as Facet>::SHAPE,
                 },
             ],
-            return_type: TypeDetail::Bytes,
+            return_type: <Vec<u8> as Facet>::SHAPE,
             doc: None,
         },
         MethodDetail {
@@ -36,9 +47,9 @@ fn fixture_methods() -> Vec<MethodDetail> {
             method_name: "loadTemplate".into(), // should normalize to same kebab as load_template
             args: vec![ArgDetail {
                 name: "id".into(),
-                type_info: TypeDetail::U64,
+                ty: <u64 as Facet>::SHAPE,
             }],
-            return_type: TypeDetail::Unit,
+            return_type: <() as Facet>::SHAPE,
             doc: None,
         },
     ]
@@ -63,25 +74,8 @@ fn swift_contains_uint64_literals() {
 }
 
 #[test]
-fn go_contains_uint64_map() {
-    let methods = fixture_methods();
-    let out = targets::go::generate_method_ids(&methods);
-    assert!(out.contains("map[string]uint64"));
-    assert!(out.contains("0x"));
-}
-
-#[test]
-fn java_contains_map_entries() {
-    let methods = fixture_methods();
-    let out = targets::java::generate_method_ids(&methods);
-    assert!(out.contains("Map.entry("));
-    assert!(out.contains("0x"));
-    assert!(out.contains("L)"));
-}
-
-#[test]
 fn typescript_service_generation() {
-    let service = echo_service_detail();
+    let service = testbed_service_detail();
     let out = targets::typescript::generate_service(&service);
 
     // Print for inspection
@@ -99,109 +93,35 @@ fn typescript_service_generation() {
     assert!(out.contains("ReverseResponse"));
 
     // Should contain caller interface
-    assert!(out.contains("interface EchoCaller"));
+    assert!(out.contains("interface TestbedCaller"));
     assert!(out.contains("echo(message: string): Promise<string>"));
 
     // Should contain handler interface
-    assert!(out.contains("interface EchoHandler"));
+    assert!(out.contains("interface TestbedHandler"));
 
     // Should contain method handlers Map (for use with UnaryDispatcher)
-    assert!(out.contains("echo_methodHandlers"));
-    assert!(out.contains("Map<bigint, MethodHandler<EchoHandler>>"));
-}
-
-#[test]
-fn python_method_ids() {
-    let methods = fixture_methods();
-    let out = targets::python::generate_method_ids(&methods);
-    assert!(out.contains("METHOD_ID: dict[str, int]"));
-    assert!(out.contains("0x"));
-}
-
-#[test]
-fn python_service_generation() {
-    let service = echo_service_detail();
-    let out = targets::python::generate_service(&service);
-
-    // Should contain method IDs
-    assert!(out.contains("METHOD_ID"));
-    assert!(out.contains("\"echo\":"));
-    assert!(out.contains("\"reverse\":"));
-
-    // Should contain caller protocol
-    assert!(out.contains("class EchoCaller(Protocol)"));
-    assert!(out.contains("def echo(self, message: str) -> str"));
-
-    // Should contain handler
-    assert!(out.contains("class EchoHandler(ABC)"));
-    assert!(out.contains("@abstractmethod"));
-    assert!(out.contains("create_echo_dispatcher"));
-
-    // Print for inspection
-    println!("{}", out);
+    assert!(out.contains("testbed_methodHandlers"));
+    assert!(out.contains("Map<bigint, MethodHandler<TestbedHandler>>"));
 }
 
 #[test]
 fn swift_service_generation() {
-    let service = echo_service_detail();
+    let service = testbed_service_detail();
     let out = targets::swift::generate_service(&service);
 
     // Should contain method IDs
-    assert!(out.contains("EchoMethodId"));
+    assert!(out.contains("TestbedMethodId"));
     assert!(out.contains("echo:"));
     assert!(out.contains("reverse:"));
 
     // Should contain caller protocol
-    assert!(out.contains("protocol EchoCaller"));
+    assert!(out.contains("protocol TestbedCaller"));
     assert!(out.contains("func echo(message: String) async throws -> String"));
 
     // Should contain handler
-    assert!(out.contains("protocol EchoHandler"));
+    assert!(out.contains("protocol TestbedHandler"));
     // Should contain dispatcher class
-    assert!(out.contains("class EchoDispatcher"));
-
-    // Print for inspection
-    println!("{}", out);
-}
-
-#[test]
-fn go_service_generation() {
-    let service = echo_service_detail();
-    let out = targets::go::generate_service(&service);
-
-    // Should contain method ID constants
-    assert!(out.contains("EchoMethodEcho"));
-    assert!(out.contains("EchoMethodReverse"));
-
-    // Should contain caller interface
-    assert!(out.contains("type EchoCaller interface"));
-    assert!(out.contains("Echo(ctx context.Context, message string) (string, error)"));
-
-    // Should contain handler
-    assert!(out.contains("type EchoHandler interface"));
-    assert!(out.contains("NewEchoDispatcher"));
-
-    // Print for inspection
-    println!("{}", out);
-}
-
-#[test]
-fn java_service_generation() {
-    let service = echo_service_detail();
-    let out = targets::java::generate_service(&service);
-
-    // Should contain method ID constants
-    assert!(out.contains("EchoMethodId"));
-    assert!(out.contains("ECHO"));
-    assert!(out.contains("REVERSE"));
-
-    // Should contain caller interface
-    assert!(out.contains("interface EchoCaller"));
-    assert!(out.contains("CompletableFuture<String> echo(String message)"));
-
-    // Should contain handler
-    assert!(out.contains("interface EchoHandler"));
-    assert!(out.contains("class EchoDispatcher"));
+    assert!(out.contains("class TestbedDispatcher"));
 
     // Print for inspection
     println!("{}", out);

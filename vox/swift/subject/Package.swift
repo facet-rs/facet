@@ -1,13 +1,10 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 5.10
 import PackageDescription
 
 let package = Package(
     name: "subject-swift",
     platforms: [
-        .macOS(.v13)
-    ],
-    products: [
-        .executable(name: "subject-swift", targets: ["subject-swift"])
+        .macOS(.v14)
     ],
     dependencies: [
         .package(path: "../roam-runtime")
@@ -17,8 +14,7 @@ let package = Package(
             name: "subject-swift",
             dependencies: [
                 .product(name: "RoamRuntime", package: "roam-runtime")
-            ],
-            path: "Sources/subject-swift"
+            ]
         )
     ]
 )

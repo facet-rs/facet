@@ -13,4 +13,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 blake3.workspace = true
+facet-core.workspace = true
+heck = "0.5"
 roam-schema = { path = "../roam-schema" }
+
+[dev-dependencies]
+facet.workspace = true

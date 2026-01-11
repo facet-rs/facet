@@ -1,64 +1,92 @@
-import Foundation
+/// COBS (Consistent Overhead Byte Stuffing) framing.
+///
+/// COBS encodes data so that it contains no zero bytes, allowing
+/// zero to be used as a frame delimiter.
 
-// MARK: - COBS encoding/decoding
+/// Encode data using COBS.
+///
+/// The output will contain no zero bytes. A zero byte should be
+/// appended as a frame delimiter after sending.
+public func cobsEncode(_ data: [UInt8]) -> [UInt8] {
+    // Empty input produces empty output
+    guard !data.isEmpty else {
+        return []
+    }
 
-/// Encode bytes using COBS (Consistent Overhead Byte Stuffing).
-/// r[impl message.cobs]
-public func cobsEncode(_ input: [UInt8]) -> [UInt8] {
-    var out: [UInt8] = []
-    out.reserveCapacity(input.count + 2)
+    var output: [UInt8] = []
+    output.reserveCapacity(data.count + data.count / 254 + 1)
 
     var codeIndex = 0
     var code: UInt8 = 1
-    out.append(0)  // placeholder
+    output.append(0)  // Placeholder for first code byte
 
-    for b in input {
-        if b == 0 {
-            out[codeIndex] = code
-            codeIndex = out.count
-            out.append(0)  // placeholder
+    for byte in data {
+        if byte == 0 {
+            output[codeIndex] = code
             code = 1
+            codeIndex = output.count
+            output.append(0)  // Placeholder for next code byte
         } else {
-            out.append(b)
-            code &+= 1
+            output.append(byte)
+            code += 1
             if code == 0xFF {
-                out[codeIndex] = code
-                codeIndex = out.count
-                out.append(0)
+                output[codeIndex] = code
                 code = 1
+                codeIndex = output.count
+                output.append(0)  // Placeholder for next code byte
             }
         }
     }
 
-    out[codeIndex] = code
-    return out
+    output[codeIndex] = code
+    return output
 }
 
-/// Decode COBS-encoded bytes.
-/// r[impl message.cobs]
-public func cobsDecode(_ input: [UInt8]) throws -> [UInt8] {
-    var out: [UInt8] = []
-    out.reserveCapacity(input.count)
+/// Decode COBS-encoded data.
+///
+/// Input should NOT include the trailing zero delimiter.
+public func cobsDecode(_ encoded: [UInt8]) throws -> [UInt8] {
+    guard !encoded.isEmpty else {
+        return []
+    }
+
+    var output: [UInt8] = []
+    output.reserveCapacity(encoded.count)
 
     var i = 0
-    while i < input.count {
-        let code = input[i]
+    while i < encoded.count {
+        let code = encoded[i]
+        if code == 0 {
+            throw COBSError.unexpectedZero
+        }
+
         i += 1
-        guard code != 0 else {
-            throw RoamError.decodeError("cobs: zero code byte")
+        let copyCount = Int(code) - 1
+
+        if i + copyCount > encoded.count {
+            throw COBSError.truncated
         }
-        let n = Int(code) - 1
-        guard i + n <= input.count else {
-            throw RoamError.decodeError("cobs: data overrun")
+
+        for j in 0..<copyCount {
+            let byte = encoded[i + j]
+            if byte == 0 {
+                throw COBSError.unexpectedZero
+            }
+            output.append(byte)
         }
-        if n > 0 {
-            out.append(contentsOf: input[i..<(i + n)])
-            i += n
-        }
-        if code != 0xFF && i < input.count {
-            out.append(0)
+        i += copyCount
+
+        // If code < 0xFF, we implicitly have a zero (unless at end)
+        if code < 0xFF && i < encoded.count {
+            output.append(0)
         }
     }
 
-    return out
+    return output
+}
+
+/// Errors that can occur during COBS decoding.
+public enum COBSError: Error {
+    case unexpectedZero
+    case truncated
 }

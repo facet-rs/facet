@@ -8,7 +8,7 @@ rust *args:
     SUBJECT_CMD="./target/debug/subject-rust" cargo nextest run -p spec-tests {{ quote(args) }}
 
 ts-typecheck:
-    npx -y @typescript/native-preview -p typescript/tsconfig.json --noEmit
+    pnpm check
 
 ts-codegen:
     cargo xtask codegen --typescript

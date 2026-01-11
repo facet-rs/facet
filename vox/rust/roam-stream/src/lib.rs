@@ -42,6 +42,7 @@
 //! ```
 
 mod connection;
+mod driver;
 mod framing;
 mod server;
 mod transport;
@@ -50,12 +51,13 @@ pub use connection::{
     Connection, ConnectionError, Negotiated, RoutedDispatcher, ServiceDispatcher,
     hello_exchange_acceptor, hello_exchange_initiator,
 };
+pub use driver::{Driver, establish_acceptor, establish_initiator};
 pub use framing::CobsFramed;
 pub use server::{Server, ServerConfig, TcpConnection};
 pub use transport::MessageTransport;
 
 // Re-export session types for convenience
-pub use roam_session::{Role, StreamIdAllocator, StreamRegistry};
+pub use roam_session::{CallError, ChannelIdAllocator, ChannelRegistry, ConnectionHandle, Role};
 
 // Re-export wire types for convenience
 pub use roam_wire::{Hello, Message};

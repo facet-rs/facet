@@ -14,7 +14,7 @@ pub enum Hello {
     /// Spec v1 Hello.
     V1 {
         max_payload_size: u32,
-        initial_stream_credit: u32,
+        initial_channel_credit: u32,
     } = 0,
 }
 
@@ -127,20 +127,20 @@ pub enum Message {
         request_id: u64,
     } = 4,
 
-    // Streams
-    // rs[impl wire.stream] - Stream<T> encoded as u64 stream ID on wire
+    // Channels
+    // rs[impl wire.stream] - Tx<T>/Rx<T> encoded as u64 channel ID on wire
     Data {
-        stream_id: u64,
+        channel_id: u64,
         payload: Vec<u8>,
     } = 5,
     Close {
-        stream_id: u64,
+        channel_id: u64,
     } = 6,
     Reset {
-        stream_id: u64,
+        channel_id: u64,
     } = 7,
     Credit {
-        stream_id: u64,
+        channel_id: u64,
         bytes: u32,
     } = 8,
 }

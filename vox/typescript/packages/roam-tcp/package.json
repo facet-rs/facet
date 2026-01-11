@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check": "pnpx --package @typescript/native-preview tsgo --noEmit"
+    "check": "tsgo --noEmit"
   },
   "dependencies": {
     "@bearcove/roam-core": "workspace:*"

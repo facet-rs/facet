@@ -1,12 +1,8 @@
-#!/bin/sh
-set -eu
+#!/bin/bash
+set -e
 
-BIN="./swift/subject/.build/debug/subject-swift"
-if [ ! -x "$BIN" ]; then
-  echo "subject-swift: missing $BIN" >&2
-  echo "subject-swift: build it with: swift build --package-path swift/subject" >&2
-  exit 1
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-exec "$BIN"
-
+# Run the subject (assumes pre-built with: swift build -c release)
+exec .build/release/subject-swift

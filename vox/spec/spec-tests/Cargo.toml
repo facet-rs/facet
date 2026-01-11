@@ -23,10 +23,6 @@ facet.workspace = true
 roam-hash = { path = "../../rust/roam-hash" }
 roam-schema = { path = "../../rust/roam-schema" }
 
-[build-dependencies]
-spec-proto = { path = "../spec-proto" }
-roam-codegen = { path = "../../rust/roam-codegen" }
-
 [[bin]]
 name = "ws-echo-server"
 path = "src/bin/ws_echo_server.rs"

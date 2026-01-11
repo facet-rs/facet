@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Session/state machine (handshake, request_id/stream_id routing, flow control)"
+description = "Session/state machine (handshake, request_id/channel_id routing, flow control)"
 
 [package.metadata]
 
@@ -15,4 +15,5 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 facet.workspace = true
 facet-postcard.workspace = true
 roam-frame = { path = "../roam-frame", version = "0.5.0" }
+roam-wire = { path = "../roam-wire", version = "0.5.0" }
 tokio.workspace = true

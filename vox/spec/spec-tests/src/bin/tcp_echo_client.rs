@@ -20,7 +20,7 @@ fn main() {
     write_varint(&mut hello, 0); // Message::Hello
     write_varint(&mut hello, 0); // Hello::V1
     write_varint(&mut hello, 1024 * 1024); // max_payload
-    write_varint(&mut hello, 64 * 1024); // initial_stream_credit
+    write_varint(&mut hello, 64 * 1024); // initial_channel_credit
     let mut framed = encode_vec(&hello);
     framed.push(0);
     stream.write_all(&framed).expect("Failed to send hello");

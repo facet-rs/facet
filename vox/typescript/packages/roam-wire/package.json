@@ -1,0 +1,19 @@
+{
+  "name": "@bearcove/roam-wire",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsgo --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bearcove/roam-postcard": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
+}

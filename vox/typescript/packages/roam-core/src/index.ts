@@ -2,73 +2,180 @@
 // This package provides the core primitives and dispatcher for roam services.
 
 // Binary encoding primitives
-export { encodeVarint, decodeVarint, decodeVarintNumber } from "./binary/varint.ts";
-export { cobsEncode, cobsDecode } from "./binary/cobs.ts";
-export { concat } from "./binary/bytes.ts";
+export {
+  encodeVarint,
+  decodeVarint,
+  decodeVarintNumber,
+} from "../../roam-postcard/src/binary/varint.ts";
+export { cobsEncode, cobsDecode } from "../../roam-postcard/src/binary/cobs.ts";
+export { concat } from "../../roam-postcard/src/binary/bytes.ts";
 
 // Postcard encoding/decoding - comprehensive type support
 export {
   // Decode result type
   type DecodeResult,
   // Primitives
-  encodeBool, decodeBool,
-  encodeU8, decodeU8,
-  encodeI8, decodeI8,
-  encodeU16, decodeU16,
-  encodeI16, decodeI16,
-  encodeU32, decodeU32,
-  encodeI32, decodeI32,
-  encodeU64, decodeU64,
-  encodeI64, decodeI64,
-  encodeF32, decodeF32,
-  encodeF64, decodeF64,
+  encodeBool,
+  decodeBool,
+  encodeU8,
+  decodeU8,
+  encodeI8,
+  decodeI8,
+  encodeU16,
+  decodeU16,
+  encodeI16,
+  decodeI16,
+  encodeU32,
+  decodeU32,
+  encodeI32,
+  decodeI32,
+  encodeU64,
+  decodeU64,
+  encodeI64,
+  decodeI64,
+  encodeF32,
+  decodeF32,
+  encodeF64,
+  decodeF64,
   // String and bytes
-  encodeString, decodeString,
-  encodeBytes, decodeBytes,
+  encodeString,
+  decodeString,
+  encodeBytes,
+  decodeBytes,
   // Containers
-  encodeOption, decodeOption,
-  encodeVec, decodeVec,
-  encodeTuple2, decodeTuple2,
-  encodeTuple3, decodeTuple3,
+  encodeOption,
+  decodeOption,
+  encodeVec,
+  decodeVec,
+  encodeTuple2,
+  decodeTuple2,
+  encodeTuple3,
+  decodeTuple3,
   // Enum support
-  encodeEnumVariant, decodeEnumVariant,
-} from "./postcard/index.ts";
+  encodeEnumVariant,
+  decodeEnumVariant,
+} from "@bearcove/roam-postcard";
+
+// Schema-driven encoding/decoding
+export { encodeWithSchema, decodeWithSchema } from "@bearcove/roam-postcard";
 
 // Result encoding (for server-side responses)
-import { encodeResultOk, encodeResultErr } from "./postcard/result.ts";
+import { encodeResultOk, encodeResultErr } from "../../roam-postcard/src/result.ts";
 import {
   encodeUnknownMethod,
   encodeInvalidPayload,
-  RAPACE_ERROR,
-} from "./postcard/rapace_error.ts";
-export { encodeResultOk, encodeResultErr, encodeUnknownMethod, encodeInvalidPayload, RAPACE_ERROR };
+  ROAM_ERROR,
+} from "../../roam-postcard/src/roam_error.ts";
+export { encodeResultOk, encodeResultErr, encodeUnknownMethod, encodeInvalidPayload, ROAM_ERROR };
 
 // RPC error types (for client-side error handling)
-export {
-  RpcError,
-  RpcErrorCode,
-  decodeRpcResult,
-  decodeUserError,
-} from "./postcard/rpc_error.ts";
+export { RpcError, RpcErrorCode, decodeRpcResult, decodeUserError } from "@bearcove/roam-wire";
 
-// Streaming types
+// Wire types, schemas, and codec
+export type {
+  Hello,
+  HelloV1,
+  MetadataValue,
+  MetadataValueString,
+  MetadataValueBytes,
+  MetadataValueU64,
+  MetadataEntry,
+  Message,
+  MessageHello,
+  MessageGoodbye,
+  MessageRequest,
+  MessageResponse,
+  MessageCancel,
+  MessageData,
+  MessageClose,
+  MessageReset,
+  MessageCredit,
+} from "@bearcove/roam-wire";
+
 export {
-  type StreamId,
+  // Wire discriminants
+  MessageDiscriminant,
+  MetadataValueDiscriminant,
+  HelloDiscriminant,
+  // Wire factory functions
+  helloV1,
+  metadataString,
+  metadataBytes,
+  metadataU64,
+  messageHello,
+  messageGoodbye,
+  messageRequest,
+  messageResponse,
+  messageCancel,
+  messageData,
+  messageClose,
+  messageReset,
+  messageCredit,
+  // Wire schemas
+  HelloSchema,
+  MetadataValueSchema,
+  MetadataEntrySchema,
+  MessageSchema,
+  wireSchemaRegistry,
+  // Wire codec
+  encodeHello,
+  decodeHello,
+  encodeMetadataValue,
+  decodeMetadataValue,
+  encodeMetadataEntry,
+  decodeMetadataEntry,
+  encodeMessage,
+  decodeMessage,
+  encodeMessages,
+  decodeMessages,
+} from "@bearcove/roam-wire";
+
+// Channel types
+export {
+  type ChannelId,
   Role,
-  StreamError,
-  StreamIdAllocator,
-  StreamRegistry,
+  ChannelError,
+  ChannelIdAllocator,
+  ChannelRegistry,
   OutgoingSender,
   ChannelReceiver,
-  Push,
-  Pull,
-  createRawPush,
-  createRawPull,
-  createTypedPush,
-  createTypedPull,
+  Tx,
+  Rx,
+  channel,
+  createServerTx,
+  createServerRx,
   type OutgoingMessage,
   type OutgoingPoll,
-} from "./streaming/index.ts";
+  type TaskMessage,
+  type TaskSender,
+  type ChannelContext,
+  // Schema types and binding
+  type PrimitiveKind,
+  type TxSchema,
+  type RxSchema,
+  type VecSchema,
+  type OptionSchema,
+  type MapSchema,
+  type StructSchema,
+  type TupleSchema,
+  type EnumVariant,
+  type EnumSchema,
+  type RefSchema,
+  type Schema,
+  type SchemaRegistry,
+  type MethodSchema,
+  // Schema helper functions
+  resolveSchema,
+  findVariantByDiscriminant,
+  findVariantByName,
+  getVariantDiscriminant,
+  getVariantFieldSchemas,
+  getVariantFieldNames,
+  isNewtypeVariant,
+  isRefSchema,
+  bindChannels,
+  type BindingSerializers,
+} from "./channeling/index.ts";
 
 // Transport abstraction
 export { type MessageTransport } from "./transport.ts";
@@ -79,6 +186,7 @@ export {
   ConnectionError,
   type Negotiated,
   type ServiceDispatcher,
+  type StreamingDispatcher,
   helloExchangeAcceptor,
   helloExchangeInitiator,
   defaultHello,

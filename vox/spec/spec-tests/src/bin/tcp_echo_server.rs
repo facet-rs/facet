@@ -1,158 +1,128 @@
-//! TCP Echo server for cross-language testing.
+//! TCP server for cross-language testing.
 //!
-//! Listens on a TCP port and handles Echo service requests.
+//! Listens on a TCP port and handles Testbed service requests.
 //! Used to test clients in other languages against a Rust server.
 
 use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
 use roam::facet::Facet;
 use roam_wire::{Hello, Message};
-use spec_tests::complex::ComplexHandler;
-use spec_tests::echo::EchoHandler;
-use spec_tests::{complex, echo};
+use spec_tests::testbed;
+use spec_tests::testbed::{Never, RoamError, Testbed};
 use std::env;
-use std::future::Future;
 use std::io::ErrorKind;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 // Service implementation
 #[derive(Clone)]
-struct EchoService;
+struct TestbedService;
 
-#[allow(clippy::manual_async_fn)]
-impl echo::EchoHandler for EchoService {
-    fn echo(
-        &self,
-        message: String,
-    ) -> impl Future<Output = Result<String, Box<dyn std::error::Error + Send + Sync>>> + Send {
-        async move { Ok(message) }
+impl Testbed for TestbedService {
+    async fn echo(&self, message: String) -> Result<String, RoamError<Never>> {
+        Ok(message)
     }
 
-    fn reverse(
-        &self,
-        message: String,
-    ) -> impl Future<Output = Result<String, Box<dyn std::error::Error + Send + Sync>>> + Send {
-        async move { Ok(message.chars().rev().collect()) }
+    async fn reverse(&self, message: String) -> Result<String, RoamError<Never>> {
+        Ok(message.chars().rev().collect())
     }
-}
 
-#[derive(Clone)]
-struct ComplexService;
+    // Streaming methods - stubs (this server only handles unary)
+    async fn sum(&self, _numbers: roam::Rx<i32>) -> Result<i64, RoamError<Never>> {
+        Ok(0)
+    }
 
-#[allow(clippy::manual_async_fn)]
-impl complex::ComplexHandler for ComplexService {
-    fn echo_point(
+    async fn generate(&self, _count: u32, _output: roam::Tx<i32>) -> Result<(), RoamError<Never>> {
+        Ok(())
+    }
+
+    async fn transform(
+        &self,
+        _input: roam::Rx<String>,
+        _output: roam::Tx<String>,
+    ) -> Result<(), RoamError<Never>> {
+        Ok(())
+    }
+
+    // Complex type methods
+    async fn echo_point(
         &self,
         point: spec_proto::Point,
-    ) -> impl Future<Output = Result<spec_proto::Point, Box<dyn std::error::Error + Send + Sync>>> + Send
-    {
-        async move { Ok(point) }
+    ) -> Result<spec_proto::Point, RoamError<Never>> {
+        Ok(point)
     }
 
-    fn create_person(
+    async fn create_person(
         &self,
         name: String,
         age: u8,
         email: Option<String>,
-    ) -> impl Future<Output = Result<spec_proto::Person, Box<dyn std::error::Error + Send + Sync>>> + Send
-    {
-        async move { Ok(spec_proto::Person { name, age, email }) }
+    ) -> Result<spec_proto::Person, RoamError<Never>> {
+        Ok(spec_proto::Person { name, age, email })
     }
 
-    fn rectangle_area(
-        &self,
-        rect: spec_proto::Rectangle,
-    ) -> impl Future<Output = Result<f64, Box<dyn std::error::Error + Send + Sync>>> + Send {
-        async move {
-            let width = (rect.bottom_right.x - rect.top_left.x).abs() as f64;
-            let height = (rect.bottom_right.y - rect.top_left.y).abs() as f64;
-            Ok(width * height)
-        }
+    async fn rectangle_area(&self, rect: spec_proto::Rectangle) -> Result<f64, RoamError<Never>> {
+        let width = (rect.bottom_right.x - rect.top_left.x).abs() as f64;
+        let height = (rect.bottom_right.y - rect.top_left.y).abs() as f64;
+        Ok(width * height)
     }
 
-    fn parse_color(
+    async fn parse_color(
         &self,
         name: String,
-    ) -> impl Future<
-        Output = Result<Option<spec_proto::Color>, Box<dyn std::error::Error + Send + Sync>>,
-    > + Send {
-        async move {
-            match name.to_lowercase().as_str() {
-                "red" => Ok(Some(spec_proto::Color::Red)),
-                "green" => Ok(Some(spec_proto::Color::Green)),
-                "blue" => Ok(Some(spec_proto::Color::Blue)),
-                _ => Ok(None),
-            }
+    ) -> Result<Option<spec_proto::Color>, RoamError<Never>> {
+        match name.to_lowercase().as_str() {
+            "red" => Ok(Some(spec_proto::Color::Red)),
+            "green" => Ok(Some(spec_proto::Color::Green)),
+            "blue" => Ok(Some(spec_proto::Color::Blue)),
+            _ => Ok(None),
         }
     }
 
-    fn shape_area(
-        &self,
-        shape: spec_proto::Shape,
-    ) -> impl Future<Output = Result<f64, Box<dyn std::error::Error + Send + Sync>>> + Send {
-        async move {
-            let area = match shape {
-                spec_proto::Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
-                spec_proto::Shape::Rectangle { width, height } => width * height,
-                spec_proto::Shape::Point => 0.0,
-            };
-            Ok(area)
-        }
+    async fn shape_area(&self, shape: spec_proto::Shape) -> Result<f64, RoamError<Never>> {
+        let area = match shape {
+            spec_proto::Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
+            spec_proto::Shape::Rectangle { width, height } => width * height,
+            spec_proto::Shape::Point => 0.0,
+        };
+        Ok(area)
     }
 
-    fn create_canvas(
+    async fn create_canvas(
         &self,
         name: String,
         shapes: Vec<spec_proto::Shape>,
         background: spec_proto::Color,
-    ) -> impl Future<Output = Result<spec_proto::Canvas, Box<dyn std::error::Error + Send + Sync>>> + Send
-    {
-        async move {
-            Ok(spec_proto::Canvas {
-                name,
-                shapes,
-                background,
-            })
-        }
+    ) -> Result<spec_proto::Canvas, RoamError<Never>> {
+        Ok(spec_proto::Canvas {
+            name,
+            shapes,
+            background,
+        })
     }
 
-    fn process_message(
+    async fn process_message(
         &self,
         msg: spec_proto::Message,
-    ) -> impl Future<Output = Result<spec_proto::Message, Box<dyn std::error::Error + Send + Sync>>> + Send
-    {
-        async move {
-            match msg {
-                spec_proto::Message::Text(text) => {
-                    Ok(spec_proto::Message::Text(format!("Processed: {}", text)))
-                }
-                spec_proto::Message::Number(n) => Ok(spec_proto::Message::Number(n * 2)),
-                spec_proto::Message::Data(data) => {
-                    Ok(spec_proto::Message::Data(data.into_iter().rev().collect()))
-                }
+    ) -> Result<spec_proto::Message, RoamError<Never>> {
+        match msg {
+            spec_proto::Message::Text(text) => {
+                Ok(spec_proto::Message::Text(format!("Processed: {}", text)))
+            }
+            spec_proto::Message::Number(n) => Ok(spec_proto::Message::Number(n * 2)),
+            spec_proto::Message::Data(data) => {
+                Ok(spec_proto::Message::Data(data.into_iter().rev().collect()))
             }
         }
     }
 
-    fn get_points(
-        &self,
-        count: u32,
-    ) -> impl Future<
-        Output = Result<Vec<spec_proto::Point>, Box<dyn std::error::Error + Send + Sync>>,
-    > + Send {
-        async move {
-            Ok((0..count as i32)
-                .map(|i| spec_proto::Point { x: i, y: i * 2 })
-                .collect())
-        }
+    async fn get_points(&self, count: u32) -> Result<Vec<spec_proto::Point>, RoamError<Never>> {
+        Ok((0..count as i32)
+            .map(|i| spec_proto::Point { x: i, y: i * 2 })
+            .collect())
     }
 
-    fn swap_pair(
-        &self,
-        pair: (i32, String),
-    ) -> impl Future<Output = Result<(String, i32), Box<dyn std::error::Error + Send + Sync>>> + Send
-    {
-        async move { Ok((pair.1, pair.0)) }
+    async fn swap_pair(&self, pair: (i32, String)) -> Result<(String, i32), RoamError<Never>> {
+        Ok((pair.1, pair.0))
     }
 }
 
@@ -210,7 +180,7 @@ async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::
     // Send our Hello
     let our_hello = Hello::V1 {
         max_payload_size: 1024 * 1024,
-        initial_stream_credit: 64 * 1024,
+        initial_channel_credit: 64 * 1024,
     };
     io.send(&Message::Hello(our_hello)).await?;
 
@@ -237,7 +207,6 @@ async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::
                 payload,
                 ..
             } => {
-                // Dispatch based on method_id
                 let response_payload = dispatch_method(method_id, &payload).await?;
 
                 io.send(&Message::Response {
@@ -255,29 +224,11 @@ async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-/// Encode Result::Ok(value) - prepend 0x00 (Ok variant) to the serialized value
+/// Encode Result::Ok(value)
 fn encode_ok<T: Facet<'static>>(value: &T) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut result = vec![0x00]; // Result::Ok variant
     result.extend(facet_postcard::to_vec(value)?);
     Ok(result)
-}
-
-/// Encode Result::Err(RoamError::User(msg))
-fn encode_user_error(msg: &str) -> Vec<u8> {
-    let mut result = vec![0x01]; // Result::Err variant
-    result.push(0x00); // RoamError::User variant
-    // Encode string: varint length + bytes
-    let msg_bytes = msg.as_bytes();
-    let len = msg_bytes.len();
-    // Simple varint encoding for length
-    if len < 128 {
-        result.push(len as u8);
-    } else {
-        result.push((len & 0x7f) as u8 | 0x80);
-        result.push((len >> 7) as u8);
-    }
-    result.extend_from_slice(msg_bytes);
-    result
 }
 
 /// Encode Result::Err(RoamError::UnknownMethod)
@@ -289,74 +240,55 @@ async fn dispatch_method(
     method_id: u64,
     payload: &[u8],
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let service = EchoService;
-    let complex_service = ComplexService;
+    let service = TestbedService;
 
-    // Echo methods
-    if method_id == echo::method_id::ECHO {
+    // Unary methods - RoamError<Never> always succeeds since Never is uninhabited
+    if method_id == testbed::method_id::echo() {
         let args: (String,) = facet_postcard::from_slice(payload)?;
-        return match service.echo(args.0).await {
-            Ok(v) => encode_ok(&v),
-            Err(e) => Ok(encode_user_error(&e.to_string())),
-        };
+        return encode_ok(&service.echo(args.0).await.unwrap());
     }
-    if method_id == echo::method_id::REVERSE {
+    if method_id == testbed::method_id::reverse() {
         let args: (String,) = facet_postcard::from_slice(payload)?;
-        return match service.reverse(args.0).await {
-            Ok(v) => encode_ok(&v),
-            Err(e) => Ok(encode_user_error(&e.to_string())),
-        };
+        return encode_ok(&service.reverse(args.0).await.unwrap());
     }
 
-    // Complex methods
-    if method_id == complex::method_id::ECHO_POINT {
+    // Complex type methods
+    if method_id == testbed::method_id::echo_point() {
         let args: (spec_proto::Point,) = facet_postcard::from_slice(payload)?;
-        return match complex_service.echo_point(args.0).await {
-            Ok(v) => encode_ok(&v),
-            Err(e) => Ok(encode_user_error(&e.to_string())),
-        };
+        return encode_ok(&service.echo_point(args.0).await.unwrap());
     }
-    if method_id == complex::method_id::CREATE_PERSON {
+    if method_id == testbed::method_id::create_person() {
         let args: (String, u8, Option<String>) = facet_postcard::from_slice(payload)?;
-        return match complex_service.create_person(args.0, args.1, args.2).await {
-            Ok(v) => encode_ok(&v),
-            Err(e) => Ok(encode_user_error(&e.to_string())),
-        };
+        return encode_ok(&service.create_person(args.0, args.1, args.2).await.unwrap());
     }
-    if method_id == complex::method_id::RECTANGLE_AREA {
+    if method_id == testbed::method_id::rectangle_area() {
         let args: (spec_proto::Rectangle,) = facet_postcard::from_slice(payload)?;
-        return match complex_service.rectangle_area(args.0).await {
-            Ok(v) => encode_ok(&v),
-            Err(e) => Ok(encode_user_error(&e.to_string())),
-        };
+        return encode_ok(&service.rectangle_area(args.0).await.unwrap());
     }
-    if method_id == complex::method_id::PARSE_COLOR {
+    if method_id == testbed::method_id::parse_color() {
         let args: (String,) = facet_postcard::from_slice(payload)?;
-        return match complex_service.parse_color(args.0).await {
-            Ok(v) => encode_ok(&v),
-            Err(e) => Ok(encode_user_error(&e.to_string())),
-        };
+        return encode_ok(&service.parse_color(args.0).await.unwrap());
     }
-    if method_id == complex::method_id::SHAPE_AREA {
+    if method_id == testbed::method_id::shape_area() {
         let args: (spec_proto::Shape,) = facet_postcard::from_slice(payload)?;
-        return match complex_service.shape_area(args.0).await {
-            Ok(v) => encode_ok(&v),
-            Err(e) => Ok(encode_user_error(&e.to_string())),
-        };
+        return encode_ok(&service.shape_area(args.0).await.unwrap());
     }
-    if method_id == complex::method_id::GET_POINTS {
+    if method_id == testbed::method_id::get_points() {
         let args: (u32,) = facet_postcard::from_slice(payload)?;
-        return match complex_service.get_points(args.0).await {
-            Ok(v) => encode_ok(&v),
-            Err(e) => Ok(encode_user_error(&e.to_string())),
-        };
+        return encode_ok(&service.get_points(args.0).await.unwrap());
     }
-    if method_id == complex::method_id::SWAP_PAIR {
+    if method_id == testbed::method_id::swap_pair() {
         let args: ((i32, String),) = facet_postcard::from_slice(payload)?;
-        return match complex_service.swap_pair(args.0).await {
-            Ok(v) => encode_ok(&v),
-            Err(e) => Ok(encode_user_error(&e.to_string())),
-        };
+        return encode_ok(&service.swap_pair(args.0).await.unwrap());
+    }
+    if method_id == testbed::method_id::create_canvas() {
+        let args: (String, Vec<spec_proto::Shape>, spec_proto::Color) =
+            facet_postcard::from_slice(payload)?;
+        return encode_ok(&service.create_canvas(args.0, args.1, args.2).await.unwrap());
+    }
+    if method_id == testbed::method_id::process_message() {
+        let args: (spec_proto::Message,) = facet_postcard::from_slice(payload)?;
+        return encode_ok(&service.process_message(args.0).await.unwrap());
     }
 
     // Unknown method
@@ -369,7 +301,7 @@ async fn main() {
     let addr = format!("127.0.0.1:{}", port);
 
     let listener = TcpListener::bind(&addr).await.unwrap();
-    eprintln!("TCP Echo server listening on {}", addr);
+    eprintln!("TCP server listening on {}", addr);
 
     // Print port on stdout for test harness
     println!("{}", port);

@@ -9,12 +9,10 @@
 //! - `WsTransport` for WebSocket connections
 
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::time::Duration;
 
-use roam_session::{OutgoingPoll, Role, StreamError, StreamIdAllocator, StreamRegistry};
+use roam_session::{ChannelError, ChannelIdAllocator, ChannelRegistry, Role, TaskMessage};
 use roam_wire::{Hello, Message};
-use tokio::sync::Notify;
 
 use crate::transport::MessageTransport;
 
@@ -24,7 +22,7 @@ pub struct Negotiated {
     /// Effective max payload size (min of both peers).
     pub max_payload_size: u32,
     /// Initial stream credit (min of both peers).
-    /// r[impl flow.stream.initial-credit] - Negotiated during handshake.
+    /// r[impl flow.channel.initial-credit] - Negotiated during handshake.
     pub initial_credit: u32,
 }
 
@@ -54,9 +52,6 @@ impl From<std::io::Error> for ConnectionError {
     }
 }
 
-/// Result from a completed streaming handler: (request_id, serialized_result).
-type StreamingResult = (u64, Result<Vec<u8>, String>);
-
 /// A live connection with completed Hello exchange.
 ///
 /// Generic over the transport type `T` which must implement [`MessageTransport`].
@@ -67,16 +62,15 @@ pub struct Connection<T> {
     io: T,
     role: Role,
     negotiated: Negotiated,
-    stream_allocator: StreamIdAllocator,
-    stream_registry: StreamRegistry,
+    channel_allocator: ChannelIdAllocator,
+    channel_registry: ChannelRegistry,
     /// r[impl unary.request-id.in-flight] - Track requests awaiting response.
     in_flight_requests: HashSet<u64>,
     #[allow(dead_code)]
     our_hello: Hello,
-    /// Channel for receiving completed streaming handler results.
-    /// Spawned tasks send (request_id, result) when they complete.
-    streaming_results_tx: tokio::sync::mpsc::Sender<StreamingResult>,
-    streaming_results_rx: tokio::sync::mpsc::Receiver<StreamingResult>,
+    /// Channel for receiving messages (Data/Close/Response) from spawned tasks.
+    /// Using a single channel ensures correct ordering (Data/Close before Response).
+    task_rx: tokio::sync::mpsc::Receiver<TaskMessage>,
 }
 
 impl<T> Connection<T> {
@@ -97,23 +91,23 @@ impl<T> Connection<T> {
 
     /// Get the stream ID allocator.
     ///
-    /// r[impl streaming.allocation.caller] - Caller allocates ALL stream IDs.
-    pub fn stream_allocator(&self) -> &StreamIdAllocator {
-        &self.stream_allocator
+    /// r[impl channeling.allocation.caller] - Caller allocates ALL stream IDs.
+    pub fn channel_allocator(&self) -> &ChannelIdAllocator {
+        &self.channel_allocator
     }
 
     /// Validate a stream ID according to protocol rules.
     ///
     /// Returns the rule ID if validation fails.
-    pub fn validate_stream_id(&self, stream_id: u64) -> Result<(), &'static str> {
-        // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
-        if stream_id == 0 {
-            return Err("streaming.id.zero-reserved");
+    pub fn validate_channel_id(&self, channel_id: u64) -> Result<(), &'static str> {
+        // r[impl channeling.id.zero-reserved] - Stream ID 0 is reserved.
+        if channel_id == 0 {
+            return Err("channeling.id.zero-reserved");
         }
 
-        // r[impl streaming.unknown] - Unknown stream IDs are connection errors.
-        if !self.stream_registry.contains(stream_id) {
-            return Err("streaming.unknown");
+        // r[impl channeling.unknown] - Unknown stream IDs are connection errors.
+        if !self.channel_registry.contains(channel_id) {
+            return Err("channeling.unknown");
         }
 
         Ok(())
@@ -122,16 +116,8 @@ impl<T> Connection<T> {
     /// Get a mutable reference to the stream registry.
     ///
     /// Used by dispatchers to register streams before processing requests.
-    pub fn stream_registry_mut(&mut self) -> &mut StreamRegistry {
-        &mut self.stream_registry
-    }
-
-    /// Get the notify handle for outgoing stream data.
-    ///
-    /// When an `OutgoingSender` has new data, it notifies this handle.
-    /// Use in select! to wake up when stream data is ready to send.
-    pub fn outgoing_notify(&self) -> Arc<Notify> {
-        self.stream_registry.outgoing_notify()
+    pub fn channel_registry_mut(&mut self) -> &mut ChannelRegistry {
+        &mut self.channel_registry
     }
 
     /// Validate payload size against negotiated limit.
@@ -168,33 +154,6 @@ where
         }
     }
 
-    /// Send all pending outgoing stream messages.
-    ///
-    /// Drains the outgoing stream channels and sends Data/Close messages
-    /// to the peer. Call this periodically or after processing requests.
-    ///
-    /// r[impl streaming.data] - Send Data messages for outgoing streams.
-    /// r[impl streaming.close] - Send Close messages when streams end.
-    pub async fn flush_outgoing(&mut self) -> Result<(), ConnectionError> {
-        loop {
-            match self.stream_registry.poll_outgoing() {
-                OutgoingPoll::Data { stream_id, payload } => {
-                    let msg = Message::Data { stream_id, payload };
-                    self.io.send(&msg).await?;
-                }
-                OutgoingPoll::Close { stream_id } => {
-                    let msg = Message::Close { stream_id };
-                    self.io.send(&msg).await?;
-                }
-                OutgoingPoll::Pending | OutgoingPoll::Done => {
-                    // No more pending data
-                    break;
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Run the message loop with a dispatcher.
     ///
     /// This is the main event loop that:
@@ -202,7 +161,9 @@ where
     /// - Validates them according to protocol rules
     /// - Dispatches requests to the service
     /// - Sends responses back
-    /// - Flushes outgoing stream data when notified
+    ///
+    /// All task messages (Data/Close/Response) go through a single channel to ensure
+    /// correct ordering: Data and Close are sent before Response.
     ///
     /// r[impl unary.pipelining.allowed] - Handle requests as they arrive.
     /// r[impl unary.pipelining.independence] - Each request handled independently.
@@ -210,36 +171,37 @@ where
     where
         D: ServiceDispatcher,
     {
-        // Get notify handle before entering loop - OutgoingSenders will notify
-        // when they have data ready to send.
-        let outgoing_notify = self.stream_registry.outgoing_notify();
-
         loop {
             tokio::select! {
                 biased;
 
-                // Handle completed streaming handlers
-                Some((request_id, result)) = self.streaming_results_rx.recv() => {
-                    let response_payload = result.map_err(ConnectionError::Dispatch)?;
-
-                    // Flush any outgoing stream data (Data/Close) BEFORE Response.
-                    // This ensures the client receives all streamed data before the
-                    // Response that signals call completion.
-                    // r[impl streaming.flush-before-response] - Stream data sent before Response.
-                    self.flush_outgoing().await?;
-
-                    // r[impl streaming.call-complete] - Call completes when Response sent.
-                    // r[impl streaming.lifecycle.response-closes-pulls] - Pull streams close with Response.
-                    let resp = Message::Response {
-                        request_id,
-                        metadata: Vec::new(),
-                        payload: response_payload,
+                // Handle task messages (Data/Close/Response) from spawned handlers.
+                // Using a single channel ensures Data/Close are sent before Response.
+                Some(msg) = self.task_rx.recv() => {
+                    let wire_msg = match msg {
+                        TaskMessage::Data { channel_id, payload } => {
+                            Message::Data { channel_id, payload }
+                        }
+                        TaskMessage::Close { channel_id } => Message::Close { channel_id },
+                        TaskMessage::Response { request_id, payload } => {
+                            // r[impl channeling.call-complete] - Call completes when Response sent.
+                            // r[impl channeling.lifecycle.response-closes-pulls] - Rx streams close with Response.
+                            if !self.in_flight_requests.remove(&request_id) {
+                                // Request not in-flight - likely already completed or cancelled.
+                                // Skip sending this Response.
+                                continue;
+                            }
+                            Message::Response {
+                                request_id,
+                                metadata: Vec::new(),
+                                payload,
+                            }
+                        }
                     };
-                    self.io.send(&resp).await?;
-                    self.in_flight_requests.remove(&request_id);
+                    self.io.send(&wire_msg).await?;
                 }
 
-                // Prioritize incoming messages over outgoing flush
+                // Handle incoming messages from peer
                 result = self.io.recv_timeout(Duration::from_secs(30)) => {
                     let msg = match result {
                         Ok(Some(m)) => m,
@@ -271,11 +233,6 @@ where
                         Err(ConnectionError::Closed) => return Ok(()), // Clean shutdown
                         Err(e) => return Err(e),
                     }
-                }
-
-                // Wake up when outgoing stream data is available
-                _ = outgoing_notify.notified() => {
-                    self.flush_outgoing().await?;
                 }
             }
         }
@@ -322,51 +279,17 @@ where
                     return Err(self.goodbye(rule_id).await);
                 }
 
-                // Dispatch to service - use streaming dispatch if method has Push/Pull args
-                if dispatcher.is_streaming(method_id) {
-                    // For streaming methods, we need to continue processing messages
-                    // (Data, Close) while the handler runs. The handler reads from
-                    // Pull<T> which is backed by an mpsc channel that we route to.
-                    //
-                    // dispatch_streaming registers streams synchronously, then returns
-                    // a future. We spawn that future as a task so the message loop
-                    // can continue processing Data messages.
-                    let handler_fut = dispatcher.dispatch_streaming(
-                        method_id,
-                        payload,
-                        &mut self.stream_registry,
-                    );
+                // Dispatch to service
+                // dispatch() registers streams synchronously, then returns a future.
+                // We spawn that future as a task so the message loop can continue
+                // processing Data messages for streaming methods.
+                //
+                // The dispatch future sends Data/Close/Response via task_tx in order,
+                // ensuring Data and Close are sent before Response.
+                let handler_fut =
+                    dispatcher.dispatch(method_id, payload, request_id, &mut self.channel_registry);
 
-                    // Spawn the handler as a task that sends its result to our channel
-                    let results_tx = self.streaming_results_tx.clone();
-                    tokio::spawn(async move {
-                        let result = handler_fut.await;
-                        // Send result to the connection's run loop
-                        // Ignore send error if connection closed
-                        let _ = results_tx.send((request_id, result)).await;
-                    });
-                } else {
-                    let response_payload = dispatcher
-                        .dispatch_unary(method_id, &payload)
-                        .await
-                        .map_err(ConnectionError::Dispatch)?;
-
-                    // r[impl core.call] - Callee sends Response for caller's Request.
-                    // r[impl core.call.request-id] - Response has same request_id.
-                    // r[impl unary.complete] - Send Response with matching request_id.
-                    // r[impl unary.lifecycle.single-response] - Exactly one Response per Request.
-                    // r[impl unary.request-id.in-flight] - Request no longer in-flight after Response.
-                    let resp = Message::Response {
-                        request_id,
-                        metadata: Vec::new(),
-                        payload: response_payload,
-                    };
-                    self.io.send(&resp).await?;
-                    self.in_flight_requests.remove(&request_id);
-
-                    // Flush any outgoing stream data that handlers may have queued
-                    self.flush_outgoing().await?;
-                }
+                tokio::spawn(handler_fut);
             }
             Message::Response { request_id, .. } => {
                 // Server doesn't expect Response messages (it sends them, not receives them).
@@ -385,75 +308,78 @@ where
                 // TODO: Implement proper async request handling with cancellation support.
                 let _ = request_id;
             }
-            Message::Data { stream_id, payload } => {
-                // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
-                if stream_id == 0 {
-                    return Err(self.goodbye("streaming.id.zero-reserved").await);
+            Message::Data {
+                channel_id,
+                payload,
+            } => {
+                // r[impl channeling.id.zero-reserved] - Stream ID 0 is reserved.
+                if channel_id == 0 {
+                    return Err(self.goodbye("channeling.id.zero-reserved").await);
                 }
 
-                // r[impl streaming.data.size-limit] - Stream elements bounded by max_payload_size.
+                // r[impl channeling.data.size-limit] - Stream elements bounded by max_payload_size.
                 if let Err(rule_id) = self.validate_payload_size(payload.len()) {
                     return Err(self.goodbye(rule_id).await);
                 }
 
-                // r[impl streaming.data] - Route Data to registered stream.
-                // r[impl flow.stream.credit-overrun] - Check credit before routing.
-                match self.stream_registry.route_data(stream_id, payload).await {
+                // r[impl channeling.data] - Route Data to registered stream.
+                // r[impl flow.channel.credit-overrun] - Check credit before routing.
+                match self.channel_registry.route_data(channel_id, payload).await {
                     Ok(()) => {}
-                    Err(StreamError::Unknown) => {
-                        // r[impl streaming.unknown] - Unknown stream ID.
-                        return Err(self.goodbye("streaming.unknown").await);
+                    Err(ChannelError::Unknown) => {
+                        // r[impl channeling.unknown] - Unknown stream ID.
+                        return Err(self.goodbye("channeling.unknown").await);
                     }
-                    Err(StreamError::DataAfterClose) => {
-                        // r[impl streaming.data-after-close] - Data after Close is error.
-                        return Err(self.goodbye("streaming.data-after-close").await);
+                    Err(ChannelError::DataAfterClose) => {
+                        // r[impl channeling.data-after-close] - Data after Close is error.
+                        return Err(self.goodbye("channeling.data-after-close").await);
                     }
-                    Err(StreamError::CreditOverrun) => {
-                        // r[impl flow.stream.credit-overrun] - Data exceeded credit.
-                        return Err(self.goodbye("flow.stream.credit-overrun").await);
+                    Err(ChannelError::CreditOverrun) => {
+                        // r[impl flow.channel.credit-overrun] - Data exceeded credit.
+                        return Err(self.goodbye("flow.channel.credit-overrun").await);
                     }
                 }
             }
-            Message::Close { stream_id } => {
-                // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
-                if stream_id == 0 {
-                    return Err(self.goodbye("streaming.id.zero-reserved").await);
+            Message::Close { channel_id } => {
+                // r[impl channeling.id.zero-reserved] - Stream ID 0 is reserved.
+                if channel_id == 0 {
+                    return Err(self.goodbye("channeling.id.zero-reserved").await);
                 }
 
-                // r[impl streaming.close] - Close the stream.
-                if !self.stream_registry.contains(stream_id) {
-                    return Err(self.goodbye("streaming.unknown").await);
+                // r[impl channeling.close] - Close the stream.
+                if !self.channel_registry.contains(channel_id) {
+                    return Err(self.goodbye("channeling.unknown").await);
                 }
-                self.stream_registry.close(stream_id);
+                self.channel_registry.close(channel_id);
             }
-            Message::Reset { stream_id } => {
-                // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
-                if stream_id == 0 {
-                    return Err(self.goodbye("streaming.id.zero-reserved").await);
+            Message::Reset { channel_id } => {
+                // r[impl channeling.id.zero-reserved] - Stream ID 0 is reserved.
+                if channel_id == 0 {
+                    return Err(self.goodbye("channeling.id.zero-reserved").await);
                 }
 
-                // r[impl streaming.reset] - Forcefully terminate stream.
-                // r[impl streaming.reset.effect] - Stream is terminated, ignore further messages.
-                // r[impl streaming.reset.credit] - Outstanding credit is lost on reset.
-                if !self.stream_registry.contains(stream_id) {
+                // r[impl channeling.reset] - Forcefully terminate stream.
+                // r[impl channeling.reset.effect] - Stream is terminated, ignore further messages.
+                // r[impl channeling.reset.credit] - Outstanding credit is lost on reset.
+                if !self.channel_registry.contains(channel_id) {
                     // Stream already terminated or unknown - ignore per reset.effect
                     return Ok(());
                 }
-                self.stream_registry.reset(stream_id);
+                self.channel_registry.reset(channel_id);
             }
-            Message::Credit { stream_id, bytes } => {
-                // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
-                if stream_id == 0 {
-                    return Err(self.goodbye("streaming.id.zero-reserved").await);
+            Message::Credit { channel_id, bytes } => {
+                // r[impl channeling.id.zero-reserved] - Stream ID 0 is reserved.
+                if channel_id == 0 {
+                    return Err(self.goodbye("channeling.id.zero-reserved").await);
                 }
 
-                // r[impl flow.stream.credit-grant] - Credit message grants more credit.
-                // r[impl flow.stream.credit-additive] - Credit accumulates.
-                // r[impl flow.stream.credit-prompt] - Process Credit without delay.
-                if !self.stream_registry.contains(stream_id) {
-                    return Err(self.goodbye("streaming.unknown").await);
+                // r[impl flow.channel.credit-grant] - Credit message grants more credit.
+                // r[impl flow.channel.credit-additive] - Credit accumulates.
+                // r[impl flow.channel.credit-prompt] - Process Credit without delay.
+                if !self.channel_registry.contains(channel_id) {
+                    return Err(self.goodbye("channeling.unknown").await);
                 }
-                self.stream_registry.receive_credit(stream_id, bytes);
+                self.channel_registry.receive_credit(channel_id, bytes);
             }
         }
         Ok(())
@@ -500,14 +426,14 @@ where
     let (our_max, our_credit) = match &our_hello {
         Hello::V1 {
             max_payload_size,
-            initial_stream_credit,
-        } => (*max_payload_size, *initial_stream_credit),
+            initial_channel_credit,
+        } => (*max_payload_size, *initial_channel_credit),
     };
     let (peer_max, peer_credit) = match &peer_hello {
         Hello::V1 {
             max_payload_size,
-            initial_stream_credit,
-        } => (*max_payload_size, *initial_stream_credit),
+            initial_channel_credit,
+        } => (*max_payload_size, *initial_channel_credit),
     };
 
     let negotiated = Negotiated {
@@ -515,18 +441,17 @@ where
         initial_credit: our_credit.min(peer_credit),
     };
 
-    let (streaming_results_tx, streaming_results_rx) = tokio::sync::mpsc::channel(64);
+    let (task_tx, task_rx) = tokio::sync::mpsc::channel(64);
     Ok(Connection {
         io,
         role: Role::Acceptor,
         negotiated: negotiated.clone(),
-        stream_allocator: StreamIdAllocator::new(Role::Acceptor),
-        // r[impl flow.stream.initial-credit] - Use negotiated credit for streams.
-        stream_registry: StreamRegistry::new_with_credit(negotiated.initial_credit),
+        channel_allocator: ChannelIdAllocator::new(Role::Acceptor),
+        // r[impl flow.channel.initial-credit] - Use negotiated credit for streams.
+        channel_registry: ChannelRegistry::new_with_credit(negotiated.initial_credit, task_tx),
         in_flight_requests: HashSet::new(),
         our_hello,
-        streaming_results_tx,
-        streaming_results_rx,
+        task_rx,
     })
 }
 
@@ -582,14 +507,14 @@ where
     let (our_max, our_credit) = match &our_hello {
         Hello::V1 {
             max_payload_size,
-            initial_stream_credit,
-        } => (*max_payload_size, *initial_stream_credit),
+            initial_channel_credit,
+        } => (*max_payload_size, *initial_channel_credit),
     };
     let (peer_max, peer_credit) = match &peer_hello {
         Hello::V1 {
             max_payload_size,
-            initial_stream_credit,
-        } => (*max_payload_size, *initial_stream_credit),
+            initial_channel_credit,
+        } => (*max_payload_size, *initial_channel_credit),
     };
 
     let negotiated = Negotiated {
@@ -597,17 +522,16 @@ where
         initial_credit: our_credit.min(peer_credit),
     };
 
-    let (streaming_results_tx, streaming_results_rx) = tokio::sync::mpsc::channel(64);
+    let (task_tx, task_rx) = tokio::sync::mpsc::channel(64);
     Ok(Connection {
         io,
         role: Role::Initiator,
         negotiated: negotiated.clone(),
-        stream_allocator: StreamIdAllocator::new(Role::Initiator),
-        // r[impl flow.stream.initial-credit] - Use negotiated credit for streams.
-        stream_registry: StreamRegistry::new_with_credit(negotiated.initial_credit),
+        channel_allocator: ChannelIdAllocator::new(Role::Initiator),
+        // r[impl flow.channel.initial-credit] - Use negotiated credit for streams.
+        channel_registry: ChannelRegistry::new_with_credit(negotiated.initial_credit, task_tx),
         in_flight_requests: HashSet::new(),
         our_hello,
-        streaming_results_tx,
-        streaming_results_rx,
+        task_rx,
     })
 }
