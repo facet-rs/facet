@@ -16,12 +16,9 @@ title = "Assertions"
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Config</a-t> <a-p>{</a-p>
     <a-pr>host</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-pr>port</a-pr><a-p>:</a-p> <a-t>u16</a-t><a-p>,</a-p>
-
-    <a-pr>debug</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-pr>tags</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
+<br>    <a-pr>port</a-pr><a-p>:</a-p> <a-t>u16</a-t><a-p>,</a-p>
+<br>    <a-pr>debug</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
+<br>    <a-pr>tags</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
 </details>
 <div class="success">
@@ -44,12 +41,9 @@ title = "Assertions"
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Config</a-t> <a-p>{</a-p>
     <a-pr>host</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-pr>port</a-pr><a-p>:</a-p> <a-t>u16</a-t><a-p>,</a-p>
-
-    <a-pr>debug</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-pr>tags</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
+<br>    <a-pr>port</a-pr><a-p>:</a-p> <a-t>u16</a-t><a-p>,</a-p>
+<br>    <a-pr>debug</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
+<br>    <a-pr>tags</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
 </details>
 <div class="success">
@@ -72,17 +66,13 @@ title = "Assertions"
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Person</a-t> <a-p>{</a-p>
     <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-pr>age</a-pr><a-p>:</a-p> <a-t>u32</a-t><a-p>,</a-p>
-
-    <a-pr>address</a-pr><a-p>:</a-p> <a-t>Address</a-t><a-p>,</a-p>
+<br>    <a-pr>age</a-pr><a-p>:</a-p> <a-t>u32</a-t><a-p>,</a-p>
+<br>    <a-pr>address</a-pr><a-p>:</a-p> <a-t>Address</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Address</a-t> <a-p>{</a-p>
     <a-pr>street</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-pr>city</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
+<br>    <a-pr>city</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 <a-p>}</a-p></code></pre>
 </details>
 <div class="success">
@@ -160,9 +150,9 @@ title = "Assertions"
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/3e6fd5971d603bc93a9cbaed73a42d60f93a615a/facet-assert/examples/assert_showcase.rs"><code>facet-assert/examples/assert_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/3e6fd5971d603bc93a9cbaed73a42d60f93a615a"><code>3e6fd5971</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-10T07:06:01+01:00">2026-01-10T07:06:01+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5b2c5e9712e0f360b2a4aaa22ae966823affca23/facet-assert/examples/assert_showcase.rs"><code>facet-assert/examples/assert_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5b2c5e9712e0f360b2a4aaa22ae966823affca23"><code>5b2c5e971</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-11T22:26:32+01:00">2026-01-11T22:26:32+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

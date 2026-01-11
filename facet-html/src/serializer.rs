@@ -59,6 +59,21 @@ const BOOLEAN_ATTRIBUTES: &[&str] = &[
     "shadowrootserializable",
 ];
 
+/// HTML5 phrasing/inline elements that should NOT cause block formatting.
+/// These elements can appear inline within text and shouldn't have newlines around them.
+const INLINE_ELEMENTS: &[&str] = &[
+    // Text-level semantics
+    "a", "abbr", "b", "bdi", "bdo", "br", "cite", "code", "data", "dfn", "em", "i", "kbd", "mark",
+    "q", "ruby", "rt", "rp", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u",
+    "var", "wbr",
+    // Embedded content (inline)
+    "img", "picture", "audio", "video", "canvas", "iframe", "embed", "object", "svg", "math",
+    // Form elements that can appear inline
+    "button", "input", "label", "select", "textarea", "output", "meter", "progress",
+    // Interactive
+    "details", "summary",
+];
+
 /// Options for HTML serialization.
 #[derive(Clone)]
 pub struct SerializeOptions {
@@ -365,7 +380,7 @@ impl HtmlSerializer {
 
     /// Write a closing tag.
     ///
-    /// - `indent_before`: if true, decrement depth and write indent before the tag
+    /// - `indent_before`: if true, decrement depth, add newline if needed, and write indent before the tag
     /// - `newline_after`: if true, write a newline after the tag
     fn write_close_tag_ex(&mut self, name: &str, indent_before: bool, newline_after: bool) {
         if is_void_element(name) {
@@ -373,6 +388,11 @@ impl HtmlSerializer {
         }
         if indent_before {
             self.depth = self.depth.saturating_sub(1);
+            // Add newline before indent only if output doesn't already end with newline
+            // (e.g., after inline content that didn't add newline, but not after block content that did)
+            if !self.out.ends_with(b"\n") {
+                self.write_newline();
+            }
             self.write_indent();
         }
         self.out.extend_from_slice(b"</");
@@ -713,10 +733,19 @@ impl FormatSerializer for HtmlSerializer {
     }
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
-        // Flush any deferred tag from parent before starting a new struct
-        self.flush_deferred_open_tag();
+        // Check if this element is inline (phrasing content) - inline elements shouldn't
+        // cause block formatting in their parent
+        let is_inline = self
+            .pending_field
+            .as_ref()
+            .map(|name| is_inline_element(name))
+            .unwrap_or(false);
 
-        // Mark nearest ancestor struct as having block content (child elements)
+        // Flush any deferred tag from parent before starting a new struct
+        // Use inline mode if this child element is inline (so parent doesn't get newline after opening tag)
+        self.flush_deferred_open_tag_with_mode(is_inline);
+
+        // Mark nearest ancestor struct as having content (and block content if not inline)
         // We need to find the Struct even if there's a Seq in between (for elements lists)
         for ctx in self.stack.iter_mut().rev() {
             if let Ctx::Struct {
@@ -726,7 +755,10 @@ impl FormatSerializer for HtmlSerializer {
             } = ctx
             {
                 *has_content = true;
-                *has_block_content = true;
+                // Only mark as block content if the child element is a block element
+                if !is_inline {
+                    *has_block_content = true;
+                }
                 break;
             }
         }
@@ -837,23 +869,28 @@ impl FormatSerializer for HtmlSerializer {
             if let Some(name) = close
                 && !is_void_element(&name)
             {
-                // Check if parent is a block context (Seq or Struct with block content)
-                let parent_is_block = matches!(
-                    self.stack.last(),
-                    Some(Ctx::Seq { .. })
-                        | Some(Ctx::Struct {
+                // Check if this element is inline - inline elements shouldn't have
+                // newlines added around them
+                let is_inline = is_inline_element(&name);
+
+                // Check if we're in a block context by looking at ancestor structs.
+                // A Seq (elements list) itself doesn't determine block-ness - we need
+                // to find the nearest Struct ancestor and check its has_block_content.
+                let parent_is_block = self.stack.iter().rev().any(|ctx| {
+                    matches!(
+                        ctx,
+                        Ctx::Struct {
                             has_block_content: true,
                             ..
-                        })
-                );
+                        }
+                    )
+                });
 
                 // If we had block content, indent before closing tag
-                // If parent is block context, add newline after (so next sibling is on new line)
-                self.write_close_tag_ex(
-                    &name,
-                    has_block_content,
-                    has_block_content || parent_is_block,
-                );
+                // Only add newline after if we had block content or parent has block content,
+                // AND this element is not inline
+                let newline_after = (has_block_content || parent_is_block) && !is_inline;
+                self.write_close_tag_ex(&name, has_block_content, newline_after);
             }
         }
         Ok(())
@@ -1014,6 +1051,13 @@ fn is_whitespace_sensitive(name: &str) -> bool {
 /// Check if an element is a raw text element (content should not be HTML-escaped).
 fn is_raw_text_element(name: &str) -> bool {
     RAW_TEXT_ELEMENTS
+        .iter()
+        .any(|&v| v.eq_ignore_ascii_case(name))
+}
+
+/// Check if an element is an inline/phrasing element (should not cause block formatting).
+fn is_inline_element(name: &str) -> bool {
+    INLINE_ELEMENTS
         .iter()
         .any(|&v| v.eq_ignore_ascii_case(name))
 }

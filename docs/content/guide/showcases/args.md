@@ -22,16 +22,13 @@ title = "Args"
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -63,16 +60,13 @@ title = "Args"
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -104,16 +98,13 @@ title = "Args"
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -145,13 +136,11 @@ title = "Args"
     <a-c>/// Show version information
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>version</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Git command to run
+<br>    <a-c>/// Git command to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
     <a-pr>command</a-pr><a-p>:</a-p> <a-t>GitCommand</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Available commands
+<br><a-c>/// Available commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>GitCommand</a-t> <a-p>{</a-p>
@@ -160,40 +149,33 @@ title = "Args"
         <a-c>/// The repository URL to clone
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// Directory to clone into
+<br>        <a-c>/// Directory to clone into
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>directory</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Clone only the specified branch
+<br>        <a-c>/// Clone only the specified branch
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Create a shallow clone with limited history
+<br>        <a-c>/// Create a shallow clone with limited history
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
         <a-pr>depth</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Show the working tree status
+<br>    <a-c>/// Show the working tree status
 </a-c>    <a-cr>Status</a-cr> <a-p>{</a-p>
         <a-c>/// Show short-format output
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>short</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-        <a-c>/// Show the branch even in short-format
+<br>        <a-c>/// Show the branch even in short-format
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Manage set of tracked repositories
+<br>    <a-c>/// Manage set of tracked repositories
 </a-c>    <a-cr>Remote</a-cr> <a-p>{</a-p>
         <a-c>/// Remote action to perform
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
         <a-pr>action</a-pr><a-p>:</a-p> <a-t>RemoteAction</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Remote management commands
+<br><a-c>/// Remote management commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>RemoteAction</a-t> <a-p>{</a-p>
@@ -202,20 +184,17 @@ title = "Args"
         <a-c>/// Name of the remote
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// URL of the remote repository
+<br>        <a-c>/// URL of the remote repository
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Remove the remote named &lt;name&gt;
+<br>    <a-c>/// Remove the remote named &lt;name&gt;
 </a-c>    rm <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// List all remotes
+<br>    <a-c>/// List all remotes
 </a-c>    ls <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
@@ -251,13 +230,11 @@ title = "Args"
     <a-c>/// Show version information
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>version</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Git command to run
+<br>    <a-c>/// Git command to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
     <a-pr>command</a-pr><a-p>:</a-p> <a-t>GitCommand</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Available commands
+<br><a-c>/// Available commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>GitCommand</a-t> <a-p>{</a-p>
@@ -266,40 +243,33 @@ title = "Args"
         <a-c>/// The repository URL to clone
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// Directory to clone into
+<br>        <a-c>/// Directory to clone into
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>directory</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Clone only the specified branch
+<br>        <a-c>/// Clone only the specified branch
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Create a shallow clone with limited history
+<br>        <a-c>/// Create a shallow clone with limited history
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
         <a-pr>depth</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Show the working tree status
+<br>    <a-c>/// Show the working tree status
 </a-c>    <a-cr>Status</a-cr> <a-p>{</a-p>
         <a-c>/// Show short-format output
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>short</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-        <a-c>/// Show the branch even in short-format
+<br>        <a-c>/// Show the branch even in short-format
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Manage set of tracked repositories
+<br>    <a-c>/// Manage set of tracked repositories
 </a-c>    <a-cr>Remote</a-cr> <a-p>{</a-p>
         <a-c>/// Remote action to perform
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
         <a-pr>action</a-pr><a-p>:</a-p> <a-t>RemoteAction</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Remote management commands
+<br><a-c>/// Remote management commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>RemoteAction</a-t> <a-p>{</a-p>
@@ -308,20 +278,17 @@ title = "Args"
         <a-c>/// Name of the remote
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// URL of the remote repository
+<br>        <a-c>/// URL of the remote repository
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Remove the remote named &lt;name&gt;
+<br>    <a-c>/// Remove the remote named &lt;name&gt;
 </a-c>    rm <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// List all remotes
+<br>    <a-c>/// List all remotes
 </a-c>    ls <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
@@ -359,13 +326,11 @@ title = "Args"
     <a-c>/// Show version information
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>version</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Git command to run
+<br>    <a-c>/// Git command to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
     <a-pr>command</a-pr><a-p>:</a-p> <a-t>GitCommand</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Available commands
+<br><a-c>/// Available commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>GitCommand</a-t> <a-p>{</a-p>
@@ -374,40 +339,33 @@ title = "Args"
         <a-c>/// The repository URL to clone
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// Directory to clone into
+<br>        <a-c>/// Directory to clone into
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>directory</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Clone only the specified branch
+<br>        <a-c>/// Clone only the specified branch
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Create a shallow clone with limited history
+<br>        <a-c>/// Create a shallow clone with limited history
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
         <a-pr>depth</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Show the working tree status
+<br>    <a-c>/// Show the working tree status
 </a-c>    <a-cr>Status</a-cr> <a-p>{</a-p>
         <a-c>/// Show short-format output
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>short</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-        <a-c>/// Show the branch even in short-format
+<br>        <a-c>/// Show the branch even in short-format
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Manage set of tracked repositories
+<br>    <a-c>/// Manage set of tracked repositories
 </a-c>    <a-cr>Remote</a-cr> <a-p>{</a-p>
         <a-c>/// Remote action to perform
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
         <a-pr>action</a-pr><a-p>:</a-p> <a-t>RemoteAction</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Remote management commands
+<br><a-c>/// Remote management commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>RemoteAction</a-t> <a-p>{</a-p>
@@ -416,20 +374,17 @@ title = "Args"
         <a-c>/// Name of the remote
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// URL of the remote repository
+<br>        <a-c>/// URL of the remote repository
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Remove the remote named &lt;name&gt;
+<br>    <a-c>/// Remove the remote named &lt;name&gt;
 </a-c>    rm <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// List all remotes
+<br>    <a-c>/// List all remotes
 </a-c>    ls <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
@@ -470,42 +425,38 @@ title = "Args"
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
 </details>
-<div class="serialized-output">
-<h4>Rust Output</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>mytool <a-co>1</a-co><a-p>.</a-p><a-co>0</a-co><a-p>.</a-p><a-co>0</a-co>
+<div class="output">
+<pre><code>mytool 1.0.0
 
-<a-cr>A</a-cr> simple <a-cr>CLI</a-cr> tool <a-k>for</a-k> file processing<a-p>.</a-p>
+A simple CLI tool for file processing.
 
-<a-p>[</a-p><a-co>1</a-co>m<a-p>[</a-p><a-co>33</a-co>mUSAGE<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
-    mytool <a-p>[</a-p><a-cr>OPTIONS</a-cr><a-p>]</a-p> &lt;<a-cr>INPUT</a-cr>&gt; <a-p>[</a-p><a-cr>OUTPUT</a-cr><a-p>]</a-p>
+<span style="font-weight:bold"></span><span style="color:#e5c07b">USAGE</span><span style="color:inherit"></span>:
+    mytool [OPTIONS] &lt;INPUT&gt; [OUTPUT]
 
-<a-p>[</a-p><a-co>1</a-co>m<a-p>[</a-p><a-co>33</a-co>mARGUMENTS<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
-        <a-p>[</a-p><a-co>32</a-co><a-t>m</a-t><a-p>&lt;</a-p><a-t>INPUT</a-t><a-p>&gt;</a-p><a-p>[</a-p><a-co>39</a-co>m
-            <a-cr>Input</a-cr> file to process
-        <a-p>[</a-p><a-co>32</a-co><a-t>m</a-t><a-p>&lt;</a-p><a-t>OUTPUT</a-t><a-p>&gt;</a-p><a-p>[</a-p><a-co>39</a-co>m
-            <a-cr>Output</a-cr> file <a-p>(</a-p>defaults to stdout<a-p>)</a-p>
+<span style="font-weight:bold"></span><span style="color:#e5c07b">ARGUMENTS</span><span style="color:inherit"></span>:
+        <span style="color:#98c379">&lt;INPUT&gt;</span><span style="color:inherit">
+            Input file to process
+        </span><span style="color:#98c379">&lt;OUTPUT&gt;</span><span style="color:inherit">
+            Output file (defaults to stdout)
 
-<a-p>[</a-p><a-co>1</a-co>m<a-p>[</a-p><a-co>33</a-co>mOPTIONS<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
-    <a-p>[</a-p><a-co>32</a-co>m-v<a-p>[</a-p><a-co>39</a-co>m<a-p>,</a-p> <a-p>[</a-p><a-co>32</a-co>m--verbose<a-p>[</a-p><a-co>39</a-co>m
-            <a-cr>Enable</a-cr> verbose output
-    <a-p>[</a-p><a-co>32</a-co>m-j<a-p>[</a-p><a-co>39</a-co>m<a-p>,</a-p> <a-p>[</a-p><a-co>32</a-co>m--jobs<a-p>[</a-p><a-co>39</a-co><a-t>m</a-t> <a-p>&lt;</a-p><a-t>OPTION</a-t><a-p>&gt;</a-p>
-            <a-cr>Number</a-cr> of parallel jobs to run
+</span><span style="font-weight:bold"></span><span style="color:#e5c07b">OPTIONS</span><span style="color:inherit"></span>:
+    <span style="color:#98c379">-v</span><span style="color:inherit">, </span><span style="color:#98c379">--verbose</span><span style="color:inherit">
+            Enable verbose output
+    </span><span style="color:#98c379">-j</span><span style="color:inherit">, </span><span style="color:#98c379">--jobs</span><span style="color:inherit"> &lt;OPTION&gt;
+            Number of parallel jobs to run
 
-</code></pre>
+</span></code></pre>
 </div>
 </section>
 
@@ -521,16 +472,13 @@ title = "Args"
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -539,28 +487,27 @@ title = "Args"
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;--help&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="serialized-output">
-<h4>Rust Output</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>target/debug/examples/args_showcase
+<div class="output">
+<pre><code>target/debug/examples/args_showcase
 
-<a-cr>A</a-cr> simple <a-cr>CLI</a-cr> tool <a-k>for</a-k> file processing<a-p>.</a-p>
+A simple CLI tool for file processing.
 
-<a-p>[</a-p><a-co>1</a-co>m<a-p>[</a-p><a-co>33</a-co>mUSAGE<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
-    target/debug/examples/args_showcase <a-p>[</a-p><a-cr>OPTIONS</a-cr><a-p>]</a-p> &lt;<a-cr>INPUT</a-cr>&gt; <a-p>[</a-p><a-cr>OUTPUT</a-cr><a-p>]</a-p>
+<span style="font-weight:bold"></span><span style="color:#e5c07b">USAGE</span><span style="color:inherit"></span>:
+    target/debug/examples/args_showcase [OPTIONS] &lt;INPUT&gt; [OUTPUT]
 
-<a-p>[</a-p><a-co>1</a-co>m<a-p>[</a-p><a-co>33</a-co>mARGUMENTS<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
-        <a-p>[</a-p><a-co>32</a-co><a-t>m</a-t><a-p>&lt;</a-p><a-t>INPUT</a-t><a-p>&gt;</a-p><a-p>[</a-p><a-co>39</a-co>m
-            <a-cr>Input</a-cr> file to process
-        <a-p>[</a-p><a-co>32</a-co><a-t>m</a-t><a-p>&lt;</a-p><a-t>OUTPUT</a-t><a-p>&gt;</a-p><a-p>[</a-p><a-co>39</a-co>m
-            <a-cr>Output</a-cr> file <a-p>(</a-p>defaults to stdout<a-p>)</a-p>
+<span style="font-weight:bold"></span><span style="color:#e5c07b">ARGUMENTS</span><span style="color:inherit"></span>:
+        <span style="color:#98c379">&lt;INPUT&gt;</span><span style="color:inherit">
+            Input file to process
+        </span><span style="color:#98c379">&lt;OUTPUT&gt;</span><span style="color:inherit">
+            Output file (defaults to stdout)
 
-<a-p>[</a-p><a-co>1</a-co>m<a-p>[</a-p><a-co>33</a-co>mOPTIONS<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
-    <a-p>[</a-p><a-co>32</a-co>m-v<a-p>[</a-p><a-co>39</a-co>m<a-p>,</a-p> <a-p>[</a-p><a-co>32</a-co>m--verbose<a-p>[</a-p><a-co>39</a-co>m
-            <a-cr>Enable</a-cr> verbose output
-    <a-p>[</a-p><a-co>32</a-co>m-j<a-p>[</a-p><a-co>39</a-co>m<a-p>,</a-p> <a-p>[</a-p><a-co>32</a-co>m--jobs<a-p>[</a-p><a-co>39</a-co><a-t>m</a-t> <a-p>&lt;</a-p><a-t>OPTION</a-t><a-p>&gt;</a-p>
-            <a-cr>Number</a-cr> of parallel jobs to run
+</span><span style="font-weight:bold"></span><span style="color:#e5c07b">OPTIONS</span><span style="color:inherit"></span>:
+    <span style="color:#98c379">-v</span><span style="color:inherit">, </span><span style="color:#98c379">--verbose</span><span style="color:inherit">
+            Enable verbose output
+    </span><span style="color:#98c379">-j</span><span style="color:inherit">, </span><span style="color:#98c379">--jobs</span><span style="color:inherit"> &lt;OPTION&gt;
+            Number of parallel jobs to run
 
-</code></pre>
+</span></code></pre>
 </div>
 </section>
 
@@ -576,13 +523,11 @@ title = "Args"
     <a-c>/// Show version information
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>version</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Git command to run
+<br>    <a-c>/// Git command to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
     <a-pr>command</a-pr><a-p>:</a-p> <a-t>GitCommand</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Available commands
+<br><a-c>/// Available commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>GitCommand</a-t> <a-p>{</a-p>
@@ -591,40 +536,33 @@ title = "Args"
         <a-c>/// The repository URL to clone
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// Directory to clone into
+<br>        <a-c>/// Directory to clone into
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>directory</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Clone only the specified branch
+<br>        <a-c>/// Clone only the specified branch
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Create a shallow clone with limited history
+<br>        <a-c>/// Create a shallow clone with limited history
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
         <a-pr>depth</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Show the working tree status
+<br>    <a-c>/// Show the working tree status
 </a-c>    <a-cr>Status</a-cr> <a-p>{</a-p>
         <a-c>/// Show short-format output
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>short</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-        <a-c>/// Show the branch even in short-format
+<br>        <a-c>/// Show the branch even in short-format
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Manage set of tracked repositories
+<br>    <a-c>/// Manage set of tracked repositories
 </a-c>    <a-cr>Remote</a-cr> <a-p>{</a-p>
         <a-c>/// Remote action to perform
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
         <a-pr>action</a-pr><a-p>:</a-p> <a-t>RemoteAction</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Remote management commands
+<br><a-c>/// Remote management commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>RemoteAction</a-t> <a-p>{</a-p>
@@ -633,20 +571,17 @@ title = "Args"
         <a-c>/// Name of the remote
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// URL of the remote repository
+<br>        <a-c>/// URL of the remote repository
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Remove the remote named &lt;name&gt;
+<br>    <a-c>/// Remove the remote named &lt;name&gt;
 </a-c>    rm <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// List all remotes
+<br>    <a-c>/// List all remotes
 </a-c>    ls <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
@@ -654,28 +589,27 @@ title = "Args"
     <a-p>},</a-p>
 <a-p>}</a-p></code></pre>
 </details>
-<div class="serialized-output">
-<h4>Rust Output</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>git <a-co>2</a-co><a-p>.</a-p><a-co>40</a-co><a-p>.</a-p><a-co>0</a-co>
+<div class="output">
+<pre><code>git 2.40.0
 
-<a-pr>Git</a-pr>-like <a-cr>CLI</a-cr> with subcommands<a-p>.</a-p>
+Git-like CLI with subcommands.
 
-<a-p>[</a-p><a-co>1</a-co><a-pr>m</a-pr><a-p>[</a-p><a-co>33</a-co>mUSAGE<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
-    git <a-p>[</a-p><a-cr>OPTIONS</a-cr><a-p>]</a-p> &lt;<a-cr>COMMAND</a-cr>&gt;
+<span style="font-weight:bold"></span><span style="color:#e5c07b">USAGE</span><span style="color:inherit"></span>:
+    git [OPTIONS] &lt;COMMAND&gt;
 
-<a-p>[</a-p><a-co>1</a-co>m<a-p>[</a-p><a-co>33</a-co>mOPTIONS<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
-        <a-p>[</a-p><a-co>32</a-co>m--version<a-p>[</a-p><a-co>39</a-co>m
-            <a-cr>Show</a-cr> version information
+<span style="font-weight:bold"></span><span style="color:#e5c07b">OPTIONS</span><span style="color:inherit"></span>:
+        <span style="color:#98c379">--version</span><span style="color:inherit">
+            Show version information
 
-<a-p>[</a-p><a-co>1</a-co>m<a-p>[</a-p><a-co>33</a-co>mCOMMANDS<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
-    <a-p>[</a-p><a-co>32</a-co>mclone<a-p>[</a-p><a-co>39</a-co>m
-            <a-cr>Clone</a-cr> a repository into a new directory
-    <a-p>[</a-p><a-co>32</a-co>mstatus<a-p>[</a-p><a-co>39</a-co>m
-            <a-cr>Show</a-cr> the working tree status
-    <a-p>[</a-p><a-co>32</a-co>mremote<a-p>[</a-p><a-co>39</a-co>m
-            <a-cr>Manage</a-cr> set of tracked repositories
+</span><span style="font-weight:bold"></span><span style="color:#e5c07b">COMMANDS</span><span style="color:inherit"></span>:
+    <span style="color:#98c379">clone</span><span style="color:inherit">
+            Clone a repository into a new directory
+    </span><span style="color:#98c379">status</span><span style="color:inherit">
+            Show the working tree status
+    </span><span style="color:#98c379">remote</span><span style="color:inherit">
+            Manage set of tracked repositories
 
-</code></pre>
+</span></code></pre>
 </div>
 </section>
 
@@ -694,53 +628,43 @@ title = "Args"
     <a-c>/// Build in release mode with optimizations
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>release</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs
+<br>    <a-c>/// Number of parallel jobs
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Package to build
+<br>    <a-c>/// Package to build
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>package</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Build all packages in the workspace
+<br>    <a-c>/// Build all packages in the workspace
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>workspace</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Space-separated list of features to enable
+<br>    <a-c>/// Space-separated list of features to enable
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>features</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Target triple to build for
+<br>    <a-c>/// Target triple to build for
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>target</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
 </details>
 <div class="serialized-output">
-<h4>Rust Output</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>_cargo-<a-f>build</a-f><a-p>()</a-p> <a-p>{</a-p>
+<h4>Output Output</h4>
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>_cargo-build() {
     local cur prev words cword
-    _init_completion || <a-k>return</a-k>
-
-    local commands=<a-s>&quot;&quot;</a-s>
-    local flags=<a-s>&quot;&quot;</a-s>
-
-    flags=<a-s>&quot;--release -r --jobs -j --package -p --workspace --features -F --target&quot;</a-s>
-
-    case &quot;$prev&quot; <a-k>in</a-k>
-        # <a-cr>Add</a-cr> cases <a-k>for</a-k> flags that take values
-        <a-o>*</a-o><a-p>)</a-p>
-            <a-p>;;</a-p>
+    _init_completion || return
+<br>    local commands=&quot;&quot;
+    local flags=&quot;&quot;
+<br>    flags=&quot;--release -r --jobs -j --package -p --workspace --features -F --target&quot;
+<br>    case &quot;$prev&quot; in
+        # Add cases for flags that take values
+        *)
+            ;;
     esac
-
-    if <a-p>[[</a-p> <a-s>&quot;$cur&quot;</a-s> == -<a-o>*</a-o> <a-p>]];</a-p> then
-        <a-cr>COMPREPLY</a-cr>=<a-p>(</a-p>$<a-p>(</a-p>compgen -<a-cr>W</a-cr> <a-s>&quot;$flags&quot;</a-s> -- <a-s>&quot;$cur&quot;</a-s><a-p>))</a-p>
-    elif <a-p>[[</a-p> -n <a-s>&quot;$commands&quot;</a-s> <a-p>]];</a-p> then
-        <a-cr>COMPREPLY</a-cr>=<a-p>(</a-p>$<a-p>(</a-p>compgen -<a-cr>W</a-cr> <a-s>&quot;$commands&quot;</a-s> -- <a-s>&quot;$cur&quot;</a-s><a-p>))</a-p>
+<br>    if [[ &quot;$cur&quot; == -* ]]; then
+        COMPREPLY=($(compgen -W &quot;$flags&quot; -- &quot;$cur&quot;))
+    elif [[ -n &quot;$commands&quot; ]]; then
+        COMPREPLY=($(compgen -W &quot;$commands&quot; -- &quot;$cur&quot;))
     fi
-<a-p>}</a-p>
-
-complete -<a-cr>F</a-cr> _cargo-build cargo-build
+}
+<br>complete -F _cargo-build cargo-build
 </code></pre>
 </div>
 </section>
@@ -757,53 +681,44 @@ complete -<a-cr>F</a-cr> _cargo-build cargo-build
     <a-c>/// Build in release mode with optimizations
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>release</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs
+<br>    <a-c>/// Number of parallel jobs
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Package to build
+<br>    <a-c>/// Package to build
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>package</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Build all packages in the workspace
+<br>    <a-c>/// Build all packages in the workspace
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>workspace</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Space-separated list of features to enable
+<br>    <a-c>/// Space-separated list of features to enable
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>features</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Target triple to build for
+<br>    <a-c>/// Target triple to build for
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>target</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
 </details>
 <div class="serialized-output">
-<h4>Rust Output</h4>
+<h4>Output Output</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>#compdef cargo-build
-
-_cargo-<a-f>build</a-f><a-p>()</a-p> <a-p>{</a-p>
+<br>_cargo-build() {
     local -a commands
     local -a options
-
-    options=<a-p>(</a-p>
-        <a-o>&#39;</a-o>-r<a-p>[</a-p><a-cr>Build</a-cr> in release mode with optimizations<a-p>]</a-p><a-o>&#39;</a-o>
-        <a-o>&#39;</a-o>--release<a-p>[</a-p><a-cr>Build</a-cr> in release mode with optimizations<a-p>]</a-p><a-o>&#39;</a-o>
-        <a-o>&#39;</a-o>-j<a-p>[</a-p><a-cr>Number</a-cr> of parallel jobs<a-p>]</a-p><a-o>&#39;</a-o>
-        <a-o>&#39;</a-o>--jobs<a-p>[</a-p><a-cr>Number</a-cr> of parallel jobs<a-p>]</a-p><a-o>&#39;</a-o>
-        <a-o>&#39;</a-o>-p<a-p>[</a-p><a-cr>Package</a-cr> to build<a-p>]</a-p><a-o>&#39;</a-o>
-        <a-o>&#39;</a-o>--package<a-p>[</a-p><a-cr>Package</a-cr> to build<a-p>]</a-p><a-o>&#39;</a-o>
-        <a-o>&#39;</a-o>--workspace<a-p>[</a-p><a-cr>Build</a-cr> all packages in the workspace<a-p>]</a-p><a-o>&#39;</a-o>
-        <a-o>&#39;</a-o>-<a-cr>F</a-cr><a-p>[</a-p><a-cr>Space</a-cr>-separated list of features to enable<a-p>]</a-p><a-o>&#39;</a-o>
-        <a-o>&#39;</a-o>--features<a-p>[</a-p><a-cr>Space</a-cr>-separated list of features to enable<a-p>]</a-p><a-o>&#39;</a-o>
-        <a-o>&#39;</a-o>--target<a-p>[</a-p><a-cr>Target</a-cr> triple to build <a-k>for</a-k><a-p>]</a-p><a-o>&#39;</a-o>
-    <a-p>)</a-p>
-
-    _arguments $options
-<a-p>}</a-p>
-
-_cargo-build <a-s>&quot;$@&quot;</a-s>
+<br>    options=(
+        '-r[Build in release mode with optimizations]'
+        '--release[Build in release mode with optimizations]'
+        '-j[Number of parallel jobs]'
+        '--jobs[Number of parallel jobs]'
+        '-p[Package to build]'
+        '--package[Package to build]'
+        '--workspace[Build all packages in the workspace]'
+        '-F[Space-separated list of features to enable]'
+        '--features[Space-separated list of features to enable]'
+        '--target[Target triple to build for]'
+    )
+<br>    _arguments $options
+}
+<br>_cargo-build &quot;$@&quot;
 </code></pre>
 </div>
 </section>
@@ -820,38 +735,32 @@ _cargo-build <a-s>&quot;$@&quot;</a-s>
     <a-c>/// Build in release mode with optimizations
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>release</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs
+<br>    <a-c>/// Number of parallel jobs
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Package to build
+<br>    <a-c>/// Package to build
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>package</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Build all packages in the workspace
+<br>    <a-c>/// Build all packages in the workspace
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>workspace</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Space-separated list of features to enable
+<br>    <a-c>/// Space-separated list of features to enable
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>features</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Target triple to build for
+<br>    <a-c>/// Target triple to build for
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>target</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
 </details>
 <div class="serialized-output">
-<h4>Rust Output</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code># <a-cr>Fish</a-cr> completion for cargo-build
-
-complete -c cargo-build -s r -l release -d <a-o>&#39;</a-o><a-cr>Build</a-cr> in release mode with optimizations<a-o>&#39;</a-o>
-complete -c cargo-build -s j -l jobs -d <a-o>&#39;</a-o><a-cr>Number</a-cr> of parallel jobs<a-o>&#39;</a-o>
-complete -c cargo-build -s p -l package -d <a-o>&#39;</a-o><a-cr>Package</a-cr> to build<a-o>&#39;</a-o>
-complete -c cargo-build -l workspace -d <a-o>&#39;</a-o><a-cr>Build</a-cr> all packages in the workspace<a-o>&#39;</a-o>
-complete -c cargo-build -s <a-cr>F</a-cr> -l features -d <a-o>&#39;</a-o><a-cr>Space</a-cr>-separated list of features to enable<a-o>&#39;</a-o>
-complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple to build <a-k>for</a-k><a-o>&#39;</a-o>
+<h4>Output Output</h4>
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code># Fish completion for cargo-build
+<br>complete -c cargo-build -s r -l release -d 'Build in release mode with optimizations'
+complete -c cargo-build -s j -l jobs -d 'Number of parallel jobs'
+complete -c cargo-build -s p -l package -d 'Package to build'
+complete -c cargo-build -l workspace -d 'Build all packages in the workspace'
+complete -c cargo-build -s F -l features -d 'Space-separated list of features to enable'
+complete -c cargo-build -l target -d 'Target triple to build for'
 </code></pre>
 </div>
 </section>
@@ -871,16 +780,13 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -915,24 +821,19 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Build in release mode with optimizations
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>release</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs
+<br>    <a-c>/// Number of parallel jobs
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Package to build
+<br>    <a-c>/// Package to build
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>package</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Build all packages in the workspace
+<br>    <a-c>/// Build all packages in the workspace
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>workspace</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Space-separated list of features to enable
+<br>    <a-c>/// Space-separated list of features to enable
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>features</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Target triple to build for
+<br>    <a-c>/// Target triple to build for
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>target</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -967,16 +868,13 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -1015,16 +913,13 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -1063,16 +958,13 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -1111,16 +1003,13 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -1155,16 +1044,13 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -1199,24 +1085,19 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Build in release mode with optimizations
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>release</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs
+<br>    <a-c>/// Number of parallel jobs
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Package to build
+<br>    <a-c>/// Package to build
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>package</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Build all packages in the workspace
+<br>    <a-c>/// Build all packages in the workspace
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>workspace</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Space-separated list of features to enable
+<br>    <a-c>/// Space-separated list of features to enable
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>features</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Target triple to build for
+<br>    <a-c>/// Target triple to build for
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>target</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -1257,13 +1138,11 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Show version information
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>version</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Git command to run
+<br>    <a-c>/// Git command to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
     <a-pr>command</a-pr><a-p>:</a-p> <a-t>GitCommand</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Available commands
+<br><a-c>/// Available commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>GitCommand</a-t> <a-p>{</a-p>
@@ -1272,40 +1151,33 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
         <a-c>/// The repository URL to clone
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// Directory to clone into
+<br>        <a-c>/// Directory to clone into
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>directory</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Clone only the specified branch
+<br>        <a-c>/// Clone only the specified branch
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Create a shallow clone with limited history
+<br>        <a-c>/// Create a shallow clone with limited history
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
         <a-pr>depth</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Show the working tree status
+<br>    <a-c>/// Show the working tree status
 </a-c>    <a-cr>Status</a-cr> <a-p>{</a-p>
         <a-c>/// Show short-format output
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>short</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-        <a-c>/// Show the branch even in short-format
+<br>        <a-c>/// Show the branch even in short-format
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Manage set of tracked repositories
+<br>    <a-c>/// Manage set of tracked repositories
 </a-c>    <a-cr>Remote</a-cr> <a-p>{</a-p>
         <a-c>/// Remote action to perform
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
         <a-pr>action</a-pr><a-p>:</a-p> <a-t>RemoteAction</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Remote management commands
+<br><a-c>/// Remote management commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>RemoteAction</a-t> <a-p>{</a-p>
@@ -1314,20 +1186,17 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
         <a-c>/// Name of the remote
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// URL of the remote repository
+<br>        <a-c>/// URL of the remote repository
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Remove the remote named &lt;name&gt;
+<br>    <a-c>/// Remove the remote named &lt;name&gt;
 </a-c>    rm <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// List all remotes
+<br>    <a-c>/// List all remotes
 </a-c>    ls <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
@@ -1365,13 +1234,11 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Show version information
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>version</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Git command to run
+<br>    <a-c>/// Git command to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
     <a-pr>command</a-pr><a-p>:</a-p> <a-t>GitCommand</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Available commands
+<br><a-c>/// Available commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>GitCommand</a-t> <a-p>{</a-p>
@@ -1380,40 +1247,33 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
         <a-c>/// The repository URL to clone
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// Directory to clone into
+<br>        <a-c>/// Directory to clone into
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>directory</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Clone only the specified branch
+<br>        <a-c>/// Clone only the specified branch
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Create a shallow clone with limited history
+<br>        <a-c>/// Create a shallow clone with limited history
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
         <a-pr>depth</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Show the working tree status
+<br>    <a-c>/// Show the working tree status
 </a-c>    <a-cr>Status</a-cr> <a-p>{</a-p>
         <a-c>/// Show short-format output
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>short</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-        <a-c>/// Show the branch even in short-format
+<br>        <a-c>/// Show the branch even in short-format
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Manage set of tracked repositories
+<br>    <a-c>/// Manage set of tracked repositories
 </a-c>    <a-cr>Remote</a-cr> <a-p>{</a-p>
         <a-c>/// Remote action to perform
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
         <a-pr>action</a-pr><a-p>:</a-p> <a-t>RemoteAction</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Remote management commands
+<br><a-c>/// Remote management commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>RemoteAction</a-t> <a-p>{</a-p>
@@ -1422,20 +1282,17 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
         <a-c>/// Name of the remote
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// URL of the remote repository
+<br>        <a-c>/// URL of the remote repository
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Remove the remote named &lt;name&gt;
+<br>    <a-c>/// Remove the remote named &lt;name&gt;
 </a-c>    rm <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// List all remotes
+<br>    <a-c>/// List all remotes
 </a-c>    ls <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
@@ -1476,13 +1333,11 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Show version information
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
     <a-pr>version</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Git command to run
+<br>    <a-c>/// Git command to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
     <a-pr>command</a-pr><a-p>:</a-p> <a-t>GitCommand</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Available commands
+<br><a-c>/// Available commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>GitCommand</a-t> <a-p>{</a-p>
@@ -1491,40 +1346,33 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
         <a-c>/// The repository URL to clone
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// Directory to clone into
+<br>        <a-c>/// Directory to clone into
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>directory</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Clone only the specified branch
+<br>        <a-c>/// Clone only the specified branch
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-        <a-c>/// Create a shallow clone with limited history
+<br>        <a-c>/// Create a shallow clone with limited history
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>)]</a-p>
         <a-pr>depth</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Show the working tree status
+<br>    <a-c>/// Show the working tree status
 </a-c>    <a-cr>Status</a-cr> <a-p>{</a-p>
         <a-c>/// Show short-format output
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>short</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-        <a-c>/// Show the branch even in short-format
+<br>        <a-c>/// Show the branch even in short-format
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>branch</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Manage set of tracked repositories
+<br>    <a-c>/// Manage set of tracked repositories
 </a-c>    <a-cr>Remote</a-cr> <a-p>{</a-p>
         <a-c>/// Remote action to perform
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>subcommand</a-at><a-p>)]</a-p>
         <a-pr>action</a-pr><a-p>:</a-p> <a-t>RemoteAction</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Remote management commands
+<br><a-c>/// Remote management commands
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>RemoteAction</a-t> <a-p>{</a-p>
@@ -1533,20 +1381,17 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
         <a-c>/// Name of the remote
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-        <a-c>/// URL of the remote repository
+<br>        <a-c>/// URL of the remote repository
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// Remove the remote named &lt;name&gt;
+<br>    <a-c>/// Remove the remote named &lt;name&gt;
 </a-c>    rm <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-c>/// List all remotes
+<br>    <a-c>/// List all remotes
 </a-c>    ls <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
@@ -1584,16 +1429,13 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
     <a-c>/// Enable verbose output
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
-
-    <a-c>/// Number of parallel jobs to run
+<br>    <a-c>/// Number of parallel jobs to run
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
     <a-pr>jobs</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>usize</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Input file to process
+<br>    <a-c>/// Input file to process
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>input</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-c>/// Output file (defaults to stdout)
+<br>    <a-c>/// Output file (defaults to stdout)
 </a-c>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
     <a-pr>output</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
@@ -1617,9 +1459,9 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/9a08052331c141ce69a86655e9bdddd14c7e07e0/facet-args/examples/args_showcase.rs"><code>facet-args/examples/args_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/9a08052331c141ce69a86655e9bdddd14c7e07e0"><code>9a080523</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-11T16:22:42+01:00">2026-01-11T16:22:42+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5b2c5e9712e0f360b2a4aaa22ae966823affca23/facet-args/examples/args_showcase.rs"><code>facet-args/examples/args_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5b2c5e9712e0f360b2a4aaa22ae966823affca23"><code>5b2c5e971</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-11T22:26:32+01:00">2026-01-11T22:26:32+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

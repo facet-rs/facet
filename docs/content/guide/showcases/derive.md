@@ -18,15 +18,13 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <div class="input">
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-k>use</a-k> facet<a-p>::</a-p><a-cr>Facet</a-cr><a-p>;</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-cr>C</a-cr><a-p>,</a-p><a-at> </a-at><a-cr>Rust</a-cr><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>Status</a-t> <a-p>{</a-p>
     <a-cr>Active</a-cr><a-p>,</a-p>
     <a-cr>Inactive</a-cr><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
+<br><a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
 </code></pre>
 </div>
 <div class="compiler-error">
@@ -49,12 +47,10 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <div class="input">
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-k>use</a-k> facet<a-p>::</a-p><a-cr>Facet</a-cr><a-p>;</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-cr>C</a-cr><a-p>,</a-p><a-at> transparent</a-at><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Wrapper</a-t><a-p>(</a-p><a-t>u32</a-t><a-p>);</a-p>
-
-<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
+<br><a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
 </code></pre>
 </div>
 <div class="compiler-error">
@@ -77,15 +73,13 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <div class="input">
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-k>use</a-k> facet<a-p>::</a-p><a-cr>Facet</a-cr><a-p>;</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-at>transparent</a-at><a-p>,</a-p><a-at> </a-at><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>Status</a-t> <a-p>{</a-p>
     <a-cr>Active</a-cr><a-p>,</a-p>
     <a-cr>Inactive</a-cr><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
+<br><a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
 </code></pre>
 </div>
 <div class="compiler-error">
@@ -119,16 +113,14 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <div class="input">
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-k>use</a-k> facet<a-p>::</a-p><a-cr>Facet</a-cr><a-p>;</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>,</a-p><a-at> </a-at><a-t>u16</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>Priority</a-t> <a-p>{</a-p>
     <a-cr>Low</a-cr><a-p>,</a-p>
     <a-cr>Medium</a-cr><a-p>,</a-p>
     <a-cr>High</a-cr><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
+<br><a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
 </code></pre>
 </div>
 <div class="compiler-error">
@@ -164,15 +156,13 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <div class="input">
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-k>use</a-k> facet<a-p>::</a-p><a-cr>Facet</a-cr><a-p>;</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-at>packed</a-at><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Data</a-t> <a-p>{</a-p>
     <a-pr>a</a-pr><a-p>:</a-p> <a-t>u8</a-t><a-p>,</a-p>
     <a-pr>b</a-pr><a-p>:</a-p> <a-t>u32</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
+<br><a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
 </code></pre>
 </div>
 <div class="compiler-error">
@@ -194,16 +184,14 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <div class="input">
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-k>use</a-k> facet<a-p>::</a-p><a-cr>Facet</a-cr><a-p>;</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-cr>C</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>Status</a-t> <a-p>{</a-p>
     <a-cr>Active</a-cr><a-p>,</a-p>
     <a-cr>Inactive</a-cr><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
+<br><a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
 </code></pre>
 </div>
 <div class="compiler-error">
@@ -244,15 +232,13 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <div class="input">
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-k>use</a-k> facet<a-p>::</a-p><a-cr>Facet</a-cr><a-p>;</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>rename_all = </a-at><a-s>&quot;SCREAMING_SNAKE&quot;</a-s><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Config</a-t> <a-p>{</a-p>
     <a-pr>user_name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-pr>max_retries</a-pr><a-p>:</a-p> <a-t>u32</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
+<br><a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
 </code></pre>
 </div>
 <div class="compiler-error">
@@ -274,15 +260,13 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <div class="input">
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-k>use</a-k> facet<a-p>::</a-p><a-cr>Facet</a-cr><a-p>;</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>rename = </a-at><a-s>&quot;MyConfig&quot;</a-s><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Config</a-t> <a-p>{</a-p>
     <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-pr>value</a-pr><a-p>:</a-p> <a-t>u32</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
+<br><a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{}</a-p>
 </code></pre>
 </div>
 <div class="compiler-error">
@@ -294,9 +278,9 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/3e6fd5971d603bc93a9cbaed73a42d60f93a615a/facet/examples/derive_showcase.rs"><code>facet/examples/derive_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/3e6fd5971d603bc93a9cbaed73a42d60f93a615a"><code>3e6fd5971</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-10T07:06:01+01:00">2026-01-10T07:06:01+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5b2c5e9712e0f360b2a4aaa22ae966823affca23/facet/examples/derive_showcase.rs"><code>facet/examples/derive_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5b2c5e9712e0f360b2a4aaa22ae966823affca23"><code>5b2c5e971</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-11T22:26:32+01:00">2026-01-11T22:26:32+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>
