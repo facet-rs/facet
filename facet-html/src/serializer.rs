@@ -24,7 +24,7 @@ const WHITESPACE_SENSITIVE_ELEMENTS: &[&str] = &["pre", "code", "textarea", "scr
 
 /// HTML5 raw text elements where content should NOT be HTML-escaped.
 /// The HTML5 spec defines these as elements whose content is treated as raw text.
-/// See: https://html.spec.whatwg.org/multipage/parsing.html#raw-text-elements
+/// See: <https://html.spec.whatwg.org/multipage/parsing.html#raw-text-elements>
 const RAW_TEXT_ELEMENTS: &[&str] = &["script", "style"];
 
 /// HTML5 boolean attributes that are written without a value when true.
