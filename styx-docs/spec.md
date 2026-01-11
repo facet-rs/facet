@@ -214,7 +214,8 @@ r#"no need to escape "double quotes" in here"#
 > ```styx
 > r"simple"
 > r#"contains "quotes""#
-> r##"contains "# sequence"##
+> r##"contains "# in the middle"##
+> r###"contains "## in the middle"###
 > ```
 
 ### Heredoc scalars
@@ -595,6 +596,7 @@ build components=(clippy rustfmt miri)
 
 > r[object.attr.termination]
 > The parser MUST terminate an attribute object when the next token is not of the form `key=`.
+> Comments are treated as whitespace and do not affect termination.
 
 Attribute objects work well for inline key-value patterns like labels,
 environment variables, and options. For complex or nested structures, use block form.
@@ -1208,3 +1210,4 @@ STYX enforces the following invariants:
 - **No semantic interpretation during parsing**: The parser produces opaque scalars; meaning is assigned during deserialization.
 - **All structure is explicit**: Braces and parentheses define nesting, not whitespace or conventions.
 - **Commas in objects only**: Commas are optional separators in objects (interchangeable with newlines). Sequences use whitespace only.
+- **Implicit unit values**: Keys without values produce `()` (empty sequence). This enables concise unit variants (`status.ok`) and flag-like entries (`enabled`).
