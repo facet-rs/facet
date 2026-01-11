@@ -68,8 +68,6 @@ let app = Router::new()
 - `postcard`: Enables `Postcard<T>` extractor/response using `facet-postcard`
 - `all`: Enables all format features
 
-
-
 ## LLM contribution policy
 
 ## Sponsors
