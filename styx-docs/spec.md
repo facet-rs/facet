@@ -31,6 +31,10 @@ A STYX document is an [object](#styx--objects). Top-level entries do not require
 > }
 > ```
 
+> r[document.root.separators]
+> Root entries MUST follow the same separator rules as block objects: entries
+> are separated by newlines or commas.
+
 > r[document.root.explicit]
 > If the document starts with `{`, it MUST be a single block object.
 > The closing `}` MUST be the end of the document.
@@ -115,17 +119,22 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 > Sequences MUST start with `(` and end with `)`.
 
 > r[sequence.separators]
-> Elements MUST be separated by whitespace or commas.
+> Elements MUST be separated by whitespace or commas. Mixing is allowed.
+> Trailing commas are allowed.
 >
 > ```styx
 > (a b c)
 > (a, b, c)
+> (a, b c d, e)   // mixed separators
+> (a, b, c,)      // trailing comma
 > (
 >   a
 >   b
 >   c
 > )
 > ```
+>
+> A single-element sequence is valid: `(foo)` contains one element.
 
 > r[sequence.elements]
 > Sequence elements MAY be scalars, block objects, or nested sequences.
@@ -159,7 +168,16 @@ produce identical values.
 
 ### Bare scalars
 
-Bare scalars are delimited by whitespace.
+Bare scalars are delimited by whitespace and structural characters.
+
+> r[scalar.bare.termination]
+> A bare scalar is terminated by whitespace or any of: `{`, `}`, `(`, `)`, `=`, `,`.
+>
+> ```styx
+> items(a b c)     // "items" is key, (a b c) is value
+> foo{bar baz}     // "foo" is key, {bar baz} is value
+> x=1              // in attribute context: "x" is key, "1" is value
+> ```
 
 ```compare
 /// json
@@ -315,9 +333,9 @@ EOF
 
 The parser produces opaque scalar values. Interpretation is a separate layer.
 
-A conforming implementation MUST provide standard interpretations for the following
-scalar forms. These interpretations are applied during deserialization, not parsing.
-The parser itself MUST NOT assign semantic meaning to scalars.
+A conforming deserialization library SHOULD provide standard interpretations for the
+following scalar forms. These interpretations are applied during deserialization, not
+parsing. The parser itself MUST NOT assign semantic meaning to scalars.
 
 > r[scalar.interp.integer]
 > A conforming implementation MUST recognize scalars matching this grammar as
@@ -426,8 +444,11 @@ Keys are dotted paths composed of one or more segments.
 > key     = segment ("." segment)*
 > segment = bare | quoted
 > bare    = [A-Za-z_][A-Za-z0-9_-]*
-> quoted  = '"' ... '"'
+> quoted  = <quoted scalar>
 > ```
+>
+> Quoted key segments use the same syntax and escape sequences as quoted scalars
+> (see r[scalar.quoted.escapes]).
 
 ```compare
 /// json
@@ -551,6 +572,7 @@ Nested objects:
 
 > r[object.block.separators]
 > Entries MUST be separated by newlines or commas.
+> Trailing commas are allowed: `{ a 1, b 2, }` is valid.
 
 ### Attribute form
 
@@ -611,6 +633,8 @@ build components=(clippy rustfmt miri)
 > r[object.attr.binding]
 > `=` binds tighter than whitespace. When the parser encounters `key=` in a
 > value position, it MUST parse an attribute object.
+>
+> Whitespace around `=` is not allowed. `key = value` is invalid; use `key=value`.
 
 > r[object.attr.value]
 > The value after `=` MUST be exactly one value.
@@ -651,7 +675,15 @@ Inside a sequence, use block objects:
 >
 > ```styx
 > (
->   { a=1 b=2 }
+>   { a 1, b 2 }
+> )
+> ```
+>
+> Or with attribute objects nested as values:
+>
+> ```styx
+> (
+>   { config a=1 b=2 }
 > )
 > ```
 
@@ -674,11 +706,11 @@ config {
 Enums are a schema-level concept. The core language provides structural representation
 via externally tagged objects.
 
-An enum value is represented as an object with exactly one key (the variant tag)
-whose value is the payload:
+When a value is interpreted as an enum, it is represented as an object with
+exactly one key (the variant tag) whose value is the payload:
 
 > r[enum.representation]
-> An enum object MUST contain exactly one key.
+> When interpreting a value as an enum, it MUST be an object with exactly one key.
 >
 > ```compare
 > /// json
