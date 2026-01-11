@@ -37,11 +37,9 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
-brotli = "7"
 compact_str = { workspace = true }
 facet = { path = "../facet", features = ["doc", "net", "compact_str", "smol_str"] }
 facet-format = { path = "../facet-format", features = ["jit", "net"] }
-serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net", "tokio"] }
 indoc = { workspace = true }

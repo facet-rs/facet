@@ -810,3 +810,83 @@ fn issue_full_document_with_code_block() {
         code_section
     );
 }
+
+// Issue #1737: HTML-like closing tags inside <script> corrupt document parsing
+// When parsing HTML with <script> tags containing HTML-like content in JavaScript strings
+// (e.g., '</dt>'), facet-html was incorrectly interpreting these as actual HTML closing tags.
+#[test]
+fn issue_1737_script_with_html_closing_tag_in_string() {
+    use facet_html_dom::Script;
+
+    let html = r#"<script>var x = '</dt>';</script>"#;
+    let script: Script =
+        facet_html::from_str(html).expect("Should parse script with closing tag in content");
+
+    assert_eq!(
+        script.text, "var x = '</dt>';",
+        "Script content should preserve HTML-like strings"
+    );
+}
+
+#[test]
+fn issue_1737_script_with_complex_html_in_strings() {
+    use facet_html_dom::Script;
+
+    // Test case from the issue: build info popup script that generates HTML dynamically
+    let html = r#"<script>depsHtml = '<dt>Dependencies</dt><dd><div class="deps-list">';</script>"#;
+    let script: Script =
+        facet_html::from_str(html).expect("Should parse script with complex HTML in strings");
+
+    assert_eq!(
+        script.text, r#"depsHtml = '<dt>Dependencies</dt><dd><div class="deps-list">';"#,
+        "Script content should preserve complex HTML-like strings"
+    );
+}
+
+#[test]
+fn issue_1737_full_document_with_script_html_strings() {
+    use facet_html_dom::Html;
+
+    let html = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Test</title>
+<script>
+var x = '<dt>Term</dt>';
+</script>
+</head>
+<body>
+<p>Hello</p>
+</body>
+</html>"#;
+
+    let doc: Html = facet_html::from_str(html).expect("Should parse document");
+
+    // Check the script content is preserved
+    let head = doc.head.as_ref().expect("Should have head");
+    assert!(!head.script.is_empty(), "Should have script element");
+    assert!(
+        head.script[0].text.contains("'<dt>Term</dt>'"),
+        "Script text should contain the HTML string literal, got: {:?}",
+        head.script[0].text
+    );
+
+    // Verify document structure wasn't corrupted
+    assert!(doc.body.is_some(), "Should have body");
+}
+
+#[test]
+fn issue_1737_style_with_html_like_content() {
+    use facet_html_dom::Style;
+
+    // Style elements should also be treated as raw text
+    let html = r#"<style>/* comment with </div> in it */ .class { color: red; }</style>"#;
+    let style: Style =
+        facet_html::from_str(html).expect("Should parse style with HTML-like content");
+
+    assert!(
+        style.text.contains("</div>"),
+        "Style content should preserve HTML-like content, got: {:?}",
+        style.text
+    );
+}

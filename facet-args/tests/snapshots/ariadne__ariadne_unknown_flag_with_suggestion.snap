@@ -1,0 +1,13 @@
+---
+source: facet-args/tests/ariadne.rs
+expression: ariadne_output
+---
+[args::unknown_long_flag] Error: unknown flag `--c0ncurrency`
+   ╭─[ <unknown>:1:1 ]
+   │
+ 1 │ --c0ncurrency 4
+   │ ──────┬──────  
+   │       ╰──────── unknown flag `--c0ncurrency`
+   │ 
+   │ Help: did you mean `--concurrency`?
+───╯

@@ -539,30 +539,27 @@ title = "Args"
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;--help&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#56b6c2">args::help</span>
+<div class="serialized-output">
+<h4>Rust Output</h4>
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>target/debug/examples/args_showcase
 
-  <span style="color:#56b6c2">☞</span> target/debug/examples/args_showcase
-  <span style="color:#56b6c2">│</span> 
-  <span style="color:#56b6c2">│</span> A simple CLI tool for file processing.
-  <span style="color:#56b6c2">│</span> 
-  <span style="color:#56b6c2">│</span> <span style="font-weight:bold"></span><span style="color:#e5c07b">USAGE</span><span style="color:inherit"></span>:
-  <span style="color:#56b6c2">│</span>     target/debug/examples/args_showcase [OPTIONS] &lt;INPUT&gt; [OUTPUT]
-  <span style="color:#56b6c2">│</span> 
-  <span style="color:#56b6c2">│</span> <span style="font-weight:bold"></span><span style="color:#e5c07b">ARGUMENTS</span><span style="color:inherit"></span>:
-  <span style="color:#56b6c2">│</span>         <span style="color:#98c379">&lt;INPUT&gt;</span><span style="color:inherit">
-  </span><span style="color:#56b6c2">│</span>             Input file to process
-  <span style="color:#56b6c2">│</span>         <span style="color:#98c379">&lt;OUTPUT&gt;</span><span style="color:inherit">
-  </span><span style="color:#56b6c2">│</span>             Output file (defaults to stdout)
-  <span style="color:#56b6c2">│</span> 
-  <span style="color:#56b6c2">│</span> <span style="font-weight:bold"></span><span style="color:#e5c07b">OPTIONS</span><span style="color:inherit"></span>:
-  <span style="color:#56b6c2">│</span>     <span style="color:#98c379">-v</span><span style="color:inherit">, </span><span style="color:#98c379">--verbose</span><span style="color:inherit">
-  </span><span style="color:#56b6c2">│</span>             Enable verbose output
-  <span style="color:#56b6c2">│</span>     <span style="color:#98c379">-j</span><span style="color:inherit">, </span><span style="color:#98c379">--jobs</span><span style="color:inherit"> &lt;OPTION&gt;
-  </span><span style="color:#56b6c2">│</span>             Number of parallel jobs to run
-  <span style="color:#56b6c2">│</span> 
-  <span style="color:#56b6c2">│</span> 
+<a-cr>A</a-cr> simple <a-cr>CLI</a-cr> tool <a-k>for</a-k> file processing<a-p>.</a-p>
+
+<a-p>[</a-p><a-co>1</a-co>m<a-p>[</a-p><a-co>33</a-co>mUSAGE<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
+    target/debug/examples/args_showcase <a-p>[</a-p><a-cr>OPTIONS</a-cr><a-p>]</a-p> &lt;<a-cr>INPUT</a-cr>&gt; <a-p>[</a-p><a-cr>OUTPUT</a-cr><a-p>]</a-p>
+
+<a-p>[</a-p><a-co>1</a-co>m<a-p>[</a-p><a-co>33</a-co>mARGUMENTS<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
+        <a-p>[</a-p><a-co>32</a-co><a-t>m</a-t><a-p>&lt;</a-p><a-t>INPUT</a-t><a-p>&gt;</a-p><a-p>[</a-p><a-co>39</a-co>m
+            <a-cr>Input</a-cr> file to process
+        <a-p>[</a-p><a-co>32</a-co><a-t>m</a-t><a-p>&lt;</a-p><a-t>OUTPUT</a-t><a-p>&gt;</a-p><a-p>[</a-p><a-co>39</a-co>m
+            <a-cr>Output</a-cr> file <a-p>(</a-p>defaults to stdout<a-p>)</a-p>
+
+<a-p>[</a-p><a-co>1</a-co>m<a-p>[</a-p><a-co>33</a-co>mOPTIONS<a-p>[</a-p><a-co>39</a-co>m<a-p>[</a-p><a-co>0</a-co>m<a-p>:</a-p>
+    <a-p>[</a-p><a-co>32</a-co>m-v<a-p>[</a-p><a-co>39</a-co>m<a-p>,</a-p> <a-p>[</a-p><a-co>32</a-co>m--verbose<a-p>[</a-p><a-co>39</a-co>m
+            <a-cr>Enable</a-cr> verbose output
+    <a-p>[</a-p><a-co>32</a-co>m-j<a-p>[</a-p><a-co>39</a-co>m<a-p>,</a-p> <a-p>[</a-p><a-co>32</a-co>m--jobs<a-p>[</a-p><a-co>39</a-co><a-t>m</a-t> <a-p>&lt;</a-p><a-t>OPTION</a-t><a-p>&gt;</a-p>
+            <a-cr>Number</a-cr> of parallel jobs to run
+
 </code></pre>
 </div>
 </section>
@@ -892,17 +889,16 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;--verbos&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::unknown_long_flag</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ --verbos input.txt 
-   · <span style="color:#c678dd;font-weight:bold">────┬───</span>
-   ·     <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;--verbos&#96;</span>
-   ╰────
-<span style="color:#56b6c2">  help: </span>did you mean &#96;--verbose&#96;?
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;--verbos&#96;
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">v</span><span style="color:#e06c75">e</span><span style="color:#e06c75">r</span><span style="color:#e06c75">b</span><span style="color:#e06c75">o</span><span style="color:#e06c75">s</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
+ <span style="color:#888888">  │</span> <span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">┬</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span>  
+ <span style="color:#888888">  │</span>     <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span> unknown flag &#96;--verbos&#96;
+ <span style="color:#888888">  │</span> 
+ <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: did you mean &#96;--verbose&#96;?
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -945,17 +941,16 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;--releas&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::unknown_long_flag</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ --releas 
-   · <span style="color:#c678dd;font-weight:bold">────┬───</span>
-   ·     <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;--releas&#96;</span>
-   ╰────
-<span style="color:#56b6c2">  help: </span>did you mean &#96;--release&#96;?
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;--releas&#96;
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">r</span><span style="color:#e06c75">e</span><span style="color:#e06c75">l</span><span style="color:#e06c75">e</span><span style="color:#e06c75">a</span><span style="color:#e06c75">s</span>
+ <span style="color:#888888">  │</span> <span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">┬</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span>  
+ <span style="color:#888888">  │</span>     <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span> unknown flag &#96;--releas&#96;
+ <span style="color:#888888">  │</span> 
+ <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: did you mean &#96;--release&#96;?
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -990,21 +985,20 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-vxyz&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::unknown_short_flag</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ -vxyz input.txt 
-   · <span style="color:#c678dd;font-weight:bold">  ┬</span>
-   ·   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;-x&#96;</span>
-   ╰────
-<span style="color:#56b6c2">  help: </span>available options:
-          -v, --verbose  Enable verbose output
-          -j, --jobs     Number of parallel jobs to run
-              &lt;input&gt;    Input file to process
-              &lt;output&gt;   Output file (defaults to stdout)
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::unknown_short_flag] Error:</span> unknown flag &#96;-x&#96;
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:3 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">v</span><span style="color:#e06c75">x</span><span style="color:#888888">y</span><span style="color:#888888">z</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
+ <span style="color:#888888">  │</span>   <span style="color:#e06c75">┬</span>  
+ <span style="color:#888888">  │</span>   <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span> unknown flag &#96;-x&#96;
+ <span style="color:#888888">  │</span> 
+ <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: available options:
+ <span style="color:#888888">  │</span>         -v, --verbose  Enable verbose output
+ <span style="color:#888888">  │</span>         -j, --jobs     Number of parallel jobs to run
+ <span style="color:#888888">  │</span>             &lt;input&gt;    Input file to process
+ <span style="color:#888888">  │</span>             &lt;output&gt;   Output file (defaults to stdout)
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -1039,21 +1033,20 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;---verbose&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::unknown_long_flag</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ ---verbose input.txt 
-   · <span style="color:#c678dd;font-weight:bold">─────┬────</span>
-   ·      <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;---verbose&#96;</span>
-   ╰────
-<span style="color:#56b6c2">  help: </span>available options:
-          -v, --verbose  Enable verbose output
-          -j, --jobs     Number of parallel jobs to run
-              &lt;input&gt;    Input file to process
-              &lt;output&gt;   Output file (defaults to stdout)
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;---verbose&#96;
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">v</span><span style="color:#e06c75">e</span><span style="color:#e06c75">r</span><span style="color:#e06c75">b</span><span style="color:#e06c75">o</span><span style="color:#e06c75">s</span><span style="color:#e06c75">e</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
+ <span style="color:#888888">  │</span> <span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">┬</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span>  
+ <span style="color:#888888">  │</span>      <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span> unknown flag &#96;---verbose&#96;
+ <span style="color:#888888">  │</span> 
+ <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: available options:
+ <span style="color:#888888">  │</span>         -v, --verbose  Enable verbose output
+ <span style="color:#888888">  │</span>         -j, --jobs     Number of parallel jobs to run
+ <span style="color:#888888">  │</span>             &lt;input&gt;    Input file to process
+ <span style="color:#888888">  │</span>             &lt;output&gt;   Output file (defaults to stdout)
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -1088,21 +1081,20 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-verbose&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::unknown_short_flag</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ -verbose input.txt 
-   · <span style="color:#c678dd;font-weight:bold">  ┬</span>
-   ·   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;-e&#96;</span>
-   ╰────
-<span style="color:#56b6c2">  help: </span>available options:
-          -v, --verbose  Enable verbose output
-          -j, --jobs     Number of parallel jobs to run
-              &lt;input&gt;    Input file to process
-              &lt;output&gt;   Output file (defaults to stdout)
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::unknown_short_flag] Error:</span> unknown flag &#96;-e&#96;
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:3 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">v</span><span style="color:#e06c75">e</span><span style="color:#888888">r</span><span style="color:#888888">b</span><span style="color:#888888">o</span><span style="color:#888888">s</span><span style="color:#888888">e</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
+ <span style="color:#888888">  │</span>   <span style="color:#e06c75">┬</span>  
+ <span style="color:#888888">  │</span>   <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span> unknown flag &#96;-e&#96;
+ <span style="color:#888888">  │</span> 
+ <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: available options:
+ <span style="color:#888888">  │</span>         -v, --verbose  Enable verbose output
+ <span style="color:#888888">  │</span>         -j, --jobs     Number of parallel jobs to run
+ <span style="color:#888888">  │</span>             &lt;input&gt;    Input file to process
+ <span style="color:#888888">  │</span>             &lt;output&gt;   Output file (defaults to stdout)
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -1137,17 +1129,16 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-j&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::expected_value</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ -j 
-   · <span style="color:#c678dd;font-weight:bold">─┬</span>
-   ·  <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">expected &#96;usize&#96; value</span>
-   ╰────
-<span style="color:#56b6c2">  help: </span>provide a value after the flag
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::expected_value] Error:</span> expected &#96;usize&#96; value
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">j</span>
+ <span style="color:#888888">  │</span> <span style="color:#e06c75">─</span><span style="color:#e06c75">┬</span>  
+ <span style="color:#888888">  │</span>  <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span> expected &#96;usize&#96; value
+ <span style="color:#888888">  │</span> 
+ <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: provide a value after the flag
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -1182,15 +1173,16 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-v&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::missing_argument</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ -v 
-   ╰────
-<span style="color:#56b6c2">  help: </span>provide a value for &#96;&lt;input&gt;&#96;
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::missing_argument] Error:</span> missing required argument &#96;&lt;input&gt;&#96; (Input file to process)
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:4 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">v</span>
+ <span style="color:#888888">  │</span>    <span style="color:#e06c75">│</span> 
+ <span style="color:#888888">  │</span>    <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span> missing required argument &#96;&lt;input&gt;&#96; (Input file to process)
+ <span style="color:#888888">  │</span> 
+ <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: provide a value for &#96;&lt;input&gt;&#96;
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -1233,23 +1225,22 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;extra&quot;</a-s><a-p>,</a-p> <a-s>&quot;--release&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::unexpected_positional</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ extra --release 
-   · <span style="color:#c678dd;font-weight:bold">──┬──</span>
-   ·   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unexpected positional argument</span>
-   ╰────
-<span style="color:#56b6c2">  help: </span>available options:
-          -r, --release    Build in release mode with optimizations
-          -j, --jobs       Number of parallel jobs
-          -p, --package    Package to build
-              --workspace  Build all packages in the workspace
-          -F, --features   Space-separated list of features to enable
-              --target     Target triple to build for
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::unexpected_positional] Error:</span> unexpected positional argument
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#e06c75">e</span><span style="color:#e06c75">x</span><span style="color:#e06c75">t</span><span style="color:#e06c75">r</span><span style="color:#e06c75">a</span><span style="color:#888888"> </span><span style="color:#888888">-</span><span style="color:#888888">-</span><span style="color:#888888">r</span><span style="color:#888888">e</span><span style="color:#888888">l</span><span style="color:#888888">e</span><span style="color:#888888">a</span><span style="color:#888888">s</span><span style="color:#888888">e</span>
+ <span style="color:#888888">  │</span> <span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">┬</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span>  
+ <span style="color:#888888">  │</span>   <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span> unexpected positional argument
+ <span style="color:#888888">  │</span> 
+ <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: available options:
+ <span style="color:#888888">  │</span>         -r, --release    Build in release mode with optimizations
+ <span style="color:#888888">  │</span>         -j, --jobs       Number of parallel jobs
+ <span style="color:#888888">  │</span>         -p, --package    Package to build
+ <span style="color:#888888">  │</span>             --workspace  Build all packages in the workspace
+ <span style="color:#888888">  │</span>         -F, --features   Space-separated list of features to enable
+ <span style="color:#888888">  │</span>             --target     Target triple to build for
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -1348,17 +1339,16 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;clon&quot;</a-s><a-p>,</a-p> <a-s>&quot;https://example.com&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::unknown_subcommand</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ clon https://example.com 
-   · <span style="color:#c678dd;font-weight:bold">──┬─</span>
-   ·   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown subcommand &#96;clon&#96;</span>
-   ╰────
-<span style="color:#56b6c2">  help: </span>did you mean &#96;clone&#96;?
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::unknown_subcommand] Error:</span> unknown subcommand &#96;clon&#96;
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#e06c75">c</span><span style="color:#e06c75">l</span><span style="color:#e06c75">o</span><span style="color:#e06c75">n</span><span style="color:#888888"> </span><span style="color:#888888">h</span><span style="color:#888888">t</span><span style="color:#888888">t</span><span style="color:#888888">p</span><span style="color:#888888">s</span><span style="color:#888888">:</span><span style="color:#888888">/</span><span style="color:#888888">/</span><span style="color:#888888">e</span><span style="color:#888888">x</span><span style="color:#888888">a</span><span style="color:#888888">m</span><span style="color:#888888">p</span><span style="color:#888888">l</span><span style="color:#888888">e</span><span style="color:#888888">.</span><span style="color:#888888">c</span><span style="color:#888888">o</span><span style="color:#888888">m</span>
+ <span style="color:#888888">  │</span> <span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">┬</span><span style="color:#e06c75">─</span>  
+ <span style="color:#888888">  │</span>   <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span> unknown subcommand &#96;clon&#96;
+ <span style="color:#888888">  │</span> 
+ <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: did you mean &#96;clone&#96;?
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -1457,18 +1447,19 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;--version&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::missing_subcommand</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ --version 
-   ╰────
-<span style="color:#56b6c2">  help: </span>available subcommands:
-          clone   Clone a repository into a new directory
-          status  Show the working tree status
-          remote  Manage set of tracked repositories
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::missing_subcommand] Error:</span> expected a subcommand
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:11 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">-</span><span style="color:#888888">v</span><span style="color:#888888">e</span><span style="color:#888888">r</span><span style="color:#888888">s</span><span style="color:#888888">i</span><span style="color:#888888">o</span><span style="color:#888888">n</span>
+ <span style="color:#888888">  │</span>           <span style="color:#e06c75">│</span> 
+ <span style="color:#888888">  │</span>           <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span> expected a subcommand
+ <span style="color:#888888">  │</span> 
+ <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: available subcommands:
+ <span style="color:#888888">  │</span>         clone   Clone a repository into a new directory
+ <span style="color:#888888">  │</span>         status  Show the working tree status
+ <span style="color:#888888">  │</span>         remote  Manage set of tracked repositories
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -1567,15 +1558,16 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;remote&quot;</a-s><a-p>,</a-p> <a-s>&quot;add&quot;</a-s><a-p>,</a-p> <a-s>&quot;origin&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::missing_argument</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ remote add origin 
-   ╰────
-<span style="color:#56b6c2">  help: </span>provide a value for &#96;&lt;url&gt;&#96;
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::missing_argument] Error:</span> missing required argument &#96;&lt;url&gt;&#96; (URL of the remote repository)
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:19 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#888888">r</span><span style="color:#888888">e</span><span style="color:#888888">m</span><span style="color:#888888">o</span><span style="color:#888888">t</span><span style="color:#888888">e</span><span style="color:#888888"> </span><span style="color:#888888">a</span><span style="color:#888888">d</span><span style="color:#888888">d</span><span style="color:#888888"> </span><span style="color:#888888">o</span><span style="color:#888888">r</span><span style="color:#888888">i</span><span style="color:#888888">g</span><span style="color:#888888">i</span><span style="color:#888888">n</span>
+ <span style="color:#888888">  │</span>                   <span style="color:#e06c75">│</span> 
+ <span style="color:#888888">  │</span>                   <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span> missing required argument &#96;&lt;url&gt;&#96; (URL of the remote repository)
+ <span style="color:#888888">  │</span> 
+ <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: provide a value for &#96;&lt;url&gt;&#96;
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -1610,16 +1602,14 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <h4>Rust Input</h4>
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-j&quot;</a-s><a-p>,</a-p> <a-s>&quot;not-a-number&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
 </div>
-<div class="error">
-<h4>Error</h4>
-<pre><code><span style="color:#e06c75">args::reflect_error</span>
-
-  <span style="color:#e06c75">×</span> Could not parse CLI arguments
-   ╭────
- <span style="opacity:0.7">1</span> │ -j not-a-number input.txt 
-   · <span style="color:#c678dd;font-weight:bold">   ──────┬─────</span>
-   ·          <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">invalid value for &#96;usize&#96;</span>
-   ╰────
+<div class="output">
+<pre><code><span style="color:#e06c75">[args::reflect_error] Error:</span> invalid value for &#96;usize&#96;
+   <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:4 <span style="color:#888888">]</span>
+   <span style="color:#888888">│</span>
+ <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">j</span><span style="color:#888888"> </span><span style="color:#e06c75">n</span><span style="color:#e06c75">o</span><span style="color:#e06c75">t</span><span style="color:#e06c75">-</span><span style="color:#e06c75">a</span><span style="color:#e06c75">-</span><span style="color:#e06c75">n</span><span style="color:#e06c75">u</span><span style="color:#e06c75">m</span><span style="color:#e06c75">b</span><span style="color:#e06c75">e</span><span style="color:#e06c75">r</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
+ <span style="color:#888888">  │</span>    <span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">┬</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span>  
+ <span style="color:#888888">  │</span>          <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span> invalid value for &#96;usize&#96;
+<span style="color:#888888">───╯</span>
 </code></pre>
 </div>
 </section>
@@ -1627,9 +1617,9 @@ complete -c cargo-build -l target -d <a-o>&#39;</a-o><a-cr>Target</a-cr> triple 
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/c5842bc4cd833fedc52522b20f09daedff260a0e/facet-args/examples/args_showcase.rs"><code>facet-args/examples/args_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/c5842bc4cd833fedc52522b20f09daedff260a0e"><code>c5842bc4c</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-04T12:56:12+01:00">2026-01-04T12:56:12+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/9a08052331c141ce69a86655e9bdddd14c7e07e0/facet-args/examples/args_showcase.rs"><code>facet-args/examples/args_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/9a08052331c141ce69a86655e9bdddd14c7e07e0"><code>9a080523</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-11T16:22:42+01:00">2026-01-11T16:22:42+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

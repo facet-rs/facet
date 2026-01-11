@@ -1,0 +1,13 @@
+---
+source: facet-args/tests/ariadne.rs
+expression: ariadne_output
+---
+[args::unknown_subcommand] Error: unknown subcommand `buidl`
+   ╭─[ <unknown>:1:1 ]
+   │
+ 1 │ buidl
+   │ ──┬──  
+   │   ╰──── unknown subcommand `buidl`
+   │ 
+   │ Help: did you mean `build`?
+───╯
