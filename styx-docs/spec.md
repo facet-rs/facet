@@ -119,13 +119,11 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 > Sequences MUST start with `(` and end with `)`.
 
 > r[sequence.separators]
-> Elements MUST be separated by whitespace or commas. Mixing is allowed.
-> Trailing commas are allowed.
+> Elements MUST be separated by whitespace or commas. Trailing commas are allowed.
 >
 > ```styx
 > (a b c)
 > (a, b, c)
-> (a, b c d, e)   // mixed separators
 > (a, b, c,)      // trailing comma
 > (
 >   a
