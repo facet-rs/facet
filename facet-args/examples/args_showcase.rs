@@ -20,8 +20,8 @@ impl<'a, 'b, T: facet::Facet<'b>> ArgsResultExt<'a, 'b, T> for Scenario<'a> {
         match result {
             Ok(value) => self.success(value),
             Err(err) if err.is_help_request() => {
-                // Help text is not an error, display it as output
-                self.serialized_output(Language::Rust, err.help_text().unwrap_or(""))
+                // Help text is not an error, display it as output (contains ANSI colors)
+                self.ansi_output(err.help_text().unwrap_or(""))
             }
             Err(err) => {
                 // Use Ariadne for pretty error display
@@ -337,7 +337,7 @@ fn showcase_help_simple(runner: &mut ShowcaseRunner) {
         .scenario("Simple Help")
         .description("Auto-generated help text from struct definition and doc comments.")
         .target_type::<SimpleArgs>()
-        .serialized_output(Language::Rust, &help)
+        .ansi_output(&help)
         .finish();
 }
 
@@ -365,7 +365,7 @@ fn showcase_help_subcommands(runner: &mut ShowcaseRunner) {
         .scenario("Help with Subcommands")
         .description("Help text automatically lists available subcommands with descriptions.")
         .target_type::<GitLikeArgs>()
-        .serialized_output(Language::Rust, &help)
+        .ansi_output(&help)
         .finish();
 }
 
@@ -380,7 +380,7 @@ fn showcase_completions_bash(runner: &mut ShowcaseRunner) {
         .scenario("Bash Completions")
         .description("Generated Bash completion script for tab-completion support.")
         .target_type::<BuildArgs>()
-        .serialized_output(Language::Rust, &completions)
+        .serialized_output(Language::Plain, &completions)
         .finish();
 }
 
@@ -391,7 +391,7 @@ fn showcase_completions_zsh(runner: &mut ShowcaseRunner) {
         .scenario("Zsh Completions")
         .description("Generated Zsh completion script with argument descriptions.")
         .target_type::<BuildArgs>()
-        .serialized_output(Language::Rust, &completions)
+        .serialized_output(Language::Plain, &completions)
         .finish();
 }
 
@@ -402,7 +402,7 @@ fn showcase_completions_fish(runner: &mut ShowcaseRunner) {
         .scenario("Fish Completions")
         .description("Generated Fish shell completion script.")
         .target_type::<BuildArgs>()
-        .serialized_output(Language::Rust, &completions)
+        .serialized_output(Language::Plain, &completions)
         .finish();
 }
 

@@ -21,68 +21,53 @@ title = "HTML"
 <a-k>struct</a-k> <a-t>SimplePage</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>element</a-at><a-p>)]</a-p>
     <a-pr>head</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>SimpleHead</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>element</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>element</a-at><a-p>)]</a-p>
     <a-pr>body</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>SimpleBody</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>SimpleBody</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>class</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>elements</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>elements</a-at><a-p>)]</a-p>
     <a-pr>children</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>BodyElement</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Elements that can appear in the body.
+<br><a-c>/// Elements that can appear in the body.
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>BodyElement</a-t> <a-p>{</a-p>
     h1<a-p>(</a-p><a-t>Heading</a-t><a-p>),</a-p>
-
-    p<a-p>(</a-p><a-t>Paragraph</a-t><a-p>),</a-p>
-
-    div<a-p>(</a-p><a-t>DivElement</a-t><a-p>),</a-p>
+<br>    p<a-p>(</a-p><a-t>Paragraph</a-t><a-p>),</a-p>
+<br>    div<a-p>(</a-p><a-t>DivElement</a-t><a-p>),</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>DivElement</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>id</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>class</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
     <a-pr>content</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Paragraph</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>class</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
     <a-pr>text</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Heading</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>id</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
     <a-pr>text</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>SimpleHead</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>element</a-at><a-p>)]</a-p>
     <a-pr>title</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>SimpleTitle</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>SimpleTitle</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
     <a-pr>text</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
@@ -134,68 +119,53 @@ title = "HTML"
 <a-k>struct</a-k> <a-t>SimplePage</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>element</a-at><a-p>)]</a-p>
     <a-pr>head</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>SimpleHead</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>element</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>element</a-at><a-p>)]</a-p>
     <a-pr>body</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>SimpleBody</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>SimpleBody</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>class</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>elements</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>elements</a-at><a-p>)]</a-p>
     <a-pr>children</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>BodyElement</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p>
-
-<a-c>/// Elements that can appear in the body.
+<br><a-c>/// Elements that can appear in the body.
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>BodyElement</a-t> <a-p>{</a-p>
     h1<a-p>(</a-p><a-t>Heading</a-t><a-p>),</a-p>
-
-    p<a-p>(</a-p><a-t>Paragraph</a-t><a-p>),</a-p>
-
-    div<a-p>(</a-p><a-t>DivElement</a-t><a-p>),</a-p>
+<br>    p<a-p>(</a-p><a-t>Paragraph</a-t><a-p>),</a-p>
+<br>    div<a-p>(</a-p><a-t>DivElement</a-t><a-p>),</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>DivElement</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>id</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>class</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
     <a-pr>content</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Paragraph</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>class</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
     <a-pr>text</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Heading</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>id</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
     <a-pr>text</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>SimpleHead</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>element</a-at><a-p>)]</a-p>
     <a-pr>title</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>SimpleTitle</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>SimpleTitle</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
     <a-pr>text</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
@@ -243,26 +213,20 @@ title = "HTML"
 <a-k>struct</a-k> <a-t>ContactForm</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>action</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>method</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>elements</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>elements</a-at><a-p>)]</a-p>
     <a-pr>inputs</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>FormInput</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>FormInput</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>type</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>name</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>placeholder</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>required</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
 </details>
@@ -316,11 +280,9 @@ title = "HTML"
 <a-k>struct</a-k> <a-t>DivElement</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>id</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>class</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
     <a-pr>content</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 <a-p>}</a-p></code></pre>
 </details>
@@ -341,26 +303,20 @@ title = "HTML"
 <a-k>struct</a-k> <a-t>ContactForm</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>action</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>method</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>elements</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>elements</a-at><a-p>)]</a-p>
     <a-pr>inputs</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>FormInput</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>FormInput</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>type</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>name</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>placeholder</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>required</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
 </details>
@@ -386,14 +342,11 @@ title = "HTML"
 <a-k>struct</a-k> <a-t>DivWithExtras</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>id</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>class</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-c>/// Captures data-*, aria-*, and other unknown attributes
+<br>    <a-c>/// Captures data-*, aria-*, and other unknown attributes
 </a-c>    <a-pr>extra</a-pr><a-p>:</a-p> <a-t>BTreeMap</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>,</a-p> <a-t>String</a-t><a-p>&gt;,</a-p>
-
-    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
+<br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>text</a-at><a-p>)]</a-p>
     <a-pr>content</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 <a-p>}</a-p></code></pre>
 </details>
@@ -419,9 +372,9 @@ title = "HTML"
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/3e6fd5971d603bc93a9cbaed73a42d60f93a615a/facet-html/examples/html_showcase.rs"><code>facet-html/examples/html_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/3e6fd5971d603bc93a9cbaed73a42d60f93a615a"><code>3e6fd5971</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-10T07:06:01+01:00">2026-01-10T07:06:01+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5b2c5e9712e0f360b2a4aaa22ae966823affca23/facet-html/examples/html_showcase.rs"><code>facet-html/examples/html_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5b2c5e9712e0f360b2a4aaa22ae966823affca23"><code>5b2c5e971</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-11T22:26:32+01:00">2026-01-11T22:26:32+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

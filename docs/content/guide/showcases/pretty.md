@@ -130,8 +130,7 @@ title = "Pretty Printing"
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Point</a-t> <a-p>{</a-p>
     <a-pr>x</a-pr><a-p>:</a-p> <a-t>f64</a-t><a-p>,</a-p>
-
-    <a-pr>y</a-pr><a-p>:</a-p> <a-t>f64</a-t><a-p>,</a-p>
+<br>    <a-pr>y</a-pr><a-p>:</a-p> <a-t>f64</a-t><a-p>,</a-p>
 <a-p>}</a-p></code></pre>
 </div>
 </section>
@@ -153,10 +152,8 @@ title = "Pretty Printing"
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Person</a-t> <a-p>{</a-p>
     <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-pr>age</a-pr><a-p>:</a-p> <a-t>u32</a-t><a-p>,</a-p>
-
-    <a-pr>email</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
+<br>    <a-pr>age</a-pr><a-p>:</a-p> <a-t>u32</a-t><a-p>,</a-p>
+<br>    <a-pr>email</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p></code></pre>
 </div>
 </section>
@@ -175,12 +172,9 @@ title = "Pretty Printing"
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>Color</a-t> <a-p>{</a-p>
     <a-cr>Red</a-cr><a-p>,</a-p>
-
-    <a-cr>Green</a-cr><a-p>,</a-p>
-
-    <a-cr>Blue</a-cr><a-p>,</a-p>
-
-    <a-cr>Rgb</a-cr><a-p>(</a-p><a-t>u8</a-t><a-p>,</a-p> <a-t>u8</a-t><a-p>,</a-p> <a-t>u8</a-t><a-p>),</a-p>
+<br>    <a-cr>Green</a-cr><a-p>,</a-p>
+<br>    <a-cr>Blue</a-cr><a-p>,</a-p>
+<br>    <a-cr>Rgb</a-cr><a-p>(</a-p><a-t>u8</a-t><a-p>,</a-p> <a-t>u8</a-t><a-p>,</a-p> <a-t>u8</a-t><a-p>),</a-p>
 <a-p>}</a-p></code></pre>
 </div>
 </section>
@@ -203,12 +197,9 @@ title = "Pretty Printing"
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>Color</a-t> <a-p>{</a-p>
     <a-cr>Red</a-cr><a-p>,</a-p>
-
-    <a-cr>Green</a-cr><a-p>,</a-p>
-
-    <a-cr>Blue</a-cr><a-p>,</a-p>
-
-    <a-cr>Rgb</a-cr><a-p>(</a-p><a-t>u8</a-t><a-p>,</a-p> <a-t>u8</a-t><a-p>,</a-p> <a-t>u8</a-t><a-p>),</a-p>
+<br>    <a-cr>Green</a-cr><a-p>,</a-p>
+<br>    <a-cr>Blue</a-cr><a-p>,</a-p>
+<br>    <a-cr>Rgb</a-cr><a-p>(</a-p><a-t>u8</a-t><a-p>,</a-p> <a-t>u8</a-t><a-p>,</a-p> <a-t>u8</a-t><a-p>),</a-p>
 <a-p>}</a-p></code></pre>
 </div>
 </section>
@@ -230,14 +221,11 @@ title = "Pretty Printing"
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>Message</a-t> <a-p>{</a-p>
     <a-cr>Quit</a-cr><a-p>,</a-p>
-
-    <a-cr>Move</a-cr> <a-p>{</a-p>
+<br>    <a-cr>Move</a-cr> <a-p>{</a-p>
         <a-pr>x</a-pr><a-p>:</a-p> <a-t>i32</a-t><a-p>,</a-p>
-
-        <a-pr>y</a-pr><a-p>:</a-p> <a-t>i32</a-t><a-p>,</a-p>
+<br>        <a-pr>y</a-pr><a-p>:</a-p> <a-t>i32</a-t><a-p>,</a-p>
     <a-p>},</a-p>
-
-    <a-cr>Write</a-cr><a-p>(</a-p><a-t>String</a-t><a-p>),</a-p>
+<br>    <a-cr>Write</a-cr><a-p>(</a-p><a-t>String</a-t><a-p>),</a-p>
 <a-p>}</a-p></code></pre>
 </div>
 </section>
@@ -279,9 +267,9 @@ title = "Pretty Printing"
 <div class="value-output">
 <h4>Value</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span>
+  "<span style="color:rgb(158,206,106)">three</span><span style="color:inherit">"</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">3</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   "<span style="color:rgb(158,206,106)">two</span><span style="color:inherit">"</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">2</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   "<span style="color:rgb(158,206,106)">one</span><span style="color:inherit">"</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">1</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
-  "<span style="color:rgb(158,206,106)">three</span><span style="color:inherit">"</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">3</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="shape-output">
@@ -324,7 +312,7 @@ title = "Pretty Printing"
 <p class="description">Result::Ok displays its success value.</p>
 <div class="value-output">
 <h4>Value</h4>
-<pre><code>unsupported peek variant: Ok(42)</code></pre>
+<pre><code>unsupported peek variant: Ok(42) (Result&lt;i32, String&gt;, User(Opaque))</code></pre>
 </div>
 <div class="shape-output">
 <h4>Shape</h4>
@@ -338,7 +326,7 @@ title = "Pretty Printing"
 <p class="description">Result::Err displays the error value.</p>
 <div class="value-output">
 <h4>Value</h4>
-<pre><code>unsupported peek variant: Err("something went wrong")</code></pre>
+<pre><code>unsupported peek variant: Err("something went wrong") (Result&lt;i32, String&gt;, User(Opaque))</code></pre>
 </div>
 <div class="shape-output">
 <h4>Shape</h4>
@@ -378,28 +366,20 @@ title = "Pretty Printing"
 <pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Company</a-t> <a-p>{</a-p>
     <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-pr>address</a-pr><a-p>:</a-p> <a-t>Address</a-t><a-p>,</a-p>
-
-    <a-pr>employees</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>Person</a-t><a-p>&gt;,</a-p>
+<br>    <a-pr>address</a-pr><a-p>:</a-p> <a-t>Address</a-t><a-p>,</a-p>
+<br>    <a-pr>employees</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>Person</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Person</a-t> <a-p>{</a-p>
     <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-pr>age</a-pr><a-p>:</a-p> <a-t>u32</a-t><a-p>,</a-p>
-
-    <a-pr>email</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
+<br>    <a-pr>age</a-pr><a-p>:</a-p> <a-t>u32</a-t><a-p>,</a-p>
+<br>    <a-pr>email</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <a-p>}</a-p>
-
-<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>Address</a-t> <a-p>{</a-p>
     <a-pr>street</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-pr>city</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
-
-    <a-pr>zip</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
+<br>    <a-pr>city</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
+<br>    <a-pr>zip</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 <a-p>}</a-p></code></pre>
 </div>
 </section>
@@ -407,9 +387,9 @@ title = "Pretty Printing"
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/3e6fd5971d603bc93a9cbaed73a42d60f93a615a/facet-pretty/examples/pretty_showcase.rs"><code>facet-pretty/examples/pretty_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/3e6fd5971d603bc93a9cbaed73a42d60f93a615a"><code>3e6fd5971</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-10T07:06:01+01:00">2026-01-10T07:06:01+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5b2c5e9712e0f360b2a4aaa22ae966823affca23/facet-pretty/examples/pretty_showcase.rs"><code>facet-pretty/examples/pretty_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5b2c5e9712e0f360b2a4aaa22ae966823affca23"><code>5b2c5e971</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-11T22:26:32+01:00">2026-01-11T22:26:32+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

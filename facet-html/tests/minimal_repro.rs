@@ -967,8 +967,245 @@ fn stray_end_tag_does_not_corrupt_document() {
 
     let result = facet_html::from_str::<Html>(html);
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
-    
+
     let doc = result.unwrap();
     assert!(doc.head.is_some(), "head should be present despite stray end tag");
     assert!(doc.body.is_some(), "body should be present despite stray end tag");
+}
+
+// =============================================================================
+// Canonical roundtrip tests: verify html == serialize(parse(html))
+// These test that already-normalized HTML is preserved exactly through roundtrip.
+// These would have caught the inline element spacing bug.
+// =============================================================================
+
+use facet_html_dom::{Blockquote, Code, Div, Figcaption, H1, Label, Li, P, Pre, Td};
+
+#[test]
+fn canonical_inline_link_in_text() {
+    // Inline <a> should not have spaces added around it
+    let html = "<p>See the <a href=\"#\">documentation</a> for details.</p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_multiple_inline_elements() {
+    // Multiple inline elements in a row
+    let html = "<p>This is <strong>bold</strong> and <em>italic</em> text.</p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_nested_inline_elements() {
+    // Nested inline elements
+    let html = "<p>This is <strong><em>bold italic</em></strong> text.</p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_inline_code_in_text() {
+    // Inline <code> in text
+    let html = "<p>Use the <code>foo()</code> function.</p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_link_with_code() {
+    // Link containing code
+    let html = "<p>See <a href=\"#\"><code>example</code></a> here.</p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_list_item_with_link() {
+    // List item with inline link - this was the original bug
+    let html = "<li>First item with <a href=\"#\">link</a>.</li>";
+    let parsed: Li = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_span_in_div() {
+    // Span (inline) in div (block)
+    let html = "<div>Text with <span class=\"highlight\">highlighted</span> word.</div>";
+    let parsed: Div = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+// --- Block/inline boundaries ---
+
+#[test]
+fn canonical_inline_at_start_of_block() {
+    let html = "<p><strong>Bold</strong> then text.</p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_inline_at_end_of_block() {
+    let html = "<p>Text then <em>italic</em></p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_only_inline_in_block() {
+    let html = "<p><a href=\"#\">just a link</a></p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_adjacent_inline_no_text() {
+    let html = "<p><strong>bold</strong><em>italic</em></p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_inline_with_whitespace_between() {
+    let html = "<p><b>a</b> <i>b</i></p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+// --- Void inline elements ---
+
+#[test]
+fn canonical_img_in_text() {
+    let html = "<p>See <img src=\"x.png\" alt=\"img\"> here.</p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_br_in_text() {
+    let html = "<p>Line one<br>Line two</p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_input_in_label() {
+    let html = "<label>Name: <input type=\"text\"></label>";
+    let parsed: Label = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+// --- Nesting depth ---
+
+#[test]
+fn canonical_deeply_nested_inline() {
+    let html = "<p><a href=\"#\"><strong><em><code>deep</code></em></strong></a></p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_inline_in_inline_in_block() {
+    let html = "<div><span><a href=\"#\">link</a></span></div>";
+    let parsed: Div = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+// --- Different block containers ---
+
+#[test]
+fn canonical_inline_in_heading() {
+    let html = "<h1>Title with <code>code</code></h1>";
+    let parsed: H1 = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_inline_in_blockquote() {
+    let html = "<blockquote>Quote with <cite>citation</cite></blockquote>";
+    let parsed: Blockquote = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_inline_in_td() {
+    let html = "<td>Cell with <strong>bold</strong></td>";
+    let parsed: Td = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_inline_in_figcaption() {
+    let html = "<figcaption>Caption <em>emphasized</em></figcaption>";
+    let parsed: Figcaption = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+// --- List edge cases ---
+
+#[test]
+fn canonical_li_starting_with_inline() {
+    let html = "<li><code>cmd</code> - description</li>";
+    let parsed: Li = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_li_ending_with_inline() {
+    let html = "<li>description - <code>cmd</code></li>";
+    let parsed: Li = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+// --- Custom elements (syntax highlighting) ---
+
+#[test]
+fn canonical_custom_inline_elements() {
+    let html = "<code><a-k>fn</a-k> <a-f>main</a-f>()</code>";
+    let parsed: Code = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn canonical_mixed_custom_and_standard() {
+    let html = "<p>The <a-k>keyword</a-k> and <code>code</code></p>";
+    let parsed: P = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+// --- Whitespace sensitive contexts ---
+
+#[test]
+fn canonical_pre_with_inline_spans() {
+    let html = "<pre><code><span>line1</span>\n<span>line2</span></code></pre>";
+    let parsed: Pre = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
