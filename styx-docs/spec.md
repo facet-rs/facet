@@ -117,36 +117,61 @@ Line comments start with `//` and extend to the end of the line.
 
 ## Value types
 
-The parser produces four types of values:
+The parser produces six types of values:
 
   * **Scalar** — an opaque text atom
   * **Object** — an ordered map of keys to values
   * **Sequence** — an ordered list of values
+  * **Tagged sequence** — a sequence with an associated scalar tag
+  * **Tagged object** — an object with an associated scalar tag
   * **Unit** — the absence of a meaningful value (`@`)
 
 ## Scalars
 
 Scalars are opaque atoms. The parser assigns no meaning to them; interpretation
-is deferred until deserialization. Quoted forms are lexical delimiters — they
-allow spaces and special characters but don't change meaning. `foo` and `"foo"`
-produce identical scalar values.
+is deferred until deserialization.
+
+> r[scalar.form]
+> The parser MUST record the lexical form of each scalar: **bare**, **quoted**,
+> **raw**, or **heredoc**. All forms produce identical text content, but the
+> form is preserved for use by the schema layer.
+>
+> ```styx
+> foo          // bare scalar
+> "foo"        // quoted scalar
+> r#"foo"#     // raw scalar
+> <<EOF        // heredoc scalar
+> foo
+> EOF
+> ```
+>
+> The schema layer uses this distinction: only bare scalars starting with `@`
+> are type references. Quoted, raw, and heredoc forms are always literal values
+> (see r[schema.type-ref]).
 
 ### Bare scalars
 
 Bare scalars are delimited by whitespace and structural characters.
 
 > r[scalar.bare.termination]
-> A bare scalar is terminated by whitespace or any of: `{`, `}`, `(`, `)`, `=`, `,`, `//`.
+> A bare scalar is terminated by whitespace or any of: `}`, `)`, `=`, `,`, `//`.
 >
 > ```styx
-> items(a b c)     // "items" is key, (a b c) is value
-> foo{bar baz}     // "foo" is key, {bar baz} is value
 > x=1              // "x" terminates at =, triggers attribute parsing
 > foo// comment    // "foo" is the scalar, comment follows
 > ```
 >
 > When `=` terminates a bare scalar in value position, it triggers attribute object
 > parsing (see r[object.attr.binding]).
+>
+> When `(` or `{` immediately follows a bare scalar (no whitespace), the scalar
+> becomes a tag for a tagged sequence or tagged object (see r[sequence.tagged]
+> and r[object.tagged]).
+>
+> ```styx
+> items tag(a b c)   // "items" is key, tag(a b c) is a tagged sequence
+> foo data{bar baz}  // "foo" is key, data{bar baz} is a tagged object
+> ```
 
 ```compare
 /// json
@@ -198,7 +223,6 @@ Quoted scalars use double quotes and support escape sequences.
 > | `\r` | Carriage return |
 > | `\t` | Tab |
 > | `\0` | Null |
-> | `\@` | Literal `@` (see r[schema.type-ref.escape]) |
 > | `\uXXXX` | Unicode code point (4 hex digits) |
 > | `\u{X...}` | Unicode code point (1-6 hex digits) |
 >
@@ -365,6 +389,79 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 > r[sequence.empty]
 > An empty sequence `()` is valid and represents an empty list.
 
+### Tagged sequences
+
+A tagged sequence is a sequence with an associated tag. The tag is a scalar that
+immediately precedes the opening `(` with no whitespace.
+
+> r[sequence.tagged]
+> When a bare scalar is immediately followed by `(` (no intervening whitespace),
+> the parser MUST produce a **tagged sequence** value. The scalar becomes the tag.
+>
+> ```styx
+> colors rgb(255 128 0)
+> point vec3(1.0 2.0 3.0)
+> ```
+>
+> The value of `colors` is a tagged sequence with tag `rgb` and elements `(255 128 0)`.
+
+> r[sequence.tagged.nested]
+> Tagged sequences may be nested.
+>
+> ```styx
+> value @result(@ok(@string) @err(@integer))
+> ```
+>
+> This is a tagged sequence `@result(...)` containing two tagged sequences
+> `@ok(...)` and `@err(...)`, each containing a type reference.
+
+> r[sequence.tagged.quoted]
+> The tag may be a quoted scalar.
+>
+> ```styx
+> data "my-tag"(a b c)
+> ```
+
+> r[sequence.tagged.empty]
+> A tagged empty sequence is valid.
+>
+> ```styx
+> empty tag()
+> ```
+
+### Tagged objects
+
+A tagged object is an object with an associated tag. The tag is a scalar that
+immediately precedes the opening `{` with no whitespace.
+
+> r[object.tagged]
+> When a bare scalar is immediately followed by `{` (no intervening whitespace),
+> the parser MUST produce a **tagged object** value. The scalar becomes the tag.
+>
+> ```styx
+> status @enum{
+>   ok
+>   pending
+>   err { message @string }
+> }
+> ```
+>
+> The value of `status` is a tagged object with tag `@enum` and the object contents.
+
+> r[object.tagged.quoted]
+> The tag may be a quoted scalar.
+>
+> ```styx
+> data "my-tag"{ key value }
+> ```
+
+> r[object.tagged.empty]
+> A tagged empty object is valid.
+>
+> ```styx
+> empty tag{}
+> ```
+
 ## Unit
 
 The unit value represents the absence of a meaningful value, analogous to `()` in Rust
@@ -404,11 +501,13 @@ Keys are dotted paths composed of one or more segments.
 > A key MUST match the following grammar:
 >
 > ```
-> key     = segment ("." segment)*
+> key     = segment ("." segment)* "?"?
 > segment = bare | quoted
 > bare    = [A-Za-z_][A-Za-z0-9_-]*
 > quoted  = <quoted scalar>
 > ```
+>
+> A trailing `?` marks the key as optional (see r[schema.optional]).
 >
 > Quoted key segments use the same syntax and escape sequences as quoted scalars
 > (see r[scalar.quoted.escapes]).
@@ -867,7 +966,8 @@ Schemas define the expected structure of STYX documents. They specify what keys 
 what types values must have, and whether fields are required or optional.
 
 STYX schemas are themselves STYX documents. They can be inline (embedded in a document)
-or external (separate files).
+or external (separate files). Schema constructs use tagged sequences and tagged objects
+(see r[sequence.tagged] and r[object.tagged]).
 
 ## Type references
 
@@ -878,7 +978,7 @@ Type references use the `@` prefix to distinguish types from literal values:
 server {
   host @string
   port @integer
-  timeout @duration?
+  timeout? @duration
 }
 ```
 
@@ -888,7 +988,7 @@ server {
 >
 > Type names MUST match the grammar:
 > ```
-> type-ref  = "@" type-name ["?"]
+> type-ref  = "@" type-name
 > type-name = [A-Za-z_][A-Za-z0-9_-]*
 > ```
 >
@@ -903,24 +1003,16 @@ server {
 > version @integer   // must be an integer (1, 2, 42, etc.)
 > ```
 
-> r[schema.type-ref.escape]
-> To represent a literal value starting with `@`, use the `\@` escape in a quoted scalar.
-> The parser produces the scalar text; the schema layer interprets `@` prefixes.
+> r[schema.type-ref.literal]
+> To represent a literal value starting with `@`, use any non-bare scalar form.
+> Only bare scalars are interpreted as type references (see r[scalar.form]).
 >
 > ```styx
 > // In a schema:
 > tag @string        // type reference: any string
-> tag "\@mention"    // literal: must be exactly "@mention"
+> tag "@mention"     // literal: must be exactly "@mention"
+> tag r#"@user"#     // literal: the string "@user"
 > ```
->
-> Raw scalars and heredocs are always literal values — they never produce type references:
->
-> ```styx
-> pattern r#"@user"#   // literal: the string "@user"
-> ```
->
-> Note: The `\@` escape is only valid in quoted scalars. Bare scalars starting with `@`
-> are always interpreted as type references in schema context. Use quoting for literals.
 
 ## Standard types
 
@@ -969,7 +1061,7 @@ The schema type vocabulary matches the deserializer's scalar interpretation rule
 > enabled @unit
 >
 > // Nullable field using union
-> value @string | @unit
+> value @union(@string @unit)
 > ```
 
 **`@null` vs `@unit`**: These serve different purposes:
@@ -977,77 +1069,74 @@ The schema type vocabulary matches the deserializer's scalar interpretation rule
 - `@null` matches the *scalar* `null` — text that the deserializer interprets as null
 - `@unit` matches the *unit value* `@` — structural absence of a value
 
-Use `@unit` for nullable fields (`@string | @unit`). Use `@null` when you specifically
+Use `@unit` for nullable fields (via `@union(@string @unit)`). Use `@null` when you specifically
 need the literal scalar `null` (rare in practice). Most nullable patterns use `@unit`.
 
 ## Optional types
 
-A `?` suffix marks a type as optional:
+A trailing `?` on a key marks the field as optional:
 
 ```styx
 server {
-  host @string       // required
-  port @integer      // required  
-  timeout @duration? // optional
+  host @string      // required
+  port @integer     // required  
+  timeout? @duration // optional
 }
 ```
 
 > r[schema.optional]
-> A type reference followed by `?` indicates the field may be omitted.
+> A key ending with `?` indicates the field may be omitted from the document.
 > If present, the value must match the type.
 >
-> The `?` MUST immediately follow the type name with no whitespace:
->
 > ```styx
-> timeout @duration?     // OK: optional duration
-> timeout @duration ?    // ERROR: space before ?
+> timeout? @duration   // may be absent; if present, must be duration
 > ```
 
 ## Union types
 
-Union types allow a value to match any of several types:
+Union types allow a value to match any of several types using a tagged sequence:
 
 ```styx
 // String or unit (nullable string)
-name @string | @unit
+name @union(@string @unit)
 
 // Integer or string
-id @integer | @string
+id @union(@integer @string)
 
 // Duration, integer, or unit
-timeout @duration | @integer | @unit
+timeout @union(@duration @integer @unit)
 ```
 
 > r[schema.union]
-> A union type `@type1 | @type2 | ...` matches a value if it matches any of the
-> constituent types. The `?` operator binds tighter than `|`.
+> `@union(@type1 @type2 ...)` matches a value if it matches any of the
+> listed types.
 >
 > ```styx
-> // @string, or optional @unit (? binds to @unit only)
-> name @string | @unit?
+> // Nullable string: required, but may be unit
+> name @union(@string @unit)
 >
-> // Optional union (use parentheses)
-> name (@string | @unit)?
+> // Optional nullable: may be absent, or string, or unit
+> name? @union(@string @unit)
 > ```
 
 > r[schema.union.disambiguation]
 > When validating a value against a union, types are checked in order.
 > The first matching type determines the interpretation.
 >
-> For overlapping types (e.g., `@integer | @string`), more specific types
+> For overlapping types (e.g., `@union(@integer @string)`), more specific types
 > should appear first to ensure correct matching.
 
 **Common patterns:**
 
 ```styx
 // Nullable field (required but may be unit)
-value @string | @unit
+value @union(@string @unit)
 
 // Optional field (may be absent)
-value @string?
+value? @string
 
 // Optional nullable field (may be absent, or present as string or unit)
-value (@string | @unit)?
+value? @union(@string @unit)
 ```
 
 ## Sequences
@@ -1070,7 +1159,8 @@ servers ({
 
 ## Maps
 
-Maps are objects with arbitrary string keys and uniform value types:
+Maps are objects with arbitrary string keys and uniform value types. They use the
+`@map` tagged sequence:
 
 ```styx
 /// Environment variables (string to string)
@@ -1095,7 +1185,7 @@ server {
   tls {
     cert @string
     key @string
-    enabled @boolean?
+    enabled? @boolean
   }
 }
 ```
@@ -1112,7 +1202,7 @@ server {
 TlsConfig {
   cert @string
   key @string
-  enabled @boolean?
+  enabled? @boolean
 }
 ```
 
@@ -1141,23 +1231,54 @@ TlsConfig {
 > }
 > ```
 
-## Enums
+## Flatten
 
-Enum schemas list the valid variants:
+The `@flatten` modifier inlines fields from another type into the current object:
 
 ```styx
-status @enum {
+User {
+  name @string
+  email @string
+}
+
+Admin {
+  user @flatten(@User)
+  permissions (@string)
+}
+```
+
+> r[schema.flatten]
+> `@flatten(@Type)` inlines all fields from the referenced type into the current
+> object. The field name (`user` in the example) is used for deserialization into
+> nested structures, but the data is flat.
+>
+> Given the schema above, this data:
+>
+> ```styx
+> name Alice
+> email alice@example.com
+> permissions (read write admin)
+> ```
+>
+> deserializes into an `Admin` with `name` and `email` routed to the nested `User`.
+
+## Enums
+
+Enum schemas list the valid variants using a tagged object:
+
+```styx
+status @enum{
   ok
   pending
   err {
     message @string
-    code @integer?
+    code? @integer
   }
 }
 ```
 
 > r[schema.enum]
-> An enum schema `@enum { ... }` defines valid variant names and their payloads.
+> `@enum{ ... }` defines valid variant names and their payloads.
 > Unit variants use implicit `@` (see r[object.entry.implicit-unit]).
 > Variants with payloads specify their schema as the value.
 
@@ -1165,22 +1286,22 @@ status @enum {
 
 **Nullable vs optional**: These are distinct concepts:
 
-- `@type?` — *optional*: field may be absent from the document
-- `@type | @unit` — *nullable*: field must be present but may be unit (`@`)
-- `(@type | @unit)?` — *optional nullable*: field may be absent, or present as value or unit
+- `key? @type` — *optional*: field may be absent from the document
+- `key @union(@type @unit)` — *nullable*: field must be present but may be unit (`@`)
+- `key? @union(@type @unit)` — *optional nullable*: may be absent, or present as value or unit
 
 ```styx
 // Required string
 name @string
 
 // Optional string (may be absent)
-name @string?
+name? @string
 
 // Nullable string (present, but may be @)
-name @string | @unit
+name @union(@string @unit)
 
-// Optional nullable string (parentheses required)
-name (@string | @unit)?
+// Optional nullable string
+name? @union(@string @unit)
 ```
 
 **Recursive types**: Self-referential types are supported:
@@ -1206,7 +1327,7 @@ server {
   port @integer
   
   /// Request timeout; defaults to 30s if not specified
-  timeout @duration?
+  timeout? @duration
 }
 ```
 
