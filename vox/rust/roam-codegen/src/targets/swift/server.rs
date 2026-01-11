@@ -284,7 +284,7 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
         .unwrap();
     w.writeln("/// race conditions where Data arrives before channels are registered.")
         .unwrap();
-    w.writeln("public func preregisterChannels(methodId: UInt64, payload: Data) async {")
+    w.writeln("public static func preregisterChannels(methodId: UInt64, payload: Data, registry: ChannelRegistry) async {")
         .unwrap();
     {
         let _indent = w.indent();

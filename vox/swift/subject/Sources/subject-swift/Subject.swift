@@ -38,7 +38,7 @@ struct TestbedService: TestbedHandler {
             log("  sending: \(i)")
             try output.send(i)
         }
-        log("generate complete")
+        log("generate complete, about to return (close will be sent by dispatcher)")
     }
 
     func transform(input: Rx<String>, output: Tx<String>) async throws {

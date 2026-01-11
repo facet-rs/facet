@@ -49,6 +49,11 @@ extension ConnectionHandle: RoamConnection {
 // MARK: - RoamError
 
 /// Errors that can occur during roam operations.
+///
+/// r[impl core.error.roam-error] - RoamError represents call-level errors.
+/// r[impl core.error.call-vs-connection] - Call errors don't terminate connection.
+/// r[impl unary.error.roam-error] - RoamError variants for different error types.
+/// r[impl unary.error.user] - User errors propagate through RoamError.
 public enum RoamError: Error {
     case unknownMethod
     case notImplemented
@@ -72,11 +77,15 @@ public func encodeResultOkUnit() -> [UInt8] {
 }
 
 /// Encode an unknown method error.
+///
+/// r[impl unary.error.unknown-method] - UnknownMethod when method_id not recognized.
 public func encodeUnknownMethodError() -> [UInt8] {
     [1, 1]  // Err discriminant + UnknownMethod variant
 }
 
 /// Encode an invalid payload error.
+///
+/// r[impl unary.error.invalid-payload] - InvalidPayload when payload fails to decode.
 public func encodeInvalidPayloadError() -> [UInt8] {
     [1, 2]  // Err discriminant + InvalidPayload variant
 }

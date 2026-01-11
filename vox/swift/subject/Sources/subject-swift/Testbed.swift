@@ -89,7 +89,7 @@ public enum Message: Codable, Sendable {
     case data(Data)
 }
 
-// MARK: - Testbed Caller Protocol
+// MARK: - Testbed Client
 
 ///  Testbed service for conformance testing.
 ///
@@ -131,8 +131,6 @@ public protocol TestbedCaller {
     func swapPair(pair: (Int32, String)) async throws -> (String, Int32)
 }
 
-// MARK: - Testbed Client
-
 public final class TestbedClient: TestbedCaller {
     private let connection: RoamConnection
 
@@ -144,7 +142,7 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeString(message)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: TestbedMethodId.echo, payload: payload)
+        let response = try await connection.call(methodId: 0x9aab_c4ba_61fd_5df3, payload: payload)
         var offset = 0
         let result = try decodeString(from: response, offset: &offset)
         return result
@@ -154,8 +152,7 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeString(message)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(
-            methodId: TestbedMethodId.reverse, payload: payload)
+        let response = try await connection.call(methodId: 0xcba1_5460_0f64_0175, payload: payload)
         var offset = 0
         let result = try decodeString(from: response, offset: &offset)
         return result
@@ -177,7 +174,7 @@ public final class TestbedClient: TestbedCaller {
         payloadBytes += encodeVarint(numbers.channelId)
         let payload = Data(payloadBytes)
 
-        let response = try await connection.call(methodId: TestbedMethodId.sum, payload: payload)
+        let response = try await connection.call(methodId: 0x855b_3a25_d97b_fefd, payload: payload)
         var offset = 0
         let result = try decodeI64(from: payload, offset: &offset)
         return result
@@ -200,7 +197,7 @@ public final class TestbedClient: TestbedCaller {
         payloadBytes += encodeVarint(output.channelId)
         let payload = Data(payloadBytes)
 
-        _ = try await connection.call(methodId: TestbedMethodId.generate, payload: payload)
+        _ = try await connection.call(methodId: 0x54d2_273d_8cdb_9c38, payload: payload)
     }
 
     public func transform(input: UnboundRx<String>, output: UnboundTx<String>) async throws {
@@ -220,15 +217,14 @@ public final class TestbedClient: TestbedCaller {
         payloadBytes += encodeVarint(output.channelId)
         let payload = Data(payloadBytes)
 
-        _ = try await connection.call(methodId: TestbedMethodId.transform, payload: payload)
+        _ = try await connection.call(methodId: 0x5d98_9560_4eb1_8b19, payload: payload)
     }
 
     public func echoPoint(point: Point) async throws -> Point {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeI32(point.x) + encodeI32(point.y)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(
-            methodId: TestbedMethodId.echoPoint, payload: payload)
+        let response = try await connection.call(methodId: 0x453f_a9bf_6932_528c, payload: payload)
         var offset = 0
         let _result_x = try decodeI32(from: response, offset: &offset)
         let _result_y = try decodeI32(from: response, offset: &offset)
@@ -242,8 +238,7 @@ public final class TestbedClient: TestbedCaller {
         payloadBytes += encodeU8(age)
         payloadBytes += encodeOption(email, encoder: { encodeString($0) })
         let payload = Data(payloadBytes)
-        let response = try await connection.call(
-            methodId: TestbedMethodId.createPerson, payload: payload)
+        let response = try await connection.call(methodId: 0x3dd2_31f5_7b1b_ca21, payload: payload)
         var offset = 0
         let _result_name = try decodeString(from: response, offset: &offset)
         let _result_age = try decodeU8(from: response, offset: &offset)
@@ -261,8 +256,7 @@ public final class TestbedClient: TestbedCaller {
             + encodeI32(rect.bottomRight.y)
             + encodeOption(rect.label, encoder: { encodeString($0) })
         let payload = Data(payloadBytes)
-        let response = try await connection.call(
-            methodId: TestbedMethodId.rectangleArea, payload: payload)
+        let response = try await connection.call(methodId: 0xba75_c486_83f1_d9e6, payload: payload)
         var offset = 0
         let result = try decodeF64(from: response, offset: &offset)
         return result
@@ -272,8 +266,7 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeString(name)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(
-            methodId: TestbedMethodId.parseColor, payload: payload)
+        let response = try await connection.call(methodId: 0xe285_f31c_6dff_fbfc, payload: payload)
         var offset = 0
         let result = try decodeOption(
             from: response, offset: &offset,
@@ -299,8 +292,7 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += []
         let payload = Data(payloadBytes)
-        let response = try await connection.call(
-            methodId: TestbedMethodId.shapeArea, payload: payload)
+        let response = try await connection.call(methodId: 0x6e70_6354_167c_00c2, payload: payload)
         var offset = 0
         let result = try decodeF64(from: response, offset: &offset)
         return result
@@ -325,8 +317,7 @@ public final class TestbedClient: TestbedCaller {
             })
         payloadBytes += []
         let payload = Data(payloadBytes)
-        let response = try await connection.call(
-            methodId: TestbedMethodId.createCanvas, payload: payload)
+        let response = try await connection.call(methodId: 0xa914_982e_7d3c_7b55, payload: payload)
         var offset = 0
         let _result_name = try decodeString(from: response, offset: &offset)
         let _result_shapes = try decodeVec(
@@ -370,8 +361,7 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += []
         let payload = Data(payloadBytes)
-        let response = try await connection.call(
-            methodId: TestbedMethodId.processMessage, payload: payload)
+        let response = try await connection.call(methodId: 0xed1d_c0c6_2588_9d30, payload: payload)
         var offset = 0
         let _result_disc = try decodeU8(from: response, offset: &offset)
         let result: Message
@@ -395,8 +385,7 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeU32(count)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(
-            methodId: TestbedMethodId.getPoints, payload: payload)
+        let response = try await connection.call(methodId: 0x5c87_07f5_ae4c_cbcc, payload: payload)
         var offset = 0
         let result = try decodeVec(
             from: response, offset: &offset,
@@ -412,8 +401,7 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += { encodeI32($0) }(pair.0) + { encodeString($0) }(pair.1)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(
-            methodId: TestbedMethodId.swapPair, payload: payload)
+        let response = try await connection.call(methodId: 0xacd1_9a29_fe0d_470c, payload: payload)
         var offset = 0
         let result = try decodeTuple2(
             from: response, offset: &offset,
@@ -421,10 +409,9 @@ public final class TestbedClient: TestbedCaller {
             decoderB: { data, off in try decodeI32(from: data, offset: &off) })
         return result
     }
-
 }
 
-// MARK: - Testbed Handler Protocol
+// MARK: - Testbed Server
 
 ///  Testbed service for conformance testing.
 ///
@@ -466,8 +453,6 @@ public protocol TestbedHandler {
     func swapPair(pair: (Int32, String)) async throws -> (String, Int32)
 }
 
-// MARK: - Testbed Dispatcher
-
 public final class TestbedDispatcher {
     private let handler: TestbedHandler
 
@@ -477,33 +462,33 @@ public final class TestbedDispatcher {
 
     public func dispatch(methodId: UInt64, payload: Data) async throws -> Data {
         switch methodId {
-        case TestbedMethodId.echo:
+        case 0x9aab_c4ba_61fd_5df3:
             return try await dispatchecho(payload: payload)
-        case TestbedMethodId.reverse:
+        case 0xcba1_5460_0f64_0175:
             return try await dispatchreverse(payload: payload)
-        case TestbedMethodId.sum:
+        case 0x855b_3a25_d97b_fefd:
             return try await dispatchsum(payload: payload)
-        case TestbedMethodId.generate:
+        case 0x54d2_273d_8cdb_9c38:
             return try await dispatchgenerate(payload: payload)
-        case TestbedMethodId.transform:
+        case 0x5d98_9560_4eb1_8b19:
             return try await dispatchtransform(payload: payload)
-        case TestbedMethodId.echoPoint:
+        case 0x453f_a9bf_6932_528c:
             return try await dispatchechoPoint(payload: payload)
-        case TestbedMethodId.createPerson:
+        case 0x3dd2_31f5_7b1b_ca21:
             return try await dispatchcreatePerson(payload: payload)
-        case TestbedMethodId.rectangleArea:
+        case 0xba75_c486_83f1_d9e6:
             return try await dispatchrectangleArea(payload: payload)
-        case TestbedMethodId.parseColor:
+        case 0xe285_f31c_6dff_fbfc:
             return try await dispatchparseColor(payload: payload)
-        case TestbedMethodId.shapeArea:
+        case 0x6e70_6354_167c_00c2:
             return try await dispatchshapeArea(payload: payload)
-        case TestbedMethodId.createCanvas:
+        case 0xa914_982e_7d3c_7b55:
             return try await dispatchcreateCanvas(payload: payload)
-        case TestbedMethodId.processMessage:
+        case 0xed1d_c0c6_2588_9d30:
             return try await dispatchprocessMessage(payload: payload)
-        case TestbedMethodId.getPoints:
+        case 0x5c87_07f5_ae4c_cbcc:
             return try await dispatchgetPoints(payload: payload)
-        case TestbedMethodId.swapPair:
+        case 0xacd1_9a29_fe0d_470c:
             return try await dispatchswapPair(payload: payload)
         default:
             throw RoamError.unknownMethod
@@ -736,9 +721,7 @@ public final class TestbedDispatcher {
             encodeResultOk(
                 result, encoder: { { encodeString($0) }($0.0) + { encodeI32($0) }($0.1) }))
     }
-
 }
-// MARK: - Testbed Streaming Dispatcher
 
 public final class TestbedStreamingDispatcher {
     private let handler: TestbedHandler
@@ -755,33 +738,33 @@ public final class TestbedStreamingDispatcher {
 
     public func dispatch(methodId: UInt64, requestId: UInt64, payload: Data) async {
         switch methodId {
-        case TestbedMethodId.echo:
+        case 0x9aab_c4ba_61fd_5df3:
             await dispatchecho(requestId: requestId, payload: payload)
-        case TestbedMethodId.reverse:
+        case 0xcba1_5460_0f64_0175:
             await dispatchreverse(requestId: requestId, payload: payload)
-        case TestbedMethodId.sum:
+        case 0x855b_3a25_d97b_fefd:
             await dispatchsum(requestId: requestId, payload: payload)
-        case TestbedMethodId.generate:
+        case 0x54d2_273d_8cdb_9c38:
             await dispatchgenerate(requestId: requestId, payload: payload)
-        case TestbedMethodId.transform:
+        case 0x5d98_9560_4eb1_8b19:
             await dispatchtransform(requestId: requestId, payload: payload)
-        case TestbedMethodId.echoPoint:
+        case 0x453f_a9bf_6932_528c:
             await dispatchechoPoint(requestId: requestId, payload: payload)
-        case TestbedMethodId.createPerson:
+        case 0x3dd2_31f5_7b1b_ca21:
             await dispatchcreatePerson(requestId: requestId, payload: payload)
-        case TestbedMethodId.rectangleArea:
+        case 0xba75_c486_83f1_d9e6:
             await dispatchrectangleArea(requestId: requestId, payload: payload)
-        case TestbedMethodId.parseColor:
+        case 0xe285_f31c_6dff_fbfc:
             await dispatchparseColor(requestId: requestId, payload: payload)
-        case TestbedMethodId.shapeArea:
+        case 0x6e70_6354_167c_00c2:
             await dispatchshapeArea(requestId: requestId, payload: payload)
-        case TestbedMethodId.createCanvas:
+        case 0xa914_982e_7d3c_7b55:
             await dispatchcreateCanvas(requestId: requestId, payload: payload)
-        case TestbedMethodId.processMessage:
+        case 0xed1d_c0c6_2588_9d30:
             await dispatchprocessMessage(requestId: requestId, payload: payload)
-        case TestbedMethodId.getPoints:
+        case 0x5c87_07f5_ae4c_cbcc:
             await dispatchgetPoints(requestId: requestId, payload: payload)
-        case TestbedMethodId.swapPair:
+        case 0xacd1_9a29_fe0d_470c:
             await dispatchswapPair(requestId: requestId, payload: payload)
         default:
             taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
@@ -791,14 +774,11 @@ public final class TestbedStreamingDispatcher {
     /// Pre-register channel IDs from a request payload.
     /// Call this synchronously before spawning the dispatch task to avoid
     /// race conditions where Data arrives before channels are registered.
-    /// Pre-register channels from request payload. This is a static method so it can be
-    /// called before the dispatcher instance is created, ensuring channels are registered
-    /// before any Data messages arrive.
     public static func preregisterChannels(
         methodId: UInt64, payload: Data, registry: ChannelRegistry
     ) async {
         switch methodId {
-        case TestbedMethodId.sum:
+        case 0x855b_3a25_d97b_fefd:
             do {
                 var offset = 0
                 let numbersChannelId = try decodeVarint(from: payload, offset: &offset)
@@ -806,7 +786,7 @@ public final class TestbedStreamingDispatcher {
             } catch {
                 // Ignore parse errors - dispatch will handle them
             }
-        case TestbedMethodId.transform:
+        case 0x5d98_9560_4eb1_8b19:
             do {
                 var offset = 0
                 let inputChannelId = try decodeVarint(from: payload, offset: &offset)
@@ -874,19 +854,13 @@ public final class TestbedStreamingDispatcher {
             var offset = 0
             let count = try decodeU32(from: payload, offset: &offset)
             let outputChannelId = try decodeVarint(from: payload, offset: &offset)
-            fputs(
-                "[\(getpid())] dispatchgenerate: count=\(count), channelId=\(outputChannelId)\n",
-                stderr)
             let output = createServerTx(
                 channelId: outputChannelId, taskSender: taskSender, serialize: ({ encodeI32($0) }))
             try await handler.generate(count: count, output: output)
-            fputs("[\(getpid())] dispatchgenerate: handler done, closing channel\n", stderr)
             output.close()
-            fputs("[\(getpid())] dispatchgenerate: sending response\n", stderr)
             taskSender(
                 .response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
         } catch {
-            fputs("[\(getpid())] dispatchgenerate error: \(error)\n", stderr)
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
     }
@@ -1175,7 +1149,7 @@ public final class TestbedStreamingDispatcher {
 
 }
 
-// MARK: - Testbed Method Schemas
+// MARK: - Testbed Schemas
 
 public let testbed_schemas: [String: MethodSchema] = [
     "echo": MethodSchema(args: [.string]),
@@ -1209,8 +1183,6 @@ public let testbed_schemas: [String: MethodSchema] = [
     "getPoints": MethodSchema(args: [.u32]),
     "swapPair": MethodSchema(args: [.bytes]),
 ]
-
-// MARK: - Testbed Serializers
 
 public struct TestbedSerializers: BindingSerializers {
     public init() {}

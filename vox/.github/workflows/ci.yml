@@ -164,7 +164,7 @@ jobs:
 
   swift-conformance:
     name: Conformance / Swift
-    runs-on: depot-macos-14
+    runs-on: depot-macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -178,7 +178,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build subject
-        run: swift build --package-path swift/subject
+        run: swift build -c release --package-path swift/subject
 
       - name: Run spec tests
         run: cargo nextest run -p spec-tests

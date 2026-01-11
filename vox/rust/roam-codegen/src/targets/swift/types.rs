@@ -126,20 +126,20 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
             ShapeKind::Enum(EnumInfo { variants, .. }) => {
                 out.push_str(&format!("public enum {name}: Codable, Sendable {{\n"));
                 for variant in variants {
+                    let variant_name = variant.name.to_lower_camel_case();
                     match classify_variant(variant) {
                         VariantKind::Unit => {
-                            out.push_str(&format!("    case {}\n", variant.name));
+                            out.push_str(&format!("    case {variant_name}\n"));
                         }
                         VariantKind::Newtype { inner } => {
                             let inner_type = swift_type_base(inner);
-                            out.push_str(&format!("    case {}({inner_type})\n", variant.name));
+                            out.push_str(&format!("    case {variant_name}({inner_type})\n"));
                         }
                         VariantKind::Tuple { fields } => {
                             let field_types: Vec<_> =
                                 fields.iter().map(|f| swift_type_base(f.shape())).collect();
                             out.push_str(&format!(
-                                "    case {}({})\n",
-                                variant.name,
+                                "    case {variant_name}({})\n",
                                 field_types.join(", ")
                             ));
                         }
@@ -155,8 +155,7 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
                                 })
                                 .collect();
                             out.push_str(&format!(
-                                "    case {}({})\n",
-                                variant.name,
+                                "    case {variant_name}({})\n",
                                 field_decls.join(", ")
                             ));
                         }

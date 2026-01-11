@@ -3,6 +3,9 @@ import Foundation
 // MARK: - Hello
 
 /// Hello message for connection handshake.
+///
+/// r[impl message.hello.structure] - Hello contains version, maxPayloadSize, initialChannelCredit.
+/// r[impl message.hello.version] - Version field determines protocol version (V1 = 0).
 public enum Hello: Sendable {
     case v1(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
 }
@@ -44,6 +47,12 @@ public enum MetadataValue: Sendable {
 // MARK: - Message
 
 /// Wire protocol message types.
+///
+/// r[impl wire.message-types] - All wire message types: Hello, Goodbye, Request, Response, Cancel, Data, Close, Reset, Credit.
+/// r[impl core.call] - Request/Response messages implement the call abstraction.
+/// r[impl core.call.request-id] - Request ID links requests to responses.
+/// r[impl core.channel] - Data/Close/Reset/Credit messages operate on channels.
+/// r[impl unary.cancel.no-response-required] - Cancel message indicates no response needed.
 public enum Message: Sendable {
     case hello(Hello)
     case goodbye(reason: String)
@@ -174,6 +183,12 @@ extension Message {
 
 // MARK: - Metadata Encoding
 
+/// r[impl core.metadata] - Metadata is key-value pairs attached to requests/responses.
+/// r[impl unary.metadata.type] - Values can be string, bytes, or integer.
+/// r[impl unary.metadata.keys] - Keys are UTF-8 strings.
+/// r[impl unary.metadata.order] - Metadata entries preserve insertion order.
+/// r[impl unary.metadata.duplicates] - Duplicate keys are allowed.
+/// r[impl unary.metadata.unknown] - Unknown metadata keys are ignored.
 func encodeMetadata(_ metadata: [(String, MetadataValue)]) -> [UInt8] {
     var out = encodeVarint(UInt64(metadata.count))
     for (key, value) in metadata {

@@ -194,7 +194,9 @@ private func bindValue(
         }
 
     case .option(let inner):
-        if let opt = value as? Any?, let unwrapped = opt {
+        // Use Mirror to check if value is Some(x) vs None
+        let mirror = Mirror(reflecting: value)
+        if mirror.displayStyle == .optional, let (_, unwrapped) = mirror.children.first {
             await bindValue(
                 schema: inner,
                 value: unwrapped,

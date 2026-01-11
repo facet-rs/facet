@@ -1,6 +1,10 @@
 import Foundation
 
 // MARK: - Encoding
+//
+// r[impl unary.request.payload-encoding] - Payloads are Postcard-encoded.
+// r[impl postcard.varint] - Variable-length integers use LEB128-style encoding.
+// r[impl postcard.zigzag] - Signed integers use zigzag encoding before varint.
 
 public func encodeBool(_ v: Bool) -> [UInt8] { [v ? 1 : 0] }
 public func encodeU8(_ v: UInt8) -> [UInt8] { [v] }
@@ -95,27 +99,24 @@ public func decodeI8(from data: Data, offset: inout Int) throws -> Int8 {
 }
 
 public func decodeU16(from data: Data, offset: inout Int) throws -> UInt16 {
-    guard offset + 2 <= data.count else { throw PostcardError.truncated }
-    let v = data.subdata(in: (data.startIndex + offset)..<(data.startIndex + offset + 2))
-        .withUnsafeBytes { $0.load(as: UInt16.self) }
-    offset += 2
-    return UInt16(littleEndian: v)
+    // Postcard uses varint for u16
+    let v = try decodeVarint(from: data, offset: &offset)
+    guard v <= UInt64(UInt16.max) else { throw PostcardError.overflow }
+    return UInt16(v)
 }
 
 public func decodeI16(from data: Data, offset: inout Int) throws -> Int16 {
-    guard offset + 2 <= data.count else { throw PostcardError.truncated }
-    let v = data.subdata(in: (data.startIndex + offset)..<(data.startIndex + offset + 2))
-        .withUnsafeBytes { $0.load(as: Int16.self) }
-    offset += 2
-    return Int16(littleEndian: v)
+    // Postcard uses zigzag + varint for signed integers
+    let zigzag = try decodeVarint(from: data, offset: &offset)
+    let unsigned = UInt16(truncatingIfNeeded: zigzag)
+    return Int16(bitPattern: (unsigned >> 1) ^ (0 &- (unsigned & 1)))
 }
 
 public func decodeU32(from data: Data, offset: inout Int) throws -> UInt32 {
-    guard offset + 4 <= data.count else { throw PostcardError.truncated }
-    let v = data.subdata(in: (data.startIndex + offset)..<(data.startIndex + offset + 4))
-        .withUnsafeBytes { $0.load(as: UInt32.self) }
-    offset += 4
-    return UInt32(littleEndian: v)
+    // Postcard uses varint for u32
+    let v = try decodeVarint(from: data, offset: &offset)
+    guard v <= UInt64(UInt32.max) else { throw PostcardError.overflow }
+    return UInt32(v)
 }
 
 public func decodeI32(from data: Data, offset: inout Int) throws -> Int32 {
@@ -214,4 +215,5 @@ public enum PostcardError: Error {
     case truncated
     case invalidUtf8
     case unknownVariant
+    case overflow
 }

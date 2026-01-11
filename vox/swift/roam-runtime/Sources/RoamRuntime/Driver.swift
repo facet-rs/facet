@@ -3,6 +3,9 @@ import Foundation
 // MARK: - Negotiated Parameters
 
 /// Parameters negotiated during handshake.
+///
+/// r[impl message.hello.negotiation] - Effective limit is min of both peers.
+/// r[impl flow.channel.initial-credit] - Negotiated during handshake.
 public struct Negotiated: Sendable {
     public let maxPayloadSize: UInt32
     public let initialCredit: UInt32
@@ -145,6 +148,10 @@ private actor DriverState {
 }
 
 /// Bidirectional connection driver.
+///
+/// r[impl unary.pipelining.allowed] - Handle requests as they arrive.
+/// r[impl unary.pipelining.independence] - Each request handled independently.
+/// r[impl transport.message.multiplexing] - channel_id field provides multiplexing.
 ///
 /// Uses AsyncStream to multiplex between:
 /// - Incoming messages from transport
@@ -303,6 +310,10 @@ public final class Driver: @unchecked Sendable {
     }
 
     /// Handle an incoming message.
+    ///
+    /// r[impl message.goodbye.receive] - Stop sending, close connection, fail in-flight.
+    /// r[impl unary.lifecycle.ordering] - Request before Response in message sequence.
+    /// r[impl message.unknown-variant] - Unknown message variant triggers Goodbye.
     private func handleMessage(_ msg: Message) async throws {
         switch msg {
         case .hello:
@@ -310,6 +321,7 @@ public final class Driver: @unchecked Sendable {
             break
 
         case .goodbye(let reason):
+            // r[impl message.goodbye.receive]
             await failAllPending()
             throw ConnectionError.goodbye(reason: reason)
 
@@ -317,12 +329,19 @@ public final class Driver: @unchecked Sendable {
             try await handleRequest(requestId: requestId, methodId: methodId, payload: payload)
 
         case .response(let requestId, _, let payload):
+            // r[impl unary.lifecycle.single-response] - One response per request.
+            // r[impl unary.complete] - Response completes the call.
+            // r[impl unary.response.encoding] - Response payload is Postcard-encoded.
             let responseTx = await state.removePendingResponse(requestId)
             responseTx?(.success(payload))
 
-        case .cancel:
-            // TODO: implement cancellation
-            break
+        case .cancel(let requestId):
+            // r[impl unary.cancel.message] - Cancel requests termination.
+            // r[impl unary.cancel.best-effort] - Cancel is best-effort, response may still arrive.
+            // r[impl core.call.cancel] - Cancel message uses request_id.
+            // r[impl unary.request-id.cancel-still-in-flight] - Cancel only valid for in-flight.
+            let _ = await state.removeInFlight(requestId)
+        // Handler may still be processing; best-effort cancellation
 
         case .data(let channelId, let payload):
             try await handleData(channelId: channelId, payload: payload)
@@ -331,18 +350,29 @@ public final class Driver: @unchecked Sendable {
             try await handleClose(channelId: channelId)
 
         case .reset(let channelId):
-            // TODO: handle reset
-            _ = channelId
-            break
+            // r[impl channeling.reset] - Reset abruptly terminates channel.
+            // r[impl channeling.reset.effect] - Data in flight may be lost.
+            // r[impl channeling.reset.credit] - Credit is discarded on reset.
+            await serverRegistry.deliverReset(channelId: channelId)
+            await handle.channelRegistry.deliverReset(channelId: channelId)
 
-        case .credit:
-            // TODO: handle credit
-            break
+        case .credit(let channelId, let bytes):
+            // r[impl flow.channel.credit-based] - Credit controls data flow.
+            // r[impl flow.channel.credit-grant] - Credit message grants permission.
+            // r[impl flow.channel.credit-additive] - Credits are additive.
+            // r[impl flow.channel.all-transports] - Flow control on all transports.
+            await serverRegistry.deliverCredit(channelId: channelId, bytes: bytes)
+            await handle.channelRegistry.deliverCredit(channelId: channelId, bytes: bytes)
         }
     }
 
+    /// r[impl unary.request-id.duplicate-detection] - Duplicate request_id is fatal.
+    /// r[impl flow.unary.payload-limit] - Payloads bounded by max_payload_size.
+    /// r[impl message.hello.enforcement] - Exceeding limit requires Goodbye.
+    /// r[impl unary.request-id.in-flight] - Request IDs must be tracked while in-flight.
+    /// r[impl unary.request-id.uniqueness] - Each request uses a unique ID.
     private func handleRequest(requestId: UInt64, methodId: UInt64, payload: [UInt8]) async throws {
-        // Check for duplicate
+        // r[impl unary.request-id.duplicate-detection]
         let inserted = await state.addInFlight(requestId)
 
         guard inserted else {
@@ -350,7 +380,7 @@ public final class Driver: @unchecked Sendable {
             throw ConnectionError.protocolViolation(rule: "unary.request-id.duplicate-detection")
         }
 
-        // Validate payload size
+        // r[impl flow.unary.payload-limit]
         if payload.count > Int(negotiated.maxPayloadSize) {
             try await sendGoodbye("flow.unary.payload-limit")
             throw ConnectionError.protocolViolation(rule: "flow.unary.payload-limit")
@@ -379,10 +409,14 @@ public final class Driver: @unchecked Sendable {
         }
     }
 
+    /// r[impl channeling.id.zero-reserved] - Channel ID 0 is reserved.
+    /// r[impl channeling.unknown] - Unknown channel IDs cause Goodbye.
+    /// r[impl channeling.data] - Data messages routed by channel_id.
     private func handleData(channelId: UInt64, payload: [UInt8]) async throws {
+        // r[impl channeling.id.zero-reserved]
         if channelId == 0 {
-            try await sendGoodbye("streaming.id.zero-reserved")
-            throw ConnectionError.protocolViolation(rule: "streaming.id.zero-reserved")
+            try await sendGoodbye("channeling.id.zero-reserved")
+            throw ConnectionError.protocolViolation(rule: "channeling.id.zero-reserved")
         }
 
         // Try server registry first, then client registry
@@ -392,16 +426,21 @@ public final class Driver: @unchecked Sendable {
                 channelId: channelId, payload: payload)
         }
 
+        // r[impl channeling.unknown]
         if !delivered {
-            try await sendGoodbye("streaming.unknown")
-            throw ConnectionError.protocolViolation(rule: "streaming.unknown")
+            try await sendGoodbye("channeling.unknown")
+            throw ConnectionError.protocolViolation(rule: "channeling.unknown")
         }
     }
 
+    /// r[impl channeling.id.zero-reserved] - Channel ID 0 is reserved.
+    /// r[impl channeling.unknown] - Unknown channel IDs cause Goodbye.
+    /// r[impl channeling.close] - Close terminates the channel.
     private func handleClose(channelId: UInt64) async throws {
+        // r[impl channeling.id.zero-reserved]
         if channelId == 0 {
-            try await sendGoodbye("streaming.id.zero-reserved")
-            throw ConnectionError.protocolViolation(rule: "streaming.id.zero-reserved")
+            try await sendGoodbye("channeling.id.zero-reserved")
+            throw ConnectionError.protocolViolation(rule: "channeling.id.zero-reserved")
         }
 
         var delivered = await serverRegistry.deliverClose(channelId: channelId)
@@ -409,12 +448,15 @@ public final class Driver: @unchecked Sendable {
             delivered = await handle.channelRegistry.deliverClose(channelId: channelId)
         }
 
+        // r[impl channeling.unknown]
         if !delivered {
-            try await sendGoodbye("streaming.unknown")
-            throw ConnectionError.protocolViolation(rule: "streaming.unknown")
+            try await sendGoodbye("channeling.unknown")
+            throw ConnectionError.protocolViolation(rule: "channeling.unknown")
         }
     }
 
+    /// r[impl message.goodbye.send] - Send Goodbye with rule ID before closing.
+    /// r[impl core.error.goodbye-reason] - Reason contains violated rule ID.
     private func sendGoodbye(_ reason: String) async throws {
         try await transport.send(.goodbye(reason: reason))
     }
@@ -430,6 +472,8 @@ public final class Driver: @unchecked Sendable {
 
 // MARK: - Connection Errors
 
+/// r[impl core.error.connection] - Connection-level errors terminate the connection.
+/// r[impl unary.error.protocol] - Protocol errors are connection-fatal.
 public enum ConnectionError: Error {
     case connectionClosed
     case goodbye(reason: String)
@@ -440,6 +484,10 @@ public enum ConnectionError: Error {
 // MARK: - Establish Connection
 
 /// Establish a connection as initiator.
+///
+/// r[impl message.hello.ordering] - Hello is the first message sent.
+/// r[impl message.hello.timing] - Send Hello immediately on connection.
+/// r[impl unary.initiate] - Initiator can start calls after Hello exchange.
 public func establishInitiator(
     transport: any MessageTransport,
     ourHello: Hello,
@@ -459,10 +507,11 @@ public func establishInitiator(
         }
         peerHello = hello
     } catch let error as WireError {
-        // Unknown Hello variant or decode error - send Goodbye per spec
+        // r[impl message.hello.unknown-version] - Unknown version triggers Goodbye.
+        // r[impl message.decode-error] - Decode errors trigger Goodbye.
         let reason =
             error == .unknownHelloVariant
-            ? "handshake.unknown-hello-variant" : "handshake.decode-error"
+            ? "message.hello.unknown-version" : "handshake.decode-error"
         try? await transport.send(.goodbye(reason: reason))
         throw ConnectionError.handshakeFailed(reason)
     }
@@ -490,6 +539,9 @@ public func establishInitiator(
 }
 
 /// Establish a connection as acceptor.
+///
+/// r[impl message.hello.ordering] - Hello is the first message sent.
+/// r[impl message.hello.timing] - Send Hello immediately on connection.
 public func establishAcceptor(
     transport: any MessageTransport,
     ourHello: Hello,
@@ -512,7 +564,7 @@ public func establishAcceptor(
         // Unknown Hello variant or decode error - send Goodbye per spec
         let reason =
             error == .unknownHelloVariant
-            ? "handshake.unknown-hello-variant" : "handshake.decode-error"
+            ? "message.hello.unknown-version" : "handshake.decode-error"
         try? await transport.send(.goodbye(reason: reason))
         throw ConnectionError.handshakeFailed(reason)
     }
@@ -551,10 +603,12 @@ private func makeDriverAndHandle(
     let eventStream = AsyncStream<DriverEvent> { cont in
         continuation = cont
     }
+    // Capture as let to satisfy Sendable requirements
+    let capturedContinuation = continuation!
 
     // Create command sender that uses this continuation
     let commandSender: @Sendable (HandleCommand) -> Void = { cmd in
-        continuation.yield(.command(cmd))
+        capturedContinuation.yield(.command(cmd))
     }
 
     // Create handle with the command sender

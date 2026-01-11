@@ -1,5 +1,9 @@
 /// COBS (Consistent Overhead Byte Stuffing) framing.
 ///
+/// r[impl transport.bytestream.cobs] - Messages are COBS-encoded with 0x00 delimiter.
+/// r[impl transport.message.binary] - All messages are binary (not text).
+/// r[impl transport.message.one-to-one] - Each frame contains exactly one roam message.
+///
 /// COBS encodes data so that it contains no zero bytes, allowing
 /// zero to be used as a frame delimiter.
 

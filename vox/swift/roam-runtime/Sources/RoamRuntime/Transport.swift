@@ -1,7 +1,7 @@
 import Foundation
-import NIO
-import NIOCore
-import NIOPosix
+@preconcurrency import NIO
+@preconcurrency import NIOCore
+@preconcurrency import NIOPosix
 import os
 
 // MARK: - Debug Logging
@@ -9,11 +9,12 @@ import os
 /// Logger for roam-runtime debug output.
 /// Enable with ROAM_DEBUG=1 environment variable.
 private let debugEnabled = ProcessInfo.processInfo.environment["ROAM_DEBUG"] != nil
-private let logger = Logger(subsystem: "com.bearcove.roam", category: "transport")
 
 func debugLog(_ message: String) {
     if debugEnabled {
-        logger.debug("\(message)")
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let data = "[\(pid)] DEBUG: \(message)\n".data(using: .utf8)!
+        FileHandle.standardError.write(data)
     }
 }
 
@@ -153,13 +154,18 @@ public func connect(host: String, port: Int) async throws -> NIOTransport {
     let inboundStream = AsyncStream<Result<Message, Error>> { continuation in
         inboundContinuation = continuation
     }
+    // Capture as let to satisfy Sendable requirements
+    let capturedContinuation = inboundContinuation!
 
     let bootstrap = ClientBootstrap(group: group)
         .channelInitializer { channel in
+            // Note: ByteToMessageHandler is explicitly non-Sendable in SwiftNIO.
+            // This warning is benign - channel initializers run on the event loop.
             channel.pipeline.addHandler(ByteToMessageHandler(COBSFrameDecoder())).flatMap {
                 channel.pipeline.addHandler(MessageDecoder())
             }.flatMap {
-                channel.pipeline.addHandler(MessageStreamHandler(continuation: inboundContinuation))
+                channel.pipeline.addHandler(
+                    MessageStreamHandler(continuation: capturedContinuation))
             }
         }
 

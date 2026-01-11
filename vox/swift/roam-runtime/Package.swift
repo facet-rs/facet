@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
@@ -10,7 +10,7 @@ let package = Package(
         .library(name: "RoamRuntime", targets: ["RoamRuntime"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.1")
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0")
     ],
     targets: [
         .target(
