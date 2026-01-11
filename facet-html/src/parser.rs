@@ -327,17 +327,18 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, HtmlError
             Token::EndTag(tag) => {
                 let end_name = String::from_utf8_lossy(&tag.name).to_ascii_lowercase();
 
-                // Pop elements until we find a matching start tag
-                // This handles malformed HTML gracefully
-                while let Some(elem) = stack.pop() {
-                    if elem.name == end_name {
-                        attach_element(&mut stack, elem, &mut roots);
-                        break;
-                    } else {
-                        // Implicitly close this element (HTML error recovery)
+                // Find if there's a matching start tag on the stack
+                let matching_idx = stack.iter().rposition(|elem| elem.name == end_name);
+
+                if let Some(idx) = matching_idx {
+                    // Pop elements from the top down to (and including) the matching element
+                    // Elements above the match are implicitly closed (HTML error recovery)
+                    while stack.len() > idx {
+                        let elem = stack.pop().unwrap();
                         attach_element(&mut stack, elem, &mut roots);
                     }
                 }
+                // If no matching start tag found, ignore the stray end tag
             }
             Token::String(text) => {
                 let text_str = String::from_utf8_lossy(&text);
