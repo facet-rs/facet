@@ -56,6 +56,10 @@ A STYX document is an [object](#styx--objects). Top-level entries do not require
 > 42   // ERROR: unexpected token after root
 > ```
 
+> r[document.root.empty]
+> An empty document (containing only whitespace and comments) is valid and
+> represents an empty object `{}`.
+
 ## Comments
 
 Line comments start with `//` and extend to the end of the line.
@@ -589,6 +593,21 @@ server host=localhost port=8080
 build components=(clippy rustfmt miri)
 ```
 
+> r[object.attr.key]
+> Attribute keys follow the same grammar as object keys. Quoted keys are valid:
+>
+> ```styx
+> config "quoted key"=value foo=bar
+> ```
+>
+> Dotted paths in attribute keys expand as expected:
+>
+> ```styx
+> server.host=localhost
+> ```
+>
+> expands to `server { host localhost }`.
+
 > r[object.attr.binding]
 > `=` binds tighter than whitespace. When the parser encounters `key=` in a
 > value position, it MUST parse an attribute object.
@@ -690,10 +709,13 @@ status.err { message "nope" }
 > `status.err { ... }` to `status { err { ... } }`.
 
 > r[enum.singleton]
-> Enum objects MUST contain exactly one variant.
+> An enum object MUST contain exactly one key. This constraint is enforced
+> during deserialization when the target type is known to be an enum.
+> The parser itself cannot distinguish enum objects from regular objects.
 
 > r[enum.singleton.dotted]
-> Dotted paths MUST only traverse singleton objects.
+> Dotted paths used for enum syntax MUST only traverse singleton objects.
+> This is a structural consequence of the expansion rule, not a parser constraint.
 
 A variant payload may be omitted (unit variant), or may be a scalar, block object,
 or sequence:
@@ -706,9 +728,12 @@ result.ok
 result.err message="timeout" retry_in=5s
 ```
 
-Schemas define which objects are enums, valid variant names, payload shapes,
-and whether unit variants are allowed. The core language only enforces structural
-rules.
+The parser produces the same object structure regardless of whether the target
+is an enum. Schema validation (at deserialization time) enforces:
+- Which objects are enums
+- Valid variant names
+- Payload shapes
+- Whether unit variants are allowed
 
 ## Usage patterns (non-normative)
 
