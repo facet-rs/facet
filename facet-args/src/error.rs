@@ -556,3 +556,66 @@ pub(crate) fn get_variants_from_shape(shape: &'static Shape) -> &'static [Varian
         &[]
     }
 }
+
+#[cfg(feature = "ariadne")]
+mod ariadne_impl {
+    use super::*;
+    use ariadne::{Color, Label, Report, ReportKind, Source};
+
+    impl ArgsErrorWithInput {
+        /// Returns an Ariadne report builder for this error.
+        ///
+        /// The report uses `std::ops::Range<usize>` as the span type, suitable for
+        /// use with `ariadne::Source::from(&self.flattened_args)`.
+        pub fn to_ariadne_report(&self) -> Report<'static, core::ops::Range<usize>> {
+            // Skip help requests - they're not real errors
+            if self.is_help_request() {
+                return Report::build(ReportKind::Custom("Help", Color::Cyan), 0..0)
+                    .with_message(self.help_text().unwrap_or(""))
+                    .finish();
+            }
+
+            // Use precise_span if available (e.g., for chained short flags)
+            let span = self.inner.kind.precise_span().unwrap_or(self.inner.span);
+            let range = span.start..(span.start + span.len);
+
+            let mut builder = Report::build(ReportKind::Error, range.clone())
+                .with_code(self.inner.kind.code())
+                .with_message(self.inner.kind.label());
+
+            // Add the primary label
+            builder = builder.with_label(
+                Label::new(range)
+                    .with_message(self.inner.kind.label())
+                    .with_color(Color::Red),
+            );
+
+            // Add help text as a note if available
+            if let Some(help) = self.inner.kind.help() {
+                builder = builder.with_help(help.to_string());
+            }
+
+            builder.finish()
+        }
+
+        /// Writes the error as a pretty-printed Ariadne diagnostic to the given writer.
+        ///
+        /// This creates a source from the flattened CLI arguments and renders the
+        /// error report with source context.
+        pub fn write_ariadne(&self, writer: impl std::io::Write) -> std::io::Result<()> {
+            let source = Source::from(&self.flattened_args);
+            self.to_ariadne_report().write(source, writer)
+        }
+
+        /// Returns the error as a pretty-printed Ariadne diagnostic string.
+        ///
+        /// This is a convenience method that calls [`write_ariadne`](Self::write_ariadne)
+        /// with an in-memory buffer.
+        pub fn to_ariadne_string(&self) -> String {
+            let mut buf = Vec::new();
+            // write_ariadne only fails on IO errors, which won't happen with Vec
+            self.write_ariadne(&mut buf).expect("write to Vec failed");
+            String::from_utf8(buf).expect("ariadne output is valid UTF-8")
+        }
+    }
+}

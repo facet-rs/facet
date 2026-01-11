@@ -3,11 +3,33 @@
 //! This example demonstrates facet-args' capabilities for command-line argument
 //! parsing, including rich error diagnostics, help generation, and shell completions.
 //!
-//! Run with: cargo run -p facet-args --example args_showcase
+//! Run with: cargo run -p facet-args --example args_showcase --features ariadne
 
 use facet::Facet;
-use facet_args as args;
-use facet_showcase::{Language, ShowcaseRunner};
+use facet_args::{self as args, ArgsErrorWithInput};
+use facet_showcase::{Language, Scenario, ShowcaseRunner};
+
+/// Extension trait for displaying args parse results with Ariadne error formatting.
+trait ArgsResultExt<'a, 'b, T: facet::Facet<'b>> {
+    /// Display the result - success values with facet-pretty, errors with Ariadne.
+    fn args_result(self, result: &'b Result<T, ArgsErrorWithInput>) -> Self;
+}
+
+impl<'a, 'b, T: facet::Facet<'b>> ArgsResultExt<'a, 'b, T> for Scenario<'a> {
+    fn args_result(self, result: &'b Result<T, ArgsErrorWithInput>) -> Self {
+        match result {
+            Ok(value) => self.success(value),
+            Err(err) if err.is_help_request() => {
+                // Help text is not an error, display it as output
+                self.serialized_output(Language::Rust, err.help_text().unwrap_or(""))
+            }
+            Err(err) => {
+                // Use Ariadne for pretty error display
+                self.ansi_output(&err.to_ariadne_string())
+            }
+        }
+    }
+}
 
 // =============================================================================
 // Type Definitions
@@ -215,7 +237,7 @@ fn showcase_simple_parsing(runner: &mut ShowcaseRunner) {
             Language::Rust,
             "from_slice(&[\"-v\", \"-j\", \"4\", \"input.txt\", \"output.txt\"])",
         )
-        .result(&args::from_slice::<SimpleArgs>(&[
+        .args_result(&args::from_slice::<SimpleArgs>(&[
             "-v",
             "-j",
             "4",
@@ -231,7 +253,7 @@ fn showcase_attached_short_value(runner: &mut ShowcaseRunner) {
         .description("Short flags can have their values attached directly without a space.")
         .target_type::<SimpleArgs>()
         .input(Language::Rust, "from_slice(&[\"-j4\", \"input.txt\"])")
-        .result(&args::from_slice::<SimpleArgs>(&["-j4", "input.txt"]))
+        .args_result(&args::from_slice::<SimpleArgs>(&["-j4", "input.txt"]))
         .finish();
 }
 
@@ -244,7 +266,7 @@ fn showcase_bool_equals_value(runner: &mut ShowcaseRunner) {
             Language::Rust,
             "from_slice(&[\"--verbose=true\", \"input.txt\"])",
         )
-        .result(&args::from_slice::<SimpleArgs>(&[
+        .args_result(&args::from_slice::<SimpleArgs>(&[
             "--verbose=true",
             "input.txt",
         ]))
@@ -260,7 +282,7 @@ fn showcase_subcommand_parsing(runner: &mut ShowcaseRunner) {
             Language::Rust,
             "from_slice(&[\"clone\", \"--branch\", \"main\", \"https://github.com/user/repo\"])",
         )
-        .result(&args::from_slice::<GitLikeArgs>(&[
+        .args_result(&args::from_slice::<GitLikeArgs>(&[
             "clone",
             "--branch",
             "main",
@@ -278,7 +300,7 @@ fn showcase_nested_subcommands(runner: &mut ShowcaseRunner) {
             Language::Rust,
             "from_slice(&[\"remote\", \"add\", \"origin\", \"https://github.com/user/repo\"])",
         )
-        .result(&args::from_slice::<GitLikeArgs>(&[
+        .args_result(&args::from_slice::<GitLikeArgs>(&[
             "remote",
             "add",
             "origin",
@@ -295,7 +317,7 @@ fn showcase_short_flag_chaining(runner: &mut ShowcaseRunner) {
         )
         .target_type::<GitLikeArgs>()
         .input(Language::Rust, "from_slice(&[\"status\", \"-sb\"])")
-        .result(&args::from_slice::<GitLikeArgs>(&["status", "-sb"]))
+        .args_result(&args::from_slice::<GitLikeArgs>(&["status", "-sb"]))
         .finish();
 }
 
@@ -327,7 +349,7 @@ fn showcase_help_auto_detection(runner: &mut ShowcaseRunner) {
         .description("When `-h`, `--help`, `-help`, or `/?` is the first argument, help is automatically generated and returned.")
         .target_type::<SimpleArgs>()
         .input(Language::Rust, "from_slice(&[\"--help\"])")
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -396,7 +418,7 @@ fn scenario_unknown_flag(runner: &mut ShowcaseRunner) {
         .description("Error when an unrecognized flag is provided.")
         .target_type::<SimpleArgs>()
         .input(Language::Rust, "from_slice(&[\"--verbos\", \"input.txt\"])")
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -408,7 +430,7 @@ fn scenario_unknown_flag_suggestion(runner: &mut ShowcaseRunner) {
         .description("When the flag name is close to a valid one, a suggestion is offered.")
         .target_type::<BuildArgs>()
         .input(Language::Rust, "from_slice(&[\"--releas\"])")
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -422,7 +444,7 @@ fn scenario_invalid_short_flag_in_chain(runner: &mut ShowcaseRunner) {
         )
         .target_type::<SimpleArgs>()
         .input(Language::Rust, "from_slice(&[\"-vxyz\", \"input.txt\"])")
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -437,7 +459,7 @@ fn scenario_triple_dash(runner: &mut ShowcaseRunner) {
             Language::Rust,
             "from_slice(&[\"---verbose\", \"input.txt\"])",
         )
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -449,7 +471,7 @@ fn scenario_single_dash_long_name(runner: &mut ShowcaseRunner) {
         .description("Long flag names require double dashes.")
         .target_type::<SimpleArgs>()
         .input(Language::Rust, "from_slice(&[\"-verbose\", \"input.txt\"])")
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -461,7 +483,7 @@ fn scenario_missing_value(runner: &mut ShowcaseRunner) {
         .description("Error when a flag that requires a value doesn't get one.")
         .target_type::<SimpleArgs>()
         .input(Language::Rust, "from_slice(&[\"-j\"])")
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -473,7 +495,7 @@ fn scenario_missing_required_arg(runner: &mut ShowcaseRunner) {
         .description("Error when a required positional argument is not provided.")
         .target_type::<SimpleArgs>()
         .input(Language::Rust, "from_slice(&[\"-v\"])")
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -485,7 +507,7 @@ fn scenario_unexpected_positional(runner: &mut ShowcaseRunner) {
         .description("Error when a positional argument is provided but not expected.")
         .target_type::<BuildArgs>()
         .input(Language::Rust, "from_slice(&[\"extra\", \"--release\"])")
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -502,7 +524,7 @@ fn scenario_unknown_subcommand(runner: &mut ShowcaseRunner) {
             Language::Rust,
             "from_slice(&[\"clon\", \"https://example.com\"])",
         )
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -514,7 +536,7 @@ fn scenario_missing_subcommand(runner: &mut ShowcaseRunner) {
         .description("Error when a required subcommand is not provided.")
         .target_type::<GitLikeArgs>()
         .input(Language::Rust, "from_slice(&[\"--version\"])")
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -529,7 +551,7 @@ fn scenario_missing_nested_subcommand_arg(runner: &mut ShowcaseRunner) {
             Language::Rust,
             "from_slice(&[\"remote\", \"add\", \"origin\"])",
         )
-        .result(&result)
+        .args_result(&result)
         .finish();
 }
 
@@ -544,6 +566,6 @@ fn scenario_invalid_value(runner: &mut ShowcaseRunner) {
             Language::Rust,
             "from_slice(&[\"-j\", \"not-a-number\", \"input.txt\"])",
         )
-        .result(&result)
+        .args_result(&result)
         .finish();
 }

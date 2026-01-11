@@ -1,0 +1,11 @@
+---
+source: facet-args/tests/ariadne.rs
+expression: ariadne_output
+---
+[args::reflect_error] Error: invalid value for `usize`
+   ╭─[ <unknown>:1:9 ]
+   │
+ 1 │ --count not-a-number
+   │         ──────┬─────  
+   │               ╰─────── invalid value for `usize`
+───╯
