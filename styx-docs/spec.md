@@ -981,96 +981,7 @@ config {
 
 ---
 
-# Part 2: Deserializer
-
-The deserializer converts document trees into typed application values. It interprets
-scalars based on target types and validates structural constraints like enum representations.
-
-For performance, implementations may deserialize directly from source text without
-materializing an intermediate document tree. The behavior must be indistinguishable
-from first parsing into a tree, then deserializing from that tree.
-
-## Scalar interpretation
-
-The deserializer interprets opaque scalar values based on the target type. A scalar
-like `42` becomes an integer when the target is `u32`, but remains a string when
-the target is `String`. See the standard types in Part 3 for the grammars of
-`@integer`, `@float`, `@duration`, etc.
-
-## Enum deserialization
-
-Enums are represented as objects with exactly one key (the variant tag) whose value
-is the variant payload.
-
-> r[enum.representation]
-> When deserializing into an enum type, the value MUST be an object with exactly one key.
->
-> ```compare
-> /// json
-> {"ok": null}
-> /// styx
-> { ok @ }
-> ```
->
-> ```compare
-> /// json
-> {"err": {"message": "nope", "retry_in": "5s"}}
-> /// styx
-> { err { message "nope", retry_in 5s } }
-> ```
-
-The parser expands dotted paths into nested objects, which provides a convenient
-syntax for enums:
-
-```compare
-/// styx
-status.ok
-/// styx
-status { ok @ }
-```
-
-```compare
-/// styx
-status.err { message "nope" }
-/// styx
-status { err { message "nope" } }
-```
-
-Dotted paths expand to nested objects (see `r[object.key.dotted.expansion]`).
-Keys without values get implicit unit (see `r[object.entry.implicit-unit]`).
-
-> r[enum.singleton]
-> The deserializer MUST reject enum values that are not single-key objects.
-> The parser cannot enforce this — it produces the same object structure regardless
-> of target type.
-
-> r[enum.unit]
-> For unit variants, the payload is the unit value `@`.
->
-> ```styx
-> // All equivalent for unit variants:
-> status.ok        // implicit @
-> status.ok @      // explicit @
-> ```
-
-A variant payload may be unit (`@`), a scalar, an object, or a sequence:
-
-```styx
-result.ok
-```
-
-```styx
-result.err message="timeout" retry_in=5s
-```
-
-The deserializer validates:
-- The value is a single-key object
-- The key matches a valid variant name
-- The payload matches the expected variant shape
-
----
-
-# Part 3: Schemas
+# Part 2: Schemas
 
 Schemas define the expected structure of STYX documents. They specify what keys exist,
 what types values must have, and whether fields are required or optional.
@@ -1581,6 +1492,96 @@ Schemas can be:
 > r[schema.external]
 > External schema resolution is implementation-defined. Common patterns include
 > file extensions (`.schema.styx`), sidecar files, or registry lookups.
+
+---
+
+# Part 3: Deserializer
+
+The deserializer converts document trees into typed application values. It interprets
+scalars based on target types and validates structural constraints like enum representations.
+
+For performance, implementations may deserialize directly from source text without
+materializing an intermediate document tree. The behavior must be indistinguishable
+from first parsing into a tree, then deserializing from that tree.
+
+## Scalar interpretation
+
+The deserializer interprets opaque scalar values based on the target type. A scalar
+like `42` becomes an integer when the target is `u32`, but remains a string when
+the target is `String`. See the standard types in Part 3 for the grammars of
+`@integer`, `@float`, `@duration`, etc.
+
+## Enum deserialization
+
+Enums are represented as objects with exactly one key (the variant tag) whose value
+is the variant payload.
+
+> r[enum.representation]
+> When deserializing into an enum type, the value MUST be an object with exactly one key.
+>
+> ```compare
+> /// json
+> {"ok": null}
+> /// styx
+> { ok @ }
+> ```
+>
+> ```compare
+> /// json
+> {"err": {"message": "nope", "retry_in": "5s"}}
+> /// styx
+> { err { message "nope", retry_in 5s } }
+> ```
+
+The parser expands dotted paths into nested objects, which provides a convenient
+syntax for enums:
+
+```compare
+/// styx
+status.ok
+/// styx
+status { ok @ }
+```
+
+```compare
+/// styx
+status.err { message "nope" }
+/// styx
+status { err { message "nope" } }
+```
+
+Dotted paths expand to nested objects (see `r[object.key.dotted.expansion]`).
+Keys without values get implicit unit (see `r[object.entry.implicit-unit]`).
+
+> r[enum.singleton]
+> The deserializer MUST reject enum values that are not single-key objects.
+> The parser cannot enforce this — it produces the same object structure regardless
+> of target type.
+
+> r[enum.unit]
+> For unit variants, the payload is the unit value `@`.
+>
+> ```styx
+> // All equivalent for unit variants:
+> status.ok        // implicit @
+> status.ok @      // explicit @
+> ```
+
+A variant payload may be unit (`@`), a scalar, an object, or a sequence:
+
+```styx
+result.ok
+```
+
+```styx
+result.err message="timeout" retry_in=5s
+```
+
+The deserializer validates:
+- The value is a single-key object
+- The key matches a valid variant name
+- The payload matches the expected variant shape
+
 
 ---
 
