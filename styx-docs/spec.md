@@ -1,7 +1,85 @@
 # styx
 
-STYX is a document language designed to replaced YAML, TOML, JSON, etc. for documents authored
+STYX is a document language designed to replace YAML, TOML, JSON, etc. for documents authored
 by humans.
+
+## Document structure
+
+A STYX document is an [object](#styx--objects). Top-level entries do not require braces.
+
+> r[document.root]
+> The parser MUST interpret top-level key-value pairs as entries of an implicit root object.
+>
+> ```compare
+> /// json
+> {
+>   "server": {
+>     "host": "localhost",
+>     "port": 8080
+>   },
+>   "database": {
+>     "url": "postgres://..."
+>   }
+> }
+> /// styx
+> server {
+>   host localhost
+>   port 8080
+> }
+> database {
+>   url "postgres://..."
+> }
+> ```
+
+> r[document.root.explicit]
+> If the document starts with `{`, it MUST be a single block object.
+> The closing `}` MUST be the end of the document.
+>
+> ```compare
+> /// json
+> {
+>   "key": "value"
+> }
+> /// styx
+> {
+>   key value
+> }
+> ```
+
+> r[document.root.trailing]
+> The parser MUST reject tokens after the root object.
+>
+> ```styx
+> {
+>   key value
+> }
+> 42   // ERROR: unexpected token after root
+> ```
+
+## Comments
+
+Line comments start with `//` and extend to the end of the line.
+
+> r[comment.line]
+> The parser MUST ignore content from `//` to the end of the line.
+>
+> ```compare
+> /// json
+> {
+>   "server": {
+>     "host": "localhost",
+>     "port": 8080
+>   }
+> }
+> /// styx
+> server {
+>   host localhost  // primary host
+>   port 8080       // default port
+> }
+> ```
+
+> r[comment.placement]
+> The parser MUST allow comments anywhere whitespace is allowed.
 
 ## Value types
 
@@ -22,27 +100,53 @@ produce identical values.
 
 Bare scalars are delimited by whitespace.
 
-```styx
+```compare
+/// json
+"foo"
+/// styx
 foo
+```
+
+```compare
+/// json
 42
+/// styx
+42
+```
+
+```compare
+/// json
 true
-https://example.com/path
+/// styx
+true
 ```
 
 ### Quoted scalars
 
 Quoted scalars use double quotes and support escape sequences.
 
-```styx
+```compare
+/// json
 "hello world"
+/// styx
+"hello world"
+```
+
+```compare
+/// json
+"foo\nbar"
+/// styx
 "foo\nbar"
 ```
 
 ### Raw scalars
 
-Raw scalars preserve content literally.
+Raw scalars preserve content literally. JSON has no equivalent.
 
-```styx
+```compare
+/// json
+"no need to escape \"double quotes\" in here"
+/// styx
 r#"no need to escape "double quotes" in here"#
 ```
 
@@ -51,9 +155,12 @@ r#"no need to escape "double quotes" in here"#
 
 ### Heredoc scalars
 
-Heredocs are multiline scalars.
+Heredocs are multiline scalars. JSON has no equivalent.
 
-```styx
+```compare
+/// json
+"line one\nline two"
+/// styx
 <<EOF
 line one
 line two
@@ -66,30 +173,129 @@ EOF
 > r[scalar.heredoc.indent]
 > The parser MUST strip leading whitespace from content lines up to the
 > closing delimiter's indentation level.
+>
+> ```styx
+> server {
+>   script <<BASH
+>     #!/bin/bash
+>     echo "hello"
+>     BASH
+> }
+> ```
+>
+> The closing `BASH` is indented 4 spaces, so 4 spaces are stripped.
+> The value of `script` is `#!/bin/bash\necho "hello"`.
 
 > r[scalar.heredoc.indent.minimum]
 > All content lines MUST be indented at least as much as the closing delimiter.
+>
+> ```styx
+> server {
+>   script <<BASH
+> #!/bin/bash   // ERROR: less indented than closing delimiter
+>     BASH
+> }
+> ```
 
 > r[scalar.heredoc.chomp]
 > The parser MUST strip the trailing newline immediately before the closing delimiter.
+>
+> ```styx
+> msg <<EOF
+>   hello
+>   EOF
+> ```
+>
+> The value of `msg` is `hello` (no trailing newline).
 
 > r[scalar.heredoc.closing]
 > The closing delimiter MUST appear on its own line.
+>
+> ```styx
+> msg <<EOF
+>   hello EOF   // ERROR: delimiter not on its own line
+> ```
 
 ### Scalar interpretation
 
-> r[scalar.interpretation]
-> A conforming implementation MUST support interpreting scalars as:
+A conforming implementation MUST support interpreting scalars as the following types.
+
+> r[scalar.interp.integer]
+> A conforming implementation MUST interpret scalars matching this grammar as integers:
 >
-> - Integers (signed/unsigned, various widths)
-> - Floating point numbers
-> - Booleans (`true`, `false`)
-> - Null (`null`)
-> - Strings
-> - Durations (`30s`, `10ms`, `2h`)
-> - Timestamps (RFC 3339)
-> - Regular expressions (`/foo/i`)
-> - Byte sequences (hex `0xdeadbeef`, base64 `b64"..."`)
+> ```
+> integer = ["-" | "+"] digit+
+> digit   = "0"..."9"
+> ```
+>
+> Examples: `0`, `42`, `-10`, `+5`
+
+> r[scalar.interp.float]
+> A conforming implementation MUST interpret scalars matching this grammar as floats:
+>
+> ```
+> float    = integer "." digit+ [exponent] | integer exponent
+> exponent = ("e" | "E") ["-" | "+"] digit+
+> ```
+>
+> Examples: `3.14`, `-0.5`, `1e10`, `2.5e-3`
+
+> r[scalar.interp.boolean]
+> A conforming implementation MUST interpret `true` and `false` as booleans.
+
+> r[scalar.interp.null]
+> A conforming implementation MUST interpret `null` as the null value.
+
+> r[scalar.interp.duration]
+> A conforming implementation MUST interpret scalars matching this grammar as durations:
+>
+> ```
+> duration = integer unit
+> unit     = "ns" | "us" | "µs" | "ms" | "s" | "m" | "h" | "d"
+> ```
+>
+> Examples: `30s`, `10ms`, `2h`, `500µs`
+
+> r[scalar.interp.timestamp]
+> A conforming implementation MUST interpret scalars matching RFC 3339 as timestamps:
+>
+> ```
+> timestamp = date "T" time timezone
+> date      = year "-" month "-" day
+> time      = hour ":" minute ":" second ["." fraction]
+> timezone  = "Z" | ("+" | "-") hour ":" minute
+> ```
+>
+> Examples: `2026-01-10T18:43:00Z`, `2026-01-10T12:00:00-05:00`
+
+> r[scalar.interp.regex]
+> A conforming implementation MUST interpret scalars matching this grammar as regular expressions:
+>
+> ```
+> regex = "/" pattern "/" flags
+> flags = ("i" | "m" | "s" | "x")*
+> ```
+>
+> Examples: `/foo/`, `/^hello$/i`, `/\d+/`
+
+> r[scalar.interp.bytes.hex]
+> A conforming implementation MUST interpret scalars matching this grammar as byte sequences:
+>
+> ```
+> hex_bytes = "0x" hex_digit+
+> hex_digit = "0"..."9" | "a"..."f" | "A"..."F"
+> ```
+>
+> Examples: `0xdeadbeef`, `0x00FF`
+
+> r[scalar.interp.bytes.base64]
+> A conforming implementation MUST interpret scalars matching this grammar as byte sequences:
+>
+> ```
+> base64_bytes = "b64" '"' base64_char* '"'
+> ```
+>
+> Examples: `b64"SGVsbG8="`, `b64""`
 
 Implementations commonly support additional forms like paths, URLs, IPs, and semver.
 
@@ -101,19 +307,39 @@ Objects are key-value maps.
 
 Keys are bare identifiers, quoted strings, or dotted paths.
 
-```styx
-foo value             // bare key
-"foo bar" value       // quoted key (contains space)
-foo.bar value         // dotted path: foo -> bar
-"foo".bar value       // dotted path: "foo" -> bar
-"foo.bar" value       // quoted key (literal dot, no path expansion)
+```compare
+/// json
+{"foo": "value"}
+/// styx
+foo value
+```
+
+```compare
+/// json
+{"foo bar": "value"}
+/// styx
+"foo bar" value
+```
+
+```compare
+/// json
+{"foo": {"bar": "value"}}
+/// styx
+foo.bar value
+```
+
+```compare
+/// json
+{"foo.bar": "value"}
+/// styx
+"foo.bar" value
 ```
 
 > r[object.key.bare]
 > A bare key MUST match `[A-Za-z_][A-Za-z0-9_-]*`.
 
 > r[object.key.dotted]
-> A dotted path is a sequence of key segments separated by `.`.
+> The parser MUST recognize dotted paths as key segments separated by `.`.
 > Each segment MUST be a bare key or a quoted string.
 
 > r[object.key.dotted.expansion]
@@ -123,7 +349,14 @@ foo.bar value         // dotted path: foo -> bar
 
 Block objects use `{ }` delimiters. Entries are separated by newlines or commas.
 
-```styx
+```compare
+/// json
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "enabled": true
+}
+/// styx
 {
   name "my-app"
   version 1.0.0
@@ -131,13 +364,21 @@ Block objects use `{ }` delimiters. Entries are separated by newlines or commas.
 }
 ```
 
-```styx
-{ name "my-app", version 1.0.0, enabled true }
-```
-
 Nested objects:
 
-```styx
+```compare
+/// json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080
+  },
+  "database": {
+    "url": "postgres://localhost/mydb",
+    "pool_size": 10
+  }
+}
+/// styx
 {
   server {
     host localhost
@@ -160,24 +401,40 @@ Nested objects:
 
 Attribute objects use `key=value` syntax. They are sugar for block objects.
 
-```styx
-labels app=web tier=frontend
-```
-
-is equivalent to:
-
-```styx
-labels {
-  app web
-  tier frontend
+```compare
+/// json
+{
+  "labels": {
+    "app": "web",
+    "tier": "frontend"
+  }
 }
+/// styx
+labels app=web tier=frontend
 ```
 
 Values can be scalars, block objects, or sequences:
 
-```styx
+```compare
+/// json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080
+  }
+}
+/// styx
 server host=localhost port=8080
-server config={ host localhost, port 8080 }
+```
+
+```compare
+/// json
+{
+  "build": {
+    "components": ["clippy", "rustfmt", "miri"]
+  }
+}
+/// styx
 build components=(clippy rustfmt miri)
 ```
 
@@ -189,7 +446,7 @@ build components=(clippy rustfmt miri)
 > The value after `=` MUST be exactly one value.
 
 > r[object.attr.termination]
-> An attribute object ends when a token is not of the form `key=`.
+> The parser MUST terminate an attribute object when the next token is not of the form `key=`.
 
 Attribute objects work well for inline key-value patterns like labels,
 environment variables, and options. For complex or nested structures, use block form.
@@ -198,7 +455,13 @@ environment variables, and options. For complex or nested structures, use block 
 
 Inside a sequence, use block objects:
 
-```styx
+```compare
+/// json
+[
+  {"labels": {"app": "web", "tier": "frontend"}},
+  {"labels": {"app": "api", "tier": "backend"}}
+]
+/// styx
 (
   { labels app=web tier=frontend }
   { labels app=api tier=backend }
@@ -209,9 +472,10 @@ Inside a sequence, use block objects:
 
 Both forms produce the same object value:
 
-```styx
+```compare
+/// styx
 config host=localhost port=8080
-
+/// styx
 config {
   host localhost
   port 8080
@@ -223,77 +487,60 @@ config {
 Enums are a schema-level concept. The core language provides structural representation
 via externally tagged objects.
 
+An enum value is represented as an object with exactly one key (the variant tag)
+whose value is the payload:
+
 > r[enum.representation]
-> An enum value is represented as an object with exactly one key (the variant tag)
-> whose value is the payload:
+> An enum object MUST contain exactly one key.
 >
-> ```styx
+> ```compare
+> /// json
+> {"ok": {}}
+> /// styx
 > { ok {} }
 > ```
 >
-> ```styx
+> ```compare
+> /// json
+> {"err": {"message": "nope", "retry_in": "5s"}}
+> /// styx
 > { err { message "nope", retry_in 5s } }
 > ```
 
+Enum variants may be written using dotted path syntax:
+
+```styx
+status.ok
+```
+
+```styx
+status.err { message "nope" }
+```
+
 > r[enum.dotted-path]
-> Enum variants may be written using dotted path syntax:
->
-> ```styx
-> status.ok
-> ```
->
-> ```styx
-> status.err { message "nope" }
-> ```
->
-> This is syntactic sugar for:
->
-> ```styx
-> status { ok {} }
-> ```
->
-> ```styx
-> status { err { message "nope" } }
-> ```
+> The parser MUST expand `status.ok` to `status { ok {} }` and 
+> `status.err { ... }` to `status { err { ... } }`.
 
 > r[enum.singleton]
-> Enum objects MUST contain exactly one variant. Dotted paths may only traverse
-> singleton objects.
+> Enum objects MUST contain exactly one variant.
 
-> r[enum.no-reopen]
-> Enum objects MUST NOT be reopened or merged:
->
-> ```styx
-> // Invalid: attempts to add second variant
-> status.ok
-> status.err { message "nope" }
-> ```
+> r[enum.singleton.dotted]
+> Dotted paths MUST only traverse singleton objects.
 
-> r[enum.payload]
-> A variant payload may be omitted (unit variant), or may be a scalar, block object,
-> or sequence:
->
-> ```styx
-> result.ok
-> ```
->
-> ```styx
-> result.err message="timeout" retry_in=5s
-> ```
+A variant payload may be omitted (unit variant), or may be a scalar, block object,
+or sequence:
 
-> r[enum.explicit]
-> Enum interpretation must be structurally explicit. The following is ambiguous
-> and not a valid enum representation:
->
-> ```styx
-> // Ambiguous: string value or enum variant?
-> status ok
-> ```
+```styx
+result.ok
+```
 
-> r[enum.schema]
-> Schemas define which objects are enums, valid variant names, payload shapes,
-> and whether unit variants are allowed. The core language only enforces structural
-> rules (singleton objects, no reopening).
+```styx
+result.err message="timeout" retry_in=5s
+```
+
+Schemas define which objects are enums, valid variant names, payload shapes,
+and whether unit variants are allowed. The core language only enforces structural
+rules.
 
 ## Usage patterns (non-normative)
 
