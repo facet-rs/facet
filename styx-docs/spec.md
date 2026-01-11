@@ -413,7 +413,17 @@ Objects are key-value maps.
 
 ### Keys
 
-Keys are bare identifiers, quoted strings, or dotted paths.
+Keys are dotted paths composed of one or more segments.
+
+> r[object.key.syntax]
+> A key MUST match the following grammar:
+>
+> ```
+> key     = segment ("." segment)*
+> segment = bare | quoted
+> bare    = [A-Za-z_][A-Za-z0-9_-]*
+> quoted  = '"' ... '"'
+> ```
 
 ```compare
 /// json
@@ -443,15 +453,18 @@ foo.bar value
 "foo.bar" value
 ```
 
-> r[object.key.bare]
-> A bare key MUST match `[A-Za-z_][A-Za-z0-9_-]*`.
+Mixed dotted paths with quoted segments:
 
-> r[object.key.dotted]
-> The parser MUST recognize dotted paths as key segments separated by `.`.
-> Each segment MUST be a bare key or a quoted string.
+```compare
+/// json
+{"key with spaces": {"still": {"dotted": "value"}}}
+/// styx
+"key with spaces".still.dotted value
+```
 
 > r[object.key.dotted.expansion]
-> A dotted path `a.b.c value` MUST expand to nested objects: `a { b { c value } }`.
+> A dotted path MUST expand to nested singleton objects.
+> `a.b.c value` expands to `a { b { c value } }`.
 
 > r[object.key.dotted.no-reopen]
 > A dotted path MUST NOT introduce a key whose parent object already contains a different key.
