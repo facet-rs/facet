@@ -113,11 +113,12 @@ Line comments start with `//` and extend to the end of the line.
 
 ## Value types
 
-The parser produces three types of values:
+The parser produces four types of values:
 
   * **Scalar** — an opaque text atom
   * **Object** — an ordered map of keys to values
   * **Sequence** — an ordered list of values
+  * **Unit** — the absence of a meaningful value (`@`)
 
 ## Scalars
 
@@ -351,6 +352,28 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 > r[sequence.empty]
 > An empty sequence `()` is valid and represents an empty list.
 
+## Unit
+
+The unit value represents the absence of a meaningful value, analogous to `()` in Rust
+or `None` in Python.
+
+> r[value.unit]
+> The token `@` not immediately followed by an identifier character is the **unit value**.
+>
+> ```styx
+> field @              // unit value
+> field @string        // type reference (@ followed by identifier)
+> ```
+
+> r[value.unit.sequence]
+> The unit value is valid as a sequence element.
+>
+> ```styx
+> (a @ c)              // 3-element sequence: "a", unit, "c"
+> (@)                  // 1-element sequence containing unit
+> ()                   // 0-element sequence (empty, distinct from unit)
+> ```
+
 ## Objects
 
 Objects are key-value maps.
@@ -452,13 +475,13 @@ Mixed dotted paths with quoted segments:
 > ```
 
 > r[object.entry.implicit-unit]
-> If a key is not followed by a value, the value is implicitly `()` (empty sequence).
+> If a key is not followed by a value, the value is implicitly `@` (unit).
 >
 > ```styx
-> enabled           // equivalent to: enabled ()
-> status.ok         // equivalent to: status { ok () }
+> enabled           // equivalent to: enabled @
+> status.ok         // equivalent to: status { ok @ }
 > server {
->   debug           // equivalent to: debug ()
+>   debug           // equivalent to: debug @
 > }
 > ```
 
@@ -766,9 +789,9 @@ is the variant payload.
 >
 > ```compare
 > /// json
-> {"ok": []}
+> {"ok": null}
 > /// styx
-> { ok () }
+> { ok @ }
 > ```
 >
 > ```compare
@@ -789,7 +812,7 @@ status.ok
 status.err { message "nope" }
 ```
 
-The first expands to `status { ok () }` (using implicit unit, see r[object.entry.implicit-unit]).
+The first expands to `status { ok @ }` (using implicit unit, see r[object.entry.implicit-unit]).
 The second expands to `status { err { message "nope" } }`.
 
 > r[enum.singleton]
@@ -798,17 +821,15 @@ The second expands to `status { err { message "nope" } }`.
 > of target type.
 
 > r[enum.unit]
-> For unit variants, the deserializer MUST accept both `()` and `{}` as valid payloads.
-> Both represent "no payload."
+> For unit variants, the payload is the unit value `@`.
 >
 > ```styx
 > // All equivalent for unit variants:
-> status.ok        // implicit ()
-> status.ok ()     // explicit ()
-> status.ok {}     // explicit {}
+> status.ok        // implicit @
+> status.ok @      // explicit @
 > ```
 
-A variant payload may be a unit (omitted, `()`, or `{}`), a scalar, an object, or a sequence:
+A variant payload may be unit (`@`), a scalar, an object, or a sequence:
 
 ```styx
 result.ok
@@ -915,11 +936,22 @@ The schema type vocabulary matches the deserializer's scalar interpretation rule
 > `@bytes` — a scalar matching hex (`0x...`) or base64 (`b64"..."`) grammar.
 
 > r[schema.type.any]
-> `@any` — any value (scalar, object, or sequence). Useful for arbitrary metadata:
+> `@any` — any value (scalar, object, sequence, or unit). Useful for arbitrary metadata:
 >
 > ```styx
 > metadata @map(@any)   // arbitrary key-value pairs
 > extensions @any       // any structure
+> ```
+
+> r[schema.type.unit]
+> `@unit` — the unit value `@`. Useful for sentinel fields or nullable types:
+>
+> ```styx
+> // Field that must be unit (sentinel/marker)
+> enabled @unit
+>
+> // Nullable field using union
+> value @string | @unit
 > ```
 
 ## Optional types
@@ -944,6 +976,53 @@ server {
 > timeout @duration?     // OK: optional duration
 > timeout @duration ?    // ERROR: space before ?
 > ```
+
+## Union types
+
+Union types allow a value to match any of several types:
+
+```styx
+// String or unit (nullable string)
+name @string | @unit
+
+// Integer or string
+id @integer | @string
+
+// Duration, integer, or unit
+timeout @duration | @integer | @unit
+```
+
+> r[schema.union]
+> A union type `@type1 | @type2 | ...` matches a value if it matches any of the
+> constituent types. The `|` operator has lower precedence than `?`.
+>
+> ```styx
+> // Nullable optional: field may be absent, or present with string or unit
+> name @string | @unit?
+>
+> // This is equivalent to:
+> name (@string | @unit)?
+> ```
+
+> r[schema.union.disambiguation]
+> When validating a value against a union, types are checked in order.
+> The first matching type determines the interpretation.
+>
+> For overlapping types (e.g., `@integer | @string`), more specific types
+> should appear first to ensure correct matching.
+
+**Common patterns:**
+
+```styx
+// Nullable field (required but may be unit)
+value @string | @unit
+
+// Optional field (may be absent)
+value @string?
+
+// Optional nullable field (may be absent, or present as string or unit)
+value @string | @unit?
+```
 
 ## Sequences
 
@@ -1053,28 +1132,29 @@ status @enum {
 
 > r[schema.enum]
 > An enum schema `@enum { ... }` defines valid variant names and their payloads.
-> Unit variants use implicit `()` (see r[object.entry.implicit-unit]).
+> Unit variants use implicit `@` (see r[object.entry.implicit-unit]).
 > Variants with payloads specify their schema as the value.
 
-## Limitations (non-normative)
+## Notes (non-normative)
 
-This schema language intentionally omits some features common in other systems:
+**Nullable vs optional**: These are distinct concepts:
 
-**Union types**: There is no syntax for "string or integer" or "duration or null".
-Use `@any` for polymorphic fields, or model variants explicitly with `@enum`.
-
-**Nullable vs optional**: `@type?` means the field may be omitted. To express
-"required but may be null", use `@null` as a valid type or model with `@enum`:
+- `@type?` — *optional*: field may be absent from the document
+- `@type | @unit` — *nullable*: field must be present but may be unit (`@`)
+- `@type | @unit?` — *optional nullable*: field may be absent, or present as value or unit
 
 ```styx
-// Option 1: accept null explicitly
-value @any  // allows null among other values
+// Required string
+name @string
 
-// Option 2: model as enum
-value @enum {
-  some { inner @string }
-  none
-}
+// Optional string (may be absent)
+name @string?
+
+// Nullable string (present, but may be @)
+name @string | @unit
+
+// Optional nullable string
+name @string | @unit?
 ```
 
 **Recursive types**: Self-referential types are supported:
@@ -1210,4 +1290,4 @@ STYX enforces the following invariants:
 - **No semantic interpretation during parsing**: The parser produces opaque scalars; meaning is assigned during deserialization.
 - **All structure is explicit**: Braces and parentheses define nesting, not whitespace or conventions.
 - **Commas in objects only**: Commas are optional separators in objects (interchangeable with newlines). Sequences use whitespace only.
-- **Implicit unit values**: Keys without values produce `()` (empty sequence). This enables concise unit variants (`status.ok`) and flag-like entries (`enabled`).
+- **Explicit unit value**: `@` is the unit value, distinct from `()` (empty sequence). Keys without values implicitly produce `@`. This enables concise unit variants (`status.ok`) and flag-like entries (`enabled`).
