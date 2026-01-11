@@ -131,21 +131,13 @@ produce identical scalar values.
 Bare scalars are delimited by whitespace and structural characters.
 
 > r[scalar.bare.termination]
-> A bare scalar is terminated by whitespace or any of: `{`, `}`, `(`, `)`, `=`, `,`.
+> A bare scalar is terminated by whitespace or any of: `{`, `}`, `(`, `)`, `=`, `,`, `//`.
 >
 > ```styx
 > items(a b c)     // "items" is key, (a b c) is value
 > foo{bar baz}     // "foo" is key, {bar baz} is value
 > x=1              // in attribute context: "x" is key, "1" is value
-> ```
-
-> r[scalar.bare.type-ref]
-> A bare scalar starting with `@` is a **type reference**. Type references are
-> used in schemas to denote types rather than literal values.
->
-> ```styx
-> name @string     // type reference: value must be a string
-> name string      // literal: value must be the scalar "string"
+> foo// comment    // "foo" is the scalar, comment follows
 > ```
 
 ```compare
@@ -198,16 +190,11 @@ Quoted scalars use double quotes and support escape sequences.
 > | `\r` | Carriage return |
 > | `\t` | Tab |
 > | `\0` | Null |
-> | `\@` | Literal `@` (prevents type reference interpretation) |
+> | `\@` | Literal `@` (see r[schema.type-ref.escape]) |
 > | `\uXXXX` | Unicode code point (4 hex digits) |
 > | `\u{X...}` | Unicode code point (1-6 hex digits) |
 >
 > Invalid escape sequences are an error.
-
-> r[scalar.quoted.type-ref]
-> Quoting does not change meaning. `@string` and `"@string"` are both type references.
-> To represent a literal scalar starting with `@`, escape it: `"\@string"` produces
-> the scalar value `@string`.
 
 ### Raw scalars
 
@@ -326,7 +313,7 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 > Sequences MUST start with `(` and end with `)`.
 
 > r[sequence.separators]
-> Elements MUST be separated by whitespace.
+> Elements MUST be separated by whitespace. Commas are NOT allowed in sequences.
 >
 > ```styx
 > (a b c)
@@ -335,6 +322,7 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 >   b
 >   c
 > )
+> (a, b, c)    // ERROR: commas not allowed in sequences
 > ```
 >
 > A single-element sequence is valid: `(foo)` contains one element.
@@ -451,6 +439,17 @@ Mixed dotted paths with quoted segments:
 > }
 > ```
 
+> r[object.entry.implicit-unit]
+> If a key is not followed by a value, the value is implicitly `()` (empty sequence).
+>
+> ```styx
+> enabled           // equivalent to: enabled ()
+> status.ok         // equivalent to: status { ok () }
+> server {
+>   debug           // equivalent to: debug ()
+> }
+> ```
+
 ### Block form
 
 Block objects use `{ }` delimiters. Entries are separated by newlines or commas.
@@ -506,6 +505,17 @@ Nested objects:
 > r[object.block.separators]
 > Entries MUST be separated by newlines or commas.
 > Trailing commas are allowed: `{ a 1, b 2, }` is valid.
+
+> r[object.block.no-equals]
+> The `=` character is not valid in block object entries. Use attribute form
+> for `key=value` syntax.
+>
+> ```styx
+> { a=1 b=2 }   // ERROR: use attribute form or block form, not both
+> config { a=1 }  // ERROR: same issue
+> config a=1 b=2  // OK: attribute form
+> config { a 1, b 2 }  // OK: block form
+> ```
 
 ### Attribute form
 
@@ -766,14 +776,26 @@ status.ok
 status.err { message "nope" }
 ```
 
-These expand to `status { ok {} }` and `status { err { message "nope" } }` respectively.
+The first expands to `status { ok () }` (using implicit unit, see r[object.entry.implicit-unit]).
+The second expands to `status { err { message "nope" } }`.
 
 > r[enum.singleton]
 > The deserializer MUST reject enum values that are not single-key objects.
 > The parser cannot enforce this — it produces the same object structure regardless
 > of target type.
 
-A variant payload may be omitted (unit variant), or may be a scalar, object, or sequence:
+> r[enum.unit]
+> For unit variants, the deserializer MUST accept both `()` and `{}` as valid payloads.
+> Both represent "no payload."
+>
+> ```styx
+> // All equivalent for unit variants:
+> status.ok        // implicit ()
+> status.ok ()     // explicit ()
+> status.ok {}     // explicit {}
+> ```
+
+A variant payload may be a unit (omitted, `()`, or `{}`), a scalar, an object, or a sequence:
 
 ```styx
 result.ok
@@ -814,6 +836,14 @@ server {
 > r[schema.type-ref]
 > A type reference is a scalar starting with `@`. The remainder names a type
 > from the standard type vocabulary or a user-defined type.
+>
+> Type names MUST match the grammar:
+> ```
+> type-ref  = "@" type-name ["?"]
+> type-name = [A-Za-z_][A-Za-z0-9_-]*
+> ```
+>
+> Examples: `@string`, `@TlsConfig`, `@my-type`, `@my_type`
 
 > r[schema.type-ref.literal]
 > A scalar without `@` is a literal value constraint. The document value must
@@ -822,6 +852,22 @@ server {
 > ```styx
 > version 1          // must be exactly the scalar "1"
 > version @integer   // must be an integer (1, 2, 42, etc.)
+> ```
+
+> r[schema.type-ref.escape]
+> To represent a literal value starting with `@`, use the `\@` escape in a quoted scalar.
+> The parser produces the scalar text; the schema layer interprets `@` prefixes.
+>
+> ```styx
+> // In a schema:
+> tag @string        // type reference: any string
+> tag "\@mention"    // literal: must be exactly "@mention"
+> ```
+>
+> Raw scalars and heredocs are always literal values — they never produce type references:
+>
+> ```styx
+> pattern r#"@user"#   // literal: the string "@user"
 > ```
 
 ## Standard types
@@ -855,6 +901,14 @@ The schema type vocabulary matches the deserializer's scalar interpretation rule
 > r[schema.type.bytes]
 > `@bytes` — a scalar matching hex (`0x...`) or base64 (`b64"..."`) grammar.
 
+> r[schema.type.any]
+> `@any` — any value (scalar, object, or sequence). Useful for arbitrary metadata:
+>
+> ```styx
+> metadata @map(@any)   // arbitrary key-value pairs
+> extensions @any       // any structure
+> ```
+
 ## Optional types
 
 A `?` suffix marks a type as optional:
@@ -870,6 +924,13 @@ server {
 > r[schema.optional]
 > A type reference followed by `?` indicates the field may be omitted.
 > If present, the value must match the type.
+>
+> The `?` MUST immediately follow the type name with no whitespace:
+>
+> ```styx
+> timeout @duration?     // OK: optional duration
+> timeout @duration ?    // ERROR: space before ?
+> ```
 
 ## Sequences
 
@@ -944,6 +1005,24 @@ TlsConfig {
 > A type reference like `@TlsConfig` refers to a named schema defined elsewhere
 > in the schema document.
 
+> r[schema.type.definition]
+> Named types are defined at the schema root as a key (the type name) with an
+> object value (the type's structure). Type definitions do NOT use the `@` prefix;
+> `@` is only used when *referencing* a type.
+>
+> ```styx
+> // Type definition (no @):
+> TlsConfig {
+>   cert @string
+>   key @string
+> }
+>
+> // Type reference (with @):
+> server {
+>   tls @TlsConfig
+> }
+> ```
+
 ## Enums
 
 Enum schemas list the valid variants:
@@ -961,7 +1040,8 @@ status @enum {
 
 > r[schema.enum]
 > An enum schema `@enum { ... }` defines valid variant names and their payloads.
-> Each variant is a key. The value is the payload schema (or empty for unit variants).
+> Unit variants use implicit `()` (see r[object.entry.implicit-unit]).
+> Variants with payloads specify their schema as the value.
 
 ## Doc comments
 
@@ -984,6 +1064,9 @@ server {
 > r[schema.doc]
 > A comment starting with `///` is a doc comment. It attaches to the immediately
 > following key or type definition.
+>
+> Doc comments take precedence: `////` is a doc comment with content `/ ...`,
+> not a regular comment. Multiple consecutive doc comments are concatenated.
 
 ## Schema location
 
@@ -1083,4 +1166,4 @@ STYX enforces the following invariants:
 - **No indentation-based structure**: All structure is explicit via `{}` and `()`.
 - **No semantic interpretation during parsing**: The parser produces opaque scalars; meaning is assigned during deserialization.
 - **All structure is explicit**: Braces and parentheses define nesting, not whitespace or conventions.
-- **Commas are separators only**: Commas have no semantic meaning; they are interchangeable with newlines for readability.
+- **Commas in objects only**: Commas are optional separators in objects (interchangeable with newlines). Sequences use whitespace only.
