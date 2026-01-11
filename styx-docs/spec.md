@@ -163,7 +163,7 @@ A STYX document is an object. Top-level entries do not require braces.
 
 > r[document.root]
 > The parser MUST interpret top-level key-value pairs as entries of an implicit root object.
->
+> 
 > ```compare
 > /// json
 > {
@@ -180,8 +180,8 @@ A STYX document is an object. Top-level entries do not require braces.
 >   host localhost
 >   port 8080
 > }
-> database {
->   url "postgres://..."
+database {
+>   url postgres://...
 > }
 > ```
 
@@ -192,7 +192,7 @@ A STYX document is an object. Top-level entries do not require braces.
 > r[document.root.explicit]
 > If the document starts with `{`, it MUST be parsed as a single block object.
 > The closing `}` MUST be the final token; content after it is an error.
->
+> 
 > ```styx
 > {
 >   key value
@@ -209,7 +209,7 @@ Line comments start with `//` and extend to the end of the line.
 > Line comments start with `//` and extend to the end of the line.
 > Comments MUST be preceded by whitespace (space or newline). The sequence `//`
 > without preceding whitespace is not recognized as a comment start.
->
+> 
 > ```styx
 > server {
 >   host localhost  // OK: space before //
@@ -249,20 +249,20 @@ enabled @
 > The token `@` not immediately followed by an identifier character is the **unit value**.
 > Identifier characters are `[A-Za-z_]` for the first character, `[A-Za-z0-9_-]` thereafter
 > (see `r[object.key.syntax]`).
->
+> 
 > ```styx
 > field @              // unit value (@ followed by whitespace)
 > field @              // unit value (@ at end of line)
 > field @string        // type reference (@ followed by identifier)
 > field @123           // unit value followed by scalar "123" — ERROR: unexpected token
 > ```
->
+> 
 > The parser resolves `@` vs `@identifier` by checking the immediately following character.
 > If no identifier character follows, the `@` is the unit value.
 
 > r[value.unit.sequence]
 > The unit value is valid as a sequence element.
->
+> 
 > ```styx
 > (a @ c)              // 3-element sequence: "a", unit, "c"
 > (@)                  // 1-element sequence containing unit
@@ -278,7 +278,7 @@ is deferred until deserialization.
 > The parser MUST record the lexical form of each scalar: **bare**, **quoted**,
 > **raw**, or **heredoc**. All forms produce identical text content, but the
 > form is preserved for use by the schema layer.
->
+> 
 > ```styx
 > foo          // bare scalar
 > "foo"        // quoted scalar
@@ -287,7 +287,7 @@ is deferred until deserialization.
 > foo
 > EOF
 > ```
->
+> 
 > The schema layer uses this distinction: only bare scalars starting with `@`
 > are type references. Quoted, raw, and heredoc forms are always literal values
 > (see `r[schema.type-ref]`).
@@ -298,11 +298,11 @@ Bare scalars are delimited by whitespace and structural characters.
 
 > r[scalar.bare.termination]
 > A bare scalar is terminated by whitespace or any of: `{`, `}`, `(`, `)`, `,`.
->
+> 
 > When `(` or `{` terminates a bare scalar, the preceding characters form a tag
 > and the result is a tagged sequence or tagged object (see `r[sequence.tagged]`
 > and `r[object.tagged]`).
->
+> 
 > ```styx
 > url https://example.com/path?query=1   // bare scalar includes = and /
 > items (a b c)                           // whitespace before ( — two tokens
@@ -310,7 +310,7 @@ Bare scalars are delimited by whitespace and structural characters.
 > config { host localhost }               // whitespace before { — two tokens
 > point{ x 1, y 2 }                       // no whitespace — tagged object
 > ```
->
+> 
 > ```styx
 > items tag(a b c)   // "items" is key, tag(a b c) is a tagged sequence
 > foo data{bar baz}  // "foo" is key, data{bar baz} is a tagged object
@@ -357,7 +357,7 @@ Quoted scalars use double quotes and support escape sequences.
 
 > r[scalar.quoted.escapes]
 > Quoted scalars MUST support the following escape sequences:
->
+> 
 > | Escape | Meaning |
 > |--------|---------|
 > | `\\` | Backslash |
@@ -368,7 +368,7 @@ Quoted scalars use double quotes and support escape sequences.
 > | `\0` | Null |
 > | `\uXXXX` | Unicode code point (4 hex digits) |
 > | `\u{X...}` | Unicode code point (1-6 hex digits) |
->
+> 
 > Invalid escape sequences are an error.
 
 ### Raw scalars
@@ -385,12 +385,12 @@ r#"no need to escape "double quotes" in here"#
 > r[scalar.raw.delimiter]
 > The number of `#` in the closing delimiter MUST match the opening.
 > Any number of `#` characters is allowed (including zero: `r"..."`).
->
+> 
 > ```styx
 > r"simple"
-> r#"contains "quotes""#
-> r##"contains "# in the middle"##
-> r###"contains "## in the middle"###
+> r#"contains \"quotes\""#
+> r##"contains \"# in the middle"##
+> r###"contains \"## in the middle"###
 > ```
 
 ### Heredoc scalars
@@ -411,7 +411,7 @@ EOF
 > The delimiter MUST match the pattern `[A-Z][A-Z0-9_]*` (uppercase letters,
 > digits, and underscores only; must start with an uppercase letter).
 > Single-character delimiters are valid.
->
+> 
 > Examples: `E`, `EOF`, `SQL`, `EOF2`, `BASE64_DATA`
 
 > r[scalar.heredoc.delimiter.length]
@@ -420,7 +420,7 @@ EOF
 > r[scalar.heredoc.indent]
 > The parser MUST strip leading whitespace from content lines up to the
 > closing delimiter's indentation level.
->
+> 
 > ```styx
 > server {
 >   script <<BASH
@@ -429,7 +429,7 @@ EOF
 >     BASH
 > }
 > ```
->
+> 
 > The closing `BASH` is indented 4 spaces, so 4 spaces are stripped.
 > The resulting value is:
 > ```
@@ -439,7 +439,7 @@ EOF
 
 > r[scalar.heredoc.indent.minimum]
 > All content lines MUST be indented at least as much as the closing delimiter.
->
+> 
 > ```styx
 > server {
 >   script <<BASH
@@ -450,19 +450,19 @@ EOF
 
 > r[scalar.heredoc.chomp]
 > The parser MUST strip the trailing newline immediately before the closing delimiter.
->
+> 
 > ```styx
 > msg <<EOF
 >   hello
 >   EOF
 > ```
->
+> 
 > The value of `msg` is `hello` (no trailing newline).
 
 > r[scalar.heredoc.closing]
 > The closing delimiter MUST appear on its own line, with only optional
 > leading whitespace before it. Trailing whitespace after the delimiter is allowed.
->
+> 
 > ```styx
 > msg <<EOF
 >   hello EOF   // ERROR: delimiter not on its own line
@@ -470,25 +470,25 @@ EOF
 
 > r[scalar.heredoc.empty]
 > A heredoc with no content lines produces an empty string.
->
+> 
 > ```styx
 > empty <<EOF
 > EOF
 > ```
->
+> 
 > The value of `empty` is `""` (empty string).
 
 > r[scalar.heredoc.literal]
 > Heredoc content is literal. Comments (`//`) and escape sequences (`\n`) are
 > not processed within heredoc content.
->
+> 
 > ```styx
 > script <<BASH
 >   echo "hello"  // this is not a comment
 >   echo "line\nbreak"  // \n is literal, not a newline
 >   BASH
 > ```
->
+> 
 > The value includes the literal text `// this is not a comment` and `\n`.
 
 ## Sequences
@@ -514,7 +514,7 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 
 > r[sequence.separators]
 > Elements MUST be separated by whitespace.
->
+> 
 > ```styx
 > (a b c)
 > (
@@ -523,25 +523,25 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 >   c
 > )
 > ```
->
+> 
 > A single-element sequence is valid: `(foo)` contains one element.
 > An empty sequence `()` is valid and distinct from unit (`@`).
 
 > r[sequence.no-commas]
 > Commas are NOT allowed in sequences.
->
+> 
 > ```styx
 > (a, b, c)    // ERROR: commas not allowed in sequences
 > ```
->
+> 
 > **Rationale**: Sequences are visually clean with whitespace alone:
->
+> 
 > ```styx
 > (a b c)
 > ```
->
+> 
 > Objects need commas because `key value` pairs are harder to group visually:
->
+> 
 > ```styx
 > { key value, key value }   // commas help group key-value pairs
 > key=value key=value        // or use attribute form
@@ -550,14 +550,14 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 > r[sequence.elements]
 > Sequence elements MAY be scalars, block objects, nested sequences, or unit.
 > Attribute objects are NOT allowed as direct sequence elements.
->
+> 
 > ```styx
 > ((1 2) (3 4))           // nested sequences
 > ({ name alice } { name bob })  // block objects
 > (a @ c)                 // unit as element
 > (a=1 b=2)               // ERROR: attribute object ambiguous
 > ```
->
+> 
 > **Rationale**: Given `(a=1 b=2)`, it is unclear whether this is one object
 > `{a: 1, b: 2}` or two objects `{a: 1}` and `{b: 2}`. Block objects make
 > structure explicit.
@@ -577,35 +577,35 @@ colors rgb(255 128 0)
 
 > r[sequence.tagged]
 > When a bare scalar is immediately followed by `(` (no intervening whitespace),
-> the parser MUST produce a **tagged sequence** value. The scalar becomes the tag.
->
+the parser MUST produce a **tagged sequence** value. The scalar becomes the tag.
+> 
 > ```styx
 > colors rgb(255 128 0)
 > point vec3(1.0 2.0 3.0)
 > ```
->
+> 
 > The value of `colors` is a tagged sequence with tag `rgb` and elements `(255 128 0)`.
 
 > r[sequence.tagged.nested]
 > Tagged sequences may be nested.
->
+> 
 > ```styx
 > transform scale(translate(10 20) rotate(45))
 > ```
->
+> 
 > This is a tagged sequence `scale(...)` containing two tagged sequences
 > `translate(...)` and `rotate(...)`.
 
 > r[sequence.tagged.quoted]
 > The tag may be a quoted scalar.
->
+> 
 > ```styx
 > data "my-tag"(a b c)
 > ```
 
 > r[sequence.tagged.empty]
 > A tagged empty sequence is valid.
->
+> 
 > ```styx
 > empty tag()
 > ```
@@ -617,8 +617,8 @@ immediately precedes the opening `{` with no whitespace.
 
 > r[object.tagged]
 > When a bare scalar is immediately followed by `{` (no intervening whitespace),
-> the parser MUST produce a **tagged object** value. The scalar becomes the tag.
->
+the parser MUST produce a **tagged object** value. The scalar becomes the tag.
+> 
 > ```styx
 > status @enum{
 >   ok
@@ -626,19 +626,19 @@ immediately precedes the opening `{` with no whitespace.
 >   err { message @string }
 > }
 > ```
->
+> 
 > The value of `status` is a tagged object with tag `@enum` and the object contents.
 
 > r[object.tagged.quoted]
 > The tag may be a quoted scalar.
->
+> 
 > ```styx
 > data "my-tag"{ key value }
 > ```
 
 > r[object.tagged.empty]
 > A tagged empty object is valid.
->
+> 
 > ```styx
 > empty tag{}
 > ```
@@ -657,16 +657,16 @@ Keys are dotted paths composed of one or more segments.
 
 > r[object.key.syntax]
 > A key MUST match the following grammar:
->
+> 
 > ```
 > key     = segment ("." segment)* "?"?
 > segment = bare | quoted
 > bare    = [A-Za-z_][A-Za-z0-9_-]*
 > quoted  = <quoted scalar>
 > ```
->
+> 
 > A trailing `?` marks the key as optional (see `r[schema.optional]`).
->
+> 
 > Quoted key segments use the same syntax and escape sequences as quoted scalars
 > (see `r[scalar.quoted.escapes]`).
 
@@ -674,7 +674,7 @@ Keys are dotted paths composed of one or more segments.
 > Keys starting with `@` are reserved for directives (e.g., `@schema`).
 > Reserved keys do not follow the standard key grammar — they are recognized
 > as special tokens by the parser at specific positions (e.g., document root).
-> To use a literal key starting with `@` in a document, quote it: `"\@foo"`.
+> To use a literal key starting with `@` in a document, quote it: `"\\@foo"`.
 
 ```compare
 /// json
@@ -719,14 +719,14 @@ Mixed dotted paths with quoted segments:
 
 > r[object.key.dotted.no-reopen]
 > A dotted path MUST NOT introduce a key whose parent object already contains a different key.
->
+> 
 > ```styx
 > server.host localhost
 > server.port 8080   // ERROR: cannot reopen server to add port
 > ```
->
+> 
 > Use block form instead:
->
+> 
 > ```styx
 > server {
 >   host localhost
@@ -736,7 +736,7 @@ Mixed dotted paths with quoted segments:
 
 > r[object.key.duplicate]
 > Duplicate keys within the same object are forbidden.
->
+> 
 > ```styx
 > server {
 >   port 8080
@@ -746,7 +746,7 @@ Mixed dotted paths with quoted segments:
 
 > r[object.entry.implicit-unit]
 > If a key is not followed by a value, the value is implicitly `@` (unit).
->
+> 
 > ```styx
 > enabled           // equivalent to: enabled @
 > status.ok         // equivalent to: status { ok @ }
@@ -815,7 +815,7 @@ Nested objects:
 > An object MUST use either commas or newlines as separators, never both.
 > An object uses comma separation if any comma appears between entries.
 > An object uses newline separation if entries are separated only by newlines.
->
+> 
 > ```styx
 > { a 1, b 2, c 3 }      // OK: comma-separated
 > {
@@ -872,43 +872,43 @@ build components=(clippy rustfmt miri)
 
 > r[object.attr.key]
 > Attribute keys follow the same grammar as object keys. Quoted keys are valid:
->
+> 
 > ```styx
 > config "quoted key"=value foo=bar
 > ```
->
+> 
 > Dotted paths in attribute keys expand as expected:
->
+> 
 > ```styx
 > server.host=localhost
 > ```
->
+> 
 > expands to `server { host localhost }`.
 
 > r[object.attr.binding]
 > When the parser expects a value and encounters a token matching `key=value`,
-> it MUST parse an attribute object. The `=` is recognized within the token
-> because `=` does not terminate bare scalars (see `r[scalar.bare.termination]`).
->
+it MUST parse an attribute object. The `=` is recognized within the token
+because `=` does not terminate bare scalars (see `r[scalar.bare.termination]`).
+> 
 > The parser scans for `=` within the token: characters before `=` form the key,
 > characters after form the value (which may itself be a scalar, sequence, or object).
->
+> 
 > Whitespace around `=` is not allowed. `key = value` is three tokens; use `key=value`.
 
 > r[object.attr.value]
 > The value after `=` MUST be exactly one value: a scalar, sequence, or block object.
 > Block objects may span multiple lines; the attribute object continues after the
 > closing `}`.
->
+> 
 > ```styx
 > config foo={
 >   a long
 >   object block
 > } bar=123 baz=hey
 > ```
->
+> 
 > This is equivalent to:
->
+> 
 > ```styx
 > config {
 >   foo { a long, object block }
@@ -919,7 +919,7 @@ build components=(clippy rustfmt miri)
 
 > r[object.attr.termination]
 > An attribute object ends when the next token is not `key=...`.
->
+> 
 > ```compare
 > /// json
 > {
@@ -932,7 +932,7 @@ build components=(clippy rustfmt miri)
 > // both attributes belong to server
 > server host=localhost port=8080
 > ```
->
+> 
 > ```compare
 > /// json
 > {
@@ -946,7 +946,7 @@ build components=(clippy rustfmt miri)
 > server host=localhost
 > port 8080
 > ```
->
+> 
 > ```styx
 > // ERROR: cannot follow attribute object with block object
 > server host=localhost { port 8080 }
@@ -958,7 +958,7 @@ environment variables, and options. For complex or nested structures, use block 
 > r[object.block.no-equals]
 > Block objects use `key value` syntax. Attribute `key=value` syntax is only
 > valid as a *value* within a block object, not as an entry.
->
+> 
 > ```styx
 > { a=1 b=2 }              // ERROR: block entries cannot use =
 > { a 1, b 2 }             // OK: block form entries
@@ -990,6 +990,117 @@ STYX schemas are themselves STYX documents. They can be inline (embedded in a do
 or external (separate files). Schema constructs use tagged sequences and tagged objects
 (see `r[sequence.tagged]` and `r[object.tagged]`).
 
+## Schema declaration
+
+A document SHOULD declare its schema using the `@schema` directive at the root.
+This allows tools like editors and validators to provide immediate feedback.
+
+> r[schema.declaration]
+> A document MAY declare its schema using the reserved key `@schema` at the document root.
+> The value MUST be either an inline schema object or a path/URL to an external schema file.
+>
+> ```styx
+> // Inline schema declaration
+> @schema {
+>   server {
+>     host @string
+>     port @u16
+>   }
+> }
+>
+> server {
+>   host localhost
+>   port 8080
+> }
+> ```
+>
+> ```styx
+> // External schema (local path)
+> @schema ./server.schema.styx
+>
+> server {
+>   host localhost
+>   port 8080
+> }
+> ```
+>
+> ```styx
+> // External schema (URL)
+> @schema https://example.com/schemas/server.styx
+>
+> server {
+>   host localhost
+>   port 8080
+> }
+> ```
+
+> r[schema.resolution]
+> Implementations MUST support resolving local paths relative to the document's location.
+> Implementations SHOULD support resolving remote schemas via HTTPS URLs.
+> If no `@schema` directive is present, schema application is determined by the processing tool.
+
+## Schema metadata
+
+Standalone schema files declare metadata using the `@meta` directive.
+
+> r[schema.meta]
+> A schema file MAY include an `@meta` directive at the root to declare metadata.
+>
+> ```styx
+> @meta {
+>   id https://example.com/schemas/server
+>   version 2026-01-11
+>   description "Server configuration schema"
+> }
+>
+> server {
+>   host @string
+>   port @u16
+> }
+> ```
+
+> r[schema.meta.id]
+> Standalone schema files (not inline schemas) MUST include an `id` field in `@meta`.
+> The ID SHOULD be a URL that uniquely identifies this schema.
+> Implementations MUST warn or error when multiple schemas with the same ID are loaded.
+
+> r[schema.meta.version]
+> The `version` field is a date in `YYYY-MM-DD` format indicating when the schema
+> was last modified. This is informational and does not affect validation.
+
+> r[schema.meta.description]
+> The `description` field is a human-readable summary of the schema's purpose.
+> This is informational and MAY be displayed by tooling.
+
+## Imports
+
+Schemas can import type definitions from other schema files using the `@import` directive.
+
+> r[schema.import]
+> The `@import` directive imports types from external schema files into namespaces.
+> Each key is a namespace name, and the value is a path or URL to the schema file.
+>
+> ```styx
+> @import {
+>   types ./common/types.styx
+>   config https://example.com/schemas/config.styx
+> }
+>
+> server {
+>   host @string
+>   port @u16
+>   tls @types.TlsConfig       // from ./common/types.styx
+>   logging @config.Logging    // from the URL
+> }
+> ```
+
+> r[schema.import.namespace]
+> Imported types MUST be referenced using their namespace prefix: `@namespace.TypeName`.
+> This avoids collisions between types with the same name from different sources.
+
+> r[schema.import.resolution]
+> Import paths follow the same resolution rules as `@schema` (see `r[schema.resolution]`).
+
 ## Type references
 
 Type references use the `@` prefix to distinguish types from literal values:
@@ -998,7 +1109,7 @@ Type references use the `@` prefix to distinguish types from literal values:
 /// A server configuration schema
 server {
   host @string
-  port @integer
+  port @u16
   timeout? @duration
 }
 ```
@@ -1006,28 +1117,28 @@ server {
 > r[schema.type-ref]
 > A type reference is a scalar starting with `@`. The remainder names a type
 > from the standard type vocabulary or a user-defined type.
->
+> 
 > Type names MUST match the grammar:
 > ```
 > type-ref  = "@" type-name
 > type-name = [A-Za-z_][A-Za-z0-9_-]*
 > ```
->
+> 
 > Examples: `@string`, `@TlsConfig`, `@my-type`, `@my_type`
 
 > r[schema.type-ref.literal]
 > A scalar without `@` is a literal value constraint. The document value must
 > be exactly that scalar.
->
+> 
 > ```styx
 > version 1          // must be exactly the scalar "1"
-> version @integer   // must be an integer (1, 2, 42, etc.)
+> version @u32       // must be an unsigned 32-bit integer
 > ```
 
 > r[schema.type-ref.escape]
 > To represent a literal value starting with `@`, use any non-bare scalar form.
 > Only bare scalars are interpreted as type references (see `r[scalar.form]`).
->
+> 
 > ```styx
 > // In a schema:
 > tag @string        // type reference: any string
@@ -1043,18 +1154,42 @@ The schema type vocabulary matches the deserializer's scalar interpretation rule
 > `@string` — any scalar value.
 
 > r[schema.type.integer]
-> `@integer` — a scalar matching:
+> Integer types are sized and match their Rust equivalents:
 >
+> | Type | Range |
+> |------|-------|
+> | `@u8` | 0 to 255 |
+> | `@u16` | 0 to 65,535 |
+> | `@u32` | 0 to 4,294,967,295 |
+> | `@u64` | 0 to 18,446,744,073,709,551,615 |
+> | `@u128` | 0 to 2¹²⁸−1 |
+> | `@i8` | −128 to 127 |
+> | `@i16` | −32,768 to 32,767 |
+> | `@i32` | −2,147,483,648 to 2,147,483,647 |
+> | `@i64` | −2⁶³ to 2⁶³−1 |
+> | `@i128` | −2¹²⁷ to 2¹²⁷−1 |
+> | `@usize` | Platform-dependent (32 or 64 bits, unsigned) |
+> | `@isize` | Platform-dependent (32 or 64 bits, signed) |
+>
+> Integer syntax:
 > ```
 > integer = ["-" | "+"] digit+
 > digit   = "0"..."9"
 > ```
 >
 > Examples: `0`, `42`, `-10`, `+5`
+>
+> Schema validation MUST reject values outside the type's range.
 
 > r[schema.type.float]
-> `@float` — a scalar matching:
+> Float types are sized and match their Rust equivalents:
 >
+> | Type | Description |
+> |------|-------------|
+> | `@f32` | 32-bit IEEE 754 floating point |
+> | `@f64` | 64-bit IEEE 754 floating point |
+>
+> Float syntax:
 > ```
 > float    = integer "." digit+ [exponent] | integer exponent
 > exponent = ("e" | "E") ["-" | "+"] digit+
@@ -1067,73 +1202,73 @@ The schema type vocabulary matches the deserializer's scalar interpretation rule
 
 > r[schema.type.duration]
 > `@duration` — a scalar matching:
->
+> 
 > ```
 > duration = integer unit
 > unit     = "ns" | "us" | "µs" | "ms" | "s" | "m" | "h" | "d"
 > ```
->
+> 
 > Both `us` and `µs` are accepted for microseconds, for ASCII compatibility.
 > Units are case-sensitive; `30S` is not a valid duration.
->
+> 
 > Examples: `30s`, `10ms`, `2h`, `500µs`, `500us`
 
 > r[schema.type.timestamp]
 > `@timestamp` — a scalar matching RFC 3339:
->
+> 
 > ```
 > timestamp = date "T" time timezone
 > date      = year "-" month "-" day
-> time      = hour ":" minute ":" second ["." fraction]
+> time      = hour ":" minute ":" second [ "." fraction]
 > timezone  = "Z" | ("+" | "-") hour ":" minute
 > ```
->
+> 
 > Examples: `2026-01-10T18:43:00Z`, `2026-01-10T12:00:00-05:00`
 
 > r[schema.type.regex]
 > `@regex` — a scalar matching:
->
+> 
 > ```
 > regex = "/" pattern "/" flags
 > flags = [a-zA-Z]*
 > ```
->
+> 
 > The set of valid flags is implementation-defined. Common flags include `i` (case-insensitive),
 > `m` (multiline), `s` (dotall), and `x` (extended).
->
+> 
 > Examples: `/foo/`, `/^hello$/i`, `/\d+/`
 
 > r[schema.type.bytes]
 > `@bytes` — a scalar matching hex or base64:
->
+> 
 > ```
 > hex_bytes    = "0x" hex_digit+
 > base64_bytes = "b64" '"' base64_char* '"'
 > ```
->
+> 
 > Examples: `0xdeadbeef`, `0x00FF`, `b64"SGVsbG8="`, `b64""`
 
 > r[schema.type.any]
 > `@any` — any value (scalar, object, sequence, or unit). Useful for arbitrary metadata:
 >
 > ```styx
-> metadata @map(@any)   // arbitrary key-value pairs
-> extensions @any       // any structure
+> metadata @map(@string @any)   // arbitrary key-value pairs
+> extensions @any               // any structure
 > ```
 
 > r[schema.type.unit]
 > `@unit` — the unit value `@`. Useful for sentinel fields or nullable types:
->
+> 
 > ```styx
 > // Field that must be unit (sentinel/marker)
 > enabled @unit
->
+> 
 > // Nullable field using union
 > value @union(@string @unit)
 > ```
->
+> 
 > Use `@unit` for nullable fields. The unit value `@` represents structural absence,
-> distinct from any scalar value.
+distinct from any scalar value.
 
 ## Optional types
 
@@ -1142,7 +1277,7 @@ A trailing `?` on a key marks the field as optional:
 ```styx
 server {
   host @string      // required
-  port @integer     // required  
+  port @u16         // required
   timeout? @duration // optional
 }
 ```
@@ -1150,7 +1285,7 @@ server {
 > r[schema.optional]
 > A key ending with `?` indicates the field may be omitted from the document.
 > If present, the value must match the type.
->
+> 
 > ```styx
 > timeout? @duration   // may be absent; if present, must be duration
 > ```
@@ -1164,29 +1299,29 @@ Union types allow a value to match any of several types using a tagged sequence:
 name @union(@string @unit)
 
 // Integer or string
-id @union(@integer @string)
+id @union(@u64 @string)
 
 // Duration, integer, or unit
-timeout @union(@duration @integer @unit)
+timeout @union(@duration @u64 @unit)
 ```
 
 > r[schema.union.syntax]
 > A union type uses the `@union` tagged sequence containing type references:
->
+> 
 > ```
 > union = "@union" "(" type-ref+ ")"
 > ```
->
+> 
 > The union must contain at least one type reference.
 
 > r[schema.union]
 > `@union(@type1 @type2 ...)` matches a value if it matches any of the
 > listed types.
->
+> 
 > ```styx
 > // Nullable string: required, but may be unit
 > name @union(@string @unit)
->
+> 
 > // Optional nullable: may be absent, or string, or unit
 > name? @union(@string @unit)
 > ```
@@ -1194,8 +1329,8 @@ timeout @union(@duration @integer @unit)
 > r[schema.union.disambiguation]
 > When validating a value against a union, types are checked in order.
 > The first matching type determines the interpretation.
->
-> For overlapping types (e.g., `@union(@integer @string)`), more specific types
+> 
+> For overlapping types (e.g., `@union(@u64 @string)`), more specific types
 > should appear first to ensure correct matching.
 
 **Common patterns:**
@@ -1222,7 +1357,7 @@ hosts (@string)
 /// List of server configurations
 servers ({
   host @string
-  port @integer
+  port @u16
 })
 ```
 
@@ -1231,15 +1366,17 @@ servers ({
 
 ## Maps
 
-Maps are objects with arbitrary string keys and uniform value types. They use the
-`@map` tagged sequence:
+Maps are objects with typed keys and values. They use the `@map` tagged sequence:
 
 ```styx
-/// Environment variables (string to string)
+/// Environment variables (string → string)
 env @map(@string)
 
-/// Port mappings (string to integer)
-ports @map(@integer)
+/// Port mappings (string → u16)
+ports @map(@string @u16)
+
+/// Generic counts (string → u64)
+counts @map(@string @u64)
 ```
 
 Example document matching `env @map(@string)`:
@@ -1255,8 +1392,25 @@ env {
 ```
 
 > r[schema.map]
-> `@map(@type)` matches an object where all values match `@type`.
-> Keys are always strings.
+> `@map(@K @V)` matches an object where keys match `@K` and values match `@V`.
+> The one-argument form `@map(@T)` is shorthand for `@map(@T @T)`.
+>
+> ```styx
+> env @map(@string)           // string → string (shorthand)
+> env @map(@string @string)   // equivalent explicit form
+> ports @map(@string @u16)    // string → u16
+> ```
+>
+> The value type can be an inline object schema:
+>
+> ```styx
+> /// Named server configurations
+> servers @map(@string {
+>   host @string
+>   port @u16
+>   timeout? @duration
+> })
+> ```
 
 ## Nested objects
 
@@ -1265,7 +1419,7 @@ Object schemas can be nested inline:
 ```styx
 server {
   host @string
-  port @integer
+  port @u16
   tls {
     cert @string
     key @string
@@ -1279,7 +1433,7 @@ Or reference named types:
 ```styx
 server {
   host @string
-  port @integer
+  port @u16
   tls @TlsConfig
 }
 
@@ -1301,14 +1455,14 @@ TlsConfig {
 > Named types are defined at the schema root as a key (the type name) with an
 > object value (the type's structure). Type definitions do NOT use the `@` prefix;
 > `@` is only used when *referencing* a type.
->
+> 
 > ```styx
 > // Type definition (no @):
 > TlsConfig {
 >   cert @string
 >   key @string
 > }
->
+> 
 > // Type reference (with @):
 > server {
 >   tls @TlsConfig
@@ -1319,7 +1473,7 @@ TlsConfig {
 > A type reference to an undefined type degenerates to `@any`. This allows schemas
 > to reference types from external sources (imports, registries) that the validator
 > may not have access to. Implementations MAY issue a warning for unknown types.
->
+> 
 > ```styx
 > // If ExternalConfig is not defined in this schema:
 > config @ExternalConfig   // treated as @any during validation
@@ -1345,15 +1499,15 @@ Admin {
 > `@flatten(@Type)` inlines all fields from the referenced type into the current
 > object. The field name (`user` in the example) is used for deserialization into
 > nested structures, but the data is flat.
->
+> 
 > Given the schema above, this data:
->
+> 
 > ```styx
 > name Alice
 > email alice@example.com
 > permissions (read write admin)
 > ```
->
+> 
 > deserializes into an `Admin` with `name` and `email` routed to the nested `User`.
 
 > r[schema.flatten.collision]
@@ -1361,7 +1515,7 @@ Admin {
 > are forbidden. The schema validator MUST detect collisions statically at schema
 > validation time, before any documents are validated. This requires resolving all
 > type references in the flattened type.
->
+> 
 > ```styx
 > Base { name @string }
 > 
@@ -1370,7 +1524,7 @@ Admin {
 >   name @string            // ERROR: "name" collides with Base.name
 > }
 > ```
->
+> 
 > For recursive types, the validator MUST detect cycles and report an error rather
 > than entering infinite recursion.
 
@@ -1384,7 +1538,7 @@ status @enum{
   pending
   err {
     message @string
-    code? @integer
+    code? @i32
   }
 }
 ```
@@ -1434,10 +1588,10 @@ Doc comments use `///` and attach to the following definition:
 server {
   /// Hostname or IP address to bind to
   host @string
-  
+
   /// Port number (1-65535)
-  port @integer
-  
+  port @u16
+
   /// Request timeout; defaults to 30s if not specified
   timeout? @duration
 }
@@ -1446,52 +1600,24 @@ server {
 > r[schema.doc]
 > A comment starting with `///` is a doc comment. It attaches to the immediately
 > following key or type definition.
->
+> 
 > Doc comments take precedence: `////` is a doc comment with content `/ ...`,
 > not a regular comment. Multiple consecutive doc comments are concatenated.
 
 > r[schema.doc.unattached]
 > A doc comment not followed by a key or type definition is a syntax error.
 > Blank lines between doc comments break the sequence.
->
+> 
 > ```styx
 > /// This comment
 > /// attaches to foo
 > foo @string
->
+> 
 > /// This comment
->
+> 
 > /// ERROR: previous doc comment has no attachment (blank line broke sequence)
 > bar @string
 > ```
-
-## Schema location
-
-Schemas can be:
-
-1. **External**: A separate `.styx` file referenced by the document
-2. **Inline**: Embedded in the document itself
-
-> r[schema.inline]
-> An inline schema uses the reserved key `@schema` at the document root:
->
-> ```styx
-> @schema {
->   server {
->     host @string
->     port @integer
->   }
-> }
-> 
-> server {
->   host localhost
->   port 8080
-> }
-> ```
-
-> r[schema.external]
-> External schema resolution is implementation-defined. Common patterns include
-> file extensions (`.schema.styx`), sidecar files, or registry lookups.
 
 ---
 
@@ -1512,7 +1638,7 @@ based on the target type.
 > r[deser.scalar.opaque]
 > A scalar has no inherent type. `42` is not "an integer" — it is text that
 > *can be interpreted as* an integer when the target type requires one.
->
+> 
 > ```styx
 > port 42        // if target is u16: integer 42
 >                // if target is String: string "42"
@@ -1523,7 +1649,7 @@ based on the target type.
 > and a bare scalar `42` both contain the text `42`, but neither is "more numeric"
 > than the other. The target type determines interpretation, not the lexical form.
 
-See Part 2 for the grammars of `@integer`, `@float`, `@duration`, etc.
+See Part 2 for the grammars of integer types, float types, `@duration`, etc.
 
 ## Object deserialization
 
@@ -1543,12 +1669,12 @@ Optional fields interact with absence and unit.
 
 > r[deser.optional.absent]
 > An optional field (`key? @type`) that is absent from the document is valid.
-> The application receives no value for that field.
+The application receives no value for that field.
 
 > r[deser.optional.unit]
 > An optional field explicitly set to unit (`key @`) is distinct from absence.
 > Both are valid for optional fields, but applications may distinguish them.
->
+> 
 > ```styx
 > // Schema: timeout? @duration
 > { }                    // absent — no timeout specified
@@ -1574,27 +1700,77 @@ Maps are objects with uniform value types.
 
 ## Flatten
 
-Flattening merges fields from a referenced type.
+Flattening merges fields from a referenced type into a single, flat key-space in the document,
+while maintaining a nested structure in the deserialized application type.
 
 > r[deser.flatten]
-> A flattened field `key @flatten(@Type)` expects the referenced type's fields
-> at the same level, not nested under `key`.
->
-> ```styx
-> // Schema:
-> // User { name @string, email @string }
-> // Admin { user @flatten(@User), role @string }
->
-> // Document (fields are flat):
-> name Alice
-> email alice@example.com
-> role superuser
-> ```
+> A flattened field `key @flatten(@Type)` instructs the deserializer to collect
+> keys from the document that are defined in `@Type` and use them to construct
+> an instance of `Type`. This instance is then assigned to the field `key` in the
+> parent object. The document itself does not contain a `key` object; the fields
+> are expected to be at the same level as the parent's other fields.
 
 > r[deser.flatten.routing]
-> The deserializer routes flattened keys to the appropriate nested structure
-> based on the schema. Keys are matched in declaration order when multiple
-> flattened types could apply.
+> The deserializer routes keys from the flat document to the appropriate nested structure
+> based on the schema. When multiple `@flatten` directives are present, keys are
+> matched to the type where they are defined.
+
+**Example (non-normative)**
+
+This example shows how a document with a flat structure is deserialized into a nested
+`Admin` object containing a `User` object.
+
+1.  **Schema Definition**:
+    The `Admin` schema flattens the `User` schema into its `user` field.
+
+    ```styx
+    // schema.styx
+    User {
+      name @string
+      email @string
+    }
+
+    Admin {
+      // Fields from User (name, email) are expected to be flat
+      // in the document, but will be collected into a User
+      // object assigned to this 'user' field.
+      user @flatten(@User)
+      
+      // Regular field belonging to Admin
+      permissions (@string)
+    }
+    ```
+
+2.  **STYX Document**:
+    The document is flat. There is no `user` object. The keys `name` and `email`
+    are peers with `permissions`.
+
+    ```styx
+    // config.styx
+    name "Alice"
+    email "alice@example.com"
+    permissions (read write admin)
+    ```
+
+3.  **Deserialization Logic**:
+    - The deserializer targets the `Admin` type.
+    - It sees the `user @flatten(@User)` field in the schema.
+    - It consumes `name` and `email` from the document, recognizes them as fields of `User`, and uses them to construct a `User` object.
+    - It consumes `permissions` and assigns it to the `permissions` field of `Admin`.
+    - The constructed `User` object is assigned to the `user` field of the `Admin` object.
+
+4.  **Resulting Application Structure (represented as JSON)**:
+    The final in-memory object has a nested structure, even though the source document was flat.
+
+    ```json
+    {
+      "user": {
+        "name": "Alice",
+        "email": "alice@example.com"
+      },
+      "permissions": ["read", "write", "admin"]
+    }
+    ```
 
 ## Enum deserialization
 
@@ -1603,14 +1779,14 @@ is the variant payload.
 
 > r[enum.representation]
 > When deserializing into an enum type, the value MUST be an object with exactly one key.
->
+> 
 > ```compare
 > /// json
 > {"ok": null}
 > /// styx
 > { ok @ }
 > ```
->
+> 
 > ```compare
 > /// json
 > {"err": {"message": "nope", "retry_in": "5s"}}
@@ -1640,12 +1816,12 @@ Keys without values get implicit unit (see `r[object.entry.implicit-unit]`).
 
 > r[enum.singleton]
 > The deserializer MUST reject enum values that are not single-key objects.
-> The parser cannot enforce this — it produces the same object structure regardless
-> of target type.
+The parser cannot enforce this — it produces the same object structure regardless
+of target type.
 
 > r[enum.unit]
 > For unit variants, the payload is the unit value `@`.
->
+> 
 > ```styx
 > // All equivalent for unit variants:
 > status.ok        // implicit @
@@ -1692,19 +1868,36 @@ NN | source line
 
 > r[diagnostic.format]
 > A diagnostic SHOULD include:
->
+> 
 > - **Level**: `error`, `warning`, or `note`
 > - **Message**: A concise description of the problem
 > - **Location**: File path, line number, and column
 > - **Source context**: The relevant source line(s) with underline annotations
 > - **Help**: When applicable, a concrete suggestion for fixing the problem
->
+> 
 > Secondary locations (e.g., "first defined here") use `------` underlines.
 > Primary locations (the actual error site) use `^^^^^` underlines.
 
 > r[diagnostic.actionable]
 > Error messages SHOULD be actionable. When a fix is known, the diagnostic
 > SHOULD show the corrected code, not just describe the problem.
+> 
+> **Note (non-normative)**: For schema validation errors, diagnostics can be improved
+> by including a note pointing to the `@schema` declaration that applied the schema.
+> 
+> ```
+> error: missing required field 'host'
+>   --> config.styx:1:1
+>   |
+> 1 | server { ... }
+>   | ^^^^^^ missing 'host'
+>   |
+>   = note: schema validation failed
+>   --> config.styx:1:1
+>   |
+> 1 | @schema ./server.schema.styx
+>   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ schema applied here
+> ```
 
 ## Parser errors
 
@@ -1713,7 +1906,7 @@ NN | source line
 > r[diagnostic.parser.unexpected]
 > When the parser encounters an unexpected token, the message SHOULD identify
 > what was found and what was expected.
->
+> 
 > ```
 > error: unexpected token
 >   --> config.styx:3:5
@@ -1727,7 +1920,7 @@ NN | source line
 > r[diagnostic.parser.unclosed]
 > When a delimiter is not closed, the message SHOULD show where the opening
 > delimiter was and where the parser expected the closing delimiter.
->
+> 
 > ```
 > error: unclosed '{'
 >   --> config.styx:1:8
@@ -1746,7 +1939,7 @@ NN | source line
 > r[diagnostic.parser.escape]
 > When a quoted scalar contains an invalid escape sequence, the message SHOULD
 > identify the specific invalid escape.
->
+> 
 > ```
 > error: invalid escape sequence '\q'
 >   --> config.styx:2:12
@@ -1762,7 +1955,7 @@ NN | source line
 > r[diagnostic.parser.unterminated-string]
 > When a quoted scalar is not terminated, the message SHOULD show where the
 > string started.
->
+> 
 > ```
 > error: unterminated string
 >   --> config.styx:2:8
@@ -1779,7 +1972,7 @@ NN | source line
 > r[diagnostic.parser.unterminated-heredoc]
 > When a heredoc is not terminated, the message SHOULD show the expected
 > delimiter and where the heredoc started.
->
+> 
 > ```
 > error: unterminated heredoc, expected 'EOF'
 >   --> config.styx:2:10
@@ -1796,7 +1989,7 @@ NN | source line
 > r[diagnostic.parser.heredoc-delimiter-length]
 > When a heredoc delimiter exceeds 16 characters, the message SHOULD state
 > the limit.
->
+> 
 > ```
 > error: heredoc delimiter too long
 >   --> config.styx:2:10
@@ -1811,8 +2004,8 @@ NN | source line
 
 > r[diagnostic.parser.heredoc-indent]
 > When a heredoc content line is less indented than the closing delimiter,
-> the message SHOULD show both locations.
->
+the message SHOULD show both locations.
+> 
 > ```
 > error: heredoc line less indented than closing delimiter
 >   --> config.styx:4:1
@@ -1830,9 +2023,9 @@ NN | source line
 
 > r[diagnostic.parser.comment-whitespace]
 > When `//` appears without preceding whitespace (making it part of a scalar),
-> the parser cannot distinguish user intent. If subsequent parsing fails, the
+the parser cannot distinguish user intent. If subsequent parsing fails, the
 > message SHOULD note the potential comment issue.
->
+> 
 > ```
 > error: unexpected token 'comment'
 >   --> config.styx:2:13
@@ -1849,7 +2042,7 @@ NN | source line
 > r[diagnostic.parser.duplicate-key]
 > When a key appears twice in the same object, the message SHOULD show both
 > locations.
->
+> 
 > ```
 > error: duplicate key 'port'
 >   --> config.styx:4:3
@@ -1866,7 +2059,7 @@ NN | source line
 > r[diagnostic.parser.no-reopen]
 > When a dotted path attempts to add a key to an already-closed singleton
 > object, the message SHOULD show both locations and suggest block form.
->
+> 
 > ```
 > error: cannot add key 'port' to 'server': object was already closed
 >   --> config.styx:2:1
@@ -1889,7 +2082,7 @@ NN | source line
 > r[diagnostic.parser.mixed-separators]
 > When an object mixes comma and newline separators, the message SHOULD
 > identify both styles and suggest picking one.
->
+> 
 > ```
 > error: mixed separators in object
 >   --> config.styx:2:7
@@ -1914,7 +2107,7 @@ NN | source line
 > r[diagnostic.parser.sequence-comma]
 > When a comma appears in a sequence, the message SHOULD explain that
 > sequences use whitespace separation.
->
+> 
 > ```
 > error: unexpected ',' in sequence
 >   --> config.styx:1:3
@@ -1930,7 +2123,7 @@ NN | source line
 > r[diagnostic.parser.attr-in-sequence]
 > When an attribute object appears as a direct sequence element, the message
 > SHOULD explain the ambiguity and suggest block form.
->
+> 
 > ```
 > error: attribute object not allowed as sequence element
 >   --> config.styx:2:3
@@ -1947,7 +2140,7 @@ NN | source line
 > r[diagnostic.parser.trailing-content]
 > When content appears after a closed root object, the message SHOULD note
 > that explicit root objects cannot have siblings.
->
+> 
 > ```
 > error: unexpected token after root object
 >   --> config.styx:4:1
@@ -1970,7 +2163,7 @@ NN | source line
 > r[diagnostic.deser.type-mismatch]
 > When a scalar cannot be interpreted as the target type, the message SHOULD
 > identify the expected type and the actual value.
->
+> 
 > ```
 > error: type mismatch
 >   --> config.styx:2:8
@@ -1985,8 +2178,8 @@ NN | source line
 
 > r[diagnostic.deser.invalid-integer]
 > When a scalar looks like an integer but is invalid (overflow, invalid chars),
-> the message SHOULD be specific.
->
+the message SHOULD be specific.
+> 
 > ```
 > error: integer out of range
 >   --> config.styx:2:8
@@ -2000,7 +2193,7 @@ NN | source line
 > r[diagnostic.deser.invalid-duration]
 > When a scalar cannot be parsed as a duration, the message SHOULD show
 > valid duration formats.
->
+> 
 > ```
 > error: invalid duration
 >   --> config.styx:2:11
@@ -2017,7 +2210,7 @@ NN | source line
 > r[diagnostic.deser.invalid-timestamp]
 > When a scalar cannot be parsed as an RFC 3339 timestamp, the message SHOULD
 > identify the problem.
->
+> 
 > ```
 > error: invalid timestamp
 >   --> config.styx:2:12
@@ -2033,7 +2226,7 @@ NN | source line
 > r[diagnostic.deser.invalid-boolean]
 > When a value is expected to be boolean but isn't `true` or `false`, the
 > message SHOULD list the valid values.
->
+> 
 > ```
 > error: invalid boolean
 >   --> config.styx:2:11
@@ -2047,7 +2240,7 @@ NN | source line
 > r[diagnostic.deser.enum-not-singleton]
 > When deserializing an enum and the value is not a single-key object, the
 > message SHOULD explain enum representation.
->
+> 
 > ```
 > error: expected enum variant (single-key object)
 >   --> config.styx:2:10
@@ -2076,13 +2269,21 @@ NN | source line
 >   |
 >   = help: valid variants are: ok, pending, err
 > ```
-
+>
+> The same error would be reported for the equivalent block form, as the
+> underlying issue is an object with an unexpected key for the target enum type:
+>
+> ```styx
+> status {
+>   unknown @
+> }
+> ```
 ### Missing required field
 
 > r[diagnostic.deser.missing-field]
 > When a required field is missing during deserialization, the message SHOULD
 > identify the field and the containing object.
->
+> 
 > ```
 > error: missing required field 'port'
 >   --> config.styx:1:1
@@ -2100,7 +2301,7 @@ NN | source line
 > r[diagnostic.deser.unknown-field]
 > When a field is present but not expected by the target type, the message
 > SHOULD suggest similar field names if available.
->
+> 
 > ```
 > error: unknown field 'prot'
 >   --> config.styx:3:3
@@ -2116,7 +2317,7 @@ NN | source line
 
 > r[diagnostic.deser.expected-object]
 > When an object is expected but a scalar is found.
->
+> 
 > ```
 > error: expected object, found scalar
 >   --> config.styx:2:10
@@ -2131,7 +2332,7 @@ NN | source line
 
 > r[diagnostic.deser.expected-sequence]
 > When a sequence is expected but a scalar is found.
->
+> 
 > ```
 > error: expected sequence, found scalar
 >   --> config.styx:2:9
@@ -2150,23 +2351,22 @@ NN | source line
 > When a value doesn't match the schema's type constraint.
 >
 > ```
-> error: schema violation: expected @integer, found string
+> error: schema violation: expected @u16
 >   --> config.styx:2:8
 >   |
-> 2 |   port "8080"
->   |        ^^^^^^ expected integer
+> 2 |   port "eighty"
+>   |        ^^^^^^^^ cannot parse as u16
 >   |
 >   --> schema.styx:3:8
 >   |
-> 3 |   port @integer
->   |        -------- required by schema
+> 3 |   port @u16
+>   |        ---- required by schema
 > ```
-
 ### Literal mismatch
 
 > r[diagnostic.schema.literal-mismatch]
 > When a value doesn't match a literal constraint in the schema.
->
+> 
 > ```
 > error: schema violation: expected literal 'v1', found 'v2'
 >   --> config.styx:1:9
@@ -2184,7 +2384,7 @@ NN | source line
 
 > r[diagnostic.schema.missing-required]
 > When a required field per the schema is missing.
->
+> 
 > ```
 > error: missing required field 'host'
 >   --> config.styx:1:1
@@ -2204,7 +2404,7 @@ NN | source line
 
 > r[diagnostic.schema.unexpected-field]
 > When a field is present but not defined in the schema.
->
+> 
 > ```
 > error: unexpected field 'debug'
 >   --> config.styx:4:3
@@ -2224,7 +2424,7 @@ NN | source line
 
 > r[diagnostic.schema.union-mismatch]
 > When a value doesn't match any type in a union.
->
+> 
 > ```
 > error: value matches no type in union
 >   --> config.styx:2:10
@@ -2234,18 +2434,18 @@ NN | source line
 >   |
 >   --> schema.styx:3:11
 >   |
-> 3 |   timeout? @union(@duration @integer)
->   |            -------------------------- expected one of these types
+> 3 |   timeout? @union(@duration @u64)
+>   |            ---------------------- expected one of these types
 >   |
 >   = note: tried @duration: invalid duration format
->   = note: tried @integer: expected scalar, found sequence
+>   = note: tried @u64: expected scalar, found sequence
 > ```
 
 ### Flatten collision
 
 > r[diagnostic.schema.flatten-collision]
 > When flattened fields collide with the containing object's fields.
->
+> 
 > ```
 > error: field collision in @flatten
 >   --> schema.styx:8:3
@@ -2267,9 +2467,10 @@ NN | source line
 ### Unknown type reference
 
 > r[diagnostic.schema.unknown-type]
-> When a type reference cannot be resolved. This is a warning, not an error,
-> since the type may come from an external source.
->
+> When a type reference cannot be resolved, the message SHOULD be a warning,
+since the type may come from an external source. The unknown type reference
+> MUST be treated as `@any`.
+> 
 > ```
 > warning: unknown type '@ExternalConfig'
 >   --> schema.styx:5:10
@@ -2280,11 +2481,17 @@ NN | source line
 >   = note: treating as @any; validation will be skipped for this field
 > ```
 
+> r[diagnostic.schema.unknown-type.strict]
+> Implementations MAY provide a **strict mode** for schema validation. In strict
+> mode, an unknown type reference MUST be an error, not a warning. This is
+> recommended for continuous integration environments to catch typos or missing
+> schema definitions.
+
 ### Invalid type name
 
 > r[diagnostic.schema.invalid-type-name]
 > When a type reference doesn't match the type name grammar.
->
+> 
 > ```
 > error: invalid type name
 >   --> schema.styx:2:8
@@ -2299,13 +2506,13 @@ NN | source line
 
 > r[diagnostic.schema.unattached-doc]
 > When a doc comment is not followed by a definition.
->
+> 
 > ```
 > error: doc comment has no attachment
 >   --> schema.styx:3:1
 >   |
 > 2 | /// This comment is orphaned
-> 3 |
+> 3 | 
 >   | ^ blank line breaks doc comment attachment
 > 4 | /// This attaches to 'bar'
 > 5 | bar @string
@@ -2421,3 +2628,179 @@ STYX enforces the following invariants:
 - **All structure is explicit**: Braces and parentheses define nesting, not whitespace or conventions.
 - **Commas in objects only**: Commas are optional separators in objects (interchangeable with newlines). Sequences use whitespace only.
 - **Explicit unit value**: `@` is the unit value, distinct from `()` (empty sequence). Keys without values implicitly produce `@`. This enables concise unit variants (`status.ok`) and flag-like entries (`enabled`).
+
+## Type-to-schema mapping (non-normative)
+
+STYX schemas are typically generated from strongly-typed languages like Rust. This section
+shows how Rust types with Facet derive map to STYX schemas.
+
+### Primitives
+
+| Rust Type | STYX Schema |
+|-----------|-------------|
+| `String`, `&str` | `@string` |
+| `bool` | `@boolean` |
+| `u8` | `@u8` |
+| `u16` | `@u16` |
+| `u32` | `@u32` |
+| `u64` | `@u64` |
+| `u128` | `@u128` |
+| `usize` | `@usize` |
+| `i8` | `@i8` |
+| `i16` | `@i16` |
+| `i32` | `@i32` |
+| `i64` | `@i64` |
+| `i128` | `@i128` |
+| `isize` | `@isize` |
+| `f32` | `@f32` |
+| `f64` | `@f64` |
+| `Duration` | `@duration` |
+| `()` | `@unit` |
+
+### Optional fields
+
+`Option<T>` maps to an optional field with `?` suffix:
+
+```rust
+#[derive(Facet)]
+struct Server {
+    host: String,           // required
+    port: u16,              // required
+    timeout: Option<Duration>, // optional
+}
+```
+
+```styx
+Server {
+  host @string
+  port @u16
+  timeout? @duration
+}
+```
+
+### Sequences
+
+`Vec<T>` and other sequence types map to `(@T)`:
+
+```rust
+#[derive(Facet)]
+struct Config {
+    hosts: Vec<String>,
+    ports: Vec<u16>,
+}
+```
+
+```styx
+Config {
+  hosts (@string)
+  ports (@u16)
+}
+```
+
+### Maps
+
+`HashMap<K, V>` maps to `@map(@K @V)`:
+
+```rust
+#[derive(Facet)]
+struct Config {
+    env: HashMap<String, String>,
+    ports: HashMap<String, u16>,
+}
+```
+
+```styx
+Config {
+  env @map(@string)           // shorthand for @map(@string @string)
+  ports @map(@string @u16)
+}
+```
+
+### Structs
+
+Structs map to object schemas:
+
+```rust
+#[derive(Facet)]
+struct Server {
+    host: String,
+    port: u16,
+    tls: TlsConfig,
+}
+
+#[derive(Facet)]
+struct TlsConfig {
+    cert: String,
+    key: String,
+    enabled: Option<bool>,
+}
+```
+
+```styx
+Server {
+  host @string
+  port @u16
+  tls @TlsConfig
+}
+
+TlsConfig {
+  cert @string
+  key @string
+  enabled? @boolean
+}
+```
+
+### Enums
+
+Enums map to `@enum{ ... }`:
+
+```rust
+#[derive(Facet)]
+enum Status {
+    Ok,
+    Pending,
+    Err { message: String, code: Option<i32> },
+}
+```
+
+```styx
+Status @enum{
+  ok
+  pending
+  err { message @string, code? @i32 }
+}
+```
+
+Note: Rust enum variants are PascalCase by convention, but STYX uses lowercase
+for enum variant names. Schema generators should apply case conversion.
+
+### Flatten
+
+The `#[facet(flatten)]` attribute maps to `@flatten`:
+
+```rust
+#[derive(Facet)]
+struct User {
+    name: String,
+    email: String,
+}
+
+#[derive(Facet)]
+struct Admin {
+    #[facet(flatten)]
+    user: User,
+    permissions: Vec<String>,
+}
+```
+
+```styx
+User {
+  name @string
+  email @string
+}
+
+Admin {
+  user @flatten(@User)
+  permissions (@string)
+}
+```
