@@ -13,89 +13,73 @@ STYX values are one of:
   
 ## Scalars
 
-> r[scalar.opaque]
-> Scalars are opaque atoms. The parser assigns no meaning to them;
-> interpretation is deferred until deserialization.
-
-> r[scalar.quoting]
-> Quoted forms (`"..."`, `r#"..."#`, heredocs) are lexical delimiters that allow scalars
-> to contain spaces and special characters. They do not change the scalar's type or meaning.
-> `foo` and `"foo"` produce identical scalar values.
+Scalars are opaque atoms. The parser assigns no meaning to them; interpretation
+is deferred until deserialization. Quoted forms are lexical delimiters — they
+allow spaces and special characters but don't change meaning. `foo` and `"foo"`
+produce identical values.
 
 ### Bare scalars
 
-> r[scalar.bare]
-> A bare scalar is delimited by whitespace:
->
-> ```styx
-> foo
-> 42
-> true
-> https://example.com/path
-> ```
+Bare scalars are delimited by whitespace.
+
+```styx
+foo
+42
+true
+https://example.com/path
+```
 
 ### Quoted scalars
 
-> r[scalar.quoted]
-> Quoted scalars use double quotes and support escape sequences:
->
-> ```styx
-> "hello world"
-> "foo\nbar"
-> ```
+Quoted scalars use double quotes and support escape sequences.
+
+```styx
+"hello world"
+"foo\nbar"
+```
 
 ### Raw scalars
 
-> r[scalar.raw]
-> Raw scalars do not process escape sequences:
->
-> ```styx
-> r#"no need to escape "double quotes" in here"#
-> ```
+Raw scalars preserve content literally.
 
-> r[scalar.raw.nesting]
-> Multiple `#` characters allow embedding `"#` sequences.
-> The closing delimiter MUST match the opening:
->
-> ```styx
-> r##"can contain "# without closing"##
-> ```
+```styx
+r#"no need to escape "double quotes" in here"#
+```
+
+> r[scalar.raw.delimiter]
+> The number of `#` in the closing delimiter MUST match the opening.
 
 ### Heredoc scalars
 
-> r[scalar.heredoc]
-> Heredocs are multiline scalars using `<<DELIM` ... `DELIM` syntax.
-> The delimiter MUST be `[A-Z_]+`:
->
-> ```styx
-> <<EOF
-> line one
-> line two
-> EOF
-> ```
+Heredocs are multiline scalars.
+
+```styx
+<<EOF
+line one
+line two
+EOF
+```
+
+> r[scalar.heredoc.delimiter]
+> The delimiter MUST match the pattern `[A-Z_]+`.
 
 > r[scalar.heredoc.indent]
-> The closing delimiter's indentation sets the base indent; that much is stripped
-> from all content lines. Content lines MUST be indented at least as much as the
-> closing delimiter:
->
-> ```styx
-> server {
->   script <<EOF
->     #!/bin/bash
->     echo "hello"
->     EOF
-> }
-> ```
+> The parser MUST strip leading whitespace from content lines up to the
+> closing delimiter's indentation level.
+
+> r[scalar.heredoc.indent.minimum]
+> All content lines MUST be indented at least as much as the closing delimiter.
 
 > r[scalar.heredoc.chomp]
-> The trailing newline before the closing delimiter is stripped.
+> The parser MUST strip the trailing newline immediately before the closing delimiter.
+
+> r[scalar.heredoc.closing]
 > The closing delimiter MUST appear on its own line.
 
 ### Scalar interpretation
 
 > r[scalar.interpretation]
-> A conforming STYX implementation MUST support interpreting scalars as:
+> A conforming implementation MUST support interpreting scalars as:
 >
 > - Integers (signed/unsigned, various widths)
 > - Floating point numbers
@@ -107,168 +91,132 @@ STYX values are one of:
 > - Regular expressions (`/foo/i`)
 > - Byte sequences (hex `0xdeadbeef`, base64 `b64"..."`)
 
-> r[scalar.interpretation.extensible]
-> Implementations MAY support additional forms (paths, URLs, IPs, semver, etc.).
+Implementations commonly support additional forms like paths, URLs, IPs, and semver.
 
 ## Objects
 
-There are several object forms in STYX.
+Objects are key-value maps.
 
-### Block objects
+### Keys
 
-> r[object.block.delimiters]
-> Block objects MUST start with `{` and end with `}`:
-> 
-> ```styx
-> {
->   key value
->   key value
-> }
-> ```
+Keys are bare identifiers, quoted strings, or dotted paths.
 
-> r[object.block.separators]
-> In block objects, keys and values MUST separated by spaces, and key-value pairs MUST be separated by newlines (`\n`) or commas (`,`):
-> 
-> ```styx
-> // this is fine, too!
-> {
->   key value, key value
-> }
-> ```
-> 
-> ```styx
-> { key value, key value } // and so is this
-> ```
-
-> r[object.block.separators.trailing]
->
-> Trailing commas in a block object MUST be treated as a syntax error:
->
-> ```styx
-> {
->   key value, // <- ERROR: expected another key
-> }
-> ```
+```styx
+foo value             // bare key
+"foo bar" value       // quoted key (contains space)
+foo.bar value         // dotted path: foo -> bar
+"foo".bar value       // dotted path: "foo" -> bar
+"foo.bar" value       // quoted key (literal dot, no path expansion)
+```
 
 > r[object.key.bare]
-> Bare keys MUST only contain /[A-Za-z0-9-_]/.
->
-> Any key that contains a space, a unicode character, etc., must be double-quoted.
+> A bare key MUST match `[A-Za-z_][A-Za-z0-9_-]*`.
 
-> r[object.block.scope]
-> Block objects MAY appear anywhere a value is allowed, including:
->
-> - as the document root
-> - as object values
-> - inside sequences
+> r[object.key.dotted]
+> A dotted path is a sequence of key segments separated by `.`.
+> Each segment MUST be a bare key or a quoted string.
 
-### Attribute objects
+> r[object.key.dotted.expansion]
+> A dotted path `a.b.c value` MUST expand to nested objects: `a { b { c value } }`.
 
-Attribute objects are syntactic sugar for block objects, providing a compact inline form.
+### Block form
 
-> r[object.attr.definition]
-> An attribute object is an object introduced implicitly by one or more assignments using `=`:
->
-> ```styx
-> labels app=web tier=frontend
-> ```
->
-> This is equivalent to:
->
-> ```styx
-> labels {
->   app web
->   tier frontend
-> }
-> ```
+Block objects use `{ }` delimiters. Entries are separated by newlines or commas.
+
+```styx
+{
+  name "my-app"
+  version 1.0.0
+  enabled true
+}
+```
+
+```styx
+{ name "my-app", version 1.0.0, enabled true }
+```
+
+Nested objects:
+
+```styx
+{
+  server {
+    host localhost
+    port 8080
+  }
+  database {
+    url "postgres://localhost/mydb"
+    pool_size 10
+  }
+}
+```
+
+> r[object.block.delimiters]
+> Block objects MUST start with `{` and end with `}`.
+
+> r[object.block.separators]
+> Entries MUST be separated by newlines or commas.
+
+### Attribute form
+
+Attribute objects use `key=value` syntax. They are sugar for block objects.
+
+```styx
+labels app=web tier=frontend
+```
+
+is equivalent to:
+
+```styx
+labels {
+  app web
+  tier frontend
+}
+```
+
+Values can be scalars, block objects, or sequences:
+
+```styx
+server host=localhost port=8080
+server config={ host localhost, port 8080 }
+build components=(clippy rustfmt miri)
+```
 
 > r[object.attr.binding]
-> When parsing a value position, if the next token is an assignment token (`key=`),
-> the value is parsed as an attribute object. `=` binds tighter than whitespace.
+> `=` binds tighter than whitespace. When the parser encounters `key=` in a
+> value position, it MUST parse an attribute object.
 
-> r[object.attr.assignment]
-> An assignment has the form `key=value`, where:
->
-> - `=` separates the key and value with no surrounding whitespace
-> - The value MUST be exactly one value
-> - The value MAY be a block object (`{ ... }`) or a sequence (`( ... )`)
->
-> ```styx
-> config server={ host localhost, port 8080 }
-> with toolchain=stable components=(clippy rustfmt)
-> ```
-
-> r[object.attr.grouping]
-> Multi-value data in an assignment MUST be explicitly grouped:
->
-> ```styx
-> // Valid: grouped with ()
-> components=(clippy rustfmt)
->
-> // Invalid: value is not grouped
-> components=clippy rustfmt
-> ```
+> r[object.attr.value]
+> The value after `=` MUST be exactly one value.
 
 > r[object.attr.termination]
-> An attribute object consists of a contiguous run of assignments.
-> It ends when:
->
-> - a token appears that cannot start an assignment, or
-> - the surrounding block (`{}`) closes
+> An attribute object ends when a token is not of the form `key=`.
 
-> r[object.attr.no-comma]
-> Attribute objects do not use commas between assignments.
+Attribute objects work well for inline key-value patterns like labels,
+environment variables, and options. For complex or nested structures, use block form.
 
-> r[object.attr.no-reopen]
-> Attribute objects do not support implicit merging and cannot be reopened or extended later.
+### Attribute objects in sequences
 
-> r[object.attr.sequence-restriction]
-> Attribute objects MUST NOT appear as direct elements of a sequence.
->
-> ```styx
-> // Invalid: attribute object as direct sequence element
-> (
->   a=1 b=2
-> )
->
-> // Valid: block object containing attribute object
-> (
->   { labels app=web tier=frontend }
->   { labels app=api tier=backend }
-> )
-> ```
+Inside a sequence, use block objects:
 
-> r[object.attr.sequence-restriction.scope]
-> This restriction does not apply to attribute objects nested within object literals
-> that are themselves sequence elements.
+```styx
+(
+  { labels app=web tier=frontend }
+  { labels app=api tier=backend }
+)
+```
 
-> r[object.attr.direct-element]
-> A "direct element of a sequence" is a value parsed immediately within `( )`
-> without being contained inside an explicit block object `{ }` or sequence `( )`.
+### Equivalence
 
-### Object equivalence
+Both forms produce the same object value:
 
-> r[object.equivalence]
-> Block objects and attribute objects are semantically equivalent.
-> Both forms produce the same object value at the data model level.
->
-> ```styx
-> // These are identical:
-> labels app=web tier=frontend
->
-> labels {
->   app web
->   tier frontend
-> }
-> ```
+```styx
+config host=localhost port=8080
 
-> r[object.block.intent]
-> Block objects prioritize clarity, explicit structure, and ease of navigation and editing.
-
-> r[object.attr.intent]
-> Attribute objects prioritize compactness and inline readability for common map-like patterns
-> (labels, env, options). They are intentionally constrained to remain local, predictable,
-> and visually obvious.
+config {
+  host localhost
+  port 8080
+}
+```
 
 ## Enums
 
@@ -281,6 +229,9 @@ via externally tagged objects.
 >
 > ```styx
 > { ok {} }
+> ```
+>
+> ```styx
 > { err { message "nope", retry_in 5s } }
 > ```
 
@@ -289,6 +240,9 @@ via externally tagged objects.
 >
 > ```styx
 > status.ok
+> ```
+>
+> ```styx
 > status.err { message "nope" }
 > ```
 >
@@ -296,6 +250,9 @@ via externally tagged objects.
 >
 > ```styx
 > status { ok {} }
+> ```
+>
+> ```styx
 > status { err { message "nope" } }
 > ```
 
@@ -318,6 +275,9 @@ via externally tagged objects.
 >
 > ```styx
 > result.ok
+> ```
+>
+> ```styx
 > result.err message="timeout" retry_in=5s
 > ```
 
