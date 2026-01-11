@@ -321,3 +321,80 @@ fn deserialize_value_into_value() {
     let v2: Value = from_value(v.clone()).unwrap();
     assert_eq!(v, v2);
 }
+
+#[test]
+fn deserialize_numeric_enum() {
+    /// Numeric enum with a u8 discriminant.
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    #[facet(is_numeric)]
+    #[repr(u8)]
+    enum NumericEnum {
+        A,
+        B,
+        C,
+    }
+
+    // Deserialize from number value (discriminant 0 -> A)
+    let v = Value::from(0i64);
+    let e: NumericEnum = from_value(v).unwrap();
+    assert_eq!(e, NumericEnum::A);
+
+    // Deserialize from number value (discriminant 1 -> B)
+    let v = Value::from(1i64);
+    let e: NumericEnum = from_value(v).unwrap();
+    assert_eq!(e, NumericEnum::B);
+
+    // Deserialize from number value (discriminant 2 -> C)
+    let v = Value::from(2i64);
+    let e: NumericEnum = from_value(v).unwrap();
+    assert_eq!(e, NumericEnum::C);
+}
+
+#[test]
+fn deserialize_signed_numeric_enum() {
+    /// Numeric enum with signed discriminant.
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    #[facet(is_numeric)]
+    #[repr(i16)]
+    enum SignedNumericEnum {
+        Negative = -1,
+        Zero,
+        Positive,
+    }
+
+    // Deserialize from signed number (discriminant -1 -> Negative)
+    let v = Value::from(-1i64);
+    let e: SignedNumericEnum = from_value(v).unwrap();
+    assert_eq!(e, SignedNumericEnum::Negative);
+
+    // Deserialize from zero (discriminant 0 -> Zero)
+    let v = Value::from(0i64);
+    let e: SignedNumericEnum = from_value(v).unwrap();
+    assert_eq!(e, SignedNumericEnum::Zero);
+
+    // Deserialize from positive (discriminant 1 -> Positive)
+    let v = Value::from(1i64);
+    let e: SignedNumericEnum = from_value(v).unwrap();
+    assert_eq!(e, SignedNumericEnum::Positive);
+}
+
+#[test]
+fn deserialize_numeric_enum_from_string() {
+    /// Numeric enum with a u8 discriminant.
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    #[facet(is_numeric)]
+    #[repr(u8)]
+    enum NumericEnum {
+        A,
+        B,
+    }
+
+    // Deserialize from string that can be parsed as integer
+    let v: Value = VString::new("0").into();
+    let e: NumericEnum = from_value(v).unwrap();
+    assert_eq!(e, NumericEnum::A);
+
+    let v: Value = VString::new("1").into();
+    let e: NumericEnum = from_value(v).unwrap();
+    assert_eq!(e, NumericEnum::B);
+}

@@ -784,6 +784,11 @@ fn deserialize_tuple<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<
 fn deserialize_enum<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
     let shape = partial.shape();
 
+    // Check for numeric enums first (like #[repr(u8)] enums)
+    if shape.is_numeric() {
+        return deserialize_numeric_enum(value, partial);
+    }
+
     if shape.is_untagged() {
         return deserialize_untagged_enum(value, partial);
     }
@@ -805,6 +810,47 @@ fn deserialize_enum<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'
             message: "content key without tag key is invalid".into(),
         })),
     }
+}
+
+/// Deserialize a numeric enum from a Value::Number or Value::String.
+///
+/// Numeric enums use their discriminant value for serialization (e.g., `#[repr(u8)]` enums).
+/// Accepts:
+/// - Number values (i64/u64)
+/// - String values that can be parsed as i64
+fn deserialize_numeric_enum<'p>(value: &Value, mut partial: Partial<'p>) -> Result<Partial<'p>> {
+    let discriminant = match value.value_type() {
+        ValueType::Number => {
+            let num = value.as_number().unwrap();
+            if let Some(i) = num.to_i64() {
+                i
+            } else {
+                return Err(ValueError::new(ValueErrorKind::TypeMismatch {
+                    expected: "Could not parse discriminant into i64", // TODO
+                    got: ValueType::Number,
+                }));
+            }
+        }
+        ValueType::String => {
+            // Parse string as i64 discriminant
+            let s = value.as_string().unwrap().as_str();
+            s.parse().map_err(|_| {
+                ValueError::new(ValueErrorKind::TypeMismatch {
+                    expected: "Failed to parse string into i64",
+                    got: ValueType::String,
+                })
+            })?
+        }
+        other => {
+            return Err(ValueError::new(ValueErrorKind::TypeMismatch {
+                expected: "Expected number or string for numeric enum",
+                got: other,
+            }));
+        }
+    };
+
+    partial = partial.select_variant(discriminant)?;
+    Ok(partial)
 }
 
 /// Deserialize an externally tagged enum: {"VariantName": data} or "VariantName"
