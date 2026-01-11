@@ -54,7 +54,7 @@ true
 
 ### Objects
 
-Objects map keys to values. Use `{}` braces for nested objects.
+Objects map keys to values. Use `{}` braces.
 
 ```compare
 /// json
@@ -63,9 +63,10 @@ Objects map keys to values. Use `{}` braces for nested objects.
   "age": 30
 }
 /// styx
-name alice
-age 30
+{ name alice, age 30 }
 ```
+
+Objects can be nested:
 
 ```compare
 /// json
@@ -76,9 +77,23 @@ age 30
   }
 }
 /// styx
+{
+  server {
+    host localhost
+    port 8080
+  }
+}
+```
+
+At the top level, braces are optional — a STYX document *is* an object:
+
+```styx
 server {
   host localhost
   port 8080
+}
+database {
+  url "postgres://..."
 }
 ```
 
@@ -175,58 +190,37 @@ A STYX document is an object. Top-level entries do not require braces.
 > are separated by newlines or commas.
 
 > r[document.root.explicit]
-> If the document starts with `{`, it MUST be a single block object.
-> The closing `}` MUST be the end of the document.
->
-> ```compare
-> /// json
-> {
->   "key": "value"
-> }
-> /// styx
-> {
->   key value
-> }
-> ```
-
-> r[document.root.trailing]
-> The parser MUST reject tokens after the root object.
+> If the document starts with `{`, it MUST be parsed as a single block object.
+> The closing `}` MUST be the final token; content after it is an error.
 >
 > ```styx
 > {
 >   key value
 > }
-> 42   // ERROR: unexpected token after root
+> extra   // ERROR: unexpected token after root object
 > ```
 
-> r[document.root.empty]
-> An empty document (containing only whitespace and comments) is valid and
-> represents an empty object `{}`.
 
 ## Comments
 
 Line comments start with `//` and extend to the end of the line.
 
 > r[comment.line]
-> The parser MUST ignore content from `//` to the end of the line.
+> Line comments start with `//` and extend to the end of the line.
+> Comments MUST be preceded by whitespace (space or newline). The sequence `//`
+> without preceding whitespace is not recognized as a comment start.
 >
-> ```compare
-> /// json
-> {
->   "server": {
->     "host": "localhost",
->     "port": 8080
->   }
-> }
-> /// styx
+> ```styx
 > server {
->   host localhost  // primary host
->   port 8080       // default port
+>   host localhost  // OK: space before //
+>   port 8080       // OK: space before //
 > }
+> url https://example.com  // OK: space before //
+> foo bar// comment        // ERROR: "bar//" is part of the scalar
 > ```
 
 > r[comment.placement]
-> The parser MUST allow comments anywhere whitespace is allowed.
+> Comments are allowed anywhere whitespace is allowed.
 
 ## Value types
 
@@ -234,10 +228,46 @@ The parser produces six types of values:
 
   * **Scalar** — an opaque text atom
   * **Object** — an ordered map of keys to values
+  * **Tagged object** — an object with an associated scalar tag
   * **Sequence** — an ordered list of values
   * **Tagged sequence** — a sequence with an associated scalar tag
-  * **Tagged object** — an object with an associated scalar tag
   * **Unit** — the absence of a meaningful value (`@`)
+
+## Unit
+
+The unit value represents the absence of a meaningful value, analogous to `()` in Rust
+or `None` in Python. JSON has no direct equivalent; `null` is the closest approximation.
+
+```compare
+/// json
+{"enabled": null}
+/// styx
+enabled @
+```
+
+> r[value.unit]
+> The token `@` not immediately followed by an identifier character is the **unit value**.
+> Identifier characters are `[A-Za-z_]` for the first character, `[A-Za-z0-9_-]` thereafter
+> (see `r[object.key.syntax]`).
+>
+> ```styx
+> field @              // unit value (@ followed by whitespace)
+> field @              // unit value (@ at end of line)
+> field @string        // type reference (@ followed by identifier)
+> field @123           // unit value followed by scalar "123" — ERROR: unexpected token
+> ```
+>
+> The parser resolves `@` vs `@identifier` by checking the immediately following character.
+> If no identifier character follows, the `@` is the unit value.
+
+> r[value.unit.sequence]
+> The unit value is valid as a sequence element.
+>
+> ```styx
+> (a @ c)              // 3-element sequence: "a", unit, "c"
+> (@)                  // 1-element sequence containing unit
+> ()                   // 0-element sequence (empty, distinct from unit)
+> ```
 
 ## Scalars
 
@@ -267,28 +297,19 @@ is deferred until deserialization.
 Bare scalars are delimited by whitespace and structural characters.
 
 > r[scalar.bare.termination]
-> A bare scalar is terminated by whitespace or any of: `}`, `)`, `,`.
+> A bare scalar is terminated by whitespace or any of: `{`, `}`, `(`, `)`, `,`.
+>
+> When `(` or `{` terminates a bare scalar, the preceding characters form a tag
+> and the result is a tagged sequence or tagged object (see `r[sequence.tagged]`
+> and `r[object.tagged]`).
 >
 > ```styx
 > url https://example.com/path?query=1   // bare scalar includes = and /
-> items (a b c)                           // ) ends the sequence
-> config { host localhost }               // } ends the object
+> items (a b c)                           // whitespace before ( — two tokens
+> rgb(255 0 0)                            // no whitespace — tagged sequence
+> config { host localhost }               // whitespace before { — two tokens
+> point{ x 1, y 2 }                       // no whitespace — tagged object
 > ```
-
-> r[comment.whitespace]
-> Comments MUST be preceded by whitespace. The sequence `//` within a bare scalar
-> is not recognized as a comment start.
->
-> ```styx
-> foo bar // comment    // OK: space before //
-> foo bar// comment     // "bar//" is part of the scalar — ERROR at "comment"
-> url https://example.com   // OK: space before //
-> ```
-
-> r[scalar.bare.tag]
-> When `(` or `{` immediately follows a bare scalar (no whitespace), the characters
-> preceding `(` or `{` form a tag rather than a standalone scalar. The result is
-> a tagged sequence or tagged object (see `r[sequence.tagged]` and `r[object.tagged]`).
 >
 > ```styx
 > items tag(a b c)   // "items" is key, tag(a b c) is a tagged sequence
@@ -457,6 +478,19 @@ EOF
 >
 > The value of `empty` is `""` (empty string).
 
+> r[scalar.heredoc.literal]
+> Heredoc content is literal. Comments (`//`) and escape sequences (`\n`) are
+> not processed within heredoc content.
+>
+> ```styx
+> script <<BASH
+>   echo "hello"  // this is not a comment
+>   echo "line\nbreak"  // \n is literal, not a newline
+>   BASH
+> ```
+>
+> The value includes the literal text `// this is not a comment` and `\n`.
+
 ## Sequences
 
 Sequences are ordered collections of values. They use `( )` delimiters.
@@ -491,6 +525,7 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 > ```
 >
 > A single-element sequence is valid: `(foo)` contains one element.
+> An empty sequence `()` is valid and distinct from unit (`@`).
 
 > r[sequence.no-commas]
 > Commas are NOT allowed in sequences.
@@ -513,27 +548,19 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 > ```
 
 > r[sequence.elements]
-> Sequence elements MAY be scalars, block objects, or nested sequences.
+> Sequence elements MAY be scalars, block objects, nested sequences, or unit.
+> Attribute objects are NOT allowed as direct sequence elements.
 >
-> ```compare
-> /// json
-> [[1, 2], [3, 4]]
-> /// styx
-> ((1 2) (3 4))
+> ```styx
+> ((1 2) (3 4))           // nested sequences
+> ({ name alice } { name bob })  // block objects
+> (a @ c)                 // unit as element
+> (a=1 b=2)               // ERROR: attribute object ambiguous
 > ```
 >
-> ```compare
-> /// json
-> [{"name": "alice"}, {"name": "bob"}]
-> /// styx
-> (
->   { name alice }
->   { name bob }
-> )
-> ```
-
-> r[sequence.empty]
-> An empty sequence `()` is valid and represents an empty list.
+> **Rationale**: Given `(a=1 b=2)`, it is unclear whether this is one object
+> `{a: 1, b: 2}` or two objects `{a: 1}` and `{b: 2}`. Block objects make
+> structure explicit.
 
 ### Tagged sequences
 
@@ -563,11 +590,11 @@ colors rgb(255 128 0)
 > Tagged sequences may be nested.
 >
 > ```styx
-> value @result(@ok(@string) @err(@integer))
+> transform scale(translate(10 20) rotate(45))
 > ```
 >
-> This is a tagged sequence `@result(...)` containing two tagged sequences
-> `@ok(...)` and `@err(...)`, each containing a type reference.
+> This is a tagged sequence `scale(...)` containing two tagged sequences
+> `translate(...)` and `rotate(...)`.
 
 > r[sequence.tagged.quoted]
 > The tag may be a quoted scalar.
@@ -616,50 +643,13 @@ immediately precedes the opening `{` with no whitespace.
 > empty tag{}
 > ```
 
-## Unit
-
-The unit value represents the absence of a meaningful value, analogous to `()` in Rust
-or `None` in Python. JSON has no direct equivalent; `null` is the closest approximation.
-
-```compare
-/// json
-{"enabled": null}
-/// styx
-enabled @
-```
-
-> r[value.unit]
-> The token `@` not immediately followed by an identifier character is the **unit value**.
-> Identifier characters are `[A-Za-z_]` for the first character, `[A-Za-z0-9_-]` thereafter
-> (see `r[object.key.syntax]`).
->
-> ```styx
-> field @              // unit value (@ followed by whitespace)
-> field @              // unit value (@ at end of line)
-> field @string        // type reference (@ followed by identifier)
-> field @123           // unit value followed by scalar "123" — ERROR: unexpected token
-> ```
->
-> The parser resolves `@` vs `@identifier` by checking the immediately following character.
-> If no identifier character follows, the `@` is the unit value.
-
-> r[value.unit.sequence]
-> The unit value is valid as a sequence element.
->
-> ```styx
-> (a @ c)              // 3-element sequence: "a", unit, "c"
-> (@)                  // 1-element sequence containing unit
-> ()                   // 0-element sequence (empty, distinct from unit)
-> ```
-
 ## Objects
 
 Objects are key-value maps.
 
 > r[object.order]
-> Objects preserve insertion order. Parsers MUST yield entries in the order
-> they appear in the source. This guarantee enables configuration files where
-> order matters (e.g., processing pipelines, rule precedence).
+> Parsers MUST yield object entries in the order they appear in the source.
+> This enables stable round-tripping and predictable diffs.
 
 ### Keys
 
@@ -805,7 +795,7 @@ Nested objects:
     port 8080
   }
   database {
-    url "postgres://localhost/mydb"
+    url postgres://localhost/mydb
     pool_size 10
   }
 }
@@ -836,20 +826,7 @@ Nested objects:
 > {
 >   a 1,
 >   b 2
-> }                       // ERROR: has both commas and newlines
-> { a 1
->   b 2 }                 // ERROR: newline between entries, no commas — pick one style
-> ```
-
-> r[object.block.no-equals]
-> In block objects, entries use `key value` syntax, not `key=value`.
-> Attribute objects may appear as *values* within block objects.
->
-> ```styx
-> { a=1 b=2 }              // ERROR: entries cannot use =
-> { a 1, b 2 }             // OK: block form entries
-> { labels app=web }       // OK: "labels" is key, "app=web..." is attribute value
-> { config { a=1 } }       // ERROR: nested block cannot use =
+> }                       // ERROR: comma on line 1, newline separates from line 2
 > ```
 
 ### Attribute form
@@ -919,69 +896,73 @@ build components=(clippy rustfmt miri)
 > Whitespace around `=` is not allowed. `key = value` is three tokens; use `key=value`.
 
 > r[object.attr.value]
-> The value after `=` MUST be exactly one value.
-
-> r[object.attr.termination]
-> The parser MUST terminate an attribute object when the next token is not of the form `key=`.
-> Comments are treated as whitespace and do not affect termination.
->
-> After an attribute object, the parser expects either another entry (if at root or in a block)
-> or the end of the current context. A block object `{...}` immediately following an attribute
-> object is a syntax error.
+> The value after `=` MUST be exactly one value: a scalar, sequence, or block object.
+> Block objects may span multiple lines; the attribute object continues after the
+> closing `}`.
 >
 > ```styx
-> foo a=1 { b 2 }      // ERROR: unexpected `{` after attribute object
-> foo a=1
-> bar { b 2 }          // OK: separate entries
+> config foo={
+>   a long
+>   object block
+> } bar=123 baz=hey
+> ```
+>
+> This is equivalent to:
+>
+> ```styx
+> config {
+>   foo { a long, object block }
+>   bar 123
+>   baz hey
+> }
+> ```
+
+> r[object.attr.termination]
+> An attribute object ends when the next token is not `key=...`.
+>
+> ```compare
+> /// json
+> {
+>   "server": {
+>     "host": "localhost",
+>     "port": 8080
+>   }
+> }
+> /// styx
+> // both attributes belong to server
+> server host=localhost port=8080
+> ```
+>
+> ```compare
+> /// json
+> {
+>   "server": {
+>     "host": "localhost"
+>   },
+>   "port": 8080
+> }
+> /// styx
+> // newline ends the attribute object — port is a separate root entry
+> server host=localhost
+> port 8080
+> ```
+>
+> ```styx
+> // ERROR: cannot follow attribute object with block object
+> server host=localhost { port 8080 }
 > ```
 
 Attribute objects work well for inline key-value patterns like labels,
 environment variables, and options. For complex or nested structures, use block form.
 
-### Attribute objects in sequences
-
-Inside a sequence, use block objects:
-
-```compare
-/// json
-[
-  {"labels": {"app": "web", "tier": "frontend"}},
-  {"labels": {"app": "api", "tier": "backend"}}
-]
-/// styx
-(
-  { labels app=web tier=frontend }
-  { labels app=api tier=backend }
-)
-```
-
-> r[object.attr.sequence.forbidden]
-> Attribute objects MUST NOT appear as direct elements of a sequence.
+> r[object.block.no-equals]
+> Block objects use `key value` syntax. Attribute `key=value` syntax is only
+> valid as a *value* within a block object, not as an entry.
 >
 > ```styx
-> (
->   a=1 b=2   // ERROR: attribute object as sequence element
-> )
-> ```
->
-> **Rationale**: Attribute syntax is ambiguous in sequences. Given `(a=1 b=2)`,
-> it is unclear whether this is one object `{a: 1, b: 2}` or two objects
-> `{a: 1}` and `{b: 2}`. Block objects make structure explicit.
->
-> Use block objects instead:
->
-> ```styx
-> (
->   { a 1, b 2 }
-> )
-> ```
->
-> Or with attribute objects nested as values:
->
-> ```styx
-> (
->   { config a=1 b=2 }
-> )
+> { a=1 b=2 }              // ERROR: block entries cannot use =
+> { a 1, b 2 }             // OK: block form entries
+> { labels app=web }       // OK: "labels" is key, attribute object is value
 > ```
 
 ### Equivalence
@@ -1005,99 +986,16 @@ config {
 The deserializer converts document trees into typed application values. It interprets
 scalars based on target types and validates structural constraints like enum representations.
 
+For performance, implementations may deserialize directly from source text without
+materializing an intermediate document tree. The behavior must be indistinguishable
+from first parsing into a tree, then deserializing from that tree.
+
 ## Scalar interpretation
 
 The deserializer interprets opaque scalar values based on the target type. A scalar
 like `42` becomes an integer when the target is `u32`, but remains a string when
-the target is `String`.
-
-A conforming deserializer SHOULD recognize the following standard scalar forms:
-
-> r[scalar.interp.integer]
-> Scalars matching this grammar are eligible for integer interpretation:
->
-> ```
-> integer = ["-" | "+"] digit+
-> digit   = "0"..."9"
-> ```
->
-> Examples: `0`, `42`, `-10`, `+5`
-
-> r[scalar.interp.float]
-> Scalars matching this grammar are eligible for float interpretation:
->
-> ```
-> float    = integer "." digit+ [exponent] | integer exponent
-> exponent = ("e" | "E") ["-" | "+"] digit+
-> ```
->
-> Examples: `3.14`, `-0.5`, `1e10`, `2.5e-3`
-
-> r[scalar.interp.boolean]
-> `true` and `false` are eligible for boolean interpretation.
-
-> r[scalar.interp.duration]
-> Scalars matching this grammar are eligible for duration interpretation:
->
-> ```
-> duration = integer unit
-> unit     = "ns" | "us" | "µs" | "ms" | "s" | "m" | "h" | "d"
-> ```
->
-> Both `us` and `µs` are accepted for microseconds, for ASCII compatibility.
-> Units are case-sensitive; `30S` is not a valid duration.
->
-> Examples: `30s`, `10ms`, `2h`, `500µs`, `500us`
-
-> r[scalar.interp.timestamp]
-> Scalars matching RFC 3339 are eligible for timestamp interpretation:
->
-> ```
-> timestamp = date "T" time timezone
-> date      = year "-" month "-" day
-> time      = hour ":" minute ":" second ["." fraction]
-> timezone  = "Z" | ("+" | "-") hour ":" minute
-> ```
->
-> Examples: `2026-01-10T18:43:00Z`, `2026-01-10T12:00:00-05:00`
-
-> r[scalar.interp.regex]
-> Scalars matching this grammar are eligible for regular expression interpretation:
->
-> ```
-> regex = "/" pattern "/" flags
-> flags = [a-zA-Z]*
-> ```
->
-> The set of valid flags is implementation-defined. Common flags include `i` (case-insensitive),
-> `m` (multiline), `s` (dotall), and `x` (extended), but implementations may support
-> additional flags or reject unsupported ones.
->
-> Flag order is insignificant (`/foo/im` equals `/foo/mi`). Duplicate flags
-> are allowed but have no additional effect.
->
-> Examples: `/foo/`, `/^hello$/i`, `/\d+/`
-
-> r[scalar.interp.bytes.hex]
-> Scalars matching this grammar are eligible for byte sequence interpretation:
->
-> ```
-> hex_bytes = "0x" hex_digit+
-> hex_digit = "0"..."9" | "a"..."f" | "A"..."F"
-> ```
->
-> Examples: `0xdeadbeef`, `0x00FF`
-
-> r[scalar.interp.bytes.base64]
-> Scalars matching this grammar are eligible for byte sequence interpretation:
->
-> ```
-> base64_bytes = "b64" '"' base64_char* '"'
-> ```
->
-> Examples: `b64"SGVsbG8="`, `b64""`
-
-Implementations commonly support additional forms like paths, URLs, IPs, and semver.
+the target is `String`. See the standard types in Part 3 for the grammars of
+`@integer`, `@float`, `@duration`, etc.
 
 ## Enum deserialization
 
@@ -1124,16 +1022,22 @@ is the variant payload.
 The parser expands dotted paths into nested objects, which provides a convenient
 syntax for enums:
 
-```styx
+```compare
+/// styx
 status.ok
+/// styx
+status { ok @ }
 ```
 
-```styx
+```compare
+/// styx
 status.err { message "nope" }
+/// styx
+status { err { message "nope" } }
 ```
 
-The first expands to `status { ok @ }` (using implicit unit, see r[object.entry.implicit-unit]).
-The second expands to `status { err { message "nope" } }`.
+Dotted paths expand to nested objects (see `r[object.key.dotted.expansion]`).
+Keys without values get implicit unit (see `r[object.entry.implicit-unit]`).
 
 > r[enum.singleton]
 > The deserializer MUST reject enum values that are not single-key objects.
@@ -1228,25 +1132,75 @@ The schema type vocabulary matches the deserializer's scalar interpretation rule
 > `@string` — any scalar value.
 
 > r[schema.type.integer]
-> `@integer` — a scalar matching the integer grammar.
+> `@integer` — a scalar matching:
+>
+> ```
+> integer = ["-" | "+"] digit+
+> digit   = "0"..."9"
+> ```
+>
+> Examples: `0`, `42`, `-10`, `+5`
 
 > r[schema.type.float]
-> `@float` — a scalar matching the float grammar.
+> `@float` — a scalar matching:
+>
+> ```
+> float    = integer "." digit+ [exponent] | integer exponent
+> exponent = ("e" | "E") ["-" | "+"] digit+
+> ```
+>
+> Examples: `3.14`, `-0.5`, `1e10`, `2.5e-3`
 
 > r[schema.type.boolean]
 > `@boolean` — `true` or `false`.
 
 > r[schema.type.duration]
-> `@duration` — a scalar matching the duration grammar (`30s`, `10ms`, etc.).
+> `@duration` — a scalar matching:
+>
+> ```
+> duration = integer unit
+> unit     = "ns" | "us" | "µs" | "ms" | "s" | "m" | "h" | "d"
+> ```
+>
+> Both `us` and `µs` are accepted for microseconds, for ASCII compatibility.
+> Units are case-sensitive; `30S` is not a valid duration.
+>
+> Examples: `30s`, `10ms`, `2h`, `500µs`, `500us`
 
 > r[schema.type.timestamp]
-> `@timestamp` — a scalar matching RFC 3339.
+> `@timestamp` — a scalar matching RFC 3339:
+>
+> ```
+> timestamp = date "T" time timezone
+> date      = year "-" month "-" day
+> time      = hour ":" minute ":" second ["." fraction]
+> timezone  = "Z" | ("+" | "-") hour ":" minute
+> ```
+>
+> Examples: `2026-01-10T18:43:00Z`, `2026-01-10T12:00:00-05:00`
 
 > r[schema.type.regex]
-> `@regex` — a scalar matching the regex grammar (`/pattern/flags`).
+> `@regex` — a scalar matching:
+>
+> ```
+> regex = "/" pattern "/" flags
+> flags = [a-zA-Z]*
+> ```
+>
+> The set of valid flags is implementation-defined. Common flags include `i` (case-insensitive),
+> `m` (multiline), `s` (dotall), and `x` (extended).
+>
+> Examples: `/foo/`, `/^hello$/i`, `/\d+/`
 
 > r[schema.type.bytes]
-> `@bytes` — a scalar matching hex (`0x...`) or base64 (`b64"..."`) grammar.
+> `@bytes` — a scalar matching hex or base64:
+>
+> ```
+> hex_bytes    = "0x" hex_digit+
+> base64_bytes = "b64" '"' base64_char* '"'
+> ```
+>
+> Examples: `0xdeadbeef`, `0x00FF`, `b64"SGVsbG8="`, `b64""`
 
 > r[schema.type.any]
 > `@any` — any value (scalar, object, sequence, or unit). Useful for arbitrary metadata:
