@@ -139,6 +139,15 @@ Bare scalars are delimited by whitespace and structural characters.
 > x=1              // in attribute context: "x" is key, "1" is value
 > ```
 
+> r[scalar.bare.type-ref]
+> A bare scalar starting with `@` is a **type reference**. Type references are
+> used in schemas to denote types rather than literal values.
+>
+> ```styx
+> name @string     // type reference: value must be a string
+> name string      // literal: value must be the scalar "string"
+> ```
+
 ```compare
 /// json
 "foo"
@@ -189,10 +198,16 @@ Quoted scalars use double quotes and support escape sequences.
 > | `\r` | Carriage return |
 > | `\t` | Tab |
 > | `\0` | Null |
+> | `\@` | Literal `@` (prevents type reference interpretation) |
 > | `\uXXXX` | Unicode code point (4 hex digits) |
 > | `\u{X...}` | Unicode code point (1-6 hex digits) |
 >
 > Invalid escape sequences are an error.
+
+> r[scalar.quoted.type-ref]
+> Quoting does not change meaning. `@string` and `"@string"` are both type references.
+> To represent a literal scalar starting with `@`, escape it: `"\@string"` produces
+> the scalar value `@string`.
 
 ### Raw scalars
 
@@ -772,6 +787,231 @@ The deserializer validates:
 - The value is a single-key object
 - The key matches a valid variant name
 - The payload matches the expected variant shape
+
+---
+
+# Part 3: Schemas
+
+Schemas define the expected structure of STYX documents. They specify what keys exist,
+what types values must have, and whether fields are required or optional.
+
+STYX schemas are themselves STYX documents. They can be inline (embedded in a document)
+or external (separate files).
+
+## Type references
+
+Type references use the `@` prefix to distinguish types from literal values:
+
+```styx
+/// A server configuration schema
+server {
+  host @string
+  port @integer
+  timeout @duration?
+}
+```
+
+> r[schema.type-ref]
+> A type reference is a scalar starting with `@`. The remainder names a type
+> from the standard type vocabulary or a user-defined type.
+
+> r[schema.type-ref.literal]
+> A scalar without `@` is a literal value constraint. The document value must
+> be exactly that scalar.
+>
+> ```styx
+> version 1          // must be exactly the scalar "1"
+> version @integer   // must be an integer (1, 2, 42, etc.)
+> ```
+
+## Standard types
+
+The schema type vocabulary matches the deserializer's scalar interpretation rules:
+
+> r[schema.type.string]
+> `@string` — any scalar value.
+
+> r[schema.type.integer]
+> `@integer` — a scalar matching the integer grammar.
+
+> r[schema.type.float]
+> `@float` — a scalar matching the float grammar.
+
+> r[schema.type.boolean]
+> `@boolean` — `true` or `false`.
+
+> r[schema.type.null]
+> `@null` — the scalar `null`.
+
+> r[schema.type.duration]
+> `@duration` — a scalar matching the duration grammar (`30s`, `10ms`, etc.).
+
+> r[schema.type.timestamp]
+> `@timestamp` — a scalar matching RFC 3339.
+
+> r[schema.type.regex]
+> `@regex` — a scalar matching the regex grammar (`/pattern/flags`).
+
+> r[schema.type.bytes]
+> `@bytes` — a scalar matching hex (`0x...`) or base64 (`b64"..."`) grammar.
+
+## Optional types
+
+A `?` suffix marks a type as optional:
+
+```styx
+server {
+  host @string       // required
+  port @integer      // required  
+  timeout @duration? // optional
+}
+```
+
+> r[schema.optional]
+> A type reference followed by `?` indicates the field may be omitted.
+> If present, the value must match the type.
+
+## Sequences
+
+Sequences use `()` containing a type reference:
+
+```styx
+/// List of hostnames
+hosts (@string)
+
+/// List of server configurations
+servers ({
+  host @string
+  port @integer
+})
+```
+
+> r[schema.sequence]
+> A sequence schema `(@type)` matches a sequence where every element matches `@type`.
+
+## Maps
+
+Maps are objects with arbitrary string keys and uniform value types:
+
+```styx
+/// Environment variables (string to string)
+env @map(@string)
+
+/// Port mappings (string to integer)
+ports @map(@integer)
+```
+
+> r[schema.map]
+> `@map(@type)` matches an object where all values match `@type`.
+> Keys are always strings.
+
+## Nested objects
+
+Object schemas can be nested inline:
+
+```styx
+server {
+  host @string
+  port @integer
+  tls {
+    cert @string
+    key @string
+    enabled @boolean?
+  }
+}
+```
+
+Or reference named types:
+
+```styx
+server {
+  host @string
+  port @integer
+  tls @TlsConfig
+}
+
+TlsConfig {
+  cert @string
+  key @string
+  enabled @boolean?
+}
+```
+
+> r[schema.object.inline]
+> An inline object schema `{ ... }` defines the expected structure directly.
+
+> r[schema.object.ref]
+> A type reference like `@TlsConfig` refers to a named schema defined elsewhere
+> in the schema document.
+
+## Enums
+
+Enum schemas list the valid variants:
+
+```styx
+status @enum {
+  ok
+  pending
+  err {
+    message @string
+    code @integer?
+  }
+}
+```
+
+> r[schema.enum]
+> An enum schema `@enum { ... }` defines valid variant names and their payloads.
+> Each variant is a key. The value is the payload schema (or empty for unit variants).
+
+## Doc comments
+
+Doc comments use `///` and attach to the following definition:
+
+```styx
+/// Server configuration for the web tier
+server {
+  /// Hostname or IP address to bind to
+  host @string
+  
+  /// Port number (1-65535)
+  port @integer
+  
+  /// Request timeout; defaults to 30s if not specified
+  timeout @duration?
+}
+```
+
+> r[schema.doc]
+> A comment starting with `///` is a doc comment. It attaches to the immediately
+> following key or type definition.
+
+## Schema location
+
+Schemas can be:
+
+1. **External**: A separate `.styx` file referenced by the document
+2. **Inline**: Embedded in the document itself
+
+> r[schema.inline]
+> An inline schema uses the reserved key `@schema` at the document root:
+>
+> ```styx
+> @schema {
+>   server {
+>     host @string
+>     port @integer
+>   }
+> }
+> 
+> server {
+>   host localhost
+>   port 8080
+> }
+> ```
+
+> r[schema.external]
+> External schema resolution is implementation-defined. Common patterns include
+> file extensions (`.schema.styx`), sidecar files, or registry lookups.
 
 ---
 
