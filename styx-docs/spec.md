@@ -18,6 +18,10 @@ STYX processing happens in two distinct layers:
 This separation keeps the parser simple and predictable while allowing flexible
 interpretation at the application layer.
 
+**Key design choice**: STYX uses explicit delimiters (`{}` and `()`) for all structure.
+There is no indentation-based nesting — whitespace is purely for separation, never for structure.
+This eliminates an entire class of formatting bugs common in YAML.
+
 ---
 
 # Part 1: Parser
@@ -137,9 +141,12 @@ Bare scalars are delimited by whitespace and structural characters.
 > ```styx
 > items(a b c)     // "items" is key, (a b c) is value
 > foo{bar baz}     // "foo" is key, {bar baz} is value
-> x=1              // in attribute context: "x" is key, "1" is value
+> x=1              // "x" terminates at =, triggers attribute parsing
 > foo// comment    // "foo" is the scalar, comment follows
 > ```
+>
+> When `=` terminates a bare scalar in value position, it triggers attribute object
+> parsing (see r[object.attr.binding]).
 
 ```compare
 /// json
@@ -234,7 +241,9 @@ EOF
 ```
 
 > r[scalar.heredoc.delimiter]
-> The delimiter MUST match the pattern `[A-Z_]+`.
+> The delimiter MUST match the pattern `[A-Z][A-Z0-9_]*`.
+>
+> Examples: `EOF`, `SQL`, `EOF2`, `BASE64_DATA`
 
 > r[scalar.heredoc.indent]
 > The parser MUST strip leading whitespace from content lines up to the
@@ -250,7 +259,11 @@ EOF
 > ```
 >
 > The closing `BASH` is indented 4 spaces, so 4 spaces are stripped.
-> The value of `script` is `#!/bin/bash\necho "hello"`.
+> The resulting value is:
+> ```
+> #!/bin/bash
+> echo "hello"
+> ```
 
 > r[scalar.heredoc.indent.minimum]
 > All content lines MUST be indented at least as much as the closing delimiter.
@@ -753,6 +766,8 @@ A conforming deserializer SHOULD recognize the following standard scalar forms:
 > flags = ("i" | "m" | "s" | "x")*
 > ```
 >
+> The flags `i` (case-insensitive), `m` (multiline), `s` (dotall), and `x` (extended)
+> are commonly supported. Additional flags are implementation-defined.
 > Flag order is insignificant (`/foo/im` equals `/foo/mi`). Duplicate flags
 > are allowed but have no additional effect.
 >
@@ -903,6 +918,9 @@ server {
 > ```styx
 > pattern r#"@user"#   // literal: the string "@user"
 > ```
+>
+> Note: The `\@` escape is only valid in quoted scalars. Bare scalars starting with `@`
+> are always interpreted as type references in schema context. Use quoting for literals.
 
 ## Standard types
 
@@ -954,6 +972,14 @@ The schema type vocabulary matches the deserializer's scalar interpretation rule
 > value @string | @unit
 > ```
 
+**`@null` vs `@unit`**: These serve different purposes:
+
+- `@null` matches the *scalar* `null` — text that the deserializer interprets as null
+- `@unit` matches the *unit value* `@` — structural absence of a value
+
+Use `@unit` for nullable fields (`@string | @unit`). Use `@null` when you specifically
+need the literal scalar `null` (rare in practice). Most nullable patterns use `@unit`.
+
 ## Optional types
 
 A `?` suffix marks a type as optional:
@@ -994,13 +1020,13 @@ timeout @duration | @integer | @unit
 
 > r[schema.union]
 > A union type `@type1 | @type2 | ...` matches a value if it matches any of the
-> constituent types. The `|` operator has lower precedence than `?`.
+> constituent types. The `?` operator binds tighter than `|`.
 >
 > ```styx
-> // Nullable optional: field may be absent, or present with string or unit
+> // @string, or optional @unit (? binds to @unit only)
 > name @string | @unit?
 >
-> // This is equivalent to:
+> // Optional union (use parentheses)
 > name (@string | @unit)?
 > ```
 
@@ -1021,7 +1047,7 @@ value @string | @unit
 value @string?
 
 // Optional nullable field (may be absent, or present as string or unit)
-value @string | @unit?
+value (@string | @unit)?
 ```
 
 ## Sequences
@@ -1141,7 +1167,7 @@ status @enum {
 
 - `@type?` — *optional*: field may be absent from the document
 - `@type | @unit` — *nullable*: field must be present but may be unit (`@`)
-- `@type | @unit?` — *optional nullable*: field may be absent, or present as value or unit
+- `(@type | @unit)?` — *optional nullable*: field may be absent, or present as value or unit
 
 ```styx
 // Required string
@@ -1153,8 +1179,8 @@ name @string?
 // Nullable string (present, but may be @)
 name @string | @unit
 
-// Optional nullable string
-name @string | @unit?
+// Optional nullable string (parentheses required)
+name (@string | @unit)?
 ```
 
 **Recursive types**: Self-referential types are supported:
@@ -1278,6 +1304,42 @@ let config: Config = styx::from_str(r#"
 
 assert_eq!(config.server.port, 8080);
 assert_eq!(config.server.timeout, Duration::from_secs(30));
+```
+
+### Enum deserialization
+
+Enums use externally-tagged representation. The dotted path syntax provides ergonomic shorthand:
+
+```rust
+#[derive(styx::Deserialize)]
+enum Status {
+    Ok,
+    Pending,
+    Err { message: String, code: Option<i32> },
+}
+
+#[derive(styx::Deserialize)]
+struct Response {
+    status: Status,
+}
+
+// Unit variant (all equivalent)
+let r: Response = styx::from_str("status.ok")?;
+let r: Response = styx::from_str("status.ok @")?;
+let r: Response = styx::from_str("status { ok @ }")?;
+
+// Variant with payload
+let r: Response = styx::from_str(r#"
+    status.err {
+        message "connection timeout"
+        code 504
+    }
+"#)?;
+
+// Using attribute syntax for payload
+let r: Response = styx::from_str(r#"
+    status.err message="timeout" code=504
+"#)?;
 ```
 
 ## Design invariants (non-normative)
