@@ -364,6 +364,11 @@ fn wrap_plain_text_html(code: &str, theme: &Theme) -> String {
 }
 
 fn wrap_with_pre(content: String, theme: &Theme) -> String {
+    // Replace blank lines with <br> to preserve visual spacing.
+    // In CommonMark, blank lines terminate HTML blocks, so we must not have
+    // any actual blank lines inside our pre elements when embedded in markdown.
+    let content = blank_lines_to_br(&content);
+
     let mut styles = Vec::new();
     if let Some(bg) = theme.background {
         styles.push(format!("background-color:{};", bg.to_hex()));
@@ -386,13 +391,72 @@ fn wrap_with_pre(content: String, theme: &Theme) -> String {
     )
 }
 
+/// Replace blank lines (2+ consecutive newlines) with `<br>` tags.
+/// This preserves visual spacing while preventing CommonMark from
+/// terminating the HTML block at blank lines inside `<pre>` elements.
+fn blank_lines_to_br(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut newline_count = 0;
+
+    for c in s.chars() {
+        if c == '\n' {
+            newline_count += 1;
+        } else {
+            // Flush accumulated newlines
+            if newline_count > 0 {
+                result.push('\n');
+                // For each extra newline beyond the first, add a <br>
+                for _ in 1..newline_count {
+                    result.push_str("<br>");
+                }
+                newline_count = 0;
+            }
+            result.push(c);
+        }
+    }
+
+    // Handle trailing newlines
+    if newline_count > 0 {
+        result.push('\n');
+        for _ in 1..newline_count {
+            result.push_str("<br>");
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Language;
+    use super::{Language, blank_lines_to_br};
 
     #[test]
     fn xml_language_metadata_is_exposed() {
         assert_eq!(Language::Xml.name(), "XML");
         assert_eq!(Language::Xml.extension(), "xml");
+    }
+
+    #[test]
+    fn blank_lines_to_br_preserves_visual_spacing() {
+        // Single newlines preserved as-is
+        assert_eq!(blank_lines_to_br("a\nb\nc"), "a\nb\nc");
+
+        // Double newlines (blank line) -> newline + <br>
+        assert_eq!(blank_lines_to_br("a\n\nb"), "a\n<br>b");
+
+        // Triple newlines -> newline + 2x <br>
+        assert_eq!(blank_lines_to_br("a\n\n\nb"), "a\n<br><br>b");
+
+        // Mixed content
+        assert_eq!(
+            blank_lines_to_br("line1\n\nline2\nline3\n\n\nline4"),
+            "line1\n<br>line2\nline3\n<br><br>line4"
+        );
+
+        // Empty string
+        assert_eq!(blank_lines_to_br(""), "");
+
+        // Only newlines
+        assert_eq!(blank_lines_to_br("\n\n\n"), "\n<br><br>");
     }
 }
