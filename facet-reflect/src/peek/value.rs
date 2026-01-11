@@ -881,28 +881,42 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// For example, this will peel through newtype wrappers or smart pointers that have an `inner`.
     pub fn innermost_peek(self) -> Self {
         let mut current_peek = self;
-        while let Some(inner_shape) = current_peek.shape.inner {
-            // Try to borrow the inner value
-            let result = unsafe { current_peek.shape.call_try_borrow_inner(current_peek.data) };
-            match result {
-                Some(Ok(inner_data)) => {
-                    current_peek = Peek {
-                        data: inner_data.as_const(),
-                        shape: inner_shape,
-                        _invariant: PhantomData,
-                    };
-                }
-                Some(Err(e)) => {
-                    panic!(
-                        "innermost_peek: try_borrow_inner returned an error! was trying to go from {} to {}. error: {e}",
-                        current_peek.shape, inner_shape
-                    );
-                }
-                None => {
-                    // No try_borrow_inner function, stop here
-                    break;
+        loop {
+            // First, try to dereference if this is a pointer type (Box, Arc, etc.)
+            if let Ok(ptr) = current_peek.into_pointer()
+                && let Some(target) = ptr.borrow_inner()
+            {
+                current_peek = target;
+                continue;
+            }
+
+            // Then, try to unwrap transparent wrappers via shape.inner
+            if let Some(inner_shape) = current_peek.shape.inner {
+                let result = unsafe { current_peek.shape.call_try_borrow_inner(current_peek.data) };
+                match result {
+                    Some(Ok(inner_data)) => {
+                        current_peek = Peek {
+                            data: inner_data.as_const(),
+                            shape: inner_shape,
+                            _invariant: PhantomData,
+                        };
+                        continue;
+                    }
+                    Some(Err(e)) => {
+                        panic!(
+                            "innermost_peek: try_borrow_inner returned an error! was trying to go from {} to {}. error: {e}",
+                            current_peek.shape, inner_shape
+                        );
+                    }
+                    None => {
+                        // No try_borrow_inner function - this might be a pointer type
+                        // that we already tried above, so we're done
+                    }
                 }
             }
+
+            // No more unwrapping possible
+            break;
         }
         current_peek
     }
