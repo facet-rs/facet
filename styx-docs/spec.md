@@ -354,6 +354,11 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 
 Objects are key-value maps.
 
+> r[object.order]
+> Objects preserve insertion order. Parsers MUST yield entries in the order
+> they appear in the source. This guarantee enables configuration files where
+> order matters (e.g., processing pipelines, rule precedence).
+
 ### Keys
 
 Keys are dotted paths composed of one or more segments.
@@ -370,6 +375,12 @@ Keys are dotted paths composed of one or more segments.
 >
 > Quoted key segments use the same syntax and escape sequences as quoted scalars
 > (see r[scalar.quoted.escapes]).
+
+> r[object.key.reserved]
+> Keys starting with `@` are reserved for directives (e.g., `@schema`).
+> Reserved keys do not follow the standard key grammar — they are recognized
+> as special tokens by the parser at specific positions (e.g., document root).
+> To use a literal key starting with `@` in a document, quote it: `"\@foo"`.
 
 ```compare
 /// json
@@ -507,14 +518,14 @@ Nested objects:
 > Trailing commas are allowed: `{ a 1, b 2, }` is valid.
 
 > r[object.block.no-equals]
-> The `=` character is not valid in block object entries. Use attribute form
-> for `key=value` syntax.
+> In block objects, entries use `key value` syntax, not `key=value`.
+> Attribute objects may appear as *values* within block objects.
 >
 > ```styx
-> { a=1 b=2 }   // ERROR: use attribute form or block form, not both
-> config { a=1 }  // ERROR: same issue
-> config a=1 b=2  // OK: attribute form
-> config { a 1, b 2 }  // OK: block form
+> { a=1 b=2 }              // ERROR: entries cannot use =
+> { a 1, b 2 }             // OK: block form entries
+> { labels app=web }       // OK: "labels" is key, "app=web..." is attribute value
+> { config { a=1 } }       // ERROR: nested block cannot use =
 > ```
 
 ### Attribute form
@@ -753,9 +764,9 @@ is the variant payload.
 >
 > ```compare
 > /// json
-> {"ok": {}}
+> {"ok": []}
 > /// styx
-> { ok {} }
+> { ok () }
 > ```
 >
 > ```compare
@@ -1042,6 +1053,36 @@ status @enum {
 > An enum schema `@enum { ... }` defines valid variant names and their payloads.
 > Unit variants use implicit `()` (see r[object.entry.implicit-unit]).
 > Variants with payloads specify their schema as the value.
+
+## Limitations (non-normative)
+
+This schema language intentionally omits some features common in other systems:
+
+**Union types**: There is no syntax for "string or integer" or "duration or null".
+Use `@any` for polymorphic fields, or model variants explicitly with `@enum`.
+
+**Nullable vs optional**: `@type?` means the field may be omitted. To express
+"required but may be null", use `@null` as a valid type or model with `@enum`:
+
+```styx
+// Option 1: accept null explicitly
+value @any  // allows null among other values
+
+// Option 2: model as enum
+value @enum {
+  some { inner @string }
+  none
+}
+```
+
+**Recursive types**: Self-referential types are supported:
+
+```styx
+TreeNode {
+  value @any
+  children (@TreeNode)
+}
+```
 
 ## Doc comments
 
