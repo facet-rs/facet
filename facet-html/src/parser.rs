@@ -9,7 +9,7 @@ use facet_format::{
     ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
     ProbeStream, ScalarValue,
 };
-use html5gum::{Token, Tokenizer};
+use html5gum::{State, Token, Tokenizer};
 
 /// HTML parser implementing the `FormatParser` trait.
 ///
@@ -285,12 +285,12 @@ fn is_void_element(name: &str) -> bool {
 fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, HtmlError> {
     let input_str = core::str::from_utf8(input).map_err(|_| HtmlError::InvalidUtf8)?;
 
-    let tokenizer = Tokenizer::new(input_str);
+    let mut tokenizer = Tokenizer::new(input_str);
     let mut stack: Vec<Element> = Vec::new();
     let mut roots: Vec<Element> = Vec::new();
     let mut doctype_name: Option<String> = None;
 
-    for token_result in tokenizer {
+    while let Some(token_result) = tokenizer.next() {
         let token = token_result.map_err(|_| HtmlError::ParseError("tokenizer error".into()))?;
 
         match token {
@@ -313,6 +313,13 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, HtmlError
                     // Self-closing or void element - attach immediately
                     attach_element(&mut stack, elem, &mut roots);
                 } else {
+                    // Switch tokenizer state for raw text elements per HTML5 spec
+                    // https://html.spec.whatwg.org/multipage/parsing.html#parsing-html-fragments
+                    match name.as_str() {
+                        "script" | "style" => tokenizer.set_state(State::ScriptData),
+                        "textarea" | "title" => tokenizer.set_state(State::RcData),
+                        _ => {}
+                    }
                     // Push onto stack to collect children
                     stack.push(elem);
                 }
