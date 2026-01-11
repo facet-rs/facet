@@ -1504,12 +1504,97 @@ For performance, implementations may deserialize directly from source text witho
 materializing an intermediate document tree. The behavior must be indistinguishable
 from first parsing into a tree, then deserializing from that tree.
 
-## Scalar interpretation
+## Scalars are opaque
 
-The deserializer interprets opaque scalar values based on the target type. A scalar
-like `42` becomes an integer when the target is `u32`, but remains a string when
-the target is `String`. See the standard types in Part 3 for the grammars of
-`@integer`, `@float`, `@duration`, etc.
+The parser treats all scalars as opaque text. The deserializer assigns meaning
+based on the target type.
+
+> r[deser.scalar.opaque]
+> A scalar has no inherent type. `42` is not "an integer" — it is text that
+> *can be interpreted as* an integer when the target type requires one.
+>
+> ```styx
+> port 42        // if target is u16: integer 42
+>                // if target is String: string "42"
+> ```
+
+> r[deser.scalar.no-coercion]
+> There is no implicit coercion between scalar forms. A quoted scalar `"42"`
+> and a bare scalar `42` both contain the text `42`, but neither is "more numeric"
+> than the other. The target type determines interpretation, not the lexical form.
+
+See Part 2 for the grammars of `@integer`, `@float`, `@duration`, etc.
+
+## Object deserialization
+
+Objects in the document are validated against object schemas.
+
+> r[deser.object.fields]
+> Each key in the document must match a field defined in the schema. Required
+> fields (no `?` suffix) MUST be present; optional fields MAY be absent.
+
+> r[deser.object.unknown]
+> Keys not defined in the schema are errors by default. Implementations MAY
+> provide a lenient mode that ignores unknown keys.
+
+## Optional fields
+
+Optional fields interact with absence and unit.
+
+> r[deser.optional.absent]
+> An optional field (`key? @type`) that is absent from the document is valid.
+> The application receives no value for that field.
+
+> r[deser.optional.unit]
+> An optional field explicitly set to unit (`key @`) is distinct from absence.
+> Both are valid for optional fields, but applications may distinguish them.
+>
+> ```styx
+> // Schema: timeout? @duration
+> { }                    // absent — no timeout specified
+> { timeout @ }          // present but explicitly empty
+> { timeout 30s }        // present with value
+> ```
+
+## Sequence deserialization
+
+Sequences are validated element-by-element.
+
+> r[deser.sequence]
+> A sequence schema `(@type)` validates that every element matches `@type`.
+> Empty sequences are valid.
+
+## Map deserialization
+
+Maps are objects with uniform value types.
+
+> r[deser.map]
+> A map schema `@map(@type)` validates that all values match `@type`.
+> Keys are always strings. Empty maps are valid.
+
+## Flatten
+
+Flattening merges fields from a referenced type.
+
+> r[deser.flatten]
+> A flattened field `key @flatten(@Type)` expects the referenced type's fields
+> at the same level, not nested under `key`.
+>
+> ```styx
+> // Schema:
+> // User { name @string, email @string }
+> // Admin { user @flatten(@User), role @string }
+>
+> // Document (fields are flat):
+> name Alice
+> email alice@example.com
+> role superuser
+> ```
+
+> r[deser.flatten.routing]
+> The deserializer routes flattened keys to the appropriate nested structure
+> based on the schema. Keys are matched in declaration order when multiple
+> flattened types could apply.
 
 ## Enum deserialization
 
@@ -2265,12 +2350,12 @@ Deserialize directly into concrete types. The type system guides scalar interpre
 ```rust
 use std::time::Duration;
 
-#[derive(styx::Deserialize)]
+#[derive(Facet)]
 struct Config {
     server: Server,
 }
 
-#[derive(styx::Deserialize)]
+#[derive(Facet)]
 struct Server {
     host: String,
     port: u16,
@@ -2294,14 +2379,14 @@ assert_eq!(config.server.timeout, Duration::from_secs(30));
 Enums use externally-tagged representation. The dotted path syntax provides ergonomic shorthand:
 
 ```rust
-#[derive(styx::Deserialize)]
+#[derive(Facet)]
 enum Status {
     Ok,
     Pending,
     Err { message: String, code: Option<i32> },
 }
 
-#[derive(styx::Deserialize)]
+#[derive(Facet)]
 struct Response {
     status: Status,
 }
