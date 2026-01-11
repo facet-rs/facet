@@ -13,65 +13,59 @@ STYX values are one of:
   
 ## Scalars
 
-> r[scalar.interpretation]
-> All scalars are lexically parsed, never interpreted by the core language.
-> Meaning is assigned only by conventions or schemas.
-
-### Bare scalar tokens
-
-> r[scalar.bare.definition]
-> A bare scalar is any non-whitespace token that does not contain spaces.
->
-> ```styx
-> foo
-> web
-> RUST_LOG
-> ghcr.io/acme/web:1.2.3
-> ```
-
-> r[scalar.bare.opaque]
-> Bare scalars are opaque atoms to the core language.
-
-### Quoting
+> r[scalar.opaque]
+> Scalars are opaque atoms. The parser assigns no meaning to them;
+> interpretation is deferred until deserialization.
 
 > r[scalar.quoting]
 > Quoted forms (`"..."`, `r#"..."#`, heredocs) are lexical delimiters that allow scalars
 > to contain spaces and special characters. They do not change the scalar's type or meaning.
 > `foo` and `"foo"` produce identical scalar values.
 
-### Quoted strings
+### Bare scalars
 
-> r[scalar.string.quoted]
-> Quoted strings allow spaces and escape sequences:
+> r[scalar.bare]
+> A bare scalar is delimited by whitespace:
+>
+> ```styx
+> foo
+> 42
+> true
+> https://example.com/path
+> ```
+
+### Quoted scalars
+
+> r[scalar.quoted]
+> Quoted scalars use double quotes and support escape sequences:
 >
 > ```styx
 > "hello world"
 > "foo\nbar"
 > ```
 
-### Raw strings
+### Raw scalars
 
-> r[scalar.string.raw]
-> Raw strings do not process escape sequences:
+> r[scalar.raw]
+> Raw scalars do not process escape sequences:
 >
 > ```styx
 > r#"no need to escape "double quotes" in here"#
 > ```
 
-> r[scalar.string.raw.nesting]
-> Multiple `#` characters allow embedding `"#` sequences:
+> r[scalar.raw.nesting]
+> Multiple `#` characters allow embedding `"#` sequences.
+> The closing delimiter MUST match the opening:
 >
 > ```styx
 > r##"can contain "# without closing"##
-> r###"can contain "## without closing"###
 > ```
->
-> The number of `#` in the closing delimiter MUST match the opening.
 
-### Multiline strings (heredoc)
+### Heredoc scalars
 
-> r[scalar.string.heredoc]
-> Multiline strings are explicitly delimited using `<<DELIM` ... `DELIM` syntax:
+> r[scalar.heredoc]
+> Heredocs are multiline scalars using `<<DELIM` ... `DELIM` syntax.
+> The delimiter MUST be `[A-Z_]+`:
 >
 > ```styx
 > <<EOF
@@ -80,12 +74,10 @@ STYX values are one of:
 > EOF
 > ```
 
-> r[scalar.string.heredoc.delimiter]
-> The delimiter MUST consist of one or more uppercase letters and underscores (`[A-Z_]+`).
-
-> r[scalar.string.heredoc.indent]
-> The closing delimiter's indentation determines the base indent.
-> That amount of leading whitespace is stripped from all content lines.
+> r[scalar.heredoc.indent]
+> The closing delimiter's indentation sets the base indent; that much is stripped
+> from all content lines. Content lines MUST be indented at least as much as the
+> closing delimiter:
 >
 > ```styx
 > server {
@@ -95,49 +87,28 @@ STYX values are one of:
 >     EOF
 > }
 > ```
->
-> Produces:
->
-> ```
-> #!/bin/bash
-> echo "hello"
-> ```
 
-> r[scalar.string.heredoc.indent.minimum]
-> All content lines MUST be indented at least as much as the closing delimiter.
-> A line with less indentation than the closing delimiter is a syntax error.
-
-> r[scalar.string.heredoc.closing]
-> The closing delimiter MUST appear on its own line, with only whitespace preceding it.
-
-> r[scalar.string.heredoc.chomp]
-> The trailing newline immediately before the closing delimiter is stripped.
-> All other newlines within the content are preserved.
+> r[scalar.heredoc.chomp]
+> The trailing newline before the closing delimiter is stripped.
+> The closing delimiter MUST appear on its own line.
 
 ### Scalar interpretation
 
-> r[scalar.interpretation.deferred]
-> The parser treats all scalars as opaque atoms. Interpretation is deferred
-> until deserialization.
-
-> r[scalar.interpretation.required]
-> A conforming STYX implementation MUST support interpreting scalars as the
-> following types when requested:
+> r[scalar.interpretation]
+> A conforming STYX implementation MUST support interpreting scalars as:
 >
-> - Integers (signed and unsigned, various widths)
+> - Integers (signed/unsigned, various widths)
 > - Floating point numbers
 > - Booleans (`true`, `false`)
 > - Null (`null`)
-> - Strings (the scalar's raw text)
-> - Durations (e.g., `30s`, `10ms`, `2h`)
+> - Strings
+> - Durations (`30s`, `10ms`, `2h`)
 > - Timestamps (RFC 3339)
-> - Regular expressions (e.g., `/foo/i`)
+> - Regular expressions (`/foo/i`)
 > - Byte sequences (hex `0xdeadbeef`, base64 `b64"..."`)
 
 > r[scalar.interpretation.extensible]
-> Implementations MAY support additional forms beyond this list.
-> Enums, paths, URLs, email addresses, IP addresses, semantic versions, and other
-> domain-specific types are commonly supported as extensions.
+> Implementations MAY support additional forms (paths, URLs, IPs, semver, etc.).
 
 ## Objects
 
@@ -298,6 +269,71 @@ Attribute objects are syntactic sugar for block objects, providing a compact inl
 > Attribute objects prioritize compactness and inline readability for common map-like patterns
 > (labels, env, options). They are intentionally constrained to remain local, predictable,
 > and visually obvious.
+
+## Enums
+
+Enums are a schema-level concept. The core language provides structural representation
+via externally tagged objects.
+
+> r[enum.representation]
+> An enum value is represented as an object with exactly one key (the variant tag)
+> whose value is the payload:
+>
+> ```styx
+> { ok {} }
+> { err { message "nope", retry_in 5s } }
+> ```
+
+> r[enum.dotted-path]
+> Enum variants may be written using dotted path syntax:
+>
+> ```styx
+> status.ok
+> status.err { message "nope" }
+> ```
+>
+> This is syntactic sugar for:
+>
+> ```styx
+> status { ok {} }
+> status { err { message "nope" } }
+> ```
+
+> r[enum.singleton]
+> Enum objects MUST contain exactly one variant. Dotted paths may only traverse
+> singleton objects.
+
+> r[enum.no-reopen]
+> Enum objects MUST NOT be reopened or merged:
+>
+> ```styx
+> // Invalid: attempts to add second variant
+> status.ok
+> status.err { message "nope" }
+> ```
+
+> r[enum.payload]
+> A variant payload may be omitted (unit variant), or may be a scalar, block object,
+> or sequence:
+>
+> ```styx
+> result.ok
+> result.err message="timeout" retry_in=5s
+> ```
+
+> r[enum.explicit]
+> Enum interpretation must be structurally explicit. The following is ambiguous
+> and not a valid enum representation:
+>
+> ```styx
+> // Ambiguous: string value or enum variant?
+> status ok
+> ```
+
+> r[enum.schema]
+> Schemas define which objects are enums, valid variant names, payload shapes,
+> and whether unit variants are allowed. The core language only enforces structural
+> rules (singleton objects, no reopening).
 
 ## Usage patterns (non-normative)
 
