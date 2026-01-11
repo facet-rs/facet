@@ -1,7 +1,7 @@
 # styx
 
-STYX is a document language designed to replace YAML, TOML, JSON, etc. for documents authored
-by humans.
+STYX is a structured document format designed to replace YAML, TOML, JSON, etc. for documents
+authored by humans.
 
 ## Document structure
 
@@ -88,7 +88,64 @@ STYX values are one of:
   * Scalar
   * Object
   * Sequence
-  
+
+## Sequences
+
+Sequences are ordered collections of values. They use `( )` delimiters.
+
+```compare
+/// json
+["a", "b", "c"]
+/// styx
+(a b c)
+```
+
+```compare
+/// json
+[1, 2, 3]
+/// styx
+(1 2 3)
+```
+
+> r[sequence.delimiters]
+> Sequences MUST start with `(` and end with `)`.
+
+> r[sequence.separators]
+> Elements MUST be separated by whitespace or commas.
+>
+> ```styx
+> (a b c)
+> (a, b, c)
+> (
+>   a
+>   b
+>   c
+> )
+> ```
+
+> r[sequence.elements]
+> Sequence elements MAY be scalars, block objects, or nested sequences.
+>
+> ```compare
+> /// json
+> [[1, 2], [3, 4]]
+> /// styx
+> ((1 2) (3 4))
+> ```
+>
+> ```compare
+> /// json
+> [{"name": "alice"}, {"name": "bob"}]
+> /// styx
+> (
+>   { name alice }
+>   { name bob }
+> )
+> ```
+
+> r[sequence.empty]
+> An empty sequence `()` is valid and represents an empty list.
+
 ## Scalars
 
 Scalars are opaque atoms. The parser assigns no meaning to them; interpretation
@@ -139,6 +196,22 @@ Quoted scalars use double quotes and support escape sequences.
 "foo\nbar"
 ```
 
+> r[scalar.quoted.escapes]
+> Quoted scalars MUST support the following escape sequences:
+>
+> | Escape | Meaning |
+> |--------|---------|
+> | `\\` | Backslash |
+> | `\"` | Double quote |
+> | `\n` | Newline |
+> | `\r` | Carriage return |
+> | `\t` | Tab |
+> | `\0` | Null |
+> | `\uXXXX` | Unicode code point (4 hex digits) |
+> | `\u{X...}` | Unicode code point (1-6 hex digits) |
+>
+> Invalid escape sequences are an error.
+
 ### Raw scalars
 
 Raw scalars preserve content literally. JSON has no equivalent.
@@ -152,6 +225,13 @@ r#"no need to escape "double quotes" in here"#
 
 > r[scalar.raw.delimiter]
 > The number of `#` in the closing delimiter MUST match the opening.
+> Any number of `#` characters is allowed (including zero: `r"..."`).
+>
+> ```styx
+> r"simple"
+> r#"contains "quotes""#
+> r##"contains "# sequence"##
+> ```
 
 ### Heredoc scalars
 
@@ -209,19 +289,35 @@ EOF
 > The value of `msg` is `hello` (no trailing newline).
 
 > r[scalar.heredoc.closing]
-> The closing delimiter MUST appear on its own line.
+> The closing delimiter MUST appear on its own line, with only optional
+> leading whitespace before it. Trailing whitespace after the delimiter is allowed.
 >
 > ```styx
 > msg <<EOF
 >   hello EOF   // ERROR: delimiter not on its own line
 > ```
 
+> r[scalar.heredoc.empty]
+> A heredoc with no content lines produces an empty string.
+>
+> ```styx
+> empty <<EOF
+> EOF
+> ```
+>
+> The value of `empty` is `""` (empty string).
+
 ### Scalar interpretation
 
-A conforming implementation MUST support interpreting scalars as the following types.
+The parser produces opaque scalar values. Interpretation is a separate layer.
+
+A conforming implementation MUST provide standard interpretations for the following
+scalar forms. These interpretations are applied during deserialization, not parsing.
+The parser itself MUST NOT assign semantic meaning to scalars.
 
 > r[scalar.interp.integer]
-> A conforming implementation MUST interpret scalars matching this grammar as integers:
+> A conforming implementation MUST recognize scalars matching this grammar as
+> eligible for integer interpretation:
 >
 > ```
 > integer = ["-" | "+"] digit+
@@ -231,7 +327,8 @@ A conforming implementation MUST support interpreting scalars as the following t
 > Examples: `0`, `42`, `-10`, `+5`
 
 > r[scalar.interp.float]
-> A conforming implementation MUST interpret scalars matching this grammar as floats:
+> A conforming implementation MUST recognize scalars matching this grammar as
+> eligible for float interpretation:
 >
 > ```
 > float    = integer "." digit+ [exponent] | integer exponent
@@ -241,23 +338,28 @@ A conforming implementation MUST support interpreting scalars as the following t
 > Examples: `3.14`, `-0.5`, `1e10`, `2.5e-3`
 
 > r[scalar.interp.boolean]
-> A conforming implementation MUST interpret `true` and `false` as booleans.
+> A conforming implementation MUST recognize `true` and `false` as eligible for
+> boolean interpretation.
 
 > r[scalar.interp.null]
-> A conforming implementation MUST interpret `null` as the null value.
+> A conforming implementation MUST recognize `null` as eligible for null interpretation.
 
 > r[scalar.interp.duration]
-> A conforming implementation MUST interpret scalars matching this grammar as durations:
+> A conforming implementation MUST recognize scalars matching this grammar as
+> eligible for duration interpretation:
 >
 > ```
 > duration = integer unit
 > unit     = "ns" | "us" | "µs" | "ms" | "s" | "m" | "h" | "d"
 > ```
 >
+> Units are case-sensitive; `30S` is not a valid duration.
+>
 > Examples: `30s`, `10ms`, `2h`, `500µs`
 
 > r[scalar.interp.timestamp]
-> A conforming implementation MUST interpret scalars matching RFC 3339 as timestamps:
+> A conforming implementation MUST recognize scalars matching RFC 3339 as
+> eligible for timestamp interpretation:
 >
 > ```
 > timestamp = date "T" time timezone
@@ -269,17 +371,22 @@ A conforming implementation MUST support interpreting scalars as the following t
 > Examples: `2026-01-10T18:43:00Z`, `2026-01-10T12:00:00-05:00`
 
 > r[scalar.interp.regex]
-> A conforming implementation MUST interpret scalars matching this grammar as regular expressions:
+> A conforming implementation MUST recognize scalars matching this grammar as
+> eligible for regular expression interpretation:
 >
 > ```
 > regex = "/" pattern "/" flags
 > flags = ("i" | "m" | "s" | "x")*
 > ```
 >
+> Flag order is insignificant (`/foo/im` equals `/foo/mi`). Duplicate flags
+> are allowed but have no additional effect.
+>
 > Examples: `/foo/`, `/^hello$/i`, `/\d+/`
 
 > r[scalar.interp.bytes.hex]
-> A conforming implementation MUST interpret scalars matching this grammar as byte sequences:
+> A conforming implementation MUST recognize scalars matching this grammar as
+> eligible for byte sequence interpretation:
 >
 > ```
 > hex_bytes = "0x" hex_digit+
@@ -289,7 +396,8 @@ A conforming implementation MUST support interpreting scalars as the following t
 > Examples: `0xdeadbeef`, `0x00FF`
 
 > r[scalar.interp.bytes.base64]
-> A conforming implementation MUST interpret scalars matching this grammar as byte sequences:
+> A conforming implementation MUST recognize scalars matching this grammar as
+> eligible for byte sequence interpretation:
 >
 > ```
 > base64_bytes = "b64" '"' base64_char* '"'
@@ -345,6 +453,33 @@ foo.bar value
 > r[object.key.dotted.expansion]
 > A dotted path `a.b.c value` MUST expand to nested objects: `a { b { c value } }`.
 
+> r[object.key.dotted.no-reopen]
+> A dotted path MUST NOT introduce a key whose parent object already contains a different key.
+>
+> ```styx
+> server.host localhost
+> server.port 8080   // ERROR: cannot reopen server to add port
+> ```
+>
+> Use block form instead:
+>
+> ```styx
+> server {
+>   host localhost
+>   port 8080
+> }
+> ```
+
+> r[object.key.duplicate]
+> Duplicate keys within the same object are forbidden.
+>
+> ```styx
+> server {
+>   port 8080
+>   port 9090   // ERROR: duplicate key
+> }
+> ```
+
 ### Block form
 
 Block objects use `{ }` delimiters. Entries are separated by newlines or commas.
@@ -393,6 +528,9 @@ Nested objects:
 
 > r[object.block.delimiters]
 > Block objects MUST start with `{` and end with `}`.
+
+> r[object.block.empty]
+> An empty object `{}` is valid and represents an object with no entries.
 
 > r[object.block.separators]
 > Entries MUST be separated by newlines or commas.
@@ -467,6 +605,23 @@ Inside a sequence, use block objects:
   { labels app=api tier=backend }
 )
 ```
+
+> r[object.attr.sequence.forbidden]
+> Attribute objects MUST NOT appear as direct elements of a sequence.
+>
+> ```styx
+> (
+>   a=1 b=2   // ERROR: attribute object as sequence element
+> )
+> ```
+>
+> Use block objects instead:
+>
+> ```styx
+> (
+>   { a=1 b=2 }
+> )
+> ```
 
 ### Equivalence
 
@@ -612,3 +767,14 @@ This approach is useful for:
 In both patterns, the "schema" — whether explicit types or runtime `.as_*()` calls —
 determines how scalars are interpreted. The STYX parser produces the same document tree
 regardless of how it will be consumed.
+
+## Design invariants (non-normative)
+
+STYX enforces the following invariants:
+
+- **No implicit merges**: Objects are never merged. Each key appears exactly once.
+- **No reopening**: Once an object is closed, it cannot be extended with additional keys.
+- **No indentation-based structure**: All structure is explicit via `{}` and `()`.
+- **No semantic interpretation during parsing**: The parser produces opaque scalars; meaning is assigned during deserialization.
+- **All structure is explicit**: Braces and parentheses define nesting, not whitespace or conventions.
+- **Commas are separators only**: Commas have no semantic meaning; they are interchangeable with newlines for readability.
