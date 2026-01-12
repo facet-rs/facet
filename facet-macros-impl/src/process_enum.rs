@@ -218,6 +218,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             // - crate: sets the facet crate path
             // - traits: compile-time directive for vtable generation
             // - auto_traits: compile-time directive for vtable generation
+            // - where: compile-time directive for custom generic bounds
             if attr.is_builtin() {
                 let key = attr.key_str();
                 if matches!(
@@ -228,6 +229,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         | "proxy"
                         | "truthy"
                         | "skip_all_unless_truthy"
+                        | "where"
                 ) {
                     continue;
                 }

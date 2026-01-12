@@ -1639,6 +1639,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 // - traits: compile-time directive for vtable generation
                 // - auto_traits: compile-time directive for vtable generation
                 // - proxy: sets Shape::proxy for container-level proxy
+                // - where: compile-time directive for custom generic bounds
                 if attr.is_builtin() {
                     let key = attr.key_str();
                     !matches!(
@@ -1650,6 +1651,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                             | "proxy"
                             | "truthy"
                             | "skip_all_unless_truthy"
+                            | "where"
                     )
                 } else {
                     true

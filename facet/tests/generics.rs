@@ -270,7 +270,7 @@ fn type_params_nonnull_u8() {
     assert_eq!(t.shape(), u8::SHAPE);
 }
 
-// Tests for #[facet(bound = "...")] custom bounds feature
+// Tests for #[facet(where ...)] custom bounds feature
 
 #[test]
 fn custom_bound_single() {
@@ -279,7 +279,7 @@ fn custom_bound_single() {
     // Test that a single custom bound works with opaque types
     #[derive(Facet)]
     #[facet(opaque)]
-    #[facet(bound = "I: Clone")]
+    #[facet(where I: Clone)]
     struct StateManager<I> {
         internal: I,
     }
@@ -298,11 +298,10 @@ fn custom_bound_single() {
 fn custom_bound_multiple_attrs() {
     #![allow(dead_code)]
 
-    // Test multiple #[facet(bound = "...")] attributes
+    // Test multiple bounds in a single #[facet(where ...)] attribute
     #[derive(Facet)]
     #[facet(opaque)]
-    #[facet(bound = "T: Clone")]
-    #[facet(bound = "U: core::fmt::Debug")]
+    #[facet(where T: Clone, U: core::fmt::Debug)]
     struct TwoParams<T, U> {
         t: T,
         u: U,
@@ -321,7 +320,7 @@ fn custom_bound_multiple_attrs() {
 fn custom_bound_with_non_opaque() {
     // Test custom bounds on non-opaque types (adds to Facet<'ʄ> bound)
     #[derive(Facet)]
-    #[facet(bound = "T: Clone")]
+    #[facet(where T: Clone)]
     struct ClonableWrapper<T: 'static> {
         data: T,
     }
@@ -342,7 +341,7 @@ fn custom_bound_enum() {
     #[derive(Facet)]
     #[repr(u8)]
     #[facet(opaque)]
-    #[facet(bound = "T: Clone")]
+    #[facet(where T: Clone)]
     #[allow(dead_code)]
     enum MaybeClone<T> {
         Some(T),
@@ -387,7 +386,7 @@ fn custom_bound_with_proxy() {
     // - `I: Facet<'ʄ>` is required because SmartPtrProxy<I> needs it for its Facet impl
     #[derive(Facet)]
     #[facet(opaque, proxy = SmartPtrProxy<I>)]
-    #[facet(bound = "I: Clone + Facet<'ʄ>")]
+    #[facet(where I: Clone + Facet<'ʄ>)]
     struct SmartPtr<I> {
         inner: NonFacetSmartPtr<I>,
     }

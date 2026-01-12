@@ -18,6 +18,8 @@
 
 pub use unsynn::*;
 
+use std::ops::Deref;
+
 // ============================================================================
 // KEYWORDS AND OPERATORS
 // ============================================================================
@@ -45,6 +47,13 @@ keyword! {
     pub KMut = "mut";
     /// The "facet" keyword.
     pub KFacet = "facet";
+}
+
+impl KWhere {
+    /// Returns the span of this keyword
+    pub fn span(&self) -> proc_macro2::Span {
+        self.0.deref().span()
+    }
 }
 
 operator! {
@@ -138,8 +147,18 @@ unsynn! {
     pub enum FacetInner {
         /// A namespaced attribute like `xml::element` or `xml::ns = "http://example.com"`
         Namespaced(NamespacedAttr),
+        /// A where clause attribute like `where T: Clone`
+        Where(WhereAttr),
         /// A non-namespaced (builtin) attribute like `sensitive` or `rename = "foo"`
         Simple(SimpleAttr),
+    }
+
+    /// A where clause attribute like `where T: Clone + Send`
+    pub struct WhereAttr {
+        /// The `where` keyword.
+        pub _kw_where: KWhere,
+        /// The bounds (everything after `where`)
+        pub bounds: VerbatimUntil<Either<Comma, EndOfStream>>,
     }
 
     /// A namespaced attribute like `xml::element` or `xml::ns = "http://example.com"`
