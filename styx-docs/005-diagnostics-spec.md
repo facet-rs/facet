@@ -40,7 +40,7 @@ NN | source line
 > SHOULD show the corrected code, not just describe the problem.
 > 
 > **Note (non-normative)**: For schema validation errors, diagnostics can be improved
-> by including a note pointing to the `@schema` declaration that applied the schema.
+> by including a note pointing to the schema declaration that applied the schema.
 > 
 > ```
 > error: missing required field 'host'
@@ -52,8 +52,8 @@ NN | source line
 >   = note: schema validation failed
 >   --> config.styx:1:1
 >   |
-> 1 | @schema ./server.schema.styx
->   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ schema applied here
+> 1 | @ "./server.schema.styx"
+>   | ^^^^^^^^^^^^^^^^^^^^^^^^ schema applied here
 > ```
 
 ## Parser errors
