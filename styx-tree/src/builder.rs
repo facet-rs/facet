@@ -212,22 +212,21 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
             }
 
             Event::EntryEnd => {
-                if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.pop() {
-                    if let Some(key) = key {
+                if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.pop()
+                    && let Some(key) = key {
                         // We have a key but might not have a value yet
                         // The value should have been pushed to parent already
                         // Just add the entry to parent
                         match self.stack.last_mut() {
                             Some(BuilderFrame::Object { entries, .. }) => {
                                 // Check if last entry needs this key
-                                if let Some(last) = entries.last_mut() {
-                                    if matches!(last.key, Value::Unit) && last.doc_comment.is_none()
+                                if let Some(last) = entries.last_mut()
+                                    && matches!(last.key, Value::Unit) && last.doc_comment.is_none()
                                     {
                                         last.key = key;
                                         last.doc_comment = doc_comment;
                                         return true;
                                     }
-                                }
                                 // Otherwise add as unit-valued entry
                                 entries.push(Entry {
                                     key,
@@ -237,14 +236,13 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                             }
                             _ => {
                                 // Root level
-                                if let Some(last) = self.root_entries.last_mut() {
-                                    if matches!(last.key, Value::Unit) && last.doc_comment.is_none()
+                                if let Some(last) = self.root_entries.last_mut()
+                                    && matches!(last.key, Value::Unit) && last.doc_comment.is_none()
                                     {
                                         last.key = key;
                                         last.doc_comment = doc_comment;
                                         return true;
                                     }
-                                }
                                 self.root_entries.push(Entry {
                                     key,
                                     value: Value::Unit,
@@ -253,7 +251,6 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                             }
                         }
                     }
-                }
             }
 
             Event::Key { span, value, kind } => {
@@ -275,8 +272,8 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                 });
 
                 // Check if we're in an entry context
-                if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut() {
-                    if key.is_some() {
+                if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut()
+                    && key.is_some() {
                         // We have a key, this is the value
                         let key_val = key.take().unwrap();
                         let doc = doc_comment.take();
@@ -308,7 +305,6 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                         });
                         return true;
                     }
-                }
 
                 self.push_value(scalar);
             }
@@ -317,8 +313,8 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                 let unit = Value::Unit;
 
                 // Similar logic to Scalar for entry handling
-                if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut() {
-                    if key.is_some() {
+                if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut()
+                    && key.is_some() {
                         let key_val = key.take().unwrap();
                         let doc = doc_comment.take();
                         self.stack.pop();
@@ -345,7 +341,6 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                         });
                         return true;
                     }
-                }
 
                 let _ = span; // suppress unused warning
                 self.push_value(unit);
@@ -367,8 +362,8 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                     });
 
                     // Similar to scalar handling
-                    if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut() {
-                        if key.is_some() {
+                    if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut()
+                        && key.is_some() {
                             let key_val = key.take().unwrap();
                             let doc = doc_comment.take();
                             self.stack.pop();
@@ -395,7 +390,6 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                             });
                             return true;
                         }
-                    }
 
                     self.push_value(tagged);
                 }

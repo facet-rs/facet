@@ -116,47 +116,41 @@ impl<'src> Parser<'src> {
     ) {
         self.skip_whitespace_and_newlines();
 
-        loop {
+        while let Some(token) = self.peek() {
             // Check for closing token or EOF
-            if let Some(token) = self.peek() {
-                if token.kind == TokenKind::Eof {
-                    break;
-                }
-                if let Some(close) = closing {
-                    if token.kind == close {
-                        break;
-                    }
-                }
-            } else {
+            if token.kind == TokenKind::Eof {
+                break;
+            }
+            if let Some(close) = closing
+                && token.kind == close
+            {
                 break;
             }
 
             // Handle doc comments
-            if let Some(token) = self.peek() {
-                if token.kind == TokenKind::DocComment {
-                    let token = self.advance().unwrap();
-                    if !callback.event(Event::DocComment {
-                        span: token.span,
-                        text: token.text,
-                    }) {
-                        return;
-                    }
-                    self.skip_whitespace_and_newlines();
-                    continue;
+            if token.kind == TokenKind::DocComment {
+                let token = self.advance().unwrap();
+                if !callback.event(Event::DocComment {
+                    span: token.span,
+                    text: token.text,
+                }) {
+                    return;
                 }
+                self.skip_whitespace_and_newlines();
+                continue;
+            }
 
-                // Handle line comments
-                if token.kind == TokenKind::LineComment {
-                    let token = self.advance().unwrap();
-                    if !callback.event(Event::Comment {
-                        span: token.span,
-                        text: token.text,
-                    }) {
-                        return;
-                    }
-                    self.skip_whitespace_and_newlines();
-                    continue;
+            // Handle line comments
+            if token.kind == TokenKind::LineComment {
+                let token = self.advance().unwrap();
+                if !callback.event(Event::Comment {
+                    span: token.span,
+                    text: token.text,
+                }) {
+                    return;
                 }
+                self.skip_whitespace_and_newlines();
+                continue;
             }
 
             // Parse entry
@@ -508,19 +502,20 @@ impl<'src> Parser<'src> {
         let start_span = at.span;
 
         // Check if followed by a tag name
-        if let Some(token) = self.peek_raw() {
-            if token.kind == TokenKind::BareScalar && token.span.start == start_span.end {
-                // Tag name immediately follows @
-                let name_token = self.advance().unwrap();
-                return Atom {
-                    span: Span {
-                        start: start_span.start,
-                        end: name_token.span.end,
-                    },
-                    kind: ScalarKind::Bare,
-                    content: AtomContent::Tag(name_token.text),
-                };
-            }
+        if let Some(token) = self.peek_raw()
+            && token.kind == TokenKind::BareScalar
+            && token.span.start == start_span.end
+        {
+            // Tag name immediately follows @
+            let name_token = self.advance().unwrap();
+            return Atom {
+                span: Span {
+                    start: start_span.start,
+                    end: name_token.span.end,
+                },
+                kind: ScalarKind::Bare,
+                content: AtomContent::Tag(name_token.text),
+            };
         }
 
         // Just @ (unit)
@@ -640,10 +635,10 @@ impl<'src> Parser<'src> {
                                 }
                                 hex.push(chars.next().unwrap());
                             }
-                            if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                                if let Some(ch) = char::from_u32(code) {
-                                    result.push(ch);
-                                }
+                            if let Ok(code) = u32::from_str_radix(&hex, 16)
+                                && let Some(ch) = char::from_u32(code)
+                            {
+                                result.push(ch);
                             }
                         }
                     }

@@ -337,15 +337,14 @@ impl Sequence {
 /// Split path at first `.` or `[`.
 fn split_path(path: &str) -> (&str, &str) {
     // Handle [n] at start
-    if path.starts_with('[') {
-        if let Some(end) = path.find(']') {
+    if path.starts_with('[')
+        && let Some(end) = path.find(']') {
             let segment = &path[..=end];
             let rest = &path[end + 1..];
             // Skip leading `.` in rest
             let rest = rest.strip_prefix('.').unwrap_or(rest);
             return (segment, rest);
         }
-    }
 
     // Find first `.` or `[`
     let dot_pos = path.find('.');

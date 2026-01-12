@@ -99,13 +99,12 @@ impl<'de> StyxParser<'de> {
     fn skip_newlines(&mut self) -> bool {
         let mut found = false;
         loop {
-            if let Some(token) = self.peek_token() {
-                if token.kind == TokenKind::Newline {
+            if let Some(token) = self.peek_token()
+                && token.kind == TokenKind::Newline {
                     self.next_token();
                     found = true;
                     continue;
                 }
-            }
             break;
         }
         found
@@ -182,11 +181,10 @@ impl<'de> StyxParser<'de> {
                                 }
                                 hex.push(chars.next().unwrap());
                             }
-                            if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                                if let Some(ch) = char::from_u32(code) {
+                            if let Ok(code) = u32::from_str_radix(&hex, 16)
+                                && let Some(ch) = char::from_u32(code) {
                                     result.push(ch);
                                 }
-                            }
                         }
                     }
                     Some(c) => {
@@ -277,15 +275,14 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         // Could be unit @ or a tag
                         self.next_token();
                         // Check if followed by identifier
-                        if let Some(next) = self.peek_token() {
-                            if next.kind == TokenKind::BareScalar
+                        if let Some(next) = self.peek_token()
+                            && next.kind == TokenKind::BareScalar
                                 && next.span.start == token.span.end
                             {
                                 // Tag @name - emit as variant
                                 let name_token = self.next_token();
                                 return Ok(Some(ParseEvent::VariantTag(name_token.text)));
                             }
-                        }
                         // Just @ - unit/null
                         return Ok(Some(ParseEvent::Scalar(ScalarValue::Null)));
                     }
@@ -438,14 +435,13 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                     }
                     TokenKind::At => {
                         self.next_token();
-                        if let Some(next) = self.peek_token() {
-                            if next.kind == TokenKind::BareScalar
+                        if let Some(next) = self.peek_token()
+                            && next.kind == TokenKind::BareScalar
                                 && next.span.start == token.span.end
                             {
                                 let name_token = self.next_token();
                                 return Ok(Some(ParseEvent::VariantTag(name_token.text)));
                             }
-                        }
                         return Ok(Some(ParseEvent::Scalar(ScalarValue::Null)));
                     }
                     _ => {}

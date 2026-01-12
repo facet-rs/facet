@@ -59,14 +59,13 @@ impl Document {
 }
 
 fn split_path(path: &str) -> (&str, &str) {
-    if path.starts_with('[') {
-        if let Some(end) = path.find(']') {
+    if path.starts_with('[')
+        && let Some(end) = path.find(']') {
             let segment = &path[..=end];
             let rest = &path[end + 1..];
             let rest = rest.strip_prefix('.').unwrap_or(rest);
             return (segment, rest);
         }
-    }
 
     let dot_pos = path.find('.');
     let bracket_pos = path.find('[');
