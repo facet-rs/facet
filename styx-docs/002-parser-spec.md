@@ -3,7 +3,7 @@ weight = 2
 slug = "parser-spec"
 ---
 
-# Part 1: Parser
+# Parser
 
 The parser converts STYX source text into a document tree.
 

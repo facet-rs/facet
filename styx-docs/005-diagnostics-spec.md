@@ -3,7 +3,7 @@ weight = 5
 slug = "diagnostics-spec"
 ---
 
-# Part 4: Diagnostics
+# Diagnostics
 
 This section specifies the format and content of error messages. Clear, actionable
 diagnostics are essential for a human-authored format.

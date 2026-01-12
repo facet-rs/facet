@@ -3,7 +3,7 @@ weight = 4
 slug = "deserializer-spec"
 ---
 
-# Part 3: Deserializer
+# Deserializer
 
 The deserializer converts document trees into typed application values. It interprets
 scalars based on target types (e.g., Rust structs) and validates structural constraints.

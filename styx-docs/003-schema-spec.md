@@ -3,7 +3,7 @@ weight = 3
 slug = "schema-spec"
 ---
 
-# Part 2: Schemas
+# Schemas
 
 Schemas define the expected structure of STYX documents for validation purposes.
 They are optional — deserialization works with target types directly (e.g., Rust structs).
