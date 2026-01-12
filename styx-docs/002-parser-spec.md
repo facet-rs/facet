@@ -75,13 +75,14 @@ Line comments start with `//` and extend to the end of the line.
 
 ## Value types
 
-The parser produces five base value types, plus tagged variants:
+The parser produces six types of values:
 
   * **Scalar** — an opaque text atom
   * **Object** — an ordered map of keys to values
+  * **Tagged object** — an object with an associated scalar tag
   * **Sequence** — an ordered list of values
+  * **Tagged sequence** — a sequence with an associated scalar tag
   * **Unit** — the absence of a meaningful value (`@`)
-  * **Tagged value** — any of the above with an associated tag (`@identifier`)
 
 ## Unit
 
@@ -97,16 +98,18 @@ enabled @
 
 > r[value.unit]
 > The token `@` not immediately followed by an identifier character is the **unit value**.
-> Identifier characters are `[A-Za-z_]` for the first character, `[A-Za-z0-9_-]` thereafter.
+> Identifier characters are `[A-Za-z_]` for the first character, `[A-Za-z0-9_-]` thereafter
+> (see `r[object.key.syntax]`).
 > 
 > ```styx
 > field @              // unit value (@ followed by whitespace)
-> field @ok            // tagged unit (@ followed by identifier) — see Tags
+> field @              // unit value (@ at end of line)
+> field @string        // type reference (@ followed by identifier)
 > field @123           // unit value followed by scalar "123" — ERROR: unexpected token
 > ```
 > 
 > The parser resolves `@` vs `@identifier` by checking the immediately following character.
-> If an identifier character follows, it's a tag (see `r[tag.syntax]`). Otherwise, it's unit.
+> If no identifier character follows, the `@` is the unit value.
 
 > r[value.unit.sequence]
 > The unit value is valid as a sequence element.
@@ -115,54 +118,6 @@ enabled @
 > (a @ c)              // 3-element sequence: "a", unit, "c"
 > (@)                  // 1-element sequence containing unit
 > ()                   // 0-element sequence (empty, distinct from unit)
-> ```
-
-## Tags
-
-A tag is an identifier prefixed with `@` that labels a value. Tags are used for
-type discrimination (enums, variants) and constructor-style values.
-
-> r[tag.syntax]
-> A tag MUST match the pattern `@[A-Za-z_][A-Za-z0-9_-]*`.
-> 
-> Examples: `@ok`, `@err`, `@rgb`, `@Some`, `@my-variant`
-
-> r[tag.payload]
-> A tag MUST be immediately followed (no whitespace) by its payload:
-> 
-> | Follows `@identifier` | Result |
-> |-----------------------|--------|
-> | `{...}` | tagged object |
-> | `(...)` | tagged sequence |
-> | `"..."` or `r#"..."#` or `<<HEREDOC` | tagged scalar |
-> | `@` | tagged unit (explicit) |
-> | whitespace, `,`, `}`, `)`, or EOF | tagged unit (implicit) |
-> 
-> ```styx
-> status @ok                  // tagged unit (implicit)
-> status @ok@                 // tagged unit (explicit)
-> result @err{ message "x" }  // tagged object
-> color @rgb(255 128 0)       // tagged sequence
-> name @nickname"Bob"         // tagged quoted scalar
-> ```
-
-> r[tag.no-bare-scalar]
-> Bare scalars cannot be tagged because there is no delimiter to separate
-> the tag from the value. `@foo bar` is a tagged unit followed by a separate
-> bare scalar — two values, which is an error in most contexts.
-> 
-> ```styx
-> value @tag bar      // TWO values: @tag (tagged unit) + bar (scalar) — ERROR
-> value @tag"bar"     // ONE value: tagged scalar, tag="tag", payload="bar"
-> value @tagbar       // ONE value: tagged unit, tag="tagbar"
-> ```
-
-> r[tag.whitespace]
-> Whitespace between a tag and its payload separates them into distinct values.
-> 
-> ```styx
-> color @rgb(1 2 3)   // ONE value: tagged sequence
-> color @rgb (1 2 3)  // TWO values: tagged unit + sequence — ERROR
 > ```
 
 ## Scalars
@@ -193,21 +148,23 @@ is deferred until deserialization.
 Bare scalars are delimited by whitespace and structural characters.
 
 > r[scalar.bare.termination]
-> A bare scalar is terminated by whitespace or any of: `{`, `}`, `(`, `)`, `,`, `@`.
+> A bare scalar is terminated by whitespace or any of: `{`, `}`, `(`, `)`, `,`.
+> 
+> When `(` or `{` terminates a bare scalar, the preceding characters form a tag
+> and the result is a tagged sequence or tagged object (see `r[sequence.tagged]`
+> and `r[object.tagged]`).
 > 
 > ```styx
-> url https://example.com/path?query=1   // bare scalar includes = and /
+> url https://example.com/path?query=1    // bare scalar includes = and /
 > items (a b c)                           // whitespace before ( — two tokens
+> rgb(255 0 0)                            // no whitespace — tagged sequence
 > config { host localhost }               // whitespace before { — two tokens
+> point{ x 1, y 2 }                       // no whitespace — tagged object
 > ```
 > 
-> The `@` character terminates a bare scalar because it introduces a tag
-> (see `r[tag.syntax]`).
-> 
 > ```styx
-> result @ok                // "result" is key, @ok is tagged unit
-> colors @rgb(255 0 0)      // "colors" is key, @rgb(...) is tagged sequence
-> status @err{ msg "x" }    // "status" is key, @err{...} is tagged object
+> items tag(a b c)   // "items" is key, tag(a b c) is a tagged sequence
+> foo data{bar baz}  // "foo" is key, data{bar baz} is a tagged object
 > ```
 
 ```compare
@@ -458,22 +415,24 @@ Sequences are ordered collections of values. They use `( )` delimiters.
 
 ### Tagged sequences
 
-A tagged sequence is a sequence with a tag (see `r[tag.syntax]`). The tag
-immediately precedes the opening `(` with no whitespace.
+A tagged sequence is a sequence with an associated tag. The tag is a scalar that
+immediately precedes the opening `(` with no whitespace. JSON has no equivalent;
+tagged values are a STYX extension.
 
 ```compare
 /// json
 {"colors": {"$tag": "rgb", "$values": [255, 128, 0]}}
 /// styx
-colors @rgb(255 128 0)
+colors rgb(255 128 0)
 ```
 
 > r[sequence.tagged]
-> A tag immediately followed by `(` produces a **tagged sequence** value.
+> When a bare scalar is immediately followed by `(` (no intervening whitespace),
+> the parser MUST produce a **tagged sequence** value. The scalar becomes the tag.
 > 
 > ```styx
-> colors @rgb(255 128 0)
-> point @vec3(1.0 2.0 3.0)
+> colors rgb(255 128 0)
+> point vec3(1.0 2.0 3.0)
 > ```
 > 
 > The value of `colors` is a tagged sequence with tag `rgb` and elements `(255 128 0)`.
@@ -482,16 +441,57 @@ colors @rgb(255 128 0)
 > Tagged sequences may be nested.
 > 
 > ```styx
-> transform @scale(@translate(10 20) @rotate(45))
+> transform scale(translate(10 20) rotate(45))
 > ```
 > 
-> This is a tagged sequence `@scale(...)` containing two tagged sequences.
+> This is a tagged sequence `scale(...)` containing two tagged sequences
+> `translate(...)` and `rotate(...)`.
+
+> r[sequence.tagged.quoted]
+> The tag may be a quoted scalar.
+> 
+> ```styx
+> data "my-tag"(a b c)
+> ```
 
 > r[sequence.tagged.empty]
 > A tagged empty sequence is valid.
 > 
 > ```styx
-> empty @tag()
+> empty tag()
+> ```
+
+### Tagged objects
+
+A tagged object is an object with an associated tag. The tag is a scalar that
+immediately precedes the opening `{` with no whitespace.
+
+> r[object.tagged]
+> When a bare scalar is immediately followed by `{` (no intervening whitespace),
+> the parser MUST produce a **tagged object** value. The scalar becomes the tag.
+> 
+> ```styx
+> status @enum{
+>   ok
+>   pending
+>   err { message @string }
+> }
+> ```
+> 
+> The value of `status` is a tagged object with tag `@enum` and the object contents.
+
+> r[object.tagged.quoted]
+> The tag may be a quoted scalar.
+> 
+> ```styx
+> data "my-tag"{ key value }
+> ```
+
+> r[object.tagged.empty]
+> A tagged empty object is valid.
+> 
+> ```styx
+> empty tag{}
 > ```
 
 ## Objects
@@ -504,27 +504,28 @@ Objects are key-value maps.
 
 ### Keys
 
-Keys are identifiers or quoted strings.
+Keys are dotted paths composed of one or more segments.
 
 > r[object.key.syntax]
 > A key MUST match the following grammar:
 > 
 > ```
-> key    = (bare | quoted) "?"?
-> bare   = [A-Za-z_][A-Za-z0-9_-]*
-> quoted = <quoted scalar>
+> key     = segment ("." segment)* "?"?
+> segment = bare | quoted
+> bare    = [A-Za-z_][A-Za-z0-9_-]*
+> quoted  = <quoted scalar>
 > ```
 > 
 > A trailing `?` marks the key as optional (see `r[schema.optional]`).
 > 
-> Quoted keys use the same syntax and escape sequences as quoted scalars
+> Quoted key segments use the same syntax and escape sequences as quoted scalars
 > (see `r[scalar.quoted.escapes]`).
 
 > r[object.key.reserved]
 > Keys starting with `@` are reserved for directives (e.g., `@schema`).
 > Reserved keys do not follow the standard key grammar — they are recognized
 > as special tokens by the parser at specific positions (e.g., document root).
-> To use a literal key starting with `@` in a document, quote it: `"\@foo"`.
+> To use a literal key starting with `@` in a document, quote it: `"\\@foo"`.
 
 ```compare
 /// json
@@ -542,10 +543,47 @@ foo value
 
 ```compare
 /// json
+{"foo": {"bar": "value"}}
+/// styx
+foo.bar value
+```
+
+```compare
+/// json
 {"foo.bar": "value"}
 /// styx
 "foo.bar" value
 ```
+
+Mixed dotted paths with quoted segments:
+
+```compare
+/// json
+{"key with spaces": {"still": {"dotted": "value"}}}
+/// styx
+"key with spaces".still.dotted value
+```
+
+> r[object.key.dotted.expansion]
+> A dotted path MUST expand to nested singleton objects.
+> `a.b.c value` expands to `a { b { c value } }`.
+
+> r[object.key.dotted.no-reopen]
+> A dotted path MUST NOT introduce a key whose parent object already contains a different key.
+> 
+> ```styx
+> server.host localhost
+> server.port 8080   // ERROR: cannot reopen server to add port
+> ```
+> 
+> Use block form instead:
+> 
+> ```styx
+> server {
+>   host localhost
+>   port 8080
+> }
+> ```
 
 > r[object.key.duplicate]
 > Duplicate keys within the same object are forbidden.
@@ -562,6 +600,7 @@ foo value
 > 
 > ```styx
 > enabled           // equivalent to: enabled @
+> status.ok         // equivalent to: status { ok @ }
 > server {
 >   debug           // equivalent to: debug @
 > }
@@ -688,6 +727,14 @@ build components=(clippy rustfmt miri)
 > ```styx
 > config "quoted key"=value foo=bar
 > ```
+> 
+> Dotted paths in attribute keys expand as expected:
+> 
+> ```styx
+> server.host=localhost
+> ```
+> 
+> expands to `server { host localhost }`.
 
 > r[object.attr.binding]
 > When the parser expects a value and encounters a token matching `key=value`,
@@ -782,28 +829,3 @@ config {
   port 8080
 }
 ```
-
-### Tagged objects
-
-A tagged object is an object with a tag (see `r[tag.syntax]`). The tag
-immediately precedes the opening `{` with no whitespace.
-
-> r[object.tagged]
-> A tag immediately followed by `{` produces a **tagged object** value.
-> 
-> ```styx
-> status @enum{
->   ok
->   pending
->   err { message @string }
-> }
-> ```
-> 
-> The value of `status` is a tagged object with tag `enum` and the object contents.
-
-> r[object.tagged.empty]
-> A tagged empty object is valid.
-> 
-> ```styx
-> empty @tag{}
-> ```
