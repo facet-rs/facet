@@ -174,93 +174,69 @@ BLAKE3 hash of these bytes gives `sig_bytes`.
 # Introspection Types
 
 The `Diagnostic` service uses these types for introspection and debugging.
+Type information uses `facet::Shape` directly rather than a parallel type system.
 
 ```rust
+struct ServiceDetail {
+    name: Cow<'static, str>,
+    methods: Vec<MethodDetail>,
+    doc: Option<Cow<'static, str>>,
+}
+
 struct MethodDetail {
-    service_name: String,
-    method_name: String,
+    service_name: Cow<'static, str>,
+    method_name: Cow<'static, str>,
     args: Vec<ArgDetail>,
-    return_type: TypeDetail,
+    return_type: &'static Shape,  // facet Shape, not TypeDetail
+    doc: Option<Cow<'static, str>>,
 }
 
 struct ArgDetail {
-    name: String,
-    type_info: TypeDetail,
+    name: Cow<'static, str>,
+    ty: &'static Shape,  // facet Shape
 }
 
 struct ServiceSummary {
-    name: String,
+    name: Cow<'static, str>,
     method_count: u32,
-    doc: Option<String>,
+    doc: Option<Cow<'static, str>>,
 }
 
 struct MethodSummary {
-    name: String,
+    name: Cow<'static, str>,
     method_id: u64,
-    doc: Option<String>,
+    doc: Option<Cow<'static, str>>,
 }
 
 enum MismatchExplanation {
     /// Service doesn't exist
-    UnknownService { closest: Option<String> },
+    UnknownService { closest: Option<Cow<'static, str>> },
     /// Service exists but method doesn't
-    UnknownMethod { service: String, closest: Option<String> },
+    UnknownMethod { service: Cow<'static, str>, closest: Option<Cow<'static, str>> },
     /// Method exists but signature differs
     SignatureMismatch { 
-        service: String,
-        method: String,
+        service: Cow<'static, str>,
+        method: Cow<'static, str>,
         expected: MethodDetail,
     },
 }
 ```
 
-## TypeDetail
+## Using Shape for Type Introspection
 
-Describes a type's structure for introspection and diffing. This mirrors
-the signature hash encoding but in a structured form.
+Instead of a custom `TypeDetail` enum, roam uses `facet::Shape` directly.
+Use `facet_core` to inspect shapes:
 
-```rust
-enum TypeDetail {
-    // Primitives
-    Bool,
-    U8, U16, U32, U64, U128,
-    I8, I16, I32, I64, I128,
-    F32, F64,
-    Char,
-    String,
-    Unit,
-    Bytes,
-    
-    // Containers (wire-format types, not Rust types)
-    List(Box<TypeDetail>),
-    Option(Box<TypeDetail>),
-    Array { element: Box<TypeDetail>, len: u32 },
-    Map { key: Box<TypeDetail>, value: Box<TypeDetail> },
-    Set(Box<TypeDetail>),
-    Tuple(Vec<TypeDetail>),
-    Stream(Box<TypeDetail>),
-    
-    // Composite
-    Struct { fields: Vec<FieldDetail> },
-    Enum { variants: Vec<VariantDetail> },
-}
+- `shape.def` reveals if it's a struct, enum, list, option, etc.
+- `shape.type_params` gives generic parameters
+- `shape.scalar_type()` returns the scalar type for primitives
+- `roam_schema::classify_shape()` provides high-level classification for codegen
 
-struct FieldDetail {
-    name: String,
-    type_info: TypeDetail,
-}
-
-struct VariantDetail {
-    name: String,
-    payload: VariantPayload,
-}
-
-enum VariantPayload {
-    Unit,
-    Newtype(TypeDetail),
-    Struct(Vec<FieldDetail>),
-}
-```
+Helper functions in `roam_schema`:
+- `is_tx(shape)` / `is_rx(shape)` — check for streaming types
+- `is_stream(shape)` — check for any streaming type
+- `contains_stream(shape)` — recursively check for streams
+- `is_bytes(shape)` — check for `Vec<u8>` or `&[u8]`
 
 ## Usage
 
