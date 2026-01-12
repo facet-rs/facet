@@ -77,6 +77,7 @@ pub(crate) fn build_where_clauses(
     generics: Option<&GenericParams>,
     opaque: bool,
     facet_crate: &TokenStream,
+    custom_bounds: &[TokenStream],
 ) -> TokenStream {
     let mut where_clause_tokens = TokenStream::new();
     let mut has_clauses = false;
@@ -122,6 +123,15 @@ pub(crate) fn build_where_clauses(
                 }
             }
         }
+    }
+
+    // Add custom bounds from #[facet(bound = "...")]
+    for bound in custom_bounds {
+        if has_clauses {
+            where_clause_tokens.extend(quote! { , });
+        }
+        where_clause_tokens.extend(bound.clone());
+        has_clauses = true;
     }
 
     if !has_clauses {
