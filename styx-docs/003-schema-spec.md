@@ -11,34 +11,58 @@ Schemas are useful for text editors, CLI tools, and documentation.
 
 STYX schemas are themselves STYX documents.
 
-## Schema declaration
+## Schema file structure
 
-> r[schema.declaration]
-> A document MAY declare its schema using the reserved key `@schema` at the document root.
-> The value is either an inline schema object or a path/URL to an external schema file.
+> r[schema.file]
+> A schema file has two top-level keys: `meta` (required) and `schema` (required).
 >
 > ```styx
-> @schema {
->   server {
+> meta {
+>   id https://example.com/schemas/server
+>   version 2026-01-11
+>   description "Server configuration schema"
+> }
+>
+> schema {
+>   @ {
+>     server @Server
+>   }
+>
+>   Server {
 >     host @string
 >     port @u16
 >   }
 > }
->
-> server {
->   host localhost
->   port 8080
-> }
 > ```
 
 > r[schema.meta]
-> Standalone schema files MAY include an `@meta` directive with `id`, `version`, and `description`.
+> The `meta` block contains schema metadata: `id` (required), `version` (required), and `description` (optional).
+
+> r[schema.root]
+> Inside `schema`, the key `@` defines the expected structure of the document root.
+> Other keys define named types that can be referenced with `@TypeName`.
+
+## Schema declaration in documents
+
+> r[schema.declaration]
+> A document MAY declare its schema inline or reference an external schema file.
 >
 > ```styx
-> @meta {
->   id https://example.com/schemas/server
->   version 2026-01-11
+> // Inline schema
+> @ {
+>   schema {
+>     @ { server { host @string, port @u16 } }
+>   }
 > }
+>
+> server { host localhost, port 8080 }
+> ```
+>
+> ```styx
+> // External schema reference
+> @ "https://example.com/schemas/server.styx"
+>
+> server { host localhost, port 8080 }
 > ```
 
 ## Type references
@@ -173,3 +197,61 @@ In schemas, tags name types rather than enum variants.
 > ```
 >
 > Values use the tag syntax: `@ok`, `@pending`, `@err{message "timeout"}`.
+
+## Meta schema
+
+The schema for STYX schema files:
+
+```styx
+meta {
+  id https://styx-lang.org/schemas/schema
+  version 2026-01-11
+  description "Schema for STYX schema files"
+}
+
+schema {
+  @ {
+    meta @Meta
+    schema @map(@string @Schema)
+  }
+
+  Meta {
+    id @string
+    version @string
+    description? @string
+  }
+
+  Schema @union(
+    @string                    // literal value constraint
+    @TypeRef                   // @string, @u64, @MyType, etc.
+    @Object                    // { field @type }
+    @Sequence                  // (@type)
+    @Union                     // @union(@type @type)
+    @Enum                      // @enum{ a, b { x @type } }
+    @Map                       // @map(@K @V)
+    @Flatten                   // @flatten(@Type)
+  )
+
+  TypeRef @string              // tag like @string, @u64, @CustomType
+
+  Object @map(@string @Schema) // keys to schemas (keys ending in ? are optional)
+
+  Sequence (@Schema)           // homogeneous sequence
+
+  Union {
+    @union (@Schema)           // list of alternative schemas
+  }
+
+  Enum {
+    @enum @map(@string @union(@unit @Object))  // variant name → optional payload
+  }
+
+  Map {
+    @map (@Schema @Schema)     // key schema, value schema (key usually @string)
+  }
+
+  Flatten {
+    @flatten @TypeRef          // inline fields from another type
+  }
+}
+```
