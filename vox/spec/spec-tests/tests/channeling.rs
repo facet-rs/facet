@@ -1,9 +1,9 @@
-//! Streaming RPC compliance tests.
+//! Channeling (streaming) RPC compliance tests.
 //!
-//! Tests the streaming methods from the `Testbed` service:
-//! - `sum(numbers: Rx<i32>) -> i64` - client-to-server streaming
-//! - `generate(count: u32, output: Tx<i32>)` - server-to-client streaming
-//! - `transform(input: Rx<String>, output: Tx<String>)` - bidirectional streaming
+//! Tests the channeling methods from the `Testbed` service:
+//! - `sum(numbers: Rx<i32>) -> i64` - client-to-server channel
+//! - `generate(count: u32, output: Tx<i32>)` - server-to-client channel
+//! - `transform(input: Rx<String>, output: Tx<String>)` - bidirectional channels
 
 use std::time::Duration;
 

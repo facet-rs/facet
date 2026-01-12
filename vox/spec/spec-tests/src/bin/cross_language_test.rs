@@ -1,6 +1,6 @@
 //! Cross-language test matrix for roam RPC.
 //!
-//! Tests all client-server pairs across {Rust, Go, TypeScript, Swift}.
+//! Tests all client-server pairs across {Rust, TypeScript, Swift}.
 //! Supports both TCP and WebSocket transports.
 //! Runs tests in parallel for faster execution.
 
@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Language {
     Rust,
-    Go,
     TypeScript,
     Swift,
 }
@@ -22,7 +21,6 @@ impl Language {
     fn name(&self) -> &'static str {
         match self {
             Language::Rust => "Rust",
-            Language::Go => "Go",
             Language::TypeScript => "TypeScript",
             Language::Swift => "Swift",
         }
@@ -69,37 +67,22 @@ impl Server {
                     .map_err(|e| format!("Failed to spawn Rust WS server: {}", e))?
             }
 
-            (Language::Go, Transport::Tcp) => Command::new("./go/server/go-server")
-                .env("TCP_PORT", port.to_string())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(|e| format!("Failed to spawn Go server: {}", e))?,
-
-            (Language::Go, Transport::WebSocket) => {
-                return Err("Go WebSocket server not implemented".to_string());
+            (Language::TypeScript, Transport::Tcp) => {
+                return Err("TypeScript TCP server not implemented".to_string());
             }
-
-            (Language::TypeScript, Transport::Tcp) => Command::new("sh")
-                .args(["typescript/tests/tcp-server.sh"])
-                .env("TCP_PORT", port.to_string())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(|e| format!("Failed to spawn TypeScript TCP server: {}", e))?,
 
             (Language::TypeScript, Transport::WebSocket) => {
                 return Err("TypeScript WebSocket server not implemented".to_string());
             }
 
-            (Language::Swift, Transport::Tcp) => {
-                Command::new("swift/server/.build/debug/swift-server")
-                    .env("TCP_PORT", port.to_string())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .map_err(|e| format!("Failed to spawn Swift server: {}", e))?
-            }
+            (Language::Swift, Transport::Tcp) => Command::new("sh")
+                .arg("swift/subject/subject-swift.sh")
+                .env("TCP_PORT", port.to_string())
+                .env("SUBJECT_MODE", "server")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| format!("Failed to spawn Swift server: {}", e))?,
 
             (Language::Swift, Transport::WebSocket) => {
                 return Err("Swift WebSocket server not implemented".to_string());
@@ -147,31 +130,17 @@ fn run_client(lang: Language, transport: Transport, addr: &str) -> Result<bool, 
             return Err("Rust WebSocket client not implemented".to_string());
         }
 
-        (Language::Go, Transport::Tcp) => Command::new("./go/client/go-client")
-            .env("SERVER_ADDR", addr)
-            .output()
-            .map_err(|e| format!("Failed to run Go client: {}", e))?,
-
-        (Language::Go, Transport::WebSocket) => {
-            return Err("Go WebSocket client not implemented".to_string());
+        (Language::TypeScript, Transport::Tcp) => {
+            return Err("TypeScript TCP client not implemented".to_string());
         }
 
-        (Language::TypeScript, Transport::Tcp) => Command::new("sh")
-            .args(["typescript/tests/tcp-client.sh"])
-            .env("SERVER_ADDR", addr)
-            .output()
-            .map_err(|e| format!("Failed to run TypeScript TCP client: {}", e))?,
+        (Language::TypeScript, Transport::WebSocket) => {
+            return Err("TypeScript WebSocket client not implemented".to_string());
+        }
 
-        (Language::TypeScript, Transport::WebSocket) => Command::new("sh")
-            .args(["typescript/tests/ws-client.sh"])
-            .env("SERVER_ADDR", addr)
-            .output()
-            .map_err(|e| format!("Failed to run TypeScript WS client: {}", e))?,
-
-        (Language::Swift, Transport::Tcp) => Command::new("swift/client/.build/debug/swift-client")
-            .env("SERVER_ADDR", addr)
-            .output()
-            .map_err(|e| format!("Failed to run Swift client: {}", e))?,
+        (Language::Swift, Transport::Tcp) => {
+            return Err("Swift TCP client not implemented".to_string());
+        }
 
         (Language::Swift, Transport::WebSocket) => {
             return Err("Swift WebSocket client not implemented".to_string());
@@ -270,19 +239,9 @@ fn format_duration(d: Duration) -> String {
 fn main() {
     let total_start = Instant::now();
 
-    // TCP tests: 4×4 = 16
-    let tcp_servers = [
-        Language::Rust,
-        Language::Go,
-        Language::TypeScript,
-        Language::Swift,
-    ];
-    let tcp_clients = [
-        Language::Rust,
-        Language::Go,
-        Language::TypeScript,
-        Language::Swift,
-    ];
+    // TCP tests: 3×3 = 9 (Rust, TypeScript, Swift)
+    let tcp_servers = [Language::Rust, Language::TypeScript, Language::Swift];
+    let tcp_clients = [Language::Rust, Language::TypeScript, Language::Swift];
 
     // WebSocket tests: Rust server × TypeScript client = 1
     // (expandable as more implementations are added)
@@ -295,7 +254,7 @@ fn main() {
 
     println!("╔════════════════════════════════════════════════════════════╗");
     println!(
-        "║     Cross-Language Test Matrix ({} TCP + {} WS = {} tests)     ║",
+        "║     Cross-Language Test Matrix ({} TCP + {} WS = {} tests)      ║",
         tcp_count, ws_count, total_count
     );
     println!("╚════════════════════════════════════════════════════════════╝");
