@@ -14,6 +14,8 @@
         <a href="/" class="nav-brand">STYX</a>
         <div class="nav-links">
             <a href="/spec" {% if current_path is starting_with("/spec") %}class="active"{% endif %}>Spec</a>
+            <a href="/bindings" {% if current_path is starting_with("/bindings") %}class="active"{% endif %}>Bindings</a>
+            <a href="/comparisons" {% if current_path is starting_with("/comparisons") %}class="active"{% endif %}>Comparisons</a>
             <a href="/examples" {% if current_path is starting_with("/examples") %}class="active"{% endif %}>Examples</a>
             <a href="https://github.com/bearcove/styx" class="nav-github">GitHub</a>
         </div>

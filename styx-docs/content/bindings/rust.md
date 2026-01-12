@@ -1,7 +1,7 @@
 +++
-title = "Rust Bindings"
-weight = 4
-slug = "rust-bindings"
+title = "Rust"
+weight = 1
+slug = "rust"
 insert_anchor_links = "heading"
 +++
 
