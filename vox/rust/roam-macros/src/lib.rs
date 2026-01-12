@@ -93,10 +93,9 @@ fn generate_service(parsed: &ServiceTrait) -> Result<TokenStream2, parser::Error
 
     // Generate items directly in the current module scope - no wrapper module.
     // This avoids type resolution issues since all types are already in scope.
+    // Note: We use fully qualified paths for RoamError and Never instead of
+    // importing them, to allow multiple services in the same module.
     Ok(quote! {
-        #[allow(unused_imports)]
-        use #roam::session::{RoamError, Never};
-
         #method_id_mod
         #service_trait
         #dispatcher
@@ -221,14 +220,14 @@ fn generate_trait_method(method: &ServiceMethod, roam: &TokenStream2) -> TokenSt
 }
 
 /// Format the return type as Result<T, RoamError<E>> for handler trait.
-fn format_handler_return_type(return_type: &Type, _roam: &TokenStream2) -> TokenStream2 {
+fn format_handler_return_type(return_type: &Type, roam: &TokenStream2) -> TokenStream2 {
     if let Some((ok_ty, err_ty)) = return_type.as_result() {
         let ok_tokens = ok_ty.to_token_stream();
         let err_tokens = err_ty.to_token_stream();
-        quote! { Result<#ok_tokens, RoamError<#err_tokens>> }
+        quote! { Result<#ok_tokens, #roam::session::RoamError<#err_tokens>> }
     } else {
         let ty_tokens = return_type.to_token_stream();
-        quote! { Result<#ty_tokens, RoamError<Never>> }
+        quote! { Result<#ty_tokens, #roam::session::RoamError<#roam::session::Never>> }
     }
 }
 
@@ -444,14 +443,14 @@ fn generate_client_method(
 }
 
 /// Format the return type as Result<Result<T, RoamError<E>>, C::Error> for client.
-fn format_client_return_type(return_type: &Type, _roam: &TokenStream2) -> TokenStream2 {
+fn format_client_return_type(return_type: &Type, roam: &TokenStream2) -> TokenStream2 {
     if let Some((ok_ty, err_ty)) = return_type.as_result() {
         let ok_tokens = ok_ty.to_token_stream();
         let err_tokens = err_ty.to_token_stream();
-        quote! { Result<Result<#ok_tokens, RoamError<#err_tokens>>, C::Error> }
+        quote! { Result<Result<#ok_tokens, #roam::session::RoamError<#err_tokens>>, C::Error> }
     } else {
         let ty_tokens = return_type.to_token_stream();
-        quote! { Result<Result<#ty_tokens, RoamError<Never>>, C::Error> }
+        quote! { Result<Result<#ty_tokens, #roam::session::RoamError<#roam::session::Never>>, C::Error> }
     }
 }
 
