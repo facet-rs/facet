@@ -83,7 +83,7 @@ impl BoxPtrUninit {
         }
     }
 
-    unsafe fn assume_init(self) -> BoxPtrMut {
+    const unsafe fn assume_init(self) -> BoxPtrMut {
         let r = BoxPtrMut {
             ptr: unsafe { self.ptr.assume_init() },
             layout: self.layout,
@@ -155,7 +155,7 @@ unsafe fn debug(shape: &'static Shape, ptr: PtrConst) -> impl Debug {
     Debugger(shape, ptr)
 }
 
-fn ord_str(ordering: Option<Ordering>) -> &'static str {
+const fn ord_str(ordering: Option<Ordering>) -> &'static str {
     match ordering {
         Some(Ordering::Less) => "<",
         Some(Ordering::Equal) => "==",
@@ -434,41 +434,41 @@ impl FactBuilder {
         Default::default()
     }
 
-    fn debug(mut self) -> Self {
+    const fn debug(mut self) -> Self {
         self.has_debug = true;
         self
     }
 
-    fn display(mut self) -> Self {
+    const fn display(mut self) -> Self {
         self.has_display = true;
         self
     }
 
-    fn partial_eq_and(mut self, l_eq_r: bool) -> Self {
+    const fn partial_eq_and(mut self, l_eq_r: bool) -> Self {
         self.has_partial_eq_and = Some(l_eq_r);
         self
     }
 
-    fn correct_ord_and(self, l_ord_r: Ordering) -> Self {
+    const fn correct_ord_and(self, l_ord_r: Ordering) -> Self {
         self.ord_and(l_ord_r).partial_ord_and(Some(l_ord_r))
     }
 
-    fn ord_and(mut self, l_ord_r: Ordering) -> Self {
+    const fn ord_and(mut self, l_ord_r: Ordering) -> Self {
         self.has_ord_and = Some(l_ord_r);
         self
     }
 
-    fn partial_ord_and(mut self, l_ord_r: Option<Ordering>) -> Self {
+    const fn partial_ord_and(mut self, l_ord_r: Option<Ordering>) -> Self {
         self.has_partial_ord_and = Some(l_ord_r);
         self
     }
 
-    fn default(mut self) -> Self {
+    const fn default(mut self) -> Self {
         self.has_default = true;
         self
     }
 
-    fn clone(mut self) -> Self {
+    const fn clone(mut self) -> Self {
         self.has_clone = true;
         self
     }

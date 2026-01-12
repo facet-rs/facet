@@ -25,12 +25,12 @@ impl Span {
     }
 
     /// Check if this span is unknown (zero offset and length).
-    pub fn is_unknown(&self) -> bool {
+    pub const fn is_unknown(&self) -> bool {
         self.offset == 0 && self.len == 0
     }
 
     /// Get the end offset (offset + len).
-    pub fn end(&self) -> usize {
+    pub const fn end(&self) -> usize {
         self.offset + self.len
     }
 }
@@ -85,12 +85,12 @@ impl<T> Spanned<T> {
     }
 
     /// Get the source span.
-    pub fn span(&self) -> Span {
+    pub const fn span(&self) -> Span {
         self.span
     }
 
     /// Get a reference to the inner value.
-    pub fn value(&self) -> &T {
+    pub const fn value(&self) -> &T {
         &self.value
     }
 

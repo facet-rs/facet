@@ -29,13 +29,13 @@ struct StringHeader {
 impl StringHeader {
     /// Returns the actual length of the string, masking out the safe flag.
     #[inline]
-    fn actual_len(&self) -> usize {
+    const fn actual_len(&self) -> usize {
         self.len & !SAFE_FLAG
     }
 
     /// Returns true if the safe flag is set.
     #[inline]
-    fn is_safe(&self) -> bool {
+    const fn is_safe(&self) -> bool {
         self.len & SAFE_FLAG != 0
     }
 }
@@ -179,17 +179,17 @@ impl VString {
     }
 
     #[inline]
-    fn can_inline(len: usize) -> bool {
+    const fn can_inline(len: usize) -> bool {
         len <= Self::INLINE_LEN_MAX && len <= Self::INLINE_CAP_BYTES
     }
 
     #[inline]
-    fn inline_meta_ptr(&self) -> *const u8 {
+    const fn inline_meta_ptr(&self) -> *const u8 {
         self as *const VString as *const u8
     }
 
     #[inline]
-    fn inline_data_ptr(&self) -> *const u8 {
+    const fn inline_data_ptr(&self) -> *const u8 {
         unsafe { self.inline_meta_ptr().add(Self::INLINE_DATA_OFFSET) }
     }
 

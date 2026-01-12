@@ -53,7 +53,7 @@ unsafe fn slice_truthy<T>(ptr: PtrConst) -> bool {
 
 /// Extract the SliceDef from a shape, returns None if not a slice
 #[inline]
-fn get_slice_def(shape: &'static Shape) -> Option<&'static SliceDef> {
+const fn get_slice_def(shape: &'static Shape) -> Option<&'static SliceDef> {
     match shape.def {
         Def::Slice(ref def) => Some(def),
         _ => None,

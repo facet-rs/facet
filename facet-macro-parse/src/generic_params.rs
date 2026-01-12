@@ -120,7 +120,7 @@ impl quote::ToTokens for AsPhantomData<'_> {
 
 impl BoundedGenericParams {
     /// Returns a display wrapper that formats generic parameters as a PhantomData type
-    pub fn as_phantom_data(&self) -> AsPhantomData<'_> {
+    pub const fn as_phantom_data(&self) -> AsPhantomData<'_> {
         AsPhantomData(self)
     }
 }
@@ -200,12 +200,12 @@ impl quote::ToTokens for WithoutBounds<'_> {
 
 impl BoundedGenericParams {
     /// Returns a display wrapper that formats generic parameters with their bounds
-    pub fn display_with_bounds(&self) -> WithBounds<'_> {
+    pub const fn display_with_bounds(&self) -> WithBounds<'_> {
         WithBounds(self)
     }
 
     /// Returns a display wrapper that formats generic parameters without their bounds
-    pub fn display_without_bounds(&self) -> WithoutBounds<'_> {
+    pub const fn display_without_bounds(&self) -> WithoutBounds<'_> {
         WithoutBounds(self)
     }
 
@@ -219,7 +219,7 @@ impl BoundedGenericParams {
     /// For generic parameters `<'a, T, const N: usize>`, this returns a wrapper that
     /// when displayed produces:
     /// `::core::marker::PhantomData<(*mut &'a (), T, [u32; N])>`
-    pub fn display_as_phantom_data(&self) -> AsPhantomData<'_> {
+    pub const fn display_as_phantom_data(&self) -> AsPhantomData<'_> {
         AsPhantomData(self)
     }
 

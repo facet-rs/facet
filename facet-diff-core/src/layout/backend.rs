@@ -135,7 +135,7 @@ pub struct AnsiBackend {
 
 impl AnsiBackend {
     /// Create a new ANSI backend with the given theme.
-    pub fn new(theme: DiffTheme) -> Self {
+    pub const fn new(theme: DiffTheme) -> Self {
         Self { theme }
     }
 

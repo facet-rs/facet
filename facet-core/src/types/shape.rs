@@ -49,7 +49,7 @@ impl VarianceVisited {
     /// Push a type ID onto the visited stack.
     /// Returns false if the stack is full (depth limit reached).
     #[inline]
-    fn push(&mut self, id: ConstTypeId) -> bool {
+    const fn push(&mut self, id: ConstTypeId) -> bool {
         if self.len >= MAX_VARIANCE_DEPTH {
             return false;
         }
@@ -296,7 +296,7 @@ impl Shape {
     /// This is used by deferred validation mode in `Partial` to determine which
     /// shapes must be fully materialized before proceeding.
     #[inline]
-    pub fn requires_eager_materialization(&self) -> bool {
+    pub const fn requires_eager_materialization(&self) -> bool {
         // Check if this is a pointer type with slice_builder_vtable
         // (indicates Arc<[T]>, Box<[T]>, Rc<[T]>, etc.)
         if let Ok(ptr_def) = self.def.into_pointer()
@@ -435,7 +435,7 @@ impl Shape {
     /// Untagged enums serialize their content directly without any discriminant.
     /// This checks the `UNTAGGED` flag (O(1)).
     #[inline]
-    pub fn is_untagged(&self) -> bool {
+    pub const fn is_untagged(&self) -> bool {
         self.flags.contains(ShapeFlags::UNTAGGED)
     }
 
@@ -443,7 +443,7 @@ impl Shape {
     ///
     /// This checks the `NUMERIC` flag (O(1)).
     #[inline]
-    pub fn is_numeric(&self) -> bool {
+    pub const fn is_numeric(&self) -> bool {
         self.flags.contains(ShapeFlags::NUMERIC)
     }
 
@@ -466,7 +466,7 @@ impl Shape {
     /// are manipulated through their vtables which maintain their invariants.
     /// The POD-ness of the element type `T` matters when mutating elements.
     #[inline]
-    pub fn is_pod(&self) -> bool {
+    pub const fn is_pod(&self) -> bool {
         // Primitives are implicitly POD - any value of the type is valid
         matches!(self.ty, Type::Primitive(_)) || self.flags.contains(ShapeFlags::POD)
     }
@@ -475,7 +475,7 @@ impl Shape {
     ///
     /// This is the direct field access (O(1)), not an attribute lookup.
     #[inline]
-    pub fn get_tag_attr(&self) -> Option<&'static str> {
+    pub const fn get_tag_attr(&self) -> Option<&'static str> {
         self.tag
     }
 
@@ -483,7 +483,7 @@ impl Shape {
     ///
     /// This is the direct field access (O(1)), not an attribute lookup.
     #[inline]
-    pub fn get_content_attr(&self) -> Option<&'static str> {
+    pub const fn get_content_attr(&self) -> Option<&'static str> {
         self.content
     }
 

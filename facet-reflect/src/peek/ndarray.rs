@@ -54,7 +54,7 @@ impl<'mem, 'facet> PeekNdArray<'mem, 'facet> {
     ///
     /// Violating these requirements can lead to memory safety issues.
     #[inline]
-    pub unsafe fn new(value: Peek<'mem, 'facet>, def: NdArrayDef) -> Self {
+    pub const unsafe fn new(value: Peek<'mem, 'facet>, def: NdArrayDef) -> Self {
         Self { value, def }
     }
 
@@ -105,13 +105,13 @@ impl<'mem, 'facet> PeekNdArray<'mem, 'facet> {
 
     /// Peek value getter
     #[inline]
-    pub fn value(&self) -> Peek<'mem, 'facet> {
+    pub const fn value(&self) -> Peek<'mem, 'facet> {
         self.value
     }
 
     /// Def getter
     #[inline]
-    pub fn def(&self) -> NdArrayDef {
+    pub const fn def(&self) -> NdArrayDef {
         self.def
     }
 }

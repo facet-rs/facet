@@ -47,7 +47,7 @@ union NumberData {
 pub struct VNumber(pub(crate) Value);
 
 impl VNumber {
-    fn layout() -> Layout {
+    const fn layout() -> Layout {
         Layout::new::<NumberHeader>()
     }
 

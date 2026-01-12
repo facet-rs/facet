@@ -14,12 +14,12 @@ pub struct CsvError {
 
 impl CsvError {
     /// Create a new error with the given kind.
-    pub fn new(kind: CsvErrorKind) -> Self {
+    pub const fn new(kind: CsvErrorKind) -> Self {
         Self { kind, span: None }
     }
 
     /// Create a new error with the given kind and span.
-    pub fn with_span(kind: CsvErrorKind, span: facet_reflect::Span) -> Self {
+    pub const fn with_span(kind: CsvErrorKind, span: facet_reflect::Span) -> Self {
         Self {
             kind,
             span: Some(span),
@@ -27,7 +27,7 @@ impl CsvError {
     }
 
     /// Get the error kind.
-    pub fn kind(&self) -> &CsvErrorKind {
+    pub const fn kind(&self) -> &CsvErrorKind {
         &self.kind
     }
 }

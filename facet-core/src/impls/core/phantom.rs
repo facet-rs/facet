@@ -3,11 +3,11 @@ use crate::{
     Type, TypeOpsIndirect, UserType, VTableIndirect,
 };
 
-unsafe fn phantom_drop(_ptr: OxPtrMut) {
+const unsafe fn phantom_drop(_ptr: OxPtrMut) {
     // PhantomData is zero-sized, nothing to drop
 }
 
-unsafe fn phantom_default(_dst: OxPtrMut) {
+const unsafe fn phantom_default(_dst: OxPtrMut) {
     // PhantomData is zero-sized, nothing to write
 }
 
@@ -42,24 +42,24 @@ unsafe fn phantom_debug(
     Some(f.write_str("PhantomData"))
 }
 
-unsafe fn phantom_hash(_ox: OxPtrConst, _hasher: &mut HashProxy<'_>) -> Option<()> {
+const unsafe fn phantom_hash(_ox: OxPtrConst, _hasher: &mut HashProxy<'_>) -> Option<()> {
     // PhantomData hashes to nothing
     Some(())
 }
 
-unsafe fn phantom_partial_eq(_a: OxPtrConst, _b: OxPtrConst) -> Option<bool> {
+const unsafe fn phantom_partial_eq(_a: OxPtrConst, _b: OxPtrConst) -> Option<bool> {
     // All PhantomData are equal
     Some(true)
 }
 
-unsafe fn phantom_partial_cmp(
+const unsafe fn phantom_partial_cmp(
     _a: OxPtrConst,
     _b: OxPtrConst,
 ) -> Option<Option<core::cmp::Ordering>> {
     Some(Some(core::cmp::Ordering::Equal))
 }
 
-unsafe fn phantom_cmp(_a: OxPtrConst, _b: OxPtrConst) -> Option<core::cmp::Ordering> {
+const unsafe fn phantom_cmp(_a: OxPtrConst, _b: OxPtrConst) -> Option<core::cmp::Ordering> {
     Some(core::cmp::Ordering::Equal)
 }
 

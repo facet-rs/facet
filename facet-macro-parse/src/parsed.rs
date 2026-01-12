@@ -32,7 +32,7 @@ impl ParseError {
     ///
     /// Use this when we detect an error that rustc will also catch,
     /// so we avoid duplicate diagnostics.
-    pub fn rustc_will_catch(reason: &'static str) -> Self {
+    pub const fn rustc_will_catch(reason: &'static str) -> Self {
         ParseError::RustcWillCatch { reason }
     }
 
@@ -213,7 +213,7 @@ impl PFacetAttr {
     }
 
     /// Returns true if this is a builtin attribute (no namespace)
-    pub fn is_builtin(&self) -> bool {
+    pub const fn is_builtin(&self) -> bool {
         self.ns.is_none()
     }
 
@@ -533,7 +533,7 @@ pub struct DeclaredTraits {
 
 impl DeclaredTraits {
     /// Returns true if any trait is declared
-    pub fn has_any(&self) -> bool {
+    pub const fn has_any(&self) -> bool {
         self.display
             || self.debug
             || self.clone
@@ -804,7 +804,7 @@ impl PAttrs {
     }
 
     /// Check if `#[repr(transparent)]` is present
-    pub fn is_repr_transparent(&self) -> bool {
+    pub const fn is_repr_transparent(&self) -> bool {
         matches!(self.repr, PRepr::Transparent)
     }
 

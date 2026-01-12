@@ -29,7 +29,7 @@ pub struct NodeData<K, L> {
 
 impl<K, L> NodeData<K, L> {
     /// Create a new node with the given hash and kind.
-    pub fn new(hash: u64, kind: K) -> Self {
+    pub const fn new(hash: u64, kind: K) -> Self {
         Self {
             hash,
             kind,
@@ -38,7 +38,7 @@ impl<K, L> NodeData<K, L> {
     }
 
     /// Create a new leaf node with a label.
-    pub fn leaf(hash: u64, kind: K, label: L) -> Self {
+    pub const fn leaf(hash: u64, kind: K, label: L) -> Self {
         Self {
             hash,
             kind,

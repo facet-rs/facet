@@ -744,7 +744,7 @@ impl JitFormat for NoFormatJit {
 ///
 /// Use this when creating signatures for `call_indirect` to `extern "C"` helper functions.
 #[inline]
-pub fn c_call_conv() -> cranelift::codegen::isa::CallConv {
+pub const fn c_call_conv() -> cranelift::codegen::isa::CallConv {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
         cranelift::codegen::isa::CallConv::WindowsFastcall

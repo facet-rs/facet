@@ -17,7 +17,7 @@ impl<'mem, 'facet> PeekPointer<'mem, 'facet> {
     /// Returns a reference to the pointer definition.
     #[must_use]
     #[inline]
-    pub fn def(&self) -> &PointerDef {
+    pub const fn def(&self) -> &PointerDef {
         &self.def
     }
 

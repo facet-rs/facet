@@ -76,7 +76,7 @@ pub fn is_counted_field(field: &facet_core::Field) -> bool {
 }
 
 /// Check if a shape is a supported type for counted fields (integer types).
-pub fn is_supported_counted_type(shape: &'static facet_core::Shape) -> bool {
+pub const fn is_supported_counted_type(shape: &'static facet_core::Shape) -> bool {
     use facet_core::{NumericType, PrimitiveType, Type};
     matches!(
         shape.ty,

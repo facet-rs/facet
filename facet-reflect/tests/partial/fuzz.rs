@@ -108,7 +108,7 @@ enum FieldName {
 }
 
 impl FieldName {
-    fn as_str(&self) -> &'static str {
+    const fn as_str(&self) -> &'static str {
         match self {
             FieldName::Name => "name",
             FieldName::Count => "count",
@@ -134,7 +134,7 @@ enum VariantName {
 }
 
 impl VariantName {
-    fn as_str(&self) -> &'static str {
+    const fn as_str(&self) -> &'static str {
         match self {
             VariantName::Active => "Active",
             VariantName::Inactive => "Inactive",

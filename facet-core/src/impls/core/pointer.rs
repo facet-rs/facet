@@ -55,7 +55,7 @@ unsafe fn const_ptr_cmp<T: ?Sized>(a: OxPtrConst, b: OxPtrConst) -> Option<Order
 }
 
 /// Drop for *const T (no-op, pointers don't need dropping)
-unsafe fn const_ptr_drop<T: ?Sized>(_ptr: OxPtrMut) {
+const unsafe fn const_ptr_drop<T: ?Sized>(_ptr: OxPtrMut) {
     // Pointers don't need dropping
 }
 
@@ -107,7 +107,7 @@ unsafe fn mut_ptr_cmp<T: ?Sized>(a: OxPtrConst, b: OxPtrConst) -> Option<Orderin
 }
 
 /// Drop for *mut T (no-op, pointers don't need dropping)
-unsafe fn mut_ptr_drop<T: ?Sized>(_ptr: OxPtrMut) {
+const unsafe fn mut_ptr_drop<T: ?Sized>(_ptr: OxPtrMut) {
     // Pointers don't need dropping
 }
 

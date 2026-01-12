@@ -172,7 +172,7 @@ impl<'input, const BORROW: bool> SliceAdapter<'input, BORROW> {
 
     /// Check if we've reached the end of input.
     #[inline]
-    fn at_end_of_input(&self) -> bool {
+    const fn at_end_of_input(&self) -> bool {
         self.window_end >= self.input.len()
     }
 
@@ -486,13 +486,13 @@ impl<'input, const BORROW: bool> SliceAdapter<'input, BORROW> {
 
     /// Get the current absolute position in the input.
     #[allow(dead_code)]
-    pub fn position(&self) -> usize {
+    pub const fn position(&self) -> usize {
         self.window_start + self.scanner.pos()
     }
 
     /// Get the underlying input slice.
     #[allow(dead_code)]
-    pub fn input(&self) -> &'input [u8] {
+    pub const fn input(&self) -> &'input [u8] {
         self.input
     }
 }

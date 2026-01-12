@@ -10,7 +10,7 @@ use crate::{
 
 /// Extract the OptionDef from a shape, returns None if not an Option
 #[inline]
-fn get_option_def(shape: &'static Shape) -> Option<&'static OptionDef> {
+const fn get_option_def(shape: &'static Shape) -> Option<&'static OptionDef> {
     match shape.def {
         Def::Option(ref def) => Some(def),
         _ => None,

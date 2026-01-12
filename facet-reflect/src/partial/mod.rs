@@ -175,26 +175,26 @@ enum FrameMode {
 
 impl FrameMode {
     /// Get a reference to the frame stack.
-    fn stack(&self) -> &Vec<Frame> {
+    const fn stack(&self) -> &Vec<Frame> {
         match self {
             FrameMode::Strict { stack } | FrameMode::Deferred { stack, .. } => stack,
         }
     }
 
     /// Get a mutable reference to the frame stack.
-    fn stack_mut(&mut self) -> &mut Vec<Frame> {
+    const fn stack_mut(&mut self) -> &mut Vec<Frame> {
         match self {
             FrameMode::Strict { stack } | FrameMode::Deferred { stack, .. } => stack,
         }
     }
 
     /// Check if we're in deferred mode.
-    fn is_deferred(&self) -> bool {
+    const fn is_deferred(&self) -> bool {
         matches!(self, FrameMode::Deferred { .. })
     }
 
     /// Get the start depth if in deferred mode.
-    fn start_depth(&self) -> Option<usize> {
+    const fn start_depth(&self) -> Option<usize> {
         match self {
             FrameMode::Deferred { start_depth, .. } => Some(*start_depth),
             FrameMode::Strict { .. } => None,
@@ -202,7 +202,7 @@ impl FrameMode {
     }
 
     /// Get the current path if in deferred mode.
-    fn current_path(&self) -> Option<&KeyPath> {
+    const fn current_path(&self) -> Option<&KeyPath> {
         match self {
             FrameMode::Deferred { current_path, .. } => Some(current_path),
             FrameMode::Strict { .. } => None,
@@ -210,7 +210,7 @@ impl FrameMode {
     }
 
     /// Get the resolution if in deferred mode.
-    fn resolution(&self) -> Option<&Resolution> {
+    const fn resolution(&self) -> Option<&Resolution> {
         match self {
             FrameMode::Deferred { resolution, .. } => Some(resolution),
             FrameMode::Strict { .. } => None,
@@ -303,7 +303,7 @@ impl FrameOwnership {
     /// Both `Owned` and `TrackedBuffer` frames allocated their memory and need
     /// to deallocate it. `Field` and `BorrowedInPlace` frames borrow from
     /// parent or existing structures.
-    fn needs_dealloc(&self) -> bool {
+    const fn needs_dealloc(&self) -> bool {
         matches!(self, FrameOwnership::Owned | FrameOwnership::TrackedBuffer)
     }
 }
@@ -319,18 +319,18 @@ pub(crate) struct AllocatedShape {
 }
 
 impl AllocatedShape {
-    pub(crate) fn new(shape: &'static Shape, allocated_size: usize) -> Self {
+    pub(crate) const fn new(shape: &'static Shape, allocated_size: usize) -> Self {
         Self {
             shape,
             allocated_size,
         }
     }
 
-    pub(crate) fn shape(&self) -> &'static Shape {
+    pub(crate) const fn shape(&self) -> &'static Shape {
         self.shape
     }
 
-    pub(crate) fn allocated_size(&self) -> usize {
+    pub(crate) const fn allocated_size(&self) -> usize {
         self.allocated_size
     }
 }
@@ -488,7 +488,7 @@ pub(crate) enum DynamicObjectInsertState {
 }
 
 impl Tracker {
-    fn kind(&self) -> TrackerKind {
+    const fn kind(&self) -> TrackerKind {
         match self {
             Tracker::Scalar => TrackerKind::Scalar,
             Tracker::Array { .. } => TrackerKind::Array,
@@ -506,7 +506,7 @@ impl Tracker {
     }
 
     /// Set the current_child index for trackers that support it
-    fn set_current_child(&mut self, idx: usize) {
+    const fn set_current_child(&mut self, idx: usize) {
         match self {
             Tracker::Struct { current_child, .. }
             | Tracker::Enum { current_child, .. }
@@ -518,7 +518,7 @@ impl Tracker {
     }
 
     /// Clear the current_child index for trackers that support it
-    fn clear_current_child(&mut self) {
+    const fn clear_current_child(&mut self) {
         match self {
             Tracker::Struct { current_child, .. }
             | Tracker::Enum { current_child, .. }
@@ -531,7 +531,7 @@ impl Tracker {
 }
 
 impl Frame {
-    fn new(data: PtrUninit, allocated: AllocatedShape, ownership: FrameOwnership) -> Self {
+    const fn new(data: PtrUninit, allocated: AllocatedShape, ownership: FrameOwnership) -> Self {
         // For empty structs (structs with 0 fields), start as initialized since there's nothing to initialize
         // This includes empty tuples () which are zero-sized types with no fields to initialize
         let is_init = matches!(
@@ -859,7 +859,7 @@ impl Frame {
     /// # Safety
     ///
     /// This should only be called when `self.data` has been actually initialized.
-    unsafe fn mark_as_init(&mut self) {
+    const unsafe fn mark_as_init(&mut self) {
         self.is_init = true;
     }
 
@@ -1205,7 +1205,7 @@ impl Frame {
     }
 
     /// Get the [EnumType] of the frame's shape, if it is an enum type
-    pub(crate) fn get_enum_type(&self) -> Result<EnumType, ReflectError> {
+    pub(crate) const fn get_enum_type(&self) -> Result<EnumType, ReflectError> {
         match self.allocated.shape().ty {
             Type::User(UserType::Enum(e)) => Ok(e),
             _ => Err(ReflectError::WasNotA {
@@ -1254,37 +1254,37 @@ impl Frame {
 impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Get a reference to the frame stack.
     #[inline]
-    pub(crate) fn frames(&self) -> &Vec<Frame> {
+    pub(crate) const fn frames(&self) -> &Vec<Frame> {
         self.mode.stack()
     }
 
     /// Get a mutable reference to the frame stack.
     #[inline]
-    pub(crate) fn frames_mut(&mut self) -> &mut Vec<Frame> {
+    pub(crate) const fn frames_mut(&mut self) -> &mut Vec<Frame> {
         self.mode.stack_mut()
     }
 
     /// Check if we're in deferred mode.
     #[inline]
-    pub fn is_deferred(&self) -> bool {
+    pub const fn is_deferred(&self) -> bool {
         self.mode.is_deferred()
     }
 
     /// Get the start depth if in deferred mode.
     #[inline]
-    pub(crate) fn start_depth(&self) -> Option<usize> {
+    pub(crate) const fn start_depth(&self) -> Option<usize> {
         self.mode.start_depth()
     }
 
     /// Get the current path if in deferred mode.
     #[inline]
-    pub(crate) fn current_path(&self) -> Option<&KeyPath> {
+    pub(crate) const fn current_path(&self) -> Option<&KeyPath> {
         self.mode.current_path()
     }
 
     /// Get the resolution if in deferred mode.
     #[inline]
-    pub(crate) fn resolution(&self) -> Option<&Resolution> {
+    pub(crate) const fn resolution(&self) -> Option<&Resolution> {
         self.mode.resolution()
     }
 }

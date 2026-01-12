@@ -536,7 +536,7 @@ impl Ox<'static> {
 impl<'a> Ox<'a> {
     /// Get an immutable view of the value.
     #[inline]
-    pub fn as_ref(&self) -> OxRef<'_> {
+    pub const fn as_ref(&self) -> OxRef<'_> {
         match self {
             Ox::Owned(inner) => inner.as_ref(),
             Ox::Borrowed(inner) => *inner,
@@ -545,7 +545,7 @@ impl<'a> Ox<'a> {
 
     /// Get a mutable view of the value (only if owned).
     #[inline]
-    pub fn as_mut(&mut self) -> Option<OxMut<'_>> {
+    pub const fn as_mut(&mut self) -> Option<OxMut<'_>> {
         match self {
             Ox::Owned(inner) => Some(OxMut {
                 ptr: inner.ptr,
@@ -558,7 +558,7 @@ impl<'a> Ox<'a> {
 
     /// For read-only vtable operations.
     #[inline]
-    pub fn ptr_const(&self) -> PtrConst {
+    pub const fn ptr_const(&self) -> PtrConst {
         match self {
             Ox::Owned(inner) => inner.ptr.as_const(),
             Ox::Borrowed(inner) => inner.ptr,
@@ -567,7 +567,7 @@ impl<'a> Ox<'a> {
 
     /// For mutating vtable operations (only if owned).
     #[inline]
-    pub fn ptr_mut(&mut self) -> Option<PtrMut> {
+    pub const fn ptr_mut(&mut self) -> Option<PtrMut> {
         match self {
             Ox::Owned(inner) => Some(inner.ptr),
             Ox::Borrowed(_) => None,
@@ -576,7 +576,7 @@ impl<'a> Ox<'a> {
 
     /// Get the shape.
     #[inline]
-    pub fn shape(&self) -> &'static Shape {
+    pub const fn shape(&self) -> &'static Shape {
         match self {
             Ox::Owned(inner) => inner.shape,
             Ox::Borrowed(inner) => inner.shape,

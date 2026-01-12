@@ -309,7 +309,7 @@ impl Def {
     }
 
     /// Returns the `ScalarDef` wrapped in an `Ok` if this is a [`Def::Scalar`].
-    pub fn into_scalar(self) -> Result<(), Self> {
+    pub const fn into_scalar(self) -> Result<(), Self> {
         match self {
             Self::Scalar => Ok(()),
             _ => Err(self),
@@ -317,7 +317,7 @@ impl Def {
     }
 
     /// Returns the `MapDef` wrapped in an `Ok` if this is a [`Def::Map`].
-    pub fn into_map(self) -> Result<MapDef, Self> {
+    pub const fn into_map(self) -> Result<MapDef, Self> {
         match self {
             Self::Map(def) => Ok(def),
             _ => Err(self),
@@ -325,7 +325,7 @@ impl Def {
     }
 
     /// Returns the `SetDef` wrapped in an `Ok` if this is a [`Def::Set`].
-    pub fn into_set(self) -> Result<SetDef, Self> {
+    pub const fn into_set(self) -> Result<SetDef, Self> {
         match self {
             Self::Set(def) => Ok(def),
             _ => Err(self),
@@ -333,49 +333,49 @@ impl Def {
     }
 
     /// Returns the `ListDef` wrapped in an `Ok` if this is a [`Def::List`].
-    pub fn into_list(self) -> Result<ListDef, Self> {
+    pub const fn into_list(self) -> Result<ListDef, Self> {
         match self {
             Self::List(def) => Ok(def),
             _ => Err(self),
         }
     }
     /// Returns the `ArrayDef` wrapped in an `Ok` if this is a [`Def::Array`].
-    pub fn into_array(self) -> Result<ArrayDef, Self> {
+    pub const fn into_array(self) -> Result<ArrayDef, Self> {
         match self {
             Self::Array(def) => Ok(def),
             _ => Err(self),
         }
     }
     /// Returns the `NdArrayDef` wrapped in an `Ok` if this is a [`Def::NdArray`].
-    pub fn into_ndarray(self) -> Result<NdArrayDef, Self> {
+    pub const fn into_ndarray(self) -> Result<NdArrayDef, Self> {
         match self {
             Self::NdArray(def) => Ok(def),
             _ => Err(self),
         }
     }
     /// Returns the `SliceDef` wrapped in an `Ok` if this is a [`Def::Slice`].
-    pub fn into_slice(self) -> Result<SliceDef, Self> {
+    pub const fn into_slice(self) -> Result<SliceDef, Self> {
         match self {
             Self::Slice(def) => Ok(def),
             _ => Err(self),
         }
     }
     /// Returns the `OptionDef` wrapped in an `Ok` if this is a [`Def::Option`].
-    pub fn into_option(self) -> Result<OptionDef, Self> {
+    pub const fn into_option(self) -> Result<OptionDef, Self> {
         match self {
             Self::Option(def) => Ok(def),
             _ => Err(self),
         }
     }
     /// Returns the `ResultDef` wrapped in an `Ok` if this is a [`Def::Result`].
-    pub fn into_result(self) -> Result<ResultDef, Self> {
+    pub const fn into_result(self) -> Result<ResultDef, Self> {
         match self {
             Self::Result(def) => Ok(def),
             _ => Err(self),
         }
     }
     /// Returns the `PointerDef` wrapped in an `Ok` if this is a [`Def::Pointer`].
-    pub fn into_pointer(self) -> Result<PointerDef, Self> {
+    pub const fn into_pointer(self) -> Result<PointerDef, Self> {
         match self {
             Self::Pointer(def) => Ok(def),
             _ => Err(self),
@@ -383,7 +383,7 @@ impl Def {
     }
 
     /// Returns the `DynamicValueDef` wrapped in an `Ok` if this is a [`Def::DynamicValue`].
-    pub fn into_dynamic_value(self) -> Result<DynamicValueDef, Self> {
+    pub const fn into_dynamic_value(self) -> Result<DynamicValueDef, Self> {
         match self {
             Self::DynamicValue(def) => Ok(def),
             _ => Err(self),

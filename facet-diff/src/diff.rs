@@ -35,7 +35,7 @@ impl DiffOptions {
     }
 
     /// Set the tolerance for floating-point comparisons.
-    pub fn with_float_tolerance(mut self, tolerance: f64) -> Self {
+    pub const fn with_float_tolerance(mut self, tolerance: f64) -> Self {
         self.float_tolerance = Some(tolerance);
         self
     }
@@ -50,7 +50,7 @@ impl DiffOptions {
     ///
     /// # Arguments
     /// * `threshold` - Minimum similarity score (0.0 to 1.0). Recommended: 0.5-0.7.
-    pub fn with_similarity_threshold(mut self, threshold: f64) -> Self {
+    pub const fn with_similarity_threshold(mut self, threshold: f64) -> Self {
         self.similarity_threshold = Some(threshold);
         self
     }

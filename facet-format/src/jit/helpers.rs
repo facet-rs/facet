@@ -165,7 +165,7 @@ pub enum ScalarTag {
 
 impl ScalarTag {
     /// Convert from u8 value
-    pub fn from_u8(v: u8) -> Self {
+    pub const fn from_u8(v: u8) -> Self {
         match v {
             0 => ScalarTag::None,
             1 => ScalarTag::Null,
@@ -629,7 +629,7 @@ pub unsafe extern "C" fn jit_write_u64(out: *mut u8, offset: usize, value: u64) 
 
 /// Write an i8 value to a struct field.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jit_write_i8(out: *mut u8, offset: usize, value: i8) {
+pub const unsafe extern "C" fn jit_write_i8(out: *mut u8, offset: usize, value: i8) {
     unsafe {
         let ptr = out.add(offset) as *mut i8;
         std::ptr::write_unaligned(ptr, value);
@@ -638,7 +638,7 @@ pub unsafe extern "C" fn jit_write_i8(out: *mut u8, offset: usize, value: i8) {
 
 /// Write an i16 value to a struct field.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jit_write_i16(out: *mut u8, offset: usize, value: i16) {
+pub const unsafe extern "C" fn jit_write_i16(out: *mut u8, offset: usize, value: i16) {
     unsafe {
         let ptr = out.add(offset) as *mut i16;
         std::ptr::write_unaligned(ptr, value);
@@ -647,7 +647,7 @@ pub unsafe extern "C" fn jit_write_i16(out: *mut u8, offset: usize, value: i16) 
 
 /// Write an i32 value to a struct field.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jit_write_i32(out: *mut u8, offset: usize, value: i32) {
+pub const unsafe extern "C" fn jit_write_i32(out: *mut u8, offset: usize, value: i32) {
     unsafe {
         let ptr = out.add(offset) as *mut i32;
         std::ptr::write_unaligned(ptr, value);
@@ -656,7 +656,7 @@ pub unsafe extern "C" fn jit_write_i32(out: *mut u8, offset: usize, value: i32) 
 
 /// Write an i64 value to a struct field.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jit_write_i64(out: *mut u8, offset: usize, value: i64) {
+pub const unsafe extern "C" fn jit_write_i64(out: *mut u8, offset: usize, value: i64) {
     unsafe {
         let ptr = out.add(offset) as *mut i64;
         std::ptr::write_unaligned(ptr, value);
@@ -665,7 +665,7 @@ pub unsafe extern "C" fn jit_write_i64(out: *mut u8, offset: usize, value: i64) 
 
 /// Write an f32 value to a struct field.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jit_write_f32(out: *mut u8, offset: usize, value: f32) {
+pub const unsafe extern "C" fn jit_write_f32(out: *mut u8, offset: usize, value: f32) {
     unsafe {
         let ptr = out.add(offset) as *mut f32;
         std::ptr::write_unaligned(ptr, value);
@@ -674,7 +674,7 @@ pub unsafe extern "C" fn jit_write_f32(out: *mut u8, offset: usize, value: f32) 
 
 /// Write an f64 value to a struct field.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jit_write_f64(out: *mut u8, offset: usize, value: f64) {
+pub const unsafe extern "C" fn jit_write_f64(out: *mut u8, offset: usize, value: f64) {
     unsafe {
         let ptr = out.add(offset) as *mut f64;
         std::ptr::write_unaligned(ptr, value);
@@ -775,7 +775,7 @@ pub unsafe extern "C" fn jit_write_string(
 /// - `len` bytes must be readable from src and writable to dest
 /// - memory regions may overlap (uses memmove semantics)
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jit_memcpy(dest: *mut u8, src: *const u8, len: usize) {
+pub const unsafe extern "C" fn jit_memcpy(dest: *mut u8, src: *const u8, len: usize) {
     unsafe {
         std::ptr::copy(src, dest, len);
     }

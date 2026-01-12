@@ -62,7 +62,7 @@ pub enum ChangeKind {
 
 impl ChangeKind {
     /// Get the symbol for this change kind.
-    pub fn symbol(self, symbols: &DiffSymbols) -> Option<&'static str> {
+    pub const fn symbol(self, symbols: &DiffSymbols) -> Option<&'static str> {
         match self {
             Self::Unchanged => None,
             Self::Deleted | Self::Modified => Some(symbols.deleted),
@@ -73,7 +73,7 @@ impl ChangeKind {
     }
 
     /// Returns true if this change should be highlighted (not unchanged).
-    pub fn is_changed(self) -> bool {
+    pub const fn is_changed(self) -> bool {
         !matches!(self, Self::Unchanged)
     }
 }

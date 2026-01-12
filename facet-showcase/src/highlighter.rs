@@ -27,7 +27,7 @@ pub enum Language {
 
 impl Language {
     /// Returns the file extension used to look up the syntax.
-    pub fn extension(self) -> &'static str {
+    pub const fn extension(self) -> &'static str {
         match self {
             Language::Json => "json",
             Language::Yaml => "yaml",
@@ -39,7 +39,7 @@ impl Language {
     }
 
     /// Returns a human-readable name for the language.
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Language::Json => "JSON",
             Language::Yaml => "YAML",
@@ -50,7 +50,7 @@ impl Language {
         }
     }
 
-    fn arborium_name(self) -> Option<&'static str> {
+    const fn arborium_name(self) -> Option<&'static str> {
         match self {
             Language::Json => Some("json"),
             Language::Yaml => Some("yaml"),
@@ -87,7 +87,7 @@ impl Highlighter {
     }
 
     /// Get a reference to the theme.
-    pub fn theme(&self) -> &Theme {
+    pub const fn theme(&self) -> &Theme {
         &self.theme
     }
 
@@ -337,7 +337,7 @@ fn parse_ansi_style(seq: &str) -> Option<String> {
     }
 }
 
-fn ansi_256_to_rgb(n: u8) -> &'static str {
+const fn ansi_256_to_rgb(n: u8) -> &'static str {
     match n {
         0 => "#000000",
         1 => "#800000",

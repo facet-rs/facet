@@ -130,12 +130,12 @@ impl ResolutionSet {
     }
 
     /// Get the number of resolutions in the set.
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         self.count
     }
 
     /// Check if empty.
-    fn is_empty(&self) -> bool {
+    const fn is_empty(&self) -> bool {
         self.count == 0
     }
 
@@ -739,7 +739,7 @@ impl<'a> Solver<'a> {
     }
 
     /// Get the seen keys.
-    pub fn seen_keys(&self) -> &BTreeSet<Cow<'a, str>> {
+    pub const fn seen_keys(&self) -> &BTreeSet<Cow<'a, str>> {
         &self.seen_keys
     }
 
@@ -1535,12 +1535,12 @@ impl VariantFormat {
     }
 
     /// Returns true if this variant expects a scalar value in untagged format.
-    pub fn expects_scalar(&self) -> bool {
+    pub const fn expects_scalar(&self) -> bool {
         matches!(self, VariantFormat::NewtypeScalar { .. })
     }
 
     /// Returns true if this variant expects a sequence in untagged format.
-    pub fn expects_sequence(&self) -> bool {
+    pub const fn expects_sequence(&self) -> bool {
         matches!(
             self,
             VariantFormat::Tuple { .. }
@@ -1550,7 +1550,7 @@ impl VariantFormat {
     }
 
     /// Returns true if this variant expects a mapping in untagged format.
-    pub fn expects_mapping(&self) -> bool {
+    pub const fn expects_mapping(&self) -> bool {
         matches!(
             self,
             VariantFormat::Struct | VariantFormat::NewtypeStruct { .. }
@@ -1558,7 +1558,7 @@ impl VariantFormat {
     }
 
     /// Returns true if this is a unit variant (no data).
-    pub fn is_unit(&self) -> bool {
+    pub const fn is_unit(&self) -> bool {
         matches!(self, VariantFormat::Unit)
     }
 }
@@ -1781,17 +1781,17 @@ impl VariantsByFormat {
     }
 
     /// Check if there are any scalar-expecting variants.
-    pub fn has_scalar_variants(&self) -> bool {
+    pub const fn has_scalar_variants(&self) -> bool {
         !self.scalar_variants.is_empty()
     }
 
     /// Check if there are any tuple-expecting variants.
-    pub fn has_tuple_variants(&self) -> bool {
+    pub const fn has_tuple_variants(&self) -> bool {
         !self.tuple_variants.is_empty()
     }
 
     /// Check if there are any struct-expecting variants.
-    pub fn has_struct_variants(&self) -> bool {
+    pub const fn has_struct_variants(&self) -> bool {
         !self.struct_variants.is_empty()
     }
 }
@@ -1842,7 +1842,7 @@ impl EnumRepr {
     /// - `InternallyTagged` if `#[facet(tag = "...")]` without content
     /// - `AdjacentlyTagged` if both `#[facet(tag = "...", content = "...")]`
     /// - `ExternallyTagged` if no attributes (the default enum representation)
-    pub fn from_shape(shape: &'static Shape) -> Self {
+    pub const fn from_shape(shape: &'static Shape) -> Self {
         let tag = shape.get_tag_attr();
         let content = shape.get_content_attr();
         let untagged = shape.is_untagged();
@@ -1918,7 +1918,7 @@ struct SchemaBuilder {
 }
 
 impl SchemaBuilder {
-    fn new(shape: &'static Shape, enum_repr: EnumRepr) -> Self {
+    const fn new(shape: &'static Shape, enum_repr: EnumRepr) -> Self {
         Self {
             shape,
             enum_repr,
@@ -1926,7 +1926,7 @@ impl SchemaBuilder {
         }
     }
 
-    fn with_auto_detect(mut self) -> Self {
+    const fn with_auto_detect(mut self) -> Self {
         self.auto_detect_enum_repr = true;
         self
     }
@@ -2605,12 +2605,12 @@ impl SchemaBuilder {
 }
 
 /// Check if a shape represents an Option type.
-fn is_option_type(shape: &'static Shape) -> bool {
+const fn is_option_type(shape: &'static Shape) -> bool {
     matches!(shape.def, Def::Option(_))
 }
 
 /// If shape is `Option<T>`, returns `Some(T's shape)`. Otherwise returns `None`.
-fn unwrap_option_type(shape: &'static Shape) -> Option<&'static Shape> {
+const fn unwrap_option_type(shape: &'static Shape) -> Option<&'static Shape> {
     match shape.def {
         Def::Option(option_def) => Some(option_def.t),
         _ => None,

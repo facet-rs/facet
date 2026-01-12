@@ -10,7 +10,7 @@ use crate::{
 
 /// Extract the ArrayDef from a shape, returns None if not an array
 #[inline]
-fn get_array_def(shape: &'static Shape) -> Option<&'static ArrayDef> {
+const fn get_array_def(shape: &'static Shape) -> Option<&'static ArrayDef> {
     match shape.def {
         Def::Array(ref def) => Some(def),
         _ => None,

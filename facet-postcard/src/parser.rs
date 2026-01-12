@@ -94,7 +94,7 @@ struct OpaqueScalarHint {
 
 impl<'de> PostcardParser<'de> {
     /// Create a new postcard parser from input bytes.
-    pub fn new(input: &'de [u8]) -> Self {
+    pub const fn new(input: &'de [u8]) -> Self {
         Self {
             input,
             pos: 0,

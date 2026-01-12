@@ -828,7 +828,7 @@ impl CaseSpec {
 
     /// Convenience for UTF-8 inputs.
     #[allow(clippy::should_implement_trait)]
-    pub fn from_str(input: &'static str) -> Self {
+    pub const fn from_str(input: &'static str) -> Self {
         Self::from_bytes(input.as_bytes())
     }
 
@@ -843,26 +843,26 @@ impl CaseSpec {
     }
 
     /// Attach an optional note for diagnostics.
-    pub fn with_note(mut self, note: &'static str) -> Self {
+    pub const fn with_note(mut self, note: &'static str) -> Self {
         self.note = Some(note);
         self
     }
 
     /// Disable round-trip checks for this case, documenting the reason.
-    pub fn without_roundtrip(mut self, reason: &'static str) -> Self {
+    pub const fn without_roundtrip(mut self, reason: &'static str) -> Self {
         self.roundtrip = RoundtripSpec::Disabled { reason };
         self
     }
 
     /// Use PartialEq comparison instead of reflection-based comparison.
     /// Required for types containing opaque fields that can't be compared via reflection.
-    pub fn with_partial_eq(mut self) -> Self {
+    pub const fn with_partial_eq(mut self) -> Self {
         self.compare_mode = CompareMode::PartialEq;
         self
     }
 
     /// Expect deserialization to fail with an error containing the given substring.
-    pub fn expect_error(input: &'static str, error_contains: &'static str) -> Self {
+    pub const fn expect_error(input: &'static str, error_contains: &'static str) -> Self {
         Self {
             payload: CasePayload::ExpectError {
                 input: input.as_bytes(),
@@ -880,7 +880,7 @@ impl CaseSpec {
     ///
     /// Use this for binary formats where input is generated at runtime
     /// (e.g., from a reference implementation like rmp-serde for MsgPack).
-    pub fn from_bytes_vec(input: Vec<u8>) -> Self {
+    pub const fn from_bytes_vec(input: Vec<u8>) -> Self {
         Self {
             payload: CasePayload::DynamicInput(input),
             note: None,
@@ -1007,7 +1007,7 @@ impl SuiteCase {
         (self.async_runner)()
     }
 
-    pub fn skip_reason(&self) -> Option<&'static str> {
+    pub const fn skip_reason(&self) -> Option<&'static str> {
         self.skip_reason
     }
 }
@@ -2369,7 +2369,7 @@ pub struct StructLevelDefault {
 }
 
 /// Default value function for `WithDefaultFunction`.
-pub fn custom_default_value() -> i32 {
+pub const fn custom_default_value() -> i32 {
     42
 }
 

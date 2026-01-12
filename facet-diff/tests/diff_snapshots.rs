@@ -15,7 +15,7 @@ use facet_value::value;
 use insta::assert_snapshot;
 
 // Convert Tokyo Night Rgb to boxen Color
-fn to_boxen(c: owo_colors::Rgb) -> Color {
+const fn to_boxen(c: owo_colors::Rgb) -> Color {
     Color::Rgb(c.0, c.1, c.2)
 }
 

@@ -62,7 +62,7 @@ pub enum Diff<'mem, 'facet> {
 
 impl<'mem, 'facet> Diff<'mem, 'facet> {
     /// Returns true if the two values were equal
-    pub fn is_equal(&self) -> bool {
+    pub const fn is_equal(&self) -> bool {
         matches!(self, Self::Equal { .. })
     }
 }

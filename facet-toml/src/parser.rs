@@ -63,11 +63,11 @@ struct ParseErrorCollector {
 }
 
 impl ParseErrorCollector {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self { error: None }
     }
 
-    fn take_error(&mut self) -> Option<String> {
+    const fn take_error(&mut self) -> Option<String> {
         self.error.take()
     }
 }
@@ -166,7 +166,7 @@ impl<'de> TomlParser<'de> {
     }
 
     /// Get the original input string.
-    pub fn input(&self) -> &'de str {
+    pub const fn input(&self) -> &'de str {
         self.input
     }
 
@@ -300,7 +300,7 @@ impl<'de> TomlParser<'de> {
     }
 
     /// Emit the "end" event for a path segment based on its kind.
-    fn end_event_for_segment(segment: &PathSegment<'_>) -> ParseEvent<'static> {
+    const fn end_event_for_segment(segment: &PathSegment<'_>) -> ParseEvent<'static> {
         match segment.kind {
             SegmentKind::Table => ParseEvent::StructEnd,
             SegmentKind::Array => ParseEvent::SequenceEnd,

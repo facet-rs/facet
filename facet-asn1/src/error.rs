@@ -97,17 +97,17 @@ impl std::error::Error for Asn1Error {}
 
 impl Asn1Error {
     /// Create a new error with the given kind at the given position.
-    pub fn new(kind: Asn1ErrorKind, pos: usize) -> Self {
+    pub const fn new(kind: Asn1ErrorKind, pos: usize) -> Self {
         Self { kind, pos }
     }
 
     /// Create an unexpected EOF error.
-    pub fn unexpected_eof(pos: usize) -> Self {
+    pub const fn unexpected_eof(pos: usize) -> Self {
         Self::new(Asn1ErrorKind::UnexpectedEof, pos)
     }
 
     /// Create an unknown tag error.
-    pub fn unknown_tag(tag: u8, pos: usize) -> Self {
+    pub const fn unknown_tag(tag: u8, pos: usize) -> Self {
         Self::new(Asn1ErrorKind::UnknownTag { tag }, pos)
     }
 

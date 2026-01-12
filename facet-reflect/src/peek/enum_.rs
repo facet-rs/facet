@@ -25,7 +25,7 @@ impl core::fmt::Debug for PeekEnum<'_, '_> {
 
 /// Returns the enum definition if the shape represents an enum, None otherwise
 #[inline]
-pub fn peek_enum(shape: &'static Shape) -> Option<EnumType> {
+pub const fn peek_enum(shape: &'static Shape) -> Option<EnumType> {
     match shape.ty {
         facet_core::Type::User(UserType::Enum(enum_ty)) => Some(enum_ty),
         _ => None,
@@ -56,25 +56,25 @@ impl<'mem, 'facet> core::ops::Deref for PeekEnum<'mem, 'facet> {
 impl<'mem, 'facet> PeekEnum<'mem, 'facet> {
     /// Returns the enum definition
     #[inline(always)]
-    pub fn ty(self) -> EnumType {
+    pub const fn ty(self) -> EnumType {
         self.ty
     }
 
     /// Returns the enum representation
     #[inline(always)]
-    pub fn enum_repr(self) -> EnumRepr {
+    pub const fn enum_repr(self) -> EnumRepr {
         self.ty.enum_repr
     }
 
     /// Returns the enum variants
     #[inline(always)]
-    pub fn variants(self) -> &'static [Variant] {
+    pub const fn variants(self) -> &'static [Variant] {
         self.ty.variants
     }
 
     /// Returns the number of variants in this enum
     #[inline(always)]
-    pub fn variant_count(self) -> usize {
+    pub const fn variant_count(self) -> usize {
         self.ty.variants.len()
     }
 

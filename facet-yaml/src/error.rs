@@ -45,7 +45,7 @@ impl core::error::Error for YamlError {}
 
 impl YamlError {
     /// Create a new error with span information
-    pub fn new(kind: YamlErrorKind, span: Span) -> Self {
+    pub const fn new(kind: YamlErrorKind, span: Span) -> Self {
         YamlError {
             kind,
             span: Some(span),
@@ -54,7 +54,7 @@ impl YamlError {
     }
 
     /// Create an error without span information
-    pub fn without_span(kind: YamlErrorKind) -> Self {
+    pub const fn without_span(kind: YamlErrorKind) -> Self {
         YamlError {
             kind,
             span: None,
@@ -177,7 +177,7 @@ impl Display for YamlErrorKind {
 
 impl YamlErrorKind {
     /// Get an error code for this kind of error.
-    pub fn code(&self) -> &'static str {
+    pub const fn code(&self) -> &'static str {
         match self {
             YamlErrorKind::Parse(_) => "yaml::parse",
             YamlErrorKind::UnexpectedEvent { .. } => "yaml::unexpected_event",

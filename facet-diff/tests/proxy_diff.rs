@@ -18,7 +18,7 @@ pub struct OpaqueCounter {
 }
 
 impl OpaqueCounter {
-    pub fn new(count: u64) -> Self {
+    pub const fn new(count: u64) -> Self {
         Self { count }
     }
 }

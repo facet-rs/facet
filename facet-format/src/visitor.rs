@@ -29,7 +29,7 @@ pub struct StructFieldTracker<'a> {
 
 impl<'a> StructFieldTracker<'a> {
     /// Create a tracker for the given resolution.
-    pub fn new(resolution: &'a Resolution) -> Self {
+    pub const fn new(resolution: &'a Resolution) -> Self {
         Self {
             resolution,
             seen: BTreeSet::new(),

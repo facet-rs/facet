@@ -17,7 +17,7 @@ enum SyntaxElement {
 }
 
 /// Get the appropriate semantic color for a syntax element in a given context.
-fn syntax_color(base: SyntaxElement, context: ElementChange) -> SemanticColor {
+const fn syntax_color(base: SyntaxElement, context: ElementChange) -> SemanticColor {
     match (base, context) {
         (SyntaxElement::Key, ElementChange::Deleted) => SemanticColor::DeletedKey,
         (SyntaxElement::Key, ElementChange::Inserted) => SemanticColor::InsertedKey,
@@ -34,7 +34,7 @@ fn syntax_color(base: SyntaxElement, context: ElementChange) -> SemanticColor {
 }
 
 /// Get the appropriate semantic color for a value based on its type and context.
-fn value_color(value_type: ValueType, context: ElementChange) -> SemanticColor {
+const fn value_color(value_type: ValueType, context: ElementChange) -> SemanticColor {
     match (value_type, context) {
         (ValueType::String, ElementChange::Deleted) => SemanticColor::DeletedString,
         (ValueType::String, ElementChange::Inserted) => SemanticColor::InsertedString,
@@ -62,7 +62,7 @@ fn value_color(value_type: ValueType, context: ElementChange) -> SemanticColor {
 }
 
 /// Get semantic color for highlight background (changed values).
-fn value_color_highlight(value_type: ValueType, context: ElementChange) -> SemanticColor {
+const fn value_color_highlight(value_type: ValueType, context: ElementChange) -> SemanticColor {
     match (value_type, context) {
         (ValueType::String, ElementChange::Deleted) => SemanticColor::DeletedString,
         (ValueType::String, ElementChange::Inserted) => SemanticColor::InsertedString,
@@ -231,7 +231,7 @@ pub fn render_to_string<B: ColorBackend, F: DiffFlavor>(
     out
 }
 
-fn element_change_to_semantic(change: ElementChange) -> SemanticColor {
+const fn element_change_to_semantic(change: ElementChange) -> SemanticColor {
     match change {
         ElementChange::None => SemanticColor::Unchanged,
         ElementChange::Deleted => SemanticColor::Deleted,

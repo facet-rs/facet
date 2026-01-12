@@ -65,7 +65,7 @@ enum FormRejectionKind {
 
 impl FormRejection {
     /// Returns the status code for this rejection.
-    pub fn status(&self) -> StatusCode {
+    pub const fn status(&self) -> StatusCode {
         match &self.kind {
             FormRejectionKind::BodyError(_) => StatusCode::BAD_REQUEST,
             FormRejectionKind::DeserializeError(_) => StatusCode::UNPROCESSABLE_ENTITY,
@@ -146,7 +146,7 @@ enum QueryRejectionKind {
 
 impl QueryRejection {
     /// Returns the status code for this rejection.
-    pub fn status(&self) -> StatusCode {
+    pub const fn status(&self) -> StatusCode {
         match &self.kind {
             QueryRejectionKind::DeserializeError(_) => StatusCode::BAD_REQUEST,
         }

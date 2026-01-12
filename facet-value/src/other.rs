@@ -57,7 +57,7 @@ struct QNameHeader {
 pub struct VQName(pub(crate) Value);
 
 impl VQName {
-    fn layout() -> Layout {
+    const fn layout() -> Layout {
         Layout::new::<QNameHeader>()
     }
 
@@ -211,7 +211,7 @@ struct UuidHeader {
 pub struct VUuid(pub(crate) Value);
 
 impl VUuid {
-    fn layout() -> Layout {
+    const fn layout() -> Layout {
         Layout::new::<UuidHeader>()
     }
 

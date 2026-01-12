@@ -539,7 +539,7 @@ unsafe fn oncelock_drop<T>(ox: OxPtrMut) {
 }
 
 const fn oncelock_guard_vtable() -> LockGuardVTable {
-    unsafe fn drop_guard(_guard: PtrConst) {
+    const unsafe fn drop_guard(_guard: PtrConst) {
         // No-op - OnceLock doesn't have a guard to release
     }
     LockGuardVTable {

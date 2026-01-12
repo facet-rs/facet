@@ -205,7 +205,7 @@ struct PostcardSerializer<'a, W> {
 }
 
 impl<'a, W> PostcardSerializer<'a, W> {
-    fn new(writer: &'a mut W) -> Self {
+    const fn new(writer: &'a mut W) -> Self {
         Self { writer }
     }
 

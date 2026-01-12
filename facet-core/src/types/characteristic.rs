@@ -249,7 +249,7 @@ impl Shape {
     /// assert_eq!(format!("{}", shape.type_name()), "Vec<u32>");
     /// ```
     #[inline]
-    pub fn type_name(&'static self) -> TypeNameDisplay {
+    pub const fn type_name(&'static self) -> TypeNameDisplay {
         TypeNameDisplay(self)
     }
 }

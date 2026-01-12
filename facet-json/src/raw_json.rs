@@ -38,13 +38,13 @@ pub struct RawJson<'a>(pub Cow<'a, str>);
 impl<'a> RawJson<'a> {
     /// Create a new `RawJson` from a string slice.
     #[inline]
-    pub fn new(s: &'a str) -> Self {
+    pub const fn new(s: &'a str) -> Self {
         RawJson(Cow::Borrowed(s))
     }
 
     /// Create a new `RawJson` from an owned string.
     #[inline]
-    pub fn from_owned(s: String) -> Self {
+    pub const fn from_owned(s: String) -> Self {
         RawJson(Cow::Owned(s))
     }
 

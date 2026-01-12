@@ -19,7 +19,7 @@ pub struct Points {
 }
 
 impl Points {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { points: Vec::new() }
     }
 
@@ -66,7 +66,7 @@ impl Points {
     }
 
     /// Check if empty
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.points.is_empty()
     }
 }

@@ -510,7 +510,7 @@ pub(crate) fn ensure_format_jit_element_supported(
 }
 
 /// Get a human-readable description of a shape's type for error messages.
-fn shape_type_description(shape: &'static Shape) -> &'static str {
+const fn shape_type_description(shape: &'static Shape) -> &'static str {
     match &shape.def {
         Def::Undefined => "undefined",
         Def::Scalar => "scalar",

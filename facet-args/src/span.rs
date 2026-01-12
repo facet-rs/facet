@@ -12,12 +12,12 @@ pub struct Span {
 
 impl Span {
     /// Creates a new span with the given start position and length
-    pub fn new(start: Pos, len: usize) -> Self {
+    pub const fn new(start: Pos, len: usize) -> Self {
         Span { start, len }
     }
 
     /// Length of the span
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.len
     }
 }

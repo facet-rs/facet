@@ -30,7 +30,7 @@ enum ContainerState {
 
 impl XdrSerializer {
     /// Create a new XDR serializer.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             out: Vec::new(),
             stack: Vec::new(),

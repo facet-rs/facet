@@ -41,7 +41,7 @@ struct PadAdapter<'a, 'b: 'a> {
 }
 
 impl<'a, 'b> PadAdapter<'a, 'b> {
-    fn new_indented(fmt: &'a mut std::fmt::Formatter<'b>) -> Self {
+    const fn new_indented(fmt: &'a mut std::fmt::Formatter<'b>) -> Self {
         Self {
             fmt,
             on_newline: true,
@@ -242,12 +242,12 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
 
 impl<'mem, 'facet> Updates<'mem, 'facet> {
     /// Check if this is a single replace operation (useful for Option::Some)
-    pub fn is_single_replace(&self) -> bool {
+    pub const fn is_single_replace(&self) -> bool {
         self.0.first.is_some() && self.0.values.is_empty() && self.0.last.is_none()
     }
 
     /// Check if there are no changes (everything is unchanged)
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.0.first.is_none() && self.0.values.is_empty()
     }
 }

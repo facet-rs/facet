@@ -23,13 +23,13 @@ impl core::fmt::Debug for PeekStruct<'_, '_> {
 impl<'mem, 'facet> PeekStruct<'mem, 'facet> {
     /// Returns the struct definition
     #[inline(always)]
-    pub fn ty(&self) -> &StructType {
+    pub const fn ty(&self) -> &StructType {
         &self.ty
     }
 
     /// Returns the number of fields in this struct
     #[inline(always)]
-    pub fn field_count(&self) -> usize {
+    pub const fn field_count(&self) -> usize {
         self.ty.fields.len()
     }
 

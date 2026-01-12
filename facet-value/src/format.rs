@@ -58,7 +58,7 @@ struct FormatContext {
 }
 
 impl FormatContext {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             output: String::new(),
             spans: BTreeMap::new(),
@@ -66,7 +66,7 @@ impl FormatContext {
         }
     }
 
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         self.output.len()
     }
 

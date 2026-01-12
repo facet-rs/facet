@@ -148,7 +148,7 @@ unsafe fn ref_cmp(a: OxPtrConst, b: OxPtrConst) -> Option<core::cmp::Ordering> {
 }
 
 /// Drop for &T and &mut T (no-op, references don't need dropping)
-unsafe fn ref_drop(_ptr: OxPtrMut) {
+const unsafe fn ref_drop(_ptr: OxPtrMut) {
     // References don't need dropping
 }
 

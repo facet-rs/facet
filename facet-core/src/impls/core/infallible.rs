@@ -3,7 +3,7 @@ use crate::{
     Type, TypeOpsIndirect, UserType, VTableIndirect,
 };
 
-unsafe fn infallible_drop(_ptr: OxPtrMut) {
+const unsafe fn infallible_drop(_ptr: OxPtrMut) {
     // Infallible is zero-sized, nothing to drop
 }
 
@@ -39,17 +39,17 @@ unsafe fn infallible_debug(
     Some(f.write_str("Infallible"))
 }
 
-unsafe fn infallible_hash(_ox: OxPtrConst, _hasher: &mut HashProxy<'_>) -> Option<()> {
+const unsafe fn infallible_hash(_ox: OxPtrConst, _hasher: &mut HashProxy<'_>) -> Option<()> {
     // This can never be called since Infallible cannot be instantiated
     Some(())
 }
 
-unsafe fn infallible_partial_eq(_a: OxPtrConst, _b: OxPtrConst) -> Option<bool> {
+const unsafe fn infallible_partial_eq(_a: OxPtrConst, _b: OxPtrConst) -> Option<bool> {
     // This can never be called since Infallible cannot be instantiated
     Some(true)
 }
 
-unsafe fn infallible_partial_cmp(
+const unsafe fn infallible_partial_cmp(
     _a: OxPtrConst,
     _b: OxPtrConst,
 ) -> Option<Option<core::cmp::Ordering>> {
@@ -57,7 +57,7 @@ unsafe fn infallible_partial_cmp(
     Some(Some(core::cmp::Ordering::Equal))
 }
 
-unsafe fn infallible_cmp(_a: OxPtrConst, _b: OxPtrConst) -> Option<core::cmp::Ordering> {
+const unsafe fn infallible_cmp(_a: OxPtrConst, _b: OxPtrConst) -> Option<core::cmp::Ordering> {
     // This can never be called since Infallible cannot be instantiated
     Some(core::cmp::Ordering::Equal)
 }

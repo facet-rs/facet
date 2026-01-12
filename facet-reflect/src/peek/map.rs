@@ -71,7 +71,7 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
     ///
     /// Violating these requirements can lead to memory safety issues.
     #[inline]
-    pub unsafe fn new(value: Peek<'mem, 'facet>, def: MapDef) -> Self {
+    pub const unsafe fn new(value: Peek<'mem, 'facet>, def: MapDef) -> Self {
         Self { value, def }
     }
 
@@ -148,7 +148,7 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
 
     /// Def getter
     #[inline]
-    pub fn def(&self) -> MapDef {
+    pub const fn def(&self) -> MapDef {
         self.def
     }
 }

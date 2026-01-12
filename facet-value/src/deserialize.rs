@@ -86,7 +86,7 @@ impl core::fmt::Display for ValueError {
 
 impl ValueError {
     /// Create a new ValueError with empty paths
-    pub fn new(kind: ValueErrorKind) -> Self {
+    pub const fn new(kind: ValueErrorKind) -> Self {
         Self {
             kind,
             source_path: Vec::new(),
@@ -97,7 +97,7 @@ impl ValueError {
     }
 
     /// Set the target shape for diagnostics
-    pub fn with_shape(mut self, shape: &'static Shape) -> Self {
+    pub const fn with_shape(mut self, shape: &'static Shape) -> Self {
         self.target_shape = Some(shape);
         self
     }

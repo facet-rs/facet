@@ -559,7 +559,7 @@ impl Value {
     }
 
     /// Takes this value, replacing it with `Value::NULL`.
-    pub fn take(&mut self) -> Value {
+    pub const fn take(&mut self) -> Value {
         mem::replace(self, Value::NULL)
     }
 }

@@ -36,7 +36,7 @@ enum ContainerState {
 
 impl MsgPackSerializer {
     /// Create a new MsgPack serializer.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             out: Vec::new(),
             stack: Vec::new(),

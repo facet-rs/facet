@@ -63,7 +63,7 @@ impl PointerFlags {
         lock: false,
     };
 
-    pub fn from_bits_truncate(bits: u8) -> Self {
+    pub const fn from_bits_truncate(bits: u8) -> Self {
         Self {
             weak: (bits & (1 << 0)) != 0,
             atomic: (bits & (1 << 1)) != 0,

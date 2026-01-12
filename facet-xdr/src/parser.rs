@@ -78,7 +78,7 @@ pub struct XdrParser<'de> {
 
 impl<'de> XdrParser<'de> {
     /// Create a new XDR parser from input bytes.
-    pub fn new(input: &'de [u8]) -> Self {
+    pub const fn new(input: &'de [u8]) -> Self {
         Self {
             input,
             pos: 0,

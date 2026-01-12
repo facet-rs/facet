@@ -19,7 +19,7 @@ impl SerializeOptions {
     }
 
     /// Enable inline tables for nested structures.
-    pub fn inline_tables(mut self) -> Self {
+    pub const fn inline_tables(mut self) -> Self {
         self.inline_tables = true;
         self
     }
@@ -71,7 +71,7 @@ impl TomlSerializer {
     }
 
     /// Create a new TOML serializer with the given options.
-    pub fn with_options(options: SerializeOptions) -> Self {
+    pub const fn with_options(options: SerializeOptions) -> Self {
         Self {
             out: String::new(),
             stack: Vec::new(),

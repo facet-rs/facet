@@ -343,7 +343,7 @@ struct Element {
 }
 
 impl Element {
-    fn new(name: QName, attributes: Vec<(QName, String)>) -> Self {
+    const fn new(name: QName, attributes: Vec<(QName, String)>) -> Self {
         Self {
             name,
             attributes,

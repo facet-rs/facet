@@ -105,7 +105,7 @@ impl<'mem, 'facet> PeekList<'mem, 'facet> {
     ///
     /// Violating these requirements can lead to memory safety issues.
     #[inline]
-    pub unsafe fn new(value: Peek<'mem, 'facet>, def: ListDef) -> Self {
+    pub const unsafe fn new(value: Peek<'mem, 'facet>, def: ListDef) -> Self {
         Self { value, def }
     }
 
@@ -166,7 +166,7 @@ impl<'mem, 'facet> PeekList<'mem, 'facet> {
 
     /// Def getter
     #[inline]
-    pub fn def(&self) -> ListDef {
+    pub const fn def(&self) -> ListDef {
         self.def
     }
 }

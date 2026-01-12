@@ -16,7 +16,7 @@ pub struct RGB {
 
 impl RGB {
     /// Create a new RGB color
-    pub fn new(r: u8, g: u8, b: u8) -> Self {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
 
@@ -56,19 +56,19 @@ impl ColorGenerator {
     }
 
     /// Set the base hue (0-360)
-    pub fn with_base_hue(mut self, hue: f32) -> Self {
+    pub const fn with_base_hue(mut self, hue: f32) -> Self {
         self.base_hue = hue;
         self
     }
 
     /// Set the saturation (0.0-1.0)
-    pub fn with_saturation(mut self, saturation: f32) -> Self {
+    pub const fn with_saturation(mut self, saturation: f32) -> Self {
         self.saturation = saturation.clamp(0.0, 1.0);
         self
     }
 
     /// Set the lightness (0.0-1.0)
-    pub fn with_lightness(mut self, lightness: f32) -> Self {
+    pub const fn with_lightness(mut self, lightness: f32) -> Self {
         self.lightness = lightness.clamp(0.0, 1.0);
         self
     }

@@ -138,7 +138,7 @@ enum ScanState {
 
 impl Scanner {
     /// Create a new scanner starting at position 0
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             pos: 0,
             state: ScanState::Ready,
@@ -147,7 +147,7 @@ impl Scanner {
 
     /// Create a scanner starting at a specific position
     #[allow(dead_code)]
-    pub fn at_position(pos: usize) -> Self {
+    pub const fn at_position(pos: usize) -> Self {
         Self {
             pos,
             state: ScanState::Ready,
@@ -155,12 +155,12 @@ impl Scanner {
     }
 
     /// Current position in the buffer
-    pub fn pos(&self) -> usize {
+    pub const fn pos(&self) -> usize {
         self.pos
     }
 
     /// Set position (used after buffer operations)
-    pub fn set_pos(&mut self, pos: usize) {
+    pub const fn set_pos(&mut self, pos: usize) {
         self.pos = pos;
     }
 
@@ -649,7 +649,7 @@ impl Default for Scanner {
 
 /// Check if a 128-bit window contains a specific byte (SIMD-friendly)
 #[inline]
-fn contains_byte(window: u128, byte: u8) -> bool {
+const fn contains_byte(window: u128, byte: u8) -> bool {
     let pattern = u128::from_ne_bytes([byte; 16]);
     let xor = window ^ pattern;
     let has_zero = (xor.wrapping_sub(0x01010101010101010101010101010101))

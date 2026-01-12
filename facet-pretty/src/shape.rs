@@ -22,52 +22,52 @@ pub mod colors {
     use owo_colors::Style;
 
     /// Keywords: struct, enum, pub, etc. (purple)
-    pub fn keyword() -> Style {
+    pub const fn keyword() -> Style {
         Style::new().fg_rgb::<187, 154, 247>()
     }
 
     /// Type names and identifiers (light blue)
-    pub fn type_name() -> Style {
+    pub const fn type_name() -> Style {
         Style::new().fg_rgb::<192, 202, 245>()
     }
 
     /// Field names (cyan)
-    pub fn field_name() -> Style {
+    pub const fn field_name() -> Style {
         Style::new().fg_rgb::<125, 207, 255>()
     }
 
     /// Primitive types: u8, i32, bool, String, etc. (teal)
-    pub fn primitive() -> Style {
+    pub const fn primitive() -> Style {
         Style::new().fg_rgb::<115, 218, 202>()
     }
 
     /// Punctuation: {, }, (, ), :, etc. (gray-blue)
-    pub fn punctuation() -> Style {
+    pub const fn punctuation() -> Style {
         Style::new().fg_rgb::<154, 165, 206>()
     }
 
     /// Attribute markers: #[...] (light cyan)
-    pub fn attribute() -> Style {
+    pub const fn attribute() -> Style {
         Style::new().fg_rgb::<137, 221, 255>()
     }
 
     /// Attribute content: derive, facet, repr (blue)
-    pub fn attribute_content() -> Style {
+    pub const fn attribute_content() -> Style {
         Style::new().fg_rgb::<122, 162, 247>()
     }
 
     /// String literals (green)
-    pub fn string() -> Style {
+    pub const fn string() -> Style {
         Style::new().fg_rgb::<158, 206, 106>()
     }
 
     /// Container types: Vec, Option, HashMap (orange)
-    pub fn container() -> Style {
+    pub const fn container() -> Style {
         Style::new().fg_rgb::<255, 158, 100>()
     }
 
     /// Doc comments (muted gray)
-    pub fn comment() -> Style {
+    pub const fn comment() -> Style {
         Style::new().fg_rgb::<86, 95, 137>()
     }
 }
@@ -93,26 +93,26 @@ impl ShapeFormatConfig {
     }
 
     /// Enable doc comment display
-    pub fn with_doc_comments(mut self) -> Self {
+    pub const fn with_doc_comments(mut self) -> Self {
         self.show_doc_comments = true;
         self
     }
 
     /// Enable third-party attribute display
-    pub fn with_third_party_attrs(mut self) -> Self {
+    pub const fn with_third_party_attrs(mut self) -> Self {
         self.show_third_party_attrs = true;
         self
     }
 
     /// Enable all metadata (doc comments and third-party attrs)
-    pub fn with_all_metadata(mut self) -> Self {
+    pub const fn with_all_metadata(mut self) -> Self {
         self.show_doc_comments = true;
         self.show_third_party_attrs = true;
         self
     }
 
     /// Disable nested type expansion (only format the root type)
-    pub fn without_nested_types(mut self) -> Self {
+    pub const fn without_nested_types(mut self) -> Self {
         self.expand_nested_types = false;
         self
     }
@@ -740,7 +740,7 @@ struct SpanTrackingContext<'a> {
 }
 
 impl<'a> SpanTrackingContext<'a> {
-    fn new(config: &'a ShapeFormatConfig) -> Self {
+    const fn new(config: &'a ShapeFormatConfig) -> Self {
         Self {
             output: String::new(),
             spans: BTreeMap::new(),
@@ -750,7 +750,7 @@ impl<'a> SpanTrackingContext<'a> {
         }
     }
 
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         self.output.len()
     }
 

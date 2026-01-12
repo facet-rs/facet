@@ -25,25 +25,25 @@ impl core::fmt::Debug for PokeEnum<'_, '_> {
 impl<'mem, 'facet> PokeEnum<'mem, 'facet> {
     /// Returns the enum definition
     #[inline(always)]
-    pub fn ty(&self) -> EnumType {
+    pub const fn ty(&self) -> EnumType {
         self.ty
     }
 
     /// Returns the enum representation
     #[inline(always)]
-    pub fn enum_repr(&self) -> EnumRepr {
+    pub const fn enum_repr(&self) -> EnumRepr {
         self.ty.enum_repr
     }
 
     /// Returns the enum variants
     #[inline(always)]
-    pub fn variants(&self) -> &'static [facet_core::Variant] {
+    pub const fn variants(&self) -> &'static [facet_core::Variant] {
         self.ty.variants
     }
 
     /// Returns the number of variants in this enum
     #[inline(always)]
-    pub fn variant_count(&self) -> usize {
+    pub const fn variant_count(&self) -> usize {
         self.ty.variants.len()
     }
 
@@ -314,7 +314,7 @@ impl<'mem, 'facet> PokeEnum<'mem, 'facet> {
 
     /// Converts this back into the underlying `Poke`.
     #[inline]
-    pub fn into_inner(self) -> Poke<'mem, 'facet> {
+    pub const fn into_inner(self) -> Poke<'mem, 'facet> {
         self.value
     }
 

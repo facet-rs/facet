@@ -16,7 +16,7 @@ pub struct OwnedPeek<'mem> {
 
 impl<'mem, 'facet> OwnedPeek<'mem> {
     /// returns the shape of the peek
-    pub fn shape(&self) -> &'static Shape {
+    pub const fn shape(&self) -> &'static Shape {
         self.shape
     }
 

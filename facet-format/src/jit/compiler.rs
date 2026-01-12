@@ -35,7 +35,7 @@ pub struct CachedModule {
 
 impl CachedModule {
     /// Create a new cached module.
-    pub fn new(module: JITModule, nested_modules: Vec<JITModule>, fn_ptr: *const u8) -> Self {
+    pub const fn new(module: JITModule, nested_modules: Vec<JITModule>, fn_ptr: *const u8) -> Self {
         Self {
             module,
             nested_modules,
@@ -44,7 +44,7 @@ impl CachedModule {
     }
 
     /// Get the function pointer.
-    pub fn fn_ptr(&self) -> *const u8 {
+    pub const fn fn_ptr(&self) -> *const u8 {
         self.fn_ptr
     }
 }
@@ -83,12 +83,12 @@ impl<T, P> CompiledDeserializer<T, P> {
     }
 
     /// Get the raw function pointer.
-    pub fn as_ptr(&self) -> *const u8 {
+    pub const fn as_ptr(&self) -> *const u8 {
         self.fn_ptr
     }
 
     /// Get the vtable.
-    pub fn vtable(&self) -> &ParserVTable {
+    pub const fn vtable(&self) -> &ParserVTable {
         &self.vtable
     }
 }
@@ -401,7 +401,7 @@ impl ListElementKind {
     /// For numeric types, we accept I64, U64, and F64 since:
     /// - JSON doesn't distinguish signed/unsigned integers
     /// - JSON integers can be coerced to floats (e.g., `1` for f64)
-    fn is_numeric(&self) -> bool {
+    const fn is_numeric(&self) -> bool {
         matches!(
             self,
             ListElementKind::I64 | ListElementKind::U64 | ListElementKind::F64
@@ -410,7 +410,7 @@ impl ListElementKind {
 
     /// Returns the expected ScalarTag for non-numeric types.
     /// Returns None for numeric types (handled separately).
-    fn expected_non_numeric_tag(&self) -> Option<u8> {
+    const fn expected_non_numeric_tag(&self) -> Option<u8> {
         use helpers::ScalarTag;
         match self {
             ListElementKind::Bool => Some(ScalarTag::Bool as u8),
@@ -2328,7 +2328,7 @@ impl WriteKind {
     /// For numeric types, we accept I64, U64, and F64 since:
     /// - JSON doesn't distinguish signed/unsigned integers
     /// - JSON integers can be coerced to floats (e.g., `1` for f64)
-    fn is_numeric(&self) -> bool {
+    const fn is_numeric(&self) -> bool {
         matches!(
             self,
             WriteKind::I8
@@ -2346,7 +2346,7 @@ impl WriteKind {
 
     /// Returns the expected ScalarTag for non-numeric scalar types.
     /// Returns None for numeric types (handled separately) and non-scalar types.
-    fn expected_non_numeric_tag(&self) -> Option<u8> {
+    const fn expected_non_numeric_tag(&self) -> Option<u8> {
         use helpers::ScalarTag;
         match self {
             WriteKind::Bool => Some(ScalarTag::Bool as u8),

@@ -26,7 +26,7 @@ pub struct FieldItem {
 impl FieldItem {
     /// Create a new FieldItem from a Field, using the field's name
     #[inline]
-    pub fn new(field: Field) -> Self {
+    pub const fn new(field: Field) -> Self {
         Self {
             name: Cow::Borrowed(field.name),
             field: Some(field),
@@ -36,7 +36,7 @@ impl FieldItem {
 
     /// Create a flattened enum field item with a custom name (the variant name)
     #[inline]
-    pub fn flattened_enum(field: Field, variant_name: &'static str) -> Self {
+    pub const fn flattened_enum(field: Field, variant_name: &'static str) -> Self {
         Self {
             name: Cow::Borrowed(variant_name),
             field: Some(field),
@@ -46,7 +46,7 @@ impl FieldItem {
 
     /// Create a flattened map entry field item with a dynamic key
     #[inline]
-    pub fn flattened_map_entry(key: String) -> Self {
+    pub const fn flattened_map_entry(key: String) -> Self {
         Self {
             name: Cow::Owned(key),
             field: None,
@@ -88,7 +88,7 @@ enum FieldIterState<'mem, 'facet> {
 
 impl<'mem, 'facet> FieldIter<'mem, 'facet> {
     #[inline]
-    pub(crate) fn new_struct(struct_: PeekStruct<'mem, 'facet>) -> Self {
+    pub(crate) const fn new_struct(struct_: PeekStruct<'mem, 'facet>) -> Self {
         Self {
             range: 0..struct_.ty.fields.len(),
             state: FieldIterState::Struct(struct_),
@@ -114,7 +114,7 @@ impl<'mem, 'facet> FieldIter<'mem, 'facet> {
     }
 
     #[inline]
-    pub(crate) fn new_tuple(tuple: PeekTuple<'mem, 'facet>) -> Self {
+    pub(crate) const fn new_tuple(tuple: PeekTuple<'mem, 'facet>) -> Self {
         Self {
             range: 0..tuple.len(),
             state: FieldIterState::Tuple(tuple),

@@ -177,7 +177,7 @@ impl DiffTheme {
     };
 
     /// Get the color for a change kind.
-    pub fn color_for(&self, kind: crate::ChangeKind) -> Rgb {
+    pub const fn color_for(&self, kind: crate::ChangeKind) -> Rgb {
         match kind {
             crate::ChangeKind::Unchanged => self.unchanged,
             crate::ChangeKind::Deleted => self.deleted,

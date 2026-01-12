@@ -13,13 +13,13 @@ pub struct PeekOption<'mem, 'facet> {
 impl<'mem, 'facet> PeekOption<'mem, 'facet> {
     /// Returns the option definition
     #[inline(always)]
-    pub fn def(self) -> OptionDef {
+    pub const fn def(self) -> OptionDef {
         self.def
     }
 
     /// Returns the option vtable
     #[inline(always)]
-    pub fn vtable(self) -> &'static OptionVTable {
+    pub const fn vtable(self) -> &'static OptionVTable {
         self.def.vtable
     }
 

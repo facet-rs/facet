@@ -68,7 +68,7 @@ impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P> {
     }
 
     /// Borrow the inner parser mutably.
-    pub fn parser_mut(&mut self) -> &mut P {
+    pub const fn parser_mut(&mut self) -> &mut P {
         &mut self.parser
     }
 }
@@ -1540,7 +1540,7 @@ where
     }
 
     /// Get the item shape from a list-like field shape.
-    fn get_list_item_shape(shape: &facet_core::Shape) -> Option<&'static facet_core::Shape> {
+    const fn get_list_item_shape(shape: &facet_core::Shape) -> Option<&'static facet_core::Shape> {
         match &shape.def {
             Def::List(list_def) => Some(list_def.t()),
             _ => None,
@@ -5050,7 +5050,7 @@ impl<E: fmt::Debug + fmt::Display> std::error::Error for DeserializeError<E> {}
 impl<E> DeserializeError<E> {
     /// Create a Reflect error without span or path information.
     #[inline]
-    pub fn reflect(error: ReflectError) -> Self {
+    pub const fn reflect(error: ReflectError) -> Self {
         DeserializeError::Reflect {
             error,
             span: None,
@@ -5060,7 +5060,7 @@ impl<E> DeserializeError<E> {
 
     /// Create a Reflect error with span information.
     #[inline]
-    pub fn reflect_with_span(error: ReflectError, span: facet_reflect::Span) -> Self {
+    pub const fn reflect_with_span(error: ReflectError, span: facet_reflect::Span) -> Self {
         DeserializeError::Reflect {
             error,
             span: Some(span),
@@ -5070,7 +5070,7 @@ impl<E> DeserializeError<E> {
 
     /// Create a Reflect error with span and path information.
     #[inline]
-    pub fn reflect_with_context(
+    pub const fn reflect_with_context(
         error: ReflectError,
         span: Option<facet_reflect::Span>,
         path: Path,
@@ -5083,7 +5083,7 @@ impl<E> DeserializeError<E> {
     }
 
     /// Get the path where the error occurred, if available.
-    pub fn path(&self) -> Option<&Path> {
+    pub const fn path(&self) -> Option<&Path> {
         match self {
             DeserializeError::Reflect { path, .. } => path.as_ref(),
             DeserializeError::TypeMismatch { path, .. } => path.as_ref(),

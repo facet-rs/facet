@@ -33,7 +33,7 @@ pub struct FormattedValue {
 
 impl FormattedValue {
     /// Create a new formatted value with unknown type.
-    pub fn new(span: Span, width: usize) -> Self {
+    pub const fn new(span: Span, width: usize) -> Self {
         Self {
             span,
             width,
@@ -42,7 +42,7 @@ impl FormattedValue {
     }
 
     /// Create a new formatted value with a specific type.
-    pub fn with_type(span: Span, width: usize, value_type: ValueType) -> Self {
+    pub const fn with_type(span: Span, width: usize, value_type: ValueType) -> Self {
         Self {
             span,
             width,
@@ -133,7 +133,7 @@ impl Attr {
     }
 
     /// Check if this attribute is changed (needs -/+ lines).
-    pub fn is_changed(&self) -> bool {
+    pub const fn is_changed(&self) -> bool {
         matches!(self.status, AttrStatus::Changed { .. })
     }
 
@@ -192,7 +192,7 @@ impl ChangedGroup {
     }
 
     /// Check if this group is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.attr_indices.is_empty()
     }
 

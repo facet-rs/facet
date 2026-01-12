@@ -58,7 +58,7 @@ pub unsafe trait Facet<'facet>: 'facet {
 /// FieldBuilder::new("my_field", shape_of::<i32>, 0)
 /// ```
 #[inline]
-pub fn shape_of<'a, T: Facet<'a>>() -> &'static Shape {
+pub const fn shape_of<'a, T: Facet<'a>>() -> &'static Shape {
     T::SHAPE
 }
 

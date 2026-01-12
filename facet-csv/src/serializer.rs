@@ -32,7 +32,7 @@ pub struct CsvSerializer {
 
 impl CsvSerializer {
     /// Create a new CSV serializer.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             out: Vec::new(),
             in_struct: false,
