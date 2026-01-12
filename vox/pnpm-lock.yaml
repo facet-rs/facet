@@ -72,6 +72,9 @@ importers:
       '@types/node':
         specifier: ^22
         version: 22.19.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.3)
 
   typescript/subject:
     dependencies:

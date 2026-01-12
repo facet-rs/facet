@@ -7,13 +7,15 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check": "tsgo --noEmit"
+    "check": "tsgo --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@bearcove/roam-core": "workspace:*",
     "@bearcove/roam-tcp": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22"
+    "@types/node": "^22",
+    "vitest": "^2.1.0"
   }
 }
