@@ -1,0 +1,126 @@
+/* STYX Grammar
+ * W3C EBNF notation for use with https://www.bottlecaps.de/rr/
+ */
+
+Document ::= Entry*
+
+Entry    ::= DocComment? Atom+
+
+DocComment
+         ::= ( '///' NonNewline* Newline )+
+
+/* Atoms */
+
+Atom     ::= Scalar
+           | Sequence
+           | Object
+           | Unit
+           | Tag
+           | Attributes
+
+/* Scalars */
+
+Scalar   ::= BareScalar
+           | QuotedScalar
+           | RawScalar
+           | HeredocScalar
+
+BareScalar
+         ::= BareChar+
+
+BareChar ::= [^{}(),"=@#x20#x09#x0A#x0D]
+
+QuotedScalar
+         ::= '"' QuotedChar* '"'
+
+QuotedChar
+         ::= EscapeSeq
+           | [^"\]
+
+EscapeSeq
+         ::= '\' ( [\\"nrt0] | 'u' HexDigit HexDigit HexDigit HexDigit | 'u{' HexDigit HexDigit? HexDigit? HexDigit? HexDigit? HexDigit? '}' )
+
+HexDigit ::= [0-9A-Fa-f]
+
+/* Note: the number of '#' must match at start and end (context-sensitive, enforced by parser) */
+RawScalar
+         ::= 'r' '#'* '"' RawChar* '"' '#'*
+
+RawChar  ::= [^"]+
+
+/* Note: closing delimiter must match opening delimiter (context-sensitive, enforced by parser) */
+HeredocScalar
+         ::= '<<' Delimiter Newline HeredocLine* Delimiter
+
+Delimiter
+         ::= [A-Z] [A-Z0-9_]*
+
+HeredocLine
+         ::= NonNewline* Newline
+
+/* Unit */
+
+Unit     ::= '@'
+
+/* Tags */
+
+Tag      ::= '@' TagName TagPayload?
+
+TagName  ::= [A-Za-z_] [A-Za-z0-9_.-]*
+
+TagPayload
+         ::= Object
+           | Sequence
+           | QuotedScalar
+           | RawScalar
+           | HeredocScalar
+           | '@'
+
+/* Sequences */
+
+Sequence ::= '(' WS* ( Atom ( WS+ Atom )* )? WS* ')'
+
+/* Objects */
+
+Object   ::= '{' ObjectBody '}'
+
+ObjectBody
+         ::= NewlineSeparated
+           | CommaSeparated
+           | WS*
+
+NewlineSeparated
+         ::= WS* Entry ( Newline+ Entry )* WS*
+
+CommaSeparated
+         ::= WS* Entry ( ',' Entry )* WS*
+
+/* Attributes */
+
+Attributes
+         ::= Attribute+
+
+Attribute
+         ::= BareScalar '=' AttributeValue
+
+AttributeValue
+         ::= BareScalar
+           | QuotedScalar
+           | Sequence
+           | Object
+
+/* Comments */
+
+LineComment
+         ::= '//' NonNewline*
+
+/* Whitespace */
+
+WS       ::= [#x20#x09#x0A#x0D]
+           | LineComment
+
+Newline  ::= #x0A
+           | #x0D #x0A
+
+NonNewline
+         ::= [^#x0A#x0D]

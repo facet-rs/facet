@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="207" height="213">
+   <defs>
+      <style type="text/css">
+    @namespace "http://www.w3.org/2000/svg";
+    .line                 {fill: none; stroke: #332900; stroke-width: 1;}
+    .bold-line            {stroke: #141000; shape-rendering: crispEdges; stroke-width: 2;}
+    .thin-line            {stroke: #1F1800; shape-rendering: crispEdges}
+    .filled               {fill: #332900; stroke: none;}
+    text.terminal         {font-family: Verdana, Sans-serif;
+                            font-size: 12px;
+                            fill: #141000;
+                            font-weight: bold;
+                          }
+    text.nonterminal      {font-family: Verdana, Sans-serif;
+                            font-size: 12px;
+                            fill: #1A1400;
+                            font-weight: normal;
+                          }
+    text.regexp           {font-family: Verdana, Sans-serif;
+                            font-size: 12px;
+                            fill: #1F1800;
+                            font-weight: normal;
+                          }
+    rect, circle, polygon {fill: #332900; stroke: #332900;}
+    rect.terminal         {fill: #FFDB4D; stroke: #332900; stroke-width: 1;}
+    rect.nonterminal      {fill: #FFEC9E; stroke: #332900; stroke-width: 1;}
+    rect.text             {fill: none; stroke: none;}
+    polygon.regexp        {fill: #FFF4C7; stroke: #332900; stroke-width: 1;}
+  </style>
+   </defs>
+   <polygon points="9 17 1 13 1 21"/>
+   <polygon points="17 17 9 13 9 21"/>
+   <polygon points="51 19 58 3 118 3 125 19 118 35 58 35"/>
+   <polygon points="49 17 56 1 116 1 123 17 116 33 56 33" class="regexp"/>
+   <text class="regexp" x="64" y="21">[#x20]</text>
+   <polygon points="51 63 58 47 118 47 125 63 118 79 58 79"/>
+   <polygon points="49 61 56 45 116 45 123 61 116 77 56 77" class="regexp"/>
+   <text class="regexp" x="64" y="65">[#x09]</text>
+   <polygon points="51 107 58 91 118 91 125 107 118 123 58 123"/>
+   <polygon points="49 105 56 89 116 89 123 105 116 121 56 121" class="regexp"/>
+   <text class="regexp" x="64" y="109">[#x0A]</text>
+   <polygon points="51 151 58 135 118 135 125 151 118 167 58 167"/>
+   <polygon points="49 149 56 133 116 133 123 149 116 165 56 165" class="regexp"/>
+   <text class="regexp" x="64" y="153">[#x0D]</text>
+   <a xmlns:xlink="http://www.w3.org/1999/xlink"
+      xlink:href="#LineComment"
+      xlink:title="LineComment">
+      <rect x="51" y="179" width="108" height="32"/>
+      <rect x="49" y="177" width="108" height="32" class="nonterminal"/>
+      <text class="nonterminal" x="59" y="197">LineComment</text>
+   </a>
+   <path class="line"
+         d="m17 17 h2 m20 0 h10 m74 0 h10 m0 0 h34 m-148 0 h20 m128 0 h20 m-168 0 q10 0 10 10 m148 0 q0 -10 10 -10 m-158 10 v24 m148 0 v-24 m-148 24 q0 10 10 10 m128 0 q10 0 10 -10 m-138 10 h10 m74 0 h10 m0 0 h34 m-138 -10 v20 m148 0 v-20 m-148 20 v24 m148 0 v-24 m-148 24 q0 10 10 10 m128 0 q10 0 10 -10 m-138 10 h10 m74 0 h10 m0 0 h34 m-138 -10 v20 m148 0 v-20 m-148 20 v24 m148 0 v-24 m-148 24 q0 10 10 10 m128 0 q10 0 10 -10 m-138 10 h10 m74 0 h10 m0 0 h34 m-138 -10 v20 m148 0 v-20 m-148 20 v24 m148 0 v-24 m-148 24 q0 10 10 10 m128 0 q10 0 10 -10 m-138 10 h10 m108 0 h10 m23 -176 h-3"/>
+   <polygon points="197 17 205 13 205 21"/>
+   <polygon points="197 17 189 13 189 21"/>
+</svg>

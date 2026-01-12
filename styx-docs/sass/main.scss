@@ -421,6 +421,31 @@ hr {
   margin: 2rem 0;
 }
 
+// Railroad diagrams (from rr)
+// Hide alt text rendered as visible text (marq bug)
+article p:has(> img[src*="/grammar/"]) {
+  font-size: 0;
+  background: #fff;
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 1rem 0;
+  overflow-x: auto;
+  
+  img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+  
+  @media (prefers-color-scheme: dark) {
+    background: #1a1a1a;
+    
+    img {
+      filter: invert(1) hue-rotate(180deg);
+    }
+  }
+}
+
 // Footer
 .footer {
   border-top: 1px solid var(--color-border);
