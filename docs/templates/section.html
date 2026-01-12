@@ -4,12 +4,16 @@
 {% block title %}{{ section.title }} - {{ config.title }}{% endblock title %}
 
 {% block body %}
-{# Dynamically determine the root section from path #}
-{% set root_name = section.path | split(pat="/") | first %}
-{% set root_section_path = root_name ~ "/_index.md" %}
+{# Get the top-level section for sidebar (either from ancestors or current section) #}
+{% if section.ancestors | length > 0 %}
+    {# This is a nested section - use first ancestor as sidebar root #}
+    {% set root_section_path = section.ancestors[0].path %}
+{% else %}
+    {# This is a top-level section - use itself #}
+    {% set root_section_path = section.path %}
+{% endif %}
 {% set root_section = get_section(path=root_section_path) %}
-{# Show sidebar if this root section has pages or subsections #}
-{% set has_sidebar = root_section and (root_section.pages | length > 0 or root_section.subsections | length > 0) %}
+{% set has_sidebar = root_section.pages | length > 0 or root_section.subsections | length > 0 %}
 
 {% if has_sidebar %}
 <div class="docs-layout">

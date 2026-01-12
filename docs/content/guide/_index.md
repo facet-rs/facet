@@ -20,7 +20,7 @@ Learn how to use facet for serialization, deserialization, and rich diagnostics.
 - [Dynamic Values](@/guide/dynamic-values.md) — `Value`, `assert_same!`, `RawJson`
 - [Errors & diagnostics](@/guide/errors.md)
 - [Variance and Soundness](@/guide/variance.md) — lifetime safety in reflection
-- [Comparison with serde](@/guide/migration/_index.md)
+- [Comparison with serde](@/guide/serde/_index.md)
 - [FAQ](@/guide/faq.md) — common questions and quick answers
 
 ## Reference (quick links)

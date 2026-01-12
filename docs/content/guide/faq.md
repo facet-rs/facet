@@ -238,7 +238,7 @@ This lets you migrate incrementally or use serde for formats facet doesn't suppo
 
 ### Does facet support all serde attributes?
 
-Most common attributes have equivalents. See [Comparison with serde](@/guide/migration/_index.md) for a mapping.
+Most common attributes have equivalents. See [Comparison with serde](@/guide/serde/_index.md) for a mapping.
 
 Some serde features like `#[serde(borrow)]` don't have direct equivalents due to architectural differences.
 

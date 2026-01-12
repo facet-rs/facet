@@ -4,17 +4,19 @@
 {% block title %}{{ page.title }} - {{ config.title }}{% endblock title %}
 
 {% block body %}
-{# Determine root section dynamically from path #}
-{% set root = page.path | split(pat="/") | first %}
-{% set root_labels = { "guide": "Guide", "reference": "Reference", "extend": "Extend", "contribute": "Contribute" } %}
-{% set root_section_path = root ~ "/_index.md" %}
-{% set has_sidebar = root in root_labels %}
+{# Get the top-level section from ancestors #}
+{% if page.ancestors | length > 0 %}
+    {# ancestors[0] is the top-level section (root is excluded) #}
+    {% set root_section_path = page.ancestors[0].path %}
+    {% set root_section = get_section(path=root_section_path) %}
+    {% set has_sidebar = root_section.pages | length > 0 or root_section.subsections | length > 0 %}
+{% else %}
+    {% set has_sidebar = false %}
+{% endif %}
 
 {% if has_sidebar %}
 <div class="docs-layout">
-    {% if has_sidebar %}
-        {{ macros::sidebar(root_section_path=root_section_path, current_path=page.path) }}
-    {% endif %}
+    {{ macros::sidebar(root_section_path=root_section_path, current_path=page.path) }}
 
     <main class="docs-content">
         <article>
