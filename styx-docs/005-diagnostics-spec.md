@@ -211,29 +211,6 @@ NN | source line
 >   |   ^^^^ duplicate key
 > ```
 
-### Cannot reopen object
-
-> r[diagnostic.parser.no-reopen]
-> When a dotted path attempts to add a key to an already-closed singleton
-> object, the message SHOULD show both locations and suggest block form.
-> 
-> ```
-> error: cannot add key 'port' to 'server': object was already closed
->   --> config.styx:2:1
->   |
-> 1 | server.host localhost
->   | ------ 'server' first defined here as a singleton object
-> 2 | server.port 8080
->   | ^^^^^^^^^^^ cannot reopen 'server'
->   |
->   = help: use block form to define multiple keys:
->   |
->   | server {
->   |   host localhost
->   |   port 8080
->   | }
-> ```
-
 ### Mixed separators
 
 > r[diagnostic.parser.mixed-separators]
@@ -394,21 +371,21 @@ NN | source line
 
 ### Enum not a single-key object
 
-> r[diagnostic.deser.enum-not-singleton]
-> When deserializing an enum and the value is not a single-key object, the
+> r[diagnostic.deser.enum-invalid]
+> When deserializing an enum and the value is not a valid tagged value, the
 > message SHOULD explain enum representation.
 > 
 > ```
-> error: expected enum variant (single-key object)
+> error: expected enum variant (tagged value)
 >   --> config.styx:2:10
 >   |
-> 2 |   status { ok, err }
->   |          ^^^^^^^^^^^ object has 2 keys, expected 1
+> 2 |   status "ok"
+>   |          ^^^^ expected tag like @ok, found scalar
 >   |
->   = help: enum values are represented as single-key objects:
+>   = help: enum values use tag syntax:
 >   |
->   | status.ok              // unit variant
->   | status.err { msg "x" } // variant with payload
+>   | status @ok              // unit variant
+>   | status @err{msg "x"}    // variant with payload
 > ```
 
 ### Unknown enum variant
@@ -421,19 +398,10 @@ NN | source line
 > error: unknown variant 'unknown'
 >   --> config.styx:2:10
 >   |
-> 2 |   status.unknown
->   |          ^^^^^^^ not a valid variant
+> 2 |   status @unknown
+>   |          ^^^^^^^^ not a valid variant
 >   |
 >   = help: valid variants are: ok, pending, err
-> ```
->
-> The same error would be reported for the equivalent block form, as the
-> underlying issue is an object with an unexpected key for the target enum type:
->
-> ```styx
-> status {
->   unknown @
-> }
 > ```
 
 ### Missing required field

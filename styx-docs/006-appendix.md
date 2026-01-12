@@ -64,7 +64,7 @@ assert_eq!(config.server.timeout, Duration::from_secs(30));
 
 ### Enum deserialization
 
-Enums use externally-tagged representation. The dotted path syntax provides ergonomic shorthand:
+Enums use tag syntax. The tag names the variant; the payload follows.
 
 ```rust
 #[derive(Facet)]
@@ -79,14 +79,12 @@ struct Response {
     status: Status,
 }
 
-// Unit variant (all equivalent)
-let r: Response = styx::from_str("status.ok")?;
-let r: Response = styx::from_str("status.ok @")?;
-let r: Response = styx::from_str("status { ok @ }")?;
+// Unit variant
+let r: Response = styx::from_str("status @ok")?;
 
 // Variant with payload
 let r: Response = styx::from_str(r#"
-    status.err {
+    status @err{
         message "connection timeout"
         code 504
     }
@@ -94,7 +92,7 @@ let r: Response = styx::from_str(r#"
 
 // Using attribute syntax for payload
 let r: Response = styx::from_str(r#"
-    status.err message="timeout" code=504
+    status @err{message="timeout" code=504}
 "#)?;
 ```
 
@@ -108,7 +106,7 @@ STYX enforces the following invariants:
 - **No semantic interpretation during parsing**: The parser produces opaque scalars; meaning is assigned during deserialization.
 - **All structure is explicit**: Braces and parentheses define nesting, not whitespace or conventions.
 - **Commas in objects only**: Commas are optional separators in objects (interchangeable with newlines). Sequences use whitespace only.
-- **Explicit unit value**: `@` is the unit value, distinct from `()` (empty sequence). Keys without values implicitly produce `@`. This enables concise unit variants (`status.ok`) and flag-like entries (`enabled`).
+- **Explicit unit value**: `@` is the unit value, distinct from `()` (empty sequence). Keys without values implicitly produce `@`. This enables concise enum variants (`@ok`) and flag-like entries (`enabled`).
 
 ## Type-to-schema mapping (non-normative)
 
@@ -690,24 +688,6 @@ dependencies {
   }
 }
 ```
-
-### Dotted keys
-
-Both support dotted keys, but with different scoping rules:
-
-```toml
-# TOML: dotted keys can appear anywhere
-server.host = "localhost"
-server.port = 8080
-```
-
-```styx
-// STYX: dotted keys expand to singleton objects
-server.host localhost
-server.port 8080   // ERROR: cannot reopen server
-```
-
-STYX's restriction prevents accidental key reordering bugs and makes structure explicit.
 
 ### Arrays of tables
 

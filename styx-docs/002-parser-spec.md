@@ -42,6 +42,20 @@ A STYX document is an object. Top-level entries do not require braces.
 > url https://example.com  // the :// is not a comment
 > ```
 
+> r[comment.doc]
+> Doc comments start with `///` and attach to the following entry.
+> Consecutive doc comment lines are concatenated.
+> A doc comment not followed by an entry (blank line or EOF) is an error.
+> 
+> ```styx
+> /// The server configuration.
+> /// Supports TLS and HTTP/2.
+> server {
+>   /// Hostname to bind to.
+>   host @string
+> }
+> ```
+
 ## Value types
 
 The parser produces four value types:
@@ -58,7 +72,7 @@ Any value may be tagged: `@tag{ ... }`, `@tag(...)`, `@tag"..."`, `@tag@`.
 A tag is an identifier prefixed with `@` that labels a value.
 
 > r[tag.syntax]
-> A tag MUST match the pattern `@[A-Za-z_][A-Za-z0-9_-]*`.
+> A tag MUST match the pattern `@[A-Za-z_][A-Za-z0-9_.-]*`.
 
 > r[tag.payload]
 > A tag MUST be immediately followed (no whitespace) by its payload:
@@ -97,9 +111,11 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > r[scalar.quoted.escapes]
 > Quoted scalars use `"..."` and support escape sequences:
 > `\\`, `\"`, `\n`, `\r`, `\t`, `\0`, `\uXXXX`, `\u{X...}`.
+> Quoting does not imply string type — the deserializer interprets based on target type.
 > 
 > ```styx
 > greeting "hello\nworld"
+> port "8080"  // can deserialize as integer
 > ```
 
 ### Raw scalars
@@ -211,21 +227,3 @@ The following shorthand forms are equivalent to their canonical forms.
 
 > r[shorthand.attr.termination]
 > Attributes continue until a non-`key=...` token. Newlines end the attribute sequence.
-
-### Implicit root
-
-> r[shorthand.root]
-> Top-level entries don't require braces — the document is an implicit object.
-> 
-> ```compare
-> /// styx
-> // Shorthand
-> name "my-app"
-> version 1.0
-> /// styx
-> // Canonical
-> {
->   name "my-app"
->   version 1.0
-> }
-> ```

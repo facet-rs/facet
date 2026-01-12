@@ -6,7 +6,10 @@ slug = "deserializer-spec"
 # Part 3: Deserializer
 
 The deserializer converts document trees into typed application values. It interprets
-scalars based on target types and validates structural constraints like enum representations.
+scalars based on target types (e.g., Rust structs) and validates structural constraints.
+
+The deserializer does not require a schema — it works directly with target types.
+Schemas (Part 2) are a separate, optional validation layer.
 
 For performance, implementations may deserialize directly from source text without
 materializing an intermediate document tree. The behavior must be indistinguishable
@@ -35,14 +38,14 @@ See Part 2 for the grammars of integer types, float types, `@duration`, etc.
 
 ## Object deserialization
 
-Objects in the document are validated against object schemas.
+Objects are deserialized based on the target type (e.g., a Rust struct).
 
 > r[deser.object.fields]
-> Each key in the document must match a field defined in the schema. Required
-> fields (no `?` suffix) MUST be present; optional fields MAY be absent.
+> Each key in the document must match a field defined in the target type.
+> Required fields MUST be present; optional fields MAY be absent.
 
 > r[deser.object.unknown]
-> Keys not defined in the schema are errors by default. Implementations MAY
+> Keys not defined in the target type are errors by default. Implementations MAY
 > provide a lenient mode that ignores unknown keys.
 
 ## Optional fields
@@ -50,26 +53,26 @@ Objects in the document are validated against object schemas.
 Optional fields interact with absence and unit.
 
 > r[deser.optional.absent]
-> An optional field (`key? @type`) that is absent from the document is valid.
-> The application receives no value for that field.
+> An optional field (e.g., `Option<T>` in Rust) that is absent from the document is valid.
+> The application receives `None` or equivalent for that field.
 
 > r[deser.optional.unit]
 > An optional field explicitly set to unit (`key @`) is distinct from absence.
 > Both are valid for optional fields, but applications may distinguish them.
 > 
 > ```styx
-> // Schema: timeout? @duration
-> { }                    // absent — no timeout specified
+> // Target type has: timeout: Option<Duration>
+> { }                    // absent — None
 > { timeout @ }          // present but explicitly empty
 > { timeout 30s }        // present with value
 > ```
 
 ## Sequence deserialization
 
-Sequences are validated element-by-element.
+Sequences are deserialized element-by-element.
 
 > r[deser.sequence]
-> A sequence schema `(@type)` validates that every element matches `@type`.
+> Each element is deserialized according to the target element type (e.g., `Vec<T>` → each element as `T`).
 > Empty sequences are valid.
 
 ## Map deserialization
@@ -77,7 +80,7 @@ Sequences are validated element-by-element.
 Maps are objects with uniform value types.
 
 > r[deser.map]
-> A map schema `@map(@type)` validates that all values match `@type`.
+> Each value is deserialized according to the target value type (e.g., `HashMap<String, T>` → each value as `T`).
 > Keys are always strings. Empty maps are valid.
 
 ## Flatten
@@ -86,141 +89,92 @@ Flattening merges fields from a referenced type into a single, flat key-space in
 while maintaining a nested structure in the deserialized application type.
 
 > r[deser.flatten]
-> A flattened field `key @flatten(@Type)` instructs the deserializer to collect
-> keys from the document that are defined in `@Type` and use them to construct
-> an instance of `Type`. This instance is then assigned to the field `key` in the
-> parent object. The document itself does not contain a `key` object; the fields
-> are expected to be at the same level as the parent's other fields.
+> A flattened field (e.g., `#[facet(flatten)]` in Rust) instructs the deserializer to collect
+> keys from the document that belong to the nested type and use them to construct
+> an instance of that type. The document itself is flat; the fields appear at the
+> same level as the parent's other fields.
 
 > r[deser.flatten.routing]
 > The deserializer routes keys from the flat document to the appropriate nested structure
-> based on the schema. When multiple `@flatten` directives are present, keys are
+> based on the target type. When multiple flattened fields are present, keys are
 > matched to the type where they are defined.
 
 **Example (non-normative)**
 
-This example shows how a document with a flat structure is deserialized into a nested
-`Admin` object containing a `User` object.
+This example shows how a flat document is deserialized into a nested structure.
 
-1.  **Schema Definition**:
-    The `Admin` schema flattens the `User` schema into its `user` field.
+1.  **Target types** (Rust):
 
-    ```styx
-    // schema.styx
-    User {
-      name @string
-      email @string
+    ```rust
+    #[derive(Facet)]
+    struct User {
+        name: String,
+        email: String,
     }
 
-    Admin {
-      // Fields from User (name, email) are expected to be flat
-      // in the document, but will be collected into a User
-      // object assigned to this 'user' field.
-      user @flatten(@User)
-      
-      // Regular field belonging to Admin
-      permissions (@string)
+    #[derive(Facet)]
+    struct Admin {
+        #[facet(flatten)]
+        user: User,
+        permissions: Vec<String>,
     }
     ```
 
-2.  **STYX Document**:
-    The document is flat. There is no `user` object. The keys `name` and `email`
-    are peers with `permissions`.
+2.  **STYX Document** (flat):
 
     ```styx
-    // config.styx
     name "Alice"
     email "alice@example.com"
     permissions (read write admin)
     ```
 
-3.  **Deserialization Logic**:
+3.  **Deserialization**:
     - The deserializer targets the `Admin` type.
-    - It sees the `user @flatten(@User)` field in the schema.
-    - It consumes `name` and `email` from the document, recognizes them as fields of `User`, and uses them to construct a `User` object.
-    - It consumes `permissions` and assigns it to the `permissions` field of `Admin`.
-    - The constructed `User` object is assigned to the `user` field of the `Admin` object.
+    - It sees `user` is flattened, so it collects `name` and `email` to construct a `User`.
+    - It deserializes `permissions` into the `Vec<String>`.
+    - The `User` is assigned to `admin.user`.
 
-4.  **Resulting Application Structure (represented as JSON)**:
-    The final in-memory object has a nested structure, even though the source document was flat.
+4.  **Result** (as JSON):
 
     ```json
     {
-      "user": {
-        "name": "Alice",
-        "email": "alice@example.com"
-      },
+      "user": { "name": "Alice", "email": "alice@example.com" },
       "permissions": ["read", "write", "admin"]
     }
     ```
 
 ## Enum deserialization
 
-Enums are represented as objects with exactly one key (the variant tag) whose value
-is the variant payload.
+Enums use tag syntax. The tag names the variant; the payload is the variant's data.
 
 > r[enum.representation]
-> When deserializing into an enum type, the value MUST be an object with exactly one key.
+> An enum value is a tag whose identifier matches a variant name.
 > 
 > ```compare
 > /// json
 > {"ok": null}
 > /// styx
-> { ok @ }
+> @ok
 > ```
 > 
 > ```compare
 > /// json
 > {"err": {"message": "nope", "retry_in": "5s"}}
 > /// styx
-> { err { message "nope", retry_in 5s } }
+> @err{message "nope", retry_in 5s}
 > ```
 
-The parser expands dotted paths into nested objects, which provides a convenient
-syntax for enums:
+> r[enum.unit-variant]
+> Unit variants use implicit unit: `@ok` means `@ok@`.
 
-```compare
-/// styx
-status.ok
-/// styx
-status { ok @ }
-```
-
-```compare
-/// styx
-status.err { message "nope" }
-/// styx
-status { err { message "nope" } }
-```
-
-Dotted paths expand to nested objects (see `r[object.key.dotted.expansion]`).
-Keys without values get implicit unit (see `r[object.entry.implicit-unit]`).
-
-> r[enum.singleton]
-> The deserializer MUST reject enum values that are not single-key objects.
-> The parser cannot enforce this — it produces the same object structure regardless
-> of target type.
-
-> r[enum.unit]
-> For unit variants, the payload is the unit value `@`.
+> r[enum.payload]
+> Variant payloads may be unit (`@`), object (`{}`), sequence (`()`), or quoted scalar.
 > 
 > ```styx
-> // All equivalent for unit variants:
-> status.ok        // implicit @
-> status.ok @      // explicit @
+> @ok                              // unit variant
+> @err{message "timeout"}          // struct variant
+> @values(1 2 3)                   // tuple variant
+> @message"hello"                  // newtype variant (quoted scalar)
 > ```
 
-A variant payload may be unit (`@`), a scalar, an object, or a sequence:
-
-```styx
-result.ok
-```
-
-```styx
-result.err message="timeout" retry_in=5s
-```
-
-The deserializer validates:
-- The value is a single-key object
-- The key matches a valid variant name
-- The payload matches the expected variant shape
+The deserializer validates that the tag matches a defined variant and the payload matches the expected shape.
