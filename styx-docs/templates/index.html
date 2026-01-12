@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title | default(value=config.title) }}{% endblock title %}
+
+{% block content %}
+<main class="home">
+    {{ section.content | safe }}
+</main>
+{% endblock content %}

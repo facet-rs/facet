@@ -1,9 +1,9 @@
----
++++
+title = "Appendix"
 weight = 6
 slug = "appendix"
----
-
-# Appendix
+insert_anchor_links = "heading"
++++
 
 ## Usage patterns (non-normative)
 
@@ -608,7 +608,7 @@ KDL's `null` is a value; STYX's `@` represents structural absence.
 package {
     name "my-app"
     version "1.0.0"
-    
+
     dependencies {
         serde "1.0" features=["derive"]
         tokio "1.0" features=["full"] optional=true
@@ -620,7 +620,7 @@ package {
 package {
   name my-app
   version 1.0.0
-  
+
   dependencies {
     serde {
       version 1.0

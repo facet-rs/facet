@@ -1,9 +1,9 @@
----
++++
+title = "Schema"
 weight = 3
-slug = "schema-spec"
----
-
-# Schemas
+slug = "schema"
+insert_anchor_links = "heading"
++++
 
 Schemas define the expected structure of STYX documents for validation purposes.
 They are optional — deserialization works with target types directly (e.g., Rust structs).
@@ -33,7 +33,7 @@ The `@union(@u64 @string)` is:
 
 This uniformity means schemas require no special syntax — just STYX with semantic interpretation of tags as types.
 
-In schema definitions, the unit value `@` (not a tag) is used as a wildcard meaning “any type reference” —
+In schema definitions, the unit value `@` (not a tag) is used as a wildcard meaning "any type reference" —
 that is, any tagged unit value like `@string` or `@MyType`.
 
 ## Schema file structure

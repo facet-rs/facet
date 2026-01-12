@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}{{ section.title }} - {{ config.title }}{% endblock title %}
+
+{% block body %}
+{% if section.ancestors | length > 0 %}
+    {% set root_section_path = section.ancestors[0].path %}
+{% else %}
+    {% set root_section_path = section.path %}
+{% endif %}
+{% set root_section = get_section(path=root_section_path) %}
+{% set has_sidebar = root_section.pages | length > 0 or root_section.subsections | length > 0 %}
+
+{% if has_sidebar %}
+<div class="docs-layout">
+    {{ macros::sidebar(root_section_path=root_section_path, current_path=section.path) }}
+
+    <main class="docs-main">
+        <article>
+            <h1>{{ section.title }}</h1>
+            {{ section.content | safe }}
+        </article>
+
+        {% if section.toc and section.toc | length > 0 %}
+        <aside class="toc">
+            <nav>
+                <h2>On this page</h2>
+                <ul>
+                {% for h1 in section.toc %}
+                    <li>
+                        <a href="{{ h1.permalink }}">{{ h1.title }}</a>
+                        {% if h1.children %}
+                        <ul>
+                            {% for h2 in h1.children %}
+                            <li><a href="{{ h2.permalink }}">{{ h2.title }}</a></li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+                </ul>
+            </nav>
+        </aside>
+        {% endif %}
+    </main>
+</div>
+{% else %}
+<div class="container">
+    <main class="content">
+        <h1>{{ section.title }}</h1>
+        {{ section.content | safe }}
+    </main>
+</div>
+{% endif %}
+{% endblock body %}

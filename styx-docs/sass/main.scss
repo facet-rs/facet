@@ -1,0 +1,483 @@
+// STYX Documentation Styles
+// A clean, minimal design for specification documentation
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+:root {
+  --font-body: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, monospace;
+  
+  --color-bg: #fff;
+  --color-text: #1a1a1a;
+  --color-text-muted: #666;
+  --color-border: #e0e0e0;
+  --color-code-bg: #f6f6f6;
+  --color-link: #0066cc;
+  --color-link-hover: #0052a3;
+  --color-accent: #0066cc;
+  
+  --content-max: 900px;
+  --page-max: 1200px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #111;
+    --color-text: #e0e0e0;
+    --color-text-muted: #999;
+    --color-border: #333;
+    --color-code-bg: #1a1a1a;
+    --color-link: #6cb6ff;
+    --color-link-hover: #8fc9ff;
+    --color-accent: #6cb6ff;
+  }
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.6;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+// Navigation
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 1rem 2rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.nav-brand {
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--color-text);
+  text-decoration: none;
+  letter-spacing: -0.02em;
+}
+
+.nav-links {
+  display: flex;
+  gap: 1.5rem;
+  
+  a {
+    color: var(--color-text-muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+    
+    &:hover, &.active {
+      color: var(--color-text);
+    }
+  }
+}
+
+.nav-github {
+  margin-left: auto;
+}
+
+// Container
+.container {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 2rem;
+  flex: 1;
+}
+
+// Home page
+.home {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 3rem 2rem;
+}
+
+// Docs layout with sidebar
+.docs-layout {
+  display: flex;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  min-height: calc(100vh - 120px);
+}
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  padding: 2rem 1rem;
+  border-right: 1px solid var(--color-border);
+  
+  .sidebar-header {
+    font-weight: 600;
+    margin-bottom: 1rem;
+    
+    a {
+      color: var(--color-text);
+      text-decoration: none;
+    }
+  }
+  
+  ul {
+    list-style: none;
+    padding: 0;
+    
+    ul {
+      padding-left: 1rem;
+      margin-top: 0.25rem;
+    }
+  }
+  
+  li {
+    margin-bottom: 0.25rem;
+  }
+  
+  a {
+    color: var(--color-text-muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+    display: block;
+    padding: 0.25rem 0;
+    
+    &:hover {
+      color: var(--color-text);
+    }
+    
+    &.active {
+      color: var(--color-accent);
+      font-weight: 500;
+    }
+  }
+}
+
+.docs-main {
+  flex: 1;
+  display: flex;
+  gap: 2rem;
+  padding: 2rem;
+  min-width: 0;
+  
+  article {
+    flex: 1;
+    max-width: var(--content-max);
+    min-width: 0;
+  }
+}
+
+// Table of contents
+.toc {
+  width: 180px;
+  flex-shrink: 0;
+  
+  @media (max-width: 1000px) {
+    display: none;
+  }
+  
+  nav {
+    position: sticky;
+    top: 2rem;
+  }
+  
+  h2 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+  }
+  
+  ul {
+    list-style: none;
+    padding: 0;
+    
+    ul {
+      padding-left: 0.75rem;
+    }
+  }
+  
+  li {
+    margin-bottom: 0.25rem;
+  }
+  
+  a {
+    color: var(--color-text-muted);
+    text-decoration: none;
+    font-size: 0.8rem;
+    
+    &:hover {
+      color: var(--color-text);
+    }
+  }
+}
+
+// Typography
+h1, h2, h3, h4, h5, h6 {
+  line-height: 1.3;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  scroll-margin-top: 2rem;
+  
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+}
+
+h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+}
+
+h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+h4 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+p {
+  margin-bottom: 1rem;
+}
+
+a {
+  color: var(--color-link);
+  
+  &:hover {
+    color: var(--color-link-hover);
+  }
+}
+
+// Lists
+ul, ol {
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+
+li {
+  margin-bottom: 0.25rem;
+  
+  > ul, > ol {
+    margin-top: 0.25rem;
+    margin-bottom: 0.25rem;
+  }
+}
+
+// Code
+code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--color-code-bg);
+  padding: 0.1em 0.25em;
+  border-radius: 3px;
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  background: var(--color-code-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+  
+  code {
+    background: none;
+    padding: 0;
+    font-size: inherit;
+  }
+}
+
+// Requirement blocks (spec rules)
+.req {
+  position: relative;
+  margin: 1.5rem 0;
+  padding: 1.25rem 1rem 1rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  scroll-margin-top: 5rem;
+  
+  .req-link {
+    position: absolute;
+    top: -0.6em;
+    left: 1rem;
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--color-text);
+    background: var(--color-bg);
+    padding: 0.15em 0.5em;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    text-decoration: none;
+    
+    &:hover {
+      color: var(--color-link);
+      border-color: var(--color-link);
+    }
+  }
+  
+  > p:first-of-type {
+    margin-top: 0;
+  }
+  
+  > *:last-child {
+    margin-bottom: 0;
+  }
+  
+  ul, ol {
+    margin-bottom: 0.5rem;
+  }
+}
+
+// Compare blocks (side-by-side code comparison)
+.compare-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  
+  @media (max-width: 800px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.compare-section {
+  min-width: 0;
+  
+  .compare-header {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+    margin-bottom: 0.25rem;
+  }
+  
+  pre {
+    margin-bottom: 0;
+  }
+}
+
+// Blockquotes
+blockquote {
+  border-left: 3px solid var(--color-accent);
+  margin: 1rem 0;
+  padding: 0.5rem 1rem;
+  color: var(--color-text-muted);
+  
+  p:last-child {
+    margin-bottom: 0;
+  }
+}
+
+// Tables
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+th, td {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  text-align: left;
+}
+
+th {
+  background: var(--color-code-bg);
+  font-weight: 600;
+}
+
+// Horizontal rule
+hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 2rem 0;
+}
+
+// Footer
+.footer {
+  border-top: 1px solid var(--color-border);
+  padding: 1.5rem 2rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  
+  p {
+    margin: 0;
+  }
+}
+
+// Responsive
+@media (max-width: 768px) {
+  .nav {
+    padding: 1rem;
+  }
+  
+  .docs-layout {
+    flex-direction: column;
+  }
+  
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+    padding: 1rem;
+  }
+  
+  .docs-main {
+    padding: 1rem;
+  }
+  
+  .home {
+    padding: 2rem 1rem;
+  }
+}
+
+// Syntax highlighting
+pre code {
+  .z-keyword { color: #d73a49; }
+  .z-string { color: #032f62; }
+  .z-comment { color: #6a737d; font-style: italic; }
+  .z-constant { color: #005cc5; }
+  .z-entity { color: #6f42c1; }
+  .z-variable { color: #24292e; }
+  .z-punctuation { color: #24292e; }
+}
+
+@media (prefers-color-scheme: dark) {
+  pre code {
+    .z-keyword { color: #ff7b72; }
+    .z-string { color: #a5d6ff; }
+    .z-comment { color: #8b949e; font-style: italic; }
+    .z-constant { color: #79c0ff; }
+    .z-entity { color: #d2a8ff; }
+    .z-variable { color: #c9d1d9; }
+    .z-punctuation { color: #c9d1d9; }
+  }
+}

@@ -1,9 +1,9 @@
----
-weight = 35
++++
+title = "Schema Examples"
+weight = 1
 slug = "schema-examples"
----
-
-# Schema examples
+insert_anchor_links = "heading"
++++
 
 This document shows real-world schema examples with side-by-side YAML and STYX representations.
 

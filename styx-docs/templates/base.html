@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}{{ config.title }}{% endblock title %}</title>
+    <meta name="description" content="STYX - A structured document format for humans">
+    <link rel="stylesheet" href="/main.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    {% block head %}{% endblock head %}
+</head>
+<body>
+    <nav class="nav">
+        <a href="/" class="nav-brand">STYX</a>
+        <div class="nav-links">
+            <a href="/spec" {% if current_path is starting_with("/spec") %}class="active"{% endif %}>Spec</a>
+            <a href="/examples" {% if current_path is starting_with("/examples") %}class="active"{% endif %}>Examples</a>
+            <a href="https://github.com/bearcove/styx" class="nav-github">GitHub</a>
+        </div>
+    </nav>
+
+    {% block body %}
+    <div class="container">
+        {% block content %}{% endblock content %}
+    </div>
+    {% endblock body %}
+
+    <footer class="footer">
+        <p>STYX is open source software.</p>
+    </footer>
+</body>
+</html>

@@ -1,9 +1,9 @@
----
++++
+title = "Parser"
 weight = 2
-slug = "parser-spec"
----
-
-# Parser
+slug = "parser"
+insert_anchor_links = "heading"
++++
 
 The parser converts STYX source text into a document tree.
 
@@ -15,7 +15,7 @@ A STYX document is an object. Top-level entries do not require braces.
 > The parser MUST interpret top-level key-value pairs as entries of an implicit root object.
 > Root entries follow the same separator rules as block objects: newlines or commas (see `r[object.separators]`).
 > If the document starts with `{`, it MUST be parsed as a single explicit block object.
-> 
+>
 > ```compare
 > /// styx
 > // Implicit root
@@ -36,7 +36,7 @@ A STYX document is an object. Top-level entries do not require braces.
 > r[comment.line]
 > Line comments start with `//` and extend to the end of the line.
 > Comments MUST either start at the beginning of the file or be preceded by whitespace.
-> 
+>
 > ```styx
 > // comment at start-of-file
 > host localhost  // comment
@@ -47,7 +47,7 @@ A STYX document is an object. Top-level entries do not require braces.
 > Doc comments start with `///` and attach to the following entry.
 > Consecutive doc comment lines are concatenated.
 > A doc comment not followed by an entry (blank line or EOF) is an error.
-> 
+>
 > ```styx
 > /// The server configuration.
 > /// Supports TLS and HTTP/2.
@@ -79,7 +79,7 @@ A tag is an identifier prefixed with `@` that labels a value.
 
 > r[tag.payload]
 > A tag MAY be immediately followed (no whitespace) by an explicit payload:
-> 
+>
 > | Follows `@tag` | Result |
 > |-----------------------|--------|
 > | `{...}` | tagged object |
@@ -87,7 +87,7 @@ A tag is an identifier prefixed with `@` that labels a value.
 > | `"..."`, `r#"..."#`, or `<<HEREDOC` | tagged scalar |
 > | `@` | tagged unit (explicit) |
 > | *(nothing)* | tagged unit (implicit) |
-> 
+>
 > ```styx
 > result @err{message "x"}   // tagged object
 > color @rgb(255 128 0)      // tagged sequence
@@ -95,7 +95,7 @@ A tag is an identifier prefixed with `@` that labels a value.
 > status @ok@                // tagged unit (explicit)
 > status @ok                 // tagged unit (implicit)
 > ```
-> 
+>
 > Note: bare scalars cannot be tagged — there's no delimiter to separate tag from value.
 
 ## Scalars
@@ -110,7 +110,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 >
 > r[scalar.bare.termination]
 > A bare scalar is terminated by any character not allowed in `r[scalar.bare.chars]`, or end of input.
-> 
+>
 > ```styx
 > url https://example.com/path?query=1
 > ```
@@ -121,7 +121,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > Quoted scalars use `"..."` and support escape sequences:
 > `\\`, `\"`, `\n`, `\r`, `\t`, `\0`, `\uXXXX`, `\u{X...}`.
 > Quoting does not imply string type — the deserializer interprets based on target type.
-> 
+>
 > ```styx
 > greeting "hello\nworld"
 > port "8080"  // can deserialize as integer
@@ -132,7 +132,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > r[scalar.raw.syntax]
 > Raw scalars use `r#"..."#` syntax. The number of `#` must match.
 > Content is literal — escape sequences are not processed.
-> 
+>
 > ```styx
 > pattern r#"no need to escape "quotes" or \n"#
 > ```
@@ -146,7 +146,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > Let `indent` be the exact leading whitespace (spaces and/or tabs) immediately before the closing delimiter.
 > For each content line, if the line begins with `indent`, that prefix is removed; otherwise the line is left unchanged.
 > Content is literal — escape sequences are not processed.
-> 
+>
 > ```styx
 > script <<BASH
 >   echo "hello"
@@ -159,7 +159,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > Sequences use `(` `)` delimiters. Empty sequences `()` are valid.
 > Elements are separated by one or more whitespace characters (spaces, tabs, or newlines).
 > Commas are NOT allowed.
-> 
+>
 > ```styx
 > numbers (1 2 3)
 > nested ((a b) (c d))
@@ -186,7 +186,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > - **comma-separated**: entries are separated by commas; newlines are forbidden (outside heredoc scalar content).
 >
 > This makes comma-separated objects a single-line representation (except for heredoc content).
-> 
+>
 > ```styx
 > server {
 >   host localhost
@@ -199,7 +199,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > r[object.keys]
 > Keys MUST be either scalars or unit, optionally tagged.
 > Heredoc scalars are not allowed as keys.
-> 
+>
 > ```styx
 > host localhost            // scalar key
 > "key with spaces" 42      // quoted scalar key
@@ -219,7 +219,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 
 > r[object.implicit-unit]
 > A key without a value has implicit unit value.
-> 
+>
 > ```compare
 > /// styx
 > // Shorthand
@@ -233,7 +233,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 
 > r[value.unit]
 > The token `@` not followed by an identifier is the unit value.
-> 
+>
 > ```styx
 > enabled @
 > ```
@@ -248,7 +248,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > The `=` token MUST only appear as part of attribute syntax; a standalone `=` is an error.
 > Attribute keys MUST be bare scalars.
 > If an entry key is followed by one or more attributes, the entry's value is the corresponding object.
-> 
+>
 > ```compare
 > /// styx
 > // Shorthand
@@ -263,7 +263,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 
 > r[shorthand.attr.value]
 > Attribute values may be scalars, sequences, or block objects.
-> 
+>
 > ```styx
 > config name=app tags=(web prod) opts={verbose true}
 > ```

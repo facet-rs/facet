@@ -1,9 +1,9 @@
----
++++
+title = "Primer"
 weight = 1
 slug = "primer"
----
-
-# STYX
+insert_anchor_links = "heading"
++++
 
 STYX is a structured document format designed to replace YAML, TOML, JSON, etc. for documents
 authored by humans.
