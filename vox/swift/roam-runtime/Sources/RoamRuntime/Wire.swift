@@ -52,7 +52,7 @@ public enum MetadataValue: Sendable {
 /// r[impl core.call] - Request/Response messages implement the call abstraction.
 /// r[impl core.call.request-id] - Request ID links requests to responses.
 /// r[impl core.channel] - Data/Close/Reset/Credit messages operate on channels.
-/// r[impl unary.cancel.no-response-required] - Cancel message indicates no response needed.
+/// r[impl call.cancel.no-response-required] - Cancel message indicates no response needed.
 public enum Message: Sendable {
     case hello(Hello)
     case goodbye(reason: String)
@@ -184,11 +184,11 @@ extension Message {
 // MARK: - Metadata Encoding
 
 /// r[impl core.metadata] - Metadata is key-value pairs attached to requests/responses.
-/// r[impl unary.metadata.type] - Values can be string, bytes, or integer.
-/// r[impl unary.metadata.keys] - Keys are UTF-8 strings.
-/// r[impl unary.metadata.order] - Metadata entries preserve insertion order.
-/// r[impl unary.metadata.duplicates] - Duplicate keys are allowed.
-/// r[impl unary.metadata.unknown] - Unknown metadata keys are ignored.
+/// r[impl call.metadata.type] - Values can be string, bytes, or integer.
+/// r[impl call.metadata.keys] - Keys are UTF-8 strings.
+/// r[impl call.metadata.order] - Metadata entries preserve insertion order.
+/// r[impl call.metadata.duplicates] - Duplicate keys are allowed.
+/// r[impl call.metadata.unknown] - Unknown metadata keys are ignored.
 func encodeMetadata(_ metadata: [(String, MetadataValue)]) -> [UInt8] {
     var out = encodeVarint(UInt64(metadata.count))
     for (key, value) in metadata {

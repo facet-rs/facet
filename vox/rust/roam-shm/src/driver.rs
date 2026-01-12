@@ -320,7 +320,7 @@ where
     ) -> Result<(), ShmConnectionError> {
         // Duplicate detection
         if !self.in_flight_server_requests.insert(request_id) {
-            return Err(self.goodbye("unary.request-id.duplicate-detection").await);
+            return Err(self.goodbye("call.request-id.duplicate-detection").await);
         }
 
         // Validate metadata
@@ -332,7 +332,7 @@ where
         // Validate payload size
         if payload.len() as u32 > self.negotiated.max_payload_size {
             self.in_flight_server_requests.remove(&request_id);
-            return Err(self.goodbye("flow.unary.payload-limit").await);
+            return Err(self.goodbye("flow.call.payload-limit").await);
         }
 
         // Dispatch - spawn as a task so message loop can continue.
@@ -357,7 +357,7 @@ where
         }
 
         if payload.len() as u32 > self.negotiated.max_payload_size {
-            return Err(self.goodbye("flow.unary.payload-limit").await);
+            return Err(self.goodbye("flow.call.payload-limit").await);
         }
 
         // Try server registry first, then client registry

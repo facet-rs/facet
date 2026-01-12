@@ -1,6 +1,6 @@
 // RPC error types matching the Roam spec
 // r[impl core.error.roam-error] - RoamError wraps call results
-// r[impl unary.error.protocol] - Protocol errors use discriminants 1-3
+// r[impl call.error.protocol] - Protocol errors use discriminants 1-3
 
 import { decodeVarintNumber, type DecodeResult } from "@bearcove/roam-postcard";
 
@@ -8,9 +8,9 @@ import { decodeVarintNumber, type DecodeResult } from "@bearcove/roam-postcard";
 export const RpcErrorCode = {
   /** User-defined application error */
   USER: 0,
-  /** r[impl unary.error.unknown-method] - Method ID not recognized */
+  /** r[impl call.error.unknown-method] - Method ID not recognized */
   UNKNOWN_METHOD: 1,
-  /** r[impl unary.error.invalid-payload] - Request payload deserialization failed */
+  /** r[impl call.error.invalid-payload] - Request payload deserialization failed */
   INVALID_PAYLOAD: 2,
   /** Call was cancelled */
   CANCELLED: 3,

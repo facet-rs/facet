@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Encoding
 //
-// r[impl unary.request.payload-encoding] - Payloads are Postcard-encoded.
+// r[impl call.request.payload-encoding] - Payloads are Postcard-encoded.
 // r[impl postcard.varint] - Variable-length integers use LEB128-style encoding.
 // r[impl postcard.zigzag] - Signed integers use zigzag encoding before varint.
 

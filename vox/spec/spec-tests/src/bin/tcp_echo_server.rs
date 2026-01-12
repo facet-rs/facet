@@ -26,7 +26,7 @@ impl Testbed for TestbedService {
         Ok(message.chars().rev().collect())
     }
 
-    // Streaming methods - stubs (this server only handles unary)
+    // Streaming methods - stubs (this server only handles simple RPC calls)
     async fn sum(&self, _numbers: roam::Rx<i32>) -> Result<i64, RoamError<Never>> {
         Ok(0)
     }
@@ -242,7 +242,7 @@ async fn dispatch_method(
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let service = TestbedService;
 
-    // Unary methods - RoamError<Never> always succeeds since Never is uninhabited
+    // RPC methods - RoamError<Never> always succeeds since Never is uninhabited
     if method_id == testbed::method_id::echo() {
         let args: (String,) = facet_postcard::from_slice(payload)?;
         return encode_ok(&service.echo(args.0).await.unwrap());

@@ -46,7 +46,7 @@ pub fn generate_handler_interface(service: &ServiceDetail) -> String {
     out
 }
 
-/// Generate unary method handlers map.
+/// Generate RPC method handlers map.
 pub fn generate_method_handlers(service: &ServiceDetail) -> String {
     use crate::render::hex_u64;
 
@@ -104,7 +104,7 @@ pub fn generate_method_handlers(service: &ServiceDetail) -> String {
         } else {
             // Streaming method - must use streaming dispatcher
             out.push_str(
-                "      // Streaming method - use streamingDispatch() instead of unary dispatch\n",
+                "      // Channeling method - use streamingDispatch() instead of simple RPC dispatch\n",
             );
             out.push_str("      return encodeResultErr(encodeInvalidPayload());\n");
         }
@@ -215,7 +215,7 @@ pub fn generate_server(service: &ServiceDetail) -> String {
     // Generate handler interface
     out.push_str(&generate_handler_interface(service));
 
-    // Generate unary method handlers
+    // Generate RPC method handlers
     out.push_str(&generate_method_handlers(service));
 
     // Check if any method uses streaming

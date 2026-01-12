@@ -1007,7 +1007,7 @@ impl FlowControl for InfiniteCredit {
 
 /// Generates unique request IDs for a connection.
 ///
-/// r[impl unary.request-id.uniqueness] - monotonically increasing counter starting at 1
+/// r[impl call.request-id.uniqueness] - monotonically increasing counter starting at 1
 pub struct RequestIdGenerator {
     next: AtomicU64,
 }
@@ -1148,7 +1148,7 @@ pub fn dispatch_unknown_method(
 
 /// Trait for dispatching requests to a service.
 ///
-/// The dispatcher handles both unary and streaming methods uniformly.
+/// The dispatcher handles both simple and channeling methods uniformly.
 /// Stream binding is done via reflection (Poke) on the deserialized args.
 pub trait ServiceDispatcher: Send + Sync {
     /// Dispatch a request and send the response via the task channel.
@@ -1227,23 +1227,23 @@ where
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub struct Never;
 
-/// Call error type encoded in unary responses.
+/// Call error type encoded in RPC responses.
 ///
 /// r[impl core.error.roam-error] - Wraps call results to distinguish app vs protocol errors
-/// r[impl unary.response.encoding] - Response is `Result<T, RoamError<E>>`
-/// r[impl unary.error.roam-error] - Protocol errors use RoamError variants
-/// r[impl unary.error.protocol] - Discriminants 1-3 are protocol-level errors
+/// r[impl call.response.encoding] - Response is `Result<T, RoamError<E>>`
+/// r[impl call.error.roam-error] - Protocol errors use RoamError variants
+/// r[impl call.error.protocol] - Discriminants 1-3 are protocol-level errors
 ///
 /// Spec: `docs/content/spec/_index.md` "RoamError".
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum RoamError<E> {
     /// r[impl core.error.call-vs-connection] - User errors affect only this call
-    /// r[impl unary.error.user] - User(E) carries the application's error type
+    /// r[impl call.error.user] - User(E) carries the application's error type
     User(E) = 0,
-    /// r[impl unary.error.unknown-method] - Method ID not recognized
+    /// r[impl call.error.unknown-method] - Method ID not recognized
     UnknownMethod = 1,
-    /// r[impl unary.error.invalid-payload] - Request payload deserialization failed
+    /// r[impl call.error.invalid-payload] - Request payload deserialization failed
     InvalidPayload = 2,
     Cancelled = 3,
 }

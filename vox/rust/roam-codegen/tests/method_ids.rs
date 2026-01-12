@@ -99,7 +99,7 @@ fn typescript_service_generation() {
     // Should contain handler interface
     assert!(out.contains("interface TestbedHandler"));
 
-    // Should contain method handlers Map (for use with UnaryDispatcher)
+    // Should contain method handlers Map (for use with RpcDispatcher)
     assert!(out.contains("testbed_methodHandlers"));
     assert!(out.contains("Map<bigint, MethodHandler<TestbedHandler>>"));
 }

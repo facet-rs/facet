@@ -64,7 +64,7 @@ pub struct Connection<T> {
     negotiated: Negotiated,
     channel_allocator: ChannelIdAllocator,
     channel_registry: ChannelRegistry,
-    /// r[impl unary.request-id.in-flight] - Track requests awaiting response.
+    /// r[impl call.request-id.in-flight] - Track requests awaiting response.
     in_flight_requests: HashSet<u64>,
     #[allow(dead_code)]
     our_hello: Hello,
@@ -122,12 +122,12 @@ impl<T> Connection<T> {
 
     /// Validate payload size against negotiated limit.
     ///
-    /// r[impl flow.unary.payload-limit] - Payloads bounded by max_payload_size.
+    /// r[impl flow.call.payload-limit] - Payloads bounded by max_payload_size.
     /// r[impl message.hello.negotiation] - Effective limit is min of both peers.
     /// r[impl message.hello.enforcement] - Exceeding limit requires Goodbye.
     pub fn validate_payload_size(&self, size: usize) -> Result<(), &'static str> {
         if size as u32 > self.negotiated.max_payload_size {
-            return Err("flow.unary.payload-limit");
+            return Err("flow.call.payload-limit");
         }
         Ok(())
     }
@@ -165,8 +165,8 @@ where
     /// All task messages (Data/Close/Response) go through a single channel to ensure
     /// correct ordering: Data and Close are sent before Response.
     ///
-    /// r[impl unary.pipelining.allowed] - Handle requests as they arrive.
-    /// r[impl unary.pipelining.independence] - Each request handled independently.
+    /// r[impl call.pipelining.allowed] - Handle requests as they arrive.
+    /// r[impl call.pipelining.independence] - Each request handled independently.
     pub async fn run<D>(&mut self, dispatcher: &D) -> Result<(), ConnectionError>
     where
         D: ServiceDispatcher,
@@ -262,18 +262,18 @@ where
                 metadata,
                 payload,
             } => {
-                // r[impl unary.request-id.duplicate-detection] - Duplicate request_id is fatal.
+                // r[impl call.request-id.duplicate-detection] - Duplicate request_id is fatal.
                 if !self.in_flight_requests.insert(request_id) {
-                    return Err(self.goodbye("unary.request-id.duplicate-detection").await);
+                    return Err(self.goodbye("call.request-id.duplicate-detection").await);
                 }
 
-                // r[impl unary.metadata.limits] - Validate metadata limits.
+                // r[impl call.metadata.limits] - Validate metadata limits.
                 if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
                     self.in_flight_requests.remove(&request_id);
                     return Err(self.goodbye(rule_id).await);
                 }
 
-                // r[impl flow.unary.payload-limit]
+                // r[impl flow.call.payload-limit]
                 if let Err(rule_id) = self.validate_payload_size(payload.len()) {
                     self.in_flight_requests.remove(&request_id);
                     return Err(self.goodbye(rule_id).await);
@@ -293,14 +293,14 @@ where
             }
             Message::Response { request_id, .. } => {
                 // Server doesn't expect Response messages (it sends them, not receives them).
-                // r[impl unary.lifecycle.unknown-request-id] - Ignore unexpected responses.
+                // r[impl call.lifecycle.unknown-request-id] - Ignore unexpected responses.
                 // r[impl core.call.cancel] - Handle late responses gracefully (ignore them).
                 let _ = request_id;
             }
             Message::Cancel { request_id } => {
-                // r[impl unary.cancel.message] - Cancel includes request_id of request to cancel.
-                // r[impl unary.request-id.cancel-still-in-flight] - Cancel does NOT remove from in-flight.
-                // r[impl unary.cancel.best-effort] - Cancellation is best-effort; we still send Response.
+                // r[impl call.cancel.message] - Cancel includes request_id of request to cancel.
+                // r[impl call.request-id.cancel-still-in-flight] - Cancel does NOT remove from in-flight.
+                // r[impl call.cancel.best-effort] - Cancellation is best-effort; we still send Response.
                 //
                 // For now, we process requests synchronously, so Cancel arrives after Response.
                 // With async request handling, we'd signal the handler to stop and respond with

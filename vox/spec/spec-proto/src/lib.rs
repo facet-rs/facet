@@ -6,11 +6,11 @@ use roam::session::{Rx, Tx};
 
 /// Testbed service for conformance testing.
 ///
-/// Combines unary, streaming, and complex type methods for comprehensive testing.
+/// Combines simple RPC, channeling, and complex type methods for comprehensive testing.
 #[service]
 pub trait Testbed {
     // ========================================================================
-    // Unary methods
+    // Simple RPC methods
     // ========================================================================
 
     /// Echoes the message back.

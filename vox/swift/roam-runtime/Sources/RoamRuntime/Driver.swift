@@ -149,8 +149,8 @@ private actor DriverState {
 
 /// Bidirectional connection driver.
 ///
-/// r[impl unary.pipelining.allowed] - Handle requests as they arrive.
-/// r[impl unary.pipelining.independence] - Each request handled independently.
+/// r[impl call.pipelining.allowed] - Handle requests as they arrive.
+/// r[impl call.pipelining.independence] - Each request handled independently.
 /// r[impl transport.message.multiplexing] - channel_id field provides multiplexing.
 ///
 /// Uses AsyncStream to multiplex between:
@@ -312,7 +312,7 @@ public final class Driver: @unchecked Sendable {
     /// Handle an incoming message.
     ///
     /// r[impl message.goodbye.receive] - Stop sending, close connection, fail in-flight.
-    /// r[impl unary.lifecycle.ordering] - Request before Response in message sequence.
+    /// r[impl call.lifecycle.ordering] - Request before Response in message sequence.
     /// r[impl message.unknown-variant] - Unknown message variant triggers Goodbye.
     private func handleMessage(_ msg: Message) async throws {
         switch msg {
@@ -329,17 +329,17 @@ public final class Driver: @unchecked Sendable {
             try await handleRequest(requestId: requestId, methodId: methodId, payload: payload)
 
         case .response(let requestId, _, let payload):
-            // r[impl unary.lifecycle.single-response] - One response per request.
-            // r[impl unary.complete] - Response completes the call.
-            // r[impl unary.response.encoding] - Response payload is Postcard-encoded.
+            // r[impl call.lifecycle.single-response] - One response per request.
+            // r[impl call.complete] - Response completes the call.
+            // r[impl call.response.encoding] - Response payload is Postcard-encoded.
             let responseTx = await state.removePendingResponse(requestId)
             responseTx?(.success(payload))
 
         case .cancel(let requestId):
-            // r[impl unary.cancel.message] - Cancel requests termination.
-            // r[impl unary.cancel.best-effort] - Cancel is best-effort, response may still arrive.
+            // r[impl call.cancel.message] - Cancel requests termination.
+            // r[impl call.cancel.best-effort] - Cancel is best-effort, response may still arrive.
             // r[impl core.call.cancel] - Cancel message uses request_id.
-            // r[impl unary.request-id.cancel-still-in-flight] - Cancel only valid for in-flight.
+            // r[impl call.request-id.cancel-still-in-flight] - Cancel only valid for in-flight.
             let _ = await state.removeInFlight(requestId)
         // Handler may still be processing; best-effort cancellation
 
@@ -366,24 +366,24 @@ public final class Driver: @unchecked Sendable {
         }
     }
 
-    /// r[impl unary.request-id.duplicate-detection] - Duplicate request_id is fatal.
-    /// r[impl flow.unary.payload-limit] - Payloads bounded by max_payload_size.
+    /// r[impl call.request-id.duplicate-detection] - Duplicate request_id is fatal.
+    /// r[impl flow.call.payload-limit] - Payloads bounded by max_payload_size.
     /// r[impl message.hello.enforcement] - Exceeding limit requires Goodbye.
-    /// r[impl unary.request-id.in-flight] - Request IDs must be tracked while in-flight.
-    /// r[impl unary.request-id.uniqueness] - Each request uses a unique ID.
+    /// r[impl call.request-id.in-flight] - Request IDs must be tracked while in-flight.
+    /// r[impl call.request-id.uniqueness] - Each request uses a unique ID.
     private func handleRequest(requestId: UInt64, methodId: UInt64, payload: [UInt8]) async throws {
-        // r[impl unary.request-id.duplicate-detection]
+        // r[impl call.request-id.duplicate-detection]
         let inserted = await state.addInFlight(requestId)
 
         guard inserted else {
-            try await sendGoodbye("unary.request-id.duplicate-detection")
-            throw ConnectionError.protocolViolation(rule: "unary.request-id.duplicate-detection")
+            try await sendGoodbye("call.request-id.duplicate-detection")
+            throw ConnectionError.protocolViolation(rule: "call.request-id.duplicate-detection")
         }
 
-        // r[impl flow.unary.payload-limit]
+        // r[impl flow.call.payload-limit]
         if payload.count > Int(negotiated.maxPayloadSize) {
-            try await sendGoodbye("flow.unary.payload-limit")
-            throw ConnectionError.protocolViolation(rule: "flow.unary.payload-limit")
+            try await sendGoodbye("flow.call.payload-limit")
+            throw ConnectionError.protocolViolation(rule: "flow.call.payload-limit")
         }
 
         // Pre-register channels BEFORE spawning the handler task.
@@ -473,7 +473,7 @@ public final class Driver: @unchecked Sendable {
 // MARK: - Connection Errors
 
 /// r[impl core.error.connection] - Connection-level errors terminate the connection.
-/// r[impl unary.error.protocol] - Protocol errors are connection-fatal.
+/// r[impl call.error.protocol] - Protocol errors are connection-fatal.
 public enum ConnectionError: Error {
     case connectionClosed
     case goodbye(reason: String)
@@ -487,7 +487,7 @@ public enum ConnectionError: Error {
 ///
 /// r[impl message.hello.ordering] - Hello is the first message sent.
 /// r[impl message.hello.timing] - Send Hello immediately on connection.
-/// r[impl unary.initiate] - Initiator can start calls after Hello exchange.
+/// r[impl call.initiate] - Initiator can start calls after Hello exchange.
 public func establishInitiator(
     transport: any MessageTransport,
     ourHello: Hello,

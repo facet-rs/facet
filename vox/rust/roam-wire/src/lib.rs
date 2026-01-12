@@ -19,7 +19,7 @@ pub enum Hello {
 }
 
 /// Metadata value.
-// r[impl unary.metadata.type]
+// r[impl call.metadata.type]
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum MetadataValue {
@@ -41,7 +41,7 @@ impl MetadataValue {
 
 /// Metadata validation limits.
 ///
-/// r[impl unary.metadata.limits] - Metadata has size limits.
+/// r[impl call.metadata.limits] - Metadata has size limits.
 pub mod metadata_limits {
     /// Maximum number of metadata entries.
     pub const MAX_ENTRIES: usize = 128;
@@ -55,16 +55,16 @@ pub mod metadata_limits {
 
 /// Validate metadata against protocol limits.
 ///
-/// r[impl unary.metadata.limits] - Validate all metadata constraints.
-/// r[impl unary.metadata.keys] - Keys at most 256 bytes.
-/// r[impl unary.metadata.order] - Order is preserved (Vec maintains order).
-/// r[impl unary.metadata.duplicates] - Duplicate keys are allowed.
+/// r[impl call.metadata.limits] - Validate all metadata constraints.
+/// r[impl call.metadata.keys] - Keys at most 256 bytes.
+/// r[impl call.metadata.order] - Order is preserved (Vec maintains order).
+/// r[impl call.metadata.duplicates] - Duplicate keys are allowed.
 pub fn validate_metadata(metadata: &[(String, MetadataValue)]) -> Result<(), &'static str> {
     use metadata_limits::*;
 
     // Check entry count
     if metadata.len() > MAX_ENTRIES {
-        return Err("unary.metadata.limits");
+        return Err("call.metadata.limits");
     }
 
     let mut total_size = 0usize;
@@ -72,13 +72,13 @@ pub fn validate_metadata(metadata: &[(String, MetadataValue)]) -> Result<(), &'s
     for (key, value) in metadata {
         // Check key size
         if key.len() > MAX_KEY_SIZE {
-            return Err("unary.metadata.limits");
+            return Err("call.metadata.limits");
         }
 
         // Check value size
         let value_len = value.byte_len();
         if value_len > MAX_VALUE_SIZE {
-            return Err("unary.metadata.limits");
+            return Err("call.metadata.limits");
         }
 
         // Accumulate total size
@@ -87,7 +87,7 @@ pub fn validate_metadata(metadata: &[(String, MetadataValue)]) -> Result<(), &'s
 
     // Check total size
     if total_size > MAX_TOTAL_SIZE {
-        return Err("unary.metadata.limits");
+        return Err("call.metadata.limits");
     }
 
     Ok(())
@@ -107,7 +107,7 @@ pub enum Message {
 
     // RPC
     /// r[impl core.metadata] - Request carries metadata key-value pairs.
-    /// r[impl unary.metadata.unknown] - Unknown keys are ignored.
+    /// r[impl call.metadata.unknown] - Unknown keys are ignored.
     Request {
         request_id: u64,
         method_id: u64,
@@ -115,14 +115,14 @@ pub enum Message {
         payload: Vec<u8>,
     } = 2,
     /// r[impl core.metadata] - Response carries metadata key-value pairs.
-    /// r[impl unary.metadata.unknown] - Unknown keys are ignored.
+    /// r[impl call.metadata.unknown] - Unknown keys are ignored.
     Response {
         request_id: u64,
         metadata: Vec<(String, MetadataValue)>,
         payload: Vec<u8>,
     } = 3,
-    /// r[impl unary.cancel.message] - Cancel message requests callee stop processing.
-    /// r[impl unary.cancel.no-response-required] - Caller should timeout, not wait indefinitely.
+    /// r[impl call.cancel.message] - Cancel message requests callee stop processing.
+    /// r[impl call.cancel.no-response-required] - Caller should timeout, not wait indefinitely.
     Cancel {
         request_id: u64,
     } = 4,

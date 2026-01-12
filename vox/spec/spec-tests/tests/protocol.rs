@@ -132,11 +132,11 @@ fn handshake_unknown_hello_variant_triggers_goodbye() {
     .unwrap();
 }
 
-// r[verify flow.unary.payload-limit] - Unary RPC payloads are bounded by
+// r[verify flow.call.payload-limit] - RPC call payloads are bounded by
 // max_payload_size negotiated during handshake.
 // r[verify message.hello.negotiation] - Effective limit is min of both peers
 #[test]
-fn unary_payload_over_max_triggers_goodbye() {
+fn rpc_payload_over_max_triggers_goodbye() {
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
 
@@ -180,9 +180,9 @@ fn unary_payload_over_max_triggers_goodbye() {
 
         let reason =
             reason.ok_or_else(|| "expected Goodbye after oversized Request".to_string())?;
-        if !reason.contains("flow.unary.payload-limit") {
+        if !reason.contains("flow.call.payload-limit") {
             return Err(format!(
-                "Goodbye reason must mention flow.unary.payload-limit, got {reason:?}"
+                "Goodbye reason must mention flow.call.payload-limit, got {reason:?}"
             ));
         }
 

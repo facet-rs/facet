@@ -57,17 +57,17 @@ fn ensure_expected_ids() {
     );
 }
 
-// r[verify unary.initiate] - Call initiated by sending Request message
-// r[verify unary.complete] - Response has matching request_id
-// r[verify unary.lifecycle.single-response] - Exactly one response per request
-// r[verify unary.lifecycle.ordering] - Response correlated by request_id
-// r[verify unary.request-id.uniqueness] - Uses unique request_id (1)
-// r[verify unary.metadata.type] - Metadata is Vec<(String, MetadataValue)>
-// r[verify unary.request.payload-encoding] - Payload is POSTCARD tuple of args
-// r[verify unary.response.encoding] - Response is POSTCARD Result<T, RoamError<E>>
+// r[verify call.initiate] - Call initiated by sending Request message
+// r[verify call.complete] - Response has matching request_id
+// r[verify call.lifecycle.single-response] - Exactly one response per request
+// r[verify call.lifecycle.ordering] - Response correlated by request_id
+// r[verify call.request-id.uniqueness] - Uses unique request_id (1)
+// r[verify call.metadata.type] - Metadata is Vec<(String, MetadataValue)>
+// r[verify call.request.payload-encoding] - Payload is POSTCARD tuple of args
+// r[verify call.response.encoding] - Response is POSTCARD Result<T, RoamError<E>>
 // r[verify transport.message.binary] - Binary transport (TCP stream)
 #[test]
-fn unary_echo_roundtrip() {
+fn rpc_echo_roundtrip() {
     ensure_expected_ids();
 
     run_async(async {
@@ -136,10 +136,10 @@ fn unary_echo_roundtrip() {
     .unwrap();
 }
 
-// r[verify unary.error.unknown-method] - Unknown method_id returns UnknownMethod error
-// r[verify unary.error.roam-error] - Protocol errors use RoamError variants
+// r[verify call.error.unknown-method] - Unknown method_id returns UnknownMethod error
+// r[verify call.error.roam-error] - Protocol errors use RoamError variants
 #[test]
-fn unary_unknown_method_returns_unknownmethod_error() {
+fn rpc_unknown_method_returns_unknownmethod_error() {
     ensure_expected_ids();
 
     run_async(async {
@@ -202,9 +202,9 @@ fn unary_unknown_method_returns_unknownmethod_error() {
     .unwrap();
 }
 
-// r[verify unary.error.invalid-payload] - Malformed payload returns InvalidPayload error
+// r[verify call.error.invalid-payload] - Malformed payload returns InvalidPayload error
 #[test]
-fn unary_invalid_payload_returns_invalidpayload_error() {
+fn rpc_invalid_payload_returns_invalidpayload_error() {
     ensure_expected_ids();
 
     run_async(async {
@@ -265,12 +265,12 @@ fn unary_invalid_payload_returns_invalidpayload_error() {
     .unwrap();
 }
 
-// r[verify unary.pipelining.allowed] - Multiple requests in flight simultaneously
-// r[verify unary.pipelining.independence] - Each request is independent
+// r[verify call.pipelining.allowed] - Multiple requests in flight simultaneously
+// r[verify call.pipelining.independence] - Each request is independent
 // r[verify core.call] - Each call has one Request and one Response
 // r[verify core.call.request-id] - Request IDs correlate requests to responses
 #[test]
-fn unary_pipelining_multiple_requests() {
+fn rpc_pipelining_multiple_requests() {
     ensure_expected_ids();
 
     run_async(async {

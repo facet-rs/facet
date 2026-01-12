@@ -353,7 +353,7 @@ so they are combined:
 
 > r[shm.metadata.limits]
 >
-> The limits from `r[unary.metadata.limits]` apply: at most 128 keys,
+> The limits from `r[call.metadata.limits]` apply: at most 128 keys,
 > each value at most 16 KB. Violations are connection errors.
 
 ## Message Types

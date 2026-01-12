@@ -54,7 +54,7 @@ export interface MetadataValueU64 {
 /**
  * Metadata value.
  *
- * r[impl unary.metadata.type]
+ * r[impl call.metadata.type]
  */
 export type MetadataValue = MetadataValueString | MetadataValueBytes | MetadataValueU64;
 
@@ -87,7 +87,7 @@ export interface MessageGoodbye {
  * Request message (discriminant = 2).
  *
  * r[impl core.metadata] - Request carries metadata key-value pairs.
- * r[impl unary.metadata.unknown] - Unknown keys are ignored.
+ * r[impl call.metadata.unknown] - Unknown keys are ignored.
  */
 export interface MessageRequest {
   tag: "Request";
@@ -101,7 +101,7 @@ export interface MessageRequest {
  * Response message (discriminant = 3).
  *
  * r[impl core.metadata] - Response carries metadata key-value pairs.
- * r[impl unary.metadata.unknown] - Unknown keys are ignored.
+ * r[impl call.metadata.unknown] - Unknown keys are ignored.
  */
 export interface MessageResponse {
   tag: "Response";
@@ -113,8 +113,8 @@ export interface MessageResponse {
 /**
  * Cancel message (discriminant = 4).
  *
- * r[impl unary.cancel.message] - Cancel message requests callee stop processing.
- * r[impl unary.cancel.no-response-required] - Caller should timeout, not wait indefinitely.
+ * r[impl call.cancel.message] - Cancel message requests callee stop processing.
+ * r[impl call.cancel.no-response-required] - Caller should timeout, not wait indefinitely.
  */
 export interface MessageCancel {
   tag: "Cancel";

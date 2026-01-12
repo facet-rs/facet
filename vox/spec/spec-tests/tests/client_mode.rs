@@ -139,7 +139,7 @@ impl testbed::Testbed for TestbedService {
     }
 }
 
-// r[verify unary.initiate] - Generated client can make unary calls
+// r[verify call.initiate] - Generated client can make RPC calls
 #[test]
 fn client_mode_echo() {
     run_async(async {

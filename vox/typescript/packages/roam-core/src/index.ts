@@ -195,8 +195,8 @@ export {
 // Type definitions for method handlers
 export type MethodHandler<H> = (handler: H, payload: Uint8Array) => Promise<Uint8Array>;
 
-// Generic unary dispatcher
-export class UnaryDispatcher<H> {
+// Generic RPC dispatcher
+export class RpcDispatcher<H> {
   private methodHandlers: Map<bigint, MethodHandler<H>>;
 
   constructor(methodHandlers: Map<bigint, MethodHandler<H>>) {
@@ -206,15 +206,18 @@ export class UnaryDispatcher<H> {
   async dispatch(handler: H, methodId: bigint, payload: Uint8Array): Promise<Uint8Array> {
     const methodHandler = this.methodHandlers.get(methodId);
     if (!methodHandler) {
-      // r[impl unary.error.unknown-method]
+      // r[impl call.error.unknown-method]
       return encodeResultErr(encodeUnknownMethod());
     }
 
     try {
       return await methodHandler(handler, payload);
     } catch (_error) {
-      // r[impl unary.error.invalid-payload]
+      // r[impl call.error.invalid-payload]
       return encodeResultErr(encodeInvalidPayload());
     }
   }
 }
+
+/** @deprecated Use RpcDispatcher instead */
+export const UnaryDispatcher = RpcDispatcher;

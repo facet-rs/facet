@@ -225,7 +225,7 @@ See the [Flow Control](#flow-control-1) section for complete details.
 > Requests and Responses carry metadata: a list of key-value pairs
 > for out-of-band information (tracing, auth, deadlines, etc.).
 
-Unknown metadata keys MUST be ignored (`r[unary.metadata.unknown]`).
+Unknown metadata keys MUST be ignored (`r[call.metadata.unknown]`).
 See the [Metadata](#metadata-1) section for complete details.
 
 ## Topologies
@@ -324,30 +324,30 @@ on this connection is torn down. Examples:
   * Data after Close
   * Duplicate in-flight request ID
 
-# Unary RPC
+# RPC Calls
 
-A unary RPC is the simplest form of method call: one request, one response.
+An RPC call is a request/response exchange: one request, one response.
 This section specifies the complete lifecycle.
 
 ## Request IDs
 
-> r[unary.request-id.uniqueness]
+> r[call.request-id.uniqueness]
 >
 > A request ID (u64) MUST be unique within a connection. Implementations
 > SHOULD use a monotonically increasing counter starting at 1.
 
-> r[unary.request-id.duplicate-detection]
+> r[call.request-id.duplicate-detection]
 >
 > If a peer receives a Request with a `request_id` that matches an
 > existing in-flight request, it MUST send a Goodbye message (reason:
-> `unary.request-id.duplicate-detection`) and close the connection.
+> `call.request-id.duplicate-detection`) and close the connection.
 
-> r[unary.request-id.in-flight]
+> r[call.request-id.in-flight]
 >
 > A request is "in-flight" from when the Request message is sent until
 > the corresponding Response message is received.
 
-> r[unary.request-id.cancel-still-in-flight]
+> r[call.request-id.cancel-still-in-flight]
 >
 > Sending a Cancel message does NOT remove a request from in-flight status.
 > The request remains in-flight until a Response is received (which may be
@@ -359,7 +359,7 @@ but those channels have their own lifecycle independent of the call. See
 
 ## Initiating a Call
 
-> r[unary.initiate]
+> r[call.initiate]
 >
 > A call is initiated by sending a Request message.
 
@@ -374,7 +374,7 @@ Request {
 }
 ```
 
-> r[unary.request.payload-encoding]
+> r[call.request.payload-encoding]
 >
 > The payload MUST be the [^POSTCARD] encoding of a tuple containing all
 > method arguments in declaration order.
@@ -384,7 +384,7 @@ would have a payload that is the [^POSTCARD] encoding of the tuple `(3i32, 5i32)
 
 ## Completing a Call
 
-> r[unary.complete]
+> r[call.complete]
 >
 > A call is completed by sending a Response message with the same
 > `request_id` as the original Request.
@@ -404,7 +404,7 @@ Where `T` is the method's success type and `E` is the method's error type
 
 ## Response Encoding
 
-> r[unary.response.encoding]
+> r[call.response.encoding]
 >
 > The response payload MUST be the [^POSTCARD] encoding of `Result<T, RoamError<E>>`,
 > where `T` and `E` come from the method signature.
@@ -430,7 +430,7 @@ equivalent encoding where the `User` variant cannot occur).
 
 Requests and Responses carry a `metadata` field for out-of-band information.
 
-> r[unary.metadata.type]
+> r[call.metadata.type]
 >
 > Metadata is a list of key-value pairs: `Vec<(String, MetadataValue)>`.
 
@@ -442,28 +442,28 @@ enum MetadataValue {
 }
 ```
 
-> r[unary.metadata.keys]
+> r[call.metadata.keys]
 >
 > Metadata keys are case-sensitive strings. Keys MUST be at most 256
 > bytes (UTF-8 encoded).
 
-> r[unary.metadata.duplicates]
+> r[call.metadata.duplicates]
 >
 > Duplicate keys are allowed. If multiple entries have the same key,
 > all values are preserved in order. Consumers MAY use any of the values
 > (typically the first or last).
 
-> r[unary.metadata.order]
+> r[call.metadata.order]
 >
 > Metadata order MUST be preserved during transmission. Order is not
 > semantically meaningful for most uses, but some applications may
 > rely on it (e.g., multi-value headers).
 
-> r[unary.metadata.unknown]
+> r[call.metadata.unknown]
 >
 > Unknown metadata keys MUST be ignored.
 
-> r[unary.metadata.limits]
+> r[call.metadata.limits]
 >
 > Metadata limits:
 > - At most 128 metadata entries (key-value pairs)
@@ -472,7 +472,7 @@ enum MetadataValue {
 > - Total metadata size at most 64 KB (65,536 bytes)
 >
 > If a peer receives a message exceeding these limits, it MUST send a
-> Goodbye message (reason: `unary.metadata.limits`) and close the
+> Goodbye message (reason: `call.metadata.limits`) and close the
 > connection.
 
 ### Example Uses
@@ -487,7 +487,7 @@ Metadata is application-defined. Common uses include:
 
 ## RoamError
 
-> r[unary.error.roam-error]
+> r[call.error.roam-error]
 >
 > `RoamError<E>` distinguishes application errors from protocol errors.
 > The variant order defines wire discriminants ([^POSTCARD] varint encoding):
@@ -510,13 +510,13 @@ enum RoamError<E> {
 }
 ```
 
-> r[unary.error.user]
+> r[call.error.user]
 >
 > The `User(E)` variant (discriminant 0) carries the application's error
 > type. This is semantically different from protocol errors — the method
 > ran and returned `Err(e)`.
 
-> r[unary.error.protocol]
+> r[call.error.protocol]
 >
 > Discriminants 1-3 are protocol-level errors. The method may not have
 > run at all (UnknownMethod, InvalidPayload) or was interrupted
@@ -527,13 +527,13 @@ or did the RPC infrastructure fail?"
 
 ### Returning Call Errors
 
-> r[unary.error.unknown-method]
+> r[call.error.unknown-method]
 >
 > If a callee receives a Request with a `method_id` it does not recognize,
 > it MUST send a Response with `Err(RoamError::UnknownMethod)`. The
 > connection remains open.
 
-> r[unary.error.invalid-payload]
+> r[call.error.invalid-payload]
 >
 > If a callee cannot deserialize the Request payload, it MUST send a
 > Response with `Err(RoamError::InvalidPayload)`. The connection
@@ -541,7 +541,7 @@ or did the RPC infrastructure fail?"
 
 ## Call Lifecycle
 
-The complete lifecycle of a unary RPC:
+The complete lifecycle of an RPC call:
 
 ```aasvg
 .--------.                                        .--------.
@@ -556,17 +556,17 @@ The complete lifecycle of a unary RPC:
     |                                                 |
 ```
 
-> r[unary.lifecycle.single-response]
+> r[call.lifecycle.single-response]
 >
 > For each Request, the callee MUST send exactly one Response with the
 > same `request_id`. No more, no less.
 
-> r[unary.lifecycle.ordering]
+> r[call.lifecycle.ordering]
 >
 > Responses MAY arrive in any order. The caller MUST use `request_id`
 > for correlation, not arrival order.
 
-> r[unary.lifecycle.unknown-request-id]
+> r[call.lifecycle.unknown-request-id]
 >
 > If a caller receives a Response with a `request_id` that does not match
 > any in-flight request, it MUST ignore the response. Implementations
@@ -580,19 +580,19 @@ Cancel {
 }
 ```
 
-> r[unary.cancel.message]
+> r[call.cancel.message]
 >
 > A caller MAY send a Cancel message to request that the callee stop
 > processing a request. The Cancel message MUST include the `request_id`
 > of the request to cancel.
 
-> r[unary.cancel.best-effort]
+> r[call.cancel.best-effort]
 >
 > Cancellation is best-effort. The callee MAY have already completed the
 > request, or MAY be unable to cancel in-progress work. The callee MUST
 > still send a Response (either the completed result or `Cancelled` error).
 
-> r[unary.cancel.no-response-required]
+> r[call.cancel.no-response-required]
 >
 > The caller MUST NOT wait indefinitely for a response after sending Cancel.
 > Implementations SHOULD use a timeout after which the caller considers the
@@ -600,12 +600,12 @@ Cancel {
 
 ## Pipelining
 
-> r[unary.pipelining.allowed]
+> r[call.pipelining.allowed]
 >
 > Multiple requests MAY be in flight simultaneously. The caller does not
 > need to wait for a response before sending the next request.
 
-> r[unary.pipelining.independence]
+> r[call.pipelining.independence]
 >
 > Each request is independent. A slow or failed request MUST NOT block
 > other requests.
@@ -616,7 +616,7 @@ await all 10 responses, rather than round-tripping each one sequentially.
 # Channeling RPC
 
 Channeling methods have `Tx<T>` (caller→callee) or `Rx<T>` (callee→caller)
-in argument position. Unlike unary RPC, data flows continuously over dedicated
+in argument position. Unlike simple RPC calls, data flows continuously over dedicated
 channels.
 
 ## Tx and Rx Types
@@ -964,15 +964,15 @@ negotiated initial credit). When remaining credit drops below `W/2`,
 send a Credit message to bring it back near `W`. This avoids sending
 many small Credit messages.
 
-## Unary RPC Flow Control
+## RPC Call Flow Control
 
-> r[flow.unary.payload-limit]
+> r[flow.call.payload-limit]
 >
-> Unary RPC (Request/Response) payloads are bounded by `max_payload_size`
+> RPC call (Request/Response) payloads are bounded by `max_payload_size`
 > negotiated during handshake. No credit-based flow control is used.
 
 The natural pipelining limit (waiting for responses) provides implicit
-flow control for unary calls.
+flow control for RPC calls.
 
 # Messages
 
@@ -1151,7 +1151,7 @@ in channel messages provides multiplexing.
 
 These examples illustrate protocol behavior on byte-stream transports.
 
-## Hello Negotiation and Unary Call
+## Hello Negotiation and RPC Call
 
 ```aasvg
 .-----------.                                           .-----------.

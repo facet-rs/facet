@@ -67,10 +67,10 @@ export class ConnectionError extends Error {
   }
 }
 
-/** Trait for dispatching unary requests to a service. */
+/** Trait for dispatching RPC requests to a service. */
 export interface ServiceDispatcher {
   /**
-   * Dispatch a unary request and return the response payload.
+   * Dispatch an RPC request and return the response payload.
    *
    * The dispatcher is responsible for:
    * - Looking up the method by method_id
@@ -78,7 +78,7 @@ export interface ServiceDispatcher {
    * - Calling the service method
    * - Serializing the response
    */
-  dispatchUnary(methodId: bigint, payload: Uint8Array): Promise<Uint8Array>;
+  dispatchRpc(methodId: bigint, payload: Uint8Array): Promise<Uint8Array>;
 }
 
 /**
@@ -231,21 +231,21 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   /**
    * Validate payload size against negotiated limit.
    *
-   * r[impl flow.unary.payload-limit] - Payloads bounded by max_payload_size.
+   * r[impl flow.call.payload-limit] - Payloads bounded by max_payload_size.
    * r[impl message.hello.negotiation] - Effective limit is min of both peers.
    */
   validatePayloadSize(size: number): string | null {
     if (size > this._negotiated.maxPayloadSize) {
-      return "flow.unary.payload-limit";
+      return "flow.call.payload-limit";
     }
     return null;
   }
 
   /**
-   * Make a unary RPC call.
+   * Make an RPC call.
    *
    * r[impl core.call] - Caller sends Request, callee responds with Response.
-   * r[impl unary.complete] - Request gets exactly one Response.
+   * r[impl call.complete] - Request gets exactly one Response.
    *
    * @param methodId - The method ID to call
    * @param payload - The request payload (already encoded)
@@ -327,8 +327,8 @@ export class Connection<T extends MessageTransport = MessageTransport> {
    * - Dispatches requests to the service with stream binding
    * - Collects TaskMessages and sends them in order (Data/Close before Response)
    *
-   * r[impl unary.pipelining.allowed] - Handle requests as they arrive.
-   * r[impl unary.pipelining.independence] - Each request handled independently.
+   * r[impl call.pipelining.allowed] - Handle requests as they arrive.
+   * r[impl call.pipelining.independence] - Each request handled independently.
    */
   async runStreaming(dispatcher: StreamingDispatcher): Promise<void> {
     // Queue for task messages from handlers - handlers push, we flush
@@ -476,7 +476,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     }
 
     if (msg.tag === "Request") {
-      // r[impl flow.unary.payload-limit] - Validate payload size
+      // r[impl flow.call.payload-limit] - Validate payload size
       const payloadViolation = this.validatePayloadSize(msg.payload.length);
       if (payloadViolation) {
         throw ConnectionError.protocol({
@@ -594,8 +594,8 @@ export class Connection<T extends MessageTransport = MessageTransport> {
    * - Dispatches requests to the service
    * - Sends responses back
    *
-   * r[impl unary.pipelining.allowed] - Handle requests as they arrive.
-   * r[impl unary.pipelining.independence] - Each request handled independently.
+   * r[impl call.pipelining.allowed] - Handle requests as they arrive.
+   * r[impl call.pipelining.independence] - Each request handled independently.
    */
   async run(dispatcher: ServiceDispatcher): Promise<void> {
     while (true) {
@@ -642,19 +642,19 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     }
 
     if (msg.tag === "Request") {
-      // r[impl flow.unary.payload-limit] - enforce negotiated max payload size
+      // r[impl flow.call.payload-limit] - enforce negotiated max payload size
       const payloadViolation = this.validatePayloadSize(msg.payload.length);
       if (payloadViolation) {
         throw await this.goodbye(payloadViolation);
       }
 
       // Dispatch to service
-      const responsePayload = await dispatcher.dispatchUnary(msg.methodId, msg.payload);
+      const responsePayload = await dispatcher.dispatchRpc(msg.methodId, msg.payload);
 
       // r[impl core.call] - Callee sends Response for caller's Request.
       // r[impl core.call.request-id] - Response has same request_id.
-      // r[impl unary.complete] - Send Response with matching request_id.
-      // r[impl unary.lifecycle.single-response] - Exactly one Response per Request.
+      // r[impl call.complete] - Send Response with matching request_id.
+      // r[impl call.lifecycle.single-response] - Exactly one Response per Request.
       await this.io.send(encodeMessage(messageResponse(msg.requestId, responsePayload)));
 
       // Flush any outgoing stream data that handlers may have queued
