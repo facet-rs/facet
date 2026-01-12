@@ -1544,6 +1544,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         parsed.generics.as_ref(),
         opaque,
         &facet_crate,
+        &ps.container.attrs.custom_bounds,
     );
 
     // Generate the inherent impl with __facet_try_borrow_inner if needed

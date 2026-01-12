@@ -229,9 +229,21 @@ pub mod builtin {
             /// ```
             RecursiveType,
 
-            // Note: `traits(...)` and `auto_traits` are compile-time-only directives
+            // Note: `traits(...)`, `auto_traits`, and `bound` are compile-time-only directives
             // processed by the derive macro. They are not stored as runtime attributes.
             // See DeclaredTraits in facet-macros-impl/src/parsed.rs for their handling.
+
+            /// Adds custom trait bounds to the generated Facet impl.
+            /// The bounds are added to the where clause alongside auto-generated bounds.
+            ///
+            /// Usage: `#[facet(bound = "T: Clone + Send")]`
+            ///
+            /// When you need a type parameter to implement Facet (e.g., for proxy types),
+            /// use a higher-ranked trait bound: `#[facet(bound = "T: for<'f> Facet<'f>")]`
+            ///
+            /// If HRTB is too restrictive, you can use the internal lifetime `'ʄ` directly:
+            /// `#[facet(bound = "T: Facet<'ʄ>")]` (note: `'ʄ` is internal and may change).
+            Bound(&'static str),
         }
     }
 
