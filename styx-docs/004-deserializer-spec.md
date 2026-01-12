@@ -156,71 +156,46 @@ This example shows how a document with a flat structure is deserialized into a n
 
 ## Enum deserialization
 
-Enums are represented as objects with exactly one key (the variant tag) whose value
-is the variant payload.
+Enums are represented using tagged values. The tag names the variant, and the
+payload (if any) is the variant's associated data.
 
 > r[enum.representation]
-> When deserializing into an enum type, the value MUST be an object with exactly one key.
+> When deserializing into an enum type, the value MUST be a tagged value
+> (see `r[tag.syntax]`). The tag names the variant.
 > 
 > ```compare
 > /// json
-> {"ok": null}
+> {"$variant": "ok"}
 > /// styx
-> { ok @ }
+> @ok
 > ```
 > 
 > ```compare
 > /// json
-> {"err": {"message": "nope", "retry_in": "5s"}}
+> {"$variant": "err", "message": "nope", "retry_in": "5s"}
 > /// styx
-> { err { message "nope", retry_in 5s } }
+> @err{ message "nope", retry_in 5s }
 > ```
-
-The parser expands dotted paths into nested objects, which provides a convenient
-syntax for enums:
-
-```compare
-/// styx
-status.ok
-/// styx
-status { ok @ }
-```
-
-```compare
-/// styx
-status.err { message "nope" }
-/// styx
-status { err { message "nope" } }
-```
-
-Dotted paths expand to nested objects (see `r[object.key.dotted.expansion]`).
-Keys without values get implicit unit (see `r[object.entry.implicit-unit]`).
-
-> r[enum.singleton]
-> The deserializer MUST reject enum values that are not single-key objects.
-> The parser cannot enforce this — it produces the same object structure regardless
-> of target type.
 
 > r[enum.unit]
-> For unit variants, the payload is the unit value `@`.
+> For unit variants, the payload is unit (implicit or explicit).
 > 
 > ```styx
-> // All equivalent for unit variants:
-> status.ok        // implicit @
-> status.ok @      // explicit @
+> status @ok       // tagged unit (implicit)
+> status @ok@      // tagged unit (explicit) — equivalent
 > ```
 
-A variant payload may be unit (`@`), a scalar, an object, or a sequence:
-
-```styx
-result.ok
-```
-
-```styx
-result.err message="timeout" retry_in=5s
-```
+> r[enum.payload]
+> Variant payloads may be unit, objects, sequences, or scalars (quoted/raw/heredoc only).
+> 
+> ```styx
+> result @ok                       // unit variant
+> result @err{ message "timeout" } // struct variant
+> result @some(1 2 3)              // tuple variant
+> result @value"hello"             // newtype variant (quoted scalar)
+> ```
 
 The deserializer validates:
-- The value is a single-key object
-- The key matches a valid variant name
+- The value is a tagged value
+- The tag matches a valid variant name
 - The payload matches the expected variant shape
