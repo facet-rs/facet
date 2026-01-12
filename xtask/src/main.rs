@@ -1421,16 +1421,16 @@ impl SchemaGenerator {
 struct Lcg(u64);
 
 impl Lcg {
-    fn new(seed: u64) -> Self {
+    const fn new(seed: u64) -> Self {
         Lcg(seed | 1) // avoid zero cycles
     }
 
-    fn next_u32(&mut self) -> u32 {
+    const fn next_u32(&mut self) -> u32 {
         self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
         (self.0 >> 32) as u32
     }
 
-    fn range(&mut self, min: usize, max: usize) -> usize {
+    const fn range(&mut self, min: usize, max: usize) -> usize {
         if max <= min {
             return min;
         }

@@ -53,13 +53,13 @@ impl ISet {
 
     /// Returns true if all bits up to MAX_INDEX are set.
     #[inline]
-    pub fn all_set(&self) -> bool {
+    pub const fn all_set(&self) -> bool {
         self.flags == u64::MAX >> (63 - Self::MAX_INDEX)
     }
 
     /// Sets all bits up to MAX_INDEX.
     #[inline]
-    pub fn set_all(&mut self) {
+    pub const fn set_all(&mut self) {
         self.flags = u64::MAX >> (63 - Self::MAX_INDEX);
     }
 }

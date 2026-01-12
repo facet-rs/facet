@@ -28,7 +28,7 @@ pub enum SolveVariantError<E> {
 
 impl<E> SolveVariantError<E> {
     /// Wrap a parser error into [`SolveVariantError::Parser`].
-    pub fn from_parser(e: E) -> Self {
+    pub const fn from_parser(e: E) -> Self {
         Self::Parser(e)
     }
 }

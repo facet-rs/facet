@@ -19,7 +19,7 @@ pub struct ArgsErrorWithInput {
 
 impl ArgsErrorWithInput {
     /// Returns true if this is a help request (not a real error)
-    pub fn is_help_request(&self) -> bool {
+    pub const fn is_help_request(&self) -> bool {
         self.inner.kind.is_help_request()
     }
 
@@ -148,7 +148,7 @@ impl ArgsErrorKind {
     /// Returns a precise span override if the error kind has one.
     /// This is used for errors like `UnknownShortFlag` in chained flags
     /// where we want to highlight just the invalid character, not the whole arg.
-    pub fn precise_span(&self) -> Option<Span> {
+    pub const fn precise_span(&self) -> Option<Span> {
         match self {
             ArgsErrorKind::UnknownShortFlag { precise_span, .. } => *precise_span,
             _ => None,
@@ -156,7 +156,7 @@ impl ArgsErrorKind {
     }
 
     /// Returns an error code for this error kind.
-    pub fn code(&self) -> &'static str {
+    pub const fn code(&self) -> &'static str {
         match self {
             ArgsErrorKind::HelpRequested { .. } => "args::help",
             ArgsErrorKind::UnexpectedPositionalArgument { .. } => "args::unexpected_positional",
@@ -316,7 +316,7 @@ impl ArgsErrorKind {
     }
 
     /// Returns true if this is a help request (not a real error)
-    pub fn is_help_request(&self) -> bool {
+    pub const fn is_help_request(&self) -> bool {
         matches!(self, ArgsErrorKind::HelpRequested { .. })
     }
 
@@ -471,7 +471,7 @@ fn is_similar(a: &str, b: &str) -> bool {
 }
 
 /// Get the inner type identifier, unwrapping Option if present
-fn unwrap_option_type(shape: &'static Shape) -> &'static str {
+const fn unwrap_option_type(shape: &'static Shape) -> &'static str {
     match shape.def {
         facet_core::Def::Option(opt_def) => opt_def.t.type_identifier,
         _ => shape.type_identifier,
@@ -537,7 +537,7 @@ impl From<ReflectError> for ArgsErrorKind {
 
 impl ArgsError {
     /// Creates a new args error
-    pub fn new(kind: ArgsErrorKind, span: Span) -> Self {
+    pub const fn new(kind: ArgsErrorKind, span: Span) -> Self {
         Self { span, kind }
     }
 }
@@ -549,7 +549,7 @@ impl fmt::Display for ArgsError {
 }
 
 /// Extract variants from a shape (if it's an enum)
-pub(crate) fn get_variants_from_shape(shape: &'static Shape) -> &'static [Variant] {
+pub(crate) const fn get_variants_from_shape(shape: &'static Shape) -> &'static [Variant] {
     if let Type::User(UserType::Enum(enum_type)) = shape.ty {
         enum_type.variants
     } else {

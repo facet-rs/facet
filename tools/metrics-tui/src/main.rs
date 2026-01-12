@@ -71,7 +71,7 @@ enum Column {
 }
 
 impl Column {
-    fn all() -> &'static [Column] {
+    const fn all() -> &'static [Column] {
         &[
             Column::Timestamp,
             Column::Commit,
@@ -94,7 +94,7 @@ impl Column {
         ]
     }
 
-    fn numeric_columns() -> &'static [Column] {
+    const fn numeric_columns() -> &'static [Column] {
         &[
             Column::CompileSecs,
             Column::BinUnstripped,
@@ -113,7 +113,7 @@ impl Column {
         ]
     }
 
-    fn name(&self) -> &'static str {
+    const fn name(&self) -> &'static str {
         match self {
             Column::Timestamp => "Time",
             Column::Commit => "Commit",
@@ -230,11 +230,11 @@ impl App {
         Column::numeric_columns()[self.graph_column_idx]
     }
 
-    fn next_graph_column(&mut self) {
+    const fn next_graph_column(&mut self) {
         self.graph_column_idx = (self.graph_column_idx + 1) % Column::numeric_columns().len();
     }
 
-    fn prev_graph_column(&mut self) {
+    const fn prev_graph_column(&mut self) {
         if self.graph_column_idx == 0 {
             self.graph_column_idx = Column::numeric_columns().len() - 1;
         } else {
@@ -242,7 +242,7 @@ impl App {
         }
     }
 
-    fn next(&mut self) {
+    const fn next(&mut self) {
         if self.metrics.is_empty() {
             return;
         }
@@ -253,7 +253,7 @@ impl App {
         self.table_state.select(Some(i));
     }
 
-    fn previous(&mut self) {
+    const fn previous(&mut self) {
         if self.metrics.is_empty() {
             return;
         }

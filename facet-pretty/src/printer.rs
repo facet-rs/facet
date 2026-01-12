@@ -142,37 +142,37 @@ impl PrettyPrinter {
     }
 
     /// Set the indentation size
-    pub fn with_indent_size(mut self, size: usize) -> Self {
+    pub const fn with_indent_size(mut self, size: usize) -> Self {
         self.indent_size = size;
         self
     }
 
     /// Set the maximum depth for recursive printing
-    pub fn with_max_depth(mut self, depth: usize) -> Self {
+    pub const fn with_max_depth(mut self, depth: usize) -> Self {
         self.max_depth = Some(depth);
         self
     }
 
     /// Set the color generator
-    pub fn with_color_generator(mut self, generator: ColorGenerator) -> Self {
+    pub const fn with_color_generator(mut self, generator: ColorGenerator) -> Self {
         self.color_generator = generator;
         self
     }
 
     /// Enable or disable colors
-    pub fn with_colors(mut self, use_colors: bool) -> Self {
+    pub const fn with_colors(mut self, use_colors: bool) -> Self {
         self.use_colors = use_colors;
         self
     }
 
     /// Use minimal names for Options (show `Some(x)` instead of `Option<T>::Some(x)`)
-    pub fn with_minimal_option_names(mut self, minimal: bool) -> Self {
+    pub const fn with_minimal_option_names(mut self, minimal: bool) -> Self {
         self.minimal_option_names = minimal;
         self
     }
 
     /// Enable or disable doc comments in output
-    pub fn with_doc_comments(mut self, show: bool) -> Self {
+    pub const fn with_doc_comments(mut self, show: bool) -> Self {
         self.show_doc_comments = show;
         self
     }
@@ -1860,7 +1860,7 @@ struct NonTrackingOutput<W> {
 
 #[allow(dead_code)]
 impl<W> NonTrackingOutput<W> {
-    fn new(inner: W) -> Self {
+    const fn new(inner: W) -> Self {
         Self { inner, position: 0 }
     }
 }
@@ -1886,7 +1886,7 @@ struct SpanTrackingOutput {
 }
 
 impl SpanTrackingOutput {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             output: String::new(),
             spans: BTreeMap::new(),

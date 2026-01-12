@@ -40,7 +40,7 @@ impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
     }
 
     /// Returns the shape of this heap value.
-    pub fn shape(&self) -> &'static Shape {
+    pub const fn shape(&self) -> &'static Shape {
         self.shape
     }
 
@@ -163,7 +163,7 @@ impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
     /// # Safety
     ///
     /// Caller must guarantee that the underlying value is of type T.
-    pub unsafe fn as_ref<T>(&self) -> &T {
+    pub const unsafe fn as_ref<T>(&self) -> &T {
         unsafe { &*(self.guard.as_ref().unwrap().ptr.as_ptr() as *const T) }
     }
 }

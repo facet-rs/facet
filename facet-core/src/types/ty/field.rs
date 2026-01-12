@@ -163,7 +163,7 @@ impl Field {
     ///
     /// This checks the `FLATTEN` flag (O(1)).
     #[inline]
-    pub fn is_flattened(&self) -> bool {
+    pub const fn is_flattened(&self) -> bool {
         self.flags.contains(FieldFlags::FLATTEN)
     }
 
@@ -171,7 +171,7 @@ impl Field {
     ///
     /// This checks the `SENSITIVE` flag (O(1)).
     #[inline]
-    pub fn is_sensitive(&self) -> bool {
+    pub const fn is_sensitive(&self) -> bool {
         self.flags.contains(FieldFlags::SENSITIVE)
     }
 
@@ -180,13 +180,13 @@ impl Field {
     /// This returns true for both `#[facet(default)]` (uses the type's Default impl)
     /// and `#[facet(default = expr)]` (uses a custom expression).
     #[inline]
-    pub fn has_default(&self) -> bool {
+    pub const fn has_default(&self) -> bool {
         self.default.is_some()
     }
 
     /// Returns the default source for this field, if any.
     #[inline]
-    pub fn default_source(&self) -> Option<&DefaultSource> {
+    pub const fn default_source(&self) -> Option<&DefaultSource> {
         self.default.as_ref()
     }
 
@@ -194,7 +194,7 @@ impl Field {
     ///
     /// This checks the `CHILD` flag (O(1)).
     #[inline]
-    pub fn is_child(&self) -> bool {
+    pub const fn is_child(&self) -> bool {
         self.flags.contains(FieldFlags::CHILD)
     }
 
@@ -244,7 +244,7 @@ impl Field {
     /// Metadata fields are excluded from structural hashing and equality.
     /// Use `metadata_kind()` to get the specific kind of metadata.
     #[inline]
-    pub fn is_metadata(&self) -> bool {
+    pub const fn is_metadata(&self) -> bool {
         self.metadata.is_some()
     }
 
@@ -254,7 +254,7 @@ impl Field {
     /// the containing type, enabling lazy shape resolution for self-referential
     /// structures like linked lists and trees.
     #[inline]
-    pub fn is_recursive_type(&self) -> bool {
+    pub const fn is_recursive_type(&self) -> bool {
         self.flags.contains(FieldFlags::RECURSIVE_TYPE)
     }
 
@@ -262,7 +262,7 @@ impl Field {
     ///
     /// Common values: `"span"`, `"line"`, `"column"`
     #[inline]
-    pub fn metadata_kind(&self) -> Option<&'static str> {
+    pub const fn metadata_kind(&self) -> Option<&'static str> {
         self.metadata
     }
 
@@ -270,7 +270,7 @@ impl Field {
     ///
     /// This checks the `SKIP` and `SKIP_DESERIALIZING` flags (O(1)).
     #[inline]
-    pub fn should_skip_deserializing(&self) -> bool {
+    pub const fn should_skip_deserializing(&self) -> bool {
         !self
             .flags
             .intersection(FieldFlags::SKIP.union(FieldFlags::SKIP_DESERIALIZING))
@@ -341,7 +341,7 @@ impl Field {
     /// - `TryFrom<&FieldType> for ProxyType` (for serialization)
     #[cfg(feature = "alloc")]
     #[inline]
-    pub fn proxy(&self) -> Option<&'static super::ProxyDef> {
+    pub const fn proxy(&self) -> Option<&'static super::ProxyDef> {
         self.proxy
     }
 
@@ -387,7 +387,7 @@ impl Field {
     /// the proxy shape and conversion functions.
     #[cfg(feature = "alloc")]
     #[inline]
-    pub fn has_proxy(&self) -> bool {
+    pub const fn has_proxy(&self) -> bool {
         self.proxy.is_some()
     }
 

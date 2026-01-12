@@ -31,13 +31,13 @@ impl SerializeOptions {
     }
 
     /// Enable pretty-printing with default indentation.
-    pub fn pretty(mut self) -> Self {
+    pub const fn pretty(mut self) -> Self {
         self.pretty = true;
         self
     }
 
     /// Set a custom indentation string (implies pretty-printing).
-    pub fn indent(mut self, indent: &'static str) -> Self {
+    pub const fn indent(mut self, indent: &'static str) -> Self {
         self.indent = indent;
         self.pretty = true;
         self
@@ -77,7 +77,7 @@ impl JsonSerializer {
     }
 
     /// Create a new JSON serializer with the given options.
-    pub fn with_options(options: SerializeOptions) -> Self {
+    pub const fn with_options(options: SerializeOptions) -> Self {
         Self {
             out: Vec::new(),
             stack: Vec::new(),
@@ -91,7 +91,7 @@ impl JsonSerializer {
     }
 
     /// Current nesting depth (for indentation).
-    fn depth(&self) -> usize {
+    const fn depth(&self) -> usize {
         self.stack.len()
     }
 
@@ -216,7 +216,7 @@ impl JsonSerializer {
 /// Check if any byte in the u128 equals the target byte.
 /// Uses the SWAR (SIMD Within A Register) technique.
 #[inline]
-fn contains_byte(val: u128, byte: u8) -> bool {
+const fn contains_byte(val: u128, byte: u8) -> bool {
     let mask = 0x01010101010101010101010101010101u128 * (byte as u128);
     let xor_result = val ^ mask;
     let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101))
@@ -228,7 +228,7 @@ fn contains_byte(val: u128, byte: u8) -> bool {
 /// Check that all bytes have at least one of the top 3 bits set (i.e., >= 0x20).
 /// This means no control characters (0x00-0x1F).
 #[inline]
-fn no_control_chars(value: u128) -> bool {
+const fn no_control_chars(value: u128) -> bool {
     let masked = value & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0;
     let has_zero = (masked.wrapping_sub(0x01010101010101010101010101010101))
         & !masked

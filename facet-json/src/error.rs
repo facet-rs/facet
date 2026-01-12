@@ -31,7 +31,7 @@ impl std::error::Error for JsonError {}
 
 impl JsonError {
     /// Create a new error with span information
-    pub fn new(kind: JsonErrorKind, span: Span) -> Self {
+    pub const fn new(kind: JsonErrorKind, span: Span) -> Self {
         JsonError {
             kind,
             span: Some(span),
@@ -40,7 +40,7 @@ impl JsonError {
     }
 
     /// Create an error without span information
-    pub fn without_span(kind: JsonErrorKind) -> Self {
+    pub const fn without_span(kind: JsonErrorKind) -> Self {
         JsonError {
             kind,
             span: None,
@@ -183,7 +183,7 @@ impl Display for JsonErrorKind {
 
 impl JsonErrorKind {
     /// Get an error code for this kind of error.
-    pub fn code(&self) -> &'static str {
+    pub const fn code(&self) -> &'static str {
         match self {
             JsonErrorKind::Scan(_) => "json::scan",
             JsonErrorKind::ScanWithContext { .. } => "json::scan",

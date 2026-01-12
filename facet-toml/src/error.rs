@@ -28,7 +28,7 @@ impl std::error::Error for TomlError {}
 
 impl TomlError {
     /// Create a new error with span information
-    pub fn new(kind: TomlErrorKind, span: Span) -> Self {
+    pub const fn new(kind: TomlErrorKind, span: Span) -> Self {
         TomlError {
             kind,
             span: Some(span),
@@ -37,7 +37,7 @@ impl TomlError {
     }
 
     /// Create an error without span information
-    pub fn without_span(kind: TomlErrorKind) -> Self {
+    pub const fn without_span(kind: TomlErrorKind) -> Self {
         TomlError {
             kind,
             span: None,
@@ -157,7 +157,7 @@ impl Display for TomlErrorKind {
 
 impl TomlErrorKind {
     /// Get an error code for this kind of error.
-    pub fn code(&self) -> &'static str {
+    pub const fn code(&self) -> &'static str {
         match self {
             TomlErrorKind::Parse(_) => "toml::parse",
             TomlErrorKind::UnexpectedType { .. } => "toml::type_mismatch",

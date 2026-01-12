@@ -51,7 +51,7 @@ pub struct DiffReport<'mem, 'facet> {
 
 impl<'mem, 'facet> DiffReport<'mem, 'facet> {
     /// Create a new diff report from a computed diff and the original values.
-    pub fn new(
+    pub const fn new(
         diff: Diff<'mem, 'facet>,
         left: Peek<'mem, 'facet>,
         right: Peek<'mem, 'facet>,
@@ -68,23 +68,23 @@ impl<'mem, 'facet> DiffReport<'mem, 'facet> {
     ///
     /// The tolerance is used to determine appropriate decimal precision when rendering
     /// floating-point values in the diff output.
-    pub fn with_float_tolerance(mut self, tolerance: f64) -> Self {
+    pub const fn with_float_tolerance(mut self, tolerance: f64) -> Self {
         self.float_tolerance = Some(tolerance);
         self
     }
 
     /// Access the raw diff tree.
-    pub fn diff(&self) -> &Diff<'mem, 'facet> {
+    pub const fn diff(&self) -> &Diff<'mem, 'facet> {
         &self.diff
     }
 
     /// Peek into the left-hand value.
-    pub fn left(&self) -> Peek<'mem, 'facet> {
+    pub const fn left(&self) -> Peek<'mem, 'facet> {
         self.left
     }
 
     /// Peek into the right-hand value.
-    pub fn right(&self) -> Peek<'mem, 'facet> {
+    pub const fn right(&self) -> Peek<'mem, 'facet> {
         self.right
     }
 

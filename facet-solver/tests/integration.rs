@@ -87,7 +87,7 @@ struct JsonDeserializer<'a> {
 }
 
 impl<'a> JsonDeserializer<'a> {
-    fn new(data: &'a [u8]) -> Self {
+    const fn new(data: &'a [u8]) -> Self {
         Self { data }
     }
 

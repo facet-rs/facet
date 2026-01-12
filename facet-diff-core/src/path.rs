@@ -21,7 +21,7 @@ pub struct Path(pub Vec<PathSegment>);
 
 impl Path {
     /// Create a new empty path.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self(Vec::new())
     }
 

@@ -81,7 +81,7 @@ impl NativeWidePtr {
 
     /// Get the data pointer
     #[inline]
-    pub fn data_ptr(self) -> *mut u8 {
+    pub const fn data_ptr(self) -> *mut u8 {
         if PTR_FIRST {
             self.parts[0]
         } else {
@@ -91,7 +91,7 @@ impl NativeWidePtr {
 
     /// Get the metadata pointer
     #[inline]
-    pub fn metadata(self) -> *const () {
+    pub const fn metadata(self) -> *const () {
         if PTR_FIRST {
             self.parts[1] as *const ()
         } else {
@@ -101,7 +101,7 @@ impl NativeWidePtr {
 
     /// Create from data pointer and metadata
     #[inline]
-    pub fn from_parts(data: *mut u8, metadata: *const ()) -> Self {
+    pub const fn from_parts(data: *mut u8, metadata: *const ()) -> Self {
         let parts = if PTR_FIRST {
             [data, metadata as *mut u8]
         } else {

@@ -77,31 +77,31 @@ impl DiffSerializeOptions {
     }
 
     /// Disable ANSI color output.
-    pub fn no_colors(mut self) -> Self {
+    pub const fn no_colors(mut self) -> Self {
         self.colors = false;
         self
     }
 
     /// Set custom indentation string.
-    pub fn indent(mut self, indent: &'static str) -> Self {
+    pub const fn indent(mut self, indent: &'static str) -> Self {
         self.indent = indent;
         self
     }
 
     /// Set maximum line width for attribute grouping.
-    pub fn max_line_width(mut self, width: usize) -> Self {
+    pub const fn max_line_width(mut self, width: usize) -> Self {
         self.max_line_width = width;
         self
     }
 
     /// Set maximum number of unchanged fields to show inline.
-    pub fn max_unchanged_fields(mut self, count: usize) -> Self {
+    pub const fn max_unchanged_fields(mut self, count: usize) -> Self {
         self.max_unchanged_fields = count;
         self
     }
 
     /// Set collapse threshold for unchanged runs.
-    pub fn collapse_threshold(mut self, threshold: usize) -> Self {
+    pub const fn collapse_threshold(mut self, threshold: usize) -> Self {
         self.collapse_threshold = threshold;
         self
     }

@@ -94,7 +94,7 @@ pub struct PathData {
 }
 
 impl PathData {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             commands: Vec::new(),
         }

@@ -15,13 +15,13 @@ pub struct Span {
 impl Span {
     /// Byte length of the span
     #[inline]
-    pub fn len(self) -> usize {
+    pub const fn len(self) -> usize {
         (self.end - self.start) as usize
     }
 
     /// Check if span is empty
     #[inline]
-    pub fn is_empty(self) -> bool {
+    pub const fn is_empty(self) -> bool {
         self.start == self.end
     }
 }
@@ -87,12 +87,12 @@ impl FormatArena {
     }
 
     /// Current size of the buffer in bytes.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.buf.len()
     }
 
     /// Check if the arena is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.buf.is_empty()
     }
 }

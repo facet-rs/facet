@@ -69,7 +69,7 @@ struct DateTimeHeader {
 pub struct VDateTime(pub(crate) Value);
 
 impl VDateTime {
-    fn layout() -> Layout {
+    const fn layout() -> Layout {
         Layout::new::<DateTimeHeader>()
     }
 

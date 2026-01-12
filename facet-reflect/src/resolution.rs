@@ -76,14 +76,14 @@ impl fmt::Display for FieldPath {
 
 impl FieldPath {
     /// Create an empty path (root level).
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             segments: Vec::new(),
         }
     }
 
     /// Get the depth of this path.
-    pub fn depth(&self) -> usize {
+    pub const fn depth(&self) -> usize {
         self.segments.len()
     }
 
@@ -224,7 +224,7 @@ impl fmt::Display for DuplicateFieldError {
 
 impl Resolution {
     /// Create a new empty resolution.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             variant_selections: Vec::new(),
             fields: BTreeMap::new(),
@@ -384,12 +384,12 @@ impl Resolution {
     }
 
     /// Get all fields.
-    pub fn fields(&self) -> &BTreeMap<&'static str, FieldInfo> {
+    pub const fn fields(&self) -> &BTreeMap<&'static str, FieldInfo> {
         &self.fields
     }
 
     /// Get the set of required field names.
-    pub fn required_field_names(&self) -> &BTreeSet<&'static str> {
+    pub const fn required_field_names(&self) -> &BTreeSet<&'static str> {
         &self.required_field_names
     }
 
@@ -428,7 +428,7 @@ impl Resolution {
     }
 
     /// Get all known key paths (for depth-aware probing).
-    pub fn known_paths(&self) -> &BTreeSet<KeyPath> {
+    pub const fn known_paths(&self) -> &BTreeSet<KeyPath> {
         &self.known_paths
     }
 

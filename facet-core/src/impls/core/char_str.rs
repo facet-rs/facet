@@ -37,7 +37,7 @@ unsafe fn str_truthy(value: PtrConst) -> bool {
     !unsafe { value.get::<str>() }.is_empty()
 }
 
-unsafe fn str_drop(_: OxPtrMut) {}
+const unsafe fn str_drop(_: OxPtrMut) {}
 
 static STR_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
     drop_in_place: str_drop,

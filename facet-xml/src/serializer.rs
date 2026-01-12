@@ -63,7 +63,7 @@ impl SerializeOptions {
     }
 
     /// Enable pretty-printing with default indentation.
-    pub fn pretty(mut self) -> Self {
+    pub const fn pretty(mut self) -> Self {
         self.pretty = true;
         self
     }
@@ -119,7 +119,7 @@ impl SerializeOptions {
     ///
     /// This is useful when serializing content that already contains entity references,
     /// such as HTML entities in SVG content.
-    pub fn preserve_entities(mut self, preserve: bool) -> Self {
+    pub const fn preserve_entities(mut self, preserve: bool) -> Self {
         self.preserve_entities = preserve;
         self
     }

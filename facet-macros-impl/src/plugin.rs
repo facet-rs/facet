@@ -629,7 +629,7 @@ enum ContextFrame<'a> {
 }
 
 impl<'a> EvalContext<'a> {
-    fn new(parsed_type: &'a facet_macro_parse::PType) -> Self {
+    const fn new(parsed_type: &'a facet_macro_parse::PType) -> Self {
         Self {
             parsed_type,
             stack: Vec::new(),

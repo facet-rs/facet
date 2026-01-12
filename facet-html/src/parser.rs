@@ -240,7 +240,7 @@ struct Element {
 }
 
 impl Element {
-    fn new(name: String, attributes: Vec<(String, String)>) -> Self {
+    const fn new(name: String, attributes: Vec<(String, String)>) -> Self {
         Self {
             name,
             attributes,

@@ -66,7 +66,7 @@ pub struct YamlSerializer {
 
 impl YamlSerializer {
     /// Create a new YAML serializer.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             out: Vec::new(),
             stack: Vec::new(),

@@ -66,12 +66,12 @@ pub enum ContainerKind {
 
 impl ContainerKind {
     /// Returns true if this container kind is ambiguous (can be struct or sequence).
-    pub fn is_ambiguous(self) -> bool {
+    pub const fn is_ambiguous(self) -> bool {
         matches!(self, ContainerKind::Element)
     }
 
     /// Human-readable name for error messages.
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             ContainerKind::Object => "object",
             ContainerKind::Array => "array",

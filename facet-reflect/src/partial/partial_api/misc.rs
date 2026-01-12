@@ -22,7 +22,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// might use this for debug assertions, to make sure the state is what
     /// they think it is.
     #[inline]
-    pub fn frame_count(&self) -> usize {
+    pub const fn frame_count(&self) -> usize {
         self.frames().len()
     }
 
@@ -76,7 +76,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Returns the current deferred resolution, if in deferred mode.
     #[inline]
-    pub fn deferred_resolution(&self) -> Option<&Resolution> {
+    pub const fn deferred_resolution(&self) -> Option<&Resolution> {
         self.resolution()
     }
 

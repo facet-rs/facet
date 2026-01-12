@@ -68,7 +68,7 @@ unsafe fn hashset_iter_dealloc<T>(iter_ptr: PtrMut) {
 
 /// Extract the SetDef from a shape, returns None if not a Set
 #[inline]
-fn get_set_def(shape: &'static Shape) -> Option<&'static SetDef> {
+const fn get_set_def(shape: &'static Shape) -> Option<&'static SetDef> {
     match shape.def {
         Def::Set(ref def) => Some(def),
         _ => None,

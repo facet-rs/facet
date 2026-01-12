@@ -117,7 +117,7 @@ impl SerializeOptions {
     }
 
     /// Enable pretty-printing with default indentation.
-    pub fn pretty(mut self) -> Self {
+    pub const fn pretty(mut self) -> Self {
         self.pretty = true;
         self
     }
@@ -136,7 +136,7 @@ impl SerializeOptions {
     }
 
     /// Use self-closing syntax for void elements (`<br />` instead of `<br>`).
-    pub fn self_closing_void(mut self, value: bool) -> Self {
+    pub const fn self_closing_void(mut self, value: bool) -> Self {
         self.self_closing_void = value;
         self
     }

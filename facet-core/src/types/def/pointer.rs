@@ -29,7 +29,7 @@ pub struct PointerDef {
 
 impl PointerDef {
     /// Returns shape of the inner type of the pointer, if not opaque
-    pub fn pointee(&self) -> Option<&'static Shape> {
+    pub const fn pointee(&self) -> Option<&'static Shape> {
         self.pointee
     }
 
@@ -39,7 +39,7 @@ impl PointerDef {
     }
 
     /// Returns shape of the corresponding weak pointer, if this pointer is strong
-    pub fn strong(&self) -> Option<&'static Shape> {
+    pub const fn strong(&self) -> Option<&'static Shape> {
         self.strong
     }
 
@@ -159,7 +159,7 @@ impl<P> LockResult<P> {
     ///   will release the lock
     /// - The guard must outlive any use of `data`
     #[must_use]
-    pub unsafe fn new(data: P, guard: PtrConst, guard_vtable: &'static LockGuardVTable) -> Self {
+    pub const unsafe fn new(data: P, guard: PtrConst, guard_vtable: &'static LockGuardVTable) -> Self {
         Self {
             data,
             guard,
@@ -169,7 +169,7 @@ impl<P> LockResult<P> {
 
     /// Returns a reference to the locked data
     #[must_use]
-    pub fn data(&self) -> &P {
+    pub const fn data(&self) -> &P {
         &self.data
     }
 }
@@ -177,7 +177,7 @@ impl<P> LockResult<P> {
 impl WriteLockResult {
     /// Returns a const pointer to the locked data (convenience for write locks)
     #[must_use]
-    pub fn data_const(&self) -> PtrConst {
+    pub const fn data_const(&self) -> PtrConst {
         self.data.as_const()
     }
 }

@@ -70,13 +70,13 @@ macro_rules! bitflags {
 
             /// Inserts the flags in `other` into `self`.
             #[inline]
-            pub fn insert(&mut self, other: Self) {
+            pub const fn insert(&mut self, other: Self) {
                 self.0 |= other.0;
             }
 
             /// Removes the flags in `other` from `self`.
             #[inline]
-            pub fn remove(&mut self, other: Self) {
+            pub const fn remove(&mut self, other: Self) {
                 self.0 &= !other.0;
             }
 

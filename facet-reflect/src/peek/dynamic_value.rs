@@ -20,13 +20,13 @@ pub struct PeekDynamicValue<'mem, 'facet> {
 impl<'mem, 'facet> PeekDynamicValue<'mem, 'facet> {
     /// Returns the dynamic value definition
     #[inline(always)]
-    pub fn def(&self) -> DynamicValueDef {
+    pub const fn def(&self) -> DynamicValueDef {
         self.def
     }
 
     /// Returns the underlying peek value
     #[inline(always)]
-    pub fn peek(&self) -> Peek<'mem, 'facet> {
+    pub const fn peek(&self) -> Peek<'mem, 'facet> {
         self.value
     }
 

@@ -25,7 +25,7 @@ pub enum ListLikeDef {
 impl ListLikeDef {
     /// Returns the shape of the items in the list
     #[inline]
-    pub fn t(&self) -> &'static Shape {
+    pub const fn t(&self) -> &'static Shape {
         match self {
             ListLikeDef::List(v) => v.t(),
             ListLikeDef::Array(v) => v.t(),
@@ -154,13 +154,13 @@ impl<'mem, 'facet> PeekListLike<'mem, 'facet> {
 
     /// Get the length of the list
     #[inline]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.len
     }
 
     /// Returns true if the list is empty
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
@@ -282,7 +282,7 @@ impl<'mem, 'facet> PeekListLike<'mem, 'facet> {
 
     /// Def getter
     #[inline]
-    pub fn def(&self) -> ListLikeDef {
+    pub const fn def(&self) -> ListLikeDef {
         self.def
     }
 }

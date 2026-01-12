@@ -19,7 +19,7 @@ unsafe fn display_url(
     }
 }
 
-fn url_parse_error_message(error: url::ParseError) -> &'static str {
+const fn url_parse_error_message(error: url::ParseError) -> &'static str {
     match error {
         url::ParseError::EmptyHost => "empty host",
         url::ParseError::IdnaError => "invalid international domain name",

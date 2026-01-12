@@ -126,7 +126,7 @@ impl Default for JsonSchema {
 
 impl JsonSchema {
     /// Create an empty schema
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             schema: None,
             ref_: None,
@@ -199,7 +199,7 @@ struct SchemaContext {
 }
 
 impl SchemaContext {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             defs: BTreeMap::new(),
             in_progress: Vec::new(),

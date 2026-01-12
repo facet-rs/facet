@@ -93,7 +93,7 @@ impl<'a> TraitSources<'a> {
     }
 
     /// Check if we should use auto-detection for this trait
-    fn should_auto(&self) -> bool {
+    const fn should_auto(&self) -> bool {
         self.auto_traits
     }
 }

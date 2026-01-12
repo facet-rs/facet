@@ -155,7 +155,7 @@ impl BuildOptions {
     /// When set, all floating-point numbers will be formatted with this many
     /// decimal places. This is useful when using float tolerance in comparisons
     /// to ensure the display matches the tolerance level.
-    pub fn with_float_precision(mut self, precision: usize) -> Self {
+    pub const fn with_float_precision(mut self, precision: usize) -> Self {
         self.float_precision = Some(precision);
         self
     }

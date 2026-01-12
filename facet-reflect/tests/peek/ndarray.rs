@@ -40,22 +40,22 @@ impl<T> Mat<T> {
         }
     }
 
-    pub fn nrows(&self) -> usize {
+    pub const fn nrows(&self) -> usize {
         self.nrows
     }
-    pub fn ncols(&self) -> usize {
+    pub const fn ncols(&self) -> usize {
         self.ncols
     }
-    pub fn as_ptr(&self) -> *const T {
+    pub const fn as_ptr(&self) -> *const T {
         self.flat.as_ptr()
     }
-    pub fn as_mut_ptr(&mut self) -> *mut T {
+    pub const fn as_mut_ptr(&mut self) -> *mut T {
         self.flat.as_mut_ptr()
     }
-    pub fn row_stride(&self) -> isize {
+    pub const fn row_stride(&self) -> isize {
         size_of::<T>() as isize
     }
-    pub fn col_stride(&self) -> isize {
+    pub const fn col_stride(&self) -> isize {
         (self.nrows * size_of::<T>()) as isize
     }
 }
@@ -66,7 +66,7 @@ unsafe fn mat_count<T>(ptr: PtrConst) -> usize {
     p.nrows() * p.ncols()
 }
 
-fn mat_n_dim(_ptr: PtrConst) -> usize {
+const fn mat_n_dim(_ptr: PtrConst) -> usize {
     2
 }
 

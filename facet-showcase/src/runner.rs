@@ -53,7 +53,7 @@ impl Provenance {
     }
 
     /// Check if we have meaningful provenance info.
-    pub fn has_info(&self) -> bool {
+    pub const fn has_info(&self) -> bool {
         self.commit.is_some() || self.timestamp.is_some() || self.rustc_version.is_some()
     }
 }
@@ -114,7 +114,7 @@ impl ShowcaseRunner {
     }
 
     /// Set the primary language for this showcase.
-    pub fn language(mut self, lang: Language) -> Self {
+    pub const fn language(mut self, lang: Language) -> Self {
         self.primary_language = lang;
         self
     }
@@ -260,17 +260,17 @@ impl ShowcaseRunner {
     }
 
     /// Get a reference to the highlighter.
-    pub fn highlighter(&self) -> &Highlighter {
+    pub const fn highlighter(&self) -> &Highlighter {
         &self.highlighter
     }
 
     /// Get the output mode.
-    pub fn mode(&self) -> OutputMode {
+    pub const fn mode(&self) -> OutputMode {
         self.mode
     }
 
     /// Get the primary language.
-    pub fn primary_language(&self) -> Language {
+    pub const fn primary_language(&self) -> Language {
         self.primary_language
     }
 
@@ -333,7 +333,7 @@ pub struct Scenario<'a> {
 }
 
 impl<'a> Scenario<'a> {
-    fn new(runner: &'a mut ShowcaseRunner, name: String, skipped: bool) -> Self {
+    const fn new(runner: &'a mut ShowcaseRunner, name: String, skipped: bool) -> Self {
         Self {
             runner,
             name,

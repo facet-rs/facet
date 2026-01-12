@@ -13,13 +13,13 @@ pub struct PeekResult<'mem, 'facet> {
 impl<'mem, 'facet> PeekResult<'mem, 'facet> {
     /// Returns the result definition
     #[inline(always)]
-    pub fn def(self) -> ResultDef {
+    pub const fn def(self) -> ResultDef {
         self.def
     }
 
     /// Returns the result vtable
     #[inline(always)]
-    pub fn vtable(self) -> &'static ResultVTable {
+    pub const fn vtable(self) -> &'static ResultVTable {
         self.def.vtable
     }
 

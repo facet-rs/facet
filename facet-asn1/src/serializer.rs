@@ -55,7 +55,7 @@ struct ContainerState {
 
 impl Asn1Serializer {
     /// Create a new ASN.1 DER serializer.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             out: Vec::new(),
             stack: Vec::new(),

@@ -25,7 +25,7 @@ pub struct ValueId {
 
 impl ValueId {
     #[inline]
-    pub(crate) fn new(shape: &'static Shape, ptr: *const u8) -> Self {
+    pub(crate) const fn new(shape: &'static Shape, ptr: *const u8) -> Self {
         Self { shape, ptr }
     }
 }
@@ -214,7 +214,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Returns the vtable
     #[inline(always)]
-    pub fn vtable(&self) -> VTableErased {
+    pub const fn vtable(&self) -> VTableErased {
         self.shape.vtable
     }
 
@@ -643,7 +643,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to identify this value as a struct
     #[inline]
-    pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet>, ReflectError> {
+    pub const fn into_struct(self) -> Result<PeekStruct<'mem, 'facet>, ReflectError> {
         if let Type::User(UserType::Struct(ty)) = self.shape.ty {
             Ok(PeekStruct { value: self, ty })
         } else {
@@ -656,7 +656,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to identify this value as an enum
     #[inline]
-    pub fn into_enum(self) -> Result<PeekEnum<'mem, 'facet>, ReflectError> {
+    pub const fn into_enum(self) -> Result<PeekEnum<'mem, 'facet>, ReflectError> {
         if let Type::User(UserType::Enum(ty)) = self.shape.ty {
             Ok(PeekEnum { value: self, ty })
         } else {
@@ -669,7 +669,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to identify this value as a map
     #[inline]
-    pub fn into_map(self) -> Result<PeekMap<'mem, 'facet>, ReflectError> {
+    pub const fn into_map(self) -> Result<PeekMap<'mem, 'facet>, ReflectError> {
         if let Def::Map(def) = self.shape.def {
             // SAFETY: The MapDef comes from self.shape.def, where self.shape is obtained
             // from a trusted source (either T::SHAPE from the Facet trait, or validated
@@ -685,7 +685,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to identify this value as a set
     #[inline]
-    pub fn into_set(self) -> Result<PeekSet<'mem, 'facet>, ReflectError> {
+    pub const fn into_set(self) -> Result<PeekSet<'mem, 'facet>, ReflectError> {
         if let Def::Set(def) = self.shape.def {
             // SAFETY: The SetDef comes from self.shape.def, where self.shape is obtained
             // from a trusted source (either T::SHAPE from the Facet trait, or validated
@@ -701,7 +701,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to identify this value as a list
     #[inline]
-    pub fn into_list(self) -> Result<PeekList<'mem, 'facet>, ReflectError> {
+    pub const fn into_list(self) -> Result<PeekList<'mem, 'facet>, ReflectError> {
         if let Def::List(def) = self.shape.def {
             // SAFETY: The ListDef comes from self.shape.def, where self.shape is obtained
             // from a trusted source (either T::SHAPE from the Facet trait, or validated
@@ -717,7 +717,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to identify this value as a ndarray
     #[inline]
-    pub fn into_ndarray(self) -> Result<PeekNdArray<'mem, 'facet>, ReflectError> {
+    pub const fn into_ndarray(self) -> Result<PeekNdArray<'mem, 'facet>, ReflectError> {
         if let Def::NdArray(def) = self.shape.def {
             // SAFETY: The NdArrayDef comes from self.shape.def, where self.shape is obtained
             // from a trusted source (either T::SHAPE from the Facet trait, or validated
@@ -799,7 +799,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to identify this value as a pointer
     #[inline]
-    pub fn into_pointer(self) -> Result<PeekPointer<'mem, 'facet>, ReflectError> {
+    pub const fn into_pointer(self) -> Result<PeekPointer<'mem, 'facet>, ReflectError> {
         if let Def::Pointer(def) = self.shape.def {
             Ok(PeekPointer { value: self, def })
         } else {
@@ -812,7 +812,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to identify this value as an option
     #[inline]
-    pub fn into_option(self) -> Result<PeekOption<'mem, 'facet>, ReflectError> {
+    pub const fn into_option(self) -> Result<PeekOption<'mem, 'facet>, ReflectError> {
         if let Def::Option(def) = self.shape.def {
             Ok(PeekOption { value: self, def })
         } else {
@@ -825,7 +825,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to identify this value as a result
     #[inline]
-    pub fn into_result(self) -> Result<PeekResult<'mem, 'facet>, ReflectError> {
+    pub const fn into_result(self) -> Result<PeekResult<'mem, 'facet>, ReflectError> {
         if let Def::Result(def) = self.shape.def {
             Ok(PeekResult { value: self, def })
         } else {
@@ -863,7 +863,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to identify this value as a dynamic value (like `facet_value::Value`)
     #[inline]
-    pub fn into_dynamic_value(self) -> Result<PeekDynamicValue<'mem, 'facet>, ReflectError> {
+    pub const fn into_dynamic_value(self) -> Result<PeekDynamicValue<'mem, 'facet>, ReflectError> {
         if let Def::DynamicValue(def) = self.shape.def {
             Ok(PeekDynamicValue { value: self, def })
         } else {

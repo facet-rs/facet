@@ -24,7 +24,7 @@ pub enum ElementChange {
 
 impl ElementChange {
     /// Get the prefix character for this change type.
-    pub fn prefix(self) -> Option<char> {
+    pub const fn prefix(self) -> Option<char> {
         match self {
             Self::None => None,
             Self::Deleted => Some('-'),
@@ -35,7 +35,7 @@ impl ElementChange {
     }
 
     /// Check if this change type uses any prefix.
-    pub fn has_prefix(self) -> bool {
+    pub const fn has_prefix(self) -> bool {
         !matches!(self, Self::None)
     }
 }
@@ -120,7 +120,7 @@ impl LayoutNode {
     }
 
     /// Create a sequence node.
-    pub fn sequence(change: ElementChange, item_type: &'static str) -> Self {
+    pub const fn sequence(change: ElementChange, item_type: &'static str) -> Self {
         Self::Sequence {
             change,
             item_type,
@@ -129,17 +129,17 @@ impl LayoutNode {
     }
 
     /// Create a collapsed node.
-    pub fn collapsed(count: usize) -> Self {
+    pub const fn collapsed(count: usize) -> Self {
         Self::Collapsed { count }
     }
 
     /// Create a text node.
-    pub fn text(value: FormattedValue, change: ElementChange) -> Self {
+    pub const fn text(value: FormattedValue, change: ElementChange) -> Self {
         Self::Text { value, change }
     }
 
     /// Create an item group node.
-    pub fn item_group(
+    pub const fn item_group(
         items: Vec<FormattedValue>,
         change: ElementChange,
         collapsed_suffix: Option<usize>,
@@ -154,7 +154,7 @@ impl LayoutNode {
     }
 
     /// Get the element change type (if applicable).
-    pub fn change(&self) -> ElementChange {
+    pub const fn change(&self) -> ElementChange {
         match self {
             Self::Element { change, .. } => *change,
             Self::Sequence { change, .. } => *change,

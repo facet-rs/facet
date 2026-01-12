@@ -59,7 +59,7 @@ impl Default for TypeScriptGenerator {
 
 impl TypeScriptGenerator {
     /// Create a new TypeScript generator.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             output: String::new(),
             generated: BTreeSet::new(),

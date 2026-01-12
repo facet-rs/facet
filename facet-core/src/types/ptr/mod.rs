@@ -375,7 +375,7 @@ impl PtrConst {
     /// # Safety
     /// Caller must ensure they have exclusive access.
     #[inline]
-    pub unsafe fn into_mut(self) -> PtrMut {
+    pub const unsafe fn into_mut(self) -> PtrMut {
         self.ptr
     }
 }

@@ -66,7 +66,7 @@ struct ContainerState {
 
 impl<'de> Asn1Parser<'de> {
     /// Create a new ASN.1 DER parser from input bytes.
-    pub fn new(input: &'de [u8]) -> Self {
+    pub const fn new(input: &'de [u8]) -> Self {
         Self {
             input,
             pos: 0,
@@ -535,7 +535,7 @@ pub struct Asn1Probe<'de> {
 }
 
 impl<'de> Asn1Probe<'de> {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             _marker: core::marker::PhantomData,
         }

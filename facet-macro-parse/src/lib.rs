@@ -35,7 +35,7 @@ pub enum PType {
 
 impl PType {
     /// Get the name identifier of the type
-    pub fn name(&self) -> &Ident {
+    pub const fn name(&self) -> &Ident {
         match self {
             PType::Struct(s) => &s.container.name,
             PType::Enum(e) => &e.container.name,

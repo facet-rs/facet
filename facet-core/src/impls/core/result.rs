@@ -10,7 +10,7 @@ use crate::{
 
 /// Extract the ResultDef from a shape, returns None if not a Result
 #[inline]
-fn get_result_def(shape: &'static Shape) -> Option<&'static ResultDef> {
+const fn get_result_def(shape: &'static Shape) -> Option<&'static ResultDef> {
     match shape.def {
         Def::Result(ref def) => Some(def),
         _ => None,

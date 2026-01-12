@@ -58,7 +58,7 @@ impl SameOptions {
     /// // But passes with tolerance:
     /// assert_same_with!(a, b, SameOptions::new().float_tolerance(1e-6));
     /// ```
-    pub fn float_tolerance(mut self, tolerance: f64) -> Self {
+    pub const fn float_tolerance(mut self, tolerance: f64) -> Self {
         self.float_tolerance = Some(tolerance);
         self
     }
@@ -84,7 +84,7 @@ impl SameOptions {
     ///     .float_tolerance(0.001)
     ///     .similarity_threshold(0.6);
     /// ```
-    pub fn similarity_threshold(mut self, threshold: f64) -> Self {
+    pub const fn similarity_threshold(mut self, threshold: f64) -> Self {
         self.similarity_threshold = Some(threshold);
         self
     }
@@ -118,7 +118,7 @@ pub enum SameReport<'mem, 'facet> {
 
 impl<'mem, 'facet> SameReport<'mem, 'facet> {
     /// Returns `true` if the two values matched.
-    pub fn is_same(&self) -> bool {
+    pub const fn is_same(&self) -> bool {
         matches!(self, Self::Same)
     }
 

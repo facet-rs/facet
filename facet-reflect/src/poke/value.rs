@@ -85,42 +85,42 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
 
     /// Returns the shape of the value.
     #[inline(always)]
-    pub fn shape(&self) -> &'static Shape {
+    pub const fn shape(&self) -> &'static Shape {
         self.shape
     }
 
     /// Returns a const pointer to the underlying data.
     #[inline(always)]
-    pub fn data(&self) -> PtrConst {
+    pub const fn data(&self) -> PtrConst {
         self.data.as_const()
     }
 
     /// Returns a mutable pointer to the underlying data.
     #[inline(always)]
-    pub fn data_mut(&mut self) -> PtrMut {
+    pub const fn data_mut(&mut self) -> PtrMut {
         self.data
     }
 
     /// Returns true if this value is a struct.
     #[inline]
-    pub fn is_struct(&self) -> bool {
+    pub const fn is_struct(&self) -> bool {
         matches!(self.shape.ty, Type::User(UserType::Struct(_)))
     }
 
     /// Returns true if this value is an enum.
     #[inline]
-    pub fn is_enum(&self) -> bool {
+    pub const fn is_enum(&self) -> bool {
         matches!(self.shape.ty, Type::User(UserType::Enum(_)))
     }
 
     /// Returns true if this value is a scalar (primitive type).
     #[inline]
-    pub fn is_scalar(&self) -> bool {
+    pub const fn is_scalar(&self) -> bool {
         matches!(self.shape.def, Def::Scalar)
     }
 
     /// Converts this into a `PokeStruct` if the value is a struct.
-    pub fn into_struct(self) -> Result<PokeStruct<'mem, 'facet>, ReflectError> {
+    pub const fn into_struct(self) -> Result<PokeStruct<'mem, 'facet>, ReflectError> {
         match self.shape.ty {
             Type::User(UserType::Struct(struct_type)) => Ok(PokeStruct {
                 value: self,
@@ -134,7 +134,7 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     }
 
     /// Converts this into a `PokeEnum` if the value is an enum.
-    pub fn into_enum(self) -> Result<super::PokeEnum<'mem, 'facet>, ReflectError> {
+    pub const fn into_enum(self) -> Result<super::PokeEnum<'mem, 'facet>, ReflectError> {
         match self.shape.ty {
             Type::User(UserType::Enum(enum_type)) => Ok(super::PokeEnum {
                 value: self,

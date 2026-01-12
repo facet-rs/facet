@@ -30,7 +30,7 @@ pub enum FunctionAbi {
 }
 impl FunctionAbi {
     /// Returns the string in `extern "abi-string"` if not [`FunctionAbi::Unknown`].
-    pub fn as_abi_str(&self) -> Option<&str> {
+    pub const fn as_abi_str(&self) -> Option<&str> {
         match self {
             FunctionAbi::C => Some("C"),
             FunctionAbi::Rust => Some("Rust"),

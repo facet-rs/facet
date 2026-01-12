@@ -68,7 +68,7 @@ struct EventCollector {
 }
 
 impl EventCollector {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self { events: Vec::new() }
     }
 }
@@ -159,7 +159,7 @@ impl<'de> YamlParser<'de> {
     }
 
     /// Get the original input string.
-    pub fn input(&self) -> &'de str {
+    pub const fn input(&self) -> &'de str {
         self.input
     }
 

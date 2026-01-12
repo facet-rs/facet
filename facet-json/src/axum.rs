@@ -101,7 +101,7 @@ enum JsonRejectionKind {
 
 impl JsonRejection {
     /// Returns the HTTP status code for this rejection.
-    pub fn status(&self) -> StatusCode {
+    pub const fn status(&self) -> StatusCode {
         match &self.kind {
             JsonRejectionKind::Body(_) => StatusCode::BAD_REQUEST,
             JsonRejectionKind::Deserialize(_) => StatusCode::UNPROCESSABLE_ENTITY,
@@ -111,22 +111,22 @@ impl JsonRejection {
     }
 
     /// Returns true if this is a body reading error.
-    pub fn is_body_error(&self) -> bool {
+    pub const fn is_body_error(&self) -> bool {
         matches!(&self.kind, JsonRejectionKind::Body(_))
     }
 
     /// Returns true if this is a deserialization error.
-    pub fn is_deserialize_error(&self) -> bool {
+    pub const fn is_deserialize_error(&self) -> bool {
         matches!(&self.kind, JsonRejectionKind::Deserialize(_))
     }
 
     /// Returns true if this is a missing content type error.
-    pub fn is_missing_content_type(&self) -> bool {
+    pub const fn is_missing_content_type(&self) -> bool {
         matches!(&self.kind, JsonRejectionKind::MissingContentType)
     }
 
     /// Returns true if this is an invalid content type error.
-    pub fn is_invalid_content_type(&self) -> bool {
+    pub const fn is_invalid_content_type(&self) -> bool {
         matches!(&self.kind, JsonRejectionKind::InvalidContentType)
     }
 }

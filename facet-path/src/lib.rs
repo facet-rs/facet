@@ -73,12 +73,12 @@ impl Path {
     }
 
     /// Get the length of this path.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.steps.len()
     }
 
     /// Check if this path is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.steps.is_empty()
     }
 
@@ -264,7 +264,7 @@ fn get_field_shape(shape: &Shape, idx: usize) -> Option<&'static Shape> {
 }
 
 /// Get the element shape for a list/array.
-fn get_element_shape(shape: &Shape) -> Option<&'static Shape> {
+const fn get_element_shape(shape: &Shape) -> Option<&'static Shape> {
     match shape.def {
         Def::List(ld) => Some(ld.t()),
         Def::Array(ad) => Some(ad.t()),
@@ -297,7 +297,7 @@ fn get_variant_shape(shape: &Shape, idx: usize) -> Option<&'static Shape> {
 }
 
 /// Get the key shape for a map.
-fn get_map_key_shape(shape: &Shape) -> Option<&'static Shape> {
+const fn get_map_key_shape(shape: &Shape) -> Option<&'static Shape> {
     match shape.def {
         Def::Map(md) => Some(md.k()),
         _ => None,
@@ -305,7 +305,7 @@ fn get_map_key_shape(shape: &Shape) -> Option<&'static Shape> {
 }
 
 /// Get the value shape for a map.
-fn get_map_value_shape(shape: &Shape) -> Option<&'static Shape> {
+const fn get_map_value_shape(shape: &Shape) -> Option<&'static Shape> {
     match shape.def {
         Def::Map(md) => Some(md.v()),
         _ => None,
@@ -313,7 +313,7 @@ fn get_map_value_shape(shape: &Shape) -> Option<&'static Shape> {
 }
 
 /// Get the inner shape for an Option.
-fn get_option_inner_shape(shape: &Shape) -> Option<&'static Shape> {
+const fn get_option_inner_shape(shape: &Shape) -> Option<&'static Shape> {
     match shape.def {
         Def::Option(od) => Some(od.t()),
         _ => None,
@@ -321,7 +321,7 @@ fn get_option_inner_shape(shape: &Shape) -> Option<&'static Shape> {
 }
 
 /// Get the inner shape for a pointer.
-fn get_pointer_inner_shape(shape: &Shape) -> Option<&'static Shape> {
+const fn get_pointer_inner_shape(shape: &Shape) -> Option<&'static Shape> {
     match shape.def {
         Def::Pointer(pd) => pd.pointee(),
         _ => None,

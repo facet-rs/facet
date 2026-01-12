@@ -206,12 +206,12 @@ pub struct CachedFormatModule {
 
 impl CachedFormatModule {
     /// Create a new cached module.
-    pub fn new(module: JITModule, fn_ptr: *const u8) -> Self {
+    pub const fn new(module: JITModule, fn_ptr: *const u8) -> Self {
         Self { module, fn_ptr }
     }
 
     /// Get the function pointer.
-    pub fn fn_ptr(&self) -> *const u8 {
+    pub const fn fn_ptr(&self) -> *const u8 {
         self.fn_ptr
     }
 }
@@ -255,7 +255,7 @@ impl<T, P> CompiledFormatDeserializer<T, P> {
 
     /// Get the raw function pointer.
     #[inline(always)]
-    pub fn fn_ptr(&self) -> *const u8 {
+    pub const fn fn_ptr(&self) -> *const u8 {
         self.fn_ptr
     }
 }
