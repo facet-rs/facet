@@ -1,6 +1,5 @@
-use crate::{BoundedGenericParams, LiteralString, RenameRule, unescape};
-use crate::{IParse, ToTokenIter};
-use crate::{Ident, ReprInner, ToTokens, TokenStream};
+use crate::{BoundedGenericParams, RenameRule, unescape};
+use crate::{Ident, KWhere, ReprInner, ToTokens, TokenStream};
 use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 
@@ -78,6 +77,77 @@ impl quote::ToTokens for IdentOrLiteral {
     }
 }
 
+/// The key of a facet attribute - either an identifier or the `where` keyword.
+#[derive(Clone)]
+pub enum AttrKey {
+    /// A regular identifier (e.g., "sensitive", "rename", "opaque")
+    Ident(Ident),
+    /// The `where` keyword for custom bounds
+    Where(KWhere),
+}
+
+impl AttrKey {
+    /// Returns the key as a string
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AttrKey::Ident(ident) => {
+                // Leak the string to get a static lifetime - this is fine for attribute keys
+                // which are typically small and few in number
+                Box::leak(ident.to_string().into_boxed_str())
+            }
+            AttrKey::Where(_) => "where",
+        }
+    }
+
+    /// Returns the span of the key
+    pub fn span(&self) -> Span {
+        match self {
+            AttrKey::Ident(ident) => ident.span(),
+            AttrKey::Where(kw) => kw.span(),
+        }
+    }
+}
+
+impl PartialEq<&str> for AttrKey {
+    fn eq(&self, other: &&str) -> bool {
+        match self {
+            AttrKey::Ident(ident) => ident == other,
+            AttrKey::Where(_) => *other == "where",
+        }
+    }
+}
+
+impl PartialEq<String> for AttrKey {
+    fn eq(&self, other: &String) -> bool {
+        match self {
+            AttrKey::Ident(ident) => ident == other.as_str(),
+            AttrKey::Where(_) => other == "where",
+        }
+    }
+}
+
+impl ToTokens for AttrKey {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            AttrKey::Ident(ident) => ident.to_tokens(tokens),
+            AttrKey::Where(kw) => kw.to_tokens(tokens),
+        }
+    }
+}
+
+impl quote::ToTokens for AttrKey {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            AttrKey::Ident(ident) => quote::ToTokens::to_tokens(ident, tokens),
+            AttrKey::Where(kw) => {
+                // Convert unsynn TokenStream to proc_macro2 TokenStream
+                let ts: TokenStream = ToTokens::to_token_stream(kw);
+                tokens.extend(ts);
+            }
+        }
+    }
+}
+
 /// A parsed facet attribute.
 ///
 /// All attributes are now stored uniformly - either with a namespace (`xml::element`)
@@ -86,8 +156,8 @@ impl quote::ToTokens for IdentOrLiteral {
 pub struct PFacetAttr {
     /// The namespace (e.g., "xml", "args"). None for builtin attributes.
     pub ns: Option<Ident>,
-    /// The key (e.g., "element", "sensitive", "rename")
-    pub key: Ident,
+    /// The key (e.g., "element", "sensitive", "rename", or `where`)
+    pub key: AttrKey,
     /// The arguments as a TokenStream
     pub args: TokenStream,
 }
@@ -111,8 +181,17 @@ impl PFacetAttr {
                     };
                     dest.push(PFacetAttr {
                         ns: Some(ext.ns.clone()),
-                        key: ext.key.clone(),
+                        key: AttrKey::Ident(ext.key.clone()),
                         args,
+                    });
+                }
+
+                // Where clause attributes like `where T: Clone`
+                FacetInner::Where(where_attr) => {
+                    dest.push(PFacetAttr {
+                        ns: None,
+                        key: AttrKey::Where(where_attr._kw_where.clone()),
+                        args: where_attr.bounds.to_token_stream(),
                     });
                 }
 
@@ -125,7 +204,7 @@ impl PFacetAttr {
                     };
                     dest.push(PFacetAttr {
                         ns: None,
-                        key: simple.key.clone(),
+                        key: AttrKey::Ident(simple.key.clone()),
                         args,
                     });
                 }
@@ -140,7 +219,10 @@ impl PFacetAttr {
 
     /// Returns the key as a string
     pub fn key_str(&self) -> String {
-        self.key.to_string()
+        match &self.key {
+            AttrKey::Ident(ident) => ident.to_string(),
+            AttrKey::Where(_) => "where".to_string(),
+        }
     }
 }
 
@@ -665,35 +747,19 @@ impl PAttrs {
                         // #[facet(auto_traits)] enables specialization-based detection
                         auto_traits = true;
                     }
-                    "bound" => {
-                        // #[facet(bound = "T: Clone + Send")]
-                        // Parse the args as a LiteralString to properly extract the content
-                        let mut iter = attr.args.clone().to_token_iter();
-                        match iter.parse::<LiteralString>() {
-                            Ok(lit_str) if !lit_str.as_str().is_empty() => {
-                                // Parse the string content as a TokenStream
-                                let bound_str = lit_str.as_str();
-                                match bound_str.parse::<TokenStream>() {
-                                    Ok(tokens) => custom_bounds.push(tokens),
-                                    Err(_) => {
-                                        errors.push(CompileError {
-                                            message: format!(
-                                                "invalid bound syntax: `{bound_str}`. \
-                                                 Expected valid Rust where clause predicate."
-                                            ),
-                                            span: attr.key.span(),
-                                        });
-                                    }
-                                }
-                            }
-                            _ => {
-                                errors.push(CompileError {
-                                    message: "expected non-empty string literal for bound, e.g., \
-                                              #[facet(bound = \"T: Clone\")]"
-                                        .to_string(),
-                                    span: attr.key.span(),
-                                });
-                            }
+                    "where" => {
+                        // #[facet(where T: Clone + Send)]
+                        // Parse the args directly as tokens (no string literal needed)
+                        let tokens = attr.args.clone();
+                        if !tokens.is_empty() {
+                            custom_bounds.push(tokens);
+                        } else {
+                            errors.push(CompileError {
+                                message: "expected where clause bounds, e.g., \
+                                          #[facet(where T: Clone)]"
+                                    .to_string(),
+                                span: attr.key.span(),
+                            });
                         }
                     }
                     _ => {}

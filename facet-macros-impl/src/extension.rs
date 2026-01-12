@@ -19,7 +19,7 @@ use quote::{ToTokens, quote, quote_spanned};
 /// ```
 pub fn emit_extension_attr_for_field(
     ns_ident: &Ident,
-    key_ident: &Ident,
+    key_ident: &impl ToTokens,
     args: &TokenStream,
     field_name: &impl ToTokens,
     field_type: &TokenStream,
@@ -53,7 +53,7 @@ pub fn emit_extension_attr_for_field(
 /// ```
 pub fn emit_extension_attr(
     ns_ident: &Ident,
-    key_ident: &Ident,
+    key_ident: &impl ToTokens,
     args: &TokenStream,
     facet_crate: &TokenStream,
 ) -> TokenStream {
