@@ -139,7 +139,34 @@ pub fn diff_new_peek_with_options<'mem, 'facet>(
 
                 for (field, from) in from_ty.fields() {
                     if let Ok(to) = to_ty.field_by_name(field.name) {
-                        let diff = diff_new_peek_with_options(from, to, options);
+                        // Check for field-level proxy - if present, convert values through
+                        // the proxy before comparing (needed for opaque types).
+                        // Since OwnedPeek has a limited lifetime, we compare proxies for
+                        // equality but return results referencing the original values.
+                        let diff = if field.proxy.is_some() {
+                            match (
+                                from.custom_serialization(field),
+                                to.custom_serialization(field),
+                            ) {
+                                (Ok(from_proxy), Ok(to_proxy)) => {
+                                    let proxy_diff = diff_new_peek_with_options(
+                                        from_proxy.as_peek(),
+                                        to_proxy.as_peek(),
+                                        options,
+                                    );
+                                    // Map the proxy diff result back to original values
+                                    if proxy_diff.is_equal() {
+                                        Diff::Equal { value: Some(from) }
+                                    } else {
+                                        Diff::Replace { from, to }
+                                    }
+                                }
+                                // If proxy conversion fails, fall back to direct comparison
+                                _ => diff_new_peek_with_options(from, to, options),
+                            }
+                        } else {
+                            diff_new_peek_with_options(from, to, options)
+                        };
                         if diff.is_equal() {
                             unchanged.insert(Cow::Borrowed(field.name));
                         } else {
@@ -213,7 +240,34 @@ pub fn diff_new_peek_with_options<'mem, 'facet>(
 
                     for (field, from) in from_enum.fields() {
                         if let Ok(Some(to)) = to_enum.field_by_name(field.name) {
-                            let diff = diff_new_peek_with_options(from, to, options);
+                            // Check for field-level proxy - if present, convert values through
+                            // the proxy before comparing (needed for opaque types).
+                            // Since OwnedPeek has a limited lifetime, we compare proxies for
+                            // equality but return results referencing the original values.
+                            let diff = if field.proxy.is_some() {
+                                match (
+                                    from.custom_serialization(field),
+                                    to.custom_serialization(field),
+                                ) {
+                                    (Ok(from_proxy), Ok(to_proxy)) => {
+                                        let proxy_diff = diff_new_peek_with_options(
+                                            from_proxy.as_peek(),
+                                            to_proxy.as_peek(),
+                                            options,
+                                        );
+                                        // Map the proxy diff result back to original values
+                                        if proxy_diff.is_equal() {
+                                            Diff::Equal { value: Some(from) }
+                                        } else {
+                                            Diff::Replace { from, to }
+                                        }
+                                    }
+                                    // If proxy conversion fails, fall back to direct comparison
+                                    _ => diff_new_peek_with_options(from, to, options),
+                                }
+                            } else {
+                                diff_new_peek_with_options(from, to, options)
+                            };
                             if diff.is_equal() {
                                 unchanged.insert(Cow::Borrowed(field.name));
                             } else {
