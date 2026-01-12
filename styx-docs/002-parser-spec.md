@@ -75,20 +75,22 @@ A tag is an identifier prefixed with `@` that labels a value.
 > A tag MUST match the pattern `@[A-Za-z_][A-Za-z0-9_.-]*`.
 
 > r[tag.payload]
-> A tag MUST be immediately followed (no whitespace) by its payload:
+> A tag MAY be immediately followed (no whitespace) by an explicit payload:
 > 
 > | Follows `@tag` | Result |
 > |-----------------------|--------|
 > | `{...}` | tagged object |
 > | `(...)` | tagged sequence |
 > | `"..."`, `r#"..."#`, or `<<HEREDOC` | tagged scalar |
-> | `@` | tagged unit |
+> | `@` | tagged unit (explicit) |
+> | *(nothing)* | tagged unit (implicit) |
 > 
 > ```styx
-> status @ok@                // tagged unit
 > result @err{message "x"}   // tagged object
 > color @rgb(255 128 0)      // tagged sequence
 > name @nickname"Bob"        // tagged scalar
+> status @ok@                // tagged unit (explicit)
+> status @ok                 // tagged unit (implicit)
 > ```
 > 
 > Note: bare scalars cannot be tagged — there's no delimiter to separate tag from value.
@@ -160,7 +162,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 
 > r[object.syntax]
 > Objects use `{` `}` delimiters. Entries are `key value` pairs separated by newlines or commas (not both).
-> Keys are bare or quoted scalars. Duplicate keys are forbidden.
+> Duplicate keys are forbidden.
 > 
 > ```styx
 > server {
@@ -169,6 +171,30 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > }
 > { a 1, b 2, c 3 }         // comma-separated
 > { "key with spaces" 42 }  // quoted key
+> ```
+
+> r[object.keys]
+> Keys may be scalars, objects, sequences, unit, or tagged values.
+> 
+> ```styx
+> host localhost            // scalar key
+> "key with spaces" 42      // quoted scalar key
+> @ { root schema }         // unit key
+> { a 1 } mapped            // object key
+> (1 2 3) "tuple key"       // sequence key
+> @point(0 0) origin        // tagged key
+> ```
+
+> r[object.implicit-unit]
+> A key without a value has implicit unit value.
+> 
+> ```compare
+> /// styx
+> // Shorthand
+> enabled
+> /// styx
+> // Canonical
+> enabled @
 > ```
 
 ## Unit
@@ -181,24 +207,6 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > ```
 
 ## Shorthand syntax
-
-The following shorthand forms are equivalent to their canonical forms.
-
-### Implicit unit
-
-> r[shorthand.implicit-unit]
-> A key without a value has implicit unit value. A tag without a payload has implicit unit payload.
-> 
-> ```compare
-> /// styx
-> // Shorthand
-> enabled
-> status @ok
-> /// styx
-> // Canonical
-> enabled @
-> status @ok@
-> ```
 
 ### Attribute objects
 
@@ -222,8 +230,38 @@ The following shorthand forms are equivalent to their canonical forms.
 > Attribute values may be scalars, sequences, or block objects.
 > 
 > ```styx
-> config name=app tags=(web prod) opts={ verbose true }
+> config name=app tags=(web prod) opts={verbose true}
 > ```
 
 > r[shorthand.attr.termination]
 > Attributes continue until a non-`key=...` token. Newlines end the attribute sequence.
+
+## Appendix: Minified STYX
+
+STYX does not strictly require newlines. A document can be written on a single line using commas and explicit braces:
+
+```styx
+{server{host localhost,port 8080,tags(web prod)},database{url "postgres://..."}}
+```
+
+This is equivalent to:
+
+```styx
+server {
+  host localhost
+  port 8080
+  tags (web prod)
+}
+
+database {
+  url "postgres://..."
+}
+```
+
+This enables NDSTYX (newline-delimited STYX), analogous to NDJSON — one document per line for streaming or log-style data:
+
+```
+{event login,user alice,time 2026-01-12T10:00:00Z}
+{event logout,user alice,time 2026-01-12T10:30:00Z}
+{event login,user bob,time 2026-01-12T10:45:00Z}
+```
