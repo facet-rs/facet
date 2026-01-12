@@ -9,7 +9,31 @@ Schemas define the expected structure of STYX documents for validation purposes.
 They are optional — deserialization works with target types directly (e.g., Rust structs).
 Schemas are useful for text editors, CLI tools, and documentation.
 
-STYX schemas are themselves STYX documents.
+## Why STYX works for schemas
+
+STYX schemas are themselves STYX documents. This works because of tags and implicit unit:
+
+- A tag like `@string` is shorthand for `@string@` — a tag with unit payload
+- In schema context, tags name types: `@string`, `@u64`, `@MyCustomType`
+- Built-in tags like `@union`, `@map`, `@enum` take payloads describing composite types
+- User-defined type names are just tags referencing definitions elsewhere in the schema
+
+For example:
+
+```styx
+host @string           // field "host" must match type @string
+port @u16              // field "port" must match type @u16
+id @union(@u64 @string) // @union tag with sequence payload
+```
+
+The `@union(@u64 @string)` is:
+- Tag `@union` with payload `(@u64 @string)`
+- The payload is a sequence of two tagged unit values
+- Semantically: "id must match @u64 or @string"
+
+This uniformity means schemas require no special syntax — just STYX with semantic interpretation of tags as types.
+
+In schema definitions, `@` (unit) represents "any tag" — a type reference to a built-in or user-defined type.
 
 ## Schema file structure
 
@@ -65,30 +89,31 @@ STYX schemas are themselves STYX documents.
 > server { host localhost, port 8080 }
 > ```
 
-## Type references
+## Types and literals
 
-In schemas, tags name types rather than enum variants.
-
-> r[schema.type-ref]
-> A tag like `@string` or `@u16` references a type from the standard vocabulary or a user-defined type.
-> A bare scalar without `@` is a literal value constraint.
+> r[schema.type]
+> A tagged unit denotes a type constraint.
 >
 > ```styx
-> version 1        // must be exactly "1"
-> version @u32     // must be an unsigned 32-bit integer
+> version @u32     // type: must be an unsigned 32-bit integer
+> host @string     // type: must be a string
 > ```
+>
+> Since unit payloads are implicit, `@u32` is shorthand for `@u32@` — which makes STYX schemas valid STYX.
 
-> r[schema.type-ref.literal]
-> To constrain a field to a literal value starting with `@`, use a quoted scalar.
+> r[schema.literal]
+> A scalar denotes a literal value constraint.
 >
 > ```styx
-> tag "@mention"   // literal: must be exactly "@mention"
+> version 1        // literal: must be exactly "1"
+> enabled true     // literal: must be exactly "true"
+> tag "@mention"   // literal: must be exactly "@mention" (quoted)
 > ```
 
 ## Standard types
 
 > r[schema.type.primitives]
-> Primitive types:
+> These tags are built-in type constraints:
 >
 > | Type | Description |
 > |------|-------------|
@@ -103,23 +128,33 @@ In schemas, tags name types rather than enum variants.
 > | `@bytes` | hex `0xdeadbeef` or base64 `b64"SGVsbG8="` |
 > | `@any` | any value |
 > | `@unit` | the unit value `@` |
+> | `@optional(@T)` | value of type `@T` or absent |
 
 ## Optional fields
 
 > r[schema.optional]
-> A key ending with `?` indicates the field may be omitted.
+> `@optional(@T)` matches either a value of type `@T` or absence of a value.
+> For object fields, `key?` is shorthand for `key @optional(...)`.
 >
-> ```styx
+> ```compare
+> /// styx
+> // Shorthand
 > server {
 >   host @string
->   timeout? @duration   // optional
+>   timeout? @duration
+> }
+> /// styx
+> // Canonical
+> server {
+>   host @string
+>   timeout @optional(@duration)
 > }
 > ```
 
 ## Unions
 
 > r[schema.union]
-> `@union(...)` matches if the value matches any listed type. Types are checked in order.
+> `@union(...)` matches if the value matches any of the listed types.
 >
 > ```styx
 > id @union(@u64 @string)           // integer or string
@@ -129,31 +164,32 @@ In schemas, tags name types rather than enum variants.
 ## Sequences
 
 > r[schema.sequence]
-> `(@type)` matches a sequence where every element matches `@type`.
+> A sequence schema matches a sequence where every element matches the inner schema.
 >
 > ```styx
-> hosts (@string)
-> servers ({
+> hosts (@string)                   // sequence of strings
+> servers ({                        // sequence of objects
 >   host @string
 >   port @u16
 > })
+> ids (@union(@u64 @string))        // sequence of ids
 > ```
 
 ## Maps
 
 > r[schema.map]
-> `@map(@K @V)` matches an object where all values match `@V`.
-> Keys in STYX are always strings. `@map(@V)` is shorthand for `@map(@string @V)`.
+> `@map(@K @V)` matches an object where all keys match `@K` and all values match `@V`.
+> `@map(@V)` is shorthand for `@map(@string @V)`.
 >
 > ```styx
 > env @map(@string)              // string → string
-> ports @map(@string @u16)       // string → u16
+> ports @map(@u16)               // string → u16
 > ```
 
 ## Named types
 
 > r[schema.type.definition]
-> Named types are defined at the schema root. Use `@TypeName` to reference them.
+> Named types are defined inside the `schema` block. Use `@TypeName` to reference them.
 >
 > ```styx
 > TlsConfig {
@@ -212,7 +248,7 @@ meta {
 schema {
   @ {
     meta @Meta
-    schema @map(@string @Schema)
+    schema @map(@union(@string @unit) @Schema)
   }
 
   Meta {
@@ -223,35 +259,37 @@ schema {
 
   Schema @union(
     @string                    // literal value constraint
-    @TypeRef                   // @string, @u64, @MyType, etc.
+    @                          // type reference (any tag with unit payload)
     @Object                    // { field @type }
     @Sequence                  // (@type)
     @Union                     // @union(@type @type)
+    @Optional                  // @optional(@type)
     @Enum                      // @enum{ a, b { x @type } }
     @Map                       // @map(@K @V)
     @Flatten                   // @flatten(@Type)
   )
 
-  TypeRef @string              // tag like @string, @u64, @CustomType
-
   Object @map(@string @Schema) // keys to schemas (keys ending in ? are optional)
 
   Sequence (@Schema)           // homogeneous sequence
 
-  Union {
-    @union (@Schema)           // list of alternative schemas
-  }
+  // @union(@A @B @C) — matches any of the listed types
+  Union (@Schema)
 
-  Enum {
-    @enum @map(@string @union(@unit @Object))  // variant name → optional payload
-  }
+  // @optional(@T) — value or absent
+  Optional @Schema
 
-  Map {
-    @map (@Schema @Schema)     // key schema, value schema (key usually @string)
-  }
+  // @enum{ a, b { x @type } } — variant name → optional payload
+  Enum @map(@string @union(@unit @Object))
 
-  Flatten {
-    @flatten @TypeRef          // inline fields from another type
-  }
+  // @map(@V) — string keys, value type V
+  // @map(@K @V) — explicit key and value types
+  Map @union(
+    (@Schema)
+    (@Schema @Schema)
+  )
+
+  // @flatten(@Type) — inline fields from another type
+  Flatten @
 }
 ```
