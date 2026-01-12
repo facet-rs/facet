@@ -19,10 +19,11 @@
 //!
 //! # Deserialization
 //!
-//! There are two deserialization functions:
+//! There are three deserialization functions:
 //!
 //! - [`from_slice`]: Deserializes into owned types (`T: Facet<'static>`)
 //! - [`from_slice_borrowed`]: Deserializes with zero-copy borrowing from the input buffer
+//! - [`from_slice_with_shape`]: Deserializes into `Value` using runtime shape information
 //!
 //! ```
 //! use facet_postcard::from_slice;
@@ -46,6 +47,7 @@ extern crate alloc;
 mod error;
 mod parser;
 mod serialize;
+mod shape_deser;
 
 #[cfg(feature = "jit")]
 pub mod jit;
@@ -60,6 +62,7 @@ pub use error::{PostcardError, SerializeError};
 pub use jit::PostcardJitFormat;
 pub use parser::PostcardParser;
 pub use serialize::{Writer, peek_to_vec, to_vec, to_writer_fallible};
+pub use shape_deser::from_slice_with_shape;
 
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
