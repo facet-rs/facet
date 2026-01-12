@@ -292,11 +292,13 @@ NN | source line
 
 ## Deserializer errors
 
-### Type mismatch
+### Invalid value for type
 
-> r[diagnostic.deser.type-mismatch]
+> r[diagnostic.deser.invalid-value]
 > When a scalar cannot be interpreted as the target type, the message SHOULD
-> identify the expected type and the actual value.
+> identify the expected type, explain what's wrong, and provide helpful
+> guidance. This covers all scalar parsing failures: type mismatches, overflow,
+> invalid formats, etc.
 > 
 > ```
 > error: type mismatch
@@ -307,12 +309,6 @@ NN | source line
 >   |
 >   = help: use a numeric value: port 8080
 > ```
-
-### Invalid integer
-
-> r[diagnostic.deser.invalid-integer]
-> When a scalar looks like an integer but is invalid (overflow, invalid chars),
-> the message SHOULD be specific.
 > 
 > ```
 > error: integer out of range
@@ -321,29 +317,17 @@ NN | source line
 > 2 |   port 99999999999999999999
 >   |        ^^^^^^^^^^^^^^^^^^^^ value exceeds u16 maximum (65535)
 > ```
-
-### Invalid duration
-
-> r[diagnostic.deser.invalid-duration]
-> When a scalar cannot be parsed as a duration, the message SHOULD show
-> valid duration formats.
 > 
 > ```
 > error: invalid duration
 >   --> config.styx:2:11
 >   |
-> 2 |   timeout 30 seconds
+> 2 |   timeout 30
 >   |           ^^ expected duration with unit
 >   |
 >   = help: valid formats: 30s, 10ms, 2h, 500us
 >   = help: valid units: ns, us, µs, ms, s, m, h, d
 > ```
-
-### Invalid timestamp
-
-> r[diagnostic.deser.invalid-timestamp]
-> When a scalar cannot be parsed as an RFC 3339 timestamp, the message SHOULD
-> identify the problem.
 > 
 > ```
 > error: invalid timestamp
@@ -354,12 +338,6 @@ NN | source line
 >   |
 >   = help: expected RFC 3339 format: YYYY-MM-DDTHH:MM:SSZ
 > ```
-
-### Invalid boolean
-
-> r[diagnostic.deser.invalid-boolean]
-> When a value is expected to be boolean but isn't `true` or `false`, the
-> message SHOULD list the valid values.
 > 
 > ```
 > error: invalid boolean
@@ -369,7 +347,7 @@ NN | source line
 >   |           ^^^ expected 'true' or 'false'
 > ```
 
-### Enum not a single-key object
+### Enum not a tagged value
 
 > r[diagnostic.deser.enum-invalid]
 > When deserializing an enum and the value is not a valid tagged value, the
@@ -467,182 +445,4 @@ NN | source line
 >   |         ^^^^^^^^^ expected sequence
 >   |
 >   = help: use parentheses for sequence: hosts (localhost)
-> ```
-
-## Schema validation errors
-
-### Type constraint violation
-
-> r[diagnostic.schema.type-violation]
-> When a value doesn't match the schema's type constraint.
->
-> ```
-> error: schema violation: expected @u16
->   --> config.styx:2:8
->   |
-> 2 |   port "eighty"
->   |        ^^^^^^^^ cannot parse as u16
->   |
->   --> schema.styx:3:8
->   |
-> 3 |   port @u16
->   |        ---- required by schema
-> ```
-
-### Literal mismatch
-
-> r[diagnostic.schema.literal-mismatch]
-> When a value doesn't match a literal constraint in the schema.
-> 
-> ```
-> error: schema violation: expected literal 'v1', found 'v2'
->   --> config.styx:1:9
->   |
-> 1 | version v2
->   |         ^^ expected 'v1'
->   |
->   --> schema.styx:1:9
->   |
-> 1 | version v1
->   |         -- literal value required by schema
-> ```
-
-### Missing required field (schema)
-
-> r[diagnostic.schema.missing-required]
-> When a required field per the schema is missing.
-> 
-> ```
-> error: missing required field 'host'
->   --> config.styx:1:1
->   |
-> 1 | server {
->   | ^^^^^^ missing 'host'
-> 2 |   port 8080
-> 3 | }
->   |
->   --> schema.styx:2:3
->   |
-> 2 |   host @string
->   |   ---- required field defined here (no '?' suffix)
-> ```
-
-### Unexpected field (schema)
-
-> r[diagnostic.schema.unexpected-field]
-> When a field is present but not defined in the schema.
-> 
-> ```
-> error: unexpected field 'debug'
->   --> config.styx:4:3
->   |
-> 4 |   debug true
->   |   ^^^^^ not defined in schema
->   |
->   --> schema.styx:1:1
->   |
-> 1 | server {
->   | ------ schema for 'server' defined here
->   |
->   = note: schema defines: host, port, timeout
-> ```
-
-### Union type mismatch
-
-> r[diagnostic.schema.union-mismatch]
-> When a value doesn't match any type in a union.
-> 
-> ```
-> error: value matches no type in union
->   --> config.styx:2:10
->   |
-> 2 |   timeout (30 seconds)
->   |           ^^^^^^^^^^^^^ none of the union types match
->   |
->   --> schema.styx:3:11
->   |
-> 3 |   timeout? @union(@duration @u64)
->   |            ---------------------- expected one of these types
->   |
->   = note: tried @duration: invalid duration format
->   = note: tried @u64: expected scalar, found sequence
-> ```
-
-### Flatten collision
-
-> r[diagnostic.schema.flatten-collision]
-> When flattened fields collide with the containing object's fields.
-> 
-> ```
-> error: field collision in @flatten
->   --> schema.styx:8:3
->   |
-> 3 |   name @string
->   |   ---- 'name' defined in Base
->   |
-> ...
->   |
-> 8 |   name @string
->   |   ^^^^ 'name' also defined in Derived
->   |
->   --> schema.styx:7:3
->   |
-> 7 |   base @flatten(@Base)
->   |   ---- Base is flattened here
-> ```
-
-### Unknown type reference
-
-> r[diagnostic.schema.unknown-type]
-> When a type reference cannot be resolved, the message SHOULD be a warning,
-> since the type may come from an external source. The unknown type reference
-> MUST be treated as `@any`.
-> 
-> ```
-> warning: unknown type '@ExternalConfig'
->   --> schema.styx:5:10
->   |
-> 5 |   config @ExternalConfig
->   |          ^^^^^^^^^^^^^^^ type not defined in this schema
->   |
->   = note: treating as @any; validation will be skipped for this field
-> ```
-
-> r[diagnostic.schema.unknown-type.strict]
-> Implementations MAY provide a **strict mode** for schema validation. In strict
-> mode, an unknown type reference MUST be an error, not a warning. This is
-> recommended for continuous integration environments to catch typos or missing
-> schema definitions.
-
-### Invalid type name
-
-> r[diagnostic.schema.invalid-type-name]
-> When a type reference doesn't match the type name grammar.
-> 
-> ```
-> error: invalid type name
->   --> schema.styx:2:8
->   |
-> 2 |   port @123-invalid
->   |        ^^^^^^^^^^^^ type names must start with a letter or underscore
->   |
->   = help: valid examples: @string, @MyType, @my_type, @my-type
-> ```
-
-### Doc comment without attachment
-
-> r[diagnostic.schema.unattached-doc]
-> When a doc comment is not followed by a definition.
-> 
-> ```
-> error: doc comment has no attachment
->   --> schema.styx:3:1
->   |
-> 2 | /// This comment is orphaned
-> 3 | 
->   | ^ blank line breaks doc comment attachment
-> 4 | /// This attaches to 'bar'
-> 5 | bar @string
->   |
->   = help: remove the blank line, or delete the orphaned comment
 > ```
