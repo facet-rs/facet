@@ -156,6 +156,6 @@ export class CobsFramed implements MessageTransport {
 
   /** Close the connection. */
   close(): void {
-    this.socket.end();
+    this.socket.destroy();
   }
 }

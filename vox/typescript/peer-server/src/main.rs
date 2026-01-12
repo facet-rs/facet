@@ -1,10 +1,11 @@
-//! WebSocket server for browser testing.
+//! WebSocket peer server for testing TypeScript clients.
 //!
-//! Serves Testbed service over WebSocket for cross-language testing.
+//! This is a full roam implementation that TypeScript browser tests can
+//! connect to. It's intentionally NOT in spec-tests because spec-tests
+//! should only contain wire-level test infrastructure.
 //!
-//! Note: This server uses roam runtime types because it needs WebSocket
-//! transport support. The wire-level approach used in tcp_echo_server
-//! doesn't work for WebSocket framing.
+//! This server uses the roam runtime (dispatcher, channels, etc.) to
+//! provide a real roam peer for the TypeScript client to talk to.
 
 use roam::session::{Never, RoamError, Rx, Tx};
 use roam_stream::Hello;

@@ -6,8 +6,26 @@ license = "MIT OR Apache-2.0"
 publish = false
 description = "Compliance tests for the canonical roam spec in docs/content/"
 
+# =============================================================================
+# IMPORTANT: No roam runtime dependencies allowed!
+#
+# This crate tests implementations against the wire protocol spec. We
+# intentionally avoid roam runtime types (Rx, Tx, Dispatcher, Connection, etc.)
+# to ensure we're testing the wire format, not roam-against-roam.
+#
+# Allowed exceptions (spec-level crates only):
+#   - roam-wire: Wire protocol message types (Hello, Request, Response, etc.)
+#   - roam-hash: Method ID computation (blake3 hashing of MethodDetail)
+#   - roam-schema: Type descriptors for method signatures
+#
+# NOT allowed (runtime crates):
+#   - roam, roam-stream, roam-websocket, roam-session, etc.
+#
+# Note: spec-proto depends on roam for the #[service] macro, but we only use
+# its generated method_id functions and type definitions, not runtime features.
+# =============================================================================
+
 [dependencies]
-# Wire protocol only - no roam runtime types in the harness
 roam-wire = { path = "../../rust/roam-wire" }
 spec-proto = { path = "../spec-proto" }
 cobs.workspace = true
@@ -16,20 +34,9 @@ facet-postcard.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "time", "process", "macros"] }
 ctor.workspace = true
 
-# These are only needed for the binary servers (ws-echo-server, tcp-echo-server)
-# which implement full roam services for cross-language testing
-roam = { path = "../../rust/roam" }
-roam-stream = { path = "../../rust/roam-stream" }
-roam-websocket = { path = "../../rust/roam-websocket" }
-tokio-tungstenite.workspace = true
-
 [dev-dependencies]
 roam-hash = { path = "../../rust/roam-hash" }
 roam-schema = { path = "../../rust/roam-schema" }
-
-[[bin]]
-name = "ws-echo-server"
-path = "src/bin/ws_echo_server.rs"
 
 [[bin]]
 name = "tcp-echo-server"

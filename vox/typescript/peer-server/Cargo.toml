@@ -1,0 +1,24 @@
+[package]
+name = "peer-server"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Rust WebSocket server for testing TypeScript clients"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "ws-peer-server"
+path = "src/main.rs"
+
+[dependencies]
+roam = { path = "../../rust/roam" }
+roam-stream = { path = "../../rust/roam-stream" }
+roam-websocket = { path = "../../rust/roam-websocket" }
+spec-proto = { path = "../../spec/spec-proto" }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros"] }
+tokio-tungstenite.workspace = true

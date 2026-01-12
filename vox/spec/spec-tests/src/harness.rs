@@ -432,19 +432,19 @@ pub mod wire_server {
 
                 Message::Close { channel_id } => {
                     // Channel closed - if this was a sum request, send the response
-                    if let Some((request_id, sum_channel_id)) = pending_sum.take() {
-                        if sum_channel_id == channel_id {
-                            let data = channels.remove(&channel_id).unwrap_or_default();
-                            let sum: i64 = data.iter().map(|&x| x as i64).sum();
-                            let response_payload = encode_ok(&sum)?;
-                            io.send(&Message::Response {
-                                request_id,
-                                metadata: metadata_empty(),
-                                payload: response_payload,
-                            })
-                            .await
-                            .map_err(|e| format!("send sum response: {e}"))?;
-                        }
+                    if let Some((request_id, sum_channel_id)) = pending_sum.take()
+                        && sum_channel_id == channel_id
+                    {
+                        let data = channels.remove(&channel_id).unwrap_or_default();
+                        let sum: i64 = data.iter().map(|&x| x as i64).sum();
+                        let response_payload = encode_ok(&sum)?;
+                        io.send(&Message::Response {
+                            request_id,
+                            metadata: metadata_empty(),
+                            payload: response_payload,
+                        })
+                        .await
+                        .map_err(|e| format!("send sum response: {e}"))?;
                     }
                 }
 

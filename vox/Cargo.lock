@@ -1095,6 +1095,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "peer-server"
+version = "0.1.0"
+dependencies = [
+ "roam",
+ "roam-stream",
+ "roam-websocket",
+ "spec-proto",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1532,15 +1544,11 @@ dependencies = [
  "ctor",
  "facet",
  "facet-postcard",
- "roam",
  "roam-hash",
  "roam-schema",
- "roam-stream",
- "roam-websocket",
  "roam-wire",
  "spec-proto",
  "tokio",
- "tokio-tungstenite",
 ]
 
 [[package]]

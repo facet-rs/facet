@@ -27,7 +27,7 @@ async function waitForPort(port: number, timeoutMs: number = 10000): Promise<voi
 test.beforeAll(async () => {
   // Start Rust WebSocket Echo server
   console.log("Starting Rust WebSocket server...");
-  wsServer = spawn("cargo", ["run", "-p", "spec-tests", "--bin", "ws-echo-server"], {
+  wsServer = spawn("cargo", ["run", "-p", "peer-server", "--bin", "ws-peer-server"], {
     cwd: projectRoot,
     env: { ...process.env, WS_PORT: "9000" },
     stdio: ["ignore", "pipe", "pipe"],

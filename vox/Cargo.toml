@@ -21,6 +21,8 @@ members = [
     "spec/spec-tests",
     # xtask
     "xtask",
+    # Peer server for TypeScript browser tests
+    "typescript/peer-server",
 ]
 exclude = ["fuzz"]
 

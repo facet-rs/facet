@@ -5,6 +5,7 @@ use roam_hash::method_id_from_detail;
 use roam_schema::{ArgDetail, MethodDetail};
 use roam_wire::{Hello, Message, MetadataValue};
 use spec_tests::harness::{accept_subject, our_hello, run_async};
+use spec_tests::testbed::method_id;
 
 // TODO: Remove this shim once facet implements `Facet` for `core::convert::Infallible`
 // and for the never type `!`, then use `Infallible` as the error type parameter.
@@ -20,7 +21,7 @@ enum RoamError<E> {
     Cancelled = 3,
 }
 
-fn testbed_method_id(method_name: &str) -> u64 {
+fn compute_method_id(method_name: &str) -> u64 {
     let detail = MethodDetail {
         service_name: "Testbed".into(),
         method_name: String::from(method_name).into(),
@@ -38,23 +39,10 @@ fn metadata_empty() -> Vec<(String, MetadataValue)> {
     Vec::new()
 }
 
+/// Verify hardcoded IDs match computed IDs.
 fn ensure_expected_ids() {
-    // Keep this in sync with subjects that hardcode IDs for now.
-    assert_eq!(testbed_method_id("echo"), 0x9aabc4ba61fd5df3);
-    assert_eq!(testbed_method_id("reverse"), 0xcba154600f640175);
-
-    // Ensure the proto crate matches the spec-derived IDs.
-    let svc = spec_proto::testbed_service_detail();
-    let ids = svc
-        .methods
-        .iter()
-        .map(|m| (m.method_name.as_ref(), method_id_from_detail(m)))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    assert_eq!(ids.get("echo").copied(), Some(testbed_method_id("echo")));
-    assert_eq!(
-        ids.get("reverse").copied(),
-        Some(testbed_method_id("reverse"))
-    );
+    assert_eq!(compute_method_id("echo"), method_id::echo());
+    assert_eq!(compute_method_id("reverse"), method_id::reverse());
 }
 
 // r[verify call.initiate] - Call initiated by sending Request message
@@ -91,7 +79,7 @@ fn rpc_echo_roundtrip() {
             .map_err(|e| format!("postcard args: {e}"))?;
         let req = Message::Request {
             request_id: 1,
-            method_id: testbed_method_id("echo"),
+            method_id: method_id::echo(),
             metadata: metadata_empty(),
             payload: req_payload,
         };
@@ -223,7 +211,7 @@ fn rpc_invalid_payload_returns_invalidpayload_error() {
         // Send request with invalid payload (random bytes, not valid postcard).
         let req = Message::Request {
             request_id: 3,
-            method_id: testbed_method_id("echo"),
+            method_id: method_id::echo(),
             metadata: metadata_empty(),
             payload: vec![0xff, 0xff, 0xff, 0xff], // Invalid postcard data
         };
@@ -293,7 +281,7 @@ fn rpc_pipelining_multiple_requests() {
                 .map_err(|e| format!("postcard args: {e}"))?;
             let req = Message::Request {
                 request_id: (i + 10) as u64, // Use 10, 11, 12 to distinguish from other tests
-                method_id: testbed_method_id("echo"),
+                method_id: method_id::echo(),
                 metadata: metadata_empty(),
                 payload: req_payload,
             };
