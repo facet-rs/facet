@@ -4,7 +4,8 @@
 //! using the roam-stream transport library.
 
 use roam::session::{Rx, Tx};
-use roam_stream::Server;
+use roam_stream::{Connector, HandshakeConfig, connect};
+use tokio::net::TcpStream;
 use tracing::{debug, error, info, instrument};
 
 // Re-export types from spec_proto
@@ -204,50 +205,59 @@ fn main() -> Result<(), String> {
     }
 }
 
+/// Connector that connects to the peer specified by PEER_ADDR.
+struct PeerConnector {
+    addr: String,
+}
+
+impl Connector for PeerConnector {
+    type Transport = TcpStream;
+
+    async fn connect(&self) -> std::io::Result<TcpStream> {
+        TcpStream::connect(&self.addr).await
+    }
+}
+
 async fn run_server() -> Result<(), String> {
-    let server = Server::new();
-    // Use generated dispatcher with our service implementation
+    let addr = std::env::var("PEER_ADDR").map_err(|_| "PEER_ADDR env var not set".to_string())?;
+
+    info!("connecting to {addr}");
+
+    // Use connect() with our dispatcher - automatic reconnection
+    let connector = PeerConnector { addr };
     let dispatcher = testbed::TestbedDispatcher::new(TestbedService);
-    server
-        .run_subject(&dispatcher)
-        .await
-        .map_err(|e| format!("{e:?}"))
+    let client = connect(connector, HandshakeConfig::default(), dispatcher);
+
+    // Get handle to verify connection works (this triggers the connection)
+    let handle = client.handle().await.map_err(|e| format!("{e}"))?;
+    info!("connected");
+    let _ = handle;
+
+    // Keep the connection alive until peer disconnects
+    // In a real scenario, we'd have a proper shutdown mechanism
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        // Check if still connected by trying to get handle
+        if client.handle().await.is_err() {
+            info!("connection closed");
+            break;
+        }
+    }
+
+    Ok(())
 }
 
 async fn run_client() -> Result<(), String> {
-    use roam_stream::{CobsFramed, Hello, establish_initiator};
-    use tokio::net::TcpStream;
-
     let addr = std::env::var("PEER_ADDR").map_err(|_| "PEER_ADDR not set".to_string())?;
     info!("connecting to {addr}");
 
-    let stream = TcpStream::connect(&addr)
-        .await
-        .map_err(|e| format!("connect failed: {e}"))?;
-    let io = CobsFramed::new(stream);
-
-    let hello = Hello::V1 {
-        max_payload_size: 1024 * 1024,
-        initial_channel_credit: 64 * 1024,
-    };
-
-    // We need a dispatcher even as client (for bidirectional calls)
-    // For now, use our TestbedService in case the server wants to call us
+    // Use connect() for automatic reconnection
+    let connector = PeerConnector { addr };
     let dispatcher = testbed::TestbedDispatcher::new(TestbedService);
-
-    let (handle, driver) = establish_initiator(io, hello, dispatcher)
-        .await
-        .map_err(|e| format!("handshake failed: {e:?}"))?;
-
-    // Spawn the driver
-    tokio::spawn(async move {
-        if let Err(e) = driver.run().await {
-            error!("driver error: {e:?}");
-        }
-    });
+    let client = connect(connector, HandshakeConfig::default(), dispatcher);
 
     // Create the typed client
-    let client = testbed::TestbedClient::new(handle);
+    let service = testbed::TestbedClient::new(client);
 
     // Run the client test scenario specified by CLIENT_SCENARIO env var
     let scenario = std::env::var("CLIENT_SCENARIO").unwrap_or_else(|_| "echo".to_string());
@@ -255,7 +265,7 @@ async fn run_client() -> Result<(), String> {
 
     match scenario.as_str() {
         "echo" => {
-            let result = client.echo("hello from client".to_string()).await;
+            let result = service.echo("hello from client".to_string()).await;
             info!("echo result: {result:?}");
         }
         "sum" => {
@@ -272,10 +282,9 @@ async fn run_client() -> Result<(), String> {
                     }
                 }
                 debug!("done sending, dropping tx");
-                // tx is dropped here, closing the stream
             });
 
-            let result = client.sum(rx).await;
+            let result = service.sum(rx).await;
             info!("sum result: {result:?}");
         }
         "generate" => {
@@ -292,7 +301,7 @@ async fn run_client() -> Result<(), String> {
                 received
             });
 
-            let result = client.generate(5, tx).await;
+            let result = service.generate(5, tx).await;
             info!("generate result: {result:?}");
 
             let received = recv_task

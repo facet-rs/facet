@@ -1,4 +1,4 @@
-//! Integration tests for the ReconnectingClient.
+//! Integration tests for the reconnecting Client.
 //!
 //! r[verify reconnect.test.basic]
 //! r[verify reconnect.test.exhaustion]
@@ -15,8 +15,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use roam_session::{ChannelRegistry, ServiceDispatcher, dispatch_call, dispatch_unknown_method};
-use roam_stream::{CobsFramed, Connector, ReconnectError, ReconnectingClient, RetryPolicy};
-use roam_wire::Hello;
+use roam_stream::{
+    ConnectError, Connector, HandshakeConfig, RetryPolicy, accept, connect, connect_with_policy,
+};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
@@ -73,19 +74,11 @@ impl TcpConnector {
 }
 
 impl Connector for TcpConnector {
-    type Transport = CobsFramed<TcpStream>;
+    type Transport = TcpStream;
 
     async fn connect(&self) -> io::Result<Self::Transport> {
         self.connect_count.fetch_add(1, Ordering::SeqCst);
-        let stream = TcpStream::connect(self.addr).await?;
-        Ok(CobsFramed::new(stream))
-    }
-
-    fn hello(&self) -> Hello {
-        Hello::V1 {
-            max_payload_size: 1024 * 1024,
-            initial_channel_credit: 64 * 1024,
-        }
+        TcpStream::connect(self.addr).await
     }
 }
 
@@ -98,13 +91,11 @@ async fn start_test_server(service: TestService) -> (SocketAddr, tokio::task::Jo
         while let Ok((stream, _)) = listener.accept().await {
             let service = service.clone();
             tokio::spawn(async move {
-                let io = CobsFramed::new(stream);
-                let hello = Hello::V1 {
-                    max_payload_size: 1024 * 1024,
-                    initial_channel_credit: 64 * 1024,
-                };
-                if let Ok((_, driver)) = roam_stream::establish_acceptor(io, hello, service).await {
+                if let Ok((handle, driver)) =
+                    accept(stream, HandshakeConfig::default(), service).await
+                {
                     let _ = driver.run().await;
+                    let _ = handle;
                 }
             });
         }
@@ -120,13 +111,13 @@ async fn start_test_server(service: TestService) -> (SocketAddr, tokio::task::Jo
 #[tokio::test]
 async fn test_lazy_connection() {
     let service = TestService::new();
-    let (addr, _server_handle) = start_test_server(service).await;
+    let (addr, _server_handle) = start_test_server(service.clone()).await;
 
     let connector = TcpConnector::new(addr);
     let connect_count = connector.connect_count.clone();
 
     // Create client - should NOT connect yet
-    let _client = ReconnectingClient::new(connector);
+    let _client = connect(connector, HandshakeConfig::default(), service);
 
     // Verify no connection was made
     assert_eq!(connect_count.load(Ordering::SeqCst), 0);
@@ -136,10 +127,10 @@ async fn test_lazy_connection() {
 #[tokio::test]
 async fn test_basic_call() {
     let service = TestService::new();
-    let (addr, _server_handle) = start_test_server(service).await;
+    let (addr, _server_handle) = start_test_server(service.clone()).await;
 
     let connector = TcpConnector::new(addr);
-    let client = ReconnectingClient::new(connector);
+    let client = connect(connector, HandshakeConfig::default(), service);
 
     // Make a call
     let payload = facet_postcard::to_vec(&"hello".to_string()).unwrap();
@@ -154,11 +145,11 @@ async fn test_basic_call() {
 #[tokio::test]
 async fn test_unknown_method_not_reconnect() {
     let service = TestService::new();
-    let (addr, _server_handle) = start_test_server(service).await;
+    let (addr, _server_handle) = start_test_server(service.clone()).await;
 
     let connector = TcpConnector::new(addr);
     let connect_count = connector.connect_count.clone();
-    let client = ReconnectingClient::new(connector);
+    let client = connect(connector, HandshakeConfig::default(), service);
 
     // Call an unknown method
     let payload = facet_postcard::to_vec(&"test".to_string()).unwrap();
@@ -192,7 +183,8 @@ async fn test_retries_exhausted() {
         backoff_multiplier: 2.0,
     };
 
-    let client = ReconnectingClient::with_policy(connector, policy);
+    let service = TestService::new();
+    let client = connect_with_policy(connector, HandshakeConfig::default(), service, policy);
 
     let payload = facet_postcard::to_vec(&"test".to_string()).unwrap();
     let result = client.call_raw(1, payload).await;
@@ -200,7 +192,7 @@ async fn test_retries_exhausted() {
     // Should get RetriesExhausted error
     assert!(matches!(
         result,
-        Err(ReconnectError::RetriesExhausted { attempts: 3, .. })
+        Err(ConnectError::RetriesExhausted { attempts: 3, .. })
     ));
 
     // Should have attempted 3 connections
@@ -222,7 +214,8 @@ async fn test_backoff_timing() {
         backoff_multiplier: 2.0,
     };
 
-    let client = ReconnectingClient::with_policy(connector, policy);
+    let service = TestService::new();
+    let client = connect_with_policy(connector, HandshakeConfig::default(), service, policy);
 
     let start = Instant::now();
     let payload = facet_postcard::to_vec(&"test".to_string()).unwrap();
@@ -244,10 +237,10 @@ async fn test_backoff_timing() {
 async fn test_concurrent_callers() {
     let service = TestService::new();
     let call_count = service.call_count.clone();
-    let (addr, _server_handle) = start_test_server(service).await;
+    let (addr, _server_handle) = start_test_server(service.clone()).await;
 
     let connector = TcpConnector::new(addr);
-    let client = Arc::new(ReconnectingClient::new(connector));
+    let client = Arc::new(connect(connector, HandshakeConfig::default(), service));
 
     // Spawn multiple concurrent callers
     let mut handles = Vec::new();
@@ -291,7 +284,7 @@ impl FailingConnector {
 }
 
 impl Connector for FailingConnector {
-    type Transport = CobsFramed<TcpStream>;
+    type Transport = TcpStream;
 
     async fn connect(&self) -> io::Result<Self::Transport> {
         self.attempt_count.fetch_add(1, Ordering::SeqCst);
@@ -306,17 +299,13 @@ impl Connector for FailingConnector {
         drop(failures);
         self.inner.connect().await
     }
-
-    fn hello(&self) -> Hello {
-        self.inner.hello()
-    }
 }
 
 // r[verify reconnect.test.basic] - reconnection after initial failure
 #[tokio::test]
 async fn test_reconnect_after_initial_failure() {
     let service = TestService::new();
-    let (addr, _server_handle) = start_test_server(service).await;
+    let (addr, _server_handle) = start_test_server(service.clone()).await;
 
     // Fail the first 2 attempts, then succeed
     let connector = FailingConnector::new(addr, 2);
@@ -329,7 +318,7 @@ async fn test_reconnect_after_initial_failure() {
         backoff_multiplier: 2.0,
     };
 
-    let client = ReconnectingClient::with_policy(connector, policy);
+    let client = connect_with_policy(connector, HandshakeConfig::default(), service, policy);
 
     // Should eventually succeed after retries
     let payload = facet_postcard::to_vec(&"hello".to_string()).unwrap();

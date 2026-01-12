@@ -269,6 +269,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
 
     quote! {
         /// Dispatcher for this service.
+        #[derive(Clone)]
         pub struct #dispatcher_name<H> {
             handler: H,
         }

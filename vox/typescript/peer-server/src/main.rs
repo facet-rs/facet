@@ -8,7 +8,7 @@
 //! provide a real roam peer for the TypeScript client to talk to.
 
 use roam::session::{Never, RoamError, Rx, Tx};
-use roam_stream::Hello;
+use roam_stream::HandshakeConfig;
 use roam_websocket::{WsTransport, ws_accept};
 use spec_proto::{Canvas, Color, Message, Person, Point, Rectangle, Shape};
 use spec_proto::{Testbed, TestbedDispatcher};
@@ -135,10 +135,7 @@ async fn main() {
     // Print port on stdout for Playwright to parse
     println!("{}", port);
 
-    let hello = Hello::V1 {
-        max_payload_size: 1024 * 1024,
-        initial_channel_credit: 64 * 1024,
-    };
+    let config = HandshakeConfig::default();
 
     loop {
         let (stream, peer) = match listener.accept().await {
@@ -160,18 +157,19 @@ async fn main() {
         };
 
         let transport = WsTransport::new(ws_stream);
-        let hello = hello.clone();
+        let config = config.clone();
 
         tokio::spawn(async move {
             let dispatcher = TestbedDispatcher::new(TestbedService);
 
-            match ws_accept(transport, hello).await {
-                Ok(mut conn) => {
+            match ws_accept(transport, config, dispatcher).await {
+                Ok((handle, driver)) => {
                     eprintln!("Connection established with {}", peer);
-                    if let Err(e) = conn.run(&dispatcher).await {
+                    if let Err(e) = driver.run().await {
                         eprintln!("Connection error: {:?}", e);
                     }
                     eprintln!("Connection closed: {}", peer);
+                    let _ = handle;
                 }
                 Err(e) => {
                     eprintln!("Hello exchange failed: {:?}", e);

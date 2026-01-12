@@ -7,64 +7,105 @@
 //!
 //! - COBS framing for message boundaries
 //! - Hello exchange and parameter negotiation
-//! - Message loop with request dispatch
-//! - Stream ID validation
-//! - Flow control enforcement
+//! - Bidirectional RPC with automatic reconnection
+//! - Stream ID validation and flow control
 //!
-//! # Generic Transport
+//! # Two Connection Modes
 //!
-//! The core types (`CobsFramed`, `Connection`) are generic over any transport that
-//! implements `AsyncRead + AsyncWrite + Unpin`. This allows the same code to work
-//! with TCP sockets, Unix domain sockets, or any other async byte stream.
+//! ## Accepted Connections
 //!
-//! # Example (TCP)
+//! For connections you accepted (e.g., from a listener), use [`accept()`].
+//! No reconnection is possible since you don't control how to re-establish.
 //!
 //! ```ignore
-//! use roam_stream::{Server, ServiceDispatcher};
+//! use roam_stream::{accept, HandshakeConfig};
+//! use tokio::net::TcpListener;
 //!
-//! struct MyDispatcher { /* ... */ }
-//! impl ServiceDispatcher for MyDispatcher { /* ... */ }
+//! let listener = TcpListener::bind("127.0.0.1:9000").await?;
+//! let (stream, _) = listener.accept().await?;
 //!
-//! let server = Server::new();
-//! server.run_subject(&MyDispatcher).await?;
+//! let (handle, driver) = accept(stream, HandshakeConfig::default(), dispatcher).await?;
+//! tokio::spawn(driver.run());
+//!
+//! // Use handle with a generated client
+//! let client = MyServiceClient::new(handle);
+//! let response = client.echo("hello").await?;
 //! ```
 //!
-//! # Example (Unix Socket)
+//! ## Initiated Connections
+//!
+//! For connections you initiate, use [`connect()`]. It returns a [`Client`] that
+//! automatically reconnects on failure.
 //!
 //! ```ignore
-//! use roam_stream::{CobsFramed, hello_exchange_acceptor};
-//! use tokio::net::UnixStream;
+//! use roam_stream::{connect, Connector, HandshakeConfig, NoDispatcher};
+//! use tokio::net::TcpStream;
 //!
-//! let stream: UnixStream = listener.accept().await?.0;
-//! let io = CobsFramed::new(stream);
-//! let mut conn = hello_exchange_acceptor(io, hello).await?;
-//! conn.run(&dispatcher).await?;
+//! struct MyConnector { addr: String }
+//!
+//! impl Connector for MyConnector {
+//!     type Transport = TcpStream;
+//!     async fn connect(&self) -> io::Result<TcpStream> {
+//!         TcpStream::connect(&self.addr).await
+//!     }
+//! }
+//!
+//! let connector = MyConnector { addr: "127.0.0.1:9000".into() };
+//! let client = connect(connector, HandshakeConfig::default(), NoDispatcher);
+//!
+//! // Client automatically reconnects on failure
+//! let service = MyServiceClient::new(client);
+//! let response = service.echo("hello").await?;
 //! ```
 
-mod connection;
 mod driver;
 mod framing;
-mod reconnecting;
-mod server;
 mod transport;
 
-pub use connection::{
-    Connection, ConnectionError, Negotiated, RoutedDispatcher, ServiceDispatcher,
-    hello_exchange_acceptor, hello_exchange_initiator,
+// Main API
+pub use driver::{
+    // Types
+    Client,
+    ConnectError,
+    ConnectionError,
+    Connector,
+    Driver,
+    FramedClient,
+    HandshakeConfig,
+    MessageConnector,
+    Negotiated,
+    NoDispatcher,
+    RetryPolicy,
+    // Entry points for byte-stream transports (TCP, Unix)
+    accept,
+    // Entry points for message transports (WebSocket)
+    accept_framed,
+    connect,
+    connect_framed,
+    connect_framed_with_policy,
+    connect_with_policy,
 };
-pub use driver::{Driver, establish_acceptor, establish_initiator};
+
 pub use framing::CobsFramed;
-pub use reconnecting::{Connector, ReconnectError, ReconnectingClient, RetryPolicy};
-pub use server::{Server, ServerConfig, TcpConnection};
 pub use transport::MessageTransport;
 
 // Re-export session types for convenience
 pub use roam_session::{
     CallError, Caller, ChannelIdAllocator, ChannelRegistry, ConnectionHandle, Role,
+    ServiceDispatcher,
 };
 
 // Re-export wire types for convenience
 pub use roam_wire::{Hello, Message};
 
-// Re-export tokio IO traits for convenience when using with custom streams
+// Re-export tokio IO traits for convenience
 pub use tokio::io::{AsyncRead, AsyncWrite};
+
+// Legacy compatibility - deprecated
+#[deprecated(note = "Use accept_framed() instead")]
+#[allow(deprecated)]
+pub use driver::establish_acceptor;
+
+#[deprecated(note = "Use connect() instead")]
+#[allow(deprecated)]
+pub use driver::establish_initiator;

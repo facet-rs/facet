@@ -18,7 +18,7 @@ use roam_wire::Message;
 /// - Byte streams need COBS framing to delimit messages
 /// - Message-oriented transports (WebSocket) have built-in framing
 ///
-/// Both cases share the same protocol logic in [`Connection`](crate::Connection).
+/// Both cases share the same protocol logic in [`Driver`](crate::Driver).
 pub trait MessageTransport: Send {
     /// Send a message over the transport.
     fn send(&mut self, msg: &Message) -> impl std::future::Future<Output = io::Result<()>> + Send;
