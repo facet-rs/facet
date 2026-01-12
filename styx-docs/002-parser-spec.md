@@ -74,6 +74,8 @@ A tag is an identifier prefixed with `@` that labels a value.
 
 > r[tag.syntax]
 > A tag MUST match the pattern `@[A-Za-z_][A-Za-z0-9_.-]*`.
+> The tag identifier is terminated by any character not in `[A-Za-z0-9_.-]`, or end of input.
+> After termination, the parser checks for an immediate payload (see `r[tag.payload]`).
 
 > r[tag.payload]
 > A tag MAY be immediately followed (no whitespace) by an explicit payload:
@@ -102,8 +104,12 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 
 ### Bare scalars
 
+> r[scalar.bare.chars]
+> A bare scalar consists of one or more characters that are NOT:
+> whitespace, `{`, `}`, `(`, `)`, `,`, `"`, `=`, or `@`.
+>
 > r[scalar.bare.termination]
-> A bare scalar is terminated by whitespace or any of: `}`, `)`, `,`, `@`.
+> A bare scalar is terminated by any character not allowed in `r[scalar.bare.chars]`, or end of input.
 > 
 > ```styx
 > url https://example.com/path?query=1
@@ -150,12 +156,17 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 ## Sequences
 
 > r[sequence.syntax]
-> Sequences use `(` `)` delimiters. Elements are separated by whitespace.
+> Sequences use `(` `)` delimiters. Empty sequences `()` are valid.
+> Elements are separated by one or more whitespace characters (spaces, tabs, or newlines).
 > Commas are NOT allowed.
 > 
 > ```styx
 > numbers (1 2 3)
 > nested ((a b) (c d))
+> matrix (
+>   (1 2 3)
+>   (4 5 6)
+> )
 > ```
 
 > r[sequence.elements]
@@ -164,8 +175,9 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 ## Objects
 
 > r[object.syntax]
-> Objects use `{` `}` delimiters. Entries are `key value` pairs separated by newlines or commas (not both).
-> Duplicate keys are forbidden.
+> Objects use `{` `}` delimiters. Empty objects `{}` are valid.
+> Entries are `key value` pairs separated by newlines or commas (not both).
+> Duplicate keys are forbidden (see `r[key.equality]` for key comparison rules).
 >
 > r[object.separators]
 > An object (and the implicit document root) MUST use exactly one top-level entry separator mode:
@@ -195,7 +207,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > @root schema              // tagged unit key (implicit unit payload)
 > @env"PATH" "/usr/bin"     // tagged scalar key (requires quoted/raw scalar payload)
 > ```
->
+
 > r[key.equality]
 > To detect duplicate keys, the parser MUST compare keys by their parsed key value:
 >
