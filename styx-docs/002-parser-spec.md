@@ -13,7 +13,7 @@ A STYX document is an object. Top-level entries do not require braces.
 
 > r[document.root]
 > The parser MUST interpret top-level key-value pairs as entries of an implicit root object.
-> Root entries follow the same separator rules as block objects: newlines or commas.
+> Root entries follow the same separator rules as block objects: newlines or commas (see `r[object.separators]`).
 > If the document starts with `{`, it MUST be parsed as a single explicit block object.
 > 
 > ```compare
@@ -35,9 +35,10 @@ A STYX document is an object. Top-level entries do not require braces.
 
 > r[comment.line]
 > Line comments start with `//` and extend to the end of the line.
-> Comments MUST be preceded by whitespace.
+> Comments MUST either start at the beginning of the file or be preceded by whitespace.
 > 
 > ```styx
+> // comment at start-of-file
 > host localhost  // comment
 > url https://example.com  // the :// is not a comment
 > ```
@@ -135,7 +136,9 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > r[scalar.heredoc.syntax]
 > Heredocs start with `<<DELIMITER` and end with the delimiter on its own line.
 > The delimiter MUST match `[A-Z][A-Z0-9_]*` and not exceed 16 characters.
-> Leading whitespace is stripped up to the closing delimiter's indentation.
+> The closing delimiter line MAY be indented; that indentation controls optional indentation stripping.
+> Let `indent` be the exact leading whitespace (spaces and/or tabs) immediately before the closing delimiter.
+> For each content line, if the line begins with `indent`, that prefix is removed; otherwise the line is left unchanged.
 > Content is literal — escape sequences are not processed.
 > 
 > ```styx
@@ -163,6 +166,14 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > r[object.syntax]
 > Objects use `{` `}` delimiters. Entries are `key value` pairs separated by newlines or commas (not both).
 > Duplicate keys are forbidden.
+>
+> r[object.separators]
+> An object (and the implicit document root) MUST use exactly one top-level entry separator mode:
+>
+> - **newline-separated**: entries are separated by one or more newlines; commas are forbidden.
+> - **comma-separated**: entries are separated by commas; newlines are forbidden (outside heredoc scalar content).
+>
+> This makes comma-separated objects a single-line representation (except for heredoc content).
 > 
 > ```styx
 > server {
@@ -174,16 +185,25 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > ```
 
 > r[object.keys]
-> Keys may be scalars, objects, sequences, unit, or tagged values.
+> Keys MUST be either scalars or unit, optionally tagged.
+> Heredoc scalars are not allowed as keys.
 > 
 > ```styx
 > host localhost            // scalar key
 > "key with spaces" 42      // quoted scalar key
-> @ { root schema }         // unit key
-> { a 1 } mapped            // object key
-> (1 2 3) "tuple key"       // sequence key
-> @point(0 0) origin        // tagged key
+> @ mapped                  // unit key
+> @root schema              // tagged unit key (implicit unit payload)
+> @env"PATH" "/usr/bin"     // tagged scalar key (requires quoted/raw scalar payload)
 > ```
+>
+> r[key.equality]
+> To detect duplicate keys, the parser MUST compare keys by their parsed key value:
+>
+> - **Untagged scalar keys** compare equal if their scalar contents are exactly equal after parsing
+>   (i.e. quoted scalars are compared after escape processing; raw scalars are compared literally).
+> - **Untagged unit keys** compare equal to other untagged unit keys.
+> - **Tagged keys** compare equal if both the tag name and the parsed payload (scalar or unit) are equal.
+>   Implicit unit payloads (e.g. `@ok`) and explicit unit payloads (e.g. `@ok@`) are equivalent.
 
 > r[object.implicit-unit]
 > A key without a value has implicit unit value.
@@ -213,6 +233,9 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > r[shorthand.attr]
 > Attribute syntax `key=value` is shorthand for a nested object.
 > The `=` binds tighter than whitespace — no spaces around it.
+> The `=` token MUST only appear as part of attribute syntax; a standalone `=` is an error.
+> Attribute keys MUST be bare scalars.
+> If an entry key is followed by one or more attributes, the entry's value is the corresponding object.
 > 
 > ```compare
 > /// styx
@@ -234,7 +257,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > ```
 
 > r[shorthand.attr.termination]
-> Attributes continue until a non-`key=...` token. Newlines end the attribute sequence.
+> Attributes continue until the end of the current entry (newline or comma) or until a non-`key=...` token.
 
 ## Appendix: Minified STYX
 

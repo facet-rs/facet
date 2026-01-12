@@ -33,7 +33,8 @@ The `@union(@u64 @string)` is:
 
 This uniformity means schemas require no special syntax — just STYX with semantic interpretation of tags as types.
 
-In schema definitions, `@` (unit) represents "any tag" — a type reference to a built-in or user-defined type.
+In schema definitions, the unit value `@` (not a tag) is used as a wildcard meaning “any type reference” —
+that is, any tagged unit value like `@string` or `@MyType`.
 
 ## Schema file structure
 
@@ -151,7 +152,7 @@ In schema definitions, `@` (unit) represents "any tag" — a type reference to a
 > | `@duration` | e.g., `30s`, `10ms`, `2h` |
 > | `@timestamp` | RFC 3339, e.g., `2026-01-10T18:43:00Z` |
 > | `@regex` | e.g., `/^hello$/i` |
-> | `@bytes` | hex `0xdeadbeef` or base64 `b64"SGVsbG8="` |
+> | `@bytes` | hex `0xdeadbeef` or base64 `SGVsbG8=` |
 > | `@any` | any value |
 > | `@unit` | the unit value `@` |
 > | `@optional(@T)` | value of type `@T` or absent |
@@ -161,6 +162,7 @@ In schema definitions, `@` (unit) represents "any tag" — a type reference to a
 > r[schema.optional]
 > `@optional(@T)` matches either a value of type `@T` or absence of a value.
 > For object fields, `key?` is shorthand for `key @optional(...)`.
+> Absence means the field key is not present in the object (it does not mean the field value is `@`).
 >
 > ```compare
 > /// styx
@@ -174,6 +176,35 @@ In schema definitions, `@` (unit) represents "any tag" — a type reference to a
 > server {
 >   host @string
 >   timeout @optional(@duration)
+> }
+> ```
+
+## Objects
+
+> r[schema.object]
+> An object schema is written as an object mapping field names (scalars) to schemas.
+> By default, object schemas are **closed**: keys not mentioned in the schema are forbidden.
+>
+> To allow additional keys, use a special entry with key `@` (unit key) to define the schema for
+> all additional fields. If present, any key not explicitly listed MUST match the `@` entry's schema.
+> The key `@` is reserved for this purpose and cannot be used to describe a literal unit-key field.
+>
+> ```styx
+> // Closed object (default): only host and port allowed
+> Server {
+>   host @string
+>   port @u16
+> }
+>
+> // Open object: allow any extra string fields
+> Labels {
+>   @ @string
+> }
+>
+> // Mixed: known fields plus additional string→string
+> Config {
+>   name @string
+>   @ @string
 > }
 > ```
 
@@ -191,6 +222,8 @@ In schema definitions, `@` (unit) represents "any tag" — a type reference to a
 
 > r[schema.sequence]
 > A sequence schema matches a sequence where every element matches the inner schema.
+> The sequence schema MUST contain exactly one element: `(@T)`.
+> Tuple/positional schemas like `(@A @B)` are not supported; use `(@union(@A @B))` for heterogeneous lists.
 >
 > ```styx
 > hosts (@string)                   // sequence of strings
@@ -305,8 +338,8 @@ schema {
     @Flatten     /// Flatten: @flatten(@Type)
   )
 
-  /// Object schema: maps keys to type constraints.
-  Object @map(@string @Schema)
+  /// Object schema: maps keys to type constraints. The unit key (@) is reserved for "additional fields".
+  Object @map(@union(@string @unit) @Schema)
 
   /// Sequence schema: all elements match the inner type.
   Sequence (@Schema)
