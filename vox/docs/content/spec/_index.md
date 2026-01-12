@@ -228,6 +228,92 @@ See the [Flow Control](#flow-control-1) section for complete details.
 Unknown metadata keys MUST be ignored (`r[call.metadata.unknown]`).
 See the [Metadata](#metadata-1) section for complete details.
 
+## Idempotency
+
+Connection failures create uncertainty: did the server process the request
+before the connection dropped? Nonces enable safe retries across any transport.
+
+> r[core.nonce]
+>
+> Clients MAY include a nonce in request metadata to enable idempotent
+> delivery. The metadata key is `roam-nonce` and the value MUST be
+> `MetadataValue::Bytes` containing exactly 16 bytes (128 bits).
+
+> r[core.nonce.generation]
+>
+> Nonces MUST be generated using a cryptographically secure random source.
+> UUIDv4 (random variant) is acceptable.
+
+> r[core.nonce.uniqueness]
+>
+> Each logically distinct request MUST use a unique nonce. Retrying the
+> same logical request (due to transport failure) MUST reuse the original
+> nonce.
+
+### Server Deduplication
+
+> r[core.nonce.dedup]
+>
+> If a server receives a request with a nonce it has processed before
+> (within its retention window), it MUST return the cached response
+> without re-executing the method handler.
+
+> r[core.nonce.retention]
+>
+> Servers implementing nonce deduplication MUST retain nonce→response
+> mappings for at least 5 minutes. Servers MAY retain them longer.
+
+> r[core.nonce.scope]
+>
+> Nonce uniqueness is scoped to the server (or logical service instance).
+> The same nonce sent to different servers is not deduplicated.
+
+> r[core.nonce.storage]
+>
+> Servers storing nonce→response mappings MUST protect them appropriately.
+> Responses may contain sensitive data.
+
+### Client Retry Behavior
+
+> r[core.nonce.retry]
+>
+> When retrying a request due to transport failure (connection reset,
+> timeout, etc.), clients MUST use the same nonce as the original request.
+
+> r[core.nonce.new-request]
+>
+> For logically new requests (not retries), clients MUST generate a
+> fresh nonce.
+
+### Optional Feature
+
+> r[core.nonce.optional]
+>
+> Nonces are optional. Requests without a `roam-nonce` metadata entry
+> are processed normally without deduplication. Retrying such requests
+> may cause duplicate execution.
+
+> r[core.nonce.server-support]
+>
+> Servers are not required to implement nonce deduplication. Servers
+> that do not support it MUST ignore the `roam-nonce` metadata key
+> (per `r[call.metadata.unknown]`).
+
+### Integration with Reconnecting Clients
+
+> r[core.nonce.reconnect]
+>
+> Auto-reconnecting client implementations (see Reconnecting Client
+> Specification) SHOULD automatically attach nonces to requests and
+> reuse them on retry. This makes reconnection transparent to callers.
+
+> r[core.nonce.channels]
+>
+> Nonces apply to the initial Request that establishes channels.
+> Channel state (data sent/received, credit) is not preserved across
+> reconnection. Applications requiring resumable streams should implement
+> checkpointing at the application level.
+
 ## Topologies
 
 Transports may have different topologies:

@@ -75,3 +75,27 @@ specs:
           - "crates/**/*.rs"
         exclude:
           - "target/**"
+
+  - name: http
+    prefix: r
+    include:
+      - "docs/content/http-spec/**/*.md"
+    impls:
+      - name: rust
+        include:
+          - "rust/**/*.rs"
+        exclude:
+          - "target/**"
+      - name: typescript
+        include:
+          - "typescript/**/*.ts"
+          - "typescript/**/*.js"
+      - name: go
+        include:
+          - "go/**/*.go"
+      - name: java
+        include:
+          - "java/**/*.java"
+      - name: python
+        include:
+          - "python/**/*.py"
