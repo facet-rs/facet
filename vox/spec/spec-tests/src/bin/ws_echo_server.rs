@@ -1,12 +1,16 @@
 //! WebSocket server for browser testing.
 //!
 //! Serves Testbed service over WebSocket for cross-language testing.
+//!
+//! Note: This server uses roam runtime types because it needs WebSocket
+//! transport support. The wire-level approach used in tcp_echo_server
+//! doesn't work for WebSocket framing.
 
-use roam::session::{Rx, Tx};
+use roam::session::{Never, RoamError, Rx, Tx};
 use roam_stream::Hello;
 use roam_websocket::{WsTransport, ws_accept};
 use spec_proto::{Canvas, Color, Message, Person, Point, Rectangle, Shape};
-use spec_tests::testbed::{Never, RoamError, Testbed, TestbedDispatcher};
+use spec_proto::{Testbed, TestbedDispatcher};
 use std::env;
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async;

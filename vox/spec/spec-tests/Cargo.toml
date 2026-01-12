@@ -7,19 +7,23 @@ publish = false
 description = "Compliance tests for the canonical roam spec in docs/content/"
 
 [dependencies]
-roam = { path = "../../rust/roam" }
+# Wire protocol only - no roam runtime types in the harness
 roam-wire = { path = "../../rust/roam-wire" }
-roam-stream = { path = "../../rust/roam-stream" }
-roam-websocket = { path = "../../rust/roam-websocket" }
 spec-proto = { path = "../spec-proto" }
 cobs.workspace = true
+facet.workspace = true
 facet-postcard.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "time", "process", "macros"] }
-tokio-tungstenite.workspace = true
 ctor.workspace = true
 
+# These are only needed for the binary servers (ws-echo-server, tcp-echo-server)
+# which implement full roam services for cross-language testing
+roam = { path = "../../rust/roam" }
+roam-stream = { path = "../../rust/roam-stream" }
+roam-websocket = { path = "../../rust/roam-websocket" }
+tokio-tungstenite.workspace = true
+
 [dev-dependencies]
-facet.workspace = true
 roam-hash = { path = "../../rust/roam-hash" }
 roam-schema = { path = "../../rust/roam-schema" }
 
