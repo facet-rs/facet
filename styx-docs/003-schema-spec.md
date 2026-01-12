@@ -38,7 +38,7 @@ In schema definitions, `@` (unit) represents "any tag" — a type reference to a
 ## Schema file structure
 
 > r[schema.file]
-> A schema file has two top-level keys: `meta` (required) and `schema` (required).
+> A schema file has three top-level keys: `meta` (required), `imports` (optional), and `schema` (required).
 >
 > ```styx
 > meta {
@@ -65,6 +65,32 @@ In schema definitions, `@` (unit) represents "any tag" — a type reference to a
 > r[schema.root]
 > Inside `schema`, the key `@` defines the expected structure of the document root.
 > Other keys define named types that can be referenced with `@TypeName`.
+
+## Imports
+
+> r[schema.imports]
+> The `imports` block maps namespace prefixes to external schema locations (URLs or paths).
+> Paths are resolved relative to the importing schema file.
+> Imported types are referenced as `@namespace.TypeName`.
+>
+> ```styx
+> meta {
+>   id https://example.com/schemas/app
+>   version 2026-01-11
+> }
+>
+> imports {
+>   common https://example.com/schemas/common.styx
+>   auth https://example.com/schemas/auth.styx
+> }
+>
+> schema {
+>   @ {
+>     user @auth.User
+>     settings @common.Settings
+>   }
+> }
+> ```
 
 ## Schema declaration in documents
 
@@ -248,6 +274,7 @@ meta {
 schema {
   @ {
     meta @Meta
+    imports? @map(@string @string)  // namespace → URL/path
     schema @map(@union(@string @unit) @Schema)
   }
 
