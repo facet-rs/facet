@@ -191,3 +191,22 @@ fn test_map() {
     let map = BTreeMap::from([("abc", 1), ("def", 2)]);
     assert_snapshot!(printer.format(&map));
 }
+
+/// Multiple fields pointing to the same interned static string should NOT be flagged as cycles.
+/// This is a regression test for a bug where sibling fields with the same pointer were
+/// incorrectly detected as cycles.
+#[derive(Facet)]
+struct MultipleStaticStr {
+    a: &'static str,
+    b: &'static str,
+}
+
+#[test]
+fn test_shared_static_str_not_cycle() {
+    let val = MultipleStaticStr {
+        a: "same",
+        b: "same",
+    };
+    let printer = PrettyPrinter::new().with_colors(false);
+    assert_snapshot!(printer.format(&val));
+}
