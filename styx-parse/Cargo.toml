@@ -1,0 +1,11 @@
+[package]
+name = "styx-parse"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Event-based parser for the Styx configuration language"
+repository = "https://github.com/bearcove/styx"
+
+[dependencies]
+
+[dev-dependencies]
