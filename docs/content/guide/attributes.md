@@ -821,5 +821,5 @@ See each format crate's documentation for available extension attributes.
 ## Next steps
 
 - Check the [Showcases](@/guide/showcases/_index.md) to see these attributes in action
-- Read [Comparison with serde](@/guide/migration/_index.md) if you're migrating
+- Read [Comparison with serde](@/guide/serde/_index.md) if you're migrating
 - See the [Extend guide](/extend/) to create your own extension attributes

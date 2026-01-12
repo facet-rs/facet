@@ -851,9 +851,14 @@ pre.term {
 
     a {
       color: var(--text-color);
+      // Reset styles that would be inherited from nav a
+      display: inline;
+      padding: 0;
+      background: none;
 
       &:hover {
         color: var(--link-color);
+        background: none;
       }
     }
   }
@@ -873,7 +878,8 @@ pre.term {
     margin-bottom: 0.25rem;
   }
 
-  a {
+  // Only style links inside list items, not the header
+  li a {
     display: block;
     padding: 0.35rem var(--spacing-sm);
     color: var(--text-muted);
