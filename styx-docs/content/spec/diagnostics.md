@@ -228,7 +228,7 @@ NN | source line
 >   |
 >   = help: use either commas or newlines, not both:
 >   |
->   | { a 1, b 2 }        // comma-separated
+>   | {a 1, b 2}          // comma-separated
 >   |
 >   | {                   // newline-separated
 >   |   a 1
@@ -266,7 +266,7 @@ NN | source line
 >   |   ^^^^^^^ attribute object
 >   |
 >   = note: ambiguous whether this is one object {a:1, b:2} or two {a:1} {b:2}
->   = help: use block form: { a 1, b 2 }
+>   = help: use block form: {a 1, b 2}
 > ```
 
 ### Trailing content after root
@@ -429,7 +429,7 @@ NN | source line
 > 2 |   server localhost
 >   |          ^^^^^^^^^ expected object
 >   |
->   = help: use braces for object: server { host localhost }
+>   = help: use braces for object: server {host localhost}
 > ```
 
 ### Expected sequence, found scalar

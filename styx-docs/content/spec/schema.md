@@ -101,18 +101,18 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > // External schema reference
 > @ https://example.com/schemas/server.styx
 >
-> server { host localhost, port 8080 }
+> server {host localhost, port 8080}
 > ```
 >
 > ```styx
 > // Inline schema (simplified form)
 > @ {
 >   schema {
->     @ { server { host @string, port @u16 } }
+>     @ {server {host @string, port @u16}}
 >   }
 > }
 >
-> server { host localhost, port 8080 }
+> server {host localhost, port 8080}
 > ```
 
 ## Types and constraints
@@ -284,7 +284,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > The document is flat; deserialization reconstructs the nested structure.
 >
 > ```styx
-> User { name @string, email @string }
+> User {name @string, email @string}
 >
 > Admin {
 >   user @flatten(@User)
@@ -311,7 +311,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > status @enum{
 >   ok
 >   pending
->   err { message @string }
+>   err {message @string}
 > }
 > ```
 >
@@ -378,11 +378,11 @@ schema {
   Schema @union(
     @string      /// Literal value constraint.
     @            /// Type reference (any tag with unit payload).
-    @Object      /// Object schema: { field @type }
+    @Object      /// Object schema: {field @type}
     @Sequence    /// Sequence schema: (@type)
     @Union       /// Union: @union(@A @B)
     @Optional    /// Optional: @optional(@T)
-    @Enum        /// Enum: @enum{ a, b { x @type } }
+    @Enum        /// Enum: @enum{a, b {x @type}}
     @Map         /// Map: @map(@K @V)
     @Flatten     /// Flatten: @flatten(@Type)
   )

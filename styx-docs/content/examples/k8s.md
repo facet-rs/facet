@@ -65,25 +65,19 @@ metadata {
 }
 spec {
   replicas 3
-  selector {
-    matchLabels app=web
-  }
+  selector matchLabels app=web
   template {
-    metadata {
-      labels app=web
-    }
+    metadata labels app=web
     spec {
       containers ({
         name nginx
         image nginx:1.25
-        ports ({ containerPort 80 })
+        ports ({containerPort 80})
         env (
-          { name API_URL, value https://api.example.com }
+          {name API_URL, value https://api.example.com}
           {
             name DB_PASSWORD
-            valueFrom {
-              secretKeyRef name=db-secrets key=password
-            }
+            valueFrom secretKeyRef name=db-secrets key=password
           }
         )
         resources {

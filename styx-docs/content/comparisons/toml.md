@@ -60,8 +60,8 @@ host = "beta"
 port = 8081
 /// styx
 servers (
-  { host alpha, port 8080 }
-  { host beta, port 8081 }
+  {host alpha, port 8080}
+  {host beta, port 8081}
 )
 ```
 
@@ -71,7 +71,7 @@ servers (
 /// toml
 point = { x = 1, y = 2 }
 /// styx
-point { x 1, y 2 }
+point {x 1, y 2}
 ```
 
 TOML 1.1 allows multi-line inline tables with trailing commas. STYX comma-separated objects must be single-line.

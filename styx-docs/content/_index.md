@@ -35,7 +35,7 @@ features (auth logging metrics)
   "age": 30
 }
 /// styx
-{ name alice, age 30 }
+{name alice, age 30}
 ```
 
 ### Sequences

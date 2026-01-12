@@ -48,7 +48,7 @@ let c = Config {
     timeout: Some(Duration::from_secs(30)),
 };
 /// styx
-{ timeout 30s }
+{timeout 30s}
 ```
 
 ## Sequences
@@ -165,7 +165,7 @@ let r = Result::Err {
     message: "timeout".into(),
 };
 /// styx
-@err{ message "timeout" }
+@err{message "timeout"}
 ```
 
 ## Tuple enum variants

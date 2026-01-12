@@ -7,31 +7,7 @@ insert_anchor_links = "heading"
 
 The parser converts STYX source text into a document tree.
 
-## Document structure
-
-A STYX document is an object. Top-level entries do not require braces.
-
-> r[document.root]
-> The parser MUST interpret top-level key-value pairs as entries of an implicit root object.
-> Root entries follow the same separator rules as block objects: newlines or commas (see `r[object.separators]`).
-> If the document starts with `{`, it MUST be parsed as a single explicit block object.
->
-> ```compare
-> /// styx
-> // Implicit root
-> server {
->   host localhost
->   port 8080
-> }
-> /// styx
-> // Explicit root
-> {
->   server {
->     host localhost
->     port 8080
->   }
-> }
-> ```
+## Comments
 
 > r[comment.line]
 > Line comments start with `//` and extend to the end of the line.
@@ -57,50 +33,22 @@ A STYX document is an object. Top-level entries do not require braces.
 > }
 > ```
 
-## Value types
+## Atoms
 
-The parser produces four value types:
+An **atom** is the fundamental parsing unit:
 
-  * **Scalar** — an opaque text atom
-  * **Sequence** — an ordered list of values: `(a b c)`
-  * **Object** — an ordered map of keys to values: `{ key value }`
-  * **Unit** — the absence of a meaningful value: `@`
-
-Any value may be tagged: `@tag{ ... }`, `@tag(...)`, `@tag"..."`, `@tag@`.
-
-## Tags
-
-A tag is an identifier prefixed with `@` that labels a value.
-
-> r[tag.syntax]
-> A tag MUST match the pattern `@[A-Za-z_][A-Za-z0-9_.-]*`.
-> The tag identifier is terminated by any character not in `[A-Za-z0-9_.-]`, or end of input.
-> After termination, the parser checks for an immediate payload (see `r[tag.payload]`).
-
-> r[tag.payload]
-> A tag MAY be immediately followed (no whitespace) by an explicit payload:
->
-> | Follows `@tag` | Result |
-> |-----------------------|--------|
-> | `{...}` | tagged object |
-> | `(...)` | tagged sequence |
-> | `"..."`, `r#"..."#`, or `<<HEREDOC` | tagged scalar |
-> | `@` | tagged unit (explicit) |
-> | *(nothing)* | tagged unit (implicit) |
->
-> ```styx
-> result @err{message "x"}   // tagged object
-> color @rgb(255 128 0)      // tagged sequence
-> name @nickname"Bob"        // tagged scalar
-> status @ok@                // tagged unit (explicit)
-> status @ok                 // tagged unit (implicit)
-> ```
->
-> Note: bare scalars cannot be tagged — there's no delimiter to separate tag from value.
+  * **Bare scalar** — unquoted text: `localhost`, `8080`, `https://example.com`
+  * **Quoted scalar** — quoted text with escapes: `"hello\nworld"`
+  * **Raw scalar** — literal text: `r#"no escapes"#`
+  * **Heredoc scalar** — multi-line literal text: `<<EOF...EOF`
+  * **Sequence** — ordered list: `(a b c)`
+  * **Object** — ordered map: `{key value}`
+  * **Unit** — absence of value: `@`
+  * **Tag** — labeled value: `@tag`, `@tag(...)`, `@tag{...}`
 
 ## Scalars
 
-Scalars are opaque text atoms. The parser assigns no meaning to them.
+Scalars are opaque text. The parser assigns no type information.
 
 ### Bare scalars
 
@@ -109,7 +57,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > whitespace, `{`, `}`, `(`, `)`, `,`, `"`, `=`, or `@`.
 >
 > r[scalar.bare.termination]
-> A bare scalar is terminated by any character not allowed in `r[scalar.bare.chars]`, or end of input.
+> A bare scalar is terminated by any forbidden character or end of input.
 >
 > ```styx
 > url https://example.com/path?query=1
@@ -120,7 +68,6 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > r[scalar.quoted.escapes]
 > Quoted scalars use `"..."` and support escape sequences:
 > `\\`, `\"`, `\n`, `\r`, `\t`, `\0`, `\uXXXX`, `\u{X...}`.
-> Quoting does not imply string type — the deserializer interprets based on target type.
 >
 > ```styx
 > greeting "hello\nworld"
@@ -142,10 +89,7 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > r[scalar.heredoc.syntax]
 > Heredocs start with `<<DELIMITER` and end with the delimiter on its own line.
 > The delimiter MUST match `[A-Z][A-Z0-9_]*` and not exceed 16 characters.
-> The closing delimiter line MAY be indented; that indentation controls optional indentation stripping.
-> Let `indent` be the exact leading whitespace (spaces and/or tabs) immediately before the closing delimiter.
-> For each content line, if the line begins with `indent`, that prefix is removed; otherwise the line is left unchanged.
-> Content is literal — escape sequences are not processed.
+> The closing delimiter line MAY be indented; that indentation is stripped from content lines.
 >
 > ```styx
 > script <<BASH
@@ -153,11 +97,47 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 >   BASH
 > ```
 
+## Unit
+
+> r[value.unit]
+> The token `@` not followed by an identifier is the unit value.
+>
+> ```styx
+> enabled @
+> ```
+
+## Tags
+
+A tag labels a value with an identifier.
+
+> r[tag.syntax]
+> A tag MUST match the pattern `@[A-Za-z_][A-Za-z0-9_.-]*`.
+
+> r[tag.payload]
+> A tag MAY be immediately followed (no whitespace) by a payload:
+>
+> | Follows `@tag` | Result |
+> |----------------|--------|
+> | `{...}` | tagged object |
+> | `(...)` | tagged sequence |
+> | `"..."`, `r#"..."#`, `<<HEREDOC` | tagged scalar |
+> | `@` | tagged unit (explicit) |
+> | *(nothing)* | tagged unit (implicit) |
+>
+> ```styx
+> result @err{message "x"}   // tagged object
+> color @rgb(255 128 0)      // tagged sequence
+> name @nickname"Bob"        // tagged scalar
+> status @ok                 // tagged unit
+> ```
+>
+> Bare scalars cannot be tagged — there's no delimiter to separate tag from value.
+
 ## Sequences
 
 > r[sequence.syntax]
 > Sequences use `(` `)` delimiters. Empty sequences `()` are valid.
-> Elements are separated by one or more whitespace characters (spaces, tabs, or newlines).
+> Elements are separated by whitespace (spaces, tabs, or newlines).
 > Commas are NOT allowed.
 >
 > ```styx
@@ -170,84 +150,97 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > ```
 
 > r[sequence.elements]
-> Elements may be scalars, objects, sequences, unit, or tagged values.
+> Elements may be any atom type.
 
 ## Objects
 
+Objects are ordered collections of entries.
+
 > r[object.syntax]
 > Objects use `{` `}` delimiters. Empty objects `{}` are valid.
-> Entries are `key value` pairs separated by newlines or commas (not both).
-> Duplicate keys are forbidden (see `r[key.equality]` for key comparison rules).
+
+### Entries
+
+An **entry** is a sequence of one or more atoms. The parser interprets entries structurally:
+
+> r[entry.structure]
+> An entry consists of one or more atoms:
 >
+> - **1 atom**: the atom is the key, the value is implicit unit (`@`)
+> - **2 atoms**: first is the key, second is the value
+> - **N atoms** (N > 2): first N-1 atoms form a nested key path, last atom is the value
+>
+> ```styx
+> enabled                  // enabled = @
+> host localhost           // host = localhost
+> server host localhost    // server {host localhost}
+> server host port 8080    // server {host {port 8080}}
+> ```
+
+> r[entry.keypath]
+> When an entry has more than two atoms, the first N-1 atoms are keys forming a nested object path.
+> The final atom is the value at the innermost level.
+>
+> ```compare
+> /// styx
+> // Key path
+> selector matchLabels app web
+> /// styx
+> // Canonical
+> selector {
+>   matchLabels {
+>     app web
+>   }
+> }
+> ```
+
+> r[entry.keys]
+> Keys MUST be scalars or unit, optionally tagged.
+> Heredoc scalars are not allowed as keys.
+>
+> ```styx
+> host localhost            // bare scalar key
+> "key with spaces" 42      // quoted scalar key
+> @ mapped                  // unit key
+> @root schema              // tagged unit key
+> @env"PATH" "/usr/bin"     // tagged scalar key
+> ```
+
+> r[entry.key-equality]
+> To detect duplicate keys, the parser MUST compare keys by their parsed value:
+>
+> - **Scalar keys** compare equal if their contents are exactly equal after parsing
+>   (quoted scalars are compared after escape processing).
+> - **Unit keys** compare equal to other unit keys.
+> - **Tagged keys** compare equal if both tag name and payload are equal.
+
+### Separators
+
 > r[object.separators]
-> An object (and the implicit document root) MUST use exactly one top-level entry separator mode:
+> Entries are separated by newlines or commas. Duplicate keys are forbidden.
+> An object MUST use exactly one separator mode:
 >
-> - **newline-separated**: entries are separated by one or more newlines; commas are forbidden.
-> - **comma-separated**: entries are separated by commas; newlines are forbidden (outside heredoc scalar content).
+> - **newline-separated**: entries separated by newlines; commas forbidden
+> - **comma-separated**: entries separated by commas; newlines forbidden
 >
-> This makes comma-separated objects a single-line representation (except for heredoc content).
+> Comma-separated objects are single-line (except for heredoc content).
 >
 > ```styx
 > server {
 >   host localhost
 >   port 8080
 > }
-> { a 1, b 2, c 3 }         // comma-separated
-> { "key with spaces" 42 }  // quoted key
+> {a 1, b 2, c 3}
 > ```
 
-> r[object.keys]
-> Keys MUST be either scalars or unit, optionally tagged.
-> Heredoc scalars are not allowed as keys.
->
-> ```styx
-> host localhost            // scalar key
-> "key with spaces" 42      // quoted scalar key
-> @ mapped                  // unit key
-> @root schema              // tagged unit key (implicit unit payload)
-> @env"PATH" "/usr/bin"     // tagged scalar key (requires quoted/raw scalar payload)
-> ```
+### Attribute syntax
 
-> r[key.equality]
-> To detect duplicate keys, the parser MUST compare keys by their parsed key value:
->
-> - **Untagged scalar keys** compare equal if their scalar contents are exactly equal after parsing
->   (i.e. quoted scalars are compared after escape processing; raw scalars are compared literally).
-> - **Untagged unit keys** compare equal to other untagged unit keys.
-> - **Tagged keys** compare equal if both the tag name and the parsed payload (scalar or unit) are equal.
->   Implicit unit payloads (e.g. `@ok`) and explicit unit payloads (e.g. `@ok@`) are equivalent.
+Attribute syntax is shorthand for inline object entries.
 
-> r[object.implicit-unit]
-> A key without a value has implicit unit value.
->
-> ```compare
-> /// styx
-> // Shorthand
-> enabled
-> /// styx
-> // Canonical
-> enabled @
-> ```
-
-## Unit
-
-> r[value.unit]
-> The token `@` not followed by an identifier is the unit value.
->
-> ```styx
-> enabled @
-> ```
-
-## Shorthand syntax
-
-### Attribute objects
-
-> r[shorthand.attr]
-> Attribute syntax `key=value` is shorthand for a nested object.
-> The `=` binds tighter than whitespace — no spaces around it.
-> The `=` token MUST only appear as part of attribute syntax; a standalone `=` is an error.
+> r[attr.syntax]
+> Attribute syntax `key=value` creates an object entry.
+> The `=` has no spaces around it.
 > Attribute keys MUST be bare scalars.
-> If an entry key is followed by one or more attributes, the entry's value is the corresponding object.
 >
 > ```compare
 > /// styx
@@ -261,22 +254,74 @@ Scalars are opaque text atoms. The parser assigns no meaning to them.
 > }
 > ```
 
-> r[shorthand.attr.value]
-> Attribute values may be scalars, sequences, or block objects.
+> r[attr.values]
+> Attribute values may be bare scalars, quoted scalars, sequences, or objects.
 >
 > ```styx
 > config name=app tags=(web prod) opts={verbose true}
 > ```
 
-> r[shorthand.attr.termination]
-> Attributes continue until the end of the current entry (newline or comma) or until a non-`key=...` token.
+> r[attr.atom]
+> Multiple attributes combine into a single object atom.
+>
+> ```compare
+> /// styx
+> host=localhost port=8080
+> /// styx
+> {host localhost, port 8080}
+> ```
+
+> r[entry.keypath.attributes]
+> Key paths compose naturally with attribute syntax.
+>
+> ```compare
+> /// styx
+> // Key path with attributes
+> spec selector matchLabels app=web tier=frontend
+> /// styx
+> // Canonical
+> spec {
+>   selector {
+>     matchLabels {
+>       app web
+>       tier frontend
+>     }
+>   }
+> }
+> ```
+
+## Document structure
+
+A STYX document is an object. Top-level entries do not require braces.
+
+> r[document.root]
+> The parser MUST interpret top-level entries as entries of an implicit root object.
+> Root entries follow the same separator rules as block objects: newlines or commas (see `r[object.separators]`).
+> If the document starts with `{`, it MUST be parsed as a single explicit block object.
+>
+> ```compare
+> /// styx
+> // Implicit root
+> server {
+>   host localhost
+>   port 8080
+> }
+> /// styx
+> // Explicit root
+> {
+>   server {
+>     host localhost
+>     port 8080
+>   }
+> }
+> ```
 
 ## Appendix: Minified STYX
 
-STYX does not strictly require newlines. A document can be written on a single line using commas and explicit braces:
+STYX can be written on a single line using commas and explicit braces:
 
 ```styx
-{server{host localhost,port 8080,tags(web prod)},database{url "postgres://..."}}
+{server{host localhost,port 8080},database{url "postgres://..."}}
 ```
 
 This is equivalent to:
@@ -285,7 +330,6 @@ This is equivalent to:
 server {
   host localhost
   port 8080
-  tags (web prod)
 }
 
 database {
@@ -293,10 +337,9 @@ database {
 }
 ```
 
-This enables NDSTYX (newline-delimited STYX), analogous to NDJSON — one document per line for streaming or log-style data:
+This enables NDSTYX (newline-delimited STYX) for streaming:
 
 ```
 {event login,user alice,time 2026-01-12T10:00:00Z}
 {event logout,user alice,time 2026-01-12T10:30:00Z}
-{event login,user bob,time 2026-01-12T10:45:00Z}
 ```
