@@ -860,6 +860,7 @@ impl PrettyPrinter {
             (d, t) => write!(f, "unsupported peek variant: {value:?} ({d:?}, {t:?})")?,
         }
 
+        visited.remove(&value.id());
         Ok(())
     }
 
