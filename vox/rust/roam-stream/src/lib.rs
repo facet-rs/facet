@@ -44,6 +44,7 @@
 mod connection;
 mod driver;
 mod framing;
+mod reconnecting;
 mod server;
 mod transport;
 
@@ -53,6 +54,7 @@ pub use connection::{
 };
 pub use driver::{Driver, establish_acceptor, establish_initiator};
 pub use framing::CobsFramed;
+pub use reconnecting::{Connector, ReconnectError, ReconnectingClient, RetryPolicy};
 pub use server::{Server, ServerConfig, TcpConnection};
 pub use transport::MessageTransport;
 

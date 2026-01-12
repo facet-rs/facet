@@ -63,3 +63,15 @@ specs:
           - "rust/**/*.rs"
         exclude:
           - "target/**"
+
+  - name: reconnect
+    prefix: r
+    include:
+      - "docs/content/reconnecting-client-spec/**/*.md"
+    impls:
+      - name: rust
+        include:
+          - "rust/**/*.rs"
+          - "crates/**/*.rs"
+        exclude:
+          - "target/**"
