@@ -29,6 +29,7 @@ facet = { version = "{{ data.versions.facet }}", features = ["uuid", "chrono"] }
 | `bytes` | [bytes](https://docs.rs/bytes) | `Bytes`, `BytesMut` |
 | `ordered-float` | [ordered-float](https://docs.rs/ordered-float) | `OrderedFloat<f32>`, `OrderedFloat<f64>`, `NotNan<f32>`, `NotNan<f64>` |
 | `ruint` | [ruint](https://docs.rs/ruint) | `Uint<BITS, LIMBS>`, `Bits<BITS, LIMBS>` |
+| `lock_api` | [lock_api](https://docs.rs/lock_api) | `Mutex<R, T>`, `RwLock<R, T>`, `MutexGuard`, `RwLockReadGuard`, `RwLockWriteGuard` |
 
 ### Example: uUIDs
 
