@@ -1,0 +1,13 @@
+[package]
+name = "facet-styx"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+facet-core = "0.42"
+facet-format = "0.42"
+facet-reflect = "0.42"
+styx-parse = { path = "../styx-parse" }
+
+[dev-dependencies]
+facet = "0.42"
