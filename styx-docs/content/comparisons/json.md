@@ -17,7 +17,8 @@ not machine interchange, which leads to different trade-offs.
   "age": 30
 }
 /// styx
-{ name alice, age 30 }
+name alice
+age 30
 ```
 
 ## Nested configuration
@@ -67,12 +68,48 @@ features (auth logging metrics)
 timeout @
 ```
 
-## Key differences
+## Bare keys
 
-| JSON | STYX |
-|------|------|
-| Mandatory quotes on keys | Bare keys |
-| Colons between key/value | Whitespace |
-| No comments | `//` comments |
-| `null` is a value | `@` is structural absence |
-| Strings vs numbers distinguished | All scalars opaque until deserialization |
+```compare
+/// json
+{ "name": "alice" }
+/// styx
+name alice
+```
+
+## Comments
+
+```compare
+/// json
+{
+  "port": 8080
+}
+/// styx
+port 8080  // default HTTP port
+```
+
+## Types are opaque
+
+```compare
+/// json
+{ "count": 42, "label": "42" }
+/// styx
+count 42
+label 42
+```
+
+In STYX, both are the scalar `42`. The deserializer interprets based on target type.
+
+## Attribute syntax
+
+```compare
+/// json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080
+  }
+}
+/// styx
+server host=localhost port=8080
+```

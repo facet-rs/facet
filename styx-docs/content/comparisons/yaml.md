@@ -49,6 +49,17 @@ features:
   - logging
   - metrics
 /// styx
+features (
+  auth
+  logging
+  metrics
+)
+```
+
+```compare
+/// yaml
+features: [auth, logging, metrics]
+/// styx
 features (auth logging metrics)
 ```
 
@@ -101,11 +112,44 @@ spec {
 }
 ```
 
-## Key differences
+## Indentation vs delimiters
 
-| YAML | STYX |
-|------|------|
-| Indentation-based structure | Explicit `{}` and `()` delimiters |
-| Implicit typing (Norway problem) | Opaque scalars |
-| Anchors/aliases | Not supported |
-| Multi-document (`---`) | One document per file |
+```compare
+/// yaml
+server:
+  host: localhost
+  port: 8080
+    extra: oops
+/// styx
+server {
+  host localhost
+  port 8080
+  extra oops
+}
+```
+
+YAML's indentation can cause subtle bugs. STYX structure is always explicit.
+
+## Anchors and aliases
+
+```compare
+/// yaml
+defaults: &defaults
+  timeout: 30s
+  retries: 3
+
+production:
+  <<: *defaults
+  timeout: 60s
+/// styx
+defaults {
+  timeout 30s
+  retries 3
+}
+production {
+  timeout 60s
+  retries 3
+}
+```
+
+STYX does not support references. Use application-level merging instead.

@@ -69,21 +69,33 @@ servers (
 
 ```compare
 /// toml
-# must be single line, no trailing comma
 point = { x = 1, y = 2 }
 /// styx
-# can span lines, trailing comma OK
-point {
-  x 1,
-  y 2,
+point { x 1, y 2 }
+```
+
+TOML 1.1 allows multi-line inline tables with trailing commas. STYX comma-separated objects must be single-line.
+
+## Reopening sections
+
+```compare
+/// toml
+[server]
+host = "localhost"
+
+[database]
+url = "postgres://..."
+
+[server]  # reopening server
+port = 8080
+/// styx
+server {
+  host localhost
+  port 8080
+}
+database {
+  url postgres://...
 }
 ```
 
-## Key differences
-
-| TOML | STYX |
-|------|------|
-| Section headers `[foo]` | Explicit nesting `foo { }` |
-| `[[array]]` syntax | Sequences `(...)` |
-| Inline tables single-line only | Objects can span lines |
-| Reopening sections allowed | Each key appears once |
+TOML allows reopening sections. In STYX, each key appears exactly once.
