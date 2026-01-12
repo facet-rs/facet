@@ -115,14 +115,15 @@ h6 {
 
 // CSS Custom Properties
 :root {
-  --bg-color: #fff;
-  --text-color: #1a1a2e;
-  --text-muted: #4a5568;
-  --code-bg: #f8f9fc;
-  --border-color: #e2e6f0;
-  --link-color: #3b82f6;   // blue-500
-  --link-hover: #60a5fa;   // blue-400
-  --accent-color: #6366f1; // indigo-500
+  // Light mode: warm cream tones instead of harsh pure white
+  --bg-color: #f5f5f0;      // warm cream
+  --text-color: #292524;    // warm dark (stone-800)
+  --text-muted: #78716c;    // warm gray (stone-500)
+  --code-bg: #eceae6;       // warm beige for code blocks
+  --border-color: #d6d3d1;  // warm border (stone-300)
+  --link-color: #2563eb;    // blue-600
+  --link-hover: #3b82f6;    // blue-500
+  --accent-color: #7c3aed;  // violet-600
 
   --font-sans: "PublicSans", system-ui, -apple-system, sans-serif;
   --font-mono: "IosevkaFtl", ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
@@ -153,7 +154,7 @@ h6 {
   align-items: center;
   padding: var(--spacing-md) var(--spacing-lg);
   border-bottom: 1px solid var(--border-color);
-  background-color: rgba(255, 255, 255, 0.8);
+  background-color: rgba(245, 245, 240, 0.9);  // matches --bg-color with transparency
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   position: sticky;
@@ -161,7 +162,7 @@ h6 {
   z-index: 100;
 
   @media (prefers-color-scheme: dark) {
-    background-color: rgba(15, 15, 26, 0.8);
+    background-color: rgba(11, 16, 32, 0.85);
   }
 }
 
@@ -339,9 +340,6 @@ html {
 body {
   font-family: var(--font-sans);
   background-color: var(--bg-color);
-  background-image:
-    radial-gradient(800px at 20% 20%, rgba(99, 102, 241, 0.08), transparent 60%),
-    radial-gradient(900px at 80% 0%, rgba(59, 130, 246, 0.10), transparent 55%);
   color: var(--text-color);
   line-height: 1.6;
 }
