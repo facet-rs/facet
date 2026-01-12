@@ -2804,3 +2804,486 @@ Admin {
   permissions (@string)
 }
 ```
+
+## Comparison with JSON (non-normative)
+
+JSON is the lingua franca of data interchange. STYX is designed for human authoring,
+not machine interchange, which leads to different trade-offs.
+
+### What STYX removes
+
+| JSON | STYX | Rationale |
+|------|------|-----------|
+| Mandatory quotes on keys | Bare keys | `name alice` vs `"name": "alice"` — less noise |
+| Colons between key/value | Whitespace | `host localhost` vs `"host": "localhost"` |
+| Commas between elements | Newlines or commas | Trailing comma errors eliminated |
+| `null` | `@` (unit) | Structural absence, not a value |
+| No comments | `//` comments | Configuration needs explanation |
+
+### What STYX adds
+
+| Feature | JSON equivalent | Example |
+|---------|-----------------|---------|
+| Heredocs | Escaped strings | `<<EOF` multiline content `EOF` |
+| Raw strings | Escaped strings | `r#"no \"escaping\" needed"#` |
+| Tagged values | Convention-based | `rgb(255 0 0)` vs `{"$type": "rgb", ...}` |
+| Dotted paths | Nested objects | `server.host localhost` |
+| Attribute syntax | Verbose objects | `labels app=web tier=frontend` |
+| Duration literals | Strings + parsing | `30s` vs `"30s"` |
+| Schemas | JSON Schema (separate) | Inline `@schema { ... }` |
+
+### Data model differences
+
+JSON has seven types: object, array, string, number, boolean, null.
+STYX has six value types: object, sequence, scalar, tagged object, tagged sequence, unit.
+
+Key differences:
+
+- **Scalars are opaque**: STYX doesn't distinguish strings from numbers at parse time.
+  `42` and `"42"` both produce scalars containing the text `42`. The deserializer
+  interprets based on target type.
+
+- **Tagged values are first-class**: `rgb(255 0 0)` is a tagged sequence, not an
+  object with magic keys. This enables cleaner enum representation.
+
+- **Unit vs null**: JSON's `null` is a value. STYX's `@` represents structural absence.
+  Keys without values implicitly get `@`: `enabled` means `enabled @`.
+
+### Example: Complex configuration
+
+```json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080,
+    "tls": {
+      "enabled": true,
+      "cert": "/path/to/cert.pem",
+      "key": "/path/to/key.pem"
+    }
+  },
+  "database": {
+    "url": "postgres://localhost/mydb",
+    "pool": {
+      "min": 5,
+      "max": 20,
+      "timeout": "30s"
+    }
+  },
+  "features": ["auth", "logging", "metrics"]
+}
+```
+
+```styx
+server {
+  host localhost
+  port 8080
+  tls {
+    enabled true
+    cert /path/to/cert.pem
+    key /path/to/key.pem
+  }
+}
+
+database {
+  url postgres://localhost/mydb
+  pool {
+    min 5
+    max 20
+    timeout 30s
+  }
+}
+
+features (auth logging metrics)
+```
+
+The STYX version is 40% shorter and easier to scan.
+
+## Comparison with YAML (non-normative)
+
+YAML is the most common human-authored configuration format. STYX addresses several
+YAML pain points while preserving readability.
+
+### The Norway problem
+
+YAML's implicit typing causes famous bugs:
+
+```yaml
+countries:
+  - GB    # string "GB"
+  - NO    # boolean false (!)
+  - IE    # string "IE"
+```
+
+STYX scalars are opaque — `NO` is always the text `NO`. The deserializer interprets
+it based on target type. If you're deserializing into `Vec<String>`, you get `"NO"`.
+If you're deserializing into `Vec<bool>`, you get an error (not a silent conversion).
+
+### Indentation-based structure
+
+YAML uses indentation to define structure:
+
+```yaml
+server:
+  host: localhost
+  port: 8080
+    extra: oops  # is this a child of port or server?
+```
+
+STYX uses explicit delimiters:
+
+```styx
+server {
+  host localhost
+  port 8080
+  extra oops    // clearly a child of server
+}
+```
+
+Mixed tabs and spaces, invisible trailing whitespace, and copy-paste errors that
+break indentation are not possible in STYX.
+
+### Multi-document streams
+
+YAML supports multiple documents in one file with `---` separators.
+STYX does not — each file is one document. For multiple configurations,
+use multiple files or a sequence at the root.
+
+### Anchors and aliases
+
+YAML supports references:
+
+```yaml
+defaults: &defaults
+  timeout: 30s
+  retries: 3
+
+production:
+  <<: *defaults
+  timeout: 60s
+```
+
+STYX does not support references. Use your application's configuration
+merging logic, or schema-level defaults. This keeps the format simple and
+prevents circular reference bugs.
+
+### Example: Kubernetes-style config
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service
+  labels:
+    app: web
+    tier: frontend
+spec:
+  ports:
+    - port: 80
+      targetPort: 8080
+  selector:
+    app: web
+```
+
+```styx
+apiVersion v1
+kind Service
+
+metadata {
+  name my-service
+  labels app=web tier=frontend
+}
+
+spec {
+  ports ({
+    port 80
+    targetPort 8080
+  })
+  selector app=web
+}
+```
+
+### What YAML has that STYX doesn't
+
+| YAML feature | STYX alternative |
+|--------------|------------------|
+| Anchors/aliases | Application-level merging |
+| Multi-document | Multiple files or root sequence |
+| Flow/block choice for all types | Sequences always use `()`, objects use `{}` |
+| Implicit typing | Explicit types via schema |
+| Custom tags (`!ruby/object`) | Tagged values with schema interpretation |
+
+### What STYX has that YAML doesn't
+
+| STYX feature | YAML workaround |
+|--------------|-----------------|
+| Heredocs with indent control | Literal blocks (`|`) with fixed behavior |
+| Raw strings | Quoted strings with escaping |
+| Attribute syntax | Verbose nested objects |
+| Inline schemas | External JSON Schema |
+| Tagged sequences/objects | Custom tags (implementation-dependent) |
+
+## Comparison with KDL (non-normative)
+
+KDL (Kdl Document Language) is a modern document format with similar goals to STYX.
+Both reject YAML's indentation-sensitivity and JSON's verbosity.
+
+### Structural differences
+
+KDL uses a node-based model where each line is a node with optional arguments and properties:
+
+```kdl
+server {
+    host "localhost"
+    port 8080
+}
+```
+
+STYX uses a key-value model:
+
+```styx
+server {
+  host localhost
+  port 8080
+}
+```
+
+The difference is subtle but significant for complex structures.
+
+### Arguments vs values
+
+KDL nodes can have positional arguments:
+
+```kdl
+person "Alice" age=30
+```
+
+In STYX, the equivalent uses explicit keys or tagged values:
+
+```styx
+person { name Alice, age 30 }
+// or with a tagged sequence for positional data:
+person("Alice" 30)
+```
+
+### Properties syntax
+
+KDL uses `key=value` for properties on a node. STYX uses `key=value` for attribute
+objects, which are syntactic sugar for block objects:
+
+```kdl
+// KDL: properties on a node
+node key=value other="thing"
+```
+
+```styx
+// STYX: attribute object (sugar for nested object)
+node key=value other=thing
+// expands to:
+node {
+  key value
+  other thing
+}
+```
+
+### Type annotations
+
+KDL uses parenthesized type annotations:
+
+```kdl
+port (u16)8080
+timeout (duration)"30s"
+```
+
+STYX uses schema-defined types, not inline annotations:
+
+```styx
+// Schema
+port @u16
+timeout @duration
+
+// Document
+port 8080
+timeout 30s
+```
+
+This keeps documents clean and centralizes type information.
+
+### Null/empty handling
+
+KDL uses `null` as a keyword. STYX uses `@` for unit:
+
+```kdl
+optional null
+```
+
+```styx
+optional @
+```
+
+KDL's `null` is a value; STYX's `@` represents structural absence.
+
+### Example: Package manifest
+
+```kdl
+package {
+    name "my-app"
+    version "1.0.0"
+    
+    dependencies {
+        serde "1.0" features=["derive"]
+        tokio "1.0" features=["full"] optional=true
+    }
+}
+```
+
+```styx
+package {
+  name my-app
+  version 1.0.0
+  
+  dependencies {
+    serde {
+      version 1.0
+      features (derive)
+    }
+    tokio {
+      version 1.0
+      features (full)
+      optional true
+    }
+  }
+}
+```
+
+STYX is slightly more verbose here because it doesn't have positional arguments,
+but the structure is more uniform and easier to query programmatically.
+
+### Key differences summary
+
+| Aspect | KDL | STYX |
+|--------|-----|------|
+| Model | Node with args + props | Key-value pairs |
+| Positional data | Node arguments | Tagged sequences |
+| Type annotations | Inline `(type)` | Schema-defined |
+| Strings | Always quoted | Bare or quoted |
+| Empty/null | `null` keyword | `@` unit value |
+| Comments | `//` and `/* */` | `//` only |
+| Multiline strings | `"...\n..."` | Heredocs `<<EOF` |
+
+## Comparison with TOML (non-normative)
+
+TOML is popular for Rust project configuration (Cargo.toml). STYX offers
+different trade-offs for deeply nested structures.
+
+### Flat vs nested
+
+TOML uses section headers that implicitly define nesting:
+
+```toml
+[package]
+name = "my-app"
+version = "1.0.0"
+
+[dependencies]
+serde = "1.0"
+
+[dependencies.tokio]
+version = "1.0"
+features = ["full"]
+```
+
+STYX uses explicit nesting:
+
+```styx
+package {
+  name my-app
+  version 1.0.0
+}
+
+dependencies {
+  serde 1.0
+  tokio {
+    version 1.0
+    features (full)
+  }
+}
+```
+
+### Dotted keys
+
+Both support dotted keys, but with different scoping rules:
+
+```toml
+# TOML: dotted keys can appear anywhere
+server.host = "localhost"
+server.port = 8080
+```
+
+```styx
+// STYX: dotted keys expand to singleton objects
+server.host localhost
+server.port 8080   // ERROR: cannot reopen server
+```
+
+STYX's restriction prevents accidental key reordering bugs and makes structure explicit.
+
+### Arrays of tables
+
+TOML's `[[array]]` syntax:
+
+```toml
+[[servers]]
+host = "alpha"
+port = 8080
+
+[[servers]]
+host = "beta"
+port = 8081
+```
+
+STYX uses sequences:
+
+```styx
+servers (
+  { host alpha, port 8080 }
+  { host beta, port 8081 }
+)
+```
+
+### Inline tables
+
+TOML inline tables cannot span lines and cannot have trailing commas:
+
+```toml
+point = { x = 1, y = 2 }  # must be on one line
+```
+
+STYX inline objects can span lines and allow trailing commas:
+
+```styx
+point { x 1, y 2, }   // trailing comma OK
+point {
+  x 1,
+  y 2,              // multiline OK
+}
+```
+
+### What TOML has that STYX doesn't
+
+| TOML feature | STYX alternative |
+|--------------|------------------|
+| `[[array]]` headers | Sequence of objects |
+| Datetime literals | `@timestamp` with schema |
+| Reopening sections | Use block objects |
+| Bare integers/floats | Opaque scalars + schema |
+
+### What STYX has that TOML doesn't
+
+| STYX feature | TOML workaround |
+|--------------|-----------------|
+| Tagged values | Magic key conventions |
+| Heredocs | Multi-line basic strings |
+| Raw strings | Literal strings `'...'` |
+| Inline schemas | External validation |
+| Deeply nested inline | Awkward table headers |
