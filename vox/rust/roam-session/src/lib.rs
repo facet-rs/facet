@@ -1291,6 +1291,43 @@ impl std::fmt::Display for CallError {
 
 impl std::error::Error for CallError {}
 
+/// Trait for making RPC calls.
+///
+/// This abstracts over different connection types (e.g., `ConnectionHandle`,
+/// `ReconnectingClient`) so generated clients can work with any of them.
+///
+/// The trait uses an associated error type to allow different implementations
+/// to return their own error types while still being usable with generated clients.
+#[allow(async_fn_in_trait)]
+pub trait Caller: Clone + Send + Sync + 'static {
+    /// The error type returned by this caller.
+    type Error: From<CallError> + Send;
+
+    /// Make an RPC call with the given method ID and arguments.
+    ///
+    /// The arguments are mutable because stream bindings (Tx/Rx) need to be
+    /// assigned channel IDs before serialization.
+    ///
+    /// Returns the raw response bytes on success.
+    async fn call<T: Facet<'static>>(
+        &self,
+        method_id: u64,
+        args: &mut T,
+    ) -> Result<Vec<u8>, Self::Error>;
+}
+
+impl Caller for ConnectionHandle {
+    type Error = CallError;
+
+    async fn call<T: Facet<'static>>(
+        &self,
+        method_id: u64,
+        args: &mut T,
+    ) -> Result<Vec<u8>, Self::Error> {
+        ConnectionHandle::call(self, method_id, args).await
+    }
+}
+
 /// Command sent from ConnectionHandle to the Driver.
 #[derive(Debug)]
 pub enum HandleCommand {
@@ -1615,21 +1652,6 @@ impl<TransportError> From<TransportError> for ClientError<TransportError> {
 #[derive(Debug)]
 pub enum DispatchError {
     Encode(facet_postcard::SerializeError),
-}
-
-/// Minimal async RPC caller for unary requests.
-///
-/// This is intentionally small: it deals only in `method_id` + payload bytes, and
-/// returns a `Frame` so callers can do zero-copy deserialization (borrow from the
-/// response buffer / SHM slot).
-///
-/// r[impl unary.initiate] - call_unary sends a Request message to initiate a call
-/// r[impl unary.lifecycle.ordering] - implementations correlate responses by request_id
-#[allow(async_fn_in_trait)]
-pub trait UnaryCaller {
-    type Error;
-
-    async fn call_unary(&mut self, method_id: u64, payload: Vec<u8>) -> Result<Frame, Self::Error>;
 }
 
 // ============================================================================

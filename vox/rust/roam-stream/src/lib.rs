@@ -59,7 +59,9 @@ pub use server::{Server, ServerConfig, TcpConnection};
 pub use transport::MessageTransport;
 
 // Re-export session types for convenience
-pub use roam_session::{CallError, ChannelIdAllocator, ChannelRegistry, ConnectionHandle, Role};
+pub use roam_session::{
+    CallError, Caller, ChannelIdAllocator, ChannelRegistry, ConnectionHandle, Role,
+};
 
 // Re-export wire types for convenience
 pub use roam_wire::{Hello, Message};

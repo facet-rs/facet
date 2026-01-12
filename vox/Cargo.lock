@@ -1327,6 +1327,7 @@ version = "0.5.0"
 dependencies = [
  "cobs 0.5.0",
  "ctor",
+ "facet",
  "facet-postcard",
  "roam-session",
  "roam-wire",

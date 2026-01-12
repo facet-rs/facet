@@ -40,6 +40,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use facet::Facet;
 use roam_session::{
     CallError, ChannelRegistry, ConnectionHandle, RoamError, ServiceDispatcher, TaskMessage,
 };
@@ -180,11 +181,24 @@ impl ConnectionState {
 /// Wraps a [`Connector`] and provides transparent reconnection when the
 /// underlying transport fails. Callers make RPC calls as normal; if the
 /// connection is lost, the client automatically reconnects and retries.
+///
+/// `ReconnectingClient` is cheap to clone - all clones share the same
+/// underlying connection state.
 pub struct ReconnectingClient<C: Connector> {
-    connector: C,
+    connector: Arc<C>,
     policy: RetryPolicy,
     // r[reconnect.concurrency.impl]
     state: Arc<Mutex<Option<ConnectionState>>>,
+}
+
+impl<C: Connector> Clone for ReconnectingClient<C> {
+    fn clone(&self) -> Self {
+        Self {
+            connector: self.connector.clone(),
+            policy: self.policy.clone(),
+            state: self.state.clone(),
+        }
+    }
 }
 
 impl<C: Connector> ReconnectingClient<C> {
@@ -194,7 +208,7 @@ impl<C: Connector> ReconnectingClient<C> {
     /// Does not connect immediately. The first call triggers connection.
     pub fn new(connector: C) -> Self {
         Self {
-            connector,
+            connector: Arc::new(connector),
             policy: RetryPolicy::default(),
             state: Arc::new(Mutex::new(None)),
         }
@@ -203,7 +217,7 @@ impl<C: Connector> ReconnectingClient<C> {
     /// Create a new reconnecting client with a custom retry policy.
     pub fn with_policy(connector: C, policy: RetryPolicy) -> Self {
         Self {
-            connector,
+            connector: Arc::new(connector),
             policy,
             state: Arc::new(Mutex::new(None)),
         }
@@ -300,6 +314,84 @@ impl<C: Connector> ReconnectingClient<C> {
 
             // Attempt the call
             match handle.call_raw(method_id, payload.clone()).await {
+                Ok(response) => return Ok(response),
+                // r[reconnect.trigger.not-rpc]
+                Err(CallError::Encode(e)) => return Err(ReconnectError::Rpc(CallError::Encode(e))),
+                Err(CallError::Decode(e)) => return Err(ReconnectError::Rpc(CallError::Decode(e))),
+                // r[reconnect.trigger.transport]
+                Err(CallError::ConnectionClosed) | Err(CallError::DriverGone) => {
+                    // Mark connection as dead
+                    {
+                        let mut state = self.state.lock().await;
+                        *state = None;
+                    }
+
+                    attempt += 1;
+                    if attempt >= self.policy.max_attempts {
+                        let error = last_error.unwrap_or_else(|| {
+                            io::Error::new(io::ErrorKind::ConnectionReset, "connection closed")
+                        });
+                        return Err(ReconnectError::RetriesExhausted {
+                            original: error,
+                            attempts: attempt,
+                        });
+                    }
+
+                    last_error = Some(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "connection closed",
+                    ));
+                    let backoff = self.policy.backoff_for_attempt(attempt);
+                    tokio::time::sleep(backoff).await;
+                    // Loop will reconnect on next iteration
+                }
+            }
+        }
+    }
+}
+
+// r[reconnect.call]
+impl<C: Connector> roam_session::Caller for ReconnectingClient<C> {
+    type Error = ReconnectError;
+
+    /// Make an RPC call with automatic reconnection.
+    ///
+    /// This delegates to the underlying `ConnectionHandle::call`, which handles
+    /// stream binding (Tx/Rx channel ID assignment) and serialization.
+    ///
+    /// If the call fails due to a transport error, reconnects and retries
+    /// according to the retry policy.
+    async fn call<T: Facet<'static>>(
+        &self,
+        method_id: u64,
+        args: &mut T,
+    ) -> Result<Vec<u8>, Self::Error> {
+        let mut last_error: Option<io::Error> = None;
+        let mut attempt = 0u32;
+
+        loop {
+            // Get or establish connection
+            let handle = match self.ensure_connected().await {
+                Ok(h) => h,
+                Err(ReconnectError::ConnectFailed(e)) => {
+                    // r[reconnect.flow]
+                    attempt += 1;
+                    if attempt >= self.policy.max_attempts {
+                        return Err(ReconnectError::RetriesExhausted {
+                            original: last_error.unwrap_or(e),
+                            attempts: attempt,
+                        });
+                    }
+                    last_error = Some(e);
+                    let backoff = self.policy.backoff_for_attempt(attempt);
+                    tokio::time::sleep(backoff).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+
+            // Attempt the call - ConnectionHandle::call handles stream binding
+            match handle.call(method_id, args).await {
                 Ok(response) => return Ok(response),
                 // r[reconnect.trigger.not-rpc]
                 Err(CallError::Encode(e)) => return Err(ReconnectError::Rpc(CallError::Encode(e))),

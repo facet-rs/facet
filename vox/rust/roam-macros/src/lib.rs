@@ -364,7 +364,13 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
     let client_name = format_ident!("{}Client", parsed.name());
     let method_id_mod = format_ident!("{}_method_id", parsed.name().to_snake_case());
 
-    let client_doc = format!("Client for {} service.", parsed.name());
+    let client_doc = format!(
+        "Client for {} service.\n\n\
+        Generic over any [`Caller`]({roam}::session::Caller) implementation, \
+        allowing use with both [`ConnectionHandle`]({roam}::session::ConnectionHandle) \
+        and reconnecting clients.",
+        parsed.name()
+    );
 
     let client_methods: Vec<TokenStream2> = parsed
         .methods()
@@ -374,14 +380,14 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
     quote! {
         #[doc = #client_doc]
         #[derive(Clone)]
-        pub struct #client_name {
-            handle: #roam::session::ConnectionHandle,
+        pub struct #client_name<C: #roam::session::Caller = #roam::session::ConnectionHandle> {
+            caller: C,
         }
 
-        impl #client_name {
-            /// Create a new client wrapping the given connection handle.
-            pub fn new(handle: #roam::session::ConnectionHandle) -> Self {
-                Self { handle }
+        impl<C: #roam::session::Caller> #client_name<C> {
+            /// Create a new client wrapping the given caller.
+            pub fn new(caller: C) -> Self {
+                Self { caller }
             }
 
             #(#client_methods)*
@@ -422,7 +428,7 @@ fn generate_client_method(
         quote! { (#(#arg_names),*) }
     };
 
-    // Return type - Result<Result<T, RoamError<E>>, CallError>
+    // Return type - Result<Result<T, RoamError<E>>, C::Error>
     let return_type = method.return_type();
     let client_return = format_client_return_type(&return_type, roam);
 
@@ -430,21 +436,21 @@ fn generate_client_method(
         #method_doc
         pub async fn #method_name(&self, #(#params),*) -> #client_return {
             let mut args = #args_tuple;
-            let payload = self.handle.call(#method_id_mod::#method_name(), &mut args).await?;
-            #roam::session::CallError::decode_response(&payload)
+            let payload = #roam::session::Caller::call(&self.caller, #method_id_mod::#method_name(), &mut args).await?;
+            #roam::session::CallError::decode_response(&payload).map_err(Into::into)
         }
     }
 }
 
-/// Format the return type as Result<Result<T, RoamError<E>>, CallError> for client.
-fn format_client_return_type(return_type: &Type, roam: &TokenStream2) -> TokenStream2 {
+/// Format the return type as Result<Result<T, RoamError<E>>, C::Error> for client.
+fn format_client_return_type(return_type: &Type, _roam: &TokenStream2) -> TokenStream2 {
     if let Some((ok_ty, err_ty)) = return_type.as_result() {
         let ok_tokens = ok_ty.to_token_stream();
         let err_tokens = err_ty.to_token_stream();
-        quote! { Result<Result<#ok_tokens, RoamError<#err_tokens>>, #roam::session::CallError> }
+        quote! { Result<Result<#ok_tokens, RoamError<#err_tokens>>, C::Error> }
     } else {
         let ty_tokens = return_type.to_token_stream();
-        quote! { Result<Result<#ty_tokens, RoamError<Never>>, #roam::session::CallError> }
+        quote! { Result<Result<#ty_tokens, RoamError<Never>>, C::Error> }
     }
 }
 
