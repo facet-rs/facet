@@ -925,6 +925,83 @@ pub enum ChannelError {
 }
 
 // ============================================================================
+// Flow Control
+// ============================================================================
+
+/// Abstraction for stream flow control mechanism.
+///
+/// Different transports implement credit-based flow control differently:
+/// - **Stream transports** (TCP, WebSocket): explicit `Message::Credit` on the wire
+/// - **SHM**: shared atomic counters in the channel table (`ChannelEntry::granted_total`)
+///
+/// This trait abstracts the mechanism while `ChannelRegistry` remains the source
+/// of truth for stream lifecycle (routing, ordering, existence).
+///
+/// r[impl flow.channel.credit-based]
+/// r[impl flow.channel.all-transports]
+pub trait FlowControl: Send {
+    /// Called when we receive data on a channel (receiver side).
+    ///
+    /// The implementation may grant credit back to the sender:
+    /// - Stream: queue a `Message::Credit` to send
+    /// - SHM: increment `ChannelEntry::granted_total` atomically
+    ///
+    /// r[impl flow.channel.credit-grant]
+    fn on_data_received(&mut self, channel_id: ChannelId, bytes: u32);
+
+    /// Wait until we have enough credit to send `bytes` on a channel (sender side).
+    ///
+    /// - Stream: check `ChannelRegistry::outgoing_credit`, wait on notify if insufficient
+    /// - SHM: poll/futex wait on `granted_total - sent_total >= bytes`
+    ///
+    /// Returns `Ok(())` when credit is available, `Err` if the channel is closed/invalid.
+    ///
+    /// r[impl flow.channel.zero-credit]
+    fn wait_for_send_credit(
+        &mut self,
+        channel_id: ChannelId,
+        bytes: u32,
+    ) -> impl std::future::Future<Output = std::io::Result<()>> + Send;
+
+    /// Consume credit after sending data (sender side).
+    ///
+    /// Called after successfully sending `bytes` on a channel.
+    /// - Stream: decrement `ChannelRegistry::outgoing_credit`
+    /// - SHM: increment local `sent_total`
+    ///
+    /// r[impl flow.channel.credit-consume]
+    fn consume_send_credit(&mut self, channel_id: ChannelId, bytes: u32);
+}
+
+/// No-op flow control for infinite credit mode.
+///
+/// r[impl flow.channel.infinite-credit]
+///
+/// Used when flow control is disabled or not yet implemented.
+/// All operations succeed immediately without tracking.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InfiniteCredit;
+
+impl FlowControl for InfiniteCredit {
+    fn on_data_received(&mut self, _channel_id: ChannelId, _bytes: u32) {
+        // No credit tracking needed
+    }
+
+    async fn wait_for_send_credit(
+        &mut self,
+        _channel_id: ChannelId,
+        _bytes: u32,
+    ) -> std::io::Result<()> {
+        // Infinite credit - always available
+        Ok(())
+    }
+
+    fn consume_send_credit(&mut self, _channel_id: ChannelId, _bytes: u32) {
+        // No credit tracking needed
+    }
+}
+
+// ============================================================================
 // Request ID generation
 // ============================================================================
 
@@ -1555,6 +1632,214 @@ pub trait UnaryCaller {
     async fn call_unary(&mut self, method_id: u64, payload: Vec<u8>) -> Result<Frame, Self::Error>;
 }
 
+// ============================================================================
+// Tunnel Adapters for AsyncRead/AsyncWrite Streams
+// ============================================================================
+
+use std::io;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::task::JoinHandle;
+
+/// Default chunk size for tunnel pumps (32KB).
+///
+/// Balances throughput with memory usage and slot consumption.
+/// Larger values improve throughput but use more memory per read.
+/// Smaller values improve latency but increase syscall overhead.
+pub const DEFAULT_TUNNEL_CHUNK_SIZE: usize = 32 * 1024;
+
+/// A bidirectional byte tunnel over roam channels.
+///
+/// From the perspective of whoever holds the tunnel:
+/// - `tx`: Send bytes TO the remote end
+/// - `rx`: Receive bytes FROM the remote end
+///
+/// Tunnels are typically used to bridge async byte streams (TCP, Unix sockets, etc.)
+/// with roam's streaming channels. One side creates a tunnel pair with [`tunnel_pair()`],
+/// passes one half to the remote via an RPC call, and uses the other half locally.
+///
+/// # Example
+///
+/// ```ignore
+/// // Host side: create tunnel and pump to/from a socket
+/// let (local, remote) = roam_session::tunnel_pair();
+/// let (read_handle, write_handle) = roam_session::tunnel_stream(socket, local, 32 * 1024);
+///
+/// // Pass `remote` to cell via RPC
+/// cell.handle_connection(remote).await?;
+/// ```
+#[derive(Facet)]
+pub struct Tunnel {
+    /// Channel for sending bytes to the remote end.
+    pub tx: Tx<Vec<u8>>,
+    /// Channel for receiving bytes from the remote end.
+    pub rx: Rx<Vec<u8>>,
+}
+
+/// Create a pair of connected tunnels.
+///
+/// Returns `(local, remote)` where:
+/// - Data sent on `local.tx` arrives at `remote.rx`
+/// - Data sent on `remote.tx` arrives at `local.rx`
+///
+/// This is useful for creating a bidirectional channel that can be split
+/// across an RPC boundary. One side keeps `local` and passes `remote` to
+/// the other side via an RPC call.
+///
+/// # Example
+///
+/// ```ignore
+/// let (local, remote) = tunnel_pair();
+///
+/// // Spawn tasks to pump data from local stream
+/// tunnel_stream(tcp_stream, local, DEFAULT_TUNNEL_CHUNK_SIZE);
+///
+/// // Send remote to the other side via RPC
+/// service.handle_tunnel(remote).await?;
+/// ```
+pub fn tunnel_pair() -> (Tunnel, Tunnel) {
+    let (tx1, rx1) = channel::<Vec<u8>>();
+    let (tx2, rx2) = channel::<Vec<u8>>();
+    (Tunnel { tx: tx1, rx: rx2 }, Tunnel { tx: tx2, rx: rx1 })
+}
+
+/// Pump bytes from an `AsyncRead` into a `Tx<Vec<u8>>`.
+///
+/// Reads chunks up to `chunk_size` bytes and sends them on the channel.
+/// Returns when the reader reaches EOF or the channel closes.
+///
+/// # Arguments
+///
+/// * `reader` - Any type implementing `AsyncRead + Unpin`
+/// * `tx` - The transmit channel to send bytes to
+/// * `chunk_size` - Maximum bytes to read per chunk
+///
+/// # Returns
+///
+/// * `Ok(())` - Reader reached EOF, channel closed gracefully
+/// * `Err(io::Error)` - Read error occurred
+///
+/// # Example
+///
+/// ```ignore
+/// let (tx, rx) = roam::channel::<Vec<u8>>();
+/// let result = pump_read_to_tx(reader, tx, 32 * 1024).await;
+/// ```
+pub async fn pump_read_to_tx<R: AsyncRead + Unpin>(
+    mut reader: R,
+    tx: Tx<Vec<u8>>,
+    chunk_size: usize,
+) -> io::Result<()> {
+    let mut buf = vec![0u8; chunk_size];
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            // EOF - drop tx to close the channel
+            break;
+        }
+        // Send the bytes we read
+        if tx.send(&buf[..n].to_vec()).await.is_err() {
+            // Channel closed by receiver - treat as graceful shutdown
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Pump bytes from an `Rx<Vec<u8>>` into an `AsyncWrite`.
+///
+/// Receives chunks and writes them to the writer.
+/// Returns when the channel closes or a write error occurs.
+///
+/// # Arguments
+///
+/// * `rx` - The receive channel to get bytes from
+/// * `writer` - Any type implementing `AsyncWrite + Unpin`
+///
+/// # Returns
+///
+/// * `Ok(())` - Channel closed gracefully
+/// * `Err(io::Error)` - Write error or deserialization error occurred
+///
+/// # Example
+///
+/// ```ignore
+/// let (tx, rx) = roam::channel::<Vec<u8>>();
+/// let result = pump_rx_to_write(rx, writer).await;
+/// ```
+pub async fn pump_rx_to_write<W: AsyncWrite + Unpin>(
+    mut rx: Rx<Vec<u8>>,
+    mut writer: W,
+) -> io::Result<()> {
+    loop {
+        match rx.recv().await {
+            Ok(Some(data)) => {
+                writer.write_all(&data).await?;
+            }
+            Ok(None) => {
+                // Channel closed - flush and exit
+                writer.flush().await?;
+                break;
+            }
+            Err(e) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("tunnel receive error: {e}"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Tunnel a bidirectional stream through a roam Tunnel.
+///
+/// Spawns two tasks to pump data in both directions:
+/// - One task reads from `stream` and sends to `tunnel.tx`
+/// - One task receives from `tunnel.rx` and writes to `stream`
+///
+/// Returns handles to join on completion. Both tasks run until their
+/// respective direction completes (EOF/close) or an error occurs.
+///
+/// # Arguments
+///
+/// * `stream` - Any type implementing `AsyncRead + AsyncWrite + Unpin + Send + 'static`
+/// * `tunnel` - The tunnel to pump data through
+/// * `chunk_size` - Maximum bytes to read per chunk (see [`DEFAULT_TUNNEL_CHUNK_SIZE`])
+///
+/// # Returns
+///
+/// A tuple of `(read_handle, write_handle)`:
+/// - `read_handle` - Completes when the stream reaches EOF or tx closes
+/// - `write_handle` - Completes when rx closes or stream write fails
+///
+/// # Example
+///
+/// ```ignore
+/// let (local, remote) = tunnel_pair();
+/// let (read_handle, write_handle) = tunnel_stream(tcp_stream, local, DEFAULT_TUNNEL_CHUNK_SIZE);
+///
+/// // Wait for both directions to complete
+/// let _ = read_handle.await;
+/// let _ = write_handle.await;
+/// ```
+pub fn tunnel_stream<S>(
+    stream: S,
+    tunnel: Tunnel,
+    chunk_size: usize,
+) -> (JoinHandle<io::Result<()>>, JoinHandle<io::Result<()>>)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (reader, writer) = tokio::io::split(stream);
+    let Tunnel { tx, rx } = tunnel;
+
+    let read_handle = tokio::spawn(async move { pump_read_to_tx(reader, tx, chunk_size).await });
+
+    let write_handle = tokio::spawn(async move { pump_rx_to_write(rx, writer).await });
+
+    (read_handle, write_handle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1682,5 +1967,139 @@ mod tests {
         // Verify type_params are populated
         assert_eq!(tx_shape.type_params.len(), 1);
         assert_eq!(rx_shape.type_params.len(), 1);
+    }
+
+    // ========================================================================
+    // Tunnel Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn tunnel_pair_connects_bidirectionally() {
+        let (local, remote) = tunnel_pair();
+
+        // Send from local to remote
+        local.tx.send(&b"hello".to_vec()).await.unwrap();
+
+        // Receive on remote
+        let mut remote_rx = remote.rx;
+        let received = remote_rx.recv().await.unwrap().unwrap();
+        assert_eq!(received, b"hello".to_vec());
+
+        // Send from remote to local
+        remote.tx.send(&b"world".to_vec()).await.unwrap();
+
+        // Receive on local
+        let mut local_rx = local.rx;
+        let received = local_rx.recv().await.unwrap().unwrap();
+        assert_eq!(received, b"world".to_vec());
+    }
+
+    #[tokio::test]
+    async fn pump_read_to_tx_sends_chunks() {
+        use std::io::Cursor;
+
+        let data = b"hello world this is a test message";
+        let reader = Cursor::new(data.to_vec());
+        let (tx, mut rx) = channel::<Vec<u8>>();
+
+        // Pump with small chunk size to force multiple chunks
+        let handle = tokio::spawn(async move { pump_read_to_tx(reader, tx, 10).await });
+
+        // Collect all received chunks
+        let mut received = Vec::new();
+        while let Ok(Some(chunk)) = rx.recv().await {
+            received.extend(chunk);
+        }
+
+        // Verify we got all the data
+        assert_eq!(received, data.to_vec());
+
+        // Pump should complete successfully
+        handle.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn pump_rx_to_write_writes_chunks() {
+        use std::io::Cursor;
+
+        let (tx, rx) = channel::<Vec<u8>>();
+        let writer = Cursor::new(Vec::new());
+
+        // Spawn pump task
+        let handle = tokio::spawn(async move {
+            let mut writer = writer;
+            pump_rx_to_write(rx, &mut writer).await?;
+            Ok::<_, io::Error>(writer)
+        });
+
+        // Send some chunks
+        tx.send(&b"hello ".to_vec()).await.unwrap();
+        tx.send(&b"world".to_vec()).await.unwrap();
+        drop(tx); // Close the channel
+
+        // Wait for pump to complete and get the writer
+        let writer = handle.await.unwrap().unwrap();
+        assert_eq!(writer.into_inner(), b"hello world".to_vec());
+    }
+
+    #[tokio::test]
+    async fn tunnel_stream_bidirectional() {
+        // Create a duplex stream (simulates a socket)
+        let (client, server) = tokio::io::duplex(1024);
+
+        // Create tunnel pair
+        let (local, remote) = tunnel_pair();
+
+        // Tunnel the client side
+        let (client_read_handle, client_write_handle) =
+            tunnel_stream(client, local, DEFAULT_TUNNEL_CHUNK_SIZE);
+
+        // Use remote tunnel to send/receive
+        tokio::spawn(async move {
+            // Send data through the tunnel (will go to server side of duplex)
+            remote.tx.send(&b"from tunnel".to_vec()).await.unwrap();
+        });
+
+        // Read from server side of duplex
+        let mut server = server;
+        let mut buf = vec![0u8; 1024];
+        let n = tokio::io::AsyncReadExt::read(&mut server, &mut buf)
+            .await
+            .unwrap();
+        assert!(n > 0);
+
+        // Write to server side
+        tokio::io::AsyncWriteExt::write_all(&mut server, b"to tunnel")
+            .await
+            .unwrap();
+        drop(server); // Close to signal EOF
+
+        // Wait for read task to complete
+        client_read_handle.await.unwrap().unwrap();
+        client_write_handle.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn tunnel_handles_empty_data() {
+        let (tx, mut rx) = channel::<Vec<u8>>();
+
+        // Sending empty vec should work
+        tx.send(&Vec::new()).await.unwrap();
+
+        let received = rx.recv().await.unwrap().unwrap();
+        assert!(received.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tunnel_close_propagates() {
+        let (local, remote) = tunnel_pair();
+
+        // Drop the sender
+        drop(local.tx);
+
+        // Receiver should see channel closed
+        let mut rx = remote.rx;
+        let result = rx.recv().await;
+        assert!(matches!(result, Ok(None)));
     }
 }

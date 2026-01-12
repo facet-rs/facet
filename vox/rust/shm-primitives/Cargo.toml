@@ -33,3 +33,6 @@ tokio = { workspace = true, optional = true, features = ["net", "rt"] }
 
 [target.'cfg(loom)'.dependencies]
 loom = { version = "0.7" }
+
+[dev-dependencies]
+tempfile = "3"

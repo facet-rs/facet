@@ -11,4 +11,24 @@ description = "Shared-memory transport binding implementation"
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[features]
+default = ["std"]
+std = ["shm-primitives/std"]
+tokio = ["dep:tokio", "dep:roam-session", "dep:roam-stream"]
+
 [dependencies]
+shm-primitives = { path = "../shm-primitives", default-features = false }
+roam-frame = { path = "../roam-frame" }
+roam-wire = { path = "../roam-wire" }
+roam-session = { path = "../roam-session", optional = true }
+roam-stream = { path = "../roam-stream", optional = true }
+facet-postcard = { workspace = true }
+tokio = { workspace = true, features = ["time", "sync"], optional = true }
+libc = { workspace = true }
+
+[dev-dependencies]
+shm-primitives = { path = "../shm-primitives", features = ["alloc", "std"] }
+tempfile = "3"
+libc = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+roam-session = { path = "../roam-session" }

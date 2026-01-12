@@ -26,6 +26,12 @@ pub use roam_session::{
     SenderSlot, TaskMessage, Tx, TxError, channel,
 };
 
+// Re-export tunnel types for byte stream bridging
+pub use roam_session::{
+    DEFAULT_TUNNEL_CHUNK_SIZE, Tunnel, pump_read_to_tx, pump_rx_to_write, tunnel_pair,
+    tunnel_stream,
+};
+
 // Re-export schema types
 pub use roam_schema as schema;
 

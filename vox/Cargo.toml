@@ -8,6 +8,7 @@ members = [
     "rust/roam-hash",
     "rust/roam-schema",
     "rust/roam-shm",
+    "rust/roam-tracing",
     "rust/roam-codegen",
     "rust/roam-macros",
     "rust/roam-macros-parse",
@@ -50,7 +51,7 @@ roam = { path = "rust/roam", version = "0.5.0" }
 bytes = "1"
 blake3 = "1.8"
 cobs = "0.5.0"
-tokio = { version = "1", features = ["sync", "rt", "time", "macros"] }
+tokio = { version = "1", features = ["sync", "rt", "time", "macros", "io-util"] }
 tokio-tungstenite = "0.26"
 libc = "0.2.180"
 

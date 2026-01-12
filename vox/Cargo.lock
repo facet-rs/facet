@@ -1309,6 +1309,17 @@ dependencies = [
 [[package]]
 name = "roam-shm"
 version = "0.5.0"
+dependencies = [
+ "facet-postcard",
+ "libc",
+ "roam-frame",
+ "roam-session",
+ "roam-stream",
+ "roam-wire",
+ "shm-primitives",
+ "tempfile",
+ "tokio",
+]
 
 [[package]]
 name = "roam-stream"
@@ -1320,6 +1331,18 @@ dependencies = [
  "roam-session",
  "roam-wire",
  "tokio",
+]
+
+[[package]]
+name = "roam-tracing"
+version = "0.5.0"
+dependencies = [
+ "facet",
+ "roam",
+ "roam-session",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1449,6 +1472,7 @@ version = "0.5.0"
 dependencies = [
  "libc",
  "loom",
+ "tempfile",
  "tokio",
  "tracing",
 ]

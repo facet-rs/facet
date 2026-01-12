@@ -14,7 +14,7 @@ that communicate via shared memory.
 > r[shm.scope]
 >
 > This binding encodes Core Semantics over shared memory. It does NOT
-> redefine the meaning of calls, streams, errors, or flow control —
+> redefine the meaning of calls, channels, errors, or flow control —
 > only their representation in this transport.
 
 > r[shm.architecture]
@@ -76,7 +76,7 @@ that communicate via shared memory.
 
 ## ID Widths
 
-Core defines `request_id` and `stream_id` as u64. SHM uses narrower
+Core defines `request_id` and `channel_id` as u64. SHM uses narrower
 encodings to fit in the 64-byte descriptor:
 
 > r[shm.id.request-id]
@@ -85,27 +85,27 @@ encodings to fit in the 64-byte descriptor:
 > `request_id` are implicitly zero. Implementations MUST NOT use
 > request IDs ≥ 2^32.
 
-> r[shm.id.stream-id]
+> r[shm.id.channel-id]
 >
-> SHM encodes `stream_id` as u32. The upper 32 bits of Core's u64
-> `stream_id` are implicitly zero.
+> SHM encodes `channel_id` as u32. The upper 32 bits of Core's u64
+> `channel_id` are implicitly zero.
 
-## Stream ID Allocation
+## Channel ID Allocation
 
-> r[shm.id.stream-scope]
+> r[shm.id.channel-scope]
 >
-> Stream IDs are scoped to the guest-host pair. Two different guests
-> may independently use the same `stream_id` value without collision
-> because they have separate stream tables.
+> Channel IDs are scoped to the guest-host pair. Two different guests
+> may independently use the same `channel_id` value without collision
+> because they have separate channel tables.
 
-> r[shm.id.stream-parity]
+> r[shm.id.channel-parity]
 >
-> Within a guest-host pair, stream IDs use odd/even parity to prevent
+> Within a guest-host pair, channel IDs use odd/even parity to prevent
 > collisions:
-> - The **host** allocates even stream IDs (2, 4, 6, ...)
-> - The **guest** allocates odd stream IDs (1, 3, 5, ...)
+> - The **host** allocates even channel IDs (2, 4, 6, ...)
+> - The **guest** allocates odd channel IDs (1, 3, 5, ...)
 >
-> Stream ID 0 is reserved and MUST NOT be used.
+> Channel ID 0 is reserved and MUST NOT be used.
 
 ## Request ID Scope
 
@@ -123,7 +123,7 @@ SHM replaces this with the segment header:
 > r[shm.handshake]
 >
 > SHM does not use Hello messages. Instead, the segment header fields
-> (`max_payload_size`, `initial_credit`, `max_streams`) serve as the
+> (`max_payload_size`, `initial_credit`, `max_channels`) serve as the
 > host's unilateral configuration. Guests accept these values by
 > attaching to the segment.
 
@@ -152,14 +152,14 @@ Offset  Size   Field                Description
 12      4      header_size          Size of this header
 16      8      total_size           Total segment size in bytes
 24      4      max_payload_size     Maximum payload per message
-28      4      initial_credit       Initial stream credit (bytes)
+28      4      initial_credit       Initial channel credit (bytes)
 32      4      max_guests           Maximum number of guests (≤ 255)
 36      4      ring_size            Descriptor ring capacity (power of 2)
 40      8      peer_table_offset    Offset to peer table
 48      8      slot_region_offset   Offset to payload slot region
 56      4      slot_size            Size of each payload slot
 60      4      slots_per_guest      Number of slots per guest
-64      4      max_streams          Max concurrent streams per guest
+64      4      max_channels         Max concurrent channels per guest
 68      4      host_goodbye         Host goodbye flag (0 = active)
 72      8      heartbeat_interval   Heartbeat interval in nanoseconds (0 = disabled)
 80      48     reserved             Reserved for future use (zero)
@@ -191,7 +191,7 @@ struct PeerEntry {
     last_heartbeat: AtomicU64,  // Monotonic tick count (see r[shm.crash.heartbeat-clock])
     ring_offset: u64,           // Offset to this guest's descriptor rings
     slot_pool_offset: u64,      // Offset to this guest's slot pool
-    stream_table_offset: u64,   // Offset to this guest's stream table
+    channel_table_offset: u64,  // Offset to this guest's channel table
     reserved: [u8; 8],          // Reserved (zero)
 }
 // Total: 64 bytes per entry
@@ -203,6 +203,7 @@ struct PeerEntry {
 > - **Empty (0)**: Slot available for a new guest
 > - **Attached (1)**: Guest is active
 > - **Goodbye (2)**: Guest is shutting down or has crashed
+> - **Reserved (3)**: Host has allocated slot, guest not yet attached (see `r[shm.spawn.reserved-state]`)
 
 ## Per-Guest Rings
 
@@ -296,7 +297,7 @@ pub struct MsgDesc {
     pub msg_type: u8,             // Message type
     pub flags: u8,                // Message flags (reserved, must be 0)
     pub _reserved: [u8; 2],       // Reserved (must be zero)
-    pub id: u32,                  // request_id or stream_id
+    pub id: u32,                  // request_id or channel_id
     pub method_id: u64,           // Method ID (for Request only, else 0)
 
     // Payload location (16 bytes)
@@ -366,9 +367,9 @@ so they are combined:
 > | 1 | Request | `request_id` |
 > | 2 | Response | `request_id` |
 > | 3 | Cancel | `request_id` |
-> | 4 | Data | `stream_id` |
-> | 5 | Close | `stream_id` |
-> | 6 | Reset | `stream_id` |
+> | 4 | Data | `channel_id` |
+> | 5 | Close | `channel_id` |
+> | 6 | Reset | `channel_id` |
 > | 7 | Goodbye | (unused) |
 
 Note: There is no Credit message type. Credit is conveyed via shared
@@ -489,7 +490,7 @@ corresponding wake site:
 > r[shm.wakeup.credit-wait]
 >
 > **Sender waiting for credit** (zero remaining):
-> - Wait: futex_wait on `StreamEntry.granted_total`
+> - Wait: futex_wait on `ChannelEntry.granted_total`
 > - Wake: Receiver calls futex_wake on `granted_total` after updating
 
 > r[shm.wakeup.slot-wait]
@@ -508,17 +509,17 @@ corresponding wake site:
 SHM uses shared counters for flow control instead of explicit Credit
 messages.
 
-## Stream Metadata Table
+## Channel Metadata Table
 
-> r[shm.flow.stream-table]
+> r[shm.flow.channel-table]
 >
-> Each guest-host pair has a **stream metadata table** for tracking
-> active streams. The table is located at a fixed offset within the
+> Each guest-host pair has a **channel metadata table** for tracking
+> active channels. The table is located at a fixed offset within the
 > guest's region:
 
 ```rust
 #[repr(C)]
-struct StreamEntry {
+struct ChannelEntry {
     state: AtomicU32,        // 0=Free, 1=Active, 2=Closed
     granted_total: AtomicU32, // Cumulative bytes authorized
     _reserved: [u8; 8],      // Reserved (zero)
@@ -526,47 +527,47 @@ struct StreamEntry {
 // 16 bytes per entry
 ```
 
-> r[shm.flow.stream-table-location]
+> r[shm.flow.channel-table-location]
 >
-> Each guest's stream table offset is stored in `PeerEntry.stream_table_offset`.
-> The table size is `max_streams * 16` bytes.
+> Each guest's channel table offset is stored in `PeerEntry.channel_table_offset`.
+> The table size is `max_channels * 16` bytes.
 
-> r[shm.flow.stream-table-indexing]
+> r[shm.flow.channel-table-indexing]
 >
-> The `stream_id` directly indexes the stream table: stream N uses
+> The `channel_id` directly indexes the channel table: channel N uses
 > entry N. This means:
-> - Stream IDs MUST be < `max_streams`
-> - Stream ID 0 is reserved; entry 0 is unused
-> - Usable stream IDs are 1 to `max_streams - 1`
+> - Channel IDs MUST be < `max_channels`
+> - Channel ID 0 is reserved; entry 0 is unused
+> - Usable channel IDs are 1 to `max_channels - 1`
 
-> r[shm.flow.stream-activate]
+> r[shm.flow.channel-activate]
 >
-> When opening a new stream, the allocator MUST initialize the entry:
+> When opening a new channel, the allocator MUST initialize the entry:
 > 1. Set `granted_total = initial_credit` (from segment header)
 > 2. Set `state = Active` (with Release ordering)
 >
 > The sender maintains its own `sent_total` counter locally (not in
 > shared memory).
 
-> r[shm.flow.stream-id-reuse]
+> r[shm.flow.channel-id-reuse]
 >
-> A stream ID MAY be reused after the stream is closed (Close or Reset
+> A channel ID MAY be reused after the channel is closed (Close or Reset
 > received by both peers). To reuse:
 > 1. Sender sends Close or Reset
-> 2. Receiver sets `StreamEntry.state = Free` (with Release ordering)
+> 2. Receiver sets `ChannelEntry.state = Free` (with Release ordering)
 > 3. Allocator polls for `state == Free` before reusing
 >
-> On reuse, the allocator reinitializes per `r[shm.flow.stream-activate]`.
+> On reuse, the allocator reinitializes per `r[shm.flow.channel-activate]`.
 >
 > Implementations SHOULD delay reuse to avoid races (e.g., wait for
 > the entry to be Free before reallocating).
 
 ## Credit Counters
 
-> r[shm.flow.counter-per-stream]
+> r[shm.flow.counter-per-channel]
 >
-> Each active stream has a `granted_total: AtomicU32` counter in its
-> stream table entry. The receiver publishes; the sender reads.
+> Each active channel has a `granted_total: AtomicU32` counter in its
+> channel table entry. The receiver publishes; the sender reads.
 
 ## Counter Semantics
 
@@ -599,7 +600,7 @@ struct StreamEntry {
 
 > r[shm.flow.initial]
 >
-> Streams start with `granted_total = initial_credit` from segment
+> Channels start with `granted_total = initial_credit` from segment
 > header. Sender's `sent_total` starts at 0.
 
 ## Zero Credit
@@ -613,7 +614,7 @@ struct StreamEntry {
 
 > r[shm.flow.reset]
 >
-> After Reset, stop accessing the stream's credit counter. Values
+> After Reset, stop accessing the channel's credit counter. Values
 > after Reset are undefined.
 
 # Guest Lifecycle
@@ -729,7 +730,7 @@ additional mechanisms to detect a guest that crashed while attached.
 > 2. Treat all in-flight operations as failed
 > 3. Reset rings to empty (head = tail = 0)
 > 4. Return all slots to free
-> 5. Reset stream table entries to Free
+> 5. Reset channel table entries to Free
 > 6. Set state to Empty (allowing new guest to attach)
 
 # Byte Accounting
@@ -739,6 +740,422 @@ additional mechanisms to detect a guest that crashed while attached.
 > For flow control, "bytes" = `payload_len` of Data descriptors
 > (the [POSTCARD]-encoded element size). Descriptor overhead and
 > slot padding do NOT count.
+
+# File-Backed Segments
+
+For cross-process communication, the SHM segment must be backed by a
+file that can be memory-mapped by multiple processes.
+
+## Segment File
+
+> r[shm.file.path]
+>
+> The host creates the segment as a regular file at a path known to
+> both host and guests. Common locations:
+> - `/dev/shm/<name>` (Linux tmpfs, recommended)
+> - `/tmp/<name>` (portable but may be disk-backed)
+> - Application-specific directory
+>
+> The path MUST be communicated to guests out-of-band (e.g., via
+> command-line argument or environment variable).
+
+> r[shm.file.create]
+>
+> To create a segment file:
+> 1. Open or create the file with read/write permissions
+> 2. Truncate to the required `total_size`
+> 3. Memory-map the entire file with `MAP_SHARED`
+> 4. Initialize all data structures (header, peer table, rings, slots)
+> 5. Write header magic last (signals segment is ready)
+
+> r[shm.file.attach]
+>
+> To attach to an existing segment:
+> 1. Open the file read/write
+> 2. Memory-map with `MAP_SHARED`
+> 3. Validate magic and version
+> 4. Read configuration from header
+> 5. Proceed with guest attachment per `r[shm.guest.attach]`
+
+> r[shm.file.permissions]
+>
+> The segment file SHOULD have permissions that allow all intended
+> guests to read and write. On POSIX systems, mode 0600 or 0660 is
+> typical, with the host and guests running as the same user or group.
+
+> r[shm.file.cleanup]
+>
+> The host SHOULD delete the segment file on graceful shutdown. On
+> crash, stale segment files may remain; implementations SHOULD handle
+> this (e.g., by deleting and recreating on startup).
+
+## Platform Mapping
+
+> r[shm.file.mmap-posix]
+>
+> On POSIX systems, use `mmap()` with:
+> - `PROT_READ | PROT_WRITE`
+> - `MAP_SHARED` (required for cross-process visibility)
+> - File descriptor from `open()` or `shm_open()`
+
+> r[shm.file.mmap-windows]
+>
+> On Windows, use:
+> - `CreateFileMapping()` to create a file mapping object
+> - `MapViewOfFile()` to map it into the process address space
+> - Named mappings can use `Global\<name>` for cross-session access
+
+# Peer Spawning
+
+The host typically spawns guest processes and provides them with the
+information needed to attach to the segment.
+
+## Spawn Ticket
+
+> r[shm.spawn.ticket]
+>
+> Before spawning a guest, the host:
+> 1. Allocates a peer table entry (finds Empty slot, sets to Reserved)
+> 2. Creates a doorbell pair (see Doorbell section)
+> 3. Prepares a "spawn ticket" containing:
+>    - `hub_path`: Path to the segment file
+>    - `peer_id`: Assigned peer ID (1-255)
+>    - `doorbell_fd`: Guest's end of the doorbell (Unix only)
+
+> r[shm.spawn.reserved-state]
+>
+> The peer entry state during spawning:
+> - Host sets state to **Reserved** before spawn
+> - Guest sets state to **Attached** after successful attach
+> - If spawn fails, host resets state to **Empty**
+>
+> The Reserved state prevents other guests from claiming the slot.
+
+```rust
+#[repr(u32)]
+pub enum PeerState {
+    Empty = 0,
+    Attached = 1,
+    Goodbye = 2,
+    Reserved = 3,  // Host has allocated, guest not yet attached
+}
+```
+
+## Command-Line Arguments
+
+> r[shm.spawn.args]
+>
+> The canonical way to pass spawn ticket information to a guest process
+> is via command-line arguments:
+>
+> ```
+> --hub-path=<path>    # Path to segment file
+> --peer-id=<id>       # Assigned peer ID (1-255)
+> --doorbell-fd=<fd>   # Doorbell file descriptor (Unix only)
+> ```
+
+> r[shm.spawn.fd-inheritance]
+>
+> On Unix, the doorbell file descriptor MUST be inheritable by the child
+> process. The host MUST NOT set `O_CLOEXEC` / `FD_CLOEXEC` on the
+> guest's doorbell fd before spawning. After spawn, the host closes its
+> copy of the guest's doorbell fd (keeping only its own end).
+
+## Guest Initialization
+
+> r[shm.spawn.guest-init]
+>
+> A spawned guest process:
+> 1. Parses command-line arguments to extract ticket info
+> 2. Opens and maps the segment file
+> 3. Validates segment header
+> 4. Locates its peer entry using `peer_id`
+> 5. Verifies state is Reserved (set by host)
+> 6. Atomically sets state from Reserved to Attached
+> 7. Initializes doorbell from the inherited fd
+> 8. Begins message processing
+
+# Doorbell Mechanism
+
+Doorbells provide instant cross-process wakeup and death detection,
+complementing the futex-based wakeup for ring operations.
+
+## Purpose
+
+> r[shm.doorbell.purpose]
+>
+> A doorbell is a bidirectional notification channel between host and
+> guest that provides:
+> - **Wakeup**: Signal the other side to check for work
+> - **Death detection**: Detect when the other process terminates
+>
+> Unlike futex (which requires polling shared memory), a doorbell
+> allows blocking on I/O that unblocks immediately when the peer dies.
+
+## Implementation
+
+> r[shm.doorbell.socketpair]
+>
+> On Unix, doorbells are implemented using `socketpair()`:
+>
+> ```c
+> int fds[2];
+> socketpair(AF_UNIX, SOCK_STREAM, 0, fds);
+> // fds[0] = host end, fds[1] = guest end
+> ```
+>
+> The host keeps `fds[0]` and passes `fds[1]` to the guest via the
+> spawn ticket.
+
+> r[shm.doorbell.signal]
+>
+> To signal the peer, write a single byte to the socket:
+>
+> ```c
+> char byte = 1;
+> write(doorbell_fd, &byte, 1);
+> ```
+>
+> The byte value is ignored; only the wakeup matters.
+
+> r[shm.doorbell.wait]
+>
+> To wait for a signal (with optional timeout):
+>
+> ```c
+> struct pollfd pfd = { .fd = doorbell_fd, .events = POLLIN };
+> poll(&pfd, 1, timeout_ms);
+> if (pfd.revents & POLLIN) {
+>     // Peer signaled - check for work
+>     char buf[16];
+>     read(doorbell_fd, buf, sizeof(buf));  // drain
+> }
+> if (pfd.revents & (POLLHUP | POLLERR)) {
+>     // Peer died
+> }
+> ```
+
+> r[shm.doorbell.death]
+>
+> When a process terminates, its end of the socketpair is closed by the
+> kernel. The surviving process sees `POLLHUP` or `POLLERR` on its end,
+> providing immediate death notification without polling.
+
+## Integration with Rings
+
+> r[shm.doorbell.ring-integration]
+>
+> Doorbells complement ring-based messaging:
+> - After enqueueing a descriptor and updating head, signal the doorbell
+> - The receiver can `poll()` both the doorbell fd and other I/O
+> - On doorbell signal, check rings for new messages
+>
+> This avoids busy-waiting and integrates with async I/O frameworks.
+
+> r[shm.doorbell.optional]
+>
+> Doorbell support is OPTIONAL. Implementations MAY use only futex-based
+> wakeup (per `r[shm.wakeup.*]`). Doorbells are recommended when:
+> - Death detection latency is critical
+> - Integration with async I/O (epoll/kqueue/IOCP) is desired
+> - Busy-waiting must be avoided entirely
+
+# Death Notification
+
+The host needs to detect when guest processes crash or hang so it can
+clean up resources and optionally restart them.
+
+## Notification Callback
+
+> r[shm.death.callback]
+>
+> When adding a peer, the host MAY register a death callback:
+>
+> ```rust
+> type DeathCallback = Arc<dyn Fn(PeerId) + Send + Sync>;
+>
+> struct AddPeerOptions {
+>     peer_name: Option<String>,
+>     on_death: Option<DeathCallback>,
+> }
+> ```
+>
+> The callback is invoked when the guest's doorbell indicates death
+> (POLLHUP/POLLERR) or when heartbeat timeout is exceeded.
+
+> r[shm.death.callback-context]
+>
+> The death callback:
+> - Is called from the host's I/O or monitor thread
+> - Receives the `peer_id` of the dead guest
+> - SHOULD NOT block for long (schedule cleanup asynchronously)
+> - MAY trigger guest restart logic
+
+## Detection Methods
+
+> r[shm.death.detection-methods]
+>
+> Implementations SHOULD use multiple detection methods:
+>
+> | Method | Latency | Reliability | Platform |
+> |--------|---------|-------------|----------|
+> | Doorbell POLLHUP | Immediate | High | Unix |
+> | Heartbeat timeout | 2× interval | Medium | All |
+> | Process handle | Immediate | High | All |
+> | Epoch change | On reattach | Low | All |
+>
+> Doorbell provides the best latency on Unix. Process handles (pidfd
+> on Linux, process handle on Windows) provide immediate notification
+> on all platforms.
+
+> r[shm.death.process-handle]
+>
+> On Linux 5.3+, use `pidfd_open()` to get a pollable fd for the child
+> process. On Windows, the process handle from `CreateProcess()` is
+> waitable. This provides kernel-level death notification without
+> relying on doorbells.
+
+## Recovery Actions
+
+> r[shm.death.recovery]
+>
+> On guest death detection, per `r[shm.crash.recovery]`:
+> 1. Invoke the death callback (if registered)
+> 2. Set peer state to Goodbye, then Empty
+> 3. Reset rings and free slots
+> 4. Close host's doorbell end
+> 5. Optionally respawn the guest
+
+# Variable-Size Slot Pools
+
+For applications with diverse payload sizes (e.g., small RPC arguments
+vs. large binary blobs), a single fixed slot size is inefficient.
+Variable-size pools use multiple size classes.
+
+## Size Classes
+
+> r[shm.varslot.classes]
+>
+> A variable-size pool consists of multiple **size classes**, each with
+> its own slot size and count. Example configuration:
+>
+> | Class | Slot Size | Count | Total | Use Case |
+> |-------|-----------|-------|-------|----------|
+> | 0 | 1 KB | 1024 | 1 MB | Small RPC args |
+> | 1 | 16 KB | 256 | 4 MB | Typical payloads |
+> | 2 | 256 KB | 32 | 8 MB | Images, CSS |
+> | 3 | 4 MB | 8 | 32 MB | Compressed fonts |
+> | 4 | 16 MB | 4 | 64 MB | Decompressed fonts |
+>
+> The specific configuration is application-dependent.
+
+> r[shm.varslot.selection]
+>
+> To allocate a slot for a payload of size `N`:
+> 1. Find the smallest size class where `slot_size >= N`
+> 2. Allocate from that class's free list
+> 3. If exhausted, try the next larger class (optional)
+> 4. If all classes exhausted, block or return error
+
+## Shared Pool Architecture
+
+> r[shm.varslot.shared]
+>
+> Unlike fixed-size per-guest pools, variable-size pools are typically
+> **shared** across all guests:
+> - One pool region for the entire hub
+> - All guests allocate from the same size classes
+> - Slot ownership is tracked per-allocation
+>
+> This allows efficient use of memory when different guests have
+> different payload size distributions.
+
+> r[shm.varslot.ownership]
+>
+> Each slot tracks its current owner:
+>
+> ```rust
+> struct SlotMeta {
+>     generation: AtomicU32,  // ABA counter
+>     state: AtomicU32,       // Free=0, Allocated=1, InFlight=2
+>     owner_peer: AtomicU32,  // Peer ID that allocated (0 = host)
+>     next_free: AtomicU32,   // Free list link
+> }
+> ```
+>
+> When a guest crashes, slots with `owner_peer == crashed_peer_id`
+> are returned to their respective free lists.
+
+## Extent-Based Growth
+
+> r[shm.varslot.extents]
+>
+> Size classes can grow dynamically via **extents**:
+> - Each size class starts with one extent of `slot_count` slots
+> - When exhausted, additional extents can be allocated
+> - Extents are appended to the segment file (requires remap)
+>
+> ```rust
+> struct SizeClassHeader {
+>     slot_size: u32,
+>     slots_per_extent: u32,
+>     extent_count: AtomicU32,
+>     extent_offsets: [AtomicU64; MAX_EXTENTS],
+> }
+> ```
+
+> r[shm.varslot.extent-layout]
+>
+> Each extent contains:
+> 1. Extent header (class, index, slot count, offsets)
+> 2. Slot metadata array (one `SlotMeta` per slot)
+> 3. Slot data array (actual payload storage)
+>
+> ```
+> ┌─────────────────────────────────────────────────┐
+> │ ExtentHeader (64 bytes)                         │
+> ├─────────────────────────────────────────────────┤
+> │ SlotMeta[0] │ SlotMeta[1] │ ... │ SlotMeta[N-1] │
+> ├─────────────────────────────────────────────────┤
+> │ Slot[0] data │ Slot[1] data │ ... │ Slot[N-1]   │
+> └─────────────────────────────────────────────────┘
+> ```
+
+## Free List Management
+
+> r[shm.varslot.freelist]
+>
+> Each size class maintains a lock-free free list using a Treiber stack:
+>
+> ```rust
+> struct SizeClassHeader {
+>     // ...
+>     free_head: AtomicU64,  // Packed (index, generation)
+> }
+> ```
+>
+> Allocation pops from the head; freeing pushes to the head. The
+> generation counter prevents ABA problems.
+
+> r[shm.varslot.allocation]
+>
+> To allocate from a size class:
+> 1. Load `free_head` with Acquire
+> 2. If empty (sentinel value), class is exhausted
+> 3. Load the slot's `next_free` pointer
+> 4. CAS `free_head` from current to next
+> 5. On success, increment slot's generation, set state to Allocated
+> 6. On failure, retry from step 1
+
+> r[shm.varslot.freeing]
+>
+> To free a slot:
+> 1. Verify generation matches (detect double-free)
+> 2. Set slot state to Free
+> 3. Load current `free_head`
+> 4. Set slot's `next_free` to current head
+> 5. CAS `free_head` to point to this slot
+> 6. On failure, retry from step 3
 
 # References
 

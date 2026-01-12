@@ -80,6 +80,10 @@ jobs:
         # Note: Miri doesn't support all libc calls, so some tests may need to be skipped
         continue-on-error: true
 
+      - name: Run Miri (roam-shm)
+        run: cargo +nightly miri test -p roam-shm
+        continue-on-error: true
+
   rust-loom:
     name: Rust / Loom
     runs-on: depot-ubuntu-24.04-16

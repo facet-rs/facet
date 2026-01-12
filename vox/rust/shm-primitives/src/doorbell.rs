@@ -259,3 +259,22 @@ pub fn validate_fd(fd: RawFd) -> io::Result<()> {
         Ok(())
     }
 }
+
+/// Clear the close-on-exec flag so the fd is inherited by children.
+///
+/// Call this on the guest's doorbell fd before spawning.
+///
+/// shm[impl shm.spawn.fd-inheritance]
+pub fn clear_cloexec(fd: RawFd) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let ret = unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) };
+    if ret < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
