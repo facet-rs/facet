@@ -1,0 +1,61 @@
+{
+  "name": "tree-sitter-styx",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for the Styx configuration language",
+  "main": "bindings/node",
+  "types": "bindings/node",
+  "keywords": [
+    "tree-sitter",
+    "parser",
+    "styx",
+    "configuration"
+  ],
+  "files": [
+    "grammar.js",
+    "binding.gyp",
+    "prebuilds/**",
+    "bindings/node/*",
+    "queries/*",
+    "src/**"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^8.0.0",
+    "node-gyp-build": "^4.8.0"
+  },
+  "peerDependencies": {
+    "tree-sitter": "^0.25.0"
+  },
+  "peerDependenciesMeta": {
+    "tree-sitter": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.26.0",
+    "prebuildify": "^6.0.0"
+  },
+  "scripts": {
+    "build": "tree-sitter generate && node-gyp rebuild",
+    "test": "tree-sitter test",
+    "parse": "tree-sitter parse",
+    "install": "node-gyp-build",
+    "prebuildify": "prebuildify --napi --strip"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.styx",
+      "injection-regex": "^styx$",
+      "file-types": [
+        "styx"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "tree-sitter-cli",
+      "tree-sitter"
+    ]
+  }
+}

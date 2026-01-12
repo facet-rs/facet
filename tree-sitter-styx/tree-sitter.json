@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Tree-sitter grammar for the Styx configuration language",
+    "authors": [],
+    "links": {
+      "repository": "https://github.com/bearcove/styx"
+    }
+  },
+  "grammars": [
+    {
+      "name": "styx",
+      "scope": "source.styx",
+      "injection-regex": "^styx$",
+      "file-types": ["styx"],
+      "highlights": "queries/highlights.scm"
+    }
+  ]
+}

@@ -1,0 +1,105 @@
+================================================================================
+Single attribute
+================================================================================
+
+key=value
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    (atom
+      (attributes
+        (attribute
+          key: (bare_scalar)
+          value: (bare_scalar))))))
+
+================================================================================
+Multiple attributes
+================================================================================
+
+host=localhost port=8080
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    (atom
+      (attributes
+        (attribute
+          key: (bare_scalar)
+          value: (bare_scalar))
+        (attribute
+          key: (bare_scalar)
+          value: (bare_scalar))))))
+
+================================================================================
+Attribute with quoted value
+================================================================================
+
+message="hello world"
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    (atom
+      (attributes
+        (attribute
+          key: (bare_scalar)
+          value: (quoted_scalar))))))
+
+================================================================================
+Attribute with object value
+================================================================================
+
+config={host localhost, port 8080}
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    (atom
+      (attributes
+        (attribute
+          key: (bare_scalar)
+          value: (object
+            (entry
+              (atom
+                (scalar
+                  (bare_scalar)))
+              (atom
+                (scalar
+                  (bare_scalar))))
+            (entry
+              (atom
+                (scalar
+                  (bare_scalar)))
+              (atom
+                (scalar
+                  (bare_scalar))))))))))
+
+================================================================================
+Attribute with sequence value
+================================================================================
+
+ports=(80 443 8080)
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    (atom
+      (attributes
+        (attribute
+          key: (bare_scalar)
+          value: (sequence
+            (atom
+              (scalar
+                (bare_scalar)))
+            (atom
+              (scalar
+                (bare_scalar)))
+            (atom
+              (scalar
+                (bare_scalar)))))))))
