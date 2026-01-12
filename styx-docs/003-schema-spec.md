@@ -272,51 +272,61 @@ meta {
 }
 
 schema {
+  /// The root structure of a schema file.
   @ {
+    /// Schema metadata (required).
     meta @Meta
-    imports? @map(@string @string)  // namespace → URL/path
+    /// External schema imports (optional).
+    imports? @map(@string @string)
+    /// Type definitions: @ for document root, strings for named types.
     schema @map(@union(@string @unit) @Schema)
   }
 
+  /// Schema metadata.
   Meta {
+    /// Unique identifier for the schema (URL recommended).
     id @string
+    /// Schema version (date or semver).
     version @string
+    /// Human-readable description.
     description? @string
   }
 
+  /// A type constraint.
   Schema @union(
-    @string                    // literal value constraint
-    @                          // type reference (any tag with unit payload)
-    @Object                    // { field @type }
-    @Sequence                  // (@type)
-    @Union                     // @union(@type @type)
-    @Optional                  // @optional(@type)
-    @Enum                      // @enum{ a, b { x @type } }
-    @Map                       // @map(@K @V)
-    @Flatten                   // @flatten(@Type)
+    @string      /// Literal value constraint.
+    @            /// Type reference (any tag with unit payload).
+    @Object      /// Object schema: { field @type }
+    @Sequence    /// Sequence schema: (@type)
+    @Union       /// Union: @union(@A @B)
+    @Optional    /// Optional: @optional(@T)
+    @Enum        /// Enum: @enum{ a, b { x @type } }
+    @Map         /// Map: @map(@K @V)
+    @Flatten     /// Flatten: @flatten(@Type)
   )
 
-  Object @map(@string @Schema) // keys to schemas (keys ending in ? are optional)
+  /// Object schema: maps keys to type constraints.
+  Object @map(@string @Schema)
 
-  Sequence (@Schema)           // homogeneous sequence
+  /// Sequence schema: all elements match the inner type.
+  Sequence (@Schema)
 
-  // @union(@A @B @C) — matches any of the listed types
+  /// Union: matches any of the listed types.
   Union (@Schema)
 
-  // @optional(@T) — value or absent
+  /// Optional: value of type T or absent.
   Optional @Schema
 
-  // @enum{ a, b { x @type } } — variant name → optional payload
+  /// Enum: variant names with optional payloads.
   Enum @map(@string @union(@unit @Object))
 
-  // @map(@V) — string keys, value type V
-  // @map(@K @V) — explicit key and value types
+  /// Map: @map(@V) for string keys, @map(@K @V) for explicit key type.
   Map @union(
     (@Schema)
     (@Schema @Schema)
   )
 
-  // @flatten(@Type) — inline fields from another type
+  /// Flatten: inline fields from another type.
   Flatten @
 }
 ```
