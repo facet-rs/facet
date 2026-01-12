@@ -1209,3 +1209,166 @@ fn canonical_pre_with_inline_spans() {
     let serialized = facet_html::to_string(&parsed).expect("serialize");
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
+
+// Issue #1744: Stray spaces inside inline elements after roundtrip
+// When parsing and serializing HTML, spaces are being added inside elements:
+// - `<h2>Title</h2>` becomes `<h2> Title </h2>`
+// - `<code>Value</code>` becomes `<code>Value </code>`
+// - `<a href="#">Link</a>` gets newlines/spaces inside
+use facet_html_dom::{A, H2};
+
+#[test]
+fn issue_1744_no_stray_spaces_in_h2() {
+    let html = "<h2>Start here</h2>";
+    let parsed: H2 = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+
+    // Should NOT have spaces inside: `<h2> Start here </h2>`
+    assert!(
+        !serialized.contains("> "),
+        "Should not have space after opening tag, got: {}",
+        serialized
+    );
+    assert!(
+        !serialized.contains(" </"),
+        "Should not have space before closing tag, got: {}",
+        serialized
+    );
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn issue_1744_no_stray_spaces_in_h2_pretty() {
+    let html = "<h2>Start here</h2>";
+    let parsed: H2 = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string_pretty(&parsed).expect("serialize");
+
+    // Should NOT have newlines/spaces inside: `<h2> Start here </h2>` or `<h2>\nStart here\n</h2>`
+    assert!(
+        !serialized.contains(">\n") && !serialized.contains("> "),
+        "Should not have space/newline after opening tag, got: {}",
+        serialized
+    );
+    assert!(
+        !serialized.contains("\n</") && !serialized.contains(" </"),
+        "Should not have space/newline before closing tag, got: {}",
+        serialized
+    );
+    // The output should match the input exactly (no extra whitespace)
+    assert_eq!(html, serialized, "Pretty print of text-only element should match input");
+}
+
+#[test]
+fn issue_1744_no_stray_spaces_in_h2_with_id() {
+    let html = "<h2 id=\"start-here\">Start here</h2>";
+    let parsed: H2 = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+
+    assert!(
+        !serialized.contains("> "),
+        "Should not have space after opening tag, got: {}",
+        serialized
+    );
+    assert!(
+        !serialized.contains(" </"),
+        "Should not have space before closing tag, got: {}",
+        serialized
+    );
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn issue_1744_no_stray_spaces_in_code() {
+    let html = "<code>Value</code>";
+    let parsed: Code = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+
+    assert!(
+        !serialized.contains("Value </code>"),
+        "Should not have trailing space in code, got: {}",
+        serialized
+    );
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn issue_1744_no_stray_spaces_in_link() {
+    let html = "<a href=\"#\">Link text</a>";
+    let parsed: A = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+
+    // Should NOT have newlines or extra spaces inside
+    assert!(
+        !serialized.contains(">\n"),
+        "Should not have newline after opening tag, got: {}",
+        serialized
+    );
+    assert!(
+        !serialized.contains("\n</"),
+        "Should not have newline before closing tag, got: {}",
+        serialized
+    );
+    assert!(
+        !serialized.contains("> "),
+        "Should not have space after opening tag, got: {}",
+        serialized
+    );
+    assert!(
+        !serialized.contains(" </"),
+        "Should not have space before closing tag, got: {}",
+        serialized
+    );
+    assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
+}
+
+#[test]
+fn issue_1744_li_with_multiple_inline_elements() {
+    // This is the exact pattern from the user's screenshot
+    let html = "<li><a href=\"@/guide/dynamic-values.md\">Dynamic Values</a> _ <code>Value</code>, <code>assert_same!</code>, <code>RawJson</code></li>";
+    let parsed: Li = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+
+    // Check no stray spaces inside elements
+    assert!(
+        !serialized.contains("Value </code>"),
+        "Should not have trailing space in code, got: {}",
+        serialized
+    );
+    assert!(
+        !serialized.contains("assert_same! </code>"),
+        "Should not have trailing space in code, got: {}",
+        serialized
+    );
+    assert!(
+        !serialized.contains("RawJson </code>"),
+        "Should not have trailing space in code, got: {}",
+        serialized
+    );
+    assert!(
+        !serialized.contains("> Dynamic"),
+        "Should not have space after link opening tag, got: {}",
+        serialized
+    );
+}
+
+// Verify that pretty-printing DOES add newlines between block-level siblings (the correct case)
+#[test]
+fn issue_1744_pretty_does_add_newlines_between_blocks() {
+    // A div with multiple block children - newlines between them ARE correct
+    let html = "<div><p>First</p><p>Second</p></div>";
+    let parsed: Div = facet_html::from_str(html).expect("parse");
+    let serialized = facet_html::to_string_pretty(&parsed).expect("serialize");
+
+    // Should have newlines between block children
+    assert!(
+        serialized.contains("</p>\n"),
+        "Should have newline after block elements, got: {}",
+        serialized
+    );
+    // But NOT inside the p elements themselves (they only contain text)
+    assert!(
+        !serialized.contains("<p>\n"),
+        "Should NOT have newline inside p elements, got: {}",
+        serialized
+    );
+}

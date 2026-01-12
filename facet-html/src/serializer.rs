@@ -733,6 +733,10 @@ impl FormatSerializer for HtmlSerializer {
     }
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
+        // Check if this struct will create an element (has pending_field) or is flattened (no pending_field)
+        // Flattened structs (like GlobalAttrs) don't create elements and shouldn't trigger formatting changes
+        let has_element = self.pending_field.is_some();
+
         // Check if this element is inline (phrasing content) - inline elements shouldn't
         // cause block formatting in their parent
         let is_inline = self
@@ -741,25 +745,29 @@ impl FormatSerializer for HtmlSerializer {
             .map(|name| is_inline_element(name))
             .unwrap_or(false);
 
-        // Flush any deferred tag from parent before starting a new struct
-        // Use inline mode if this child element is inline (so parent doesn't get newline after opening tag)
-        self.flush_deferred_open_tag_with_mode(is_inline);
+        // Only flush deferred tag and mark content if this struct creates an element.
+        // Flattened structs (no pending_field) are just adding attributes, not content.
+        if has_element {
+            // Flush any deferred tag from parent before starting a new struct
+            // Use inline mode if this child element is inline (so parent doesn't get newline after opening tag)
+            self.flush_deferred_open_tag_with_mode(is_inline);
 
-        // Mark nearest ancestor struct as having content (and block content if not inline)
-        // We need to find the Struct even if there's a Seq in between (for elements lists)
-        for ctx in self.stack.iter_mut().rev() {
-            if let Ctx::Struct {
-                has_content,
-                has_block_content,
-                ..
-            } = ctx
-            {
-                *has_content = true;
-                // Only mark as block content if the child element is a block element
-                if !is_inline {
-                    *has_block_content = true;
+            // Mark nearest ancestor struct as having content (and block content if not inline)
+            // We need to find the Struct even if there's a Seq in between (for elements lists)
+            for ctx in self.stack.iter_mut().rev() {
+                if let Ctx::Struct {
+                    has_content,
+                    has_block_content,
+                    ..
+                } = ctx
+                {
+                    *has_content = true;
+                    // Only mark as block content if the child element is a block element
+                    if !is_inline {
+                        *has_block_content = true;
+                    }
+                    break;
                 }
-                break;
             }
         }
 
