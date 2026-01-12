@@ -4,10 +4,16 @@
 //! It's designed to be used by higher-level tools like `styx-tree` (document tree)
 //! and `facet-styx` (serde-like deserialization).
 
+pub mod callback;
+pub mod event;
 mod lexer;
+pub mod parser;
 mod span;
 mod token;
 
+pub use callback::ParseCallback;
+pub use event::{Event, ParseErrorKind, ScalarKind, Separator};
 pub use lexer::Lexer;
+pub use parser::Parser;
 pub use span::Span;
 pub use token::{Token, TokenKind};
