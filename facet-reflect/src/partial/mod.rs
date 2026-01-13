@@ -1058,6 +1058,16 @@ impl Frame {
             }
         }
 
+        // Special case: Collection types (Vec, HashMap, HashSet, etc.) default to empty
+        // These types have obvious "zero values" and it's almost always what you want
+        // when deserializing data where the collection is simply absent.
+        if matches!(field.shape().def, Def::List(_) | Def::Map(_) | Def::Set(_)) {
+            let field_ptr_mut = unsafe { field_ptr.assume_init() };
+            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+                return true;
+            }
+        }
+
         false
     }
 

@@ -1595,6 +1595,7 @@ dependencies = [
  "facet",
  "facet-xml",
  "indoc",
+ "test-log",
 ]
 
 [[package]]

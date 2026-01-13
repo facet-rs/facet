@@ -230,8 +230,9 @@ impl StructFieldMap {
                     namespace,
                 };
                 attribute_fields.entry(attr_key).or_default().push(info);
-            } else if field.is_elements() {
-                trace!(idx, field_name = %field.name, "found elements collection field");
+            } else if field.is_elements() && field.rename.is_none() {
+                // xml::elements without rename = catch-all for unmatched children
+                trace!(idx, field_name = %field.name, "found elements collection field (catch-all)");
                 let info = FieldInfo {
                     idx,
                     field,

@@ -19,6 +19,10 @@ facet-xml = { path = "../facet-xml", version = "0.42.0" }
 
 [dev-dependencies]
 indoc = { workspace = true }
+test-log = { version = "0.2.19", features = ["trace"] }
 
 [lints]
 workspace = true
+
+[features]
+tracing = ["facet-xml/tracing"]
