@@ -378,46 +378,45 @@ For methods with channels, the bridge provides a WebSocket endpoint.
 > }
 > ```
 
-## Channel Lifecycle Example
+## Channel Lifecycle Examples
 
-> r[bridge.ws.channel-lifecycle]
->
-> A call to `fn subscribe(topic: String, events: Rx<Event>)`:
->
-> ```aasvg
-> .--------.                                                         .--------.
-> | Client |                                                         | Bridge |
-> '---+----'                                                         '---+----'
->     |                                                                  |
->     +---request {id:1, args:["news"], channel:1} --------------------->|
->     |                                                                  |
->     |<----------------------- data {channel:1, value:{...}} -----------+
->     |<----------------------- data {channel:1, value:{...}} -----------+
->     |<-------------------- credit {channel:1, bytes:8192} -------------+
->     |<----------------------- data {channel:1, value:{...}} -----------+
->     |<---------------------- response {id:1, result:null} -------------+
->     |                                                                  |
-> ```
+These examples illustrate how channels work over WebSocket. They are
+non-normative — the message types are defined above.
 
-> r[bridge.ws.tx-lifecycle]
->
-> A call to `fn upload(data: Tx<Chunk>) -> Summary`:
->
-> ```aasvg
-> .--------.                                                         .--------.
-> | Client |                                                         | Bridge |
-> '---+----'                                                         '---+----'
->     |                                                                  |
->     +---request {id:2, channel:3} ------------------------------------>|
->     |---data {channel:3, value:{...}} -------------------------------->|
->     |---data {channel:3, value:{...}} -------------------------------->|
->     |<-------------------- credit {channel:3, bytes:8192} -------------+
->     |-- data {channel:3, value:{...}} -------------------------------->|
->     |-- close {channel:3} -------------------------------------------->|
->     |                                                                  |
->     |<---------------------- response {id:2, result:{...}} ------------|
->     |                                                                  |
-> ```
+**Rx channel** — A call to `fn subscribe(topic: String, events: Rx<Event>)`:
+
+```aasvg
+.--------.                                                         .--------.
+| Client |                                                         | Bridge |
+'---+----'                                                         '---+----'
+    |                                                                  |
+    +---request {id:1, args:["news"], channel:1} --------------------->|
+    |                                                                  |
+    |<----------------------- data {channel:1, value:{...}} -----------+
+    |<----------------------- data {channel:1, value:{...}} -----------+
+    |<-------------------- credit {channel:1, bytes:8192} -------------+
+    |<----------------------- data {channel:1, value:{...}} -----------+
+    |<---------------------- response {id:1, result:null} -------------+
+    |                                                                  |
+```
+
+**Tx channel** — A call to `fn upload(data: Tx<Chunk>) -> Summary`:
+
+```aasvg
+.--------.                                                         .--------.
+| Client |                                                         | Bridge |
+'---+----'                                                         '---+----'
+    |                                                                  |
+    +---request {id:2, channel:3} ------------------------------------>|
+    |---data {channel:3, value:{...}} -------------------------------->|
+    |---data {channel:3, value:{...}} -------------------------------->|
+    |<-------------------- credit {channel:3, bytes:8192} -------------+
+    |-- data {channel:3, value:{...}} -------------------------------->|
+    |-- close {channel:3} -------------------------------------------->|
+    |                                                                  |
+    |<---------------------- response {id:2, result:{...}} ------------|
+    |                                                                  |
+```
 
 # Implementation Notes (Non-normative)
 

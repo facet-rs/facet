@@ -9,12 +9,14 @@
 use std::net::SocketAddr;
 
 use axum::Router;
+use futures_util::{SinkExt, StreamExt};
 use roam_http_bridge::{BridgeRouter, GenericBridgeService};
 use roam_stream::{Connector, HandshakeConfig, NoDispatcher, accept, connect};
 use spec_proto::{
     LookupError, MathError, Person, Testbed, TestbedDispatcher, testbed_service_detail,
 };
 use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::{connect_async, tungstenite};
 
 /// Simple Testbed implementation for testing.
 #[derive(Clone)]
@@ -332,4 +334,316 @@ async fn test_unknown_method() {
 
     // Unknown method returns 200 with error JSON (it's a BridgeError for now)
     assert_eq!(response.status(), 200);
+}
+
+// ============================================================================
+// WebSocket tests
+// ============================================================================
+
+/// Test WebSocket connection with correct subprotocol.
+///
+/// r[bridge.ws.subprotocol]
+#[tokio::test]
+async fn test_websocket_connect_with_subprotocol() {
+    let (roam_addr, _) = start_roam_server().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let roam_client = connect_to_roam(roam_addr).await;
+    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Connect with the roam-bridge.v1 subprotocol
+    let url = format!("ws://{}/api/@ws", bridge_addr);
+    let request = tungstenite::http::Request::builder()
+        .uri(&url)
+        .header("Sec-WebSocket-Protocol", "roam-bridge.v1")
+        .header("Host", bridge_addr.to_string())
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header(
+            "Sec-WebSocket-Key",
+            tungstenite::handshake::client::generate_key(),
+        )
+        .body(())
+        .unwrap();
+
+    let (ws_stream, response) = connect_async(request).await.unwrap();
+
+    // Verify the connection succeeded
+    assert_eq!(response.status(), 101);
+
+    // The server should accept the subprotocol
+    assert_eq!(
+        response
+            .headers()
+            .get("Sec-WebSocket-Protocol")
+            .map(|v| v.to_str().unwrap()),
+        Some("roam-bridge.v1")
+    );
+
+    // Close the connection
+    let (mut write, _read) = ws_stream.split();
+    write.close().await.unwrap();
+}
+
+/// Test WebSocket echo RPC call.
+///
+/// r[bridge.ws.request]
+/// r[bridge.ws.response]
+#[tokio::test]
+async fn test_websocket_echo_rpc() {
+    let (roam_addr, _) = start_roam_server().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let roam_client = connect_to_roam(roam_addr).await;
+    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Connect with the roam-bridge.v1 subprotocol
+    let url = format!("ws://{}/api/@ws", bridge_addr);
+    let request = tungstenite::http::Request::builder()
+        .uri(&url)
+        .header("Sec-WebSocket-Protocol", "roam-bridge.v1")
+        .header("Host", bridge_addr.to_string())
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header(
+            "Sec-WebSocket-Key",
+            tungstenite::handshake::client::generate_key(),
+        )
+        .body(())
+        .unwrap();
+
+    let (ws_stream, _) = connect_async(request).await.unwrap();
+    let (mut write, mut read) = ws_stream.split();
+
+    // Send an echo request
+    // r[bridge.ws.request]
+    let request_json = serde_json::json!({
+        "type": "request",
+        "id": 1,
+        "service": "Testbed",
+        "method": "echo",
+        "args": ["hello websocket"]
+    });
+    write
+        .send(tungstenite::Message::Text(request_json.to_string().into()))
+        .await
+        .unwrap();
+
+    // Read the response
+    // r[bridge.ws.response]
+    let response = read.next().await.unwrap().unwrap();
+    if let tungstenite::Message::Text(text) = response {
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(json["type"], "response");
+        assert_eq!(json["id"], 1);
+        assert_eq!(json["result"], "hello websocket");
+    } else {
+        panic!("Expected text message, got {:?}", response);
+    }
+
+    // Close the connection
+    write.close().await.unwrap();
+}
+
+/// Test WebSocket reverse RPC call.
+#[tokio::test]
+async fn test_websocket_reverse_rpc() {
+    let (roam_addr, _) = start_roam_server().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let roam_client = connect_to_roam(roam_addr).await;
+    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let url = format!("ws://{}/api/@ws", bridge_addr);
+    let request = tungstenite::http::Request::builder()
+        .uri(&url)
+        .header("Sec-WebSocket-Protocol", "roam-bridge.v1")
+        .header("Host", bridge_addr.to_string())
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header(
+            "Sec-WebSocket-Key",
+            tungstenite::handshake::client::generate_key(),
+        )
+        .body(())
+        .unwrap();
+
+    let (ws_stream, _) = connect_async(request).await.unwrap();
+    let (mut write, mut read) = ws_stream.split();
+
+    // Send a reverse request
+    let request_json = serde_json::json!({
+        "type": "request",
+        "id": 42,
+        "service": "Testbed",
+        "method": "reverse",
+        "args": ["hello"]
+    });
+    write
+        .send(tungstenite::Message::Text(request_json.to_string().into()))
+        .await
+        .unwrap();
+
+    // Read the response
+    let response = read.next().await.unwrap().unwrap();
+    if let tungstenite::Message::Text(text) = response {
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(json["type"], "response");
+        assert_eq!(json["id"], 42);
+        assert_eq!(json["result"], "olleh");
+    } else {
+        panic!("Expected text message, got {:?}", response);
+    }
+
+    write.close().await.unwrap();
+}
+
+/// Test WebSocket unknown method error.
+#[tokio::test]
+async fn test_websocket_unknown_method() {
+    let (roam_addr, _) = start_roam_server().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let roam_client = connect_to_roam(roam_addr).await;
+    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let url = format!("ws://{}/api/@ws", bridge_addr);
+    let request = tungstenite::http::Request::builder()
+        .uri(&url)
+        .header("Sec-WebSocket-Protocol", "roam-bridge.v1")
+        .header("Host", bridge_addr.to_string())
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header(
+            "Sec-WebSocket-Key",
+            tungstenite::handshake::client::generate_key(),
+        )
+        .body(())
+        .unwrap();
+
+    let (ws_stream, _) = connect_async(request).await.unwrap();
+    let (mut write, mut read) = ws_stream.split();
+
+    // Send request for unknown method
+    let request_json = serde_json::json!({
+        "type": "request",
+        "id": 1,
+        "service": "Testbed",
+        "method": "nonexistent",
+        "args": []
+    });
+    write
+        .send(tungstenite::Message::Text(request_json.to_string().into()))
+        .await
+        .unwrap();
+
+    // Read the response - should be an error
+    let response = read.next().await.unwrap().unwrap();
+    if let tungstenite::Message::Text(text) = response {
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(json["type"], "response");
+        assert_eq!(json["id"], 1);
+        // Should have an error field
+        assert!(json.get("error").is_some());
+    } else {
+        panic!("Expected text message, got {:?}", response);
+    }
+
+    write.close().await.unwrap();
+}
+
+/// Test multiple concurrent WebSocket RPC calls (multiplexing).
+///
+/// r[bridge.ws.multiplexing]
+#[tokio::test]
+async fn test_websocket_multiplexing() {
+    let (roam_addr, _) = start_roam_server().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let roam_client = connect_to_roam(roam_addr).await;
+    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let url = format!("ws://{}/api/@ws", bridge_addr);
+    let request = tungstenite::http::Request::builder()
+        .uri(&url)
+        .header("Sec-WebSocket-Protocol", "roam-bridge.v1")
+        .header("Host", bridge_addr.to_string())
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header(
+            "Sec-WebSocket-Key",
+            tungstenite::handshake::client::generate_key(),
+        )
+        .body(())
+        .unwrap();
+
+    let (ws_stream, _) = connect_async(request).await.unwrap();
+    let (mut write, mut read) = ws_stream.split();
+
+    // Send multiple requests without waiting for responses
+    let request1 = serde_json::json!({
+        "type": "request",
+        "id": 1,
+        "service": "Testbed",
+        "method": "echo",
+        "args": ["first"]
+    });
+    let request2 = serde_json::json!({
+        "type": "request",
+        "id": 2,
+        "service": "Testbed",
+        "method": "echo",
+        "args": ["second"]
+    });
+    let request3 = serde_json::json!({
+        "type": "request",
+        "id": 3,
+        "service": "Testbed",
+        "method": "reverse",
+        "args": ["third"]
+    });
+
+    write
+        .send(tungstenite::Message::Text(request1.to_string().into()))
+        .await
+        .unwrap();
+    write
+        .send(tungstenite::Message::Text(request2.to_string().into()))
+        .await
+        .unwrap();
+    write
+        .send(tungstenite::Message::Text(request3.to_string().into()))
+        .await
+        .unwrap();
+
+    // Collect all responses
+    let mut responses: std::collections::HashMap<u64, serde_json::Value> =
+        std::collections::HashMap::new();
+
+    for _ in 0..3 {
+        let response = read.next().await.unwrap().unwrap();
+        if let tungstenite::Message::Text(text) = response {
+            let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let id = json["id"].as_u64().unwrap();
+            responses.insert(id, json);
+        }
+    }
+
+    // Verify all responses
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[&1]["result"], "first");
+    assert_eq!(responses[&2]["result"], "second");
+    assert_eq!(responses[&3]["result"], "driht"); // reversed
+
+    write.close().await.unwrap();
 }

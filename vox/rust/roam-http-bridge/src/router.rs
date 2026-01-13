@@ -6,13 +6,13 @@ use std::sync::Arc;
 use axum::{
     Router,
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 
-use crate::{BridgeError, BridgeService, metadata};
+use crate::{BridgeError, BridgeService, metadata, ws};
 
 /// Builder for creating an axum Router that implements the HTTP bridge.
 ///
@@ -42,7 +42,7 @@ impl BridgeRouter {
     /// Build the axum Router.
     ///
     /// r[bridge.url.methods] - Routes `POST /{service}/{method}`
-    /// r[bridge.url.websocket] - Routes `GET /@ws` (TODO: Phase 2)
+    /// r[bridge.url.websocket] - Routes `GET /@ws`
     /// r[bridge.url.reserved] - Reserves `@`-prefixed paths
     pub fn build(self) -> Router {
         let state = Arc::new(BridgeState {
@@ -52,8 +52,8 @@ impl BridgeRouter {
         Router::new()
             // r[bridge.url.methods]
             .route("/{service}/{method}", post(handle_rpc))
-            // r[bridge.url.websocket] - TODO: Phase 2
-            // .route("/@ws", get(handle_websocket))
+            // r[bridge.url.websocket]
+            .route("/@ws", get(handle_websocket))
             .with_state(state)
     }
 }
@@ -126,6 +126,18 @@ impl IntoResponse for BridgeError {
         )
             .into_response()
     }
+}
+
+/// Handle a WebSocket upgrade request.
+///
+/// r[bridge.ws.subprotocol] - Validates `roam-bridge.v1` subprotocol.
+/// r[bridge.url.websocket] - Endpoint at `/@ws`.
+async fn handle_websocket(ws: WebSocketUpgrade, State(state): State<Arc<BridgeState>>) -> Response {
+    // r[bridge.ws.subprotocol]
+    // Note: axum's WebSocketUpgrade handles the protocol negotiation for us.
+    // The client should include `Sec-WebSocket-Protocol: roam-bridge.v1`.
+    ws.protocols([ws::WS_SUBPROTOCOL])
+        .on_upgrade(move |socket| ws::handle_websocket(socket, Arc::new(state.services.clone())))
 }
 
 #[cfg(test)]

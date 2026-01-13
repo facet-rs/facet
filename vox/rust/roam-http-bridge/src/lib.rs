@@ -33,6 +33,7 @@ mod metadata;
 mod router;
 mod service;
 mod transcode;
+pub(crate) mod ws;
 
 pub use error::{BridgeError, ProtocolErrorKind};
 pub use metadata::BridgeMetadata;

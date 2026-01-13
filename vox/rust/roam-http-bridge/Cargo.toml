@@ -24,15 +24,19 @@ facet-json.workspace = true
 facet-postcard.workspace = true
 facet-value.workspace = true
 
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 tokio.workspace = true
 tracing.workspace = true
 http = "1"
 base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-util = "0.3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
 roam-stream = { path = "../roam-stream" }
 spec-proto = { path = "../../spec/spec-proto" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-serde_json = "1"
+tokio-tungstenite = { version = "0.28", features = ["native-tls"] }
+futures-util = "0.3"
