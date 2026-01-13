@@ -161,6 +161,8 @@ pub enum ScalarTag {
     Char = 10,
     /// Stringly-typed value (from XML, type determined by target)
     StringlyTyped = 11,
+    /// Unit type (Rust's `()`)
+    Unit = 12,
 }
 
 impl ScalarTag {
@@ -577,6 +579,12 @@ fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
                         },
                     )
                 }
+                ScalarValue::Unit => (
+                    ScalarTag::Unit,
+                    EventPayload {
+                        scalar: ScalarPayload { is_null: true },
+                    },
+                ),
             };
             RawEvent {
                 tag: EventTag::Scalar,
