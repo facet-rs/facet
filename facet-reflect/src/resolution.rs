@@ -141,6 +141,12 @@ impl From<String> for FieldKey<'static> {
     }
 }
 
+impl<'a> From<&'a String> for FieldKey<'a> {
+    fn from(s: &'a String) -> Self {
+        FieldKey::Flat(Cow::Borrowed(s.as_str()))
+    }
+}
+
 impl<'a> From<Cow<'a, str>> for FieldKey<'a> {
     fn from(s: Cow<'a, str>) -> Self {
         FieldKey::Flat(s)

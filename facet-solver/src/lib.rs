@@ -2181,7 +2181,12 @@ impl SchemaBuilder {
                 required,
                 value_shape: field.shape(),
                 field,
-                category: FieldCategory::from_field(field),
+                // Only set category for DOM format
+                category: if self.format == Format::Dom {
+                    FieldCategory::from_field(field)
+                } else {
+                    None
+                },
             };
 
             for config in &mut configs {
@@ -2651,7 +2656,12 @@ impl SchemaBuilder {
                     required,
                     value_shape: shape,
                     field,
-                    category: FieldCategory::from_field(field),
+                    // Only set category for DOM format
+                    category: if self.format == Format::Dom {
+                        FieldCategory::from_field(field)
+                    } else {
+                        None
+                    },
                 };
 
                 let mut result = configs;

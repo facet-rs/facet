@@ -16,9 +16,7 @@ use std::sync::Once;
 
 use facet::Facet;
 use facet_core::Shape;
-use facet_solver::{
-    KeyResult, Resolution, SatisfyResult, Schema, Solver,
-};
+use facet_solver::{KeyResult, Resolution, SatisfyResult, Schema, Solver};
 use json_event_parser::{JsonEvent, ReaderJsonParser};
 
 use tracing::{debug, info, info_span, trace, warn};
@@ -944,8 +942,12 @@ fn test_super_annoying_same_path_different_types() {
     assert!(large_config.has_key_path(&["payload", "value"]));
 
     // But with different types!
-    let small_field = small_config.field("payload").expect("should have payload");
-    let large_field = large_config.field("payload").expect("should have payload");
+    let small_field = small_config
+        .field_by_name("payload")
+        .expect("should have payload");
+    let large_field = large_config
+        .field_by_name("payload")
+        .expect("should have payload");
 
     info!(
         small_payload_type = small_field.value_shape.type_identifier,
@@ -1040,6 +1042,7 @@ struct IntContainer {
 /// Helper: Parse JSON and probe with the Solver for integer disambiguation
 fn probe_int_json(json: &[u8]) -> Result<String, String> {
     let schema = Schema::build(IntContainer::SHAPE).unwrap();
+    trace!(format = ?schema.format(), resolutions = schema.resolutions().len(), "Schema built");
 
     let mut cursor = Cursor::new(json);
     let mut parser = ReaderJsonParser::new(&mut cursor);
@@ -1890,7 +1893,11 @@ fn test_schema_build_auto_internally_tagged() {
 
     // Each resolution should have the "type" tag field
     for resolution in resolutions {
-        let field_names: Vec<_> = resolution.fields().keys().copied().collect();
+        let field_names: Vec<_> = resolution
+            .fields()
+            .values()
+            .map(|f| f.serialized_name)
+            .collect();
         assert!(
             field_names.contains(&"type"),
             "Expected 'type' tag field, got: {field_names:?}"
@@ -1927,7 +1934,11 @@ fn test_schema_build_auto_adjacently_tagged() {
 
     // Each resolution should have the "kind" tag field
     for resolution in resolutions {
-        let field_names: Vec<_> = resolution.fields().keys().copied().collect();
+        let field_names: Vec<_> = resolution
+            .fields()
+            .values()
+            .map(|f| f.serialized_name)
+            .collect();
         assert!(
             field_names.contains(&"kind"),
             "Expected 'kind' tag field, got: {field_names:?}"
