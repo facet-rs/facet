@@ -297,6 +297,10 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         where
             H: #trait_name + Clone + 'static,
         {
+            fn method_ids(&self) -> Vec<u64> {
+                Self::method_ids()
+            }
+
             fn dispatch(
                 &self,
                 method_id: u64,

@@ -22,6 +22,10 @@ use roam_shm::transport::ShmGuestTransport;
 struct TestService;
 
 impl ServiceDispatcher for TestService {
+    fn method_ids(&self) -> Vec<u64> {
+        vec![1, 2, 3, 4]
+    }
+
     fn dispatch(
         &self,
         method_id: u64,

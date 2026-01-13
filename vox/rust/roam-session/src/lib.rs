@@ -1217,6 +1217,12 @@ pub fn dispatch_unknown_method(
 /// The dispatcher handles both simple and channeling methods uniformly.
 /// Stream binding is done via reflection (Poke) on the deserialized args.
 pub trait ServiceDispatcher: Send + Sync {
+    /// Returns the method IDs this dispatcher handles.
+    ///
+    /// Used by [`RoutedDispatcher`] to determine which methods to route
+    /// to which dispatcher.
+    fn method_ids(&self) -> Vec<u64>;
+
     /// Dispatch a request and send the response via the task channel.
     ///
     /// The dispatcher is responsible for:
@@ -1245,23 +1251,28 @@ pub trait ServiceDispatcher: Send + Sync {
 
 /// A dispatcher that routes to one of two dispatchers based on method ID.
 ///
-/// Methods listed in `first_methods` are routed to the first dispatcher,
-/// all others to the second.
+/// Methods handled by `primary` (via [`ServiceDispatcher::method_ids`]) are
+/// routed to it; all other methods are routed to `fallback`.
 pub struct RoutedDispatcher<A, B> {
-    first: A,
-    second: B,
-    first_methods: Vec<u64>,
+    primary: A,
+    fallback: B,
+    primary_methods: Vec<u64>,
 }
 
-impl<A, B> RoutedDispatcher<A, B> {
+impl<A, B> RoutedDispatcher<A, B>
+where
+    A: ServiceDispatcher,
+{
     /// Create a new routed dispatcher.
     ///
-    /// Methods in `first_methods` are routed to `first`, all others to `second`.
-    pub fn new(first: A, second: B, first_methods: Vec<u64>) -> Self {
+    /// Methods declared by `primary.method_ids()` are routed to `primary`,
+    /// all others to `fallback`.
+    pub fn new(primary: A, fallback: B) -> Self {
+        let primary_methods = primary.method_ids();
         Self {
-            first,
-            second,
-            first_methods,
+            primary,
+            fallback,
+            primary_methods,
         }
     }
 }
@@ -1271,6 +1282,12 @@ where
     A: ServiceDispatcher,
     B: ServiceDispatcher,
 {
+    fn method_ids(&self) -> Vec<u64> {
+        let mut ids = self.primary_methods.clone();
+        ids.extend(self.fallback.method_ids());
+        ids
+    }
+
     fn dispatch(
         &self,
         method_id: u64,
@@ -1278,11 +1295,11 @@ where
         request_id: u64,
         registry: &mut ChannelRegistry,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
-        if self.first_methods.contains(&method_id) {
-            self.first
+        if self.primary_methods.contains(&method_id) {
+            self.primary
                 .dispatch(method_id, payload, request_id, registry)
         } else {
-            self.second
+            self.fallback
                 .dispatch(method_id, payload, request_id, registry)
         }
     }

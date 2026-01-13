@@ -639,10 +639,10 @@ struct PeerConnectionState {
 ///     // Simple peer only needs lifecycle dispatcher
 ///     .add_peer(ticket1.peer_id(), CellLifecycleDispatcher::new(lifecycle.clone()))
 ///     // Complex peer needs routed dispatcher for bidirectional RPC
+///     // The primary dispatcher's method_ids() determines routing; fallback handles the rest
 ///     .add_peer(ticket2.peer_id(), RoutedDispatcher::new(
-///         CellLifecycleDispatcher::new(lifecycle.clone()),
-///         TemplateHostDispatcher::new(template_host),
-///         CellLifecycleDispatcher::<HostCellLifecycle>::method_ids(),
+///         CellLifecycleDispatcher::new(lifecycle.clone()),  // primary: handles lifecycle methods
+///         TemplateHostDispatcher::new(template_host),       // fallback: handles everything else
 ///     ))
 ///     .build();
 ///

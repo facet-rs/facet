@@ -1220,6 +1220,10 @@ where
 pub struct NoDispatcher;
 
 impl ServiceDispatcher for NoDispatcher {
+    fn method_ids(&self) -> Vec<u64> {
+        vec![]
+    }
+
     fn dispatch(
         &self,
         _method_id: u64,

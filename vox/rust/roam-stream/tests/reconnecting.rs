@@ -36,6 +36,10 @@ impl TestService {
 }
 
 impl ServiceDispatcher for TestService {
+    fn method_ids(&self) -> Vec<u64> {
+        vec![1]
+    }
+
     fn dispatch(
         &self,
         method_id: u64,
