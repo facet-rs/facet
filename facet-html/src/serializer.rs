@@ -994,8 +994,8 @@ impl FormatSerializer for HtmlSerializer {
 
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
         match scalar {
-            ScalarValue::Null => {
-                // Skip null values in HTML
+            ScalarValue::Null | ScalarValue::Unit => {
+                // Skip null/unit values in HTML
                 self.pending_field.take();
                 self.pending_is_attribute = false;
                 self.pending_is_text = false;

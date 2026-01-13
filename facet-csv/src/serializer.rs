@@ -119,7 +119,7 @@ impl FormatSerializer for CsvSerializer {
 
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
         match scalar {
-            ScalarValue::Null => {
+            ScalarValue::Null | ScalarValue::Unit => {
                 // Empty field for null
             }
             ScalarValue::Bool(v) => {

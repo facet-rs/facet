@@ -315,7 +315,7 @@ impl FormatSerializer for JsonSerializer {
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
         self.before_value()?;
         match scalar {
-            ScalarValue::Null => self.out.extend_from_slice(b"null"),
+            ScalarValue::Null | ScalarValue::Unit => self.out.extend_from_slice(b"null"),
             ScalarValue::Bool(v) => {
                 if v {
                     self.out.extend_from_slice(b"true")

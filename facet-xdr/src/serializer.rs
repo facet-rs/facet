@@ -189,7 +189,7 @@ impl FormatSerializer for XdrSerializer {
         }
 
         match scalar {
-            ScalarValue::Null => {
+            ScalarValue::Null | ScalarValue::Unit => {
                 // XDR doesn't have a null type, but Option<T> uses discriminant 0 for None
                 // This shouldn't normally be called directly for null
                 self.write_u32(0);

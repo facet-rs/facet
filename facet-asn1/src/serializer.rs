@@ -272,7 +272,7 @@ impl FormatSerializer for Asn1Serializer {
 
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
         match scalar {
-            ScalarValue::Null => self.write_null(),
+            ScalarValue::Null | ScalarValue::Unit => self.write_null(),
             ScalarValue::Bool(v) => self.write_bool(v),
             ScalarValue::Char(c) => {
                 let mut buf = [0u8; 4];

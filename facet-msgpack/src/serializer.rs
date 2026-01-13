@@ -318,7 +318,7 @@ impl FormatSerializer for MsgPackSerializer {
         }
 
         match scalar {
-            ScalarValue::Null => self.write_nil(),
+            ScalarValue::Null | ScalarValue::Unit => self.write_nil(),
             ScalarValue::Bool(v) => self.write_bool(v),
             ScalarValue::Char(c) => {
                 let mut buf = [0u8; 4];
