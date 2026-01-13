@@ -12,10 +12,11 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use facet_core::{Def, ScalarType};
+use facet_core::{Def, ScalarType, Shape};
 use facet_format::{
     DynamicValueEncoding, DynamicValueTag, EnumVariantEncoding, FormatSerializer, MapEncoding,
     SerializeError as FormatSerializeError, StructFieldMode, serialize_root,
+    serialize_value_with_shape,
 };
 use facet_reflect::Peek;
 
@@ -188,6 +189,58 @@ pub fn peek_to_vec(peek: Peek<'_, '_>) -> Result<Vec<u8>, SerializeError> {
     let mut buffer = Vec::new();
     let mut serializer = PostcardSerializer::new(&mut buffer);
     serialize_root(&mut serializer, peek).map_err(map_format_error)?;
+    Ok(buffer)
+}
+
+/// Serializes a dynamic value (like `facet_value::Value`) to postcard bytes using
+/// a target shape to guide the serialization.
+///
+/// This is the inverse of [`from_slice_with_shape`](crate::from_slice_with_shape).
+/// It allows you to serialize a `Value` as if it were a typed value matching the
+/// target shape, without the `Value` type discriminants.
+///
+/// This is useful for scenarios where you need to:
+/// 1. Parse JSON/YAML into a `Value`
+/// 2. Serialize it to postcard bytes matching a specific typed schema
+///
+/// # Example
+/// ```
+/// use facet::Facet;
+/// use facet_value::Value;
+/// use facet_postcard::{to_vec_with_shape, from_slice_with_shape};
+///
+/// #[derive(Debug, Facet, PartialEq)]
+/// struct Point { x: i32, y: i32 }
+///
+/// // Parse JSON into a Value
+/// let value: Value = facet_json::from_str(r#"{"x": 10, "y": 20}"#).unwrap();
+///
+/// // Serialize using Point's shape - produces postcard bytes for Point, not Value
+/// let bytes = to_vec_with_shape(&value, Point::SHAPE).unwrap();
+///
+/// // Deserialize back into a typed Point
+/// let point: Point = facet_postcard::from_slice(&bytes).unwrap();
+/// assert_eq!(point, Point { x: 10, y: 20 });
+/// ```
+///
+/// # Arguments
+///
+/// * `value` - A reference to a dynamic value type (like `facet_value::Value`)
+/// * `target_shape` - The shape describing the expected wire format
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The value is not a dynamic value type
+/// - The value's structure doesn't match the target shape
+pub fn to_vec_with_shape<T>(value: &T, target_shape: &'static Shape) -> Result<Vec<u8>, SerializeError>
+where
+    T: facet_core::Facet<'static>,
+{
+    let mut buffer = Vec::new();
+    let peek = Peek::new(value);
+    let mut serializer = PostcardSerializer::new(&mut buffer);
+    serialize_value_with_shape(&mut serializer, peek, target_shape).map_err(map_format_error)?;
     Ok(buffer)
 }
 
@@ -1027,5 +1080,128 @@ mod tests {
         let decoded: Value = crate::from_slice(&bytes).unwrap();
 
         assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn test_to_vec_with_shape_struct() {
+        facet_testhelpers::setup();
+
+        #[derive(Debug, Facet, PartialEq, Serialize)]
+        struct Point {
+            x: i32,
+            y: i32,
+        }
+
+        // Parse JSON into a Value
+        let value: Value = facet_json::from_str(r#"{"x": 10, "y": 20}"#).unwrap();
+
+        // Serialize using Point's shape - produces postcard bytes for Point, not Value
+        let bytes = to_vec_with_shape(&value, Point::SHAPE).unwrap();
+
+        // Verify it matches what we'd get from serializing Point directly
+        let expected = to_vec(&Point { x: 10, y: 20 }).unwrap();
+        assert_eq!(bytes, expected);
+
+        // Deserialize back into a typed Point
+        let point: Point = crate::from_slice(&bytes).unwrap();
+        assert_eq!(point, Point { x: 10, y: 20 });
+    }
+
+    #[test]
+    fn test_to_vec_with_shape_vec() {
+        facet_testhelpers::setup();
+
+        // Parse JSON array into a Value
+        let value: Value = facet_json::from_str(r#"[1, 2, 3, 4, 5]"#).unwrap();
+
+        // Serialize using Vec<i32>'s shape
+        let bytes = to_vec_with_shape(&value, <Vec<i32>>::SHAPE).unwrap();
+
+        // Verify it matches what we'd get from serializing Vec<i32> directly
+        let expected = to_vec(&alloc::vec![1i32, 2, 3, 4, 5]).unwrap();
+        assert_eq!(bytes, expected);
+
+        // Deserialize back
+        let result: Vec<i32> = crate::from_slice(&bytes).unwrap();
+        assert_eq!(result, alloc::vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_to_vec_with_shape_nested() {
+        facet_testhelpers::setup();
+
+        #[derive(Debug, Facet, PartialEq, Serialize)]
+        struct Nested {
+            items: Vec<Item>,
+        }
+
+        #[derive(Debug, Facet, PartialEq, Serialize)]
+        struct Item {
+            name: alloc::string::String,
+            count: u32,
+        }
+
+        // Parse JSON into a Value
+        let value: Value = facet_json::from_str(
+            r#"{"items": [{"name": "foo", "count": 10}, {"name": "bar", "count": 20}]}"#,
+        )
+        .unwrap();
+
+        // Serialize using Nested's shape
+        let bytes = to_vec_with_shape(&value, Nested::SHAPE).unwrap();
+
+        // Deserialize back
+        let result: Nested = crate::from_slice(&bytes).unwrap();
+        assert_eq!(
+            result,
+            Nested {
+                items: alloc::vec![
+                    Item {
+                        name: "foo".into(),
+                        count: 10
+                    },
+                    Item {
+                        name: "bar".into(),
+                        count: 20
+                    }
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn test_to_vec_with_shape_roundtrip() {
+        facet_testhelpers::setup();
+
+        #[derive(Debug, Facet, PartialEq, Serialize)]
+        struct Config {
+            name: alloc::string::String,
+            enabled: bool,
+            count: u32,
+        }
+
+        // Original typed value
+        let original = Config {
+            name: "test".into(),
+            enabled: true,
+            count: 42,
+        };
+
+        // Serialize to postcard
+        let typed_bytes = to_vec(&original).unwrap();
+
+        // Deserialize into Value using from_slice_with_shape
+        let value: Value =
+            crate::from_slice_with_shape(&typed_bytes, Config::SHAPE).unwrap();
+
+        // Serialize back using to_vec_with_shape
+        let value_bytes = to_vec_with_shape(&value, Config::SHAPE).unwrap();
+
+        // The bytes should match
+        assert_eq!(typed_bytes, value_bytes);
+
+        // And we should be able to deserialize back to the original type
+        let roundtrip: Config = crate::from_slice(&value_bytes).unwrap();
+        assert_eq!(roundtrip, original);
     }
 }

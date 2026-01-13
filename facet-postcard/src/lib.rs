@@ -61,7 +61,7 @@ pub use error::{PostcardError, SerializeError};
 #[cfg(feature = "jit")]
 pub use jit::PostcardJitFormat;
 pub use parser::PostcardParser;
-pub use serialize::{Writer, peek_to_vec, to_vec, to_writer_fallible};
+pub use serialize::{Writer, peek_to_vec, to_vec, to_vec_with_shape, to_writer_fallible};
 pub use shape_deser::from_slice_with_shape;
 
 // Re-export DeserializeError for convenience

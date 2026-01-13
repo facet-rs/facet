@@ -1906,6 +1906,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-format",
+ "facet-json",
  "facet-path",
  "facet-reflect",
  "facet-testhelpers",
