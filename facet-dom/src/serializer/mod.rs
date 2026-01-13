@@ -3,6 +3,10 @@
 //! This module provides a serializer trait and shared logic for serializing
 //! facet types to tree-based formats like XML and HTML.
 
+mod write_scalar;
+
+pub use write_scalar::{ScalarBuffer, WriteScalar};
+
 extern crate alloc;
 
 use std::io::Write;
@@ -40,10 +44,12 @@ pub trait DomSerializer {
     /// Emit an attribute on the current element.
     ///
     /// Only valid between `element_start` and `children_start`.
+    /// The value is passed as a `Peek` so the serializer can format it directly
+    /// without intermediate allocations.
     fn attribute(
         &mut self,
         name: &str,
-        value: &str,
+        value: Peek<'_, '_>,
         namespace: Option<&str>,
     ) -> Result<(), Self::Error>;
 
@@ -344,13 +350,10 @@ where
             trace!(field_name = %field_item.name, is_attribute = is_attr, "field_metadata result");
 
             if is_attr {
-                let string_value = value_to_string(*field_value, serializer);
-                trace!(field_name = %field_item.name, value = ?string_value, "attribute field");
-                if let Some(s) = string_value {
-                    serializer
-                        .attribute(&field_item.name, &s, None)
-                        .map_err(DomSerializeError::Backend)?;
-                }
+                trace!(field_name = %field_item.name, "attribute field");
+                serializer
+                    .attribute(&field_item.name, *field_value, None)
+                    .map_err(DomSerializeError::Backend)?;
                 serializer.clear_field_state();
             }
         }

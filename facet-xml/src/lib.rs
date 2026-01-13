@@ -56,6 +56,7 @@
 //! element structs or `Vec<FlowContent>` with custom elements instead.
 
 mod dom_parser;
+mod escaping;
 mod serializer;
 
 #[cfg(feature = "axum")]

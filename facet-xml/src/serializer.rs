@@ -1,13 +1,102 @@
 extern crate alloc;
 
 use alloc::{borrow::Cow, format, string::String, vec::Vec};
-use std::{collections::HashMap, io::Write};
+use std::collections::HashMap;
+use std::io::Write;
 
-use facet_core::Facet;
+use facet_core::{Def, Facet, ScalarType};
 use facet_dom::{DomSerializeError, DomSerializer};
 use facet_reflect::Peek;
 
+use crate::escaping::EscapingWriter;
+
 pub use facet_dom::FloatFormatter;
+
+/// Write a scalar value directly to a writer.
+/// Returns `Ok(true)` if the value was a scalar and was written,
+/// `Ok(false)` if not a scalar, `Err` if write failed.
+fn write_scalar_value(
+    out: &mut dyn Write,
+    value: Peek<'_, '_>,
+    float_formatter: Option<FloatFormatter>,
+) -> std::io::Result<bool> {
+    // Handle Option<T> by unwrapping if Some
+    if let Def::Option(_) = &value.shape().def {
+        if let Ok(opt) = value.into_option() {
+            return match opt.value() {
+                Some(inner) => write_scalar_value(out, inner, float_formatter),
+                None => Ok(false),
+            };
+        }
+    }
+
+    let Some(scalar_type) = value.scalar_type() else {
+        // Try Display for Def::Scalar types (SmolStr, etc.)
+        if matches!(value.shape().def, Def::Scalar) && value.shape().vtable.has_display() {
+            write!(out, "{}", value)?;
+            return Ok(true);
+        }
+        return Ok(false);
+    };
+
+    match scalar_type {
+        ScalarType::Unit => {
+            out.write_all(b"null")?;
+        }
+        ScalarType::Bool => {
+            let b = value.get::<bool>().unwrap();
+            out.write_all(if *b { b"true" } else { b"false" })?;
+        }
+        ScalarType::Char => {
+            let c = value.get::<char>().unwrap();
+            let mut buf = [0u8; 4];
+            let s = c.encode_utf8(&mut buf);
+            out.write_all(s.as_bytes())?;
+        }
+        ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
+            let s = value.as_str().unwrap();
+            out.write_all(s.as_bytes())?;
+        }
+        ScalarType::F32 => {
+            let v = value.get::<f32>().unwrap();
+            if let Some(fmt) = float_formatter {
+                fmt(*v as f64, out)?;
+            } else {
+                write!(out, "{}", v)?;
+            }
+        }
+        ScalarType::F64 => {
+            let v = value.get::<f64>().unwrap();
+            if let Some(fmt) = float_formatter {
+                fmt(*v, out)?;
+            } else {
+                write!(out, "{}", v)?;
+            }
+        }
+        ScalarType::U8 => write!(out, "{}", value.get::<u8>().unwrap())?,
+        ScalarType::U16 => write!(out, "{}", value.get::<u16>().unwrap())?,
+        ScalarType::U32 => write!(out, "{}", value.get::<u32>().unwrap())?,
+        ScalarType::U64 => write!(out, "{}", value.get::<u64>().unwrap())?,
+        ScalarType::U128 => write!(out, "{}", value.get::<u128>().unwrap())?,
+        ScalarType::USize => write!(out, "{}", value.get::<usize>().unwrap())?,
+        ScalarType::I8 => write!(out, "{}", value.get::<i8>().unwrap())?,
+        ScalarType::I16 => write!(out, "{}", value.get::<i16>().unwrap())?,
+        ScalarType::I32 => write!(out, "{}", value.get::<i32>().unwrap())?,
+        ScalarType::I64 => write!(out, "{}", value.get::<i64>().unwrap())?,
+        ScalarType::I128 => write!(out, "{}", value.get::<i128>().unwrap())?,
+        ScalarType::ISize => write!(out, "{}", value.get::<isize>().unwrap())?,
+        #[cfg(feature = "net")]
+        ScalarType::IpAddr => write!(out, "{}", value.get::<core::net::IpAddr>().unwrap())?,
+        #[cfg(feature = "net")]
+        ScalarType::Ipv4Addr => write!(out, "{}", value.get::<core::net::Ipv4Addr>().unwrap())?,
+        #[cfg(feature = "net")]
+        ScalarType::Ipv6Addr => write!(out, "{}", value.get::<core::net::Ipv6Addr>().unwrap())?,
+        #[cfg(feature = "net")]
+        ScalarType::SocketAddr => write!(out, "{}", value.get::<core::net::SocketAddr>().unwrap())?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
 
 /// Options for XML serialization.
 #[derive(Clone)]
@@ -178,12 +267,8 @@ pub struct XmlSerializer {
     options: SerializeOptions,
     /// Current indentation depth for pretty-printing
     depth: usize,
-    /// True if we're collecting attributes for a deferred element
+    /// True if we're collecting attributes (between element_start and children_start)
     collecting_attributes: bool,
-    /// Buffered attributes for the current element (name, value, namespace_opt)
-    pending_attributes: Vec<(String, String, Option<String>)>,
-    /// Deferred element info: (tag_name, namespace)
-    deferred_element: Option<(String, Option<String>)>,
     /// True if the next element should establish a default namespace (from ns_all)
     pending_establish_default_ns: bool,
 }
@@ -210,8 +295,6 @@ impl XmlSerializer {
             options,
             depth: 0,
             collecting_attributes: false,
-            pending_attributes: Vec::new(),
-            deferred_element: None,
             pending_establish_default_ns: false,
         }
     }
@@ -220,14 +303,9 @@ impl XmlSerializer {
         self.out
     }
 
-    /// Flush any deferred element opening tag.
-    fn flush_deferred_element(&mut self) {
-        if let Some((tag, ns)) = self.deferred_element.take() {
-            self.write_open_tag_impl(&tag, ns.as_deref());
-        }
-    }
-
-    fn write_open_tag_impl(&mut self, name: &str, namespace: Option<&str>) {
+    /// Write the opening part of an element tag: `<tag` (without the closing `>`)
+    /// This allows attributes to be written directly afterwards.
+    fn write_element_tag_start(&mut self, name: &str, namespace: Option<&str>) {
         self.write_indent();
         self.out.push(b'<');
 
@@ -270,38 +348,52 @@ impl XmlSerializer {
 
         // Push the close tag for element_end
         self.element_stack.push(close_tag);
+    }
 
-        // Write buffered attributes
-        let attrs: Vec<_> = self.pending_attributes.drain(..).collect();
-        for (attr_name, attr_value, attr_ns) in attrs {
-            self.out.push(b' ');
-            if let Some(ns_uri) = attr_ns {
-                let prefix = self.get_or_create_prefix(&ns_uri);
-                // Write xmlns declaration
-                self.out.extend_from_slice(b"xmlns:");
-                self.out.extend_from_slice(prefix.as_bytes());
-                self.out.extend_from_slice(b"=\"");
-                self.out.extend_from_slice(ns_uri.as_bytes());
-                self.out.extend_from_slice(b"\" ");
-                // Write prefixed attribute
-                self.out.extend_from_slice(prefix.as_bytes());
-                self.out.push(b':');
-            }
-            self.out.extend_from_slice(attr_name.as_bytes());
-            self.out.extend_from_slice(b"=\"");
-            // Escape attribute value
-            for b in attr_value.as_bytes() {
-                match *b {
-                    b'&' => self.out.extend_from_slice(b"&amp;"),
-                    b'<' => self.out.extend_from_slice(b"&lt;"),
-                    b'>' => self.out.extend_from_slice(b"&gt;"),
-                    b'"' => self.out.extend_from_slice(b"&quot;"),
-                    _ => self.out.push(*b),
-                }
-            }
-            self.out.push(b'"');
+    /// Write an attribute directly to the output: ` name="escaped_value"`
+    /// Returns Ok(true) if written, Ok(false) if value wasn't a scalar (attribute skipped).
+    fn write_attribute(
+        &mut self,
+        name: &str,
+        value: Peek<'_, '_>,
+        namespace: Option<&str>,
+    ) -> std::io::Result<bool> {
+        // First, write the value to a temporary buffer to check if it's a scalar
+        let mut value_buf = Vec::new();
+        let written = write_scalar_value(
+            &mut EscapingWriter::attribute(&mut value_buf),
+            value,
+            self.options.float_formatter,
+        )?;
+
+        if !written {
+            // Not a scalar (e.g., None) - skip the attribute entirely
+            return Ok(false);
         }
 
+        // Now write the attribute
+        self.out.push(b' ');
+        if let Some(ns_uri) = namespace {
+            let prefix = self.get_or_create_prefix(ns_uri);
+            // Write xmlns declaration
+            self.out.extend_from_slice(b"xmlns:");
+            self.out.extend_from_slice(prefix.as_bytes());
+            self.out.extend_from_slice(b"=\"");
+            self.out.extend_from_slice(ns_uri.as_bytes());
+            self.out.extend_from_slice(b"\" ");
+            // Write prefixed attribute
+            self.out.extend_from_slice(prefix.as_bytes());
+            self.out.push(b':');
+        }
+        self.out.extend_from_slice(name.as_bytes());
+        self.out.extend_from_slice(b"=\"");
+        self.out.extend_from_slice(&value_buf);
+        self.out.push(b'"');
+        Ok(true)
+    }
+
+    /// Finish the element opening tag by writing `>` and incrementing depth.
+    fn write_element_tag_end(&mut self) {
         self.out.push(b'>');
         self.write_newline();
         self.depth += 1;
@@ -399,19 +491,14 @@ impl DomSerializer for XmlSerializer {
     type Error = XmlSerializeError;
 
     fn element_start(&mut self, tag: &str, namespace: Option<&str>) -> Result<(), Self::Error> {
-        // Flush any previous deferred element
-        self.flush_deferred_element();
-
-        // Defer this element until we've collected all attributes
         // Priority: explicit namespace > pending_namespace > current_ns_all (for struct roots)
         let ns = namespace
-            .map(String::from)
+            .map(|s| s.to_string())
             .or_else(|| self.pending_namespace.take())
-            .or_else(|| self.current_ns_all.clone()); // Don't consume - used for struct root AND child elements
+            .or_else(|| self.current_ns_all.clone());
 
-        // Note: close tag will be computed and pushed in write_open_tag_impl
-        // when we know if a prefix will be used
-        self.deferred_element = Some((tag.to_string(), ns));
+        // Write the opening tag immediately: `<tag` (attributes will follow)
+        self.write_element_tag_start(tag, ns.as_deref());
         self.collecting_attributes = true;
 
         Ok(())
@@ -420,21 +507,33 @@ impl DomSerializer for XmlSerializer {
     fn attribute(
         &mut self,
         name: &str,
-        value: &str,
+        value: Peek<'_, '_>,
         namespace: Option<&str>,
     ) -> Result<(), Self::Error> {
+        // Attributes must come before children_start
+        if !self.collecting_attributes {
+            return Err(XmlSerializeError {
+                msg: Cow::Borrowed("attribute() called after children_start()"),
+            });
+        }
+
         // Use the pending namespace from field_metadata if no explicit namespace given
-        let ns = namespace
-            .map(String::from)
-            .or_else(|| self.pending_namespace.clone());
-        self.pending_attributes
-            .push((name.to_string(), value.to_string(), ns));
+        let ns: Option<String> = match namespace {
+            Some(ns) => Some(ns.to_string()),
+            None => self.pending_namespace.clone(),
+        };
+
+        // Write directly to output
+        self.write_attribute(name, value, ns.as_deref())
+            .map_err(|e| XmlSerializeError {
+                msg: Cow::Owned(format!("write error: {}", e)),
+            })?;
         Ok(())
     }
 
     fn children_start(&mut self) -> Result<(), Self::Error> {
-        // Flush the deferred element now that attributes are done
-        self.flush_deferred_element();
+        // Close the element opening tag
+        self.write_element_tag_end();
         self.collecting_attributes = false;
         Ok(())
     }
@@ -451,7 +550,6 @@ impl DomSerializer for XmlSerializer {
     }
 
     fn text(&mut self, content: &str) -> Result<(), Self::Error> {
-        self.flush_deferred_element();
         self.write_text_escaped(content);
         Ok(())
     }
