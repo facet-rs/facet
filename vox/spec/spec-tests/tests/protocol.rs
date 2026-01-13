@@ -157,6 +157,7 @@ fn rpc_payload_over_max_triggers_goodbye() {
             request_id: 1,
             method_id: 1,
             metadata: metadata_empty(),
+            channels: vec![],
             payload: vec![0u8; 17],
         };
         io.send(&req).await.map_err(|e| e.to_string())?;

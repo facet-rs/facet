@@ -30,6 +30,7 @@ impl ServiceDispatcher for TestService {
         &self,
         method_id: u64,
         payload: Vec<u8>,
+        channels: Vec<u64>,
         request_id: u64,
         registry: &mut ChannelRegistry,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
@@ -37,6 +38,7 @@ impl ServiceDispatcher for TestService {
             // Echo method: returns the input unchanged
             1 => dispatch_call::<String, String, (), _, _>(
                 payload,
+                channels,
                 request_id,
                 registry,
                 |input: String| async move { Ok(input) },
@@ -44,6 +46,7 @@ impl ServiceDispatcher for TestService {
             // Add method: adds two numbers
             2 => dispatch_call::<(i32, i32), i32, (), _, _>(
                 payload,
+                channels,
                 request_id,
                 registry,
                 |(a, b): (i32, i32)| async move { Ok(a + b) },
@@ -53,6 +56,7 @@ impl ServiceDispatcher for TestService {
             // Server receives Rx<i32> after bind_streams hydrates it
             3 => dispatch_call::<Rx<i32>, i64, (), _, _>(
                 payload,
+                channels,
                 request_id,
                 registry,
                 |mut input: Rx<i32>| async move {
@@ -69,6 +73,7 @@ impl ServiceDispatcher for TestService {
             // Server receives Tx<i32> after bind_streams hydrates it with task_tx
             4 => dispatch_call::<(u32, Tx<i32>), (), (), _, _>(
                 payload,
+                channels,
                 request_id,
                 registry,
                 |(count, output): (u32, Tx<i32>)| async move {
@@ -323,7 +328,7 @@ fn create_host_and_two_guests() -> (ShmHost, ShmGuest, ShmGuest) {
     let host = ShmHost::create_heap(config).unwrap();
     let region = host.region();
 
-    let guest1 = ShmGuest::attach(region.clone()).unwrap();
+    let guest1 = ShmGuest::attach(region).unwrap();
     let guest2 = ShmGuest::attach(region).unwrap();
 
     (host, guest1, guest2)

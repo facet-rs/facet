@@ -112,6 +112,7 @@ fn rpc_echo_roundtrip() {
             request_id: 1,
             method_id: method_id::echo(),
             metadata: metadata_empty(),
+            channels: vec![],
             payload: req_payload,
         };
         io.send(&req).await.map_err(|e| e.to_string())?;
@@ -180,6 +181,7 @@ fn rpc_user_error_roundtrip() {
             request_id: 100,
             method_id: divide_method_id,
             metadata: metadata_empty(),
+            channels: vec![],
             payload: req_payload,
         };
         io.send(&req).await.map_err(|e| e.to_string())?;
@@ -255,6 +257,7 @@ fn rpc_unknown_method_returns_unknownmethod_error() {
             request_id: 2,
             method_id: 0xdeadbeef,
             metadata: metadata_empty(),
+            channels: vec![],
             payload: req_payload,
         };
         io.send(&req).await.map_err(|e| e.to_string())?;
@@ -318,6 +321,7 @@ fn rpc_invalid_payload_returns_invalidpayload_error() {
             request_id: 3,
             method_id: method_id::echo(),
             metadata: metadata_empty(),
+            channels: vec![],
             payload: vec![0xff, 0xff, 0xff, 0xff], // Invalid postcard data
         };
         io.send(&req).await.map_err(|e| e.to_string())?;
@@ -388,6 +392,7 @@ fn rpc_pipelining_multiple_requests() {
                 request_id: (i + 10) as u64, // Use 10, 11, 12 to distinguish from other tests
                 method_id: method_id::echo(),
                 metadata: metadata_empty(),
+                channels: vec![],
                 payload: req_payload,
             };
             io.send(&req).await.map_err(|e| e.to_string())?;

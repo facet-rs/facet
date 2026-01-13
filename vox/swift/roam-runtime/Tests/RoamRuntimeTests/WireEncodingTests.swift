@@ -62,13 +62,13 @@ struct WireEncodingTests {
     }
 
     @Test func testMessageRequestEmpty() throws {
-        let msg = Message.request(requestId: 1, methodId: 42, metadata: [], payload: [])
+        let msg = Message.request(requestId: 1, methodId: 42, metadata: [], channels: [], payload: [])
         try assertEncoding(msg.encode(), "wire/message_request_empty.bin")
     }
 
     @Test func testMessageRequestWithPayload() throws {
         let msg = Message.request(
-            requestId: 1, methodId: 42, metadata: [], payload: [0xDE, 0xAD, 0xBE, 0xEF])
+            requestId: 1, methodId: 42, metadata: [], channels: [], payload: [0xDE, 0xAD, 0xBE, 0xEF])
         try assertEncoding(msg.encode(), "wire/message_request_with_payload.bin")
     }
 
@@ -120,13 +120,14 @@ struct WireEncodingTests {
     @Test func testMessageRequestDecode() throws {
         let bytes = try loadGoldenVector("wire/message_request_with_payload.bin")
         let msg = try Message.decode(from: Data(bytes))
-        guard case .request(let reqId, let methodId, let meta, let payload) = msg else {
+        guard case .request(let reqId, let methodId, let meta, let channels, let payload) = msg else {
             Issue.record("Expected Request message")
             return
         }
         #expect(reqId == 1)
         #expect(methodId == 42)
         #expect(meta.isEmpty)
+        #expect(channels.isEmpty)
         #expect(payload == [0xDE, 0xAD, 0xBE, 0xEF])
     }
 }

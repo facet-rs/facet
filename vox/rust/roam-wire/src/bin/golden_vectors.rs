@@ -79,6 +79,7 @@ fn main() {
         request_id: 1,
         method_id: 42,
         metadata: vec![],
+        channels: vec![],
         payload: vec![],
     };
     write_vector(
@@ -91,6 +92,7 @@ fn main() {
         request_id: 1,
         method_id: 42,
         metadata: vec![],
+        channels: vec![],
         payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
     };
     write_vector(
@@ -106,11 +108,26 @@ fn main() {
             "key".to_string(),
             MetadataValue::String("value".to_string()),
         )],
+        channels: vec![],
         payload: vec![],
     };
     write_vector(
         &wire_dir,
         "message_request_with_metadata",
+        &facet_postcard::to_vec(&msg).unwrap(),
+    );
+
+    // Request with channels (for proxy support)
+    let msg = Message::Request {
+        request_id: 6,
+        method_id: 200,
+        metadata: vec![],
+        channels: vec![1, 3],
+        payload: vec![0x42],
+    };
+    write_vector(
+        &wire_dir,
+        "message_request_with_channels",
         &facet_postcard::to_vec(&msg).unwrap(),
     );
 

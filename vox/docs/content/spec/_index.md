@@ -456,9 +456,16 @@ Request {
     request_id: u64,
     method_id: u64,
     metadata: Vec<(String, MetadataValue)>,
+    channels: Vec<u64>,  // Channel IDs used by this call, in declaration order
     payload: Vec<u8>,  // [^POSTCARD]-encoded arguments
 }
 ```
+
+> r[call.request.channels]
+>
+> The `channels` field MUST contain all channel IDs used by the call (both
+> `Tx<T>` and `Rx<T>` parameters), in declaration order. This enables
+> transparent proxying without parsing the payload.
 
 > r[call.request.payload-encoding]
 >
@@ -755,8 +762,15 @@ on which variant is passed.
 
 > r[channeling.allocation.caller]
 >
-> The **caller** allocates ALL channel IDs (both Tx and Rx). All are
-> serialized in the Request payload. The callee does not allocate any IDs.
+> The **caller** allocates ALL channel IDs (both Tx and Rx). Channel IDs
+> are listed in the Request's `channels` field (see `r[call.request.channels]`)
+> and also serialized within `Tx<T>`/`Rx<T>` values in the payload.
+> The callee does not allocate any IDs.
+>
+> On the server side, implementations MUST use the channel IDs from the
+> `channels` field as authoritative, patching them into deserialized args
+> before binding streams. This ensures transparent proxying can work without
+> parsing the payload.
 
 > r[channeling.id.uniqueness]
 >
@@ -1072,7 +1086,7 @@ enum Message {
     Goodbye { reason: String },
     
     // RPC
-    Request { request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> },
+    Request { request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> },
     Response { request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> },
     Cancel { request_id: u64 },
     

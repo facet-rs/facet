@@ -35,6 +35,7 @@ fn guest_transport_send_request() {
             "auth".to_string(),
             MetadataValue::String("token123".to_string()),
         )],
+        channels: vec![],
         payload: b"request body".to_vec(),
     };
 
@@ -90,6 +91,7 @@ fn host_guest_transport_roundtrip() {
             ),
             ("key2".to_string(), MetadataValue::Bytes(vec![1, 2, 3, 4])),
         ],
+        channels: vec![],
         payload: b"hello server".to_vec(),
     };
     guest_transport.send(&request).unwrap();
@@ -164,6 +166,7 @@ fn cancel_message() {
         request_id: 99,
         method_id: 1,
         metadata: vec![],
+        channels: vec![],
         payload: vec![],
     };
     guest_transport.send(&request).unwrap();
@@ -239,6 +242,7 @@ fn large_metadata() {
         request_id: 1,
         method_id: 1,
         metadata,
+        channels: vec![],
         payload: b"small payload".to_vec(),
     };
 
@@ -261,6 +265,7 @@ fn empty_metadata_and_payload() {
         request_id: 1,
         method_id: 1,
         metadata: vec![],
+        channels: vec![],
         payload: vec![],
     };
 

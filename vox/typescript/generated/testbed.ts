@@ -237,8 +237,8 @@ export class TestbedClient<T extends MessageTransport = MessageTransport> implem
 
  Tests: client→server streaming. Server receives via `Rx<T>`, returns scalar. */
   async sum(numbers: Rx<number>): Promise<bigint> {
-    // Bind any Tx/Rx channels in arguments
-    bindChannels(
+    // Bind any Tx/Rx channels in arguments and collect channel IDs
+    const channels = bindChannels(
       testbed_schemas.sum.args,
       [numbers],
       this.conn.getChannelAllocator(),
@@ -246,7 +246,7 @@ export class TestbedClient<T extends MessageTransport = MessageTransport> implem
       testbed_serializers,
     );
     const payload = encodeU64(numbers.channelId);
-    const response = await this.conn.call(0x855b3a25d97bfefdn, payload);
+    const response = await this.conn.call(0x855b3a25d97bfefdn, payload, 30000, channels);
     const buf = response;
     let offset = decodeRpcResult(buf, 0);
     const _result_r = decodeI64(buf, offset); const result = _result_r.value; offset = _result_r.next;
@@ -257,8 +257,8 @@ export class TestbedClient<T extends MessageTransport = MessageTransport> implem
 
  Tests: server→client streaming. Server sends via `Tx<T>`. */
   async generate(count: number, output: Tx<number>): Promise<void> {
-    // Bind any Tx/Rx channels in arguments
-    bindChannels(
+    // Bind any Tx/Rx channels in arguments and collect channel IDs
+    const channels = bindChannels(
       testbed_schemas.generate.args,
       [count, output],
       this.conn.getChannelAllocator(),
@@ -266,7 +266,7 @@ export class TestbedClient<T extends MessageTransport = MessageTransport> implem
       testbed_serializers,
     );
     const payload = concat(encodeU32(count), encodeU64(output.channelId));
-    const response = await this.conn.call(0x54d2273d8cdb9c38n, payload);
+    const response = await this.conn.call(0x54d2273d8cdb9c38n, payload, 30000, channels);
     const buf = response;
     let offset = decodeRpcResult(buf, 0);
     const result = undefined;
@@ -277,8 +277,8 @@ export class TestbedClient<T extends MessageTransport = MessageTransport> implem
 
  Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`. */
   async transform(input: Rx<string>, output: Tx<string>): Promise<void> {
-    // Bind any Tx/Rx channels in arguments
-    bindChannels(
+    // Bind any Tx/Rx channels in arguments and collect channel IDs
+    const channels = bindChannels(
       testbed_schemas.transform.args,
       [input, output],
       this.conn.getChannelAllocator(),
@@ -286,7 +286,7 @@ export class TestbedClient<T extends MessageTransport = MessageTransport> implem
       testbed_serializers,
     );
     const payload = concat(encodeU64(input.channelId), encodeU64(output.channelId));
-    const response = await this.conn.call(0x5d9895604eb18b19n, payload);
+    const response = await this.conn.call(0x5d9895604eb18b19n, payload, 30000, channels);
     const buf = response;
     let offset = decodeRpcResult(buf, 0);
     const result = undefined;

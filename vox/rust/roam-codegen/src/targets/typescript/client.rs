@@ -108,9 +108,11 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
                     .iter()
                     .map(|a| a.name.to_lower_camel_case())
                     .collect();
-                out.push_str("    // Bind any Tx/Rx channels in arguments\n");
+                out.push_str(
+                    "    // Bind any Tx/Rx channels in arguments and collect channel IDs\n",
+                );
                 out.push_str(&format!(
-                    "    bindChannels(\n      {service_name_lower}_schemas.{method_name}.args,\n      [{}],\n      this.conn.getChannelAllocator(),\n      this.conn.getChannelRegistry(),\n      {service_name_lower}_serializers,\n    );\n",
+                    "    const channels = bindChannels(\n      {service_name_lower}_schemas.{method_name}.args,\n      [{}],\n      this.conn.getChannelAllocator(),\n      this.conn.getChannelRegistry(),\n      {service_name_lower}_serializers,\n    );\n",
                     arg_names.join(", ")
                 ));
             }
@@ -138,11 +140,18 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
                 ));
             }
 
-            // Call the server
-            out.push_str(&format!(
-                "    const response = await this.conn.call({}n, payload);\n",
-                hex_u64(id)
-            ));
+            // Call the server - pass channels if method has streaming args
+            if has_streaming_args {
+                out.push_str(&format!(
+                    "    const response = await this.conn.call({}n, payload, 30000, channels);\n",
+                    hex_u64(id)
+                ));
+            } else {
+                out.push_str(&format!(
+                    "    const response = await this.conn.call({}n, payload);\n",
+                    hex_u64(id)
+                ));
+            }
 
             // Parse the result (CallResult<T, RoamError>) - throws RpcError on failure
             out.push_str("    const buf = response;\n");

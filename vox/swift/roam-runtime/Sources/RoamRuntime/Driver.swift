@@ -303,6 +303,7 @@ public final class Driver: @unchecked Sendable {
                 requestId: requestId,
                 methodId: methodId,
                 metadata: [],
+                channels: [],  // TODO: Collect channel IDs for streaming methods
                 payload: payload
             )
             try? await transport.send(msg)
@@ -325,7 +326,8 @@ public final class Driver: @unchecked Sendable {
             await failAllPending()
             throw ConnectionError.goodbye(reason: reason)
 
-        case .request(let requestId, let methodId, _, let payload):
+        case .request(let requestId, let methodId, _, _, let payload):
+            // Note: channels field is ignored for now - server uses payload parsing for channel IDs
             try await handleRequest(requestId: requestId, methodId: methodId, payload: payload)
 
         case .response(let requestId, _, let payload):

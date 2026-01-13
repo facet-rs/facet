@@ -253,7 +253,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
             };
             quote! {
                 #keyword method_id == #method_id_mod::#method_name() {
-                    self.#dispatch_name(payload, request_id, registry)
+                    self.#dispatch_name(payload, channels, request_id, registry)
                 }
             }
         })
@@ -305,6 +305,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
                 &self,
                 method_id: u64,
                 payload: Vec<u8>,
+                channels: Vec<u64>,
                 request_id: u64,
                 registry: &mut #roam::session::ChannelRegistry,
             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
@@ -368,11 +369,12 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
         fn #dispatch_name(
             &self,
             payload: Vec<u8>,
+            channels: Vec<u64>,
             request_id: u64,
             registry: &mut #roam::session::ChannelRegistry,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
             let handler = self.handler.clone();
-            #dispatch_call(payload, request_id, registry, move |#destructure: #tuple_type| async move {
+            #dispatch_call(payload, channels, request_id, registry, move |#destructure: #tuple_type| async move {
                 handler.#method_name(#args_call).await
             })
         }

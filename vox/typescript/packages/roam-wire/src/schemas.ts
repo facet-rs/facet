@@ -90,7 +90,7 @@ export const MetadataEntrySchema: TupleSchema = {
  * pub enum Message {
  *     Hello(Hello) = 0,
  *     Goodbye { reason: String } = 1,
- *     Request { request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> } = 2,
+ *     Request { request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> } = 2,
  *     Response { request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> } = 3,
  *     Cancel { request_id: u64 } = 4,
  *     Data { channel_id: u64, payload: Vec<u8> } = 5,
@@ -117,7 +117,7 @@ export const MessageSchema: EnumSchema = {
         reason: { kind: "string" },
       },
     },
-    // Request { request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> } = 2
+    // Request { request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> } = 2
     {
       name: "Request",
       discriminant: 2,
@@ -125,6 +125,7 @@ export const MessageSchema: EnumSchema = {
         requestId: { kind: "u64" },
         methodId: { kind: "u64" },
         metadata: { kind: "vec", element: { kind: "ref", name: "MetadataEntry" } },
+        channels: { kind: "vec", element: { kind: "u64" } },
         payload: { kind: "bytes" },
       },
     },

@@ -89,11 +89,16 @@ export interface MessageGoodbye {
  * r[impl core.metadata] - Request carries metadata key-value pairs.
  * r[impl call.metadata.unknown] - Unknown keys are ignored.
  */
+/**
+ * r[impl channeling.request.channels] - Channel IDs listed explicitly for proxy support.
+ */
 export interface MessageRequest {
   tag: "Request";
   requestId: bigint;
   methodId: bigint;
   metadata: MetadataEntry[];
+  /** Channel IDs used by this call, in argument declaration order. */
+  channels: bigint[];
   payload: Uint8Array;
 }
 
@@ -263,8 +268,9 @@ export function messageRequest(
   methodId: bigint,
   payload: Uint8Array,
   metadata: MetadataEntry[] = [],
+  channels: bigint[] = [],
 ): Message {
-  return { tag: "Request", requestId, methodId, metadata, payload };
+  return { tag: "Request", requestId, methodId, metadata, channels, payload };
 }
 
 /**

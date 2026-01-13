@@ -108,10 +108,15 @@ pub enum Message {
     // RPC
     /// r[impl core.metadata] - Request carries metadata key-value pairs.
     /// r[impl call.metadata.unknown] - Unknown keys are ignored.
+    /// r[impl channeling.request.channels] - Channel IDs listed explicitly for proxy support.
     Request {
         request_id: u64,
         method_id: u64,
         metadata: Vec<(String, MetadataValue)>,
+        /// Channel IDs used by this call, in argument declaration order.
+        /// This is the authoritative source - servers MUST use these IDs,
+        /// not any IDs that may be embedded in the payload.
+        channels: Vec<u64>,
         payload: Vec<u8>,
     } = 2,
     /// r[impl core.metadata] - Response carries metadata key-value pairs.

@@ -256,11 +256,13 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     methodId: bigint,
     payload: Uint8Array,
     timeoutMs: number = 30000,
+    channels: bigint[] = [],
   ): Promise<Uint8Array> {
     const requestId = this.nextRequestId++;
 
     // Send request
-    await this.io.send(encodeMessage(messageRequest(requestId, methodId, payload)));
+    // r[impl call.request.channels] - Include channel IDs in Request.
+    await this.io.send(encodeMessage(messageRequest(requestId, methodId, payload, [], channels)));
 
     // Flush any pending outgoing stream data (for client-to-server streaming)
     // r[impl channeling.data] - Send queued Data/Close messages after Request.

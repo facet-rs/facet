@@ -56,8 +56,10 @@ public enum MetadataValue: Sendable {
 public enum Message: Sendable {
     case hello(Hello)
     case goodbye(reason: String)
+    /// r[impl channeling.request.channels] - Channel IDs listed explicitly for proxy support.
     case request(
-        requestId: UInt64, methodId: UInt64, metadata: [(String, MetadataValue)], payload: [UInt8])
+        requestId: UInt64, methodId: UInt64, metadata: [(String, MetadataValue)],
+        channels: [UInt64], payload: [UInt8])
     case response(requestId: UInt64, metadata: [(String, MetadataValue)], payload: [UInt8])
     case cancel(requestId: UInt64)
     case data(channelId: UInt64, payload: [UInt8])
@@ -76,11 +78,16 @@ extension Message {
         case .goodbye(let reason):
             return [1] + encodeString(reason)
 
-        case .request(let requestId, let methodId, let metadata, let payload):
+        case .request(let requestId, let methodId, let metadata, let channels, let payload):
             var out: [UInt8] = [2]
             out += encodeVarint(requestId)
             out += encodeVarint(methodId)
             out += encodeMetadata(metadata)
+            // r[impl call.request.channels] - Encode channel IDs as Vec<u64>
+            out += encodeVarint(UInt64(channels.count))
+            for channelId in channels {
+                out += encodeVarint(channelId)
+            }
             out += encodeBytes(payload)
             return out
 
@@ -142,10 +149,18 @@ extension Message {
             let requestId = try decodeVarint(from: data, offset: &offset)
             let methodId = try decodeVarint(from: data, offset: &offset)
             let metadata = try decodeMetadata(from: data, offset: &offset)
+            // r[impl call.request.channels] - Decode channel IDs as Vec<u64>
+            let channelCount = try decodeVarint(from: data, offset: &offset)
+            var channels: [UInt64] = []
+            channels.reserveCapacity(Int(channelCount))
+            for _ in 0..<channelCount {
+                let channelId = try decodeVarint(from: data, offset: &offset)
+                channels.append(channelId)
+            }
             let payload = try decodeBytes(from: data, offset: &offset)
             return .request(
                 requestId: requestId, methodId: methodId, metadata: metadata,
-                payload: Array(payload))
+                channels: channels, payload: Array(payload))
 
         case 3:
             let requestId = try decodeVarint(from: data, offset: &offset)

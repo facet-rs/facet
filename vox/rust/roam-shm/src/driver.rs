@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use roam_session::{
-    ChannelError, ChannelRegistry, ConnectionHandle, HandleCommand, Role, ServiceDispatcher,
-    TaskMessage, TransportError,
+    ChannelError, ChannelRegistry, ConnectionHandle, DriverMessage, Role, ServiceDispatcher,
+    TransportError,
 };
 use roam_stream::MessageTransport;
 use roam_wire::Message;
@@ -104,8 +104,9 @@ pub struct ShmDriver<T, D> {
     /// Handle for client-side operations (streams, etc.)
     handle: ConnectionHandle,
 
-    /// Receive commands from ConnectionHandle (outgoing calls).
-    command_rx: mpsc::Receiver<HandleCommand>,
+    /// Unified channel for all messages (Call/Data/Close/Response).
+    /// Single channel ensures FIFO ordering.
+    driver_rx: mpsc::Receiver<DriverMessage>,
 
     /// Server-side stream registry (for incoming Tx/Rx from requests we serve).
     server_channel_registry: ChannelRegistry,
@@ -116,10 +117,6 @@ pub struct ShmDriver<T, D> {
 
     /// In-flight requests we're serving (to detect duplicates).
     in_flight_server_requests: std::collections::HashSet<u64>,
-
-    /// Channel for receiving task messages (Data/Close/Response) from spawned handlers.
-    /// Using a single channel ensures correct ordering: Data/Close before Response.
-    task_rx: mpsc::Receiver<TaskMessage>,
 }
 
 impl<T, D> ShmDriver<T, D>
@@ -128,16 +125,14 @@ where
     D: ServiceDispatcher,
 {
     /// Create a new SHM driver with the given transport, dispatcher, and parameters.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         io: T,
         dispatcher: D,
         role: Role,
         negotiated: ShmNegotiated,
         handle: ConnectionHandle,
-        command_rx: mpsc::Receiver<HandleCommand>,
-        task_tx: mpsc::Sender<TaskMessage>,
-        task_rx: mpsc::Receiver<TaskMessage>,
+        driver_tx: mpsc::Sender<DriverMessage>,
+        driver_rx: mpsc::Receiver<DriverMessage>,
     ) -> Self {
         // Use infinite credit for now - proper SHM flow control via channel table
         // atomics will be implemented in a future phase. This matches the current
@@ -148,11 +143,10 @@ where
             role,
             negotiated,
             handle,
-            command_rx,
-            server_channel_registry: ChannelRegistry::new(task_tx),
+            driver_rx,
+            server_channel_registry: ChannelRegistry::new(driver_tx),
             pending_responses: HashMap::new(),
             in_flight_server_requests: std::collections::HashSet::new(),
-            task_rx,
         }
     }
 
@@ -162,15 +156,10 @@ where
             tokio::select! {
                 biased;
 
-                // Handle task messages (Data/Close/Response from spawned handlers)
-                // Using a single channel ensures correct ordering.
-                Some(msg) = self.task_rx.recv() => {
-                    self.handle_task_message(msg).await?;
-                }
-
-                // Handle commands from ConnectionHandle (client-side outgoing calls)
-                Some(cmd) = self.command_rx.recv() => {
-                    self.handle_command(cmd).await?;
+                // Handle all driver messages (Call/Data/Close/Response).
+                // Single channel ensures FIFO ordering.
+                Some(msg) = self.driver_rx.recv() => {
+                    self.handle_driver_message(msg).await?;
                 }
 
                 // Handle incoming messages from peer
@@ -185,18 +174,41 @@ where
         }
     }
 
-    /// Handle a task message from a spawned handler.
-    async fn handle_task_message(&mut self, msg: TaskMessage) -> Result<(), ShmConnectionError> {
+    /// Handle a driver message (Call/Data/Close/Response).
+    async fn handle_driver_message(
+        &mut self,
+        msg: DriverMessage,
+    ) -> Result<(), ShmConnectionError> {
         let wire_msg = match msg {
-            TaskMessage::Data {
+            DriverMessage::Call {
+                request_id,
+                method_id,
+                metadata,
+                channels,
+                payload,
+                response_tx,
+            } => {
+                // Store the response channel
+                self.pending_responses.insert(request_id, response_tx);
+
+                // Send the request
+                Message::Request {
+                    request_id,
+                    method_id,
+                    metadata,
+                    channels,
+                    payload,
+                }
+            }
+            DriverMessage::Data {
                 channel_id,
                 payload,
             } => Message::Data {
                 channel_id,
                 payload,
             },
-            TaskMessage::Close { channel_id } => Message::Close { channel_id },
-            TaskMessage::Response {
+            DriverMessage::Close { channel_id } => Message::Close { channel_id },
+            DriverMessage::Response {
                 request_id,
                 payload,
             } => {
@@ -213,32 +225,6 @@ where
             }
         };
         MessageTransport::send(&mut self.io, &wire_msg).await?;
-        Ok(())
-    }
-
-    /// Handle a command from ConnectionHandle.
-    async fn handle_command(&mut self, cmd: HandleCommand) -> Result<(), ShmConnectionError> {
-        match cmd {
-            HandleCommand::Call {
-                request_id,
-                method_id,
-                metadata,
-                payload,
-                response_tx,
-            } => {
-                // Store the response channel
-                self.pending_responses.insert(request_id, response_tx);
-
-                // Send the request
-                let req = Message::Request {
-                    request_id,
-                    method_id,
-                    metadata,
-                    payload,
-                };
-                MessageTransport::send(&mut self.io, &req).await?;
-            }
-        }
         Ok(())
     }
 
@@ -293,9 +279,10 @@ where
                 request_id,
                 method_id,
                 metadata,
+                channels,
                 payload,
             } => {
-                self.handle_incoming_request(request_id, method_id, metadata, payload)
+                self.handle_incoming_request(request_id, method_id, metadata, channels, payload)
                     .await?;
             }
             Message::Response {
@@ -339,6 +326,7 @@ where
         request_id: u64,
         method_id: u64,
         metadata: Vec<(String, roam_wire::MetadataValue)>,
+        channels: Vec<u64>,
         payload: Vec<u8>,
     ) -> Result<(), ShmConnectionError> {
         // Duplicate detection
@@ -362,6 +350,7 @@ where
         let handler_fut = self.dispatcher.dispatch(
             method_id,
             payload,
+            channels,
             request_id,
             &mut self.server_channel_registry,
         );
@@ -492,14 +481,14 @@ where
         initial_credit: config.initial_credit,
     };
 
-    let (command_tx, command_rx) = mpsc::channel(64);
-    let (task_tx, task_rx) = mpsc::channel(64);
+    // Create single unified channel for all messages (Call/Data/Close/Response).
+    // Single channel ensures FIFO ordering.
+    let (driver_tx, driver_rx) = mpsc::channel(256);
 
     // Guest is initiator (uses odd stream IDs)
     // Use infinite credit for now (matches current roam-stream behavior).
     let initial_credit = u32::MAX;
-    let handle =
-        ConnectionHandle::new(command_tx, Role::Initiator, initial_credit, task_tx.clone());
+    let handle = ConnectionHandle::new(driver_tx.clone(), Role::Initiator, initial_credit);
 
     let driver = ShmDriver::new(
         transport,
@@ -507,9 +496,8 @@ where
         Role::Initiator,
         negotiated,
         handle.clone(),
-        command_rx,
-        task_tx,
-        task_rx,
+        driver_tx,
+        driver_rx,
     );
 
     (handle, driver)
@@ -558,13 +546,14 @@ where
         initial_credit: config.initial_credit,
     };
 
-    let (command_tx, command_rx) = mpsc::channel(64);
-    let (task_tx, task_rx) = mpsc::channel(64);
+    // Create single unified channel for all messages (Call/Data/Close/Response).
+    // Single channel ensures FIFO ordering.
+    let (driver_tx, driver_rx) = mpsc::channel(256);
 
     // Host is acceptor (uses even stream IDs)
     // Use infinite credit for now (matches current roam-stream behavior).
     let initial_credit = u32::MAX;
-    let handle = ConnectionHandle::new(command_tx, Role::Acceptor, initial_credit, task_tx.clone());
+    let handle = ConnectionHandle::new(driver_tx.clone(), Role::Acceptor, initial_credit);
 
     let driver = ShmDriver::new(
         transport,
@@ -572,9 +561,8 @@ where
         Role::Acceptor,
         negotiated,
         handle.clone(),
-        command_rx,
-        task_tx,
-        task_rx,
+        driver_tx,
+        driver_rx,
     );
 
     (handle, driver)
@@ -593,11 +581,9 @@ struct PeerConnectionState {
     /// Boxed to allow different dispatcher types per peer.
     dispatcher: Box<dyn ServiceDispatcher>,
 
-    /// Channel for receiving commands from the ConnectionHandle.
-    command_rx: mpsc::Receiver<HandleCommand>,
-
-    /// Channel for receiving task messages from spawned handlers.
-    task_rx: mpsc::Receiver<TaskMessage>,
+    /// Unified channel for all messages (Call/Data/Close/Response).
+    /// Single channel ensures FIFO ordering.
+    driver_rx: mpsc::Receiver<DriverMessage>,
 
     /// Server-side stream registry for this peer.
     server_channel_registry: ChannelRegistry,
@@ -635,7 +621,7 @@ struct PeerConnectionState {
 /// let ticket2 = host.add_peer(options2)?;
 ///
 /// // Create driver with different dispatchers per peer
-/// let (driver, handles) = MultiPeerHostDriver::new(host)
+/// let (driver, handles) = MultiPeerHostDriver::builder(host)
 ///     // Simple peer only needs lifecycle dispatcher
 ///     .add_peer(ticket1.peer_id(), CellLifecycleDispatcher::new(lifecycle.clone()))
 ///     // Complex peer needs routed dispatcher for bidirectional RPC
@@ -699,13 +685,13 @@ impl MultiPeerHostDriverBuilder {
         let mut handles = HashMap::new();
 
         for (peer_id, dispatcher) in self.peers {
-            let (command_tx, command_rx) = mpsc::channel(64);
-            let (task_tx, task_rx) = mpsc::channel(64);
+            // Create single unified channel for all messages (Call/Data/Close/Response).
+            // Single channel ensures FIFO ordering.
+            let (driver_tx, driver_rx) = mpsc::channel(256);
 
             // Host is acceptor (uses even stream IDs)
             let initial_credit = u32::MAX;
-            let handle =
-                ConnectionHandle::new(command_tx, Role::Acceptor, initial_credit, task_tx.clone());
+            let handle = ConnectionHandle::new(driver_tx.clone(), Role::Acceptor, initial_credit);
 
             handles.insert(peer_id, handle.clone());
 
@@ -713,9 +699,8 @@ impl MultiPeerHostDriverBuilder {
                 peer_id,
                 PeerConnectionState {
                     dispatcher,
-                    command_rx,
-                    task_rx,
-                    server_channel_registry: ChannelRegistry::new(task_tx),
+                    driver_rx,
+                    server_channel_registry: ChannelRegistry::new(driver_tx),
                     pending_responses: HashMap::new(),
                     in_flight_server_requests: std::collections::HashSet::new(),
                     handle,
@@ -736,7 +721,7 @@ impl MultiPeerHostDriverBuilder {
 
 impl MultiPeerHostDriver {
     /// Create a new builder for the multi-peer host driver.
-    pub fn new(host: ShmHost) -> MultiPeerHostDriverBuilder {
+    pub fn builder(host: ShmHost) -> MultiPeerHostDriverBuilder {
         MultiPeerHostDriverBuilder {
             host,
             peers: Vec::new(),
@@ -749,35 +734,21 @@ impl MultiPeerHostDriver {
             // Process all pending work in one pass, then yield
             let mut did_work = false;
 
-            // 1. Process task messages from all peers
-            let task_msgs: Vec<_> = self
+            // 1. Process driver messages from all peers (unified Call/Data/Close/Response)
+            let driver_msgs: Vec<_> = self
                 .peers
                 .iter_mut()
                 .filter_map(|(peer_id, state)| {
-                    state.task_rx.try_recv().ok().map(|msg| (*peer_id, msg))
+                    state.driver_rx.try_recv().ok().map(|msg| (*peer_id, msg))
                 })
                 .collect();
 
-            for (peer_id, msg) in task_msgs {
-                self.handle_task_message(peer_id, msg).await?;
+            for (peer_id, msg) in driver_msgs {
+                self.handle_driver_message(peer_id, msg).await?;
                 did_work = true;
             }
 
-            // 2. Process commands from all peers
-            let commands: Vec<_> = self
-                .peers
-                .iter_mut()
-                .filter_map(|(peer_id, state)| {
-                    state.command_rx.try_recv().ok().map(|cmd| (*peer_id, cmd))
-                })
-                .collect();
-
-            for (peer_id, cmd) in commands {
-                self.handle_command(peer_id, cmd).await?;
-                did_work = true;
-            }
-
-            // 3. Poll SHM host for incoming messages
+            // 2. Poll SHM host for incoming messages
             let messages = self.host.poll();
             for (peer_id, frame) in messages {
                 self.last_decoded = frame.payload_bytes().to_vec();
@@ -802,30 +773,52 @@ impl MultiPeerHostDriver {
         }
     }
 
-    /// Handle a task message from a spawned handler for a specific peer.
-    async fn handle_task_message(
+    /// Handle a driver message (Call/Data/Close/Response) for a specific peer.
+    async fn handle_driver_message(
         &mut self,
         peer_id: PeerId,
-        msg: TaskMessage,
+        msg: DriverMessage,
     ) -> Result<(), ShmConnectionError> {
         let wire_msg = match msg {
-            TaskMessage::Data {
+            DriverMessage::Call {
+                request_id,
+                method_id,
+                metadata,
+                channels,
+                payload,
+                response_tx,
+            } => {
+                // Store the response channel
+                if let Some(state) = self.peers.get_mut(&peer_id) {
+                    state.pending_responses.insert(request_id, response_tx);
+                }
+
+                // Send the request
+                Message::Request {
+                    request_id,
+                    method_id,
+                    metadata,
+                    channels,
+                    payload,
+                }
+            }
+            DriverMessage::Data {
                 channel_id,
                 payload,
             } => Message::Data {
                 channel_id,
                 payload,
             },
-            TaskMessage::Close { channel_id } => Message::Close { channel_id },
-            TaskMessage::Response {
+            DriverMessage::Close { channel_id } => Message::Close { channel_id },
+            DriverMessage::Response {
                 request_id,
                 payload,
             } => {
                 // Only send if this request is still in-flight
-                if let Some(state) = self.peers.get_mut(&peer_id) {
-                    if !state.in_flight_server_requests.remove(&request_id) {
-                        return Ok(());
-                    }
+                if let Some(state) = self.peers.get_mut(&peer_id)
+                    && !state.in_flight_server_requests.remove(&request_id)
+                {
+                    return Ok(());
                 }
                 Message::Response {
                     request_id,
@@ -836,38 +829,6 @@ impl MultiPeerHostDriver {
         };
 
         self.send_to_peer(peer_id, &wire_msg).await
-    }
-
-    /// Handle a command from a ConnectionHandle for a specific peer.
-    async fn handle_command(
-        &mut self,
-        peer_id: PeerId,
-        cmd: HandleCommand,
-    ) -> Result<(), ShmConnectionError> {
-        match cmd {
-            HandleCommand::Call {
-                request_id,
-                method_id,
-                metadata,
-                payload,
-                response_tx,
-            } => {
-                // Store the response channel
-                if let Some(state) = self.peers.get_mut(&peer_id) {
-                    state.pending_responses.insert(request_id, response_tx);
-                }
-
-                // Send the request
-                let req = Message::Request {
-                    request_id,
-                    method_id,
-                    metadata,
-                    payload,
-                };
-                self.send_to_peer(peer_id, &req).await?;
-            }
-        }
-        Ok(())
     }
 
     /// Handle an incoming message from a specific peer.
@@ -895,10 +856,13 @@ impl MultiPeerHostDriver {
                 request_id,
                 method_id,
                 metadata,
+                channels,
                 payload,
             } => {
-                self.handle_incoming_request(peer_id, request_id, method_id, metadata, payload)
-                    .await?;
+                self.handle_incoming_request(
+                    peer_id, request_id, method_id, metadata, channels, payload,
+                )
+                .await?;
             }
             Message::Response {
                 request_id,
@@ -906,10 +870,10 @@ impl MultiPeerHostDriver {
                 payload,
             } => {
                 // Route to waiting caller
-                if let Some(state) = self.peers.get_mut(&peer_id) {
-                    if let Some(tx) = state.pending_responses.remove(&request_id) {
-                        let _ = tx.send(Ok(payload));
-                    }
+                if let Some(state) = self.peers.get_mut(&peer_id)
+                    && let Some(tx) = state.pending_responses.remove(&request_id)
+                {
+                    let _ = tx.send(Ok(payload));
                 }
             }
             Message::Cancel { request_id: _ } => {
@@ -941,6 +905,7 @@ impl MultiPeerHostDriver {
         request_id: u64,
         method_id: u64,
         metadata: Vec<(String, roam_wire::MetadataValue)>,
+        channels: Vec<u64>,
         payload: Vec<u8>,
     ) -> Result<(), ShmConnectionError> {
         let state = match self.peers.get_mut(&peer_id) {
@@ -971,6 +936,7 @@ impl MultiPeerHostDriver {
         let handler_fut = state.dispatcher.dispatch(
             method_id,
             payload,
+            channels,
             request_id,
             &mut state.server_channel_registry,
         );
@@ -1073,10 +1039,7 @@ impl MultiPeerHostDriver {
         })?;
 
         self.host.send(peer_id, frame).map_err(|e| {
-            ShmConnectionError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("send error: {:?}", e),
-            ))
+            ShmConnectionError::Io(std::io::Error::other(format!("send error: {:?}", e)))
         })
     }
 
@@ -1112,7 +1075,7 @@ impl MultiPeerHostDriver {
 ///
 /// This is a convenience function that creates a `MultiPeerHostDriver` for
 /// scenarios where all peers use the same dispatcher type. For heterogeneous
-/// dispatchers (different types per peer), use `MultiPeerHostDriver::new()`
+/// dispatchers (different types per peer), use `MultiPeerHostDriver::builder()`
 /// directly with the builder pattern.
 ///
 /// # Arguments
@@ -1153,7 +1116,7 @@ where
     D: ServiceDispatcher + 'static,
     I: IntoIterator<Item = (PeerId, D)>,
 {
-    let mut builder = MultiPeerHostDriver::new(host);
+    let mut builder = MultiPeerHostDriver::builder(host);
     for (peer_id, dispatcher) in peers {
         builder = builder.add_peer(peer_id, dispatcher);
     }

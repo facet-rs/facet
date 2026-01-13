@@ -72,6 +72,7 @@ fn streaming_sum_client_to_server() {
             request_id: 1,
             method_id,
             metadata: metadata_empty(),
+            channels: vec![channel_id],
             payload: req_payload,
         };
         io.send(&req).await.map_err(|e| e.to_string())?;
@@ -157,6 +158,7 @@ fn streaming_generate_server_to_client() {
             request_id: 1,
             method_id,
             metadata: metadata_empty(),
+            channels: vec![channel_id],
             payload: req_payload,
         };
         io.send(&req).await.map_err(|e| e.to_string())?;
@@ -253,6 +255,7 @@ fn streaming_transform_bidirectional() {
             request_id: 1,
             method_id,
             metadata: metadata_empty(),
+            channels: vec![input_channel_id, output_channel_id],
             payload: req_payload,
         };
         io.send(&req).await.map_err(|e| e.to_string())?;

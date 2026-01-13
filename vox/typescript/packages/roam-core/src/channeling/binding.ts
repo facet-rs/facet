@@ -35,11 +35,17 @@ export interface BindingSerializers {
  * Tx/Rx channels, allocates channel IDs for them, and binds them to
  * the registry.
  *
+ * Returns the channel IDs in declaration order, for inclusion in the
+ * Request message's `channels` field.
+ *
+ * r[impl call.request.channels] - Collects channel IDs in declaration order.
+ *
  * @param schemas - Schema for each argument
  * @param args - The actual argument values
  * @param allocator - Allocator for channel IDs
  * @param registry - Registry to bind channels to
  * @param serializers - Serializers for Tx/Rx element types
+ * @returns Channel IDs in declaration order
  */
 export function bindChannels(
   schemas: Schema[],
@@ -47,10 +53,12 @@ export function bindChannels(
   allocator: ChannelIdAllocator,
   registry: ChannelRegistry,
   serializers: BindingSerializers,
-): void {
+): bigint[] {
+  const channelIds: bigint[] = [];
   for (let i = 0; i < schemas.length; i++) {
-    bindValue(schemas[i], args[i], allocator, registry, serializers);
+    bindValue(schemas[i], args[i], allocator, registry, serializers, channelIds);
   }
+  return channelIds;
 }
 
 /**
@@ -62,6 +70,7 @@ function bindValue(
   allocator: ChannelIdAllocator,
   registry: ChannelRegistry,
   serializers: BindingSerializers,
+  channelIds: bigint[],
 ): void {
   switch (schema.kind) {
     // Primitives - nothing to bind
@@ -98,6 +107,8 @@ function bindValue(
           tx._pair.bind(channelId, registry, deserialize);
         }
       }
+      // Collect channel ID for Request.channels field
+      channelIds.push(tx.channelId);
       return;
     }
 
@@ -116,6 +127,8 @@ function bindValue(
           rx._pair.bind(channelId, registry, txSerialize);
         }
       }
+      // Collect channel ID for Request.channels field
+      channelIds.push(rx.channelId);
       return;
     }
 
@@ -125,7 +138,7 @@ function bindValue(
       // nested in the map. we should check that before iterating the entire vec...
       const arr = value as unknown[];
       for (const item of arr) {
-        bindValue(schema.element, item, allocator, registry, serializers);
+        bindValue(schema.element, item, allocator, registry, serializers, channelIds);
       }
       return;
     }
@@ -135,7 +148,7 @@ function bindValue(
       // whether there's even a _possibility_ of there being a Tx/Rx
       // nested in the option
       if (value !== null && value !== undefined) {
-        bindValue(schema.inner, value, allocator, registry, serializers);
+        bindValue(schema.inner, value, allocator, registry, serializers, channelIds);
       }
       return;
     }
@@ -146,8 +159,8 @@ function bindValue(
       // whether there's even a _possibility_ of there being a Tx/Rx
       // nested in the map. we should check that before iterating the entire map...
       for (const [k, v] of map) {
-        bindValue(schema.key, k, allocator, registry, serializers);
-        bindValue(schema.value, v, allocator, registry, serializers);
+        bindValue(schema.key, k, allocator, registry, serializers, channelIds);
+        bindValue(schema.value, v, allocator, registry, serializers, channelIds);
       }
       return;
     }
@@ -159,7 +172,7 @@ function bindValue(
       const obj = value as Record<string, unknown>;
       for (const [fieldName, fieldSchema] of Object.entries(schema.fields)) {
         if (fieldName in obj) {
-          bindValue(fieldSchema, obj[fieldName], allocator, registry, serializers);
+          bindValue(fieldSchema, obj[fieldName], allocator, registry, serializers, channelIds);
         }
       }
       return;
@@ -184,7 +197,7 @@ function bindValue(
         if (fieldValue !== undefined) {
           const fieldSchemas = getVariantFieldSchemas(variant);
           if (fieldSchemas.length === 1) {
-            bindValue(fieldSchemas[0], fieldValue, allocator, registry, serializers);
+            bindValue(fieldSchemas[0], fieldValue, allocator, registry, serializers, channelIds);
           }
         }
       } else {
@@ -197,7 +210,7 @@ function bindValue(
           for (let i = 0; i < fieldSchemas.length; i++) {
             const fieldValue = enumVal[fieldNames[i]];
             if (fieldValue !== undefined) {
-              bindValue(fieldSchemas[i], fieldValue, allocator, registry, serializers);
+              bindValue(fieldSchemas[i], fieldValue, allocator, registry, serializers, channelIds);
             }
           }
         } else if (fieldSchemas.length > 0) {
@@ -205,7 +218,7 @@ function bindValue(
           const tupleValues = enumVal.values as unknown[] | undefined;
           if (tupleValues) {
             for (let i = 0; i < fieldSchemas.length; i++) {
-              bindValue(fieldSchemas[i], tupleValues[i], allocator, registry, serializers);
+              bindValue(fieldSchemas[i], tupleValues[i], allocator, registry, serializers, channelIds);
             }
           }
         }
@@ -217,7 +230,7 @@ function bindValue(
       // Tuple: array of values matching schema.elements
       const arr = value as unknown[];
       for (let i = 0; i < schema.elements.length; i++) {
-        bindValue(schema.elements[i], arr[i], allocator, registry, serializers);
+        bindValue(schema.elements[i], arr[i], allocator, registry, serializers, channelIds);
       }
       return;
     }

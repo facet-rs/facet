@@ -53,6 +53,9 @@ facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-value = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-cargo-toml = { git = "https://github.com/bearcove/facet-cargo-toml", branch = "main" }
 
+# Futures utilities
+futures-util = "0.3"
+
 # Tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

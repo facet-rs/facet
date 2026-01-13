@@ -44,6 +44,7 @@ impl ServiceDispatcher for TestService {
         &self,
         method_id: u64,
         payload: Vec<u8>,
+        channels: Vec<u64>,
         request_id: u64,
         registry: &mut ChannelRegistry,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
@@ -53,6 +54,7 @@ impl ServiceDispatcher for TestService {
             // Echo method
             1 => dispatch_call::<String, String, (), _, _>(
                 payload,
+                channels,
                 request_id,
                 registry,
                 |input: String| async move { Ok(input) },
