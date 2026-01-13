@@ -642,7 +642,7 @@ struct PeerConnectionState {
 ///     .add_peer(ticket2.peer_id(), RoutedDispatcher::new(
 ///         CellLifecycleDispatcher::new(lifecycle.clone()),
 ///         TemplateHostDispatcher::new(template_host),
-///         &CELL_LIFECYCLE_METHODS,
+///         CellLifecycleDispatcher::<HostCellLifecycle>::method_ids(),
 ///     ))
 ///     .build();
 ///

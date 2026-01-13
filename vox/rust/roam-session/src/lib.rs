@@ -1250,14 +1250,14 @@ pub trait ServiceDispatcher: Send + Sync {
 pub struct RoutedDispatcher<A, B> {
     first: A,
     second: B,
-    first_methods: &'static [u64],
+    first_methods: Vec<u64>,
 }
 
 impl<A, B> RoutedDispatcher<A, B> {
     /// Create a new routed dispatcher.
     ///
     /// Methods in `first_methods` are routed to `first`, all others to `second`.
-    pub fn new(first: A, second: B, first_methods: &'static [u64]) -> Self {
+    pub fn new(first: A, second: B, first_methods: Vec<u64>) -> Self {
         Self {
             first,
             second,

@@ -259,11 +259,27 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         })
         .collect();
 
+    // Generate method ID calls for method_ids()
+    let method_id_calls: Vec<TokenStream2> = parsed
+        .methods()
+        .map(|m| {
+            let method_name = format_ident!("{}", m.name().to_snake_case());
+            quote! { #method_id_mod::#method_name() }
+        })
+        .collect();
+
     quote! {
         /// Dispatcher for this service.
         #[derive(Clone)]
         pub struct #dispatcher_name<H> {
             handler: H,
+        }
+
+        impl<H> #dispatcher_name<H> {
+            /// Returns all method IDs handled by this dispatcher.
+            pub fn method_ids() -> Vec<u64> {
+                vec![#(#method_id_calls),*]
+            }
         }
 
         impl<H> #dispatcher_name<H>
