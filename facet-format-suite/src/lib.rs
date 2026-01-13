@@ -423,6 +423,14 @@ pub trait FormatSuite {
     #[cfg(feature = "chrono")]
     fn chrono_in_vec() -> CaseSpec;
 
+    /// Case: `chrono::Duration` type - serializes as (secs, nanos) tuple.
+    #[cfg(feature = "chrono")]
+    fn chrono_duration() -> CaseSpec;
+
+    /// Case: `chrono::Duration` with negative value - tests signed (secs, nanos) handling.
+    #[cfg(feature = "chrono")]
+    fn chrono_duration_negative() -> CaseSpec;
+
     // ── Bytes crate tests ──
 
     /// Case: `bytes::Bytes` type.
@@ -764,6 +772,13 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, ChronoNaiveTimeWrapper>(&CASE_CHRONO_NAIVE_TIME, S::chrono_naive_time),
         #[cfg(feature = "chrono")]
         SuiteCase::new::<S, ChronoInVecWrapper>(&CASE_CHRONO_IN_VEC, S::chrono_in_vec),
+        #[cfg(feature = "chrono")]
+        SuiteCase::new::<S, ChronoDurationWrapper>(&CASE_CHRONO_DURATION, S::chrono_duration),
+        #[cfg(feature = "chrono")]
+        SuiteCase::new::<S, ChronoDurationNegativeWrapper>(
+            &CASE_CHRONO_DURATION_NEGATIVE,
+            S::chrono_duration_negative,
+        ),
         // Bytes crate cases
         #[cfg(feature = "bytes")]
         SuiteCase::new::<S, BytesBytesWrapper>(&CASE_BYTES_BYTES, S::bytes_bytes),
@@ -3456,6 +3471,25 @@ const CASE_CHRONO_IN_VEC: CaseDescriptor<ChronoInVecWrapper> = CaseDescriptor {
     },
 };
 
+#[cfg(feature = "chrono")]
+const CASE_CHRONO_DURATION: CaseDescriptor<ChronoDurationWrapper> = CaseDescriptor {
+    id: "third_party::chrono_duration",
+    description: "chrono::Duration type - serializes as (secs, nanos) tuple",
+    expected: || ChronoDurationWrapper {
+        duration: chrono::Duration::seconds(3600) + chrono::Duration::nanoseconds(500_000_000),
+    },
+};
+
+#[cfg(feature = "chrono")]
+const CASE_CHRONO_DURATION_NEGATIVE: CaseDescriptor<ChronoDurationNegativeWrapper> =
+    CaseDescriptor {
+        id: "third_party::chrono_duration_negative",
+        description: "chrono::Duration negative value - tests signed (secs, nanos) handling",
+        expected: || ChronoDurationNegativeWrapper {
+            duration: chrono::Duration::seconds(-90) + chrono::Duration::nanoseconds(-250_000_000),
+        },
+    };
+
 // ── Bytes crate case descriptors ──
 
 #[cfg(feature = "bytes")]
@@ -3668,6 +3702,20 @@ pub struct ChronoNaiveTimeWrapper {
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ChronoInVecWrapper {
     pub timestamps: Vec<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Fixture for `chrono::Duration` test.
+#[cfg(feature = "chrono")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct ChronoDurationWrapper {
+    pub duration: chrono::Duration,
+}
+
+/// Fixture for `chrono::Duration` negative test.
+#[cfg(feature = "chrono")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct ChronoDurationNegativeWrapper {
+    pub duration: chrono::Duration,
 }
 
 // ── Bytes crate test fixtures ──

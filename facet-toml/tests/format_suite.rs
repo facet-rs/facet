@@ -666,6 +666,14 @@ impl FormatSuite for TomlSlice {
         CaseSpec::from_str("timestamps = [2023-01-01T00:00:00Z, 2023-06-15T12:30:00Z]")
     }
 
+    fn chrono_duration() -> CaseSpec {
+        CaseSpec::from_str("duration = [3600, 500000000]")
+    }
+
+    fn chrono_duration_negative() -> CaseSpec {
+        CaseSpec::from_str("duration = [-90, -250000000]")
+    }
+
     // -- Bytes crate cases --
 
     fn bytes_bytes() -> CaseSpec {

@@ -762,6 +762,18 @@ impl FormatSuite for XmlSlice {
         )
     }
 
+    fn chrono_duration() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><duration><item>3600</item><item>500000000</item></duration></record>"#,
+        )
+    }
+
+    fn chrono_duration_negative() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><duration><item>-90</item><item>-250000000</item></duration></record>"#,
+        )
+    }
+
     // ── Bytes crate cases ──
 
     fn bytes_bytes() -> CaseSpec {

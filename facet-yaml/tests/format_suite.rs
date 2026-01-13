@@ -671,6 +671,14 @@ impl FormatSuite for YamlSlice {
         CaseSpec::from_str("timestamps:\n  - 2023-01-01T00:00:00Z\n  - 2023-06-15T12:30:00Z")
     }
 
+    fn chrono_duration() -> CaseSpec {
+        CaseSpec::from_str("duration:\n  - 3600\n  - 500000000")
+    }
+
+    fn chrono_duration_negative() -> CaseSpec {
+        CaseSpec::from_str("duration:\n  - -90\n  - -250000000")
+    }
+
     // -- Bytes crate cases --
 
     fn bytes_bytes() -> CaseSpec {

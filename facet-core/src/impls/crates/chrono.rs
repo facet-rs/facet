@@ -1,11 +1,11 @@
 #![cfg(feature = "chrono")]
 
 use alloc::string::{String, ToString};
-use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
-    Type, UserType, VTableIndirect,
+    Def, Facet, OxPtrConst, OxPtrMut, ParseError, ProxyDef, PtrConst, PtrMut, PtrUninit, Shape,
+    ShapeBuilder, TryFromOutcome, Type, UserType, VTableIndirect,
 };
 
 // DateTime<Utc> implementation
@@ -471,6 +471,76 @@ unsafe impl Facet<'_> for NaiveTime {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&NAIVE_TIME_VTABLE)
+            .build()
+    };
+}
+
+// Duration implementation
+
+unsafe fn duration_proxy_convert_out(
+    target_ptr: PtrConst,
+    proxy_ptr: PtrUninit,
+) -> Result<PtrMut, String> {
+    unsafe {
+        let duration = target_ptr.get::<Duration>();
+        let secs = duration.num_seconds();
+        let nanos = duration.subsec_nanos();
+        let proxy_mut = proxy_ptr.as_mut_byte_ptr() as *mut (i64, i32);
+        proxy_mut.write((secs, nanos));
+        Ok(PtrMut::new(proxy_mut as *mut u8))
+    }
+}
+
+unsafe fn duration_proxy_convert_in(
+    proxy_ptr: PtrConst,
+    target_ptr: PtrUninit,
+) -> Result<PtrMut, String> {
+    unsafe {
+        let (secs, nanos): (i64, i32) = proxy_ptr.read::<(i64, i32)>();
+        let duration = match Duration::try_seconds(secs) {
+            Some(d) => d + Duration::nanoseconds(nanos as i64),
+            None => return Err("Duration seconds overflow".into()),
+        };
+        let target_mut = target_ptr.as_mut_byte_ptr() as *mut Duration;
+        target_mut.write(duration);
+        Ok(PtrMut::new(target_mut as *mut u8))
+    }
+}
+
+const DURATION_PROXY: ProxyDef = ProxyDef {
+    shape: <(i64, i32) as Facet>::SHAPE,
+    convert_in: duration_proxy_convert_in,
+    convert_out: duration_proxy_convert_out,
+};
+
+unsafe fn display_duration(
+    source: OxPtrConst,
+    f: &mut core::fmt::Formatter<'_>,
+) -> Option<core::fmt::Result> {
+    unsafe {
+        let d = source.get::<Duration>();
+        Some(write!(f, "{}s {}ns", d.num_seconds(), d.subsec_nanos()))
+    }
+}
+
+unsafe fn partial_eq_duration(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe { Some(a.get::<Duration>() == b.get::<Duration>()) }
+}
+
+const DURATION_VTABLE: VTableIndirect = VTableIndirect {
+    display: Some(display_duration),
+    partial_eq: Some(partial_eq_duration),
+    ..VTableIndirect::EMPTY
+};
+
+unsafe impl Facet<'_> for Duration {
+    const SHAPE: &'static Shape = &const {
+        ShapeBuilder::for_sized::<Duration>("Duration")
+            .module_path("chrono")
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Scalar)
+            .vtable_indirect(&DURATION_VTABLE)
+            .proxy(&DURATION_PROXY)
             .build()
     };
 }
