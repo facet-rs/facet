@@ -580,8 +580,8 @@ fn set_btree() {
         items: BTreeSet<String>,
     }
 
-    let xml =
-        r#"<record><items><item>alpha</item><item>beta</item><item>gamma</item></items></record>"#;
+    // Flat list: <item> elements appear directly as children (no <items> wrapper)
+    let xml = r#"<record><item>alpha</item><item>beta</item><item>gamma</item></record>"#;
     let parsed: Record = facet_xml::from_str(xml).unwrap();
     assert!(parsed.items.contains("alpha"));
     assert!(parsed.items.contains("beta"));
@@ -597,7 +597,8 @@ fn hashset() {
         items: HashSet<String>,
     }
 
-    let xml = r#"<record><items><item>alpha</item><item>beta</item></items></record>"#;
+    // Flat list: <item> elements appear directly as children (no <items> wrapper)
+    let xml = r#"<record><item>alpha</item><item>beta</item></record>"#;
     let parsed: Record = facet_xml::from_str(xml).unwrap();
     assert!(parsed.items.contains("alpha"));
     assert!(parsed.items.contains("beta"));

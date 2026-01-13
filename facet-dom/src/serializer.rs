@@ -199,35 +199,13 @@ where
     }
 
     // Handle lists/arrays
+    // Flat list model: each item uses the field's element name (no wrapper element)
     if let Def::List(_) | Def::Array(_) | Def::Slice(_) = value.shape().def {
         let list = value.into_list_like().map_err(DomSerializeError::Reflect)?;
 
-        // If we have an element name, wrap the list in it
-        if let Some(tag) = element_name
-            && !serializer.is_elements_field()
-        {
-            serializer
-                .element_start(tag, None)
-                .map_err(DomSerializeError::Backend)?;
-            serializer
-                .children_start()
-                .map_err(DomSerializeError::Backend)?;
-        }
-
         for item in list.iter() {
-            // Let each item determine its own element name from its type
-            serialize_value(serializer, item, None)?;
-        }
-
-        if let Some(tag) = element_name
-            && !serializer.is_elements_field()
-        {
-            serializer
-                .children_end()
-                .map_err(DomSerializeError::Backend)?;
-            serializer
-                .element_end(tag)
-                .map_err(DomSerializeError::Backend)?;
+            // Use the field's element name for each item (flat list)
+            serialize_value(serializer, item, element_name)?;
         }
 
         return Ok(());
