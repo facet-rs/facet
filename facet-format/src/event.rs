@@ -102,6 +102,8 @@ pub enum ValueTypeHint {
 /// Scalar data extracted from the wire format.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScalarValue<'de> {
+    /// Unit type (Rust's `()`).
+    Unit,
     /// Null literal.
     Null,
     /// Boolean literal.

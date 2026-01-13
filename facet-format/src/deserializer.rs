@@ -919,6 +919,10 @@ where
                 ScalarValue::Bytes(b) => {
                     wip = self.set_bytes_value(wip, b)?;
                 }
+                ScalarValue::Unit => {
+                    // Unit value - set to default/unit value
+                    wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                }
             },
             _ => {
                 return Err(DeserializeError::TypeMismatch {
@@ -3788,7 +3792,6 @@ where
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let event = self.expect_peek("value")?;
-
         // Check for unit variant (just a string)
         if let ParseEvent::Scalar(
             ScalarValue::Str(variant_name) | ScalarValue::StringlyTyped(variant_name),
@@ -3798,6 +3801,18 @@ where
             wip = wip
                 .select_variant_named(variant_name)
                 .map_err(DeserializeError::reflect)?;
+            return Ok(wip);
+        }
+
+        // Check for VariantTag (self-describing formats like STYX)
+        if let ParseEvent::VariantTag(variant_name) = &event {
+            let variant_name = *variant_name;
+            self.expect_event("value")?; // consume VariantTag
+            wip = wip
+                .select_variant_named(variant_name)
+                .map_err(DeserializeError::reflect)?;
+            // Deserialize the variant content
+            wip = self.deserialize_enum_variant_content(wip)?;
             return Ok(wip);
         }
 
@@ -4145,10 +4160,13 @@ where
         match variant_kind {
             StructKind::Unit => {
                 // Unit variant - normally nothing to deserialize
-                // But some formats (like TOML with [VariantName]) might emit an empty struct
-                // Check if there's a StructStart that we need to consume
+                // But some formats may emit extra tokens:
+                // - TOML with [VariantName]: emits StructStart/StructEnd
+                // - STYX with @Foo: emits Scalar(Unit)
                 let event = self.expect_peek("value")?;
-                if matches!(event, ParseEvent::StructStart(_)) {
+                if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
+                    self.expect_event("value")?; // consume Unit
+                } else if matches!(event, ParseEvent::StructStart(_)) {
                     self.expect_event("value")?; // consume StructStart
                     // Expect immediate StructEnd for empty struct
                     let end_event = self.expect_event("value")?;
@@ -4748,6 +4766,10 @@ where
             }
             ScalarValue::Null => {
                 // Null matches Unit type
+                matches!(scalar_type, ScalarType::Unit)
+            }
+            ScalarValue::Unit => {
+                // Unit matches Unit type
                 matches!(scalar_type, ScalarType::Unit)
             }
             ScalarValue::StringlyTyped(s) => {
@@ -5365,6 +5387,10 @@ where
                 } else {
                     wip = self.set_string_value(wip, s)?;
                 }
+            }
+            ScalarValue::Unit => {
+                // Unit value - set to default/unit value
+                wip = wip.set_default().map_err(&reflect_err)?;
             }
         }
 
