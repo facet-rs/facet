@@ -152,13 +152,53 @@ impl rowan::Language for StyxLanguage {
     type Kind = SyntaxKind;
 
     fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
-        assert!(raw.0 <= SyntaxKind::HEREDOC as u16);
-        // SAFETY: We've checked the value is in range
-        unsafe { std::mem::transmute(raw.0) }
+        Self::Kind::from_raw(raw.0).expect("invalid SyntaxKind value from rowan")
     }
 
     fn kind_to_raw(kind: Self::Kind) -> rowan::SyntaxKind {
         rowan::SyntaxKind(kind as u16)
+    }
+}
+
+impl SyntaxKind {
+    /// Convert from a raw u16 value to SyntaxKind.
+    /// Returns None if the value is out of range or corresponds to __LAST_TOKEN.
+    pub const fn from_raw(raw: u16) -> Option<Self> {
+        match raw {
+            0 => Some(Self::L_BRACE),
+            1 => Some(Self::R_BRACE),
+            2 => Some(Self::L_PAREN),
+            3 => Some(Self::R_PAREN),
+            4 => Some(Self::COMMA),
+            5 => Some(Self::EQ),
+            6 => Some(Self::AT),
+            7 => Some(Self::BARE_SCALAR),
+            8 => Some(Self::QUOTED_SCALAR),
+            9 => Some(Self::RAW_SCALAR),
+            10 => Some(Self::HEREDOC_START),
+            11 => Some(Self::HEREDOC_CONTENT),
+            12 => Some(Self::HEREDOC_END),
+            13 => Some(Self::LINE_COMMENT),
+            14 => Some(Self::DOC_COMMENT),
+            15 => Some(Self::WHITESPACE),
+            16 => Some(Self::NEWLINE),
+            17 => Some(Self::EOF),
+            18 => Some(Self::ERROR),
+            // 19 is __LAST_TOKEN - skip it
+            20 => Some(Self::DOCUMENT),
+            21 => Some(Self::ENTRY),
+            22 => Some(Self::OBJECT),
+            23 => Some(Self::SEQUENCE),
+            24 => Some(Self::SCALAR),
+            25 => Some(Self::UNIT),
+            26 => Some(Self::TAG),
+            27 => Some(Self::TAG_NAME),
+            28 => Some(Self::TAG_PAYLOAD),
+            29 => Some(Self::KEY),
+            30 => Some(Self::VALUE),
+            31 => Some(Self::HEREDOC),
+            _ => None,
+        }
     }
 }
 

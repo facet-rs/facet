@@ -224,8 +224,20 @@ impl<'src> Parser<'src> {
             return callback.event(Event::EntryEnd);
         }
 
-        // First atom is the key - check for duplicates
+        // First atom is the key - check for duplicates and invalid key types
         let key_atom = &atoms[0];
+
+        // [impl r[entry.keys]]
+        // Heredoc scalars are not allowed as keys
+        if key_atom.kind == ScalarKind::Heredoc {
+            if !callback.event(Event::Error {
+                span: key_atom.span,
+                kind: ParseErrorKind::InvalidKey,
+            }) {
+                return false;
+            }
+        }
+
         let key_value = KeyValue::from_atom(key_atom, self);
         if seen_keys.contains(&key_value) {
             // Emit duplicate key error
@@ -910,7 +922,12 @@ impl<'src> Parser<'src> {
             // Tag name immediately follows @
             let name_token = self.advance().unwrap();
             let name = name_token.text;
+            let name_span = name_token.span;
             let name_end = name_token.span.end;
+
+            // [impl r[tag.syntax]]
+            // Validate tag name: must match @[A-Za-z_][A-Za-z0-9_.-]*
+            let invalid_tag_name = !Self::is_valid_tag_name(name);
 
             // Check for payload (must immediately follow tag name, no whitespace)
             let payload = self.parse_tag_payload(name_end);
@@ -925,6 +942,11 @@ impl<'src> Parser<'src> {
                 content: AtomContent::Tag {
                     name,
                     payload: payload.map(Box::new),
+                    invalid_name_span: if invalid_tag_name {
+                        Some(name_span)
+                    } else {
+                        None
+                    },
                 },
             };
         }
@@ -935,6 +957,22 @@ impl<'src> Parser<'src> {
             kind: ScalarKind::Bare,
             content: AtomContent::Unit,
         }
+    }
+
+    /// Check if a tag name is valid per r[tag.syntax].
+    /// Must match pattern: [A-Za-z_][A-Za-z0-9_.-]*
+    // [impl r[tag.syntax]]
+    fn is_valid_tag_name(name: &str) -> bool {
+        let mut chars = name.chars();
+
+        // First char: letter or underscore
+        match chars.next() {
+            Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+            _ => return false,
+        }
+
+        // Rest: alphanumeric, underscore, dot, or hyphen
+        chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
     }
 
     /// Parse a tag payload if present (must immediately follow tag name).
@@ -991,7 +1029,22 @@ impl<'src> Parser<'src> {
             }),
             AtomContent::Unit => callback.event(Event::Unit { span: atom.span }),
             // [impl r[tag.payload]]
-            AtomContent::Tag { name, payload } => {
+            AtomContent::Tag {
+                name,
+                payload,
+                invalid_name_span,
+            } => {
+                // [impl r[tag.syntax]]
+                // Emit error for invalid tag name
+                if let Some(span) = invalid_name_span {
+                    if !callback.event(Event::Error {
+                        span: *span,
+                        kind: ParseErrorKind::InvalidTagName,
+                    }) {
+                        return false;
+                    }
+                }
+
                 if !callback.event(Event::TagStart {
                     span: atom.span,
                     name,
@@ -1160,21 +1213,56 @@ impl<'src> Parser<'src> {
                     Some('\\') => result.push('\\'),
                     Some('"') => result.push('"'),
                     Some('0') => result.push('\0'),
+                    // [impl r[scalar.quoted.escapes]]
                     Some('u') => {
-                        // Unicode escape \u{XXXX}
-                        if chars.next() == Some('{') {
-                            let mut hex = String::new();
-                            while let Some(&c) = chars.peek() {
-                                if c == '}' {
-                                    chars.next();
-                                    break;
+                        // Unicode escape: \u{X...} or \uXXXX
+                        match chars.peek() {
+                            Some('{') => {
+                                // \u{X...} form - variable length
+                                chars.next(); // consume '{'
+                                let mut hex = String::new();
+                                while let Some(&c) = chars.peek() {
+                                    if c == '}' {
+                                        chars.next();
+                                        break;
+                                    }
+                                    hex.push(chars.next().unwrap());
                                 }
-                                hex.push(chars.next().unwrap());
+                                if let Ok(code) = u32::from_str_radix(&hex, 16)
+                                    && let Some(ch) = char::from_u32(code)
+                                {
+                                    result.push(ch);
+                                }
                             }
-                            if let Ok(code) = u32::from_str_radix(&hex, 16)
-                                && let Some(ch) = char::from_u32(code)
-                            {
-                                result.push(ch);
+                            Some(c) if c.is_ascii_hexdigit() => {
+                                // \uXXXX form - exactly 4 hex digits
+                                let mut hex = String::with_capacity(4);
+                                for _ in 0..4 {
+                                    if let Some(&c) = chars.peek() {
+                                        if c.is_ascii_hexdigit() {
+                                            hex.push(chars.next().unwrap());
+                                        } else {
+                                            break;
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                if hex.len() == 4 {
+                                    if let Ok(code) = u32::from_str_radix(&hex, 16)
+                                        && let Some(ch) = char::from_u32(code)
+                                    {
+                                        result.push(ch);
+                                    }
+                                } else {
+                                    // Invalid escape - not enough digits, keep as-is
+                                    result.push_str("\\u");
+                                    result.push_str(&hex);
+                                }
+                            }
+                            _ => {
+                                // Invalid \u - keep as-is
+                                result.push_str("\\u");
                             }
                         }
                     }
@@ -1219,6 +1307,9 @@ enum AtomContent<'src> {
     Tag {
         name: &'src str,
         payload: Option<Box<Atom<'src>>>,
+        /// Span of invalid tag name (for error reporting).
+        // [impl r[tag.syntax]]
+        invalid_name_span: Option<Span>,
     },
     /// An object with parsed entries.
     // [impl r[object.syntax]]
@@ -1281,7 +1372,7 @@ impl KeyValue {
             }
             AtomContent::Heredoc(content) => KeyValue::Scalar(content.clone()),
             AtomContent::Unit => KeyValue::Unit,
-            AtomContent::Tag { name, payload } => KeyValue::Tagged {
+            AtomContent::Tag { name, payload, .. } => KeyValue::Tagged {
                 name: (*name).to_string(),
                 payload: payload
                     .as_ref()
@@ -1929,6 +2020,155 @@ mod tests {
                 }
             )),
             "Should not have MixedSeparators error for consistent newline separators"
+        );
+    }
+
+    // [verify r[tag.syntax]]
+    #[test]
+    fn test_valid_tag_names() {
+        // Valid tag names should not produce errors
+        assert!(
+            !parse("@foo")
+                .iter()
+                .any(|e| matches!(e, Event::Error { .. })),
+            "@foo should be valid"
+        );
+        assert!(
+            !parse("@_private")
+                .iter()
+                .any(|e| matches!(e, Event::Error { .. })),
+            "@_private should be valid"
+        );
+        assert!(
+            !parse("@Some.Type")
+                .iter()
+                .any(|e| matches!(e, Event::Error { .. })),
+            "@Some.Type should be valid"
+        );
+        assert!(
+            !parse("@my-tag")
+                .iter()
+                .any(|e| matches!(e, Event::Error { .. })),
+            "@my-tag should be valid"
+        );
+        assert!(
+            !parse("@Type123")
+                .iter()
+                .any(|e| matches!(e, Event::Error { .. })),
+            "@Type123 should be valid"
+        );
+    }
+
+    // [verify r[tag.syntax]]
+    #[test]
+    fn test_invalid_tag_name_starts_with_digit() {
+        let events = parse("x @123");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidTagName,
+                    ..
+                }
+            )),
+            "Tag starting with digit should be invalid"
+        );
+    }
+
+    // [verify r[tag.syntax]]
+    #[test]
+    fn test_invalid_tag_name_starts_with_hyphen() {
+        let events = parse("x @-foo");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidTagName,
+                    ..
+                }
+            )),
+            "Tag starting with hyphen should be invalid"
+        );
+    }
+
+    // [verify r[tag.syntax]]
+    #[test]
+    fn test_invalid_tag_name_starts_with_dot() {
+        let events = parse("x @.foo");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidTagName,
+                    ..
+                }
+            )),
+            "Tag starting with dot should be invalid"
+        );
+    }
+
+    // [verify r[scalar.quoted.escapes]]
+    #[test]
+    fn test_unicode_escape_braces() {
+        let events = parse(r#"x "\u{1F600}""#);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "😀")),
+            "\\u{{1F600}} should produce 😀"
+        );
+    }
+
+    // [verify r[scalar.quoted.escapes]]
+    #[test]
+    fn test_unicode_escape_4digit() {
+        let events = parse(r#"x "\u0041""#);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "A")),
+            "\\u0041 should produce A"
+        );
+    }
+
+    // [verify r[scalar.quoted.escapes]]
+    #[test]
+    fn test_unicode_escape_4digit_accented() {
+        let events = parse(r#"x "\u00E9""#);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "é")),
+            "\\u00E9 should produce é"
+        );
+    }
+
+    // [verify r[scalar.quoted.escapes]]
+    #[test]
+    fn test_unicode_escape_mixed() {
+        // Mix of \uXXXX and \u{X} forms
+        let events = parse(r#"x "\u0048\u{65}\u006C\u{6C}\u006F""#);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "Hello")),
+            "Mixed unicode escapes should produce Hello"
+        );
+    }
+
+    // [verify r[entry.keys]]
+    #[test]
+    fn test_heredoc_key_rejected() {
+        let events = parse("<<EOF\nkey\nEOF value");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidKey,
+                    ..
+                }
+            )),
+            "Heredoc as key should be rejected"
         );
     }
 }

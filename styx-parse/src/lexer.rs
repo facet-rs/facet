@@ -377,6 +377,13 @@ impl<'src> Lexer<'src> {
             }
         }
 
+        // CRITICAL: If we hit EOF without finding the closing delimiter,
+        // we must clear the heredoc state to avoid an infinite loop.
+        // The next call would otherwise re-enter lex_heredoc_content forever.
+        if self.is_eof() {
+            self.heredoc_state = None;
+        }
+
         self.token(TokenKind::HeredocContent, start)
     }
 
