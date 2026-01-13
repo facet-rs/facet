@@ -965,7 +965,7 @@ fn deferred_reenter_hashset() -> Result<(), IPanic> {
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("tags")?;
-    partial = partial.begin_set()?;
+    partial = partial.init_set()?;
     partial = partial.insert(String::from("alpha"))?;
     partial = partial.end()?;
 
@@ -1001,7 +1001,7 @@ fn deferred_reenter_btreeset() -> Result<(), IPanic> {
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("ids")?;
-    partial = partial.begin_set()?;
+    partial = partial.init_set()?;
     partial = partial.insert(1i32)?;
     partial = partial.insert(2i32)?;
     partial = partial.end()?;

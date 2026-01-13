@@ -1208,7 +1208,7 @@ fn deserialize_set<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p
         })
     })?;
 
-    partial = partial.begin_set()?;
+    partial = partial.init_set()?;
 
     for item in arr.iter() {
         partial = partial.begin_set_item()?;

@@ -11,7 +11,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// `begin_set` does not clear the set if it was previously initialized.
     /// `begin_set` does not push a new frame to the stack, and thus does not
     /// require `end` to be called afterwards.
-    pub fn begin_set(mut self) -> Result<Self, ReflectError> {
+    pub fn init_set(mut self) -> Result<Self, ReflectError> {
         crate::trace!("begin_set()");
         let frame = self.frames_mut().last_mut().unwrap();
 

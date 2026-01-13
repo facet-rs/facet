@@ -1148,7 +1148,7 @@ where
         };
 
         // Initialize the set
-        wip = wip.begin_set().map_err(DeserializeError::reflect)?;
+        wip = wip.init_set().map_err(DeserializeError::reflect)?;
 
         loop {
             let event = self.expect_peek("value")?;
