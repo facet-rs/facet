@@ -88,6 +88,16 @@ impl Variant {
         self.has_attr(Some("html"), "custom_element")
             || self.has_attr(Some("xml"), "custom_element")
     }
+
+    /// Returns true if this variant has the `#[facet(other)]` attribute.
+    ///
+    /// When deserializing, variants marked as `other` act as a catch-all
+    /// for unknown variant names. This is useful for extensible enums where
+    /// unknown tags should be captured rather than rejected.
+    #[inline]
+    pub fn is_other(&self) -> bool {
+        self.has_builtin_attr("other")
+    }
 }
 
 /// An attribute that can be set on an enum variant.

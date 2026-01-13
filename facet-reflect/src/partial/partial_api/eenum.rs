@@ -66,8 +66,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     pub fn select_variant_named(mut self, variant_name: &str) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
         let enum_type = frame.get_enum_type()?;
-
-        let Some(variant) = enum_type.variants.iter().find(|v| v.name == variant_name) else {
+let Some(variant) = enum_type.variants.iter().find(|v| v.name == variant_name) else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.allocated.shape(),
                 operation: "No variant found with the given name",

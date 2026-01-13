@@ -132,6 +132,13 @@ pub mod builtin {
             /// Usage: `#[facet(untagged)]`
             Untagged,
 
+            /// Marks an enum variant as a catch-all for unknown variant names.
+            /// When deserializing, if no variant matches the input tag,
+            /// the variant marked with `other` will be used.
+            ///
+            /// Usage: `#[facet(other)]`
+            Other,
+
             /// Serializes/Deserializers enum to/from integer based on variant discriminant.
             ///
             /// Usage: `#[facet(is_numeric)]`
