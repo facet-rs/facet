@@ -49,11 +49,11 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > }
 >
 > schema {
->   @ {
+>   @ @object{
 >     server @Server
 >   }
 >
->   Server {
+>   Server @object{
 >     host @string
 >     port @u16
 >   }
@@ -83,7 +83,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > }
 >
 > schema {
->   @ {
+>   @ @object{
 >     user @auth.User
 >     settings @common.Settings
 >   }
@@ -108,7 +108,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > // Inline schema (simplified form)
 > @ {
 >   schema {
->     @ {server {host @string, port @u16}}
+>     @ @object{server @object{host @string, port @u16}}
 >   }
 > }
 >
@@ -166,7 +166,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > Absence means the field key is not present in the object (it does not mean the field value is `@`).
 >
 > ```styx
-> server {
+> server @object{
 >   host @string
 >   timeout @optional(@duration)
 > }
@@ -177,7 +177,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 ### Objects
 
 > r[schema.object]
-> An object schema is written as an object mapping field names (scalars) to schemas.
+> `@object{...}` defines an object schema mapping field names (scalars) to schemas.
 > By default, object schemas are **closed**: keys not mentioned in the schema are forbidden.
 >
 > To allow additional keys, use a special entry with key `@` (unit key) to define the schema for
@@ -186,18 +186,18 @@ that is, any tagged unit value like `@string` or `@MyType`.
 >
 > ```styx
 > // Closed object (default): only host and port allowed
-> Server {
+> Server @object{
 >   host @string
 >   port @u16
 > }
 >
 > // Open object: allow any extra string fields
-> Labels {
+> Labels @object{
 >   @ @string
 > }
 >
 > // Mixed: known fields plus additional string→string
-> Config {
+> Config @object{
 >   name @string
 >   @ @string
 > }
@@ -216,17 +216,15 @@ that is, any tagged unit value like `@string` or `@MyType`.
 ### Sequences
 
 > r[schema.sequence]
-> A sequence schema matches a sequence where every element matches the inner schema.
-> The sequence schema MUST contain exactly one element: `(@T)`.
-> Tuple/positional schemas like `(@A @B)` are not supported; use `(@union(@A @B))` for heterogeneous lists.
+> `@seq(@T)` defines a sequence schema where every element matches type `@T`.
 >
 > ```styx
-> hosts (@string)                   // sequence of strings
-> servers ({                        // sequence of objects
+> hosts @seq(@string)               // sequence of strings
+> servers @seq(@object{             // sequence of objects
 >   host @string
 >   port @u16
 > })
-> ids (@union(@u64 @string))        // sequence of ids
+> ids @seq(@union(@u64 @string))    // sequence of ids
 > ```
 
 ### Maps
@@ -255,12 +253,12 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > This is not enforced but aids readability and distinguishes user types from built-in types.
 >
 > ```styx
-> TlsConfig {
+> TlsConfig @object{
 >   cert @string
 >   key @string
 > }
 >
-> server {
+> server @object{
 >   tls @TlsConfig
 > }
 > ```
@@ -271,9 +269,9 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > Recursive types are allowed. A type may reference itself directly or indirectly.
 >
 > ```styx
-> Node {
+> Node @object{
 >   value @string
->   children (@Node)
+>   children @seq(@Node)
 > }
 > ```
 
@@ -284,11 +282,11 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > The document is flat; deserialization reconstructs the nested structure.
 >
 > ```styx
-> User {name @string, email @string}
+> User @object{name @string, email @string}
 >
-> Admin {
+> Admin @object{
 >   user @flatten(@User)
->   permissions (@string)
+>   permissions @seq(@string)
 > }
 > ```
 >
@@ -311,7 +309,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > status @enum{
 >   ok
 >   pending
->   err {message @string}
+>   err @object{message @string}
 > }
 > ```
 >
@@ -355,7 +353,7 @@ meta {
 
 schema {
   /// The root structure of a schema file.
-  @ {
+  @ @object{
     /// Schema metadata (required).
     meta @Meta
     /// External schema imports (optional).
@@ -365,7 +363,7 @@ schema {
   }
 
   /// Schema metadata.
-  Meta {
+  Meta @object{
     /// Unique identifier for the schema (URL recommended).
     id @string
     /// Schema version (date or semver).
@@ -375,40 +373,25 @@ schema {
   }
 
   /// A type constraint.
-  Schema @union(
-    @string      /// Literal value constraint.
-    @            /// Type reference (any tag with unit payload).
-    @Object      /// Object schema: {field @type}
-    @Sequence    /// Sequence schema: (@type)
-    @Union       /// Union: @union(@A @B)
-    @Optional    /// Optional: @optional(@T)
-    @Enum        /// Enum: @enum{a, b {x @type}}
-    @Map         /// Map: @map(@K @V)
-    @Flatten     /// Flatten: @flatten(@Type)
-  )
-
-  /// Object schema: maps keys to type constraints. The unit key (@) is reserved for "additional fields".
-  Object @map(@union(@string @unit) @Schema)
-
-  /// Sequence schema: all elements match the inner type.
-  Sequence (@Schema)
-
-  /// Union: matches any of the listed types.
-  Union (@Schema)
-
-  /// Optional: value of type T or absent.
-  Optional @Schema
-
-  /// Enum: variant names with optional payloads.
-  Enum @map(@string @union(@unit @Object))
-
-  /// Map: @map(@V) for string keys, @map(@K @V) for explicit key type.
-  Map @union(
-    (@Schema)
-    (@Schema @Schema)
-  )
-
-  /// Flatten: inline fields from another type.
-  Flatten @
+  Schema @enum{
+    /// Literal value constraint (a scalar).
+    literal @string
+    /// Type reference (any tag with unit payload, e.g., @string, @MyType).
+    type @
+    /// Object schema: @object{field @type, @ @type}.
+    object @object{@ @Schema}
+    /// Sequence schema: @seq(@type).
+    seq @seq(@Schema)
+    /// Union: @union(@A @B ...).
+    union @seq(@Schema)
+    /// Optional: @optional(@T).
+    optional @Schema
+    /// Enum: @enum{variant, variant @object{...}}.
+    enum @object{@ @union(@unit @object{@ @Schema})}
+    /// Map: @map(@V) or @map(@K @V).
+    map @seq(@Schema)
+    /// Flatten: @flatten(@Type).
+    flatten @
+  }
 }
 ```
