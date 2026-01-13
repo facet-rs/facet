@@ -2180,6 +2180,7 @@ dependencies = [
  "facet-core",
  "facet-diff",
  "facet-diff-core",
+ "facet-dom",
  "facet-format",
  "facet-format-suite",
  "facet-reflect",

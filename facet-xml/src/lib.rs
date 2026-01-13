@@ -56,6 +56,7 @@
 //! structures (with `_tag` and `_text` fields), not scalars. For HTML, use typed
 //! element structs or `Vec<FlowContent>` with custom elements instead.
 
+mod dom_parser;
 mod parser;
 mod serializer;
 
@@ -68,6 +69,7 @@ mod axum;
 #[cfg(feature = "diff")]
 mod diff_serialize;
 
+pub use dom_parser::{XmlDomError, XmlDomParser};
 pub use parser::{XmlError, XmlParser};
 
 #[cfg(feature = "axum")]
@@ -227,6 +229,30 @@ where
     use facet_format::FormatDeserializer;
     let parser = XmlParser::new(input);
     let mut de = FormatDeserializer::new(parser);
+    de.deserialize()
+}
+
+/// Deserialize using the DOM-based deserializer.
+///
+/// This uses `facet-dom` which has a tree-based event model better suited
+/// for HTML/XML structure with attributes, elements, and text nodes.
+pub fn from_str_dom<T>(input: &str) -> Result<T, facet_dom::DomDeserializeError<XmlDomError>>
+where
+    T: facet_core::Facet<'static>,
+{
+    from_slice_dom(input.as_bytes())
+}
+
+/// Deserialize using the DOM-based deserializer.
+///
+/// This uses `facet-dom` which has a tree-based event model better suited
+/// for HTML/XML structure with attributes, elements, and text nodes.
+pub fn from_slice_dom<T>(input: &[u8]) -> Result<T, facet_dom::DomDeserializeError<XmlDomError>>
+where
+    T: facet_core::Facet<'static>,
+{
+    let parser = XmlDomParser::new(input);
+    let mut de = facet_dom::DomDeserializer::new_owned(parser);
     de.deserialize()
 }
 

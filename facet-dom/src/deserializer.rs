@@ -71,24 +71,46 @@ impl<E: std::error::Error + 'static> std::error::Error for DomDeserializeError<E
 ///
 /// This deserializer understands tree-structured documents and maps them to
 /// Rust types using facet's reflection system.
-pub struct DomDeserializer<'de, P> {
+///
+/// The `BORROW` parameter controls whether strings can be borrowed from the input:
+/// - `BORROW = true`: Allows zero-copy deserialization of `&str` and `Cow<str>`
+/// - `BORROW = false`: All strings are owned, input doesn't need to outlive result
+pub struct DomDeserializer<'de, const BORROW: bool, P> {
     parser: P,
     _marker: std::marker::PhantomData<&'de ()>,
 }
 
-impl<'de, P> DomDeserializer<'de, P>
+impl<'de, P> DomDeserializer<'de, true, P>
 where
     P: DomParser<'de>,
 {
-    /// Create a new DOM deserializer.
+    /// Create a new DOM deserializer that can borrow strings from input.
     pub fn new(parser: P) -> Self {
         Self {
             parser,
             _marker: std::marker::PhantomData,
         }
     }
+}
 
-    /// Deserialize a value of type `T`.
+impl<'de, P> DomDeserializer<'de, false, P>
+where
+    P: DomParser<'de>,
+{
+    /// Create a new DOM deserializer that produces owned strings.
+    pub fn new_owned(parser: P) -> Self {
+        Self {
+            parser,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'de, P> DomDeserializer<'de, true, P>
+where
+    P: DomParser<'de>,
+{
+    /// Deserialize a value of type `T`, allowing borrowed strings from input.
     pub fn deserialize<T>(&mut self) -> Result<T, DomDeserializeError<P::Error>>
     where
         T: Facet<'de>,
@@ -102,12 +124,52 @@ where
             .materialize::<T>()
             .map_err(DomDeserializeError::Reflect)
     }
+}
 
+impl<'de, P> DomDeserializer<'de, false, P>
+where
+    P: DomParser<'de>,
+{
+    /// Deserialize a value of type `T` into an owned type.
+    pub fn deserialize<T>(&mut self) -> Result<T, DomDeserializeError<P::Error>>
+    where
+        T: Facet<'static>,
+    {
+        // SAFETY: When BORROW=false, no references into the input are stored.
+        // The Partial only contains owned data (String, Vec, etc.), so the
+        // lifetime parameter is purely phantom. We transmute from 'static to 'de
+        // to satisfy the type system, but the actual data has no lifetime dependency.
+        #[allow(unsafe_code)]
+        let wip: Partial<'de, false> = unsafe {
+            core::mem::transmute::<Partial<'static, false>, Partial<'de, false>>(
+                Partial::alloc_owned::<T>().map_err(DomDeserializeError::Reflect)?,
+            )
+        };
+        let partial = self.deserialize_into(wip)?;
+        // SAFETY: Same reasoning - with BORROW=false, HeapValue contains only
+        // owned data. The 'de lifetime is phantom and we can safely transmute
+        // back to 'static since T: Facet<'static>.
+        #[allow(unsafe_code)]
+        let heap_value: HeapValue<'static, false> = unsafe {
+            core::mem::transmute::<HeapValue<'de, false>, HeapValue<'static, false>>(
+                partial.build().map_err(DomDeserializeError::Reflect)?,
+            )
+        };
+        heap_value
+            .materialize::<T>()
+            .map_err(DomDeserializeError::Reflect)
+    }
+}
+
+impl<'de, const BORROW: bool, P> DomDeserializer<'de, BORROW, P>
+where
+    P: DomParser<'de>,
+{
     /// Deserialize into an existing Partial.
     pub fn deserialize_into(
         &mut self,
-        wip: Partial<'de, true>,
-    ) -> Result<Partial<'de, true>, DomDeserializeError<P::Error>> {
+        wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let shape = wip.shape();
 
         // Dispatch based on type
@@ -151,8 +213,8 @@ where
     /// Deserialize a struct from an element.
     fn deserialize_struct(
         &mut self,
-        mut wip: Partial<'de, true>,
-    ) -> Result<Partial<'de, true>, DomDeserializeError<P::Error>> {
+        mut wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let struct_def = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def,
             _ => {
@@ -264,7 +326,7 @@ where
             }
 
             // End the list and field
-            wip = wip.end().map_err(DomDeserializeError::Reflect)?; // end field
+            wip = wip.end().map_err(DomDeserializeError::Reflect)?;
 
             // Consume ChildrenEnd
             let _ = self.expect_event("ChildrenEnd")?;
@@ -358,8 +420,8 @@ where
     /// Deserialize an enum (for mixed content).
     fn deserialize_enum(
         &mut self,
-        mut wip: Partial<'de, true>,
-    ) -> Result<Partial<'de, true>, DomDeserializeError<P::Error>> {
+        mut wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let event = self.peek_event("NodeStart or Text")?;
 
         match event {
@@ -420,9 +482,9 @@ where
     /// Deserialize text content into an enum's Text variant.
     fn deserialize_text_into_enum(
         &mut self,
-        mut wip: Partial<'de, true>,
+        mut wip: Partial<'de, BORROW>,
         text: Cow<'de, str>,
-    ) -> Result<Partial<'de, true>, DomDeserializeError<P::Error>> {
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let enum_def = match &wip.shape().ty {
             Type::User(UserType::Enum(def)) => def,
             _ => {
@@ -451,8 +513,8 @@ where
     /// Deserialize a scalar value.
     fn deserialize_scalar(
         &mut self,
-        wip: Partial<'de, true>,
-    ) -> Result<Partial<'de, true>, DomDeserializeError<P::Error>> {
+        wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         // For scalars in DOM context, we expect text content
         let event = self.expect_event("Text")?;
         match event {
@@ -467,8 +529,8 @@ where
     /// Deserialize a list.
     fn deserialize_list(
         &mut self,
-        mut wip: Partial<'de, true>,
-    ) -> Result<Partial<'de, true>, DomDeserializeError<P::Error>> {
+        mut wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         wip = wip.begin_list().map_err(DomDeserializeError::Reflect)?;
 
         // Process children until ChildrenEnd
@@ -491,8 +553,8 @@ where
     /// Deserialize an Option.
     fn deserialize_option(
         &mut self,
-        mut wip: Partial<'de, true>,
-    ) -> Result<Partial<'de, true>, DomDeserializeError<P::Error>> {
+        mut wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         // In DOM context, presence of content means Some
         let event = self.peek_event("value")?;
         if matches!(event, DomEvent::ChildrenEnd | DomEvent::NodeEnd) {
@@ -510,9 +572,9 @@ where
     /// Set a string value, handling type conversion.
     fn set_string_value(
         &mut self,
-        mut wip: Partial<'de, true>,
+        mut wip: Partial<'de, BORROW>,
         value: Cow<'de, str>,
-    ) -> Result<Partial<'de, true>, DomDeserializeError<P::Error>> {
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         // Handle Option<T>
         if matches!(&wip.shape().def, Def::Option(_)) {
             wip = wip.begin_some().map_err(DomDeserializeError::Reflect)?;
