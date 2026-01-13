@@ -503,12 +503,12 @@ fn wip_struct_with_list() -> Result<(), IPanic> {
 
 #[test]
 fn wip_list_error_cases() -> Result<(), IPanic> {
-    // Test error: trying to begin_list_item on a non-list type
+    // Test error: trying to init_list_item on a non-list type
     let partial: Partial<'_> = Partial::alloc::<i32>()?;
     let result = partial.begin_list_item();
     assert!(result.is_err());
 
-    // Test error: trying to begin_list on non-list type
+    // Test error: trying to init_list on non-list type
     let partial: Partial<'_> = Partial::alloc::<String>()?;
     let result = partial.init_list();
     assert!(result.is_err());

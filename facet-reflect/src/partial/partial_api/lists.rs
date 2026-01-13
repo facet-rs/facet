@@ -44,7 +44,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     _ => {
                         return Err(ReflectError::OperationFailed {
                             shape: frame.allocated.shape(),
-                            operation: "begin_list can only be called on List types or DynamicValue",
+                            operation: "init_list can only be called on List types or DynamicValue",
                         });
                     }
                 }
@@ -120,7 +120,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_list can only be called on List or DynamicValue types",
+                    operation: "init_list can only be called on List or DynamicValue types",
                 });
             }
         }
@@ -149,7 +149,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_array can only be called on Array types",
+                    operation: "init_array can only be called on Array types",
                 });
             }
         };
@@ -176,7 +176,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_array: unexpected tracker state",
+                    operation: "init_array: unexpected tracker state",
                 });
             }
         }
@@ -361,7 +361,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "must call begin_list() before push()",
+                    operation: "must call init_list() before push()",
                 });
             }
         }

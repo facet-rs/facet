@@ -59,7 +59,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     _ => {
                         return Err(ReflectError::OperationFailed {
                             shape: frame.allocated.shape(),
-                            operation: "begin_map can only be called on Map or DynamicValue types",
+                            operation: "init_map can only be called on Map or DynamicValue types",
                         });
                     }
                 }
@@ -83,7 +83,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             _ => {
                 return Err(ReflectError::UnexpectedTracker {
-                    message: "begin_map called but tracker isn't Scalar, Map, or DynamicValue",
+                    message: "init_map called but tracker isn't Scalar, Map, or DynamicValue",
                     current_tracker: frame.tracker.kind(),
                 });
             }
@@ -122,7 +122,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_map can only be called on Map or DynamicValue types",
+                    operation: "init_map can only be called on Map or DynamicValue types",
                 });
             }
         }
@@ -169,7 +169,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "must call begin_map() before begin_key()",
+                    operation: "must call init_map() before begin_key()",
                 });
             }
         };
@@ -352,7 +352,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             (Def::DynamicValue(_), _) => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "must call begin_map() before begin_object_entry()",
+                    operation: "must call init_map() before begin_object_entry()",
                 });
             }
             _ => {

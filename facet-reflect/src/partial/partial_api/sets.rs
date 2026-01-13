@@ -46,7 +46,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_set can only be called on Set types",
+                    operation: "init_set can only be called on Set types",
                 });
             }
         };
@@ -79,7 +79,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_set_item can only be called on Set types",
+                    operation: "init_set_item can only be called on Set types",
                 });
             }
         };
@@ -98,7 +98,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "must call begin_set() before begin_set_item()",
+                    operation: "must call init_set() before begin_set_item()",
                 });
             }
         }

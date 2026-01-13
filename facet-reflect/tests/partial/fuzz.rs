@@ -560,7 +560,7 @@ fn wip_fuzz_invalid_ops_sequence() {
     let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.end().is_err());
 
-    // Try to begin_list on a struct
+    // Try to init_list on a struct
     let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.init_list().is_err());
 

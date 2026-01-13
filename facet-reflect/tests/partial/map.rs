@@ -159,7 +159,7 @@ fn list_wrong_begin_list() -> Result<(), IPanic> {
         Ok(_) => panic!("expected error"),
         Err(e) => e.to_string(),
     };
-    assert!(err_str.contains("begin_list can only be called on List or DynamicValue types"));
+    assert!(err_str.contains("init_list can only be called on List or DynamicValue types"));
     Ok(())
 }
 
