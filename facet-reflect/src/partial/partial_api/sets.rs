@@ -8,11 +8,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Initializes a set (HashSet, BTreeSet, etc.) if it hasn't been initialized before.
     /// This is a prerequisite to `begin_set_item`/`set`/`end` or the shorthand `insert`.
     ///
-    /// `begin_set` does not clear the set if it was previously initialized.
-    /// `begin_set` does not push a new frame to the stack, and thus does not
+    /// `init_set` does not clear the set if it was previously initialized.
+    /// `init_set` does not push a new frame to the stack, and thus does not
     /// require `end` to be called afterwards.
     pub fn init_set(mut self) -> Result<Self, ReflectError> {
-        crate::trace!("begin_set()");
+        crate::trace!("init_set()");
         let frame = self.frames_mut().last_mut().unwrap();
 
         match &frame.tracker {
@@ -34,7 +34,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             _ => {
                 return Err(ReflectError::UnexpectedTracker {
-                    message: "begin_set called but tracker isn't something set-like",
+                    message: "init_set called but tracker isn't something set-like",
                     current_tracker: frame.tracker.kind(),
                 });
             }

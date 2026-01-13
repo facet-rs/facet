@@ -289,7 +289,7 @@ fn fuzz_dynamic_value_exact_fuzzer_sequence() {
 
     let partial = Partial::alloc::<Value>().unwrap();
     let partial = partial.init_map().unwrap();
-    // Second begin_map is early return (already Object)
+    // Second init_map is early return (already Object)
     let partial = partial.init_map().unwrap();
 
     let partial = partial.begin_object_entry("rl").unwrap();
@@ -299,7 +299,7 @@ fn fuzz_dynamic_value_exact_fuzzer_sequence() {
     let partial = partial.end().unwrap();
     let partial = partial.end().unwrap();
 
-    // More begin_map (early return)
+    // More init_map (early return)
     let partial = partial.init_map().unwrap();
     let partial = partial.init_map().unwrap();
 
@@ -345,7 +345,7 @@ fn fuzz_dynamic_value_reenter_existing_key() {
 
     // Re-enter same key - uses BorrowedInPlace path
     let partial = partial.begin_object_entry("key").unwrap();
-    // begin_map on BorrowedInPlace frame with is_init=true should early return
+    // init_map on BorrowedInPlace frame with is_init=true should early return
     let partial = partial.init_map().unwrap();
 
     // Drop - BorrowedInPlace frame should be skipped, root Object should be dropped
@@ -387,11 +387,11 @@ fn fuzz_dynamic_value_borrowed_in_place_use_after_free() {
 }
 
 /// Regression test for fuzzer-found leak: BorrowedInPlace frame with Number value,
-/// then begin_list converts to Array without dropping the Number.
+/// then init_list converts to Array without dropping the Number.
 ///
-/// The bug: begin_list called deinit() for Tracker::DynamicValue{Scalar} state,
+/// The bug: init_list called deinit() for Tracker::DynamicValue{Scalar} state,
 /// but deinit() early-returns for BorrowedInPlace frames without dropping.
-/// Fix: use deinit_for_replace() instead of deinit() in begin_list.
+/// Fix: use deinit_for_replace() instead of deinit() in init_list.
 #[test]
 fn fuzz_dynamic_value_borrowed_in_place_begin_list_leak() {
     use facet_value::Value;
@@ -414,18 +414,18 @@ fn fuzz_dynamic_value_borrowed_in_place_begin_list_leak() {
     let partial = partial.begin_object_entry("key1").unwrap();
     // This SetI32 creates a Number in BorrowedInPlace frame
     let partial = partial.set(1296911643_i32).unwrap();
-    // This begin_list converts to Array - MUST drop the Number first!
+    // This init_list converts to Array - MUST drop the Number first!
     let partial = partial.init_list().unwrap();
 
     drop(partial);
 }
 
 /// Regression test for fuzzer-found leak: BorrowedInPlace frame with Number value,
-/// then begin_map converts to Object without dropping the Number.
+/// then init_map converts to Object without dropping the Number.
 ///
-/// The bug: begin_map called deinit() for Tracker::DynamicValue{Scalar} state,
+/// The bug: init_map called deinit() for Tracker::DynamicValue{Scalar} state,
 /// but deinit() early-returns for BorrowedInPlace frames without dropping.
-/// Fix: use deinit_for_replace() instead of deinit() in begin_map.
+/// Fix: use deinit_for_replace() instead of deinit() in init_map.
 #[test]
 fn fuzz_dynamic_value_borrowed_in_place_begin_map_leak() {
     use facet_value::Value;
@@ -448,7 +448,7 @@ fn fuzz_dynamic_value_borrowed_in_place_begin_map_leak() {
     let partial = partial.begin_object_entry("key1").unwrap();
     // This SetI32 creates a Number in BorrowedInPlace frame
     let partial = partial.set(1094786333_i32).unwrap();
-    // This begin_map converts to Object - MUST drop the Number first!
+    // This init_map converts to Object - MUST drop the Number first!
     let partial = partial.init_map().unwrap();
     let partial = partial.begin_object_entry("key2").unwrap();
 

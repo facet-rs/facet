@@ -623,7 +623,7 @@ fn deferred_reenter_vec_push_more_items() -> Result<(), IPanic> {
     let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
-    // Push first item (need begin_list on first visit)
+    // Push first item (need init_list on first visit)
     partial = partial.begin_field("items")?;
     partial = partial.init_list()?;
     partial = partial.push(1u32)?;
@@ -632,7 +632,7 @@ fn deferred_reenter_vec_push_more_items() -> Result<(), IPanic> {
     // Set other field
     partial = partial.set_field("other", String::from("middle"))?;
 
-    // Re-enter and push more items (no begin_list needed - list is already initialized)
+    // Re-enter and push more items (no init_list needed - list is already initialized)
     partial = partial.begin_field("items")?;
     partial = partial.push(2u32)?;
     partial = partial.push(3u32)?;
