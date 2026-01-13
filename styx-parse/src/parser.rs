@@ -1,11 +1,12 @@
 //! Event-based parser for Styx.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::iter::Peekable;
 
 use crate::Span;
 use crate::callback::ParseCallback;
-use crate::event::{Event, ScalarKind, Separator};
+use crate::event::{Event, ParseErrorKind, ScalarKind, Separator};
 use crate::lexer::Lexer;
 use crate::token::{Token, TokenKind};
 
@@ -45,13 +46,51 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse and emit events to callback.
+    // [impl r[document.root]]
     pub fn parse<C: ParseCallback<'src>>(mut self, callback: &mut C) {
         if !callback.event(Event::DocumentStart) {
             return;
         }
 
-        // Parse top-level entries (implicit object at document root)
-        self.parse_entries(callback, None);
+        // Skip leading whitespace/newlines and emit any leading comments
+        self.skip_whitespace_and_newlines();
+
+        // Emit leading comments before checking for explicit root
+        while let Some(token) = self.peek() {
+            match token.kind {
+                TokenKind::LineComment => {
+                    let token = self.advance().unwrap();
+                    if !callback.event(Event::Comment {
+                        span: token.span,
+                        text: token.text,
+                    }) {
+                        return;
+                    }
+                    self.skip_whitespace_and_newlines();
+                }
+                TokenKind::DocComment => {
+                    let token = self.advance().unwrap();
+                    if !callback.event(Event::DocComment {
+                        span: token.span,
+                        text: token.text,
+                    }) {
+                        return;
+                    }
+                    self.skip_whitespace_and_newlines();
+                }
+                _ => break,
+            }
+        }
+
+        // [impl r[document.root]]
+        // If the document starts with `{`, parse as a single explicit block object
+        if matches!(self.peek(), Some(t) if t.kind == TokenKind::LBrace) {
+            let obj = self.parse_object_atom();
+            self.emit_atom_as_value(&obj, callback);
+        } else {
+            // Parse top-level entries (implicit object at document root)
+            self.parse_entries(callback, None);
+        }
 
         callback.event(Event::DocumentEnd);
     }
@@ -109,11 +148,14 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse entries in an object or at document level.
+    // [impl r[entry.key-equality]]
     fn parse_entries<C: ParseCallback<'src>>(
         &mut self,
         callback: &mut C,
         closing: Option<TokenKind>,
     ) {
+        let mut seen_keys: HashSet<KeyValue> = HashSet::new();
+
         self.skip_whitespace_and_newlines();
 
         while let Some(token) = self.peek() {
@@ -153,8 +195,8 @@ impl<'src> Parser<'src> {
                 continue;
             }
 
-            // Parse entry
-            if !self.parse_entry(callback) {
+            // Parse entry with duplicate key detection
+            if !self.parse_entry_with_dup_check(callback, &mut seen_keys) {
                 return;
             }
 
@@ -163,8 +205,13 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Parse a single entry (key and optional value).
-    fn parse_entry<C: ParseCallback<'src>>(&mut self, callback: &mut C) -> bool {
+    /// Parse a single entry with duplicate key detection.
+    // [impl r[entry.key-equality]]
+    fn parse_entry_with_dup_check<C: ParseCallback<'src>>(
+        &mut self,
+        callback: &mut C,
+        seen_keys: &mut HashSet<KeyValue>,
+    ) -> bool {
         if !callback.event(Event::EntryStart) {
             return false;
         }
@@ -177,8 +224,21 @@ impl<'src> Parser<'src> {
             return callback.event(Event::EntryEnd);
         }
 
-        // First atom is the key
+        // First atom is the key - check for duplicates
         let key_atom = &atoms[0];
+        let key_value = KeyValue::from_atom(key_atom, self);
+        if seen_keys.contains(&key_value) {
+            // Emit duplicate key error
+            if !callback.event(Event::Error {
+                span: key_atom.span,
+                kind: ParseErrorKind::DuplicateKey,
+            }) {
+                return false;
+            }
+        } else {
+            seen_keys.insert(key_value);
+        }
+
         if !callback.event(Event::Key {
             span: key_atom.span,
             value: self.process_scalar_value(key_atom),
@@ -347,11 +407,18 @@ impl<'src> Parser<'src> {
                     atoms.push(self.parse_tag_or_unit_atom());
                 }
 
-                // Scalars
-                TokenKind::BareScalar
-                | TokenKind::QuotedScalar
-                | TokenKind::RawScalar
-                | TokenKind::HeredocStart => {
+                // Bare scalars - check for attribute syntax (key=value)
+                // [impl r[attr.syntax]]
+                TokenKind::BareScalar => {
+                    if self.is_attribute_start() {
+                        atoms.push(self.parse_attributes());
+                    } else {
+                        atoms.push(self.parse_scalar_atom());
+                    }
+                }
+
+                // Other scalars (quoted, raw, heredoc) - cannot be attribute keys
+                TokenKind::QuotedScalar | TokenKind::RawScalar | TokenKind::HeredocStart => {
                     atoms.push(self.parse_scalar_atom());
                 }
 
@@ -369,6 +436,179 @@ impl<'src> Parser<'src> {
         }
 
         atoms
+    }
+
+    /// Check if current position starts an attribute (bare_scalar immediately followed by =).
+    // [impl r[attr.syntax]]
+    fn is_attribute_start(&mut self) -> bool {
+        // We always try to parse as attribute; parse_attributes handles the fallback
+        // if = doesn't immediately follow the bare scalar.
+        true
+    }
+
+    /// Parse one or more attributes (key=value pairs).
+    /// If the first token is not followed by =, returns a regular scalar atom.
+    // [impl r[attr.syntax]] [impl r[attr.values]] [impl r[attr.atom]]
+    fn parse_attributes(&mut self) -> Atom<'src> {
+        // First, consume the bare scalar (potential key)
+        let first_token = self.advance().unwrap();
+        let start_span = first_token.span;
+        let first_key = first_token.text;
+
+        // Check if = immediately follows (no whitespace)
+        // Extract the info we need before borrowing self again
+        let eq_info = self.peek_raw().map(|t| (t.kind, t.span.start, t.span.end));
+
+        let Some((eq_kind, eq_start, eq_end)) = eq_info else {
+            // No more tokens - return as regular scalar
+            return Atom {
+                span: start_span,
+                kind: ScalarKind::Bare,
+                content: AtomContent::Scalar(first_key),
+            };
+        };
+
+        if eq_kind != TokenKind::Eq || eq_start != start_span.end {
+            // No = or whitespace gap - return as regular scalar
+            return Atom {
+                span: start_span,
+                kind: ScalarKind::Bare,
+                content: AtomContent::Scalar(first_key),
+            };
+        }
+
+        // Consume the =
+        self.advance();
+
+        // Value must immediately follow = (no whitespace)
+        let val_start = self.peek_raw().map(|t| t.span.start);
+
+        let Some(val_start) = val_start else {
+            // Error: missing value after = - return key as scalar for now
+            // TODO: emit error
+            return Atom {
+                span: start_span,
+                kind: ScalarKind::Bare,
+                content: AtomContent::Scalar(first_key),
+            };
+        };
+
+        if val_start != eq_end {
+            // Error: whitespace after = - return key as scalar for now
+            // TODO: emit error
+            return Atom {
+                span: start_span,
+                kind: ScalarKind::Bare,
+                content: AtomContent::Scalar(first_key),
+            };
+        }
+
+        // Parse the first value
+        let first_value = self.parse_attribute_value();
+        let Some(first_value) = first_value else {
+            // Invalid value type - return key as scalar
+            return Atom {
+                span: start_span,
+                kind: ScalarKind::Bare,
+                content: AtomContent::Scalar(first_key),
+            };
+        };
+
+        let mut attrs = vec![AttributeEntry {
+            key: first_key,
+            key_span: start_span,
+            value: first_value,
+        }];
+
+        // Continue parsing more attributes (key=value pairs separated by whitespace)
+        loop {
+            self.skip_whitespace();
+
+            // Extract token info before consuming
+            let token_info = self.peek().map(|t| (t.kind, t.span, t.text));
+            let Some((token_kind, key_span, key_text)) = token_info else {
+                break;
+            };
+
+            // Must be a bare scalar
+            if token_kind != TokenKind::BareScalar {
+                break;
+            }
+
+            // Consume the scalar
+            self.advance();
+
+            // Check for = immediately after key
+            let eq_info = self.peek_raw().map(|t| (t.kind, t.span.start, t.span.end));
+            let Some((eq_kind, eq_start, eq_end)) = eq_info else {
+                // No more tokens - we consumed a bare scalar that's not an attribute
+                // This is lost, but we stop here
+                break;
+            };
+
+            if eq_kind != TokenKind::Eq || eq_start != key_span.end {
+                // Not an attribute - the consumed scalar is lost
+                break;
+            }
+
+            // Consume =
+            self.advance();
+
+            // Check for value
+            let val_start = self.peek_raw().map(|t| t.span.start);
+            let Some(val_start) = val_start else {
+                break;
+            };
+
+            if val_start != eq_end {
+                // Whitespace after =
+                break;
+            }
+
+            let Some(value) = self.parse_attribute_value() else {
+                break;
+            };
+
+            attrs.push(AttributeEntry {
+                key: key_text,
+                key_span,
+                value,
+            });
+        }
+
+        let end_span = attrs
+            .last()
+            .map(|a| a.value.span.end)
+            .unwrap_or(start_span.end);
+
+        Atom {
+            span: Span {
+                start: start_span.start,
+                end: end_span,
+            },
+            kind: ScalarKind::Bare,
+            content: AtomContent::Attributes(attrs),
+        }
+    }
+
+    /// Parse an attribute value (bare/quoted/raw scalar, sequence, or object).
+    // [impl r[attr.values]]
+    fn parse_attribute_value(&mut self) -> Option<Atom<'src>> {
+        let Some(token) = self.peek() else {
+            return None;
+        };
+
+        match token.kind {
+            TokenKind::BareScalar | TokenKind::QuotedScalar | TokenKind::RawScalar => {
+                Some(self.parse_scalar_atom())
+            }
+            TokenKind::LParen => Some(self.parse_sequence_atom()),
+            TokenKind::LBrace => Some(self.parse_object_atom()),
+            TokenKind::At => Some(self.parse_tag_or_unit_atom()),
+            // Heredocs are not typically used as attribute values, but support them
+            TokenKind::HeredocStart => Some(self.parse_scalar_atom()),
+            _ => None,
+        }
     }
 
     /// Parse a scalar atom.
@@ -426,63 +666,105 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse an object atom (for nested objects).
+    // [impl r[object.syntax]]
     fn parse_object_atom(&mut self) -> Atom<'src> {
         let open = self.advance().unwrap(); // consume '{'
         let start_span = open.span;
 
-        // For now, just track the braces and collect everything as nested
-        let mut depth = 1;
+        let mut entries: Vec<ObjectEntry<'src>> = Vec::new();
+        let mut separator_mode: Option<Separator> = None;
         let mut end_span = start_span;
+        // [impl r[entry.key-equality]]
+        let mut seen_keys: HashSet<KeyValue> = HashSet::new();
+        let mut duplicate_key_spans: Vec<Span> = Vec::new();
+        // [impl r[object.separators]]
+        let mut mixed_separator_spans: Vec<Span> = Vec::new();
 
-        while depth > 0 {
-            let Some(token) = self.advance() else {
+        loop {
+            // Only skip horizontal whitespace initially
+            self.skip_whitespace();
+
+            let Some(token) = self.peek() else {
+                // Unclosed object - EOF
                 break;
             };
+
+            // Capture span before matching (needed for error reporting)
+            let token_span = token.span;
+
             match token.kind {
-                TokenKind::LBrace => depth += 1,
                 TokenKind::RBrace => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end_span = token.span;
+                    let close = self.advance().unwrap();
+                    end_span = close.span;
+                    break;
+                }
+
+                TokenKind::Newline => {
+                    // [impl r[object.separators]]
+                    if separator_mode == Some(Separator::Comma) {
+                        // Error: mixed separators - record span and continue parsing
+                        mixed_separator_spans.push(token_span);
+                    }
+                    separator_mode = Some(Separator::Newline);
+                    self.advance();
+                    // Consume consecutive newlines
+                    while matches!(self.peek(), Some(t) if t.kind == TokenKind::Newline) {
+                        self.advance();
                     }
                 }
-                TokenKind::Eof => break,
-                _ => {}
-            }
-        }
 
-        Atom {
-            span: Span {
-                start: start_span.start,
-                end: end_span.end,
-            },
-            kind: ScalarKind::Bare, // placeholder
-            content: AtomContent::Object,
-        }
-    }
+                TokenKind::Comma => {
+                    // [impl r[object.separators]]
+                    if separator_mode == Some(Separator::Newline) {
+                        // Error: mixed separators - record span and continue parsing
+                        mixed_separator_spans.push(token_span);
+                    }
+                    separator_mode = Some(Separator::Comma);
+                    self.advance();
+                }
 
-    /// Parse a sequence atom.
-    fn parse_sequence_atom(&mut self) -> Atom<'src> {
-        let open = self.advance().unwrap(); // consume '('
-        let start_span = open.span;
+                TokenKind::LineComment | TokenKind::DocComment => {
+                    // Skip comments inside objects
+                    self.advance();
+                }
 
-        let mut depth = 1;
-        let mut end_span = start_span;
+                TokenKind::Eof => {
+                    // Unclosed object
+                    break;
+                }
 
-        while depth > 0 {
-            let Some(token) = self.advance() else {
-                break;
-            };
-            match token.kind {
-                TokenKind::LParen => depth += 1,
-                TokenKind::RParen => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end_span = token.span;
+                _ => {
+                    // Parse entry atoms
+                    let entry_atoms = self.collect_entry_atoms();
+                    if !entry_atoms.is_empty() {
+                        let key = entry_atoms[0].clone();
+
+                        // [impl r[entry.key-equality]]
+                        // Check for duplicate key
+                        let key_value = KeyValue::from_atom(&key, self);
+                        if seen_keys.contains(&key_value) {
+                            duplicate_key_spans.push(key.span);
+                        } else {
+                            seen_keys.insert(key_value);
+                        }
+
+                        let value = if entry_atoms.len() == 1 {
+                            // Just a key, implicit unit value
+                            Atom {
+                                span: key.span,
+                                kind: ScalarKind::Bare,
+                                content: AtomContent::Unit,
+                            }
+                        } else if entry_atoms.len() == 2 {
+                            // Key and value
+                            entry_atoms[1].clone()
+                        } else {
+                            // Multiple atoms: nested key path (a b c → a: {b: c})
+                            self.build_nested_object(&entry_atoms[1..])
+                        };
+                        entries.push(ObjectEntry { key, value });
                     }
                 }
-                TokenKind::Eof => break,
-                _ => {}
             }
         }
 
@@ -492,29 +774,158 @@ impl<'src> Parser<'src> {
                 end: end_span.end,
             },
             kind: ScalarKind::Bare,
-            content: AtomContent::Sequence,
+            content: AtomContent::Object {
+                entries,
+                separator: separator_mode.unwrap_or(Separator::Newline),
+                duplicate_key_spans,
+                mixed_separator_spans,
+            },
+        }
+    }
+
+    /// Build a nested object from a slice of atoms (for key paths like `a b c`).
+    fn build_nested_object(&self, atoms: &[Atom<'src>]) -> Atom<'src> {
+        if atoms.is_empty() {
+            // Shouldn't happen, but return unit as fallback
+            return Atom {
+                span: Span { start: 0, end: 0 },
+                kind: ScalarKind::Bare,
+                content: AtomContent::Unit,
+            };
+        }
+
+        if atoms.len() == 1 {
+            return atoms[0].clone();
+        }
+
+        // Build nested: first atom is key, rest becomes nested object value
+        let key = atoms[0].clone();
+        let value = self.build_nested_object(&atoms[1..]);
+        let span = Span {
+            start: key.span.start,
+            end: value.span.end,
+        };
+
+        Atom {
+            span,
+            kind: ScalarKind::Bare,
+            content: AtomContent::Object {
+                entries: vec![ObjectEntry { key, value }],
+                separator: Separator::Newline,
+                duplicate_key_spans: Vec::new(), // Nested objects from keypaths can't have duplicates
+                mixed_separator_spans: Vec::new(), // Nested objects from keypaths can't have mixed separators
+            },
+        }
+    }
+
+    /// Parse a sequence atom.
+    // [impl r[sequence.syntax]] [impl r[sequence.elements]]
+    fn parse_sequence_atom(&mut self) -> Atom<'src> {
+        let open = self.advance().unwrap(); // consume '('
+        let start_span = open.span;
+
+        let mut elements: Vec<Atom<'src>> = Vec::new();
+        let mut end_span = start_span;
+
+        loop {
+            // Sequences allow whitespace and newlines between elements
+            self.skip_whitespace_and_newlines();
+
+            let Some(token) = self.peek() else {
+                // Unclosed sequence - EOF
+                break;
+            };
+
+            match token.kind {
+                TokenKind::RParen => {
+                    let close = self.advance().unwrap();
+                    end_span = close.span;
+                    break;
+                }
+
+                TokenKind::Comma => {
+                    // Commas are NOT allowed in sequences per spec
+                    // TODO: emit error event
+                    self.advance(); // skip it and continue
+                }
+
+                TokenKind::LineComment | TokenKind::DocComment => {
+                    // Skip comments inside sequences
+                    self.advance();
+                }
+
+                TokenKind::Eof => {
+                    // Unclosed sequence
+                    break;
+                }
+
+                _ => {
+                    // Parse a single element
+                    if let Some(elem) = self.parse_single_atom() {
+                        elements.push(elem);
+                    }
+                }
+            }
+        }
+
+        Atom {
+            span: Span {
+                start: start_span.start,
+                end: end_span.end,
+            },
+            kind: ScalarKind::Bare,
+            content: AtomContent::Sequence(elements),
+        }
+    }
+
+    /// Parse a single atom (for sequence elements).
+    fn parse_single_atom(&mut self) -> Option<Atom<'src>> {
+        let Some(token) = self.peek() else {
+            return None;
+        };
+
+        match token.kind {
+            TokenKind::BareScalar
+            | TokenKind::QuotedScalar
+            | TokenKind::RawScalar
+            | TokenKind::HeredocStart => Some(self.parse_scalar_atom()),
+            TokenKind::LBrace => Some(self.parse_object_atom()),
+            TokenKind::LParen => Some(self.parse_sequence_atom()),
+            TokenKind::At => Some(self.parse_tag_or_unit_atom()),
+            _ => None,
         }
     }
 
     /// Parse a tag or unit atom.
+    // [impl r[tag.payload]]
     fn parse_tag_or_unit_atom(&mut self) -> Atom<'src> {
         let at = self.advance().unwrap(); // consume '@'
         let start_span = at.span;
 
-        // Check if followed by a tag name
+        // Check if followed by a tag name (must be immediately adjacent, no whitespace)
         if let Some(token) = self.peek_raw()
             && token.kind == TokenKind::BareScalar
             && token.span.start == start_span.end
         {
             // Tag name immediately follows @
             let name_token = self.advance().unwrap();
+            let name = name_token.text;
+            let name_end = name_token.span.end;
+
+            // Check for payload (must immediately follow tag name, no whitespace)
+            let payload = self.parse_tag_payload(name_end);
+            let end_span = payload.as_ref().map(|p| p.span.end).unwrap_or(name_end);
+
             return Atom {
                 span: Span {
                     start: start_span.start,
-                    end: name_token.span.end,
+                    end: end_span,
                 },
                 kind: ScalarKind::Bare,
-                content: AtomContent::Tag(name_token.text),
+                content: AtomContent::Tag {
+                    name,
+                    payload: payload.map(Box::new),
+                },
             };
         }
 
@@ -523,6 +934,41 @@ impl<'src> Parser<'src> {
             span: start_span,
             kind: ScalarKind::Bare,
             content: AtomContent::Unit,
+        }
+    }
+
+    /// Parse a tag payload if present (must immediately follow tag name).
+    // [impl r[tag.payload]]
+    fn parse_tag_payload(&mut self, after_name: u32) -> Option<Atom<'src>> {
+        let Some(token) = self.peek_raw() else {
+            return None; // implicit unit
+        };
+
+        // Payload must immediately follow tag name (no whitespace)
+        if token.span.start != after_name {
+            return None; // implicit unit
+        }
+
+        match token.kind {
+            // @tag{...} - tagged object
+            TokenKind::LBrace => Some(self.parse_object_atom()),
+            // @tag(...) - tagged sequence
+            TokenKind::LParen => Some(self.parse_sequence_atom()),
+            // @tag"..." or @tagr#"..."# or @tag<<HEREDOC - tagged scalar
+            TokenKind::QuotedScalar | TokenKind::RawScalar | TokenKind::HeredocStart => {
+                Some(self.parse_scalar_atom())
+            }
+            // @tag@ - explicit tagged unit
+            TokenKind::At => {
+                let at = self.advance().unwrap();
+                Some(Atom {
+                    span: at.span,
+                    kind: ScalarKind::Bare,
+                    content: AtomContent::Unit,
+                })
+            }
+            // Anything else - implicit unit (no payload)
+            _ => None,
         }
     }
 
@@ -544,35 +990,124 @@ impl<'src> Parser<'src> {
                 kind: ScalarKind::Heredoc,
             }),
             AtomContent::Unit => callback.event(Event::Unit { span: atom.span }),
-            AtomContent::Tag(name) => {
-                // For now, emit as a scalar with the tag name
-                // TODO: proper tag handling with payload
+            // [impl r[tag.payload]]
+            AtomContent::Tag { name, payload } => {
                 if !callback.event(Event::TagStart {
                     span: atom.span,
                     name,
                 }) {
                     return false;
                 }
+                // Emit payload if present
+                if let Some(payload) = payload {
+                    if !self.emit_atom_as_value(payload, callback) {
+                        return false;
+                    }
+                }
+                // If no payload, it's an implicit unit (TagEnd implies it)
                 callback.event(Event::TagEnd)
             }
-            AtomContent::Object => {
-                // Re-parse the object content
-                // For now, emit as empty object
+            // [impl r[object.syntax]]
+            AtomContent::Object {
+                entries,
+                separator,
+                duplicate_key_spans,
+                mixed_separator_spans,
+            } => {
                 if !callback.event(Event::ObjectStart {
                     span: atom.span,
-                    separator: Separator::Newline,
+                    separator: *separator,
                 }) {
                     return false;
                 }
+
+                // [impl r[entry.key-equality]]
+                // Emit errors for duplicate keys
+                for dup_span in duplicate_key_spans {
+                    if !callback.event(Event::Error {
+                        span: *dup_span,
+                        kind: ParseErrorKind::DuplicateKey,
+                    }) {
+                        return false;
+                    }
+                }
+
+                // [impl r[object.separators]]
+                // Emit errors for mixed separators
+                for mix_span in mixed_separator_spans {
+                    if !callback.event(Event::Error {
+                        span: *mix_span,
+                        kind: ParseErrorKind::MixedSeparators,
+                    }) {
+                        return false;
+                    }
+                }
+
+                for entry in entries {
+                    if !callback.event(Event::EntryStart) {
+                        return false;
+                    }
+                    if !callback.event(Event::Key {
+                        span: entry.key.span,
+                        value: self.process_scalar_value(&entry.key),
+                        kind: entry.key.kind,
+                    }) {
+                        return false;
+                    }
+                    if !self.emit_atom_as_value(&entry.value, callback) {
+                        return false;
+                    }
+                    if !callback.event(Event::EntryEnd) {
+                        return false;
+                    }
+                }
+
                 callback.event(Event::ObjectEnd { span: atom.span })
             }
-            AtomContent::Sequence => {
-                // Re-parse the sequence content
-                // For now, emit as empty sequence
+            // [impl r[sequence.syntax]] [impl r[sequence.elements]]
+            AtomContent::Sequence(elements) => {
                 if !callback.event(Event::SequenceStart { span: atom.span }) {
                     return false;
                 }
+
+                for elem in elements {
+                    if !self.emit_atom_as_value(elem, callback) {
+                        return false;
+                    }
+                }
+
                 callback.event(Event::SequenceEnd { span: atom.span })
+            }
+            // [impl r[attr.atom]]
+            AtomContent::Attributes(attrs) => {
+                // Emit as comma-separated object
+                if !callback.event(Event::ObjectStart {
+                    span: atom.span,
+                    separator: Separator::Comma,
+                }) {
+                    return false;
+                }
+
+                for attr in attrs {
+                    if !callback.event(Event::EntryStart) {
+                        return false;
+                    }
+                    if !callback.event(Event::Key {
+                        span: attr.key_span,
+                        value: Cow::Borrowed(attr.key),
+                        kind: ScalarKind::Bare,
+                    }) {
+                        return false;
+                    }
+                    if !self.emit_atom_as_value(&attr.value, callback) {
+                        return false;
+                    }
+                    if !callback.event(Event::EntryEnd) {
+                        return false;
+                    }
+                }
+
+                callback.event(Event::ObjectEnd { span: atom.span })
             }
         }
     }
@@ -583,9 +1118,10 @@ impl<'src> Parser<'src> {
             AtomContent::Scalar(text) => self.process_scalar(text, atom.kind),
             AtomContent::Heredoc(content) => Cow::Owned(content.clone()),
             AtomContent::Unit => Cow::Borrowed("@"),
-            AtomContent::Tag(name) => Cow::Borrowed(name),
-            AtomContent::Object => Cow::Borrowed("{}"),
-            AtomContent::Sequence => Cow::Borrowed("()"),
+            AtomContent::Tag { name, .. } => Cow::Borrowed(name),
+            AtomContent::Object { .. } => Cow::Borrowed("{}"),
+            AtomContent::Sequence(_) => Cow::Borrowed("()"),
+            AtomContent::Attributes(_) => Cow::Borrowed("{}"),
         }
     }
 
@@ -661,7 +1197,7 @@ impl<'src> Parser<'src> {
 }
 
 /// An atom collected during entry parsing.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Atom<'src> {
     span: Span,
     kind: ScalarKind,
@@ -669,22 +1205,131 @@ struct Atom<'src> {
 }
 
 /// Content of an atom.
-#[derive(Debug)]
+// [impl r[object.syntax]] [impl r[sequence.syntax]]
+#[derive(Debug, Clone)]
 enum AtomContent<'src> {
+    /// A scalar value (bare, quoted, or raw).
     Scalar(&'src str),
+    /// Heredoc content (owned because it may be processed).
     Heredoc(String),
+    /// Unit value `@`.
     Unit,
-    Tag(&'src str),
-    Object,
-    Sequence,
+    /// A tag with optional payload.
+    // [impl r[tag.payload]]
+    Tag {
+        name: &'src str,
+        payload: Option<Box<Atom<'src>>>,
+    },
+    /// An object with parsed entries.
+    // [impl r[object.syntax]]
+    Object {
+        entries: Vec<ObjectEntry<'src>>,
+        separator: Separator,
+        /// Spans of duplicate keys (for error reporting).
+        duplicate_key_spans: Vec<Span>,
+        /// Spans of mixed separators (for error reporting).
+        // [impl r[object.separators]]
+        mixed_separator_spans: Vec<Span>,
+    },
+    /// A sequence with parsed elements.
+    // [impl r[sequence.syntax]] [impl r[sequence.elements]]
+    Sequence(Vec<Atom<'src>>),
+    /// Attributes (key=value pairs that become an object).
+    // [impl r[attr.syntax]] [impl r[attr.atom]]
+    Attributes(Vec<AttributeEntry<'src>>),
+}
+
+/// An attribute entry (key=value).
+#[derive(Debug, Clone)]
+struct AttributeEntry<'src> {
+    key: &'src str,
+    key_span: Span,
+    value: Atom<'src>,
+}
+
+/// An entry in an object (key-value pair).
+#[derive(Debug, Clone)]
+struct ObjectEntry<'src> {
+    key: Atom<'src>,
+    value: Atom<'src>,
+}
+
+/// A parsed key for equality comparison (duplicate key detection).
+// [impl r[entry.key-equality]]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum KeyValue {
+    /// Scalar key (after escape processing).
+    Scalar(String),
+    /// Unit key (@).
+    Unit,
+    /// Tagged key.
+    Tagged {
+        name: String,
+        payload: Option<Box<KeyValue>>,
+    },
+}
+
+impl KeyValue {
+    /// Create a KeyValue from an Atom for duplicate key comparison.
+    // [impl r[entry.key-equality]]
+    fn from_atom<'a>(atom: &Atom<'a>, parser: &Parser<'a>) -> Self {
+        match &atom.content {
+            AtomContent::Scalar(text) => {
+                // Process escapes for quoted strings
+                let processed = parser.process_scalar(text, atom.kind);
+                KeyValue::Scalar(processed.into_owned())
+            }
+            AtomContent::Heredoc(content) => KeyValue::Scalar(content.clone()),
+            AtomContent::Unit => KeyValue::Unit,
+            AtomContent::Tag { name, payload } => KeyValue::Tagged {
+                name: (*name).to_string(),
+                payload: payload
+                    .as_ref()
+                    .map(|p| Box::new(KeyValue::from_atom(p, parser))),
+            },
+            // Objects/Sequences as keys are unusual, treat as their text repr
+            AtomContent::Object { .. } => KeyValue::Scalar("{}".into()),
+            AtomContent::Sequence(_) => KeyValue::Scalar("()".into()),
+            AtomContent::Attributes(_) => KeyValue::Scalar("{}".into()),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    fn init_tracing() {
+        INIT.call_once(|| {
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::from_default_env()
+                        .add_directive(tracing::Level::DEBUG.into()),
+                )
+                .with_test_writer()
+                .init();
+        });
+    }
 
     fn parse(source: &str) -> Vec<Event<'_>> {
-        Parser::new(source).parse_to_vec()
+        init_tracing();
+        tracing::debug!(source, "parsing");
+        let events = Parser::new(source).parse_to_vec();
+        tracing::debug!(?events, "parsed");
+        events
+    }
+
+    /// Parse and log events for debugging
+    #[allow(dead_code)]
+    fn parse_debug(source: &str) -> Vec<Event<'_>> {
+        init_tracing();
+        tracing::info!(source, "parsing (debug mode)");
+        let events = Parser::new(source).parse_to_vec();
+        tracing::info!(?events, "parsed events");
+        events
     }
 
     #[test]
@@ -797,5 +1442,493 @@ mod tests {
     fn test_doc_comments() {
         let events = parse("/// doc\nfoo bar");
         assert!(events.iter().any(|e| matches!(e, Event::DocComment { .. })));
+    }
+
+    // [verify r[object.syntax]]
+    #[test]
+    fn test_nested_object() {
+        let events = parse("outer {inner {x 1}}");
+        // Should have nested ObjectStart/ObjectEnd events
+        let obj_starts = events
+            .iter()
+            .filter(|e| matches!(e, Event::ObjectStart { .. }))
+            .count();
+        assert_eq!(
+            obj_starts, 2,
+            "Expected 2 ObjectStart events for nested objects"
+        );
+    }
+
+    // [verify r[object.syntax]]
+    #[test]
+    fn test_object_with_entries() {
+        let events = parse("config {host localhost, port 8080}");
+        // Check we have keys for host and port
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key { value, .. } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"config"), "Missing key 'config'");
+        assert!(keys.contains(&"host"), "Missing key 'host'");
+        assert!(keys.contains(&"port"), "Missing key 'port'");
+    }
+
+    // [verify r[sequence.syntax]] [verify r[sequence.elements]]
+    #[test]
+    fn test_sequence_elements() {
+        let events = parse("items (a b c)");
+        let scalars: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Scalar { value, .. } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(scalars.contains(&"a"), "Missing element 'a'");
+        assert!(scalars.contains(&"b"), "Missing element 'b'");
+        assert!(scalars.contains(&"c"), "Missing element 'c'");
+    }
+
+    // [verify r[sequence.syntax]]
+    #[test]
+    fn test_nested_sequences() {
+        let events = parse("matrix ((1 2) (3 4))");
+        let seq_starts = events
+            .iter()
+            .filter(|e| matches!(e, Event::SequenceStart { .. }))
+            .count();
+        assert_eq!(
+            seq_starts, 3,
+            "Expected 3 SequenceStart events (outer + 2 inner)"
+        );
+    }
+
+    // [verify r[tag.payload]]
+    #[test]
+    fn test_tagged_object() {
+        let events = parse("result @err{message oops}");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "err")),
+            "Missing TagStart for @err"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::ObjectStart { .. })),
+            "Missing ObjectStart for tagged object"
+        );
+    }
+
+    // [verify r[tag.payload]]
+    #[test]
+    fn test_tagged_sequence() {
+        let events = parse("color @rgb(255 128 0)");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "rgb")),
+            "Missing TagStart for @rgb"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::SequenceStart { .. })),
+            "Missing SequenceStart for tagged sequence"
+        );
+    }
+
+    // [verify r[tag.payload]]
+    #[test]
+    fn test_tagged_scalar() {
+        let events = parse(r#"name @nickname"Bob""#);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "nickname")),
+            "Missing TagStart for @nickname"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "Bob")),
+            "Missing Scalar for tagged string"
+        );
+    }
+
+    // [verify r[tag.payload]]
+    #[test]
+    fn test_tagged_explicit_unit() {
+        let events = parse("nothing @empty@");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "empty")),
+            "Missing TagStart for @empty"
+        );
+        // The explicit @ after tag creates a Unit payload
+        let unit_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::Unit { .. }))
+            .count();
+        assert!(
+            unit_count >= 1,
+            "Expected at least one Unit event for @empty@"
+        );
+    }
+
+    // [verify r[tag.payload]]
+    #[test]
+    fn test_tag_whitespace_gap() {
+        // Whitespace between tag and potential payload = no payload (implicit unit)
+        // Use a simpler case: key with tag value that has whitespace before object
+        let events = parse("x @tag\ny {a b}");
+        // @tag should be its own value (implicit unit), y {a b} is a separate entry
+        let tag_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Event::TagStart { .. } | Event::TagEnd))
+            .collect();
+        // There should be TagStart and TagEnd
+        assert_eq!(tag_events.len(), 2, "Expected TagStart and TagEnd");
+        // And the tag should NOT have the object as payload (object should be in a different entry)
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key { value, .. } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"x"), "Missing key 'x'");
+        assert!(keys.contains(&"y"), "Missing key 'y'");
+    }
+
+    // [verify r[object.syntax]]
+    #[test]
+    fn test_object_in_sequence() {
+        let events = parse("servers ({host a} {host b})");
+        // Sequence containing objects
+        let obj_starts = events
+            .iter()
+            .filter(|e| matches!(e, Event::ObjectStart { .. }))
+            .count();
+        assert_eq!(
+            obj_starts, 2,
+            "Expected 2 ObjectStart events for objects in sequence"
+        );
+    }
+
+    // [verify r[attr.syntax]]
+    #[test]
+    fn test_simple_attribute() {
+        let events = parse("server host=localhost");
+        // key=server, value is object with {host: localhost}
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key { value, .. } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"server"), "Missing key 'server'");
+        assert!(keys.contains(&"host"), "Missing key 'host' from attribute");
+    }
+
+    // [verify r[attr.values]]
+    #[test]
+    fn test_attribute_values() {
+        let events = parse("config name=app tags=(a b) opts={x 1}");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key { value, .. } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"config"), "Missing key 'config'");
+        assert!(keys.contains(&"name"), "Missing key 'name'");
+        assert!(keys.contains(&"tags"), "Missing key 'tags'");
+        assert!(keys.contains(&"opts"), "Missing key 'opts'");
+        // Check sequence is present
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::SequenceStart { .. })),
+            "Missing SequenceStart for tags=(a b)"
+        );
+    }
+
+    // [verify r[attr.atom]]
+    #[test]
+    fn test_multiple_attributes() {
+        // When attributes are at root level without a preceding key,
+        // the first attribute key becomes the entry key, and the rest form the value
+        let events = parse("server host=localhost port=8080");
+        // key=server, value is object with {host: localhost, port: 8080}
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key { value, .. } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"server"), "Missing key 'server'");
+        assert!(keys.contains(&"host"), "Missing key 'host'");
+        assert!(keys.contains(&"port"), "Missing key 'port'");
+    }
+
+    // [verify r[entry.keypath.attributes]]
+    #[test]
+    fn test_keypath_with_attributes() {
+        let events = parse("spec selector matchLabels app=web tier=frontend");
+        // Nested: spec.selector.matchLabels = {app: web, tier: frontend}
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key { value, .. } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"spec"), "Missing key 'spec'");
+        assert!(keys.contains(&"selector"), "Missing key 'selector'");
+        assert!(keys.contains(&"matchLabels"), "Missing key 'matchLabels'");
+        assert!(keys.contains(&"app"), "Missing key 'app'");
+        assert!(keys.contains(&"tier"), "Missing key 'tier'");
+    }
+
+    // [verify r[attr.syntax]]
+    #[test]
+    fn test_attribute_no_spaces() {
+        // Spaces around = means it's NOT attribute syntax
+        let events = parse("x = y");
+        // This should be: key=x, then "=" and "y" as values (nested)
+        // Since = is a valid bare scalar when preceded by whitespace
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key { value, .. } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        // "x" should be the first key, and "=" should NOT be treated as attribute syntax
+        assert!(keys.contains(&"x"), "Missing key 'x'");
+        // There should not be "=" as a key (it would be a value)
+    }
+
+    // [verify r[document.root]]
+    #[test]
+    fn test_explicit_root_after_comment() {
+        // Regular comment before explicit root object
+        let events = parse("// comment\n{a 1}");
+        // Should have ObjectStart (explicit root), not be treated as implicit root
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::ObjectStart { .. })),
+            "Should have ObjectStart for explicit root after comment"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Key { value, .. } if value == "a")),
+            "Should have key 'a'"
+        );
+    }
+
+    // [verify r[document.root]]
+    #[test]
+    fn test_explicit_root_after_doc_comment() {
+        // Doc comment before explicit root object
+        let events = parse("/// doc comment\n{a 1}");
+        // Should have ObjectStart (explicit root) AND the doc comment
+        assert!(
+            events.iter().any(|e| matches!(e, Event::DocComment { .. })),
+            "Should preserve doc comment"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::ObjectStart { .. })),
+            "Should have ObjectStart for explicit root after doc comment"
+        );
+    }
+
+    // [verify r[entry.key-equality]]
+    #[test]
+    fn test_duplicate_bare_key() {
+        let events = parse("{a 1, a 2}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::DuplicateKey,
+                    ..
+                }
+            )),
+            "Expected DuplicateKey error"
+        );
+    }
+
+    // [verify r[entry.key-equality]]
+    #[test]
+    fn test_duplicate_quoted_key() {
+        let events = parse(r#"{"key" 1, "key" 2}"#);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::DuplicateKey,
+                    ..
+                }
+            )),
+            "Expected DuplicateKey error for quoted keys"
+        );
+    }
+
+    // [verify r[entry.key-equality]]
+    #[test]
+    fn test_duplicate_key_escape_normalized() {
+        // "ab" and "a\u{62}" should be considered duplicates after escape processing
+        let events = parse(r#"{"ab" 1, "a\u{62}" 2}"#);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::DuplicateKey,
+                    ..
+                }
+            )),
+            "Expected DuplicateKey error for escape-normalized keys"
+        );
+    }
+
+    // [verify r[entry.key-equality]]
+    #[test]
+    fn test_duplicate_unit_key() {
+        let events = parse("{@ 1, @ 2}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::DuplicateKey,
+                    ..
+                }
+            )),
+            "Expected DuplicateKey error for unit keys"
+        );
+    }
+
+    // [verify r[entry.key-equality]]
+    #[test]
+    fn test_duplicate_tagged_key() {
+        let events = parse("{@foo 1, @foo 2}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::DuplicateKey,
+                    ..
+                }
+            )),
+            "Expected DuplicateKey error for tagged keys"
+        );
+    }
+
+    // [verify r[entry.key-equality]]
+    #[test]
+    fn test_different_keys_ok() {
+        let events = parse("{a 1, b 2, c 3}");
+        assert!(
+            !events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "Should not have any errors for different keys"
+        );
+    }
+
+    // [verify r[entry.key-equality]]
+    #[test]
+    fn test_duplicate_key_at_root() {
+        // Test duplicate keys at the document root level (implicit root object)
+        let events = parse("a 1\na 2");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::DuplicateKey,
+                    ..
+                }
+            )),
+            "Expected DuplicateKey error at document root level"
+        );
+    }
+
+    // [verify r[object.separators]]
+    #[test]
+    fn test_mixed_separators_comma_then_newline() {
+        // Start with comma, then use newline - should error
+        let events = parse("{a 1, b 2\nc 3}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::MixedSeparators,
+                    ..
+                }
+            )),
+            "Expected MixedSeparators error when comma mode followed by newline"
+        );
+    }
+
+    // [verify r[object.separators]]
+    #[test]
+    fn test_mixed_separators_newline_then_comma() {
+        // Start with newline, then use comma - should error
+        let events = parse("{a 1\nb 2, c 3}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::MixedSeparators,
+                    ..
+                }
+            )),
+            "Expected MixedSeparators error when newline mode followed by comma"
+        );
+    }
+
+    // [verify r[object.separators]]
+    #[test]
+    fn test_consistent_comma_separators() {
+        // All commas - should be fine
+        let events = parse("{a 1, b 2, c 3}");
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::MixedSeparators,
+                    ..
+                }
+            )),
+            "Should not have MixedSeparators error for consistent comma separators"
+        );
+    }
+
+    // [verify r[object.separators]]
+    #[test]
+    fn test_consistent_newline_separators() {
+        // All newlines - should be fine
+        let events = parse("{a 1\nb 2\nc 3}");
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::MixedSeparators,
+                    ..
+                }
+            )),
+            "Should not have MixedSeparators error for consistent newline separators"
+        );
     }
 }

@@ -4,6 +4,27 @@
 //! It's designed to be used by higher-level tools like `styx-tree` (document tree)
 //! and `facet-styx` (serde-like deserialization).
 
+// Conditional tracing macros
+#[cfg(feature = "tracing")]
+macro_rules! trace {
+    ($($arg:tt)*) => { ::tracing::trace!($($arg)*) };
+}
+
+#[cfg(not(feature = "tracing"))]
+macro_rules! trace {
+    ($($arg:tt)*) => {};
+}
+
+#[cfg(feature = "tracing")]
+macro_rules! debug {
+    ($($arg:tt)*) => { ::tracing::debug!($($arg)*) };
+}
+
+#[cfg(not(feature = "tracing"))]
+macro_rules! debug {
+    ($($arg:tt)*) => {};
+}
+
 pub mod callback;
 pub mod event;
 mod lexer;

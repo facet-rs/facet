@@ -149,4 +149,13 @@ pub enum ParseErrorKind {
     ExpectedValue,
     /// Unexpected end of input.
     UnexpectedEof,
+    /// Duplicate key in object.
+    // [impl r[entry.key-equality]]
+    DuplicateKey,
+    /// Invalid tag name (must match pattern).
+    InvalidTagName,
+    /// Invalid key (e.g., heredoc used as key).
+    InvalidKey,
+    /// Dangling doc comment (not followed by entry).
+    DanglingDocComment,
 }
