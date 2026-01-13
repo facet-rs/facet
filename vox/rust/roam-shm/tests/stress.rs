@@ -267,8 +267,12 @@ fn stress_guest_attach_detach_cycle() {
 }
 
 #[test]
-#[ignore] // This test uses threads and may not work under Miri
 fn stress_concurrent_send_recv() {
+    // Skip under Miri - this test uses threads which Miri doesn't handle well
+    if cfg!(miri) {
+        return;
+    }
+
     let config = SegmentConfig {
         ring_size: 256,
         ..SegmentConfig::default()
