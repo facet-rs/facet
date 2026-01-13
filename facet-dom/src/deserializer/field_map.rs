@@ -69,6 +69,9 @@ pub(crate) struct StructFieldMap {
     /// Flattened child fields - child fields from flattened structs that appear as siblings.
     /// Keyed by the child's element name (rename or field name).
     flattened_children: HashMap<&'static str, Vec<FlattenedChildInfo>>,
+    /// Flattened attribute fields - attribute fields from flattened structs.
+    /// Keyed by the attribute name (rename or field name).
+    flattened_attributes: HashMap<&'static str, Vec<FlattenedChildInfo>>,
     /// Flattened enum field - enum variants match against child elements directly.
     /// Only one flattened enum is supported per struct.
     pub flattened_enum: Option<FlattenedEnumInfo>,
@@ -97,6 +100,8 @@ impl StructFieldMap {
         let mut text_field = None;
         let mut tag_field = None;
         let mut flattened_children: HashMap<&'static str, Vec<FlattenedChildInfo>> = HashMap::new();
+        let mut flattened_attributes: HashMap<&'static str, Vec<FlattenedChildInfo>> =
+            HashMap::new();
         let mut flattened_enum: Option<FlattenedEnumInfo> = None;
         let mut flattened_maps: Vec<FieldInfo> = Vec::new();
         let mut flattened_attr_maps: Vec<FieldInfo> = Vec::new();
@@ -160,6 +165,9 @@ impl StructFieldMap {
                             parent_is_option,
                         };
 
+                        // Determine if this is an attribute field or an element field
+                        let is_attribute = child_field.is_attribute();
+
                         trace!(
                             parent_idx = idx,
                             parent_name = %field.name,
@@ -167,26 +175,50 @@ impl StructFieldMap {
                             child_name = %child_field.name,
                             child_key = %child_key,
                             parent_is_option,
+                            is_attribute,
                             "registering flattened child"
                         );
 
-                        flattened_children
-                            .entry(child_key)
-                            .or_default()
-                            .push(flattened_child.clone());
-
-                        // Also register alias if present
-                        if let Some(alias) = child_field.alias {
-                            trace!(
-                                parent_idx = idx,
-                                child_idx,
-                                alias = %alias,
-                                "registering flattened child alias"
-                            );
-                            flattened_children
-                                .entry(alias)
+                        if is_attribute {
+                            // Register as flattened attribute
+                            flattened_attributes
+                                .entry(child_key)
                                 .or_default()
-                                .push(flattened_child);
+                                .push(flattened_child.clone());
+
+                            // Also register alias if present
+                            if let Some(alias) = child_field.alias {
+                                trace!(
+                                    parent_idx = idx,
+                                    child_idx,
+                                    alias = %alias,
+                                    "registering flattened attribute alias"
+                                );
+                                flattened_attributes
+                                    .entry(alias)
+                                    .or_default()
+                                    .push(flattened_child);
+                            }
+                        } else {
+                            // Register as flattened element
+                            flattened_children
+                                .entry(child_key)
+                                .or_default()
+                                .push(flattened_child.clone());
+
+                            // Also register alias if present
+                            if let Some(alias) = child_field.alias {
+                                trace!(
+                                    parent_idx = idx,
+                                    child_idx,
+                                    alias = %alias,
+                                    "registering flattened child alias"
+                                );
+                                flattened_children
+                                    .entry(alias)
+                                    .or_default()
+                                    .push(flattened_child);
+                            }
                         }
                     }
                 } else if is_flattened_map(field) {
@@ -351,6 +383,7 @@ impl StructFieldMap {
             tag_field,
             tuple_fields,
             flattened_children,
+            flattened_attributes,
             flattened_enum,
             flattened_maps,
             flattened_attr_maps,
@@ -430,6 +463,36 @@ impl StructFieldMap {
             ?namespace,
             found = result.is_some(),
             "find_flattened_child"
+        );
+        result
+    }
+
+    /// Find a flattened attribute field by name and namespace.
+    ///
+    /// Returns `Some` if the name matches an attribute field from a flattened struct.
+    pub fn find_flattened_attribute(
+        &self,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Option<&FlattenedChildInfo> {
+        let result = self.flattened_attributes.get(name).and_then(|children| {
+            // First try to find an exact namespace match
+            let exact_match = children.iter().find(|info| {
+                info.child_info.namespace.is_some() && info.child_info.namespace == namespace
+            });
+            if exact_match.is_some() {
+                return exact_match;
+            }
+            // Fall back to a field with no namespace constraint
+            children
+                .iter()
+                .find(|info| info.child_info.namespace.is_none())
+        });
+        trace!(
+            name,
+            ?namespace,
+            found = result.is_some(),
+            "find_flattened_attribute"
         );
         result
     }

@@ -1779,6 +1779,7 @@ dependencies = [
  "facet-core",
  "facet-dessert",
  "facet-reflect",
+ "facet-solver",
  "tracing",
 ]
 
@@ -1846,11 +1847,10 @@ dependencies = [
  "facet-assert",
  "facet-core",
  "facet-diff",
- "facet-format",
+ "facet-dom",
  "facet-html-dom",
  "facet-reflect",
  "facet-showcase",
- "facet-xml",
  "html5gum",
  "indoc",
  "itoa",

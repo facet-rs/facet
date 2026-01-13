@@ -4,7 +4,9 @@
 //! without panicking or producing errors.
 
 use facet::Facet;
-use facet_format::FormatDeserializer;
+use facet_dom::DomDeserializer;
+use facet_dom::DomParser;
+use facet_html as html;
 use facet_html::HtmlParser;
 use std::fs;
 use std::path::Path;
@@ -26,7 +28,7 @@ struct MinimalHead {
 
 #[derive(Debug, Facet)]
 struct MinimalBody {
-    #[facet(facet_xml::text, default)]
+    #[facet(html::text, default)]
     text: String,
 }
 
@@ -60,7 +62,7 @@ fn parse_all_fixtures_without_panic() {
             // Test that parsing doesn't panic
             let result = std::panic::catch_unwind(|| {
                 let parser = HtmlParser::new(&content);
-                let mut deserializer = FormatDeserializer::new(parser);
+                let mut deserializer = DomDeserializer::new_owned(parser);
                 // Try to deserialize - we don't care about the result, just that it doesn't panic
                 let _: Result<MinimalDoc, _> = deserializer.deserialize();
             });
@@ -80,11 +82,9 @@ fn parse_all_fixtures_without_panic() {
     println!("Successfully parsed {} fixture files", count);
 }
 
-/// Test that all fixtures produce valid ParseEvent streams.
+/// Test that all fixtures produce valid DomEvent streams.
 #[test_log::test]
 fn all_fixtures_produce_valid_events() {
-    use facet_format::FormatParser;
-
     let fixtures = fixtures_dir();
     if !fixtures.exists() {
         return;
@@ -141,11 +141,11 @@ fn issue_1568_no_panic_on_error_cleanup() {
 
     // Load the HTML fixture that triggers the bug
     let fixture_path = fixtures_dir().join("issue-1568.html");
-    let html = fs::read(&fixture_path).expect("Failed to read issue-1568.html fixture");
+    let html_content = fs::read(&fixture_path).expect("Failed to read issue-1568.html fixture");
 
     // This should NOT panic during error cleanup (issue #1568 fix)
     let result = std::panic::catch_unwind(|| {
-        facet_html::from_str::<Html>(std::str::from_utf8(&html).unwrap())
+        facet_html::from_str::<Html>(std::str::from_utf8(&html_content).unwrap())
     });
 
     // Verify we didn't panic

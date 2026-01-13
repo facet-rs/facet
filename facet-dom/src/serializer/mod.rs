@@ -506,6 +506,14 @@ where
                     DomSerializeError::Unsupported(Cow::Borrowed("newtype variant missing field"))
                 })?;
 
+            // Text variant (html::text or xml::text) - emit as plain text, no element wrapper
+            if variant.is_text() {
+                if let Some(s) = value_to_string(inner, serializer) {
+                    serializer.text(&s).map_err(DomSerializeError::Backend)?;
+                }
+                return Ok(());
+            }
+
             if untagged {
                 return serialize_value(serializer, inner, element_name);
             }

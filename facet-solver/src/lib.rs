@@ -15,9 +15,127 @@ use facet_core::{Def, Field, Shape, StructType, Type, UserType, Variant};
 
 // Re-export resolution types from facet-reflect
 pub use facet_reflect::{
-    DuplicateFieldError, FieldInfo, FieldPath, KeyPath, MatchResult, PathSegment, Resolution,
-    VariantSelection,
+    DuplicateFieldError, FieldCategory, FieldInfo, FieldPath, KeyPath, MatchResult, PathSegment,
+    Resolution, VariantSelection,
 };
+
+/// Format determines how fields are categorized and indexed in the schema.
+///
+/// Different serialization formats have different concepts of "fields":
+/// - Flat formats (JSON, TOML, YAML) treat all fields as key-value pairs
+/// - DOM formats (XML, HTML) distinguish attributes, elements, and text content
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Format {
+    /// Flat key-value formats (JSON, TOML, YAML, etc.)
+    ///
+    /// All fields are treated as keys with no distinction. The solver
+    /// uses `see_key()` to report field names.
+    #[default]
+    Flat,
+
+    /// DOM/tree formats (XML, HTML)
+    ///
+    /// Fields are categorized as attributes, elements, or text content.
+    /// The solver uses `see_attribute()`, `see_element()`, etc. to report
+    /// fields with their category.
+    Dom,
+}
+
+/// A key for field lookup in the solver.
+///
+/// For flat formats (JSON, TOML), keys are just field names.
+/// For DOM formats (XML, HTML), keys include a category (attribute, element, text).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Key<'a> {
+    /// Flat format key - just a name (for JSON, TOML, YAML, etc.)
+    Flat(Cow<'a, str>),
+    /// DOM format key - category + name (for XML, HTML)
+    Dom(FieldCategory, Cow<'a, str>),
+}
+
+impl<'a> Key<'a> {
+    /// Create a flat key from a string.
+    pub fn flat(name: impl Into<Cow<'a, str>>) -> Self {
+        Key::Flat(name.into())
+    }
+
+    /// Create a DOM attribute key.
+    pub fn attribute(name: impl Into<Cow<'a, str>>) -> Self {
+        Key::Dom(FieldCategory::Attribute, name.into())
+    }
+
+    /// Create a DOM element key.
+    pub fn element(name: impl Into<Cow<'a, str>>) -> Self {
+        Key::Dom(FieldCategory::Element, name.into())
+    }
+
+    /// Create a DOM text key (name is typically empty or a sentinel).
+    pub fn text() -> Self {
+        Key::Dom(FieldCategory::Text, Cow::Borrowed(""))
+    }
+
+    /// Create a DOM tag key.
+    pub fn tag() -> Self {
+        Key::Dom(FieldCategory::Tag, Cow::Borrowed(""))
+    }
+
+    /// Create a DOM elements key (catch-all for unmatched children).
+    pub fn elements() -> Self {
+        Key::Dom(FieldCategory::Elements, Cow::Borrowed(""))
+    }
+
+    /// Get the name portion of the key.
+    pub fn name(&self) -> &str {
+        match self {
+            Key::Flat(name) => name.as_ref(),
+            Key::Dom(_, name) => name.as_ref(),
+        }
+    }
+
+    /// Get the category if this is a DOM key.
+    pub fn category(&self) -> Option<FieldCategory> {
+        match self {
+            Key::Flat(_) => None,
+            Key::Dom(cat, _) => Some(*cat),
+        }
+    }
+
+    /// Convert to an owned version.
+    pub fn into_owned(self) -> Key<'static> {
+        match self {
+            Key::Flat(name) => Key::Flat(Cow::Owned(name.into_owned())),
+            Key::Dom(cat, name) => Key::Dom(cat, Cow::Owned(name.into_owned())),
+        }
+    }
+}
+
+// Allow &str to be converted to a flat Key for backwards compatibility
+impl<'a> From<&'a str> for Key<'a> {
+    fn from(s: &'a str) -> Self {
+        Key::Flat(Cow::Borrowed(s))
+    }
+}
+
+impl From<String> for Key<'static> {
+    fn from(s: String) -> Self {
+        Key::Flat(Cow::Owned(s))
+    }
+}
+
+impl<'a> From<Cow<'a, str>> for Key<'a> {
+    fn from(s: Cow<'a, str>) -> Self {
+        Key::Flat(s)
+    }
+}
+
+impl fmt::Display for Key<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Key::Flat(name) => write!(f, "{}", name),
+            Key::Dom(cat, name) => write!(f, "{:?}:{}", cat, name),
+        }
+    }
+}
 
 /// Cached schema for a type that may contain flattened fields.
 ///
@@ -29,15 +147,22 @@ pub struct Schema {
     #[allow(dead_code)]
     shape: &'static Shape,
 
+    /// The format this schema was built for.
+    format: Format,
+
     /// All possible resolutions of this type.
     /// For types with no enums in flatten paths, this has exactly 1 entry.
     /// For types with enums, this has one entry per valid combination of variants.
     resolutions: Vec<Resolution>,
 
-    /// Inverted index: field_name → bitmask of configuration indices.
+    /// Inverted index for Flat format: field_name → bitmask of configuration indices.
     /// Bit i is set if `resolutions[i]` contains this field.
     /// Uses a `Vec<u64>` to support arbitrary numbers of resolutions.
     field_to_resolutions: BTreeMap<&'static str, ResolutionSet>,
+
+    /// Inverted index for Dom format: (category, name) → bitmask of configuration indices.
+    /// Only populated when format is Dom.
+    dom_field_to_resolutions: BTreeMap<(FieldCategory, &'static str), ResolutionSet>,
 }
 
 /// Handle that identifies a specific resolution inside a schema.
@@ -512,8 +637,8 @@ pub struct Solver<'a> {
     /// Bitmask of remaining candidate configuration indices
     candidates: ResolutionSet,
     /// Set of seen keys for required field checking.
-    /// Uses Cow to allow both borrowed keys (zero-copy) and owned keys (when needed).
-    seen_keys: BTreeSet<Cow<'a, str>>,
+    /// For Flat format, stores Key::Flat. For Dom format, stores Key::Dom.
+    seen_keys: BTreeSet<Key<'a>>,
 }
 
 impl<'a> Solver<'a> {
@@ -534,12 +659,51 @@ impl<'a> Solver<'a> {
     /// - `Unknown`: Key not found in any candidate
     ///
     /// Accepts both borrowed (`&str`) and owned (`String`) keys via `Cow`.
-    pub fn see_key(&mut self, key: impl Into<Cow<'a, str>>) -> KeyResult<'a> {
+    /// For DOM format, use `see_attribute()`, `see_element()`, etc. instead.
+    pub fn see_key(&mut self, key: impl Into<Key<'a>>) -> KeyResult<'a> {
         let key = key.into();
+        self.see_key_internal(key)
+    }
+
+    /// Report an attribute key (DOM format only).
+    pub fn see_attribute(&mut self, name: impl Into<Cow<'a, str>>) -> KeyResult<'a> {
+        self.see_key_internal(Key::attribute(name))
+    }
+
+    /// Report an element key (DOM format only).
+    pub fn see_element(&mut self, name: impl Into<Cow<'a, str>>) -> KeyResult<'a> {
+        self.see_key_internal(Key::element(name))
+    }
+
+    /// Report a text content key (DOM format only).
+    pub fn see_text(&mut self) -> KeyResult<'a> {
+        self.see_key_internal(Key::text())
+    }
+
+    /// Internal implementation of key lookup.
+    fn see_key_internal(&mut self, key: Key<'a>) -> KeyResult<'a> {
         self.seen_keys.insert(key.clone());
 
-        // Key-based filtering
-        let resolutions_with_key = match self.schema.field_to_resolutions.get(key.as_ref()) {
+        // Key-based filtering - use appropriate index based on format
+        let resolutions_with_key = match (&key, self.schema.format) {
+            (Key::Flat(name), Format::Flat) => self.schema.field_to_resolutions.get(name.as_ref()),
+            (Key::Flat(name), Format::Dom) => {
+                // Flat key on DOM schema - try as element (most common)
+                self.schema
+                    .dom_field_to_resolutions
+                    .get(&(FieldCategory::Element, name.as_ref()))
+            }
+            (Key::Dom(cat, name), Format::Dom) => self
+                .schema
+                .dom_field_to_resolutions
+                .get(&(*cat, name.as_ref())),
+            (Key::Dom(_, name), Format::Flat) => {
+                // DOM key on flat schema - ignore category
+                self.schema.field_to_resolutions.get(name.as_ref())
+            }
+        };
+
+        let resolutions_with_key = match resolutions_with_key {
             Some(set) => set,
             None => return KeyResult::Unknown,
         };
@@ -560,7 +724,18 @@ impl<'a> Solver<'a> {
         let mut unique_fields: Vec<&'a FieldInfo> = Vec::new();
         for idx in self.candidates.iter() {
             let config = &self.schema.resolutions[idx];
-            if let Some(info) = config.field(key.as_ref()) {
+            if let Some(info) = config.field(key.name()) {
+                // For DOM format, also check category matches
+                if self.schema.format == Format::Dom {
+                    if let Key::Dom(cat, _) = &key {
+                        let field_cat = info.category.unwrap_or_else(|| {
+                            FieldCategory::from_field(info.field).unwrap_or(FieldCategory::Element)
+                        });
+                        if field_cat != *cat {
+                            continue;
+                        }
+                    }
+                }
                 // Deduplicate by shape pointer
                 if !unique_fields
                     .iter()
@@ -576,6 +751,8 @@ impl<'a> Solver<'a> {
             KeyResult::Unambiguous {
                 shape: unique_fields[0].value_shape,
             }
+        } else if unique_fields.is_empty() {
+            KeyResult::Unknown
         } else {
             // Different types - need disambiguation
             // Attach specificity scores so caller can pick most specific when multiple match
@@ -739,8 +916,14 @@ impl<'a> Solver<'a> {
     }
 
     /// Get the seen keys.
-    pub const fn seen_keys(&self) -> &BTreeSet<Cow<'a, str>> {
+    /// Get the seen keys.
+    pub const fn seen_keys(&self) -> &BTreeSet<Key<'a>> {
         &self.seen_keys
+    }
+
+    /// Check if a field name was seen (regardless of category for DOM format).
+    pub fn was_field_seen(&self, field_name: &str) -> bool {
+        self.seen_keys.iter().any(|k| k.name() == field_name)
     }
 
     #[inline]
@@ -822,7 +1005,7 @@ impl<'a> Solver<'a> {
     /// This is useful when the key is known to be present through means other than
     /// parsing (e.g., type annotations). Call this after `hint_variant` to mark
     /// the variant name as seen so that `finish()` doesn't report it as missing.
-    pub fn mark_seen(&mut self, key: impl Into<Cow<'a, str>>) {
+    pub fn mark_seen(&mut self, key: impl Into<Key<'a>>) {
         self.seen_keys.insert(key.into());
     }
 
@@ -1028,8 +1211,8 @@ impl<'a> Solver<'a> {
         // Find unknown fields (fields in input that don't exist in ANY resolution)
         let unknown_fields: Vec<String> = seen_keys
             .iter()
-            .filter(|k| !all_known_fields.contains(k.as_ref()))
-            .map(|s| s.to_string())
+            .filter(|k| !all_known_fields.contains(k.name()))
+            .map(|k| k.name().to_string())
             .collect();
 
         // Compute suggestions for unknown fields
@@ -1047,7 +1230,7 @@ impl<'a> Solver<'a> {
             sort_candidates_by_closeness(&mut candidate_failures);
 
             return Err(SolverError::NoMatch {
-                input_fields: seen_keys.iter().map(|s| s.to_string()).collect(),
+                input_fields: seen_keys.iter().map(|k| k.name().to_string()).collect(),
                 missing_required: Vec::new(),
                 missing_required_detailed: Vec::new(),
                 unknown_fields,
@@ -1065,7 +1248,7 @@ impl<'a> Solver<'a> {
                 config
                     .required_field_names()
                     .iter()
-                    .all(|f| seen_keys.iter().any(|k| k.as_ref() == *f))
+                    .all(|f| seen_keys.iter().any(|k| k.name() == *f))
             })
             .collect();
 
@@ -1095,7 +1278,7 @@ impl<'a> Solver<'a> {
                         let missing: Vec<_> = config
                             .required_field_names()
                             .iter()
-                            .filter(|f| !seen_keys.iter().any(|k| k.as_ref() == **f))
+                            .filter(|f| !seen_keys.iter().any(|k| k.name() == **f))
                             .copied()
                             .collect();
                         let missing_detailed: Vec<_> = missing
@@ -1140,20 +1323,20 @@ impl<'a> Solver<'a> {
 /// Build a CandidateFailure for a resolution given the seen keys.
 fn build_candidate_failure<'a>(
     config: &Resolution,
-    seen_keys: &BTreeSet<Cow<'a, str>>,
+    seen_keys: &BTreeSet<Key<'a>>,
 ) -> CandidateFailure {
     let missing_fields: Vec<MissingFieldInfo> = config
         .required_field_names()
         .iter()
-        .filter(|f| !seen_keys.iter().any(|k| k.as_ref() == **f))
+        .filter(|f| !seen_keys.iter().any(|k| k.name() == **f))
         .filter_map(|f| config.field(f))
         .map(MissingFieldInfo::from_field_info)
         .collect();
 
     let unknown_fields: Vec<String> = seen_keys
         .iter()
-        .filter(|k| !config.fields().contains_key(k.as_ref()))
-        .map(|s| s.to_string())
+        .filter(|k| !config.fields().contains_key(k.name()))
+        .map(|k| k.name().to_string())
         .collect();
 
     // Compute closeness score for ranking
@@ -1907,6 +2090,30 @@ impl Schema {
     pub fn resolutions(&self) -> &[Resolution] {
         &self.resolutions
     }
+
+    /// Get the format this schema was built for.
+    pub const fn format(&self) -> Format {
+        self.format
+    }
+
+    /// Build a schema for DOM format (XML, HTML) with auto-detected enum representation.
+    ///
+    /// In DOM format, fields are categorized as attributes, elements, or text content.
+    /// The solver uses `see_attribute()`, `see_element()`, etc. to report fields.
+    pub fn build_dom(shape: &'static Shape) -> Result<Self, SchemaError> {
+        let builder = SchemaBuilder::new(shape, EnumRepr::Flattened)
+            .with_auto_detect()
+            .with_format(Format::Dom);
+        builder.into_schema()
+    }
+
+    /// Build a schema with a specific format.
+    pub fn build_with_format(shape: &'static Shape, format: Format) -> Result<Self, SchemaError> {
+        let builder = SchemaBuilder::new(shape, EnumRepr::Flattened)
+            .with_auto_detect()
+            .with_format(format);
+        builder.into_schema()
+    }
 }
 
 struct SchemaBuilder {
@@ -1915,6 +2122,8 @@ struct SchemaBuilder {
     /// If true, detect enum representation from each enum's shape attributes.
     /// If false, use `enum_repr` for all enums.
     auto_detect_enum_repr: bool,
+    /// The format to build the schema for.
+    format: Format,
 }
 
 impl SchemaBuilder {
@@ -1923,11 +2132,17 @@ impl SchemaBuilder {
             shape,
             enum_repr,
             auto_detect_enum_repr: false,
+            format: Format::Flat,
         }
     }
 
     const fn with_auto_detect(mut self) -> Self {
         self.auto_detect_enum_repr = true;
+        self
+    }
+
+    const fn with_format(mut self, format: Format) -> Self {
+        self.format = format;
         self
     }
 
@@ -2052,6 +2267,7 @@ impl SchemaBuilder {
                 required,
                 value_shape: field.shape(),
                 field,
+                category: FieldCategory::from_field(field),
             };
 
             for config in &mut configs {
@@ -2377,6 +2593,7 @@ impl SchemaBuilder {
                                     required: !is_optional_flatten,
                                     value_shape: shape, // The enum shape
                                     field,              // The original flatten field
+                                    category: Some(FieldCategory::Element), // Variant selector is like an element
                                 };
                                 forked.add_field(variant_field_info)?;
 
@@ -2437,6 +2654,7 @@ impl SchemaBuilder {
                                     required: !is_optional_flatten,
                                     value_shape: shape, // The enum shape
                                     field,              // The original flatten field
+                                    category: Some(FieldCategory::Element), // Tag is a key field
                                 };
                                 forked.add_field(tag_field_info)?;
 
@@ -2479,6 +2697,7 @@ impl SchemaBuilder {
                                     required: !is_optional_flatten,
                                     value_shape: shape, // The enum shape
                                     field,              // The original flatten field
+                                    category: Some(FieldCategory::Element), // Tag is a key field
                                 };
                                 forked.add_field(tag_field_info)?;
 
@@ -2518,6 +2737,7 @@ impl SchemaBuilder {
                     required,
                     value_shape: shape,
                     field,
+                    category: FieldCategory::from_field(field),
                 };
 
                 let mut result = configs;
@@ -2585,7 +2805,7 @@ impl SchemaBuilder {
         let resolutions = self.analyze()?;
         let num_resolutions = resolutions.len();
 
-        // Build inverted index: field_name → bitmask of config indices
+        // Build inverted index: field_name → bitmask of config indices (for Flat format)
         let mut field_to_resolutions: BTreeMap<&'static str, ResolutionSet> = BTreeMap::new();
         for (idx, config) in resolutions.iter().enumerate() {
             for field_name in config.fields().keys() {
@@ -2596,10 +2816,32 @@ impl SchemaBuilder {
             }
         }
 
+        // Build DOM inverted index: (category, name) → bitmask of config indices
+        let mut dom_field_to_resolutions: BTreeMap<(FieldCategory, &'static str), ResolutionSet> =
+            BTreeMap::new();
+        if self.format == Format::Dom {
+            for (idx, config) in resolutions.iter().enumerate() {
+                for (field_name, field_info) in config.fields() {
+                    // Get the category from the field
+                    let category = field_info.category.unwrap_or_else(|| {
+                        // Compute from field if not already set
+                        FieldCategory::from_field(field_info.field)
+                            .unwrap_or(FieldCategory::Element)
+                    });
+                    dom_field_to_resolutions
+                        .entry((category, *field_name))
+                        .or_insert_with(|| ResolutionSet::empty(num_resolutions))
+                        .insert(idx);
+                }
+            }
+        }
+
         Ok(Schema {
             shape: self.shape,
+            format: self.format,
             resolutions,
             field_to_resolutions,
+            dom_field_to_resolutions,
         })
     }
 }

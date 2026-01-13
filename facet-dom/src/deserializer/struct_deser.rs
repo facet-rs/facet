@@ -88,7 +88,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         mut self,
         mut wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        if self.field_map.has_flatten {
+        if self.field_map.has_flatten && !wip.is_deferred() {
             trace!("enabling deferred mode for struct with flatten");
             wip = wip.begin_deferred()?;
             self.using_deferred = true;
@@ -153,6 +153,34 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                             .dom_deser
                             .set_string_value_with_proxy(wip.begin_nth_field(idx)?, value)?
                             .end()?;
+                    } else if let Some(flattened) = self
+                        .field_map
+                        .find_flattened_attribute(&name, namespace.as_ref().map(|c| c.as_ref()))
+                        .cloned()
+                    {
+                        // Handle attribute from a flattened struct (e.g., GlobalAttrs)
+                        let parent_idx = flattened.parent_idx;
+                        let child_idx = flattened.child_idx;
+                        trace!(parent_idx, child_idx, field_name = %flattened.child_info.field.name, "matched flattened attribute field");
+
+                        // Navigate into the flattened parent, then to the child field
+                        let parent_wip = wip.begin_nth_field(parent_idx)?;
+                        let parent_wip = if flattened.parent_is_option {
+                            parent_wip.begin_some()?
+                        } else {
+                            parent_wip
+                        };
+                        wip = self
+                            .dom_deser
+                            .set_string_value_with_proxy(
+                                parent_wip.begin_nth_field(child_idx)?,
+                                value,
+                            )?
+                            .end()?;
+                        if flattened.parent_is_option {
+                            wip = wip.end()?;
+                        }
+                        wip = wip.end()?;
                     } else if !self.field_map.flattened_attr_maps.is_empty() {
                         // Try to add to flattened attribute map
                         let map_info = self.field_map.flattened_attr_maps.iter().find(|info| {
@@ -253,6 +281,19 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         } else if self.field_map.text_field.is_some() {
             trace!("accumulating text for text field");
             self.text_content.push_str(&text);
+        } else if self.field_map.elements_field.is_some() {
+            // Mixed content: text before any elements - start the list and add text
+            let info = self.field_map.elements_field.as_ref().unwrap();
+            let idx = info.idx;
+            trace!(idx, field_name = %info.field.name, "starting elements list for initial text");
+            wip = wip.begin_nth_field(idx)?.init_list()?;
+            self.elements_list_started = true;
+            trace!("adding text as list item (mixed content)");
+            wip = wip.begin_list_item()?;
+            wip = self
+                .dom_deser
+                .deserialize_text_into_enum(wip, text)?
+                .end()?;
         } else if self.struct_def.kind == StructKind::TupleStruct
             && self.struct_def.fields.len() == 1
         {

@@ -17,6 +17,49 @@ use core::fmt;
 
 use facet_core::{Field, Shape};
 
+/// Category of a field in DOM formats (XML, HTML).
+///
+/// This categorizes how a field is represented in tree-based formats where
+/// attributes, child elements, and text content are distinct concepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum FieldCategory {
+    /// Field is an attribute (`#[facet(attribute)]`, `xml::attribute`, `html::attribute`)
+    Attribute,
+    /// Field is a child element (default for structs, or explicit `xml::element`)
+    Element,
+    /// Field captures text content (`xml::text`, `html::text`)
+    Text,
+    /// Field captures the tag name (`xml::tag`, `html::tag`)
+    Tag,
+    /// Field captures all unmatched children (`xml::elements`)
+    Elements,
+}
+
+impl FieldCategory {
+    /// Determine the category of a field based on its attributes.
+    ///
+    /// Returns `None` for flattened fields (they don't have a single category)
+    /// or fields that capture unknown content (maps).
+    pub fn from_field(field: &Field) -> Option<Self> {
+        if field.is_flattened() {
+            // Flattened fields don't have a category - their children do
+            return None;
+        }
+        if field.is_attribute() {
+            Some(FieldCategory::Attribute)
+        } else if field.is_text() {
+            Some(FieldCategory::Text)
+        } else if field.is_tag() {
+            Some(FieldCategory::Tag)
+        } else if field.is_elements() {
+            Some(FieldCategory::Elements)
+        } else {
+            // Default: child element
+            Some(FieldCategory::Element)
+        }
+    }
+}
+
 /// A path of serialized key names for probing.
 /// Unlike FieldPath which tracks the internal type structure (including variant selections),
 /// KeyPath only tracks the keys as they appear in the serialized format.
@@ -148,6 +191,10 @@ pub struct FieldInfo {
 
     /// The original field definition (for accessing flags, attributes, etc.)
     pub field: &'static Field,
+
+    /// Category for DOM formats (attribute, element, text, etc.)
+    /// This is `None` for flat formats or when the category cannot be determined.
+    pub category: Option<FieldCategory>,
 }
 
 impl PartialEq for FieldInfo {
@@ -157,6 +204,7 @@ impl PartialEq for FieldInfo {
             && self.required == other.required
             && core::ptr::eq(self.value_shape, other.value_shape)
             && core::ptr::eq(self.field, other.field)
+            && self.category == other.category
     }
 }
 

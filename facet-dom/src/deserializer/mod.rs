@@ -266,8 +266,25 @@ where
                 DomDeserializeError::Unsupported("enum has no Text variant for text content".into())
             })?;
 
+        let variant = &enum_def.variants[text_variant_idx];
         wip = wip.select_nth_variant(text_variant_idx)?;
-        wip = self.set_string_value(wip, text)?;
+
+        // Handle the variant based on its kind
+        match variant.data.kind {
+            StructKind::TupleStruct => {
+                // Newtype variant like Text(String) - navigate to field 0
+                wip = wip.begin_nth_field(0)?;
+                wip = self.set_string_value(wip, text)?;
+                wip = wip.end()?;
+            }
+            StructKind::Unit => {
+                // Unit variant - nothing to set (unusual for text variant but handle it)
+            }
+            _ => {
+                // For other kinds, try direct set (may fail)
+                wip = self.set_string_value(wip, text)?;
+            }
+        }
 
         Ok(wip)
     }
