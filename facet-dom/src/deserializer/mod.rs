@@ -74,6 +74,7 @@ where
                 Def::Pointer(_) => self.deserialize_pointer(wip),
                 Def::List(_) => self.deserialize_list(wip),
                 Def::Set(_) => self.deserialize_set(wip),
+                Def::Map(_) => self.deserialize_map(wip),
                 Def::Option(_) => self.deserialize_option(wip),
                 _ => Err(DomDeserializeError::Unsupported(format!(
                     "unsupported type: {:?}",
@@ -393,6 +394,10 @@ where
                         }
                         trace!("adding element to elements collection");
                         wip = wip.begin_list_item()?.deserialize_with(self)?.end()?;
+                    } else if wip.shape().has_deny_unknown_fields_attr() {
+                        return Err(DomDeserializeError::UnknownElement {
+                            tag: tag.to_string(),
+                        });
                     } else {
                         trace!(tag = %tag, "skipping unknown element");
                         self.parser
@@ -764,6 +769,108 @@ where
 
             wip = wip.begin_set_item()?.deserialize_with(self)?.end()?;
         }
+
+        Ok(wip)
+    }
+
+    /// Deserialize a map type (HashMap, BTreeMap, etc.).
+    ///
+    /// In XML, maps use a **wrapped** model:
+    /// - The field name becomes a wrapper element
+    /// - Each child element becomes a map entry (tag = key, content = value)
+    ///
+    /// Example: `<data><alpha>1</alpha><beta>2</beta></data>` -> {"alpha": 1, "beta": 2}
+    ///
+    /// # Parser State Contract
+    ///
+    /// **Entry:** Parser is positioned at the wrapper element's `NodeStart`.
+    ///
+    /// **Exit:** Parser has consumed through the wrapper element's `NodeEnd`.
+    fn deserialize_map(
+        &mut self,
+        mut wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        // Consume the wrapper element's NodeStart
+        let event = self.parser.peek_event_or_eof("NodeStart for map wrapper")?;
+        match event {
+            DomEvent::NodeStart { tag, .. } => {
+                trace!(wrapper_tag = %tag, "map wrapper element");
+                let _ = self.parser.expect_node_start()?;
+            }
+            other => {
+                return Err(DomDeserializeError::TypeMismatch {
+                    expected: "NodeStart for map wrapper",
+                    got: format!("{other:?}"),
+                });
+            }
+        }
+
+        // Skip attributes on the wrapper element
+        loop {
+            let event = self
+                .parser
+                .peek_event_or_eof("Attribute or ChildrenStart or NodeEnd")?;
+            match event {
+                DomEvent::Attribute { .. } => {
+                    self.parser.expect_attribute()?;
+                }
+                DomEvent::ChildrenStart => {
+                    self.parser.expect_children_start()?;
+                    break;
+                }
+                DomEvent::NodeEnd => {
+                    // Empty map (void element)
+                    self.parser.expect_node_end()?;
+                    return Ok(wip.init_map()?);
+                }
+                other => {
+                    return Err(DomDeserializeError::TypeMismatch {
+                        expected: "Attribute or ChildrenStart or NodeEnd",
+                        got: format!("{other:?}"),
+                    });
+                }
+            }
+        }
+
+        wip = wip.init_map()?;
+
+        // Now parse map entries from children
+        loop {
+            let event = self.parser.peek_event_or_eof("child or ChildrenEnd")?;
+            match event {
+                DomEvent::ChildrenEnd => break,
+                DomEvent::NodeStart { tag, .. } => {
+                    let key = tag.clone();
+                    trace!(key = %key, "map entry");
+
+                    // Set the key (element name)
+                    wip = wip.begin_key()?;
+                    wip = self.set_string_value(wip, key)?;
+                    wip = wip.end()?;
+
+                    // Deserialize the value (element content)
+                    wip = wip.begin_value()?.deserialize_with(self)?.end()?;
+                }
+                DomEvent::Text(_) | DomEvent::Comment(_) => {
+                    // Skip whitespace text and comments between map entries
+                    if matches!(event, DomEvent::Text(_)) {
+                        self.parser.expect_text()?;
+                    } else {
+                        self.parser.expect_comment()?;
+                    }
+                }
+                _ => {
+                    return Err(DomDeserializeError::TypeMismatch {
+                        expected: "map entry element",
+                        got: format!("{event:?}"),
+                    });
+                }
+            }
+        }
+
+        // Consume wrapper's ChildrenEnd and NodeEnd
+        self.parser.expect_children_end()?;
+        self.parser.expect_node_end()?;
 
         Ok(wip)
     }

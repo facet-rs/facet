@@ -274,9 +274,81 @@ Parses:
 </Drawing>
 ```
 
-## Capturing Unknown Content
+## Collections: Lists, Sets, and Maps
 
-Use `#[facet(flatten)]` with a `HashMap` to capture unknown attributes or elements:
+### Lists and Sets (Flat)
+
+Lists (`Vec<T>`) and sets (`HashSet<T>`, `BTreeSet<T>`) use a **flat** model — items appear directly as child elements without a wrapper. Use `#[facet(rename = "...")]` to control the element name:
+
+```rust
+use facet::Facet;
+use facet_xml as xml;
+
+#[derive(Facet)]
+struct Playlist {
+    #[facet(xml::attribute)]
+    name: String,
+    
+    #[facet(xml::elements, rename = "track")]
+    tracks: Vec<Track>,
+}
+
+#[derive(Facet)]
+struct Track {
+    #[facet(xml::attribute)]
+    title: String,
+}
+```
+
+Serializes to:
+```xml
+<Playlist name="Favorites">
+    <track title="Song A"/>
+    <track title="Song B"/>
+</Playlist>
+```
+
+Note: There is no `<tracks>` wrapper element. Each `Track` becomes a `<track>` element directly under `<Playlist>`.
+
+### Maps (Wrapped)
+
+Maps (`HashMap<K, V>`, `BTreeMap<K, V>`) use a **wrapped** model — the field name becomes a wrapper element, and each entry becomes a child element where the key is the element name and the value is the content:
+
+```rust
+use facet::Facet;
+use std::collections::HashMap;
+
+#[derive(Facet)]
+#[facet(rename = "record")]
+struct Record {
+    #[facet(rename = "data")]
+    values: HashMap<String, u32>,
+}
+```
+
+Serializes to:
+```xml
+<record>
+    <data>
+        <alpha>1</alpha>
+        <beta>2</beta>
+    </data>
+</record>
+```
+
+The field `values` (renamed to `data`) becomes the wrapper element, and each map entry (`alpha: 1`, `beta: 2`) becomes a child element.
+
+**Important:** Map keys must be valid XML element names (no spaces, must start with a letter or underscore, etc.).
+
+### Why Different Models?
+
+This matches serde-xml-rs behavior:
+- **Lists flat**: Common in real-world XML (RSS feeds, SVG shapes, SOAP arrays)
+- **Maps wrapped**: Provides clear grouping and avoids ambiguity with other fields
+
+### Capturing Unknown Attributes
+
+Use `#[facet(flatten)]` with a `HashMap` to capture unknown **attributes** (not elements):
 
 ```rust
 use facet::Facet;
@@ -293,7 +365,7 @@ struct DivWithExtras {
     
     /// Captures data-*, aria-*, and other unknown attributes
     #[facet(flatten, default)]
-    extra: HashMap<String, String>,
+    extra_attrs: HashMap<String, String>,
     
     #[facet(html::text)]
     content: String,
@@ -302,7 +374,9 @@ struct DivWithExtras {
 
 Parses: `<div id="widget" data-user-id="123" aria-label="Card">Content</div>`
 
-The `extra` field will contain `{"data-user-id": "123", "aria-label": "Card"}`.
+The `extra_attrs` field will contain `{"data-user-id": "123", "aria-label": "Card"}`.
+
+**Note:** Flattened maps capture unknown **attributes**, not child elements. This is a limitation matching serde-xml-rs.
 
 ## Basic Usage
 

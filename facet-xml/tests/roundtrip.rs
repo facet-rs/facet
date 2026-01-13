@@ -549,6 +549,7 @@ fn map_string_keys() {
         data: HashMap<String, u32>,
     }
 
+    // Wrapped map: field name is wrapper element, child element names are keys
     let xml = r#"<record><data><alpha>1</alpha><beta>2</beta></data></record>"#;
     let parsed: Record = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed.data.get("alpha"), Some(&1));
@@ -609,13 +610,24 @@ fn vec_nested() {
     #[derive(Facet, Debug, PartialEq)]
     #[facet(rename = "record")]
     struct Record {
-        #[facet(rename = "item")]
-        matrix: Vec<Vec<u32>>,
+        /// Outer vec uses "row" as element name, inner vec uses "value"
+        #[facet(rename = "row")]
+        matrix: Vec<Row>,
     }
 
-    let xml = r#"<record><matrix><item><value>1</value><value>2</value></item><item><value>3</value><value>4</value><value>5</value></item></matrix></record>"#;
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "row")]
+    struct Row {
+        #[facet(rename = "value")]
+        values: Vec<u32>,
+    }
+
+    // Flat lists: outer <row> elements directly under <record>, inner <value> under each <row>
+    let xml = r#"<record><row><value>1</value><value>2</value></row><row><value>3</value><value>4</value><value>5</value></row></record>"#;
     let parsed: Record = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed.matrix.len(), 2);
+    assert_eq!(parsed.matrix[0].values, vec![1, 2]);
+    assert_eq!(parsed.matrix[1].values, vec![3, 4, 5]);
 }
 
 #[test]

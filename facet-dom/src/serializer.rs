@@ -244,27 +244,12 @@ where
     }
 
     // Handle sets
+    // Flat set model: each item uses the field's element name (no wrapper element)
+    // Same as lists for consistency
     if let Ok(set) = value.into_set() {
-        if let Some(tag) = element_name {
-            serializer
-                .element_start(tag, None)
-                .map_err(DomSerializeError::Backend)?;
-            serializer
-                .children_start()
-                .map_err(DomSerializeError::Backend)?;
-        }
-
         for item in set.iter() {
-            serialize_value(serializer, item, Some("item"))?;
-        }
-
-        if let Some(tag) = element_name {
-            serializer
-                .children_end()
-                .map_err(DomSerializeError::Backend)?;
-            serializer
-                .element_end(tag)
-                .map_err(DomSerializeError::Backend)?;
+            // Use the field's element name for each item (flat set)
+            serialize_value(serializer, item, element_name)?;
         }
 
         return Ok(());
@@ -372,27 +357,31 @@ where
                 continue;
             }
 
+            // For xml::elements, serialize items directly (they determine their own element names)
+            let is_elements = serializer.is_elements_field();
+            let field_element_name = if is_elements {
+                None // Items determine their own element names
+            } else {
+                Some(&*field_item.name)
+            };
+
             // Check for field-level proxy
             if let Some(field) = field_item.field {
                 if field.proxy().is_some() {
                     // Use custom_serialization for field-level proxy
                     match field_value.custom_serialization(field) {
                         Ok(proxy_peek) => {
-                            serialize_value(
-                                serializer,
-                                proxy_peek.as_peek(),
-                                Some(&field_item.name),
-                            )?;
+                            serialize_value(serializer, proxy_peek.as_peek(), field_element_name)?;
                         }
                         Err(e) => {
                             return Err(DomSerializeError::Reflect(e));
                         }
                     }
                 } else {
-                    serialize_value(serializer, *field_value, Some(&field_item.name))?;
+                    serialize_value(serializer, *field_value, field_element_name)?;
                 }
             } else {
-                serialize_value(serializer, *field_value, Some(&field_item.name))?;
+                serialize_value(serializer, *field_value, field_element_name)?;
             }
 
             serializer.clear_field_state();

@@ -40,6 +40,8 @@ divan = { workspace = true }
 facet = { path = "../facet", features = ["doc", "net"] }
 facet-diff = { path = "../facet-diff" }
 indoc = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde-xml-rs = "0.8.2"
 test-log = { version = "0.2", features = ["trace"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

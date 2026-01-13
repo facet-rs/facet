@@ -105,7 +105,7 @@ impl StructFieldMap {
                 text_field = Some(info);
             } else {
                 // Default: unmarked fields and explicit xml::element fields are child elements
-                trace!(idx, field_name = %field.name, field_rename = ?field.rename, key = %element_key, is_list, is_array, is_set, namespace = ?namespace, "found element field");
+                trace!(idx, field_name = %field.name, field_rename = ?field.rename, key = %element_key, alias = ?field.alias, is_list, is_array, is_set, namespace = ?namespace, "found element field");
                 let info = FieldInfo {
                     idx,
                     field,
@@ -114,7 +114,16 @@ impl StructFieldMap {
                     is_set,
                     namespace,
                 };
-                element_fields.entry(element_key).or_default().push(info);
+                element_fields
+                    .entry(element_key)
+                    .or_default()
+                    .push(info.clone());
+
+                // Also register alias if present
+                if let Some(alias) = field.alias {
+                    trace!(idx, field_name = %field.name, alias = %alias, "registering alias for element field");
+                    element_fields.entry(alias).or_default().push(info);
+                }
             }
         }
 

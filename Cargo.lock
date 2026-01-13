@@ -2189,6 +2189,8 @@ dependencies = [
  "indoc",
  "itoa",
  "quick-xml",
+ "serde",
+ "serde-xml-rs",
  "test-log",
  "tracing-subscriber",
  "zmij",
@@ -4482,6 +4484,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-xml-rs"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc2215ce3e6a77550b80a1c37251b7d294febaf42e36e21b7b411e0bf54d540d"
+dependencies = [
+ "log",
+ "serde",
+ "thiserror",
+ "xml",
+]
+
+[[package]]
 name = "serde_bytes"
 version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6023,6 +6037,12 @@ dependencies = [
  "byteorder",
  "error-chain",
 ]
+
+[[package]]
+name = "xml"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8aa498d22c9bbaf482329839bc5620c46be275a19a812e9a22a2b07529a642a"
 
 [[package]]
 name = "xtask"
