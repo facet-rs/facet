@@ -1,0 +1,13 @@
+[package]
+name = "styx-cst"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Lossless Concrete Syntax Tree for the Styx configuration language"
+repository = "https://github.com/bearcove/styx"
+
+[dependencies]
+styx-parse = { path = "../styx-parse" }
+rowan = "0.16"
+
+[dev-dependencies]
