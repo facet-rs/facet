@@ -128,6 +128,10 @@ where
 
         loop {
             let event = self.expect_event("value")?;
+            trace!(
+                ?event,
+                "deserialize_struct_simple: loop iteration, got event"
+            );
             match event {
                 ParseEvent::StructEnd => {
                     // End any open xml::elements field

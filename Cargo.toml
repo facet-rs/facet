@@ -64,6 +64,7 @@ members = [
     "facet-shapelike",
 
     # format crates
+    "facet-dessert",
     "facet-format",
     "facet-json",
     "facet-postcard",
@@ -77,6 +78,7 @@ members = [
     "facet-csv",
     "facet-xdr",
     "facet-html",
+    "facet-dom",
     "facet-html-dom",
     "facet-atom",
     "facet-json-schema",

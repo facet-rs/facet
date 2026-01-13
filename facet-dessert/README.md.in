@@ -1,0 +1,6 @@
+# facet-dessert
+
+Sweet helpers for facet deserialization - shared between facet-format and facet-dom.
+
+Provides common setter functions for handling string, bytes, and scalar values
+when deserializing into facet types.
