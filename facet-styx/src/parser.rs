@@ -17,8 +17,8 @@ pub struct StyxParser<'de> {
     stack: Vec<ContextState>,
     /// Peeked token (if any).
     peeked_token: Option<Token<'de>>,
-    /// Peeked event (if any).
-    peeked_event: Option<ParseEvent<'de>>,
+    /// Peeked events queue (if any).
+    peeked_events: Vec<ParseEvent<'de>>,
     /// Whether we've emitted the root struct start.
     root_started: bool,
     /// Whether parsing is complete.
@@ -31,7 +31,7 @@ pub struct StyxParser<'de> {
     expecting_value: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum ContextState {
     /// Inside an object (braces or implicit root).
     Object { implicit: bool },
@@ -46,7 +46,7 @@ impl<'de> StyxParser<'de> {
             lexer: Lexer::new(source),
             stack: Vec::new(),
             peeked_token: None,
-            peeked_event: None,
+            peeked_events: Vec::new(),
             root_started: false,
             complete: false,
             current_span: None,
@@ -221,6 +221,54 @@ impl<'de> StyxParser<'de> {
     fn error(&self, kind: StyxErrorKind) -> StyxError {
         StyxError::new(kind, self.current_span)
     }
+
+    /// Parse a tag and emit appropriate events.
+    /// Called after consuming the @ token.
+    /// Returns the first event to emit (others are queued in peeked_events).
+    fn parse_tag(&mut self, at_span_end: u32) -> ParseEvent<'de> {
+        // Check if followed by identifier (tag name)
+        if let Some(next) = self.peek_token()
+            && next.kind == TokenKind::BareScalar
+            && next.span.start == at_span_end
+        {
+            let name_token = self.next_token();
+            let tag_name = name_token.text;
+
+            // Check for payload
+            if let Some(next) = self.peek_token() {
+                if next.kind == TokenKind::At && next.span.start == name_token.span.end {
+                    // @foo@ - tag with explicit unit payload
+                    self.next_token(); // consume the @
+                    self.peeked_events
+                        .push(ParseEvent::Scalar(ScalarValue::Unit));
+                    return ParseEvent::VariantTag(tag_name);
+                } else if next.kind == TokenKind::LBrace && next.span.start == name_token.span.end {
+                    // @foo{...} - tag with object payload
+                    self.next_token(); // consume {
+                    self.stack.push(ContextState::Object { implicit: false });
+                    self.peeked_events
+                        .push(ParseEvent::StructStart(ContainerKind::Object));
+                    return ParseEvent::VariantTag(tag_name);
+                } else if next.kind == TokenKind::LParen && next.span.start == name_token.span.end {
+                    // @foo(...) - tag with sequence payload
+                    self.next_token(); // consume (
+                    self.stack.push(ContextState::Sequence);
+                    self.peeked_events
+                        .push(ParseEvent::SequenceStart(ContainerKind::Array));
+                    return ParseEvent::VariantTag(tag_name);
+                }
+            }
+
+            // @foo - unit tag (no payload)
+            // Emit VariantTag followed by Scalar(Unit) for the unit payload
+            self.peeked_events
+                .push(ParseEvent::Scalar(ScalarValue::Unit));
+            return ParseEvent::VariantTag(tag_name);
+        }
+
+        // Just @ alone - unit value
+        ParseEvent::Scalar(ScalarValue::Unit)
+    }
 }
 
 impl<'de> FormatParser<'de> for StyxParser<'de> {
@@ -231,9 +279,9 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         Self: 'a;
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
-        // Return peeked event if any
-        if let Some(event) = self.peeked_event.take() {
-            return Ok(Some(event));
+        // Return queued event if any (FIFO - take from front)
+        if !self.peeked_events.is_empty() {
+            return Ok(Some(self.peeked_events.remove(0)));
         }
 
         if self.complete {
@@ -258,8 +306,8 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
             if let Some(token) = token {
                 match token.kind {
                     TokenKind::Newline | TokenKind::Eof | TokenKind::RBrace | TokenKind::Comma => {
-                        // No value - emit null (unit)
-                        return Ok(Some(ParseEvent::Scalar(ScalarValue::Null)));
+                        // No value - emit unit
+                        return Ok(Some(ParseEvent::Scalar(ScalarValue::Unit)));
                     }
                     TokenKind::LBrace => {
                         // Nested object
@@ -274,24 +322,10 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         return Ok(Some(ParseEvent::SequenceStart(ContainerKind::Array)));
                     }
                     TokenKind::At => {
-                        // Could be unit @ or a tag
+                        // Tag - could be @, @foo, @foo@, @foo(...), @foo{...}
                         self.next_token();
-                        // Check if followed by identifier
-                        if let Some(next) = self.peek_token()
-                            && next.kind == TokenKind::BareScalar
-                            && next.span.start == token.span.end
-                        {
-                            // Tag @name - for enum deserialization, facet-format expects:
-                            // - Unit variants: a string scalar with the variant name
-                            // - Struct variants: { VariantName: { ... } }
-                            // So we emit the tag name as a string scalar
-                            let name_token = self.next_token();
-                            return Ok(Some(ParseEvent::Scalar(ScalarValue::Str(Cow::Borrowed(
-                                name_token.text,
-                            )))));
-                        }
-                        // Just @ - unit/null
-                        return Ok(Some(ParseEvent::Scalar(ScalarValue::Null)));
+                        let event = self.parse_tag(token.span.end);
+                        return Ok(Some(event));
                     }
                     TokenKind::BareScalar
                     | TokenKind::QuotedScalar
@@ -352,24 +386,32 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                 }
                 TokenKind::RBrace => {
                     self.next_token();
-                    if let Some(ContextState::Object { implicit: false }) = self.stack.pop() {
-                        return Ok(Some(ParseEvent::StructEnd));
+                    match self.stack.pop() {
+                        Some(ContextState::Object { implicit: false }) => {
+                            return Ok(Some(ParseEvent::StructEnd));
+                        }
+                        _ => {
+                            // Mismatched brace - error
+                            return Err(self.error(StyxErrorKind::UnexpectedToken {
+                                got: "}".to_string(),
+                                expected: "key or value",
+                            }));
+                        }
                     }
-                    // Mismatched brace - error
-                    return Err(self.error(StyxErrorKind::UnexpectedToken {
-                        got: "}".to_string(),
-                        expected: "key or value",
-                    }));
                 }
                 TokenKind::RParen => {
                     self.next_token();
-                    if let Some(ContextState::Sequence) = self.stack.pop() {
-                        return Ok(Some(ParseEvent::SequenceEnd));
+                    match self.stack.pop() {
+                        Some(ContextState::Sequence) => {
+                            return Ok(Some(ParseEvent::SequenceEnd));
+                        }
+                        _ => {
+                            return Err(self.error(StyxErrorKind::UnexpectedToken {
+                                got: ")".to_string(),
+                                expected: "value",
+                            }));
+                        }
                     }
-                    return Err(self.error(StyxErrorKind::UnexpectedToken {
-                        got: ")".to_string(),
-                        expected: "value",
-                    }));
                 }
                 TokenKind::Comma => {
                     // Skip comma separators
@@ -411,6 +453,58 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                             FieldLocationHint::KeyValue,
                         ))));
                     }
+                    TokenKind::At => {
+                        // @ can be used as a key (represents unit/default/additional-fields)
+                        // Check if it's followed by whitespace (indicating it's a key)
+                        // vs immediately followed by an identifier (tag like @foo)
+                        let at_token = self.next_token();
+
+                        // Peek at next token to see if this is @key or @tag
+                        if let Some(next) = self.peek_token() {
+                            // If next token is NOT immediately adjacent and is a value starter,
+                            // then @ is a key
+                            if next.span.start != at_token.span.end
+                                || matches!(
+                                    next.kind,
+                                    TokenKind::LBrace
+                                        | TokenKind::LParen
+                                        | TokenKind::At
+                                        | TokenKind::Newline
+                                )
+                            {
+                                // @ is a key
+                                self.pending_key = Some(Cow::Borrowed("@"));
+                                self.expecting_value = true;
+                                return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
+                                    Cow::Borrowed("@"),
+                                    FieldLocationHint::KeyValue,
+                                ))));
+                            }
+
+                            // Otherwise it's a tag like @foo - handle as tag key
+                            if next.kind == TokenKind::BareScalar {
+                                let name_token = self.next_token();
+                                let tag_name = name_token.text;
+
+                                // This is a tag being used as a key (like `@Meta { ... }`)
+                                // The tag name becomes the key
+                                self.pending_key = Some(Cow::Borrowed(tag_name));
+                                self.expecting_value = true;
+                                return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
+                                    Cow::Borrowed(tag_name),
+                                    FieldLocationHint::KeyValue,
+                                ))));
+                            }
+                        }
+
+                        // Fallback: @ alone at end is a key
+                        self.pending_key = Some(Cow::Borrowed("@"));
+                        self.expecting_value = true;
+                        return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
+                            Cow::Borrowed("@"),
+                            FieldLocationHint::KeyValue,
+                        ))));
+                    }
                     _ => {}
                 }
             }
@@ -441,18 +535,10 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         return Ok(Some(ParseEvent::SequenceStart(ContainerKind::Array)));
                     }
                     TokenKind::At => {
+                        // Tag in sequence context
                         self.next_token();
-                        if let Some(next) = self.peek_token()
-                            && next.kind == TokenKind::BareScalar
-                            && next.span.start == token.span.end
-                        {
-                            // Tag @name - emit as string scalar for enum deserialization
-                            let name_token = self.next_token();
-                            return Ok(Some(ParseEvent::Scalar(ScalarValue::Str(Cow::Borrowed(
-                                name_token.text,
-                            )))));
-                        }
-                        return Ok(Some(ParseEvent::Scalar(ScalarValue::Null)));
+                        let event = self.parse_tag(token.span.end);
+                        return Ok(Some(event));
                     }
                     _ => {}
                 }
@@ -463,10 +549,13 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
     }
 
     fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
-        if self.peeked_event.is_none() {
-            self.peeked_event = self.next_event()?;
+        if self.peeked_events.is_empty() {
+            if let Some(event) = self.next_event()? {
+                // Insert at front since next_event may have pushed follow-up events
+                self.peeked_events.insert(0, event);
+            }
         }
-        Ok(self.peeked_event.clone())
+        Ok(self.peeked_events.first().cloned())
     }
 
     fn skip_value(&mut self) -> Result<(), Self::Error> {
@@ -490,10 +579,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                     }
                 }
                 Some(ParseEvent::VariantTag(_)) => {
-                    // We no longer emit VariantTag, but need to handle it for exhaustiveness
-                    if depth == 0 {
-                        break;
-                    }
+                    // VariantTag followed by payload - continue to consume the payload
                 }
                 Some(ParseEvent::FieldKey(_)) | Some(ParseEvent::OrderedField) => {
                     // Continue
@@ -556,12 +642,14 @@ impl<'a, 'de> ProbeStream<'de> for StyxProbe<'a, 'de> {
                     None,
                 )))
             }
-            Some(ParseEvent::Scalar(ScalarValue::Null)) => Ok(Some(FieldEvidence::new(
-                "",
-                FieldLocationHint::KeyValue,
-                Some(ValueTypeHint::Null),
-                None,
-            ))),
+            Some(ParseEvent::Scalar(ScalarValue::Unit | ScalarValue::Null)) => {
+                Ok(Some(FieldEvidence::new(
+                    "",
+                    FieldLocationHint::KeyValue,
+                    Some(ValueTypeHint::Null),
+                    None,
+                )))
+            }
             Some(ParseEvent::SequenceStart(_)) => Ok(Some(FieldEvidence::new(
                 "",
                 FieldLocationHint::KeyValue,

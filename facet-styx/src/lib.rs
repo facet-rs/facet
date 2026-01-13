@@ -42,6 +42,8 @@
 mod error;
 mod parser;
 mod serializer;
+#[cfg(test)]
+mod tag_events_test;
 
 pub use error::{StyxError, StyxErrorKind};
 pub use facet_format::DeserializeError;

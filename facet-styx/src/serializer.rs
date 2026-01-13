@@ -94,7 +94,7 @@ impl FormatSerializer for StyxSerializer {
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
         self.at_root = false;
         match scalar {
-            ScalarValue::Null => self.writer.write_null(),
+            ScalarValue::Unit | ScalarValue::Null => self.writer.write_null(),
             ScalarValue::Bool(v) => self.writer.write_bool(v),
             ScalarValue::Char(c) => self.writer.write_char(c),
             ScalarValue::I64(v) => self.writer.write_i64(v),
@@ -253,7 +253,7 @@ impl FormatSerializer for CompactStyxSerializer {
 
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
         match scalar {
-            ScalarValue::Null => self.writer.write_null(),
+            ScalarValue::Unit | ScalarValue::Null => self.writer.write_null(),
             ScalarValue::Bool(v) => self.writer.write_bool(v),
             ScalarValue::Char(c) => self.writer.write_char(c),
             ScalarValue::I64(v) => self.writer.write_i64(v),
