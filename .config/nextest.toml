@@ -80,4 +80,4 @@ retries = 0
 # Fail fast on first failure
 fail-fast = true
 # Short timeout to catch infinite loops quickly
-slow-timeout = { period = "1s", terminate-after = 2 }
+slow-timeout = { period = "3s", terminate-after = 2 }

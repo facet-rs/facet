@@ -78,9 +78,15 @@ where
                 .peek_event_or_eof("Attribute or ChildrenStart")?;
             match event {
                 DomEvent::Attribute { .. } => {
-                    let AttributeRecord { name, value } = self.parser.expect_attribute()?;
-                    trace!(name = %name, value = %value, "got Attribute");
-                    if let Some(info) = field_map.find_attribute(&name) {
+                    let AttributeRecord {
+                        name,
+                        value,
+                        namespace,
+                    } = self.parser.expect_attribute()?;
+                    trace!(name = %name, value = %value, namespace = ?namespace, "got Attribute");
+                    if let Some(info) =
+                        field_map.find_attribute(&name, namespace.as_ref().map(|c| c.as_ref()))
+                    {
                         trace!(idx = info.idx, field_name = %info.field.name, "matched attribute field");
                         wip = wip.begin_nth_field(info.idx)?;
                         wip = self.set_string_value(wip, value)?;
@@ -142,12 +148,15 @@ where
                         trace!("ignoring text (no text field)");
                     }
                 }
-                DomEvent::NodeStart { tag, .. } => {
+                DomEvent::NodeStart { tag, namespace } => {
                     let tag = tag.clone();
-                    trace!(tag = %tag, "got child NodeStart");
+                    let namespace = namespace.clone();
+                    trace!(tag = %tag, namespace = ?namespace, "got child NodeStart");
 
                     if !elements_list_started {
-                        if let Some(info) = field_map.find_element(&tag) {
+                        if let Some(info) =
+                            field_map.find_element(&tag, namespace.as_ref().map(|c| c.as_ref()))
+                        {
                             if info.is_list {
                                 trace!(idx = info.idx, field_name = %info.field.name, "matched wrapped list field");
 
@@ -372,6 +381,7 @@ where
                             let AttributeRecord {
                                 name: _name,
                                 value: _value,
+                                namespace: _namespace,
                             } = self.parser.expect_attribute()?;
                             trace!(name = %_name, "deserialize_scalar: consumed Attribute");
                         }

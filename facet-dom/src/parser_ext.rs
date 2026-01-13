@@ -88,12 +88,20 @@ pub trait DomParserExt<'de>: DomParser<'de> {
         }
     }
 
-    /// Expect and consume an Attribute event, returning (name, value).
+    /// Expect and consume an Attribute event, returning (name, value, namespace).
     fn expect_attribute(
         &mut self,
     ) -> Result<AttributeRecord<'de>, DomDeserializeError<Self::Error>> {
         match self.next_event_or_eof("Attribute")? {
-            DomEvent::Attribute { name, value, .. } => Ok(AttributeRecord { name, value }),
+            DomEvent::Attribute {
+                name,
+                value,
+                namespace,
+            } => Ok(AttributeRecord {
+                name,
+                value,
+                namespace,
+            }),
             other => Err(DomDeserializeError::TypeMismatch {
                 expected: "Attribute",
                 got: format!("{other:?}"),
@@ -113,12 +121,14 @@ pub trait DomParserExt<'de>: DomParser<'de> {
     }
 }
 
-/// An attribute name-value pair from a DOM event.
+/// An attribute name-value-namespace triple from a DOM event.
 pub struct AttributeRecord<'de> {
     /// The attribute name.
     pub name: Cow<'de, str>,
     /// The attribute value.
     pub value: Cow<'de, str>,
+    /// The attribute namespace URI, if any.
+    pub namespace: Option<Cow<'de, str>>,
 }
 
 impl<'de, P: DomParser<'de>> DomParserExt<'de> for P {}
