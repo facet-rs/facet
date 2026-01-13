@@ -611,7 +611,7 @@ where
     ///
     /// Delegates to `facet_dessert::set_string_value` which handles parsing the string
     /// into the appropriate scalar type (String, &str, integers, floats, bools, etc.).
-    fn set_string_value(
+    pub(crate) fn set_string_value(
         &mut self,
         wip: Partial<'de, BORROW>,
         value: Cow<'de, str>,
@@ -621,5 +621,33 @@ where
             value,
             self.parser.current_span(),
         )?)
+    }
+
+    /// Set a string value, handling field-level proxy conversion if present.
+    ///
+    /// If the field has a proxy attribute (e.g., `#[facet(proxy = PointsProxy)]`),
+    /// this will:
+    /// 1. Begin custom deserialization (push a frame for the proxy type)
+    /// 2. Set the string value into the proxy type
+    /// 3. End the frame (which converts proxy -> target via TryFrom)
+    ///
+    /// If no proxy is present, it just calls `set_string_value` directly.
+    pub(crate) fn set_string_value_with_proxy(
+        &mut self,
+        mut wip: Partial<'de, BORROW>,
+        value: Cow<'de, str>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        // Check if the field has a proxy
+        let has_proxy = wip.parent_field().and_then(|f| f.proxy()).is_some();
+
+        if has_proxy {
+            // Use custom deserialization through the proxy
+            wip = wip.begin_custom_deserialization()?;
+            wip = self.set_string_value(wip, value)?;
+            wip = wip.end()?;
+            Ok(wip)
+        } else {
+            self.set_string_value(wip, value)
+        }
     }
 }

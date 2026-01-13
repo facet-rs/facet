@@ -148,9 +148,10 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                     {
                         let idx = info.idx;
                         trace!(idx, field_name = %info.field.name, "matched attribute field");
+                        // Use set_string_value_with_proxy to handle field-level proxies
                         wip = self
                             .dom_deser
-                            .set_string_value(wip.begin_nth_field(idx)?, value)?
+                            .set_string_value_with_proxy(wip.begin_nth_field(idx)?, value)?
                             .end()?;
                     } else if !self.field_map.flattened_attr_maps.is_empty() {
                         // Try to add to flattened attribute map

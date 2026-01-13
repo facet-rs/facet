@@ -351,9 +351,29 @@ where
 
             if is_attr {
                 trace!(field_name = %field_item.name, "attribute field");
-                serializer
-                    .attribute(&field_item.name, *field_value, None)
-                    .map_err(DomSerializeError::Backend)?;
+                // Check for field-level proxy
+                if let Some(field) = field_item.field {
+                    if field.proxy().is_some() {
+                        match field_value.custom_serialization(field) {
+                            Ok(proxy_peek) => {
+                                serializer
+                                    .attribute(&field_item.name, proxy_peek.as_peek(), None)
+                                    .map_err(DomSerializeError::Backend)?;
+                            }
+                            Err(e) => {
+                                return Err(DomSerializeError::Reflect(e));
+                            }
+                        }
+                    } else {
+                        serializer
+                            .attribute(&field_item.name, *field_value, None)
+                            .map_err(DomSerializeError::Backend)?;
+                    }
+                } else {
+                    serializer
+                        .attribute(&field_item.name, *field_value, None)
+                        .map_err(DomSerializeError::Backend)?;
+                }
                 serializer.clear_field_state();
             }
         }
@@ -383,8 +403,13 @@ where
             }
 
             // For xml::elements, serialize items directly (they determine their own element names)
+            // Exception: if the field has an explicit rename, use that name for each item
             let is_elements = serializer.is_elements_field();
-            let field_element_name = if is_elements {
+            let has_explicit_rename = field_item
+                .field
+                .map(|f| f.rename.is_some())
+                .unwrap_or(false);
+            let field_element_name = if is_elements && !has_explicit_rename {
                 None // Items determine their own element names
             } else {
                 Some(&*field_item.name)

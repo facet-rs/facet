@@ -160,6 +160,14 @@ pub fn set_string_value<'input, const BORROW: bool>(
         return Ok(wip);
     }
 
+    // Handle transparent structs (newtypes) by unwrapping to the inner type
+    if shape.is_transparent() {
+        wip = wip.begin_nth_field(0)?;
+        wip = set_string_value(wip, s, span)?;
+        wip = wip.end()?;
+        return Ok(wip);
+    }
+
     set_string_value_inner(wip, s, span)
 }
 

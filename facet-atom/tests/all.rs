@@ -231,7 +231,9 @@ fn test_roundtrip_simple_feed() {
     };
 
     let xml = to_string(&feed).unwrap();
+    tracing::debug!("Generated XML:\n{}", xml);
     let parsed: Feed = from_str(&xml).unwrap();
+    tracing::debug!("Parsed authors: {:?}", parsed.authors);
 
     assert_eq!(parsed.id, feed.id);
     assert_eq!(

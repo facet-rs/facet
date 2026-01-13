@@ -486,4 +486,31 @@ mod tests {
             "SVG values within float tolerance should be considered Same"
         );
     }
+
+    #[test]
+    fn test_polygon_points_serialization() {
+        let polygon = Polygon {
+            points: crate::points::Points::parse("50,10 90,90 10,90").unwrap(),
+            fill: Some("lime".to_string()),
+            stroke: None,
+            stroke_width: None,
+            stroke_dasharray: None,
+            style: None,
+        };
+
+        let xml = to_string(&polygon).unwrap();
+
+        // The points attribute should be present
+        assert!(
+            xml.contains("points="),
+            "Serialized polygon should contain points attribute, got: {}",
+            xml
+        );
+        // Check the actual value
+        assert!(
+            xml.contains(r#"points="50,10 90,90 10,90""#),
+            "Points attribute should have correct value, got: {}",
+            xml
+        );
+    }
 }

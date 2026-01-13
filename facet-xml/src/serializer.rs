@@ -20,6 +20,9 @@ fn write_scalar_value(
     value: Peek<'_, '_>,
     float_formatter: Option<FloatFormatter>,
 ) -> std::io::Result<bool> {
+    // Unwrap transparent wrappers (e.g., PointsProxy -> String)
+    let value = value.innermost_peek();
+
     // Handle Option<T> by unwrapping if Some
     if let Def::Option(_) = &value.shape().def
         && let Ok(opt) = value.into_option()
