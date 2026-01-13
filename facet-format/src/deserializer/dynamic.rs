@@ -152,11 +152,10 @@ where
             }
             ParseEvent::VariantTag(variant_name) => {
                 // Find variant by display name (respecting rename) or fall back to #[facet(other)]
-                let is_using_other_fallback = enum_def
+                let is_using_other_fallback = !enum_def
                     .variants
                     .iter()
-                    .find(|v| Self::get_variant_display_name(v) == variant_name)
-                    .is_none();
+                    .any(|v| Self::get_variant_display_name(&v) == variant_name);
                 let variant = enum_def
                     .variants
                     .iter()

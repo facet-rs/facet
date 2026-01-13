@@ -154,9 +154,6 @@ enum FrameMode {
         /// Stack of frames for nested initialization.
         stack: Vec<Frame>,
 
-        /// The resolution from facet-solver describing the field structure.
-        resolution: Resolution,
-
         /// The frame depth when deferred mode was started.
         /// Path calculations are relative to this depth.
         start_depth: usize,
@@ -205,14 +202,6 @@ impl FrameMode {
     const fn current_path(&self) -> Option<&KeyPath> {
         match self {
             FrameMode::Deferred { current_path, .. } => Some(current_path),
-            FrameMode::Strict { .. } => None,
-        }
-    }
-
-    /// Get the resolution if in deferred mode.
-    const fn resolution(&self) -> Option<&Resolution> {
-        match self {
-            FrameMode::Deferred { resolution, .. } => Some(resolution),
             FrameMode::Strict { .. } => None,
         }
     }
@@ -1280,12 +1269,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     #[inline]
     pub(crate) const fn current_path(&self) -> Option<&KeyPath> {
         self.mode.current_path()
-    }
-
-    /// Get the resolution if in deferred mode.
-    #[inline]
-    pub(crate) const fn resolution(&self) -> Option<&Resolution> {
-        self.mode.resolution()
     }
 }
 

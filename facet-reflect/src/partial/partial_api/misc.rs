@@ -74,12 +74,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             .is_some_and(|f| matches!(f.tracker, Tracker::SmartPointerSlice { .. }))
     }
 
-    /// Returns the current deferred resolution, if in deferred mode.
-    #[inline]
-    pub const fn deferred_resolution(&self) -> Option<&Resolution> {
-        self.resolution()
-    }
-
     /// Returns the current path in deferred mode as a slice (for debugging/tracing).
     #[inline]
     pub fn current_path_slice(&self) -> Option<&[&'static str]> {
@@ -125,7 +119,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let start_depth = stack.len();
         self.mode = FrameMode::Deferred {
             stack,
-            resolution,
             start_depth,
             current_path: Vec::new(),
             stored_frames: BTreeMap::new(),
