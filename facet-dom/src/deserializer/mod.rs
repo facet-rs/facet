@@ -188,13 +188,8 @@ where
         // Track which flat sequence is currently active (we're inside its list/array context)
         let mut active_seq_idx: Option<usize> = None;
 
+        // Track whether we've started the xml::elements collection (lazy initialization)
         let mut elements_list_started = false;
-        if let Some(info) = &field_map.elements_field {
-            trace!(idx = info.idx, field_name = %info.field.name, "beginning elements list");
-            wip = wip.begin_nth_field(info.idx)?;
-            wip = wip.init_list()?;
-            elements_list_started = true;
-        }
 
         trace!("processing children");
         loop {
@@ -224,122 +219,141 @@ where
                     let namespace = namespace.clone();
                     trace!(tag = %tag, namespace = ?namespace, "got child NodeStart");
 
-                    if !elements_list_started {
-                        if let Some(info) =
-                            field_map.find_element(&tag, namespace.as_ref().map(|c| c.as_ref()))
-                        {
-                            if info.is_list || info.is_array {
-                                // Flat sequence: repeated elements directly as children
-                                // If we're currently inside a different sequence, end it first
-                                if let Some(prev_idx) = active_seq_idx
-                                    && prev_idx != info.idx
+                    // First, check if this element matches a specific xml::element field
+                    // (this takes priority over xml::elements collection)
+                    if let Some(info) =
+                        field_map.find_element(&tag, namespace.as_ref().map(|c| c.as_ref()))
+                    {
+                        if info.is_list || info.is_array {
+                            // Flat sequence: repeated elements directly as children
+                            // If we're currently inside the elements list, end it first
+                            if elements_list_started {
+                                trace!("leaving elements list for flat sequence field");
+                                wip = wip.end()?;
+                                elements_list_started = false;
+                            }
+                            // If we're currently inside a different sequence, end it first
+                            if let Some(prev_idx) = active_seq_idx
+                                && prev_idx != info.idx
+                            {
+                                trace!(
+                                    prev_idx = prev_idx,
+                                    new_idx = info.idx,
+                                    "switching active flat sequence"
+                                );
+                                // End the list/array (begin_nth_field doesn't push a frame,
+                                // so ending the list/array returns us to the struct level)
+                                wip = wip.end()?;
+                                // End smart_ptr if applicable
+                                if let Some(SeqState::List { is_smart_ptr: true }) =
+                                    started_seqs.get(&prev_idx)
                                 {
-                                    trace!(
-                                        prev_idx = prev_idx,
-                                        new_idx = info.idx,
-                                        "switching active flat sequence"
-                                    );
-                                    // End the list/array (begin_nth_field doesn't push a frame,
-                                    // so ending the list/array returns us to the struct level)
                                     wip = wip.end()?;
-                                    // End smart_ptr if applicable
-                                    if let Some(SeqState::List { is_smart_ptr: true }) =
-                                        started_seqs.get(&prev_idx)
-                                    {
-                                        wip = wip.end()?;
-                                    }
-                                    active_seq_idx = None;
                                 }
+                                active_seq_idx = None;
+                            }
 
-                                use std::collections::hash_map::Entry;
-                                let need_start =
-                                    matches!(started_seqs.entry(info.idx), Entry::Vacant(_));
+                            use std::collections::hash_map::Entry;
+                            let need_start =
+                                matches!(started_seqs.entry(info.idx), Entry::Vacant(_));
 
-                                if need_start {
-                                    trace!(idx = info.idx, field_name = %info.field.name, is_list = info.is_list, is_array = info.is_array, "starting flat sequence field");
-                                    wip = wip.begin_nth_field(info.idx)?;
+                            if need_start {
+                                trace!(idx = info.idx, field_name = %info.field.name, is_list = info.is_list, is_array = info.is_array, "starting flat sequence field");
+                                wip = wip.begin_nth_field(info.idx)?;
 
-                                    if info.is_list {
-                                        // Handle pointer-wrapped lists (Arc<[T]>, Box<[T]>, etc.)
-                                        let is_smart_ptr =
-                                            matches!(info.field.shape().def, Def::Pointer(_));
-                                        if is_smart_ptr {
-                                            wip = wip.begin_smart_ptr()?;
-                                        }
-                                        wip = wip.init_list()?;
-                                        started_seqs
-                                            .insert(info.idx, SeqState::List { is_smart_ptr });
-                                    } else {
-                                        // Array
-                                        wip = wip.init_array()?;
-                                        started_seqs
-                                            .insert(info.idx, SeqState::Array { next_idx: 0 });
-                                    }
-                                    active_seq_idx = Some(info.idx);
-                                } else if active_seq_idx != Some(info.idx) {
-                                    // Sequence was started before but we left it; re-enter it
-                                    trace!(idx = info.idx, field_name = %info.field.name, "re-entering flat sequence field");
-                                    wip = wip.begin_nth_field(info.idx)?;
-                                    let state = started_seqs.get(&info.idx).unwrap();
-                                    if let SeqState::List { is_smart_ptr } = state {
-                                        if *is_smart_ptr {
-                                            wip = wip.begin_smart_ptr()?;
-                                        }
-                                        wip = wip.init_list()?;
-                                    } else {
-                                        wip = wip.init_array()?;
-                                    }
-                                    active_seq_idx = Some(info.idx);
-                                }
-
-                                // Add item to sequence
                                 if info.is_list {
-                                    trace!(idx = info.idx, field_name = %info.field.name, "adding item to flat list");
-                                    wip = wip.begin_list_item()?.deserialize_with(self)?.end()?;
+                                    // Handle pointer-wrapped lists (Arc<[T]>, Box<[T]>, etc.)
+                                    let is_smart_ptr =
+                                        matches!(info.field.shape().def, Def::Pointer(_));
+                                    if is_smart_ptr {
+                                        wip = wip.begin_smart_ptr()?;
+                                    }
+                                    wip = wip.init_list()?;
+                                    started_seqs.insert(info.idx, SeqState::List { is_smart_ptr });
                                 } else {
-                                    // Array: use begin_nth_field with the current index
-                                    let state = started_seqs.get_mut(&info.idx).unwrap();
-                                    if let SeqState::Array { next_idx } = state {
-                                        trace!(idx = info.idx, field_name = %info.field.name, item_idx = *next_idx, "adding item to flat array");
-                                        wip = wip
-                                            .begin_nth_field(*next_idx)?
-                                            .deserialize_with(self)?
-                                            .end()?;
-                                        *next_idx += 1;
-                                    }
+                                    // Array
+                                    wip = wip.init_array()?;
+                                    started_seqs.insert(info.idx, SeqState::Array { next_idx: 0 });
                                 }
+                                active_seq_idx = Some(info.idx);
+                            } else if active_seq_idx != Some(info.idx) {
+                                // Sequence was started before but we left it; re-enter it
+                                trace!(idx = info.idx, field_name = %info.field.name, "re-entering flat sequence field");
+                                wip = wip.begin_nth_field(info.idx)?;
+                                let state = started_seqs.get(&info.idx).unwrap();
+                                if let SeqState::List { is_smart_ptr } = state {
+                                    if *is_smart_ptr {
+                                        wip = wip.begin_smart_ptr()?;
+                                    }
+                                    wip = wip.init_list()?;
+                                } else {
+                                    wip = wip.init_array()?;
+                                }
+                                active_seq_idx = Some(info.idx);
+                            }
+
+                            // Add item to sequence
+                            if info.is_list {
+                                trace!(idx = info.idx, field_name = %info.field.name, "adding item to flat list");
+                                wip = wip.begin_list_item()?.deserialize_with(self)?.end()?;
                             } else {
-                                // Scalar field - need to leave any active sequence first
-                                if let Some(prev_idx) = active_seq_idx {
-                                    trace!(
-                                        prev_idx = prev_idx,
-                                        "leaving active flat sequence for scalar field"
-                                    );
-                                    // End the list/array
-                                    wip = wip.end()?;
-                                    // End smart_ptr if applicable
-                                    if let Some(SeqState::List { is_smart_ptr: true }) =
-                                        started_seqs.get(&prev_idx)
-                                    {
-                                        wip = wip.end()?;
-                                    }
-                                    active_seq_idx = None;
+                                // Array: use begin_nth_field with the current index
+                                let state = started_seqs.get_mut(&info.idx).unwrap();
+                                if let SeqState::Array { next_idx } = state {
+                                    trace!(idx = info.idx, field_name = %info.field.name, item_idx = *next_idx, "adding item to flat array");
+                                    wip = wip
+                                        .begin_nth_field(*next_idx)?
+                                        .deserialize_with(self)?
+                                        .end()?;
+                                    *next_idx += 1;
                                 }
-                                trace!(idx = info.idx, field_name = %info.field.name, "matched scalar element field");
-                                wip = wip
-                                    .begin_nth_field(info.idx)?
-                                    .deserialize_with(self)?
-                                    .end()?;
                             }
                         } else {
-                            trace!(tag = %tag, "skipping unknown element");
-                            self.parser
-                                .skip_node()
-                                .map_err(DomDeserializeError::Parser)?;
+                            // Scalar field - need to leave any active sequence first
+                            if let Some(prev_idx) = active_seq_idx {
+                                trace!(
+                                    prev_idx = prev_idx,
+                                    "leaving active flat sequence for scalar field"
+                                );
+                                // End the list/array
+                                wip = wip.end()?;
+                                // End smart_ptr if applicable
+                                if let Some(SeqState::List { is_smart_ptr: true }) =
+                                    started_seqs.get(&prev_idx)
+                                {
+                                    wip = wip.end()?;
+                                }
+                                active_seq_idx = None;
+                            }
+                            // Also need to leave the elements list if it's active
+                            if elements_list_started {
+                                trace!("leaving elements list for scalar field");
+                                wip = wip.end()?;
+                                elements_list_started = false;
+                            }
+                            trace!(idx = info.idx, field_name = %info.field.name, "matched scalar element field");
+                            wip = wip
+                                .begin_nth_field(info.idx)?
+                                .deserialize_with(self)?
+                                .end()?;
                         }
-                    } else {
+                    } else if field_map.elements_field.is_some() {
+                        // No specific field matched, add to the elements collection
+                        // Lazily start the elements list if not already started
+                        if !elements_list_started {
+                            let info = field_map.elements_field.as_ref().unwrap();
+                            trace!(idx = info.idx, field_name = %info.field.name, "starting elements list (lazy)");
+                            wip = wip.begin_nth_field(info.idx)?;
+                            wip = wip.init_list()?;
+                            elements_list_started = true;
+                        }
                         trace!("adding element to elements collection");
                         wip = wip.begin_list_item()?.deserialize_with(self)?.end()?;
+                    } else {
+                        trace!(tag = %tag, "skipping unknown element");
+                        self.parser
+                            .skip_node()
+                            .map_err(DomDeserializeError::Parser)?;
                     }
                 }
                 DomEvent::Comment(_) => {
