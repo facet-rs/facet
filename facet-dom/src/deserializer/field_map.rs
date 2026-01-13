@@ -41,7 +41,8 @@ pub(crate) struct FlattenedChildInfo {
 pub(crate) struct FlattenedEnumInfo {
     /// Index of the flattened enum field in the outer struct
     pub field_idx: usize,
-    /// The field info
+    /// The field info (kept for potential future use)
+    #[allow(dead_code)]
     pub field_info: FieldInfo,
 }
 
@@ -183,7 +184,7 @@ impl StructFieldMap {
                     }
                 } else if is_flattened_map(field) {
                     // Flattened map - captures unknown elements as key-value pairs
-                    let shape = field.shape();
+                    let _shape = field.shape();
                     let namespace: Option<&'static str> = field
                         .get_attr(Some("xml"), "ns")
                         .and_then(|attr| attr.get_as::<&str>().copied());

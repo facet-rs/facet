@@ -16,13 +16,13 @@ pub trait WriteScalar: DomSerializer {
     /// Returns `Some(string)` if the value is a scalar, `None` otherwise.
     fn format_scalar(&self, value: Peek<'_, '_>) -> Option<String> {
         // Handle Option<T> by unwrapping if Some
-        if let Def::Option(_) = &value.shape().def {
-            if let Ok(opt) = value.into_option() {
-                return match opt.value() {
-                    Some(inner) => self.format_scalar(inner),
-                    None => None,
-                };
-            }
+        if let Def::Option(_) = &value.shape().def
+            && let Ok(opt) = value.into_option()
+        {
+            return match opt.value() {
+                Some(inner) => self.format_scalar(inner),
+                None => None,
+            };
         }
 
         if let Some(scalar_type) = value.scalar_type() {
@@ -114,13 +114,13 @@ pub trait WriteScalar: DomSerializer {
     /// Override to customize formatting (e.g., custom float precision).
     fn write_scalar(&mut self, value: Peek<'_, '_>) -> Result<bool, Self::Error> {
         // Handle Option<T> by unwrapping if Some
-        if let Def::Option(_) = &value.shape().def {
-            if let Ok(opt) = value.into_option() {
-                return match opt.value() {
-                    Some(inner) => self.write_scalar(inner),
-                    None => Ok(false),
-                };
-            }
+        if let Def::Option(_) = &value.shape().def
+            && let Ok(opt) = value.into_option()
+        {
+            return match opt.value() {
+                Some(inner) => self.write_scalar(inner),
+                None => Ok(false),
+            };
         }
 
         if let Some(scalar_type) = value.scalar_type() {

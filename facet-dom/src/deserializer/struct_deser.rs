@@ -299,19 +299,19 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         }
 
         // Switch sequences if needed
-        if let Some(prev_idx) = self.active_seq_idx {
-            if prev_idx != idx {
-                trace!(prev_idx, new_idx = idx, "switching active flat sequence");
-                let is_smart_ptr = matches!(
-                    self.started_seqs.get(&prev_idx),
-                    Some(SeqState::List { is_smart_ptr: true })
-                );
+        if let Some(prev_idx) = self.active_seq_idx
+            && prev_idx != idx
+        {
+            trace!(prev_idx, new_idx = idx, "switching active flat sequence");
+            let is_smart_ptr = matches!(
+                self.started_seqs.get(&prev_idx),
+                Some(SeqState::List { is_smart_ptr: true })
+            );
+            wip = wip.end()?;
+            if is_smart_ptr {
                 wip = wip.end()?;
-                if is_smart_ptr {
-                    wip = wip.end()?;
-                }
-                self.active_seq_idx = None;
             }
+            self.active_seq_idx = None;
         }
 
         use std::collections::hash_map::Entry;
@@ -623,16 +623,16 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
         }
 
-        if let Some(info) = &self.field_map.text_field {
-            if !self.text_content.is_empty() {
-                let idx = info.idx;
-                trace!(idx, field_name = %info.field.name, text_len = self.text_content.len(), "setting text field");
-                let text = std::mem::take(&mut self.text_content);
-                wip = self
-                    .dom_deser
-                    .set_string_value(wip.begin_nth_field(idx)?, Cow::Owned(text))?
-                    .end()?;
-            }
+        if let Some(info) = &self.field_map.text_field
+            && !self.text_content.is_empty()
+        {
+            let idx = info.idx;
+            trace!(idx, field_name = %info.field.name, text_len = self.text_content.len(), "setting text field");
+            let text = std::mem::take(&mut self.text_content);
+            wip = self
+                .dom_deser
+                .set_string_value(wip.begin_nth_field(idx)?, Cow::Owned(text))?
+                .end()?;
         }
         Ok(wip)
     }
