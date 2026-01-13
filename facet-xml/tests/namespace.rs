@@ -5,14 +5,11 @@
 //! declarations and namespace prefixes.
 
 use facet::Facet;
-use facet_format::FormatDeserializer;
-use facet_xml::{self as xml, XmlParser, to_vec};
+use facet_xml::{self as xml, to_vec};
 
 /// Helper to deserialize XML using facet-xml
 fn from_str<T: Facet<'static>>(xml_str: &str) -> Result<T, Box<dyn std::error::Error>> {
-    let parser = XmlParser::new(xml_str.as_bytes());
-    let mut deserializer = FormatDeserializer::new_owned(parser);
-    Ok(deserializer.deserialize()?)
+    Ok(facet_xml::from_str(xml_str)?)
 }
 
 /// Helper to serialize to XML using facet-xml

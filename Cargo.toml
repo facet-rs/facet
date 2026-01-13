@@ -129,10 +129,12 @@ tempfile = "^3.23.0"
 time = { version = "^0.3.44", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "^1.48.0", default-features = false, features = ["macros"] }
 tracing = { version = "^0.1.43", default-features = false, features = ["std"] }
+tracing-log = { version = "^0.2.0" }
 ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
 rust_decimal = "^1.38.0"
+libtest-mimic = "^0.8.1"
 
 # Allow the facet_no_doc cfg in generated code
 # See: https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html

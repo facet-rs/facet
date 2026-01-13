@@ -74,3 +74,10 @@ run-wrapper = 'lldb'
 slow-timeout = { period = "86400s" }
 # Don't retry on failure
 retries = 0
+
+# Fast profile - quick test runs with short timeouts to catch infinite loops
+[profile.fast]
+# Fail fast on first failure
+fail-fast = true
+# Short timeout to catch infinite loops quickly
+slow-timeout = { period = "1s", terminate-after = 2 }

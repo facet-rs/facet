@@ -1,7 +1,7 @@
-//! Tree-based (DOM) deserializer for facet.
+//! Tree-based (DOM) serialization and deserialization for facet.
 //!
-//! This crate provides a deserializer designed for tree-structured documents
-//! like HTML and XML, where:
+//! This crate provides serializers and deserializers designed for tree-structured
+//! documents like HTML and XML, where:
 //! - Nodes have a tag name
 //! - Nodes can have attributes (key-value pairs)
 //! - Nodes can have children (mixed content: text and child elements interleaved)
@@ -14,7 +14,9 @@
 mod deserializer;
 mod event;
 mod parser;
+mod serializer;
 
 pub use deserializer::*;
 pub use event::*;
 pub use parser::*;
+pub use serializer::*;

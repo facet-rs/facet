@@ -26,6 +26,7 @@ facet = { path = "../facet", features = ["doc"] }
 
 [features]
 default = []
+net = ["facet-core/net"]
 
 [lints]
 workspace = true

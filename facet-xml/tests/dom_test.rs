@@ -1,7 +1,7 @@
 //! Tests for DOM-based XML deserialization.
 
 use facet::Facet;
-use facet_xml::{self as xml, from_str_dom};
+use facet_xml::{self as xml, from_str};
 
 #[test]
 fn test_simple_struct() {
@@ -15,7 +15,7 @@ fn test_simple_struct() {
     }
 
     let xml = r#"<person id="1" name="Alice"/>"#;
-    let person: Person = from_str_dom(xml).unwrap();
+    let person: Person = from_str(xml).unwrap();
     assert_eq!(person.id, "1");
     assert_eq!(person.name, "Alice");
 }
@@ -32,7 +32,7 @@ fn test_struct_with_text() {
     }
 
     let xml = r#"<message from="Bob">Hello, world!</message>"#;
-    let msg: Message = from_str_dom(xml).unwrap();
+    let msg: Message = from_str(xml).unwrap();
     assert_eq!(msg.from, "Bob");
     assert_eq!(msg.content, "Hello, world!");
 }
@@ -54,7 +54,7 @@ fn test_struct_with_child_elements() {
     }
 
     let xml = r#"<container><item id="1"/><item id="2"/><item id="3"/></container>"#;
-    let container: Container = from_str_dom(xml).unwrap();
+    let container: Container = from_str(xml).unwrap();
     assert_eq!(container.items.len(), 3);
     assert_eq!(container.items[0].id, "1");
     assert_eq!(container.items[1].id, "2");
@@ -71,10 +71,10 @@ fn test_empty_element() {
     }
 
     let xml = r#"<empty/>"#;
-    let empty: Empty = from_str_dom(xml).unwrap();
+    let empty: Empty = from_str(xml).unwrap();
     assert_eq!(empty.flag, None);
 
     let xml_with_attr = r#"<empty flag="yes"/>"#;
-    let empty: Empty = from_str_dom(xml_with_attr).unwrap();
+    let empty: Empty = from_str(xml_with_attr).unwrap();
     assert_eq!(empty.flag, Some("yes".to_string()));
 }

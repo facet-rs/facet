@@ -1754,6 +1754,7 @@ dependencies = [
  "libc",
  "museair",
  "parking_lot",
+ "tracing",
 ]
 
 [[package]]
@@ -2174,23 +2175,18 @@ name = "facet-xml"
 version = "0.42.0"
 dependencies = [
  "axum-core",
- "corosensei",
  "divan",
  "facet",
  "facet-core",
  "facet-diff",
  "facet-diff-core",
  "facet-dom",
- "facet-format",
- "facet-format-suite",
  "facet-reflect",
  "http",
  "http-body-util",
  "indoc",
  "itoa",
- "libtest-mimic",
  "quick-xml",
- "tokio",
  "zmij",
 ]
 

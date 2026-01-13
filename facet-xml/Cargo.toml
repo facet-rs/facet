@@ -20,19 +20,12 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 facet = { path = "../facet", version = "0.42.0" }
 facet-core = { path = "../facet-core", version = "0.42.0" }
 facet-dom = { path = "../facet-dom", version = "0.42.0" }
-facet-format = { path = "../facet-format", version = "0.42.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
 
 # XML parsing - using quick-xml which is the most mature Rust XML parser
 quick-xml = { version = "0.39", default-features = false }
 zmij = { version = "1", optional = true }
 itoa = { version = "1", optional = true }
-
-# Streaming support
-corosensei = { version = "0.3", optional = true }
-tokio = { version = "1", default-features = false, optional = true, features = [
-    "io-util",
-] }
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
@@ -46,19 +39,7 @@ facet-diff-core = { path = "../facet-diff-core", version = "0.42.0", optional = 
 divan = { workspace = true }
 facet = { path = "../facet", features = ["doc", "net"] }
 facet-diff = { path = "../facet-diff" }
-facet-format = { path = "../facet-format", features = ["jit", "net"] }
-facet-format-suite = { path = "../facet-format-suite", features = [
-    "third-party",
-    "tokio",
-    "net",
-] }
 indoc = { workspace = true }
-libtest-mimic = "0.8.1"
-tokio = { version = "1", features = ["rt", "macros"] }
-
-[[test]]
-name = "format_suite"
-harness = false
 
 [[bench]]
 name = "vs_jit"
@@ -66,11 +47,9 @@ harness = false
 
 [features]
 default = []
-streaming = ["dep:corosensei"]
 std = []
-tokio = ["streaming", "std", "dep:tokio"]
 fast = ["dep:zmij", "dep:itoa"]
-net = ["facet-format/net", "facet-core/net"]
+net = ["facet-core/net"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
