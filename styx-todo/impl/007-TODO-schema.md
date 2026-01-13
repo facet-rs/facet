@@ -2,11 +2,31 @@
 
 Schema definition and validation library for Styx. Used by both CLI tools and the LSP server.
 
+## Key Design Principle: Eat Your Own Dog Food
+
+**The meta-schema (from `docs/content/spec/schema.md`) must be bundled into styx-schema and
+used to validate schema files via facet-styx deserialization.**
+
+This means:
+1. The meta-schema is embedded in the crate (via `include_str!` or const)
+2. Schema files are deserialized into proper Rust structs using `facet-styx`
+3. No hand-written schema parsing logic - if facet-styx can't deserialize the meta-schema,
+   that's a bug in the deserialization stack that needs fixing
+
+This approach:
+- Ensures the spec and implementation stay in sync
+- Tests the full deserialization pipeline with a complex real-world schema
+- Catches gaps in facet-styx early
+
+**If deserialization issues are encountered:**
+- Implementation gaps → fix them in facet-styx/styx-parse
+- Design issues → stop and escalate (spec might need adjustment)
+
 ## Deliverables
 
 - `crates/styx-schema/src/lib.rs` - Crate root
-- `crates/styx-schema/src/types.rs` - Schema type definitions
-- `crates/styx-schema/src/parse.rs` - Parse schema from Styx document
+- `crates/styx-schema/src/types.rs` - Schema type definitions (derived via facet)
+- `crates/styx-schema/src/meta.rs` - Bundled meta-schema
 - `crates/styx-schema/src/validate.rs` - Validate documents against schema
 - `crates/styx-schema/src/error.rs` - Validation error types
 
@@ -16,181 +36,111 @@ Schema definition and validation library for Styx. Used by both CLI tools and th
 [dependencies]
 styx-parse = { path = "../styx-parse" }
 styx-tree = { path = "../styx-tree" }
+facet-styx = { path = "../facet-styx" }
+facet = { version = "0.42" }
 ```
 
-## Schema Format
+## Schema Types (via facet derive)
 
-Schemas are Styx documents with a specific structure:
-
-```styx
-// server-config.schema.styx
-{
-    /// The root type for this schema
-    root ServerConfig
-    
-    types {
-        /// Server configuration
-        ServerConfig {
-            fields {
-                /// Server hostname or IP address
-                host { type string, required true }
-                /// Port number (1-65535)
-                port { type int, required true }
-                /// TLS configuration (optional)
-                tls { type TlsConfig }
-                /// List of allowed origins
-                origins { type (string) }
-            }
-        }
-        
-        TlsConfig {
-            fields {
-                cert { type string, required true, doc "Path to certificate file" }
-                key { type string, required true, doc "Path to private key file" }
-                /// Minimum TLS version
-                min_version { type TlsVersion, default "1.2" }
-            }
-        }
-        
-        /// TLS version enum
-        TlsVersion {
-            variants (
-                @1.2
-                @1.3
-            )
-        }
-    }
-}
-```
-
-## Type System
-
-### Primitive Types
-
-- `string` - Any scalar value
-- `int` - Integer (validated via regex or parsing)
-- `float` - Floating point number
-- `bool` - `true` or `false`
-- `any` - Any value (no validation)
-
-### Compound Types
-
-- `TypeName` - Reference to a defined type
-- `(T)` - Sequence of T
-- `{K: V}` - Map with key type K and value type V (keys are always strings)
-- `T?` - Optional T (syntactic sugar for `required false`)
-
-### Tagged Unions (Enums)
-
-```styx
-Result {
-    variants (
-        @Ok { type T }      // Tag with payload
-        @Err { type string }
-        @Pending            // Tag without payload (unit)
-    )
-}
-```
-
-### Struct Types
-
-```styx
-Person {
-    fields {
-        name { type string, required true }
-        age { type int }
-        email { type string, pattern r"^[^@]+@[^@]+$" }
-    }
-    /// Allow additional fields not in schema
-    additional_fields true
-}
-```
-
-## Schema Type Definitions
+These types are derived from the meta-schema specification. They use `#[derive(Facet)]`
+for automatic deserialization from Styx.
 
 ```rust
-/// A complete schema definition.
-pub struct Schema {
-    /// The root type name.
-    pub root: String,
-    /// All type definitions.
-    pub types: HashMap<String, TypeDef>,
+use facet::Facet;
+
+/// A complete schema file.
+#[derive(Facet)]
+pub struct SchemaFile {
+    /// Schema metadata (required).
+    pub meta: Meta,
+    /// External schema imports (optional).
+    pub imports: Option<HashMap<String, String>>,
+    /// Type definitions: @ for document root, strings for named types.
+    pub schema: HashMap<SchemaKey, Schema>,
 }
 
-/// A type definition.
-pub enum TypeDef {
-    /// Struct with named fields.
-    Struct(StructDef),
-    /// Tagged union (enum).
-    Enum(EnumDef),
-    /// Type alias.
-    Alias(TypeRef),
+/// Schema metadata.
+#[derive(Facet)]
+pub struct Meta {
+    /// Unique identifier for the schema (URL recommended).
+    pub id: String,
+    /// Schema version (date or semver).
+    pub version: String,
+    /// Human-readable description.
+    pub description: Option<String>,
 }
 
-/// Struct definition.
-pub struct StructDef {
-    /// Documentation comment.
-    pub doc: Option<String>,
-    /// Fields in this struct.
-    pub fields: Vec<FieldDef>,
-    /// Whether to allow fields not in schema.
-    pub additional_fields: bool,
+/// Key in the schema map: either a type name (String) or @ (unit key for root).
+#[derive(Facet, Hash, Eq, PartialEq)]
+pub enum SchemaKey {
+    TypeName(String),
+    Root, // represents @
 }
 
-/// Field definition.
-pub struct FieldDef {
-    /// Field name.
-    pub name: String,
-    /// Field type.
-    pub ty: TypeRef,
-    /// Whether this field is required.
-    pub required: bool,
-    /// Default value (as Styx source).
-    pub default: Option<String>,
-    /// Documentation comment.
-    pub doc: Option<String>,
-    /// Validation pattern (for strings).
-    pub pattern: Option<String>,
+/// A type constraint (the Schema union from the meta-schema).
+#[derive(Facet)]
+pub enum Schema {
+    /// Literal value constraint (scalar).
+    Literal(String),
+    /// Type reference (any tag with unit payload like @string, @MyType).
+    TypeRef(String),
+    /// Object schema: {field @type}
+    Object(HashMap<ObjectKey, Schema>),
+    /// Sequence schema: (@type)
+    Sequence(Box<Schema>),
+    /// Union: @union(@A @B)
+    Union(Vec<Schema>),
+    /// Optional: @optional(@T)
+    Optional(Box<Schema>),
+    /// Enum: @enum{a, b {x @type}}
+    Enum(HashMap<String, EnumVariant>),
+    /// Map: @map(@V) or @map(@K @V)
+    Map(MapSchema),
+    /// Flatten: @flatten(@Type)
+    Flatten(String),
 }
 
-/// Enum definition.
-pub struct EnumDef {
-    /// Documentation comment.
-    pub doc: Option<String>,
-    /// Enum variants.
-    pub variants: Vec<VariantDef>,
+#[derive(Facet)]
+pub enum ObjectKey {
+    Field(String),
+    AdditionalFields, // represents @ key
 }
 
-/// Enum variant.
-pub struct VariantDef {
-    /// Variant name (tag name without @).
-    pub name: String,
-    /// Payload type (None for unit variants).
-    pub payload: Option<TypeRef>,
-    /// Documentation comment.
-    pub doc: Option<String>,
+#[derive(Facet)]
+pub enum EnumVariant {
+    Unit,
+    Payload(HashMap<String, Schema>),
 }
 
-/// A type reference.
-pub enum TypeRef {
-    /// Primitive type.
-    Primitive(PrimitiveType),
-    /// Named type reference.
-    Named(String),
-    /// Sequence type.
-    Sequence(Box<TypeRef>),
-    /// Map type.
-    Map(Box<TypeRef>),
-    /// Optional wrapper.
-    Optional(Box<TypeRef>),
+#[derive(Facet)]
+pub enum MapSchema {
+    /// @map(@V) - string keys
+    ValueOnly(Box<Schema>),
+    /// @map(@K @V) - explicit key type
+    KeyValue(Box<Schema>, Box<Schema>),
 }
+```
 
-pub enum PrimitiveType {
-    String,
-    Int,
-    Float,
-    Bool,
-    Any,
+## Bundled Meta-Schema
+
+```rust
+// src/meta.rs
+
+/// The meta-schema for validating schema files.
+/// This is the schema from docs/content/spec/schema.md
+pub const META_SCHEMA_SOURCE: &str = include_str!("../../../docs/content/spec/schema.md");
+
+// Extract the schema block from the markdown (between ```styx and ```)
+// Or alternatively, have a separate meta-schema.styx file
+
+/// Load the meta-schema as a Schema struct.
+pub fn meta_schema() -> &'static SchemaFile {
+    static META: OnceLock<SchemaFile> = OnceLock::new();
+    META.get_or_init(|| {
+        let source = extract_schema_from_spec(META_SCHEMA_SOURCE);
+        facet_styx::from_str(&source)
+            .expect("meta-schema must deserialize - this is a bug in the stack")
+    })
 }
 ```
 
@@ -200,7 +150,7 @@ pub enum PrimitiveType {
 /// Validate a document against a schema.
 pub fn validate(
     doc: &styx_tree::Document,
-    schema: &Schema,
+    schema: &SchemaFile,
 ) -> ValidationResult;
 
 /// Validation result.
@@ -247,68 +197,28 @@ pub enum ValidationErrorKind {
 
 ```rust
 /// Load a schema from a Styx source string.
-pub fn load_schema(source: &str) -> Result<Schema, SchemaError>;
+pub fn load_schema(source: &str) -> Result<SchemaFile, SchemaError> {
+    // First validate the schema file against the meta-schema
+    let meta = meta_schema();
+    
+    // Then deserialize into our types
+    facet_styx::from_str(source).map_err(SchemaError::from)
+}
 
 /// Load a schema from a file.
-pub fn load_schema_file(path: &Path) -> Result<Schema, SchemaError>;
-
-/// Schema parsing errors.
-pub enum SchemaError {
-    /// Parse error in schema document.
-    Parse(Vec<ParseError>),
-    /// Invalid schema structure.
-    InvalidStructure { message: String, span: Option<Span> },
-    /// Unknown type reference.
-    UnknownType { name: String, span: Option<Span> },
-    /// Duplicate type definition.
-    DuplicateType { name: String, span: Option<Span> },
-    /// Cyclic type reference.
-    CyclicType { cycle: Vec<String> },
+pub fn load_schema_file(path: &Path) -> Result<SchemaFile, SchemaError> {
+    let source = std::fs::read_to_string(path)?;
+    load_schema(&source)
 }
-```
 
-## Validation Process
-
-1. **Parse schema** - Load and validate the schema document itself
-2. **Build type graph** - Resolve all type references, detect cycles
-3. **Validate document** - Walk the document tree, checking against schema
-
-```rust
-fn validate_value(
-    value: &Value,
-    ty: &TypeRef,
-    schema: &Schema,
-    path: &str,
-    errors: &mut Vec<ValidationError>,
-) {
-    match (ty, value) {
-        (TypeRef::Primitive(PrimitiveType::String), Value::Scalar(_)) => {
-            // OK - any scalar is valid as string
-        }
-        (TypeRef::Primitive(PrimitiveType::Int), Value::Scalar(s)) => {
-            if s.parse::<i64>().is_err() {
-                errors.push(ValidationError {
-                    path: path.to_string(),
-                    kind: ValidationErrorKind::TypeMismatch {
-                        expected: "int".into(),
-                        got: "string".into(),
-                    },
-                    message: format!("expected integer, got '{}'", s),
-                    span: value.span(),
-                });
-            }
-        }
-        (TypeRef::Named(name), value) => {
-            let type_def = schema.types.get(name).unwrap();
-            validate_against_type_def(value, type_def, schema, path, errors);
-        }
-        (TypeRef::Sequence(inner), Value::Sequence(items)) => {
-            for (i, item) in items.iter().enumerate() {
-                validate_value(item, inner, schema, &format!("{}[{}]", path, i), errors);
-            }
-        }
-        // ... other cases
-    }
+/// Schema loading errors.
+pub enum SchemaError {
+    /// IO error reading file.
+    Io(std::io::Error),
+    /// Deserialization error.
+    Deserialize(facet_styx::Error),
+    /// Validation error (schema doesn't match meta-schema).
+    Validation(Vec<ValidationError>),
 }
 ```
 
@@ -316,10 +226,9 @@ fn validate_value(
 
 Schemas can be associated with documents via:
 
-1. **File naming convention**: `foo.styx` looks for `foo.schema.styx`
-2. **Schema directive**: `// @schema: ./path/to/schema.styx` at top of file
+1. **Schema declaration in document**: `@ https://example.com/schema.styx` or `@ { schema { ... } }`
+2. **File naming convention**: `foo.styx` looks for `foo.schema.styx`
 3. **Directory convention**: `.styx-schema` file in directory
-4. **Explicit**: Pass schema path to validator
 
 ```rust
 /// Find schema for a document.
@@ -328,11 +237,6 @@ pub fn discover_schema(doc_path: &Path) -> Option<PathBuf> {
     let schema_path = doc_path.with_extension("schema.styx");
     if schema_path.exists() {
         return Some(schema_path);
-    }
-    
-    // Try schema directive in file
-    if let Some(directive) = find_schema_directive(doc_path) {
-        return Some(doc_path.parent()?.join(directive));
     }
     
     // Try .styx-schema in directory
@@ -345,24 +249,10 @@ pub fn discover_schema(doc_path: &Path) -> Option<PathBuf> {
 }
 ```
 
-## Integration with CST
-
-For LSP integration, we also support validation against CST nodes:
-
-```rust
-/// Validate a CST node against a schema.
-/// Returns diagnostics with precise source locations.
-pub fn validate_cst(
-    root: &SyntaxNode,
-    schema: &Schema,
-) -> Vec<Diagnostic>;
-```
-
 ## Testing
 
-- Schema parsing tests
-- Type resolution tests
-- Validation tests for each type
-- Error message quality tests
-- Schema discovery tests
-- Integration tests with real-world schemas
+1. **Meta-schema self-validation**: The meta-schema must deserialize successfully
+2. **Round-trip tests**: Parse schema → serialize → parse should be equivalent
+3. **Validation tests**: Test each constraint type
+4. **Error message quality**: Ensure errors have good spans and messages
+5. **Integration tests**: Validate real-world schema files
