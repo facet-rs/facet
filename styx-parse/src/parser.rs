@@ -46,7 +46,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse and emit events to callback.
-    // [impl r[document.root]]
+    // parser[impl document.root]
     pub fn parse<C: ParseCallback<'src>>(mut self, callback: &mut C) {
         if !callback.event(Event::DocumentStart) {
             return;
@@ -82,7 +82,7 @@ impl<'src> Parser<'src> {
             }
         }
 
-        // [impl r[document.root]]
+        // parser[impl document.root]
         // If the document starts with `{`, parse as a single explicit block object
         if matches!(self.peek(), Some(t) if t.kind == TokenKind::LBrace) {
             let obj = self.parse_object_atom();
@@ -148,7 +148,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse entries in an object or at document level.
-    // [impl r[entry.key-equality]]
+    // parser[impl entry.key-equality]
     fn parse_entries<C: ParseCallback<'src>>(
         &mut self,
         callback: &mut C,
@@ -156,7 +156,7 @@ impl<'src> Parser<'src> {
     ) {
         let mut seen_keys: HashSet<KeyValue> = HashSet::new();
         // Track last doc comment span for dangling detection
-        // [impl r[comment.doc]]
+        // parser[impl comment.doc]
         let mut pending_doc_comment: Option<Span> = None;
 
         self.skip_whitespace_and_newlines();
@@ -211,7 +211,7 @@ impl<'src> Parser<'src> {
             self.skip_whitespace_and_newlines();
         }
 
-        // [impl r[comment.doc]]
+        // parser[impl comment.doc]
         // If we exited with a pending doc comment, it's dangling (not followed by entry)
         if let Some(span) = pending_doc_comment {
             callback.event(Event::Error {
@@ -222,7 +222,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a single entry with duplicate key detection.
-    // [impl r[entry.key-equality]]
+    // parser[impl entry.key-equality] parser[impl entry.structure]
     fn parse_entry_with_dup_check<C: ParseCallback<'src>>(
         &mut self,
         callback: &mut C,
@@ -243,7 +243,7 @@ impl<'src> Parser<'src> {
         // First atom is the key - check for duplicates and invalid key types
         let key_atom = &atoms[0];
 
-        // [impl r[entry.keys]]
+        // parser[impl entry.keys]
         // Heredoc scalars are not allowed as keys
         if key_atom.kind == ScalarKind::Heredoc {
             if !callback.event(Event::Error {
@@ -288,6 +288,7 @@ impl<'src> Parser<'src> {
                 return false;
             }
         } else {
+            // parser[impl entry.keypath]
             // Multiple atoms: nested key path
             // a b c → key=a, value={b: c}
             // Emit as implicit nested object
@@ -436,7 +437,7 @@ impl<'src> Parser<'src> {
                 }
 
                 // Bare scalars - check for attribute syntax (key=value)
-                // [impl r[attr.syntax]]
+                // parser[impl attr.syntax] parser[impl entry.keypath.attributes]
                 TokenKind::BareScalar => {
                     if self.is_attribute_start() {
                         atoms.push(self.parse_attributes());
@@ -467,7 +468,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Check if current position starts an attribute (bare_scalar immediately followed by =).
-    // [impl r[attr.syntax]]
+    // parser[impl attr.syntax]
     fn is_attribute_start(&mut self) -> bool {
         // We always try to parse as attribute; parse_attributes handles the fallback
         // if = doesn't immediately follow the bare scalar.
@@ -476,7 +477,7 @@ impl<'src> Parser<'src> {
 
     /// Parse one or more attributes (key=value pairs).
     /// If the first token is not followed by =, returns a regular scalar atom.
-    // [impl r[attr.syntax]] [impl r[attr.values]] [impl r[attr.atom]]
+    // parser[impl attr.syntax] parser[impl attr.values] parser[impl attr.atom]
     fn parse_attributes(&mut self) -> Atom<'src> {
         // First, consume the bare scalar (potential key)
         let first_token = self.advance().unwrap();
@@ -620,7 +621,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse an attribute value (bare/quoted/raw scalar, sequence, or object).
-    // [impl r[attr.values]]
+    // parser[impl attr.values]
     fn parse_attribute_value(&mut self) -> Option<Atom<'src>> {
         let Some(token) = self.peek() else {
             return None;
@@ -694,7 +695,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse an object atom (for nested objects).
-    // [impl r[object.syntax]]
+    // parser[impl object.syntax]
     fn parse_object_atom(&mut self) -> Atom<'src> {
         let open = self.advance().unwrap(); // consume '{'
         let start_span = open.span;
@@ -702,12 +703,12 @@ impl<'src> Parser<'src> {
         let mut entries: Vec<ObjectEntry<'src>> = Vec::new();
         let mut separator_mode: Option<Separator> = None;
         let mut end_span = start_span;
-        // [impl r[entry.key-equality]]
+        // parser[impl entry.key-equality]
         let mut seen_keys: HashSet<KeyValue> = HashSet::new();
         let mut duplicate_key_spans: Vec<Span> = Vec::new();
-        // [impl r[object.separators]]
+        // parser[impl object.separators]
         let mut mixed_separator_spans: Vec<Span> = Vec::new();
-        // [impl r[comment.doc]]
+        // parser[impl comment.doc]
         let mut pending_doc_comment: Option<Span> = None;
         let mut dangling_doc_comment_spans: Vec<Span> = Vec::new();
 
@@ -739,7 +740,7 @@ impl<'src> Parser<'src> {
                 }
 
                 TokenKind::Newline => {
-                    // [impl r[object.separators]]
+                    // parser[impl object.separators]
                     if separator_mode == Some(Separator::Comma) {
                         // Error: mixed separators - record span and continue parsing
                         mixed_separator_spans.push(token_span);
@@ -753,7 +754,7 @@ impl<'src> Parser<'src> {
                 }
 
                 TokenKind::Comma => {
-                    // [impl r[object.separators]]
+                    // parser[impl object.separators]
                     if separator_mode == Some(Separator::Newline) {
                         // Error: mixed separators - record span and continue parsing
                         mixed_separator_spans.push(token_span);
@@ -790,7 +791,7 @@ impl<'src> Parser<'src> {
                     if !entry_atoms.is_empty() {
                         let key = entry_atoms[0].clone();
 
-                        // [impl r[entry.key-equality]]
+                        // parser[impl entry.key-equality]
                         // Check for duplicate key
                         let key_value = KeyValue::from_atom(&key, self);
                         if seen_keys.contains(&key_value) {
@@ -872,7 +873,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a sequence atom.
-    // [impl r[sequence.syntax]] [impl r[sequence.elements]]
+    // parser[impl sequence.syntax] parser[impl sequence.elements]
     fn parse_sequence_atom(&mut self) -> Atom<'src> {
         let open = self.advance().unwrap(); // consume '('
         let start_span = open.span;
@@ -950,7 +951,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a tag or unit atom.
-    // [impl r[tag.payload]]
+    // parser[impl tag.payload] parser[impl value.unit]
     fn parse_tag_or_unit_atom(&mut self) -> Atom<'src> {
         let at = self.advance().unwrap(); // consume '@'
         let start_span = at.span;
@@ -966,7 +967,7 @@ impl<'src> Parser<'src> {
             let name_span = name_token.span;
             let name_end = name_token.span.end;
 
-            // [impl r[tag.syntax]]
+            // parser[impl tag.syntax]
             // Validate tag name: must match @[A-Za-z_][A-Za-z0-9_.-]*
             let invalid_tag_name = !Self::is_valid_tag_name(name);
 
@@ -1002,7 +1003,7 @@ impl<'src> Parser<'src> {
 
     /// Check if a tag name is valid per r[tag.syntax].
     /// Must match pattern: [A-Za-z_][A-Za-z0-9_.-]*
-    // [impl r[tag.syntax]]
+    // parser[impl tag.syntax]
     fn is_valid_tag_name(name: &str) -> bool {
         let mut chars = name.chars();
 
@@ -1017,7 +1018,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a tag payload if present (must immediately follow tag name).
-    // [impl r[tag.payload]]
+    // parser[impl tag.payload]
     fn parse_tag_payload(&mut self, after_name: u32) -> Option<Atom<'src>> {
         let Some(token) = self.peek_raw() else {
             return None; // implicit unit
@@ -1069,13 +1070,13 @@ impl<'src> Parser<'src> {
                 kind: ScalarKind::Heredoc,
             }),
             AtomContent::Unit => callback.event(Event::Unit { span: atom.span }),
-            // [impl r[tag.payload]]
+            // parser[impl tag.payload]
             AtomContent::Tag {
                 name,
                 payload,
                 invalid_name_span,
             } => {
-                // [impl r[tag.syntax]]
+                // parser[impl tag.syntax]
                 // Emit error for invalid tag name
                 if let Some(span) = invalid_name_span {
                     if !callback.event(Event::Error {
@@ -1101,7 +1102,7 @@ impl<'src> Parser<'src> {
                 // If no payload, it's an implicit unit (TagEnd implies it)
                 callback.event(Event::TagEnd)
             }
-            // [impl r[object.syntax]]
+            // parser[impl object.syntax]
             AtomContent::Object {
                 entries,
                 separator,
@@ -1116,7 +1117,7 @@ impl<'src> Parser<'src> {
                     return false;
                 }
 
-                // [impl r[entry.key-equality]]
+                // parser[impl entry.key-equality]
                 // Emit errors for duplicate keys
                 for dup_span in duplicate_key_spans {
                     if !callback.event(Event::Error {
@@ -1127,7 +1128,7 @@ impl<'src> Parser<'src> {
                     }
                 }
 
-                // [impl r[object.separators]]
+                // parser[impl object.separators]
                 // Emit errors for mixed separators
                 for mix_span in mixed_separator_spans {
                     if !callback.event(Event::Error {
@@ -1138,7 +1139,7 @@ impl<'src> Parser<'src> {
                     }
                 }
 
-                // [impl r[comment.doc]]
+                // parser[impl comment.doc]
                 // Emit errors for dangling doc comments
                 for doc_span in dangling_doc_comment_spans {
                     if !callback.event(Event::Error {
@@ -1170,7 +1171,7 @@ impl<'src> Parser<'src> {
 
                 callback.event(Event::ObjectEnd { span: atom.span })
             }
-            // [impl r[sequence.syntax]] [impl r[sequence.elements]]
+            // parser[impl sequence.syntax] parser[impl sequence.elements]
             AtomContent::Sequence(elements) => {
                 if !callback.event(Event::SequenceStart { span: atom.span }) {
                     return false;
@@ -1184,7 +1185,7 @@ impl<'src> Parser<'src> {
 
                 callback.event(Event::SequenceEnd { span: atom.span })
             }
-            // [impl r[attr.atom]]
+            // parser[impl attr.atom]
             AtomContent::Attributes(attrs) => {
                 // Emit as comma-separated object
                 if !callback.event(Event::ObjectStart {
@@ -1266,7 +1267,7 @@ impl<'src> Parser<'src> {
                     Some('\\') => result.push('\\'),
                     Some('"') => result.push('"'),
                     Some('0') => result.push('\0'),
-                    // [impl r[scalar.quoted.escapes]]
+                    // parser[impl scalar.quoted.escapes]
                     Some('u') => {
                         // Unicode escape: \u{X...} or \uXXXX
                         match chars.peek() {
@@ -1346,7 +1347,7 @@ struct Atom<'src> {
 }
 
 /// Content of an atom.
-// [impl r[object.syntax]] [impl r[sequence.syntax]]
+// parser[impl object.syntax] parser[impl sequence.syntax]
 #[derive(Debug, Clone)]
 enum AtomContent<'src> {
     /// A scalar value (bare, quoted, or raw).
@@ -1356,33 +1357,33 @@ enum AtomContent<'src> {
     /// Unit value `@`.
     Unit,
     /// A tag with optional payload.
-    // [impl r[tag.payload]]
+    // parser[impl tag.payload]
     Tag {
         name: &'src str,
         payload: Option<Box<Atom<'src>>>,
         /// Span of invalid tag name (for error reporting).
-        // [impl r[tag.syntax]]
+        // parser[impl tag.syntax]
         invalid_name_span: Option<Span>,
     },
     /// An object with parsed entries.
-    // [impl r[object.syntax]]
+    // parser[impl object.syntax]
     Object {
         entries: Vec<ObjectEntry<'src>>,
         separator: Separator,
         /// Spans of duplicate keys (for error reporting).
         duplicate_key_spans: Vec<Span>,
         /// Spans of mixed separators (for error reporting).
-        // [impl r[object.separators]]
+        // parser[impl object.separators]
         mixed_separator_spans: Vec<Span>,
         /// Spans of dangling doc comments (for error reporting).
-        // [impl r[comment.doc]]
+        // parser[impl comment.doc]
         dangling_doc_comment_spans: Vec<Span>,
     },
     /// A sequence with parsed elements.
-    // [impl r[sequence.syntax]] [impl r[sequence.elements]]
+    // parser[impl sequence.syntax] parser[impl sequence.elements]
     Sequence(Vec<Atom<'src>>),
     /// Attributes (key=value pairs that become an object).
-    // [impl r[attr.syntax]] [impl r[attr.atom]]
+    // parser[impl attr.syntax] parser[impl attr.atom]
     Attributes(Vec<AttributeEntry<'src>>),
 }
 
@@ -1402,7 +1403,7 @@ struct ObjectEntry<'src> {
 }
 
 /// A parsed key for equality comparison (duplicate key detection).
-// [impl r[entry.key-equality]]
+// parser[impl entry.key-equality]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum KeyValue {
     /// Scalar key (after escape processing).
@@ -1418,7 +1419,7 @@ enum KeyValue {
 
 impl KeyValue {
     /// Create a KeyValue from an Atom for duplicate key comparison.
-    // [impl r[entry.key-equality]]
+    // parser[impl entry.key-equality]
     fn from_atom<'a>(atom: &Atom<'a>, parser: &Parser<'a>) -> Self {
         match &atom.content {
             AtomContent::Scalar(text) => {
@@ -1591,7 +1592,7 @@ mod tests {
         assert!(events.iter().any(|e| matches!(e, Event::DocComment { .. })));
     }
 
-    // [verify r[comment.doc]]
+    // parser[verify comment.doc]
     #[test]
     fn test_doc_comment_followed_by_entry_ok() {
         let events = parse("/// documentation\nkey value");
@@ -1606,7 +1607,7 @@ mod tests {
         )));
     }
 
-    // [verify r[comment.doc]]
+    // parser[verify comment.doc]
     #[test]
     fn test_doc_comment_at_eof_error() {
         let events = parse("foo bar\n/// dangling");
@@ -1619,7 +1620,7 @@ mod tests {
         )));
     }
 
-    // [verify r[comment.doc]]
+    // parser[verify comment.doc]
     #[test]
     fn test_doc_comment_before_closing_brace_error() {
         let events = parse("{foo bar\n/// dangling\n}");
@@ -1632,7 +1633,7 @@ mod tests {
         )));
     }
 
-    // [verify r[comment.doc]]
+    // parser[verify comment.doc]
     #[test]
     fn test_multiple_doc_comments_before_entry_ok() {
         let events = parse("/// line 1\n/// line 2\nkey value");
@@ -1651,7 +1652,7 @@ mod tests {
         )));
     }
 
-    // [verify r[object.syntax]]
+    // parser[verify object.syntax]
     #[test]
     fn test_nested_object() {
         let events = parse("outer {inner {x 1}}");
@@ -1666,7 +1667,7 @@ mod tests {
         );
     }
 
-    // [verify r[object.syntax]]
+    // parser[verify object.syntax]
     #[test]
     fn test_object_with_entries() {
         let events = parse("config {host localhost, port 8080}");
@@ -1683,7 +1684,7 @@ mod tests {
         assert!(keys.contains(&"port"), "Missing key 'port'");
     }
 
-    // [verify r[sequence.syntax]] [verify r[sequence.elements]]
+    // parser[verify sequence.syntax] parser[verify sequence.elements]
     #[test]
     fn test_sequence_elements() {
         let events = parse("items (a b c)");
@@ -1699,7 +1700,7 @@ mod tests {
         assert!(scalars.contains(&"c"), "Missing element 'c'");
     }
 
-    // [verify r[sequence.syntax]]
+    // parser[verify sequence.syntax]
     #[test]
     fn test_nested_sequences() {
         let events = parse("matrix ((1 2) (3 4))");
@@ -1713,7 +1714,7 @@ mod tests {
         );
     }
 
-    // [verify r[tag.payload]]
+    // parser[verify tag.payload]
     #[test]
     fn test_tagged_object() {
         let events = parse("result @err{message oops}");
@@ -1731,7 +1732,7 @@ mod tests {
         );
     }
 
-    // [verify r[tag.payload]]
+    // parser[verify tag.payload]
     #[test]
     fn test_tagged_sequence() {
         let events = parse("color @rgb(255 128 0)");
@@ -1749,7 +1750,7 @@ mod tests {
         );
     }
 
-    // [verify r[tag.payload]]
+    // parser[verify tag.payload]
     #[test]
     fn test_tagged_scalar() {
         let events = parse(r#"name @nickname"Bob""#);
@@ -1767,7 +1768,7 @@ mod tests {
         );
     }
 
-    // [verify r[tag.payload]]
+    // parser[verify tag.payload]
     #[test]
     fn test_tagged_explicit_unit() {
         let events = parse("nothing @empty@");
@@ -1788,7 +1789,7 @@ mod tests {
         );
     }
 
-    // [verify r[tag.payload]]
+    // parser[verify tag.payload]
     #[test]
     fn test_tag_whitespace_gap() {
         // Whitespace between tag and potential payload = no payload (implicit unit)
@@ -1813,7 +1814,7 @@ mod tests {
         assert!(keys.contains(&"y"), "Missing key 'y'");
     }
 
-    // [verify r[object.syntax]]
+    // parser[verify object.syntax]
     #[test]
     fn test_object_in_sequence() {
         let events = parse("servers ({host a} {host b})");
@@ -1828,7 +1829,7 @@ mod tests {
         );
     }
 
-    // [verify r[attr.syntax]]
+    // parser[verify attr.syntax]
     #[test]
     fn test_simple_attribute() {
         let events = parse("server host=localhost");
@@ -1844,7 +1845,7 @@ mod tests {
         assert!(keys.contains(&"host"), "Missing key 'host' from attribute");
     }
 
-    // [verify r[attr.values]]
+    // parser[verify attr.values]
     #[test]
     fn test_attribute_values() {
         let events = parse("config name=app tags=(a b) opts={x 1}");
@@ -1868,7 +1869,7 @@ mod tests {
         );
     }
 
-    // [verify r[attr.atom]]
+    // parser[verify attr.atom]
     #[test]
     fn test_multiple_attributes() {
         // When attributes are at root level without a preceding key,
@@ -1887,7 +1888,7 @@ mod tests {
         assert!(keys.contains(&"port"), "Missing key 'port'");
     }
 
-    // [verify r[entry.keypath.attributes]]
+    // parser[verify entry.keypath.attributes]
     #[test]
     fn test_keypath_with_attributes() {
         let events = parse("spec selector matchLabels app=web tier=frontend");
@@ -1906,7 +1907,7 @@ mod tests {
         assert!(keys.contains(&"tier"), "Missing key 'tier'");
     }
 
-    // [verify r[attr.syntax]]
+    // parser[verify attr.syntax]
     #[test]
     fn test_attribute_no_spaces() {
         // Spaces around = means it's NOT attribute syntax
@@ -1925,7 +1926,7 @@ mod tests {
         // There should not be "=" as a key (it would be a value)
     }
 
-    // [verify r[document.root]]
+    // parser[verify document.root]
     #[test]
     fn test_explicit_root_after_comment() {
         // Regular comment before explicit root object
@@ -1945,7 +1946,7 @@ mod tests {
         );
     }
 
-    // [verify r[document.root]]
+    // parser[verify document.root]
     #[test]
     fn test_explicit_root_after_doc_comment() {
         // Doc comment before explicit root object
@@ -1963,7 +1964,7 @@ mod tests {
         );
     }
 
-    // [verify r[entry.key-equality]]
+    // parser[verify entry.key-equality]
     #[test]
     fn test_duplicate_bare_key() {
         let events = parse("{a 1, a 2}");
@@ -1979,7 +1980,7 @@ mod tests {
         );
     }
 
-    // [verify r[entry.key-equality]]
+    // parser[verify entry.key-equality]
     #[test]
     fn test_duplicate_quoted_key() {
         let events = parse(r#"{"key" 1, "key" 2}"#);
@@ -1995,7 +1996,7 @@ mod tests {
         );
     }
 
-    // [verify r[entry.key-equality]]
+    // parser[verify entry.key-equality]
     #[test]
     fn test_duplicate_key_escape_normalized() {
         // "ab" and "a\u{62}" should be considered duplicates after escape processing
@@ -2012,7 +2013,7 @@ mod tests {
         );
     }
 
-    // [verify r[entry.key-equality]]
+    // parser[verify entry.key-equality]
     #[test]
     fn test_duplicate_unit_key() {
         let events = parse("{@ 1, @ 2}");
@@ -2028,7 +2029,7 @@ mod tests {
         );
     }
 
-    // [verify r[entry.key-equality]]
+    // parser[verify entry.key-equality]
     #[test]
     fn test_duplicate_tagged_key() {
         let events = parse("{@foo 1, @foo 2}");
@@ -2044,7 +2045,7 @@ mod tests {
         );
     }
 
-    // [verify r[entry.key-equality]]
+    // parser[verify entry.key-equality]
     #[test]
     fn test_different_keys_ok() {
         let events = parse("{a 1, b 2, c 3}");
@@ -2054,7 +2055,7 @@ mod tests {
         );
     }
 
-    // [verify r[entry.key-equality]]
+    // parser[verify entry.key-equality]
     #[test]
     fn test_duplicate_key_at_root() {
         // Test duplicate keys at the document root level (implicit root object)
@@ -2071,7 +2072,7 @@ mod tests {
         );
     }
 
-    // [verify r[object.separators]]
+    // parser[verify object.separators]
     #[test]
     fn test_mixed_separators_comma_then_newline() {
         // Start with comma, then use newline - should error
@@ -2088,7 +2089,7 @@ mod tests {
         );
     }
 
-    // [verify r[object.separators]]
+    // parser[verify object.separators]
     #[test]
     fn test_mixed_separators_newline_then_comma() {
         // Start with newline, then use comma - should error
@@ -2105,7 +2106,7 @@ mod tests {
         );
     }
 
-    // [verify r[object.separators]]
+    // parser[verify object.separators]
     #[test]
     fn test_consistent_comma_separators() {
         // All commas - should be fine
@@ -2122,7 +2123,7 @@ mod tests {
         );
     }
 
-    // [verify r[object.separators]]
+    // parser[verify object.separators]
     #[test]
     fn test_consistent_newline_separators() {
         // All newlines - should be fine
@@ -2139,7 +2140,7 @@ mod tests {
         );
     }
 
-    // [verify r[tag.syntax]]
+    // parser[verify tag.syntax]
     #[test]
     fn test_valid_tag_names() {
         // Valid tag names should not produce errors
@@ -2175,7 +2176,7 @@ mod tests {
         );
     }
 
-    // [verify r[tag.syntax]]
+    // parser[verify tag.syntax]
     #[test]
     fn test_invalid_tag_name_starts_with_digit() {
         let events = parse("x @123");
@@ -2191,7 +2192,7 @@ mod tests {
         );
     }
 
-    // [verify r[tag.syntax]]
+    // parser[verify tag.syntax]
     #[test]
     fn test_invalid_tag_name_starts_with_hyphen() {
         let events = parse("x @-foo");
@@ -2207,7 +2208,7 @@ mod tests {
         );
     }
 
-    // [verify r[tag.syntax]]
+    // parser[verify tag.syntax]
     #[test]
     fn test_invalid_tag_name_starts_with_dot() {
         let events = parse("x @.foo");
@@ -2223,7 +2224,7 @@ mod tests {
         );
     }
 
-    // [verify r[scalar.quoted.escapes]]
+    // parser[verify scalar.quoted.escapes]
     #[test]
     fn test_unicode_escape_braces() {
         let events = parse(r#"x "\u{1F600}""#);
@@ -2235,7 +2236,7 @@ mod tests {
         );
     }
 
-    // [verify r[scalar.quoted.escapes]]
+    // parser[verify scalar.quoted.escapes]
     #[test]
     fn test_unicode_escape_4digit() {
         let events = parse(r#"x "\u0041""#);
@@ -2247,7 +2248,7 @@ mod tests {
         );
     }
 
-    // [verify r[scalar.quoted.escapes]]
+    // parser[verify scalar.quoted.escapes]
     #[test]
     fn test_unicode_escape_4digit_accented() {
         let events = parse(r#"x "\u00E9""#);
@@ -2259,7 +2260,7 @@ mod tests {
         );
     }
 
-    // [verify r[scalar.quoted.escapes]]
+    // parser[verify scalar.quoted.escapes]
     #[test]
     fn test_unicode_escape_mixed() {
         // Mix of \uXXXX and \u{X} forms
@@ -2272,7 +2273,7 @@ mod tests {
         );
     }
 
-    // [verify r[entry.keys]]
+    // parser[verify entry.keys]
     #[test]
     fn test_heredoc_key_rejected() {
         let events = parse("<<EOF\nkey\nEOF value");

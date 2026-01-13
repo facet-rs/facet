@@ -50,6 +50,7 @@ enum BuilderFrame {
     Tag {
         name: String,
         span: Span,
+        payload: Option<Value>,
     },
     Entry {
         key: Option<Value>,
@@ -109,8 +110,9 @@ impl TreeBuilder {
             Some(BuilderFrame::Sequence { items, .. }) => {
                 items.push(value);
             }
-            Some(BuilderFrame::Tag { .. }) => {
-                // Tag payload - will be handled when tag ends
+            Some(BuilderFrame::Tag { payload, .. }) => {
+                // Store the value as the tag's payload
+                *payload = Some(value);
             }
             Some(BuilderFrame::Entry { key, .. }) => {
                 if key.is_none() {
@@ -213,44 +215,47 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
 
             Event::EntryEnd => {
                 if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.pop()
-                    && let Some(key) = key {
-                        // We have a key but might not have a value yet
-                        // The value should have been pushed to parent already
-                        // Just add the entry to parent
-                        match self.stack.last_mut() {
-                            Some(BuilderFrame::Object { entries, .. }) => {
-                                // Check if last entry needs this key
-                                if let Some(last) = entries.last_mut()
-                                    && matches!(last.key, Value::Unit) && last.doc_comment.is_none()
-                                    {
-                                        last.key = key;
-                                        last.doc_comment = doc_comment;
-                                        return true;
-                                    }
-                                // Otherwise add as unit-valued entry
-                                entries.push(Entry {
-                                    key,
-                                    value: Value::Unit,
-                                    doc_comment,
-                                });
+                    && let Some(key) = key
+                {
+                    // We have a key but might not have a value yet
+                    // The value should have been pushed to parent already
+                    // Just add the entry to parent
+                    match self.stack.last_mut() {
+                        Some(BuilderFrame::Object { entries, .. }) => {
+                            // Check if last entry needs this key
+                            if let Some(last) = entries.last_mut()
+                                && matches!(last.key, Value::Unit)
+                                && last.doc_comment.is_none()
+                            {
+                                last.key = key;
+                                last.doc_comment = doc_comment;
+                                return true;
                             }
-                            _ => {
-                                // Root level
-                                if let Some(last) = self.root_entries.last_mut()
-                                    && matches!(last.key, Value::Unit) && last.doc_comment.is_none()
-                                    {
-                                        last.key = key;
-                                        last.doc_comment = doc_comment;
-                                        return true;
-                                    }
-                                self.root_entries.push(Entry {
-                                    key,
-                                    value: Value::Unit,
-                                    doc_comment,
-                                });
+                            // Otherwise add as unit-valued entry
+                            entries.push(Entry {
+                                key,
+                                value: Value::Unit,
+                                doc_comment,
+                            });
+                        }
+                        _ => {
+                            // Root level
+                            if let Some(last) = self.root_entries.last_mut()
+                                && matches!(last.key, Value::Unit)
+                                && last.doc_comment.is_none()
+                            {
+                                last.key = key;
+                                last.doc_comment = doc_comment;
+                                return true;
                             }
+                            self.root_entries.push(Entry {
+                                key,
+                                value: Value::Unit,
+                                doc_comment,
+                            });
                         }
                     }
+                }
             }
 
             Event::Key { span, value, kind } => {
@@ -273,38 +278,39 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
 
                 // Check if we're in an entry context
                 if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut()
-                    && key.is_some() {
-                        // We have a key, this is the value
-                        let key_val = key.take().unwrap();
-                        let doc = doc_comment.take();
+                    && key.is_some()
+                {
+                    // We have a key, this is the value
+                    let key_val = key.take().unwrap();
+                    let doc = doc_comment.take();
 
-                        // Pop the entry frame
-                        self.stack.pop();
+                    // Pop the entry frame
+                    self.stack.pop();
 
-                        // Add to parent
-                        match self.stack.last_mut() {
-                            Some(BuilderFrame::Object { entries, .. }) => {
-                                entries.push(Entry {
-                                    key: key_val,
-                                    value: scalar,
-                                    doc_comment: doc,
-                                });
-                            }
-                            _ => {
-                                self.root_entries.push(Entry {
-                                    key: key_val,
-                                    value: scalar,
-                                    doc_comment: doc,
-                                });
-                            }
+                    // Add to parent
+                    match self.stack.last_mut() {
+                        Some(BuilderFrame::Object { entries, .. }) => {
+                            entries.push(Entry {
+                                key: key_val,
+                                value: scalar,
+                                doc_comment: doc,
+                            });
                         }
-                        // Re-push entry frame for potential more processing
-                        self.stack.push(BuilderFrame::Entry {
-                            key: None,
-                            doc_comment: None,
-                        });
-                        return true;
+                        _ => {
+                            self.root_entries.push(Entry {
+                                key: key_val,
+                                value: scalar,
+                                doc_comment: doc,
+                            });
+                        }
                     }
+                    // Re-push entry frame for potential more processing
+                    self.stack.push(BuilderFrame::Entry {
+                        key: None,
+                        doc_comment: None,
+                    });
+                    return true;
+                }
 
                 self.push_value(scalar);
             }
@@ -314,7 +320,64 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
 
                 // Similar logic to Scalar for entry handling
                 if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut()
-                    && key.is_some() {
+                    && key.is_some()
+                {
+                    let key_val = key.take().unwrap();
+                    let doc = doc_comment.take();
+                    self.stack.pop();
+
+                    match self.stack.last_mut() {
+                        Some(BuilderFrame::Object { entries, .. }) => {
+                            entries.push(Entry {
+                                key: key_val,
+                                value: unit,
+                                doc_comment: doc,
+                            });
+                        }
+                        _ => {
+                            self.root_entries.push(Entry {
+                                key: key_val,
+                                value: unit,
+                                doc_comment: doc,
+                            });
+                        }
+                    }
+                    self.stack.push(BuilderFrame::Entry {
+                        key: None,
+                        doc_comment: None,
+                    });
+                    return true;
+                }
+
+                let _ = span; // suppress unused warning
+                self.push_value(unit);
+            }
+
+            Event::TagStart { span, name } => {
+                self.stack.push(BuilderFrame::Tag {
+                    name: name.to_string(),
+                    span,
+                    payload: None,
+                });
+            }
+
+            Event::TagEnd => {
+                if let Some(BuilderFrame::Tag {
+                    name,
+                    span,
+                    payload,
+                }) = self.stack.pop()
+                {
+                    let tagged = Value::Tagged(Tagged {
+                        tag: name,
+                        payload: payload.map(Box::new),
+                        span: Some(span),
+                    });
+
+                    // Similar to scalar handling
+                    if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut()
+                        && key.is_some()
+                    {
                         let key_val = key.take().unwrap();
                         let doc = doc_comment.take();
                         self.stack.pop();
@@ -323,14 +386,14 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                             Some(BuilderFrame::Object { entries, .. }) => {
                                 entries.push(Entry {
                                     key: key_val,
-                                    value: unit,
+                                    value: tagged,
                                     doc_comment: doc,
                                 });
                             }
                             _ => {
                                 self.root_entries.push(Entry {
                                     key: key_val,
-                                    value: unit,
+                                    value: tagged,
                                     doc_comment: doc,
                                 });
                             }
@@ -341,55 +404,6 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                         });
                         return true;
                     }
-
-                let _ = span; // suppress unused warning
-                self.push_value(unit);
-            }
-
-            Event::TagStart { span, name } => {
-                self.stack.push(BuilderFrame::Tag {
-                    name: name.to_string(),
-                    span,
-                });
-            }
-
-            Event::TagEnd => {
-                if let Some(BuilderFrame::Tag { name, span }) = self.stack.pop() {
-                    let tagged = Value::Tagged(Tagged {
-                        tag: name,
-                        payload: None, // TODO: handle payloads
-                        span: Some(span),
-                    });
-
-                    // Similar to scalar handling
-                    if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut()
-                        && key.is_some() {
-                            let key_val = key.take().unwrap();
-                            let doc = doc_comment.take();
-                            self.stack.pop();
-
-                            match self.stack.last_mut() {
-                                Some(BuilderFrame::Object { entries, .. }) => {
-                                    entries.push(Entry {
-                                        key: key_val,
-                                        value: tagged,
-                                        doc_comment: doc,
-                                    });
-                                }
-                                _ => {
-                                    self.root_entries.push(Entry {
-                                        key: key_val,
-                                        value: tagged,
-                                        doc_comment: doc,
-                                    });
-                                }
-                            }
-                            self.stack.push(BuilderFrame::Entry {
-                                key: None,
-                                doc_comment: None,
-                            });
-                            return true;
-                        }
 
                     self.push_value(tagged);
                 }
@@ -488,5 +502,43 @@ mod tests {
         let value = parse("type @user");
         let obj = value.as_object().unwrap();
         assert_eq!(obj.get("type").and_then(|v| v.tag()), Some("user"));
+    }
+
+    #[test]
+    fn test_tag_with_object_payload() {
+        let value = parse("result @err{message \"failed\"}");
+        let obj = value.as_object().unwrap();
+        let result = obj.get("result").unwrap();
+        assert_eq!(result.tag(), Some("err"));
+        // Check payload is an object with message field
+        if let Value::Tagged(tagged) = result {
+            let payload = tagged.payload.as_ref().expect("should have payload");
+            let payload_obj = payload.as_object().expect("payload should be object");
+            assert_eq!(
+                payload_obj.get("message").and_then(|v| v.as_str()),
+                Some("failed")
+            );
+        } else {
+            panic!("expected tagged value");
+        }
+    }
+
+    #[test]
+    fn test_tag_with_sequence_payload() {
+        let value = parse("color @rgb(255 128 0)");
+        let obj = value.as_object().unwrap();
+        let color = obj.get("color").unwrap();
+        assert_eq!(color.tag(), Some("rgb"));
+        // Check payload is a sequence
+        if let Value::Tagged(tagged) = color {
+            let payload = tagged.payload.as_ref().expect("should have payload");
+            let payload_seq = payload.as_sequence().expect("payload should be sequence");
+            assert_eq!(payload_seq.len(), 3);
+            assert_eq!(payload_seq.get(0).and_then(|v| v.as_str()), Some("255"));
+            assert_eq!(payload_seq.get(1).and_then(|v| v.as_str()), Some("128"));
+            assert_eq!(payload_seq.get(2).and_then(|v| v.as_str()), Some("0"));
+        } else {
+            panic!("expected tagged value");
+        }
     }
 }

@@ -244,6 +244,7 @@ impl<'src> Lexer<'src> {
         self.token(TokenKind::QuotedScalar, start)
     }
 
+    // parser[impl comment.line]
     /// Lex a line comment: `// ...`.
     fn lex_line_comment(&mut self) -> Token<'src> {
         let start = self.pos;
@@ -287,7 +288,7 @@ impl<'src> Lexer<'src> {
     ///
     /// Per `r[scalar.heredoc.syntax]`: delimiter MUST match `[A-Z][A-Z0-9_]*`
     /// and not exceed 16 characters.
-    // [impl r[scalar.heredoc.syntax]]
+    // parser[impl scalar.heredoc.syntax]
     fn lex_heredoc_start(&mut self) -> Token<'src> {
         let start = self.pos;
 
@@ -419,6 +420,7 @@ impl<'src> Lexer<'src> {
         self.token(TokenKind::HeredocContent, start)
     }
 
+    // parser[impl scalar.raw.syntax]
     /// Lex a raw string start: `r#*"`.
     fn lex_raw_string_start(&mut self) -> Token<'src> {
         // Consume `r`
@@ -509,12 +511,14 @@ impl<'src> Iterator for Lexer<'src> {
     }
 }
 
+// parser[impl scalar.bare.chars]
 /// Check if a character can start a bare scalar.
 fn is_bare_scalar_start(c: char) -> bool {
     // Cannot be special chars, whitespace, or `/` (to avoid confusion with comments)
     !matches!(c, '{' | '}' | '(' | ')' | ',' | '"' | '=' | '@' | '/') && !c.is_whitespace()
 }
 
+// parser[impl scalar.bare.chars] parser[impl scalar.bare.termination]
 /// Check if a character can continue a bare scalar.
 fn is_bare_scalar_char(c: char) -> bool {
     // Cannot be special chars or whitespace (but `/` is allowed after the first char)
@@ -616,7 +620,7 @@ mod tests {
         );
     }
 
-    // [verify r[scalar.heredoc.syntax]]
+    // parser[verify scalar.heredoc.syntax]
     #[test]
     fn test_heredoc_valid_delimiters() {
         // Single uppercase letter
@@ -643,7 +647,7 @@ mod tests {
         );
     }
 
-    // [verify r[scalar.heredoc.syntax]]
+    // parser[verify scalar.heredoc.syntax]
     #[test]
     fn test_heredoc_must_start_uppercase() {
         // Starts with digit - error
@@ -656,7 +660,7 @@ mod tests {
         assert!(!tokens.iter().any(|t| t.0 == TokenKind::HeredocStart));
     }
 
-    // [verify r[scalar.heredoc.syntax]]
+    // parser[verify scalar.heredoc.syntax]
     #[test]
     fn test_heredoc_max_16_chars() {
         // 17 chars - error

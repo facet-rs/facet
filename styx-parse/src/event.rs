@@ -150,7 +150,7 @@ pub enum ParseErrorKind {
     /// Unexpected end of input.
     UnexpectedEof,
     /// Duplicate key in object.
-    // [impl r[entry.key-equality]]
+    // parser[impl entry.key-equality]
     DuplicateKey,
     /// Invalid tag name (must match pattern).
     InvalidTagName,
