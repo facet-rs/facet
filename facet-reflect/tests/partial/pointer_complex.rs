@@ -16,7 +16,7 @@ fn arc_slice_complex_struct() -> Result<(), IPanic> {
     // Test building Arc<[Person]>
     let mut partial = Partial::alloc::<Arc<[Person]>>().unwrap();
     partial = partial.begin_smart_ptr()?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
 
     // Add first person
     partial = partial.begin_list_item()?;
@@ -72,7 +72,7 @@ fn arc_slice_nested_struct() -> Result<(), IPanic> {
     // Test building Arc<[NestedStruct]> with nested structures
     let mut partial = Partial::alloc::<Arc<[NestedStruct]>>().unwrap();
     partial = partial.begin_smart_ptr()?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
 
     // Add first nested struct
     partial = partial.begin_list_item()?;
@@ -88,7 +88,7 @@ fn arc_slice_nested_struct() -> Result<(), IPanic> {
 
     // Set the tags field
     partial = partial.begin_field("tags")?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.push("developer".to_string())?;
     partial = partial.push("rust".to_string())?;
     partial = partial.push("senior".to_string())?;
@@ -108,7 +108,7 @@ fn arc_slice_nested_struct() -> Result<(), IPanic> {
     partial = partial.end()?; // end person field
 
     partial = partial.begin_field("tags")?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.push("designer".to_string())?;
     partial = partial.push("ui/ux".to_string())?;
     partial = partial.end()?; // end tags field
@@ -141,7 +141,7 @@ fn arc_slice_empty() -> Result<(), IPanic> {
     // Test building an empty Arc<[Person]>
     let mut partial = Partial::alloc::<Arc<[Person]>>().unwrap();
     partial = partial.begin_smart_ptr()?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.end()?; // end list/smart pointer
     let built = partial.build()?.materialize::<Arc<[Person]>>()?;
 
@@ -156,7 +156,7 @@ fn arc_slice_single_element() -> Result<(), IPanic> {
     // Test building Arc<[Person]> with just one element
     let mut partial = Partial::alloc::<Arc<[Person]>>().unwrap();
     partial = partial.begin_smart_ptr()?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
 
     partial = partial.begin_list_item()?;
     partial = partial.set_field("name", "Solo".to_string())?;
@@ -188,7 +188,7 @@ fn arc_slice_copyable_struct() -> Result<(), IPanic> {
     // Test with a copyable struct
     let mut partial = Partial::alloc::<Arc<[CopyableStruct]>>().unwrap();
     partial = partial.begin_smart_ptr()?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
 
     // Add multiple elements
     for i in 0..5 {

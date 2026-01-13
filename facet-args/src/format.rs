@@ -222,7 +222,7 @@ impl<'input> Context<'input> {
         let p = match p.shape().def {
             Def::List(_) => {
                 // if it's a list, then we'll want to initialize the list first and push to it
-                let mut p = p.begin_list()?;
+                let mut p = p.init_list()?;
                 p = p.begin_list_item()?;
                 p = p.parse_from_str(value)?;
                 p.end()?
@@ -1126,7 +1126,7 @@ impl<'input> Context<'input> {
 
                 if is_bool_list {
                     // For Vec<bool> fields, initialize list and push an item
-                    p = p.begin_list()?;
+                    p = p.init_list()?;
                     p = p.begin_list_item()?;
                     p = p.set(true)?;
                     p = p.end()?; // end list item
@@ -1154,7 +1154,7 @@ impl<'input> Context<'input> {
 
             if is_bool_list {
                 // For Vec<bool> fields, we need to initialize the list and push an item
-                p = p.begin_list()?;
+                p = p.init_list()?;
                 p = p.begin_list_item()?;
                 p = p.set(true)?;
                 p = p.end()?; // end list item

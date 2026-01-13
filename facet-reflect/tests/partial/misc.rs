@@ -427,7 +427,7 @@ fn wip_empty_list() -> Result<(), IPanic> {
 fn wip_list_push() -> Result<(), IPanic> {
     // Build a vector by pushing elements one by one
     let mut partial = Partial::alloc::<Vec<i32>>()?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.begin_list_item()?;
     partial = partial.set(10)?;
     partial = partial.end()?;
@@ -449,7 +449,7 @@ fn wip_list_push() -> Result<(), IPanic> {
 fn wip_list_string() -> Result<(), IPanic> {
     // Build a vector of strings
     let mut partial = Partial::alloc::<Vec<String>>()?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.begin_list_item()?;
     partial = partial.set("hello".to_string())?;
     partial = partial.end()?;
@@ -477,7 +477,7 @@ fn wip_struct_with_list() -> Result<(), IPanic> {
     partial = partial.set("test list".to_string())?;
     partial = partial.end()?;
     partial = partial.begin_field("values")?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.begin_list_item()?;
     partial = partial.set(42)?;
     partial = partial.end()?;
@@ -510,12 +510,12 @@ fn wip_list_error_cases() -> Result<(), IPanic> {
 
     // Test error: trying to begin_list on non-list type
     let partial: Partial<'_> = Partial::alloc::<String>()?;
-    let result = partial.begin_list();
+    let result = partial.init_list();
     assert!(result.is_err());
 
     // Test error: trying to use list API on non-list type
     let partial: Partial<'_> = Partial::alloc::<i32>()?;
-    let result = partial.begin_list();
+    let result = partial.init_list();
     assert!(result.is_err());
 
     Ok(())

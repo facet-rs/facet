@@ -3,7 +3,7 @@
 #![allow(unused_assignments)]
 
 use facet::Facet;
-use facet_reflect::{Partial};
+use facet_reflect::Partial;
 use facet_testhelpers::{IPanic, test};
 
 // =============================================================================
@@ -625,7 +625,7 @@ fn deferred_reenter_vec_push_more_items() -> Result<(), IPanic> {
 
     // Push first item (need begin_list on first visit)
     partial = partial.begin_field("items")?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.push(1u32)?;
     partial = partial.end()?;
 
@@ -659,7 +659,7 @@ fn deferred_reenter_vec_multiple_times() -> Result<(), IPanic> {
 
     // First visit
     partial = partial.begin_field("items")?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.push(String::from("a"))?;
     partial = partial.end()?;
 
@@ -701,7 +701,7 @@ fn deferred_nested_vec_reentry() -> Result<(), IPanic> {
 
     partial = partial.begin_field("inner")?;
     partial = partial.begin_field("values")?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.push(1i32)?;
     partial = partial.end()?;
     partial = partial.end()?;
@@ -742,7 +742,7 @@ fn deferred_reenter_hashmap() -> Result<(), IPanic> {
 
     // Insert first entry
     partial = partial.begin_field("map")?;
-    partial = partial.begin_map()?;
+    partial = partial.init_map()?;
     partial = partial.begin_key()?;
     partial = partial.set(String::from("a"))?;
     partial = partial.end()?;
@@ -793,7 +793,7 @@ fn deferred_reenter_btreemap() -> Result<(), IPanic> {
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("map")?;
-    partial = partial.begin_map()?;
+    partial = partial.init_map()?;
     partial = partial.begin_key()?;
     partial = partial.set(String::from("x"))?;
     partial = partial.end()?;
@@ -1048,7 +1048,7 @@ fn deferred_deeply_interleaved_everything() -> Result<(), IPanic> {
     // Start inner.list
     partial = partial.begin_field("inner")?;
     partial = partial.begin_field("list")?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.push(1i32)?;
     partial = partial.end()?;
     partial = partial.end()?;
@@ -1069,7 +1069,7 @@ fn deferred_deeply_interleaved_everything() -> Result<(), IPanic> {
     // Start inner.map
     partial = partial.begin_field("inner")?;
     partial = partial.begin_field("map")?;
-    partial = partial.begin_map()?;
+    partial = partial.init_map()?;
     partial = partial.begin_key()?;
     partial = partial.set(String::from("a"))?;
     partial = partial.end()?;
@@ -1309,7 +1309,7 @@ fn deferred_vec_empty_first_visit() -> Result<(), IPanic> {
 
     // First visit: just initialize the list, don't push anything
     partial = partial.begin_field("items")?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.end()?;
 
     partial = partial.set_field("done", false)?;
@@ -1343,7 +1343,7 @@ fn deferred_map_empty_first_visit() -> Result<(), IPanic> {
 
     // First visit: just initialize the map
     partial = partial.begin_field("data")?;
-    partial = partial.begin_map()?;
+    partial = partial.init_map()?;
     partial = partial.end()?;
 
     partial = partial.set_field("ready", true)?;
@@ -1453,7 +1453,7 @@ fn deferred_vec_of_structs_single_visit() -> Result<(), IPanic> {
 
     // Build items in single visit
     partial = partial.begin_field("items")?;
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
     partial = partial.begin_list_item()?;
     partial = partial.set_field("id", 1u32)?;
     partial = partial.set_field("name", String::from("first"))?;
@@ -1503,7 +1503,7 @@ fn deferred_map_with_struct_values_single_visit() -> Result<(), IPanic> {
 
     // Build map in single visit
     partial = partial.begin_field("people")?;
-    partial = partial.begin_map()?;
+    partial = partial.init_map()?;
     // First entry
     partial = partial.begin_key()?;
     partial = partial.set(String::from("alice"))?;
@@ -1853,14 +1853,14 @@ fn wip_deferred_drop_without_finish_collections() {
         partial = partial.begin_deferred().unwrap();
 
         partial = partial.begin_field("strings").unwrap();
-        partial = partial.begin_list().unwrap();
+        partial = partial.init_list().unwrap();
         partial = partial.push(String::from("item1")).unwrap();
         partial = partial.push(String::from("item2")).unwrap();
         partial = partial.push(String::from("item3")).unwrap();
         partial = partial.end().unwrap();
 
         partial = partial.begin_field("map").unwrap();
-        partial = partial.begin_map().unwrap();
+        partial = partial.init_map().unwrap();
         partial = partial.begin_key().unwrap();
         partial = partial.set(String::from("key1")).unwrap();
         partial = partial.end().unwrap();

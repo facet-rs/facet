@@ -369,7 +369,7 @@ where
                 wip = self.set_string_value(wip, variant_name)?;
             }
             StructKind::TupleStruct | StructKind::Tuple => {
-                wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                wip = wip.init_map().map_err(DeserializeError::reflect)?;
                 wip = wip
                     .begin_object_entry(variant.name)
                     .map_err(DeserializeError::reflect)?;
@@ -389,7 +389,7 @@ where
                         });
                     }
 
-                    wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+                    wip = wip.init_list().map_err(DeserializeError::reflect)?;
                     for field in variant.data.fields {
                         // The parser's InSequence state will emit OrderedField for each element
                         let _elem_event = self.expect_event("tuple element")?;
@@ -423,12 +423,12 @@ where
                     });
                 }
 
-                wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                wip = wip.init_map().map_err(DeserializeError::reflect)?;
                 wip = wip
                     .begin_object_entry(variant.name)
                     .map_err(DeserializeError::reflect)?;
                 // begin_map() initializes the entry's value as an Object (doesn't push a frame)
-                wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                wip = wip.init_map().map_err(DeserializeError::reflect)?;
 
                 // Deserialize each field - parser will emit OrderedField for each
                 for field in variant.data.fields {

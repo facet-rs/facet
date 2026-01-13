@@ -37,7 +37,7 @@ where
             ParseEvent::SequenceStart(_) => {
                 // Array/list
                 self.expect_event("sequence start")?; // consume '['
-                wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+                wip = wip.init_list().map_err(DeserializeError::reflect)?;
 
                 loop {
                     let event = self.expect_peek("value or end")?;
@@ -54,7 +54,7 @@ where
             ParseEvent::StructStart(_) => {
                 // Object/map/table
                 self.expect_event("struct start")?; // consume '{'
-                wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                wip = wip.init_map().map_err(DeserializeError::reflect)?;
 
                 loop {
                     let event = self.expect_peek("field key or end")?;
@@ -115,7 +115,7 @@ where
             });
         }
 
-        wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+        wip = wip.init_map().map_err(DeserializeError::reflect)?;
 
         for field in fields {
             let field_shape = field.shape.get();
@@ -171,7 +171,7 @@ where
             });
         }
 
-        wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+        wip = wip.init_list().map_err(DeserializeError::reflect)?;
 
         for field in fields {
             let field_shape = field.shape.get();
@@ -268,7 +268,7 @@ where
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {
                         if variant.data.fields.len() == 1 {
-                            wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                            wip = wip.init_map().map_err(DeserializeError::reflect)?;
                             wip = wip
                                 .begin_object_entry(variant.name)
                                 .map_err(DeserializeError::reflect)?;
@@ -278,7 +278,7 @@ where
                             )?;
                             wip = wip.end().map_err(DeserializeError::reflect)?;
                         } else {
-                            wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                            wip = wip.init_map().map_err(DeserializeError::reflect)?;
                             wip = wip
                                 .begin_object_entry(variant.name)
                                 .map_err(DeserializeError::reflect)?;
@@ -287,7 +287,7 @@ where
                         }
                     }
                     StructKind::Struct => {
-                        wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                        wip = wip.init_map().map_err(DeserializeError::reflect)?;
                         wip = wip
                             .begin_object_entry(variant.name)
                             .map_err(DeserializeError::reflect)?;
@@ -415,7 +415,7 @@ where
             });
         }
 
-        wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+        wip = wip.init_list().map_err(DeserializeError::reflect)?;
 
         loop {
             let event = self.expect_peek("element or sequence end")?;
@@ -450,7 +450,7 @@ where
             });
         }
 
-        wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+        wip = wip.init_list().map_err(DeserializeError::reflect)?;
 
         for _ in 0..len {
             wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
@@ -492,7 +492,7 @@ where
             });
         }
 
-        wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+        wip = wip.init_map().map_err(DeserializeError::reflect)?;
 
         let key_hint = match key_shape.scalar_type() {
             Some(ScalarType::String | ScalarType::CowStr) => Some(ScalarTypeHint::String),

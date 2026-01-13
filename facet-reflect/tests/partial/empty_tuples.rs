@@ -189,7 +189,7 @@ fn test_building_nested_empty_tuples_without_navigation() {
 fn test_build_vec_of_unit() {
     // This checks that zero-sized Vec allocations are handled properly
     let mut partial = Partial::alloc::<Vec<()>>().unwrap();
-    partial = partial.begin_list().unwrap();
+    partial = partial.init_list().unwrap();
     partial = partial.begin_list_item().unwrap();
     partial = partial.end().unwrap();
     partial = partial.begin_list_item().unwrap();

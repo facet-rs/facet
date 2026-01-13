@@ -266,10 +266,10 @@ fn apply_single_op<'a>(partial: Partial<'a>, op: &'a PartialOp) -> Result<Partia
         PartialOp::SetString(value) => partial.set(value.clone()).map_err(|e| e.to_string())?,
         PartialOp::SetI32(value) => partial.set(*value).map_err(|e| e.to_string())?,
         PartialOp::End => partial.end().map_err(|e| e.to_string())?,
-        PartialOp::BeginList => partial.begin_list().map_err(|e| e.to_string())?,
+        PartialOp::BeginList => partial.init_list().map_err(|e| e.to_string())?,
         PartialOp::BeginListItem => partial.begin_list_item().map_err(|e| e.to_string())?,
         PartialOp::Push(value) => partial.push(value.clone()).map_err(|e| e.to_string())?,
-        PartialOp::BeginMap => partial.begin_map().map_err(|e| e.to_string())?,
+        PartialOp::BeginMap => partial.init_map().map_err(|e| e.to_string())?,
         PartialOp::BeginKey => partial.begin_key().map_err(|e| e.to_string())?,
         PartialOp::BeginValue => partial.begin_value().map_err(|e| e.to_string())?,
         PartialOp::BeginSome => partial.begin_some().map_err(|e| e.to_string())?,
@@ -277,9 +277,7 @@ fn apply_single_op<'a>(partial: Partial<'a>, op: &'a PartialOp) -> Result<Partia
         PartialOp::SelectVariant(variant) => partial
             .select_variant_named(variant.as_str())
             .map_err(|e| e.to_string())?,
-        PartialOp::BeginDeferred => partial
-            .begin_deferred()
-            .map_err(|e| e.to_string())?,
+        PartialOp::BeginDeferred => partial.begin_deferred().map_err(|e| e.to_string())?,
         PartialOp::FinishDeferred => partial.finish_deferred().map_err(|e| e.to_string())?,
         PartialOp::Build => {
             // Build consumes the Partial and returns HeapValue
@@ -420,7 +418,7 @@ proptest! {
             }
             let result = match op {
                 "begin_items" => partial.begin_field("items"),
-                "begin_list" => partial.begin_list(),
+                "begin_list" => partial.init_list(),
                 "begin_list_item" => partial.begin_list_item(),
                 "push" => {
                     let v = values[idx % values.len()];
@@ -474,7 +472,7 @@ proptest! {
             }
             let result = match op {
                 "begin_data" => partial.begin_field("data"),
-                "begin_map" => partial.begin_map(),
+                "begin_map" => partial.init_map(),
                 "begin_key" => partial.begin_key(),
                 "begin_value" => partial.begin_value(),
                 "set_key" => {
@@ -530,7 +528,7 @@ fn wip_fuzz_drop_mid_list() {
     // Start building a list, add some items, drop
     let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     if let Ok(partial) = partial.begin_field("items")
-        && let Ok(partial) = partial.begin_list()
+        && let Ok(partial) = partial.init_list()
         && let Ok(partial) = partial.push(String::from("item1"))
     {
         let _ = partial.push(String::from("item2"));
@@ -543,7 +541,7 @@ fn wip_fuzz_drop_mid_map() {
     // Start building a map, add a key, drop before value
     let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     if let Ok(partial) = partial.begin_field("mapping")
-        && let Ok(partial) = partial.begin_map()
+        && let Ok(partial) = partial.init_map()
         && let Ok(partial) = partial.begin_key()
         && let Ok(partial) = partial.set(String::from("key1"))
         && let Ok(partial) = partial.end()
@@ -564,7 +562,7 @@ fn wip_fuzz_invalid_ops_sequence() {
 
     // Try to begin_list on a struct
     let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
-    assert!(partial.begin_list().is_err());
+    assert!(partial.init_list().is_err());
 
     // Try to set a value on a struct (need to select field first)
     let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
@@ -657,9 +655,9 @@ fn wip_fuzz_begin_field_set_string_drop() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_reg_test_1() {
     let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
-    partial = partial.begin_map().unwrap();
+    partial = partial.init_map().unwrap();
     partial = partial.begin_object_entry("foo").unwrap();
-    partial = partial.begin_map().unwrap();
+    partial = partial.init_map().unwrap();
     partial = partial.end().unwrap();
     partial = partial.begin_object_entry("foo").unwrap();
     partial.set_default().unwrap();
@@ -669,7 +667,7 @@ fn wip_fuzz_reg_test_1() {
 fn wip_fuzz_reg_test_2() {
     let mut partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     partial = partial.begin_field("mapping").unwrap();
-    partial = partial.begin_map().unwrap();
+    partial = partial.init_map().unwrap();
     partial = partial.begin_key().unwrap();
     partial = partial.set(String::from("aaaaaaaaaaaaaaaa")).unwrap();
 }
@@ -677,13 +675,13 @@ fn wip_fuzz_reg_test_2() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_reg_test_3() {
     let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
-    partial = partial.begin_map().unwrap();
+    partial = partial.init_map().unwrap();
     partial = partial.begin_object_entry("").unwrap();
-    partial = partial.begin_map().unwrap();
+    partial = partial.init_map().unwrap();
     partial = partial.end().unwrap();
     partial = partial.begin_object_entry("").unwrap();
     partial = partial.set(522133289i32).unwrap();
-    partial = partial.begin_map().unwrap();
+    partial = partial.init_map().unwrap();
     let _ = partial.begin_field("name");
 }
 
@@ -691,20 +689,20 @@ fn wip_fuzz_reg_test_3() {
 fn wip_fuzz_reg_test_4() {
     let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
     partial = partial.set(522133289i32).unwrap();
-    partial = partial.begin_map().unwrap();
+    partial = partial.init_map().unwrap();
     partial = partial.begin_object_entry("").unwrap();
-    partial = partial.begin_map().unwrap();
+    partial = partial.init_map().unwrap();
     partial = partial.end().unwrap();
     partial = partial.begin_object_entry("").unwrap();
     partial = partial.set(1179662i32).unwrap();
-    let _ = partial.begin_list().unwrap();
+    let _ = partial.init_list().unwrap();
 }
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_reg_test_5() {
     let mut partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     partial = partial.begin_field("mapping").unwrap();
-    partial = partial.begin_map().unwrap();
+    partial = partial.init_map().unwrap();
     partial = partial.begin_key().unwrap();
     partial = partial.set(String::from("mxwvhqpvvv")).unwrap();
     let _ = partial.begin_inner();
@@ -713,7 +711,7 @@ fn wip_fuzz_reg_test_5() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_reg_test_6() {
     let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
-    partial = partial.begin_map().unwrap();
+    partial = partial.init_map().unwrap();
     partial = partial.begin_object_entry("").unwrap();
     partial = partial.set_default().unwrap();
     partial = partial.set(530521897i32).unwrap();

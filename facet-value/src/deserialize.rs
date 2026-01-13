@@ -1149,7 +1149,7 @@ fn deserialize_list<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'
         })
     })?;
 
-    partial = partial.begin_list()?;
+    partial = partial.init_list()?;
 
     for item in arr.iter() {
         partial = partial.begin_list_item()?;
@@ -1229,7 +1229,7 @@ fn deserialize_map<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p
         })
     })?;
 
-    partial = partial.begin_map()?;
+    partial = partial.init_map()?;
 
     for (key, val) in obj.iter() {
         // Set the key

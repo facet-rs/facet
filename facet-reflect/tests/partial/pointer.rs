@@ -192,7 +192,7 @@ fn arc_slice_u8_begin_smart_ptr_good() {
     {
         // Just to make sure: Vec<u8> construction works
         let mut partial = Partial::alloc::<Vec<u8>>().unwrap();
-        partial = partial.begin_list().unwrap();
+        partial = partial.init_list().unwrap();
         partial = partial.push(2_u8).unwrap();
         partial = partial.push(3_u8).unwrap();
         partial = partial.push(4_u8).unwrap();
@@ -204,7 +204,7 @@ fn arc_slice_u8_begin_smart_ptr_good() {
         // Now, does Arc<[u8]> work.unwrap()
         let mut partial = Partial::alloc::<Arc<[u8]>>().unwrap();
         partial = partial.begin_smart_ptr().unwrap();
-        partial = partial.begin_list().unwrap();
+        partial = partial.init_list().unwrap();
         partial = partial.push(2_u8).unwrap();
         partial = partial.push(3_u8).unwrap();
         partial = partial.push(4_u8).unwrap();

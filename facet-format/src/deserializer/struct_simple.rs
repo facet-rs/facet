@@ -264,7 +264,7 @@ where
                                 wip = wip
                                     .begin_nth_field(idx)
                                     .map_err(DeserializeError::reflect)?;
-                                wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+                                wip = wip.init_list().map_err(DeserializeError::reflect)?;
                                 elements_field_state = Some((idx, true));
                                 fields_set[idx] = true;
                             }
@@ -275,7 +275,7 @@ where
                                 wip = wip
                                     .begin_nth_field(idx)
                                     .map_err(DeserializeError::reflect)?;
-                                wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+                                wip = wip.init_list().map_err(DeserializeError::reflect)?;
                                 elements_field_state = Some((idx, true));
                                 fields_set[idx] = true;
                             }
@@ -377,7 +377,7 @@ where
                 wip = wip
                     .begin_nth_field(idx)
                     .map_err(DeserializeError::reflect)?;
-                wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+                wip = wip.init_list().map_err(DeserializeError::reflect)?;
                 wip = wip.end().map_err(DeserializeError::reflect)?; // end field only
             }
         }

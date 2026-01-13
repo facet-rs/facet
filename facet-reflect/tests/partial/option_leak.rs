@@ -228,7 +228,7 @@ fn fuzz_map_key_leak_minimized() {
     // This EXACT sequence was found by the fuzzer - TWO parse_from_str calls!
     let partial = Partial::alloc::<FuzzTarget>().unwrap();
     let partial = partial.begin_field("mapping").unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.begin_key().unwrap();
     // First parse - initializes the key to "appppvpejv"
     let partial = partial.parse_from_str("appppvpejv").unwrap();
@@ -247,13 +247,13 @@ fn fuzz_dynamic_value_nested_object_leak() {
     let partial = Partial::alloc::<Value>().unwrap();
 
     // First BeginMap creates the root Object
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // BeginObjectEntry pushes a value frame and stores the key
     let partial = partial.begin_object_entry("key1").unwrap();
 
     // BeginMap on the value creates a nested Object
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // Now drop without finishing - should not leak
     drop(partial);
@@ -265,17 +265,17 @@ fn fuzz_dynamic_value_deeply_nested_object_leak() {
     use facet_value::Value;
 
     let partial = Partial::alloc::<Value>().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.begin_object_entry("outer").unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.begin_object_entry("inner").unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     // End two levels
     let partial = partial.end().unwrap();
     let partial = partial.end().unwrap();
     // Start another nested entry
     let partial = partial.begin_object_entry("second").unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // Drop without finishing
     drop(partial);
@@ -288,23 +288,23 @@ fn fuzz_dynamic_value_exact_fuzzer_sequence() {
     use facet_value::Value;
 
     let partial = Partial::alloc::<Value>().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     // Second begin_map is early return (already Object)
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     let partial = partial.begin_object_entry("rl").unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.begin_object_entry("ff").unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.end().unwrap();
     let partial = partial.end().unwrap();
 
     // More begin_map (early return)
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     let partial = partial.begin_object_entry("rl").unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // begin_custom_deserialization will fail for DynamicValue (no parent field)
     // This consumes the Partial and should clean up all frames
@@ -319,10 +319,10 @@ fn fuzz_dynamic_value_simple_object_with_entry() {
     use facet_value::Value;
 
     let partial = Partial::alloc::<Value>().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     let partial = partial.begin_object_entry("key").unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.end().unwrap(); // Insert entry into object
 
     // Object now has one entry
@@ -336,17 +336,17 @@ fn fuzz_dynamic_value_reenter_existing_key() {
     use facet_value::Value;
 
     let partial = Partial::alloc::<Value>().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // First entry "key" -> nested Object
     let partial = partial.begin_object_entry("key").unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.end().unwrap(); // Insert entry into object
 
     // Re-enter same key - uses BorrowedInPlace path
     let partial = partial.begin_object_entry("key").unwrap();
     // begin_map on BorrowedInPlace frame with is_init=true should early return
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // Drop - BorrowedInPlace frame should be skipped, root Object should be dropped
     drop(partial);
@@ -365,13 +365,13 @@ fn fuzz_dynamic_value_borrowed_in_place_use_after_free() {
     // Minimized from fuzzer crash artifact
     let partial = Partial::alloc::<Value>().unwrap();
     let partial = partial.begin_deferred().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.begin_object_entry("key1").unwrap();
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.end().unwrap();
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // Re-enter same key - BorrowedInPlace frame pointing to existing Object
     let partial = partial.begin_object_entry("key1").unwrap();
@@ -399,23 +399,23 @@ fn fuzz_dynamic_value_borrowed_in_place_begin_list_leak() {
     // Minimized from fuzzer artifact
     let partial = Partial::alloc::<Value>().unwrap();
     let partial = partial.set(5570193308531891999_i64).unwrap();
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.begin_object_entry("key1").unwrap();
-    let partial = partial.begin_list().unwrap();
-    let partial = partial.begin_list().unwrap();
+    let partial = partial.init_list().unwrap();
+    let partial = partial.init_list().unwrap();
     let partial = partial.set(1296911643_i32).unwrap();
-    let partial = partial.begin_list().unwrap();
+    let partial = partial.init_list().unwrap();
     let partial = partial.end().unwrap();
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // Re-enter same key - BorrowedInPlace frame pointing to existing Array
     let partial = partial.begin_object_entry("key1").unwrap();
     // This SetI32 creates a Number in BorrowedInPlace frame
     let partial = partial.set(1296911643_i32).unwrap();
     // This begin_list converts to Array - MUST drop the Number first!
-    let partial = partial.begin_list().unwrap();
+    let partial = partial.init_list().unwrap();
 
     drop(partial);
 }
@@ -433,15 +433,15 @@ fn fuzz_dynamic_value_borrowed_in_place_begin_map_leak() {
     // Minimized from fuzzer artifact leak-bda097fba5becb8df709465989755137abf03116
     let partial = Partial::alloc::<Value>().unwrap();
     let partial = partial.set(2676586811620664615_i64).unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // First entry
     let partial = partial.begin_object_entry("key1").unwrap();
     let partial = partial.set(-1145324613_i32).unwrap();
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.end().unwrap();
 
     // Re-enter same key - BorrowedInPlace frame
@@ -449,7 +449,7 @@ fn fuzz_dynamic_value_borrowed_in_place_begin_map_leak() {
     // This SetI32 creates a Number in BorrowedInPlace frame
     let partial = partial.set(1094786333_i32).unwrap();
     // This begin_map converts to Object - MUST drop the Number first!
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.begin_object_entry("key2").unwrap();
 
     drop(partial);
@@ -468,20 +468,20 @@ fn fuzz_dynamic_value_set_then_begin_map_then_set() {
     let partial = partial.set(2676586811620664615_i64).unwrap();
 
     // BeginMap should deinit the Number and create Object
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // BeginObjectEntry
     let partial = partial.begin_object_entry("key1").unwrap();
 
     // BeginMap creates nested Object
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // End the nested object
     let partial = partial.end().unwrap();
 
     // More BeginMap calls (no-op since already Object)
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
 
     // Another entry
     let partial = partial.begin_object_entry("key2").unwrap();
@@ -494,14 +494,14 @@ fn fuzz_dynamic_value_set_then_begin_map_then_set() {
     let partial = partial.set(-1145324771_i32).unwrap();
 
     // More nested structure
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.end().unwrap();
 
-    let partial = partial.begin_map().unwrap();
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.begin_object_entry("key3").unwrap();
 
     let partial = partial.set(488447261_i32).unwrap();
@@ -510,7 +510,7 @@ fn fuzz_dynamic_value_set_then_begin_map_then_set() {
     let partial = partial.set(1092427037_i32).unwrap();
 
     // More nesting
-    let partial = partial.begin_map().unwrap();
+    let partial = partial.init_map().unwrap();
     let partial = partial.begin_object_entry("key4").unwrap();
 
     drop(partial);

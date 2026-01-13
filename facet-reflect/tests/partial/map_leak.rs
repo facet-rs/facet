@@ -8,7 +8,7 @@ use facet_testhelpers::test;
 fn wip_map_leaktest1() {
     let wip = Partial::alloc::<HashMap<String, String>>()
         .unwrap()
-        .begin_map()
+        .init_map()
         .unwrap()
         .begin_key()
         .unwrap()
@@ -32,7 +32,7 @@ fn wip_map_leaktest1() {
 fn wip_map_leaktest2() {
     let wip = Partial::alloc::<HashMap<String, String>>()
         .unwrap()
-        .begin_map()
+        .init_map()
         .unwrap()
         .begin_key()
         .unwrap()
@@ -54,7 +54,7 @@ fn wip_map_leaktest2() {
 fn wip_map_leaktest3() {
     let wip = Partial::alloc::<HashMap<String, String>>()
         .unwrap()
-        .begin_map()
+        .init_map()
         .unwrap()
         .begin_key()
         .unwrap()
@@ -74,7 +74,7 @@ fn wip_map_leaktest3() {
 fn wip_map_leaktest4() {
     let wip = Partial::alloc::<HashMap<String, String>>()
         .unwrap()
-        .begin_map()
+        .init_map()
         .unwrap()
         .begin_key()
         .unwrap()
@@ -92,7 +92,7 @@ fn wip_map_leaktest4() {
 fn wip_map_leaktest5() {
     let wip = Partial::alloc::<HashMap<String, String>>()
         .unwrap()
-        .begin_map()
+        .init_map()
         .unwrap()
         .begin_key()
         .unwrap()
@@ -106,7 +106,7 @@ fn wip_map_leaktest5() {
 fn wip_map_leaktest6() {
     let wip = Partial::alloc::<HashMap<String, String>>()
         .unwrap()
-        .begin_map()
+        .init_map()
         .unwrap()
         .begin_key()
         .unwrap();
@@ -118,7 +118,7 @@ fn wip_map_leaktest6() {
 fn wip_map_leaktest7() {
     let wip = Partial::alloc::<HashMap<String, String>>()
         .unwrap()
-        .begin_map()
+        .init_map()
         .unwrap();
     drop(wip);
 }

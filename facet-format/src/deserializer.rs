@@ -1007,7 +1007,7 @@ where
         };
 
         // Initialize the list
-        wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+        wip = wip.init_list().map_err(DeserializeError::reflect)?;
         trace!("deserialize_list: initialized list, starting loop");
 
         let mut item_count = 0;
@@ -1183,7 +1183,7 @@ where
         let event = self.expect_event("value")?;
 
         // Initialize the map
-        wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+        wip = wip.init_map().map_err(DeserializeError::reflect)?;
 
         // Handle both self-describing (StructStart) and non-self-describing (SequenceStart) formats
         match event {

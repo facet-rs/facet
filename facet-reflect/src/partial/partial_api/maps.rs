@@ -11,7 +11,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// It does _not_ push a new frame onto the stack.
     ///
     /// For `Def::DynamicValue` types, this initializes as an object instead of a map.
-    pub fn begin_map(mut self) -> Result<Self, ReflectError> {
+    pub fn init_map(mut self) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check tracker state before initializing
