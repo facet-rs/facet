@@ -22,8 +22,8 @@ std = ["alloc"] # Enable the standard library features
 alloc = [
     "facet-core/alloc",
 ] # Enable the allocation features
-log = [
-    "dep:log",
+tracing = [
+    "dep:tracing",
 ] # Enable logging of reflection operations (mostly for internal development)
 slow-tests = [] # Enable slow tests (compile tests)
 ci = ["slow-tests"] # CI feature
@@ -52,7 +52,7 @@ fn-ptr = [
 [dependencies]
 camino = { workspace = true, optional = true }
 facet-core = { path = "../facet-core", version = "0.42.0", default-features = false }
-log = { version = "0.4.27", optional = true }
+tracing = { workspace = true, optional = true }
 ulid = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 

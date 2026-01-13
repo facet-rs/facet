@@ -36,19 +36,19 @@ pub use spanned::{
     Span, Spanned, find_span_metadata_field, get_spanned_inner_shape, is_spanned_shape,
 };
 
-#[cfg(feature = "log")]
+#[cfg(feature = "tracing")]
 #[allow(unused_imports)]
-pub(crate) use log::{debug, trace};
+pub(crate) use tracing::{debug, trace};
 
-#[cfg(not(feature = "log"))]
+#[cfg(not(feature = "tracing"))]
 #[macro_export]
-/// Forwards to log::trace when the log feature is enabled
+/// Forwards to tracing::trace when the tracing feature is enabled
 macro_rules! trace {
     ($($tt:tt)*) => {};
 }
-#[cfg(not(feature = "log"))]
+#[cfg(not(feature = "tracing"))]
 #[macro_export]
-/// Forwards to log::debug when the log feature is enabled
+/// Forwards to tracing::debug when the tracing feature is enabled
 macro_rules! debug {
     ($($tt:tt)*) => {};
 }

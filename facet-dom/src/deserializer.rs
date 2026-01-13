@@ -1,12 +1,103 @@
 //! Tree-based deserializer for DOM documents.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fmt;
 
-use facet_core::{Def, Facet, Field, Type, UserType};
+use facet_core::{Def, Facet, Field, StructType, Type, UserType};
 use facet_reflect::{HeapValue, Partial};
 
 use crate::{DomEvent, DomParser};
+
+// Tracing macros - compile to nothing when tracing feature is disabled
+macro_rules! trace {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "tracing")]
+        tracing::trace!($($arg)*);
+    };
+}
+
+macro_rules! trace_span {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::trace_span!($($arg)*).entered();
+    };
+}
+
+/// Precomputed field lookup map for a struct.
+///
+/// This separates "what fields does this struct have" from the parsing loop,
+/// making the code cleaner and avoiding repeated linear scans.
+struct StructFieldMap {
+    /// Fields marked with `xml::attribute`, keyed by lowercase name/rename
+    attribute_fields: HashMap<String, (usize, &'static Field)>,
+    /// Fields marked with `xml::element`, keyed by lowercase name/rename
+    element_fields: HashMap<String, (usize, &'static Field)>,
+    /// The field marked with `xml::elements` (collects all unmatched children)
+    elements_field: Option<(usize, &'static Field)>,
+    /// The field marked with `xml::text` (collects text content)
+    text_field: Option<(usize, &'static Field)>,
+}
+
+impl StructFieldMap {
+    /// Build the field map from a struct definition.
+    fn new(struct_def: &'static StructType) -> Self {
+        trace_span!("StructFieldMap::new", type_name = %struct_def.name);
+
+        let mut attribute_fields = HashMap::new();
+        let mut element_fields = HashMap::new();
+        let mut elements_field = None;
+        let mut text_field = None;
+
+        for (idx, field) in struct_def.fields.iter().enumerate() {
+            // Use exact name - case-sensitive matching for XML
+            let name = field.rename.unwrap_or(field.name).to_string();
+
+            if field.is_attribute() {
+                trace!(idx, field_name = %field.name, key = %name, "found attribute field");
+                attribute_fields.insert(name, (idx, field));
+            } else if field.is_element() {
+                trace!(idx, field_name = %field.name, key = %name, "found element field");
+                element_fields.insert(name, (idx, field));
+            } else if field.is_elements() {
+                trace!(idx, field_name = %field.name, "found elements collection field");
+                elements_field = Some((idx, field));
+            } else if field.is_text() {
+                trace!(idx, field_name = %field.name, "found text field");
+                text_field = Some((idx, field));
+            }
+        }
+
+        trace!(
+            attribute_count = attribute_fields.len(),
+            element_count = element_fields.len(),
+            has_elements = elements_field.is_some(),
+            has_text = text_field.is_some(),
+            "field map built"
+        );
+
+        Self {
+            attribute_fields,
+            element_fields,
+            elements_field,
+            text_field,
+        }
+    }
+
+    /// Find an attribute field by name (exact match).
+    fn find_attribute(&self, name: &str) -> Option<(usize, &'static Field)> {
+        let result = self.attribute_fields.get(name).copied();
+        trace!(name, found = result.is_some(), "find_attribute");
+        result
+    }
+
+    /// Find an element field by tag name (exact match).
+    fn find_element(&self, tag: &str) -> Option<(usize, &'static Field)> {
+        let result = self.element_fields.get(tag).copied();
+        trace!(tag, found = result.is_some(), "find_element");
+        result
+    }
+}
 
 /// Error type for DOM deserialization.
 #[derive(Debug)]
@@ -224,10 +315,18 @@ where
             }
         };
 
+        trace_span!("deserialize_struct", type_name = %struct_def.name);
+
+        // Build field map once upfront
+        let field_map = StructFieldMap::new(struct_def);
+
         // Expect NodeStart
         let event = self.expect_event("NodeStart")?;
-        let _tag = match event {
-            DomEvent::NodeStart { tag, .. } => tag,
+        let tag = match event {
+            DomEvent::NodeStart { tag, .. } => {
+                trace!(tag = %tag, "got NodeStart");
+                tag
+            }
             other => {
                 return Err(DomDeserializeError::TypeMismatch {
                     expected: "NodeStart",
@@ -237,28 +336,32 @@ where
         };
 
         // Process attributes
+        trace!("processing attributes");
         loop {
             let event = self.peek_event("Attribute or ChildrenStart")?;
             match event {
                 DomEvent::Attribute { .. } => {
                     let event = self.expect_event("Attribute")?;
                     if let DomEvent::Attribute { name, value, .. } = event {
-                        // Find matching field
-                        if let Some((idx, _field)) =
-                            self.find_attribute_field(struct_def.fields, &name)
-                        {
+                        trace!(name = %name, value = %value, "got Attribute");
+                        if let Some((idx, field)) = field_map.find_attribute(&name) {
+                            trace!(idx, field_name = %field.name, "matched attribute field");
                             wip = wip
                                 .begin_nth_field(idx)
                                 .map_err(DomDeserializeError::Reflect)?;
                             wip = self.set_string_value(wip, value)?;
                             wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                        } else {
+                            trace!(name = %name, "ignoring unknown attribute");
                         }
-                        // Unknown attributes are ignored (could add deny_unknown_fields later)
                     }
                 }
-                DomEvent::ChildrenStart => break,
+                DomEvent::ChildrenStart => {
+                    trace!("attributes done, starting children");
+                    break;
+                }
                 DomEvent::NodeEnd => {
-                    // Void element (no children)
+                    trace!("void element (no children)");
                     let _ = self.expect_event("NodeEnd")?;
                     return Ok(wip);
                 }
@@ -274,24 +377,13 @@ where
         // Consume ChildrenStart
         let _ = self.expect_event("ChildrenStart")?;
 
-        // Find special fields
-        let elements_field = struct_def
-            .fields
-            .iter()
-            .enumerate()
-            .find(|(_, f)| f.is_elements());
-        let text_field = struct_def
-            .fields
-            .iter()
-            .enumerate()
-            .find(|(_, f)| f.is_text());
-
         // Track text content for text field
         let mut text_content = String::new();
 
-        // If there's an elements field, we need to begin the list before processing children
+        // If there's an elements field, begin the list before processing children
         let mut elements_list_started = false;
-        if let Some((elements_idx, _)) = elements_field {
+        if let Some((elements_idx, field)) = field_map.elements_field {
+            trace!(idx = elements_idx, field_name = %field.name, "beginning elements list");
             wip = wip
                 .begin_nth_field(elements_idx)
                 .map_err(DomDeserializeError::Reflect)?;
@@ -299,51 +391,55 @@ where
             elements_list_started = true;
         }
 
-        // Process children - unified loop handling element fields, elements collection, and text
+        // Process children
+        trace!("processing children");
         loop {
             let event = self.peek_event("child or ChildrenEnd")?;
             match event {
-                DomEvent::ChildrenEnd => break,
+                DomEvent::ChildrenEnd => {
+                    trace!("children done");
+                    break;
+                }
                 DomEvent::Text(_) => {
                     let event = self.expect_event("Text")?;
                     if let DomEvent::Text(text) = event {
+                        trace!(text_len = text.len(), "got Text");
                         if elements_list_started {
-                            // Add text as a list item (for mixed content)
+                            trace!("adding text as list item (mixed content)");
                             wip = wip
                                 .begin_list_item()
                                 .map_err(DomDeserializeError::Reflect)?;
                             wip = self.deserialize_text_into_enum(wip, text)?;
                             wip = wip.end().map_err(DomDeserializeError::Reflect)?;
-                        } else if text_field.is_some() {
-                            // Accumulate text for text field
+                        } else if field_map.text_field.is_some() {
+                            trace!("accumulating text for text field");
                             text_content.push_str(&text);
+                        } else {
+                            trace!("ignoring text (no text field)");
                         }
-                        // Otherwise ignore text
                     }
                 }
                 DomEvent::NodeStart { tag, .. } => {
-                    // Clone tag to avoid borrow conflict with self
                     let tag = tag.clone();
-                    // First, check if this matches an individual element field
-                    // (only if we don't have an elements collection active)
+                    trace!(tag = %tag, "got child NodeStart");
+
                     if !elements_list_started {
-                        if let Some((idx, _field)) =
-                            self.find_element_field(struct_def.fields, &tag)
-                        {
-                            // Deserialize into the specific field
+                        // Check if this matches an individual element field
+                        if let Some((idx, field)) = field_map.find_element(&tag) {
+                            trace!(idx, field_name = %field.name, "matched element field");
                             wip = wip
                                 .begin_nth_field(idx)
                                 .map_err(DomDeserializeError::Reflect)?;
                             wip = self.deserialize_into(wip)?;
                             wip = wip.end().map_err(DomDeserializeError::Reflect)?;
                         } else {
-                            // No matching field and no elements collection - skip
+                            trace!(tag = %tag, "skipping unknown element");
                             self.parser
                                 .skip_node()
                                 .map_err(DomDeserializeError::Parser)?;
                         }
                     } else {
-                        // Add to elements collection
+                        trace!("adding element to elements collection");
                         wip = wip
                             .begin_list_item()
                             .map_err(DomDeserializeError::Reflect)?;
@@ -352,6 +448,7 @@ where
                     }
                 }
                 DomEvent::Comment(_) => {
+                    trace!("skipping comment");
                     let _ = self.expect_event("Comment")?;
                 }
                 other => {
@@ -365,13 +462,15 @@ where
 
         // End the elements list if it was started
         if elements_list_started {
+            trace!("ending elements list");
             wip = wip.end().map_err(DomDeserializeError::Reflect)?; // end list
             wip = wip.end().map_err(DomDeserializeError::Reflect)?; // end field
         }
 
         // Set the text field if we accumulated text
-        if let Some((text_idx, _)) = text_field {
+        if let Some((text_idx, field)) = field_map.text_field {
             if !text_content.is_empty() || !elements_list_started {
+                trace!(idx = text_idx, field_name = %field.name, text_len = text_content.len(), "setting text field");
                 wip = wip
                     .begin_nth_field(text_idx)
                     .map_err(DomDeserializeError::Reflect)?;
@@ -386,33 +485,8 @@ where
         // Consume NodeEnd
         let _ = self.expect_event("NodeEnd")?;
 
+        trace!(tag = %tag, "struct deserialization complete");
         Ok(wip)
-    }
-
-    /// Find an attribute field by name.
-    fn find_attribute_field(
-        &self,
-        fields: &'static [Field],
-        name: &str,
-    ) -> Option<(usize, &'static Field)> {
-        fields.iter().enumerate().find(|(_, f)| {
-            f.is_attribute()
-                && (f.name.eq_ignore_ascii_case(name)
-                    || f.rename.map_or(false, |r| r.eq_ignore_ascii_case(name)))
-        })
-    }
-
-    /// Find an element field by tag name.
-    fn find_element_field(
-        &self,
-        fields: &'static [Field],
-        tag: &str,
-    ) -> Option<(usize, &'static Field)> {
-        fields.iter().enumerate().find(|(_, f)| {
-            f.is_element()
-                && (f.name.eq_ignore_ascii_case(tag)
-                    || f.rename.map_or(false, |r| r.eq_ignore_ascii_case(tag)))
-        })
     }
 
     /// Deserialize an enum (for mixed content).

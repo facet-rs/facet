@@ -1728,6 +1728,7 @@ dependencies = [
  "facet-core",
  "facet-dessert",
  "facet-reflect",
+ "tracing",
 ]
 
 [[package]]
@@ -1995,6 +1996,7 @@ dependencies = [
  "log",
  "proptest",
  "tempfile",
+ "tracing",
  "ulid",
  "uuid",
 ]

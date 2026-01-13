@@ -3,26 +3,26 @@
 
 //! Prototype types for the format codex deserializer.
 
-/// Trace-level logging macro that forwards to `tracing::trace!` when the `log` feature is enabled.
+/// Trace-level logging macro that forwards to `tracing::trace!` when the `tracing` feature is enabled.
 ///
-/// When the `log` feature is disabled, this expands to nothing.
-#[cfg(feature = "log")]
+/// When the `tracing` feature is disabled, this expands to nothing.
+#[cfg(feature = "tracing")]
 macro_rules! trace {
     ($($arg:tt)*) => {
         ::tracing::trace!($($arg)*)
     };
 }
 
-/// Trace-level logging macro (no-op when `log` feature is disabled).
-#[cfg(not(feature = "log"))]
+/// Trace-level logging macro (no-op when `tracing` feature is disabled).
+#[cfg(not(feature = "tracing"))]
 macro_rules! trace {
     ($($arg:tt)*) => {};
 }
 
-/// Debug-level logging macro that forwards to `tracing::debug!` when the `log` feature is enabled.
+/// Debug-level logging macro that forwards to `tracing::debug!` when the `tracing` feature is enabled.
 ///
-/// When the `log` feature is disabled, this expands to nothing.
-#[cfg(feature = "log")]
+/// When the `tracing` feature is disabled, this expands to nothing.
+#[cfg(feature = "tracing")]
 #[allow(unused_macros)]
 macro_rules! debug {
     ($($arg:tt)*) => {
@@ -30,8 +30,8 @@ macro_rules! debug {
     };
 }
 
-/// Debug-level logging macro (no-op when `log` feature is disabled).
-#[cfg(not(feature = "log"))]
+/// Debug-level logging macro (no-op when `tracing` feature is disabled).
+#[cfg(not(feature = "tracing"))]
 #[allow(unused_macros)]
 macro_rules! debug {
     ($($arg:tt)*) => {};

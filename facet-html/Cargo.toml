@@ -45,7 +45,7 @@ harness = false
 [features]
 default = []
 fast = ["dep:zmij", "dep:itoa"]
-log = ["facet-format/log", "facet-reflect/log"]
+tracing = ["facet-format/tracing", "facet-reflect/tracing"]
 
 [lints]
 workspace = true

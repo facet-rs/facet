@@ -20,6 +20,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 facet-core = { path = "../facet-core", version = "0.42.0" }
 facet-dessert = { path = "../facet-dessert", version = "0.42.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet", features = ["doc"] }
@@ -27,6 +28,7 @@ facet = { path = "../facet", features = ["doc"] }
 [features]
 default = []
 net = ["facet-core/net"]
+tracing = ["dep:tracing"]
 
 [lints]
 workspace = true

@@ -39,7 +39,7 @@ libc = { version = "0.2", optional = true }
 [features]
 default = []
 # Enable logging via tracing
-log = ["dep:tracing"]
+tracing = ["dep:tracing"]
 # Network types (IpAddr, SocketAddr, etc.)
 net = ["facet-core/net"]
 # Validation support - run validators on fields during deserialization
