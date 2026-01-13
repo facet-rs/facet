@@ -3,7 +3,7 @@
 //! This crate provides Styx deserialization and serialization using the facet
 //! reflection system.
 //!
-//! # Example
+//! # Deserialization Example
 //!
 //! ```
 //! use facet::Facet;
@@ -20,13 +20,37 @@
 //! assert_eq!(config.name, "myapp");
 //! assert_eq!(config.port, 8080);
 //! ```
+//!
+//! # Serialization Example
+//!
+//! ```
+//! use facet::Facet;
+//! use facet_styx::to_string;
+//!
+//! #[derive(Facet, Debug)]
+//! struct Config {
+//!     name: String,
+//!     port: u16,
+//! }
+//!
+//! let config = Config { name: "myapp".into(), port: 8080 };
+//! let styx = to_string(&config).unwrap();
+//! assert!(styx.contains("name myapp"));
+//! assert!(styx.contains("port 8080"));
+//! ```
 
 mod error;
 mod parser;
+mod serializer;
 
 pub use error::{StyxError, StyxErrorKind};
 pub use facet_format::DeserializeError;
+pub use facet_format::SerializeError;
 pub use parser::StyxParser;
+pub use serializer::{
+    SerializeOptions, StyxSerializeError, StyxSerializer, peek_to_string,
+    peek_to_string_with_options, to_string, to_string_compact, to_string_with_options,
+};
 
 /// Deserialize a value from a Styx string into an owned type.
 ///
