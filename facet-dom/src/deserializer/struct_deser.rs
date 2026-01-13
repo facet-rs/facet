@@ -23,7 +23,7 @@ pub(crate) enum SeqState {
 
 /// Deserializer for struct types.
 pub(crate) struct StructDeserializer<'de, 'p, const BORROW: bool, P: DomParser<'de>> {
-    parser: &'p mut P,
+    dom_deser: &'p mut super::DomDeserializer<'de, BORROW, P>,
     field_map: StructFieldMap,
     struct_def: &'static StructType,
 
@@ -59,14 +59,14 @@ pub(crate) struct StructDeserializer<'de, 'p, const BORROW: bool, P: DomParser<'
 
 impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p, BORROW, P> {
     pub fn new(
-        parser: &'p mut P,
+        dom_deser: &'p mut super::DomDeserializer<'de, BORROW, P>,
         wip: Partial<'de, BORROW>,
         struct_def: &'static StructType,
         ns_all: Option<&'static str>,
     ) -> Self {
         let field_map = StructFieldMap::new(struct_def, ns_all);
         Self {
-            parser,
+            dom_deser,
             field_map,
             struct_def,
             wip: Some(wip),
@@ -82,7 +82,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         }
     }
 
-    /// Apply a fallible operation to wip.
+    /// Apply a fallible operation to wip (no dom_deser access needed).
     fn with_wip<F>(&mut self, f: F) -> Result<(), DomDeserializeError<P::Error>>
     where
         F: FnOnce(
@@ -94,33 +94,48 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         Ok(())
     }
 
+    /// Apply a fallible operation to wip that needs the deserializer.
+    fn with_wip_deser<F>(&mut self, f: F) -> Result<(), DomDeserializeError<P::Error>>
+    where
+        F: FnOnce(
+            Partial<'de, BORROW>,
+            &mut super::DomDeserializer<'de, BORROW, P>,
+        ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>>,
+    {
+        let wip = self.wip.take().expect("wip already taken");
+        self.wip = Some(f(wip, self.dom_deser)?);
+        Ok(())
+    }
+
     /// Take wip out (for final return).
     fn take_wip(&mut self) -> Partial<'de, BORROW> {
         self.wip.take().expect("wip already taken")
     }
 
-    pub fn deserialize(
-        mut self,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
-    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+    /// Convenience accessor for the parser.
+    fn parser(&mut self) -> &mut P {
+        &mut self.dom_deser.parser
+    }
+
+    pub fn deserialize(mut self) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         if self.field_map.has_flatten {
             trace!("enabling deferred mode for struct with flatten");
             self.with_wip(|wip| Ok(wip.begin_deferred()?))?;
             self.using_deferred = true;
         }
 
-        self.tag = self.parser.expect_node_start()?.to_string();
+        self.tag = self.parser().expect_node_start()?.to_string();
         trace!(tag = %self.tag, "got NodeStart");
 
-        if let Some(wip) = self.process_attributes(dom_deser)? {
+        if let Some(wip) = self.process_attributes()? {
             return Ok(wip);
         }
 
-        self.parser.expect_children_start()?;
-        self.process_children(dom_deser)?;
-        self.cleanup(dom_deser)?;
-        self.parser.expect_children_end()?;
-        self.parser.expect_node_end()?;
+        self.parser().expect_children_start()?;
+        self.process_children()?;
+        self.cleanup()?;
+        self.parser().expect_children_end()?;
+        self.parser().expect_node_end()?;
 
         let mut wip = self.take_wip();
         if self.using_deferred {
@@ -135,12 +150,11 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
     /// Process attributes. Returns Some(wip) for early return on void elements.
     fn process_attributes(
         &mut self,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
     ) -> Result<Option<Partial<'de, BORROW>>, DomDeserializeError<P::Error>> {
         trace!("processing attributes");
         loop {
             match self
-                .parser
+                .parser()
                 .peek_event_or_eof("Attribute or ChildrenStart")?
             {
                 DomEvent::Attribute { .. } => {
@@ -148,7 +162,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                         name,
                         value,
                         namespace,
-                    } = self.parser.expect_attribute()?;
+                    } = self.parser().expect_attribute()?;
                     trace!(name = %name, value = %value, namespace = ?namespace, "got Attribute");
                     if let Some(info) = self
                         .field_map
@@ -156,7 +170,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                     {
                         let idx = info.idx;
                         trace!(idx, field_name = %info.field.name, "matched attribute field");
-                        self.with_wip(|wip| {
+                        self.with_wip_deser(|wip, dom_deser| {
                             Ok(dom_deser
                                 .set_string_value(wip.begin_nth_field(idx)?, value)?
                                 .end()?)
@@ -171,7 +185,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 }
                 DomEvent::NodeEnd => {
                     trace!("void element (no children)");
-                    self.parser.expect_node_end()?;
+                    self.parser().expect_node_end()?;
                     return Ok(Some(self.take_wip()));
                 }
                 other => {
@@ -185,26 +199,23 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         Ok(None)
     }
 
-    fn process_children(
-        &mut self,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
-    ) -> Result<(), DomDeserializeError<P::Error>> {
+    fn process_children(&mut self) -> Result<(), DomDeserializeError<P::Error>> {
         trace!("processing children");
         loop {
-            match self.parser.peek_event_or_eof("child or ChildrenEnd")? {
+            match self.parser().peek_event_or_eof("child or ChildrenEnd")? {
                 DomEvent::ChildrenEnd => {
                     trace!("children done");
                     break;
                 }
-                DomEvent::Text(_) => self.handle_text(dom_deser)?,
+                DomEvent::Text(_) => self.handle_text()?,
                 DomEvent::NodeStart { tag, namespace } => {
                     let tag = tag.clone();
                     let namespace = namespace.clone();
-                    self.handle_child_element(&tag, namespace.as_deref(), dom_deser)?;
+                    self.handle_child_element(&tag, namespace.as_deref())?;
                 }
                 DomEvent::Comment(_) => {
                     trace!("skipping comment");
-                    self.parser.expect_comment()?;
+                    self.parser().expect_comment()?;
                 }
                 other => {
                     return Err(DomDeserializeError::TypeMismatch {
@@ -217,16 +228,13 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         Ok(())
     }
 
-    fn handle_text(
-        &mut self,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
-    ) -> Result<(), DomDeserializeError<P::Error>> {
-        let text = self.parser.expect_text()?;
+    fn handle_text(&mut self) -> Result<(), DomDeserializeError<P::Error>> {
+        let text = self.parser().expect_text()?;
         trace!(text_len = text.len(), "got Text");
 
         if self.elements_list_started {
             trace!("adding text as list item (mixed content)");
-            self.with_wip(|wip| {
+            self.with_wip_deser(|wip, dom_deser| {
                 let wip = wip.begin_list_item()?;
                 Ok(dom_deser.deserialize_text_into_enum(wip, text)?.end()?)
             })?;
@@ -237,7 +245,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             && self.struct_def.fields.len() == 1
         {
             trace!("setting text content for newtype field 0");
-            self.with_wip(|wip| {
+            self.with_wip_deser(|wip, dom_deser| {
                 Ok(dom_deser
                     .set_string_value(wip.begin_nth_field(0)?, text)?
                     .end()?)
@@ -252,7 +260,6 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         &mut self,
         tag: &str,
         namespace: Option<&str>,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
     ) -> Result<(), DomDeserializeError<P::Error>> {
         trace!(tag = %tag, namespace = ?namespace, "got child NodeStart");
 
@@ -264,21 +271,20 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                     info.is_array,
                     info.is_set,
                     info.field,
-                    dom_deser,
                 )
             } else {
-                self.handle_scalar_element(info.idx, info.field.name, dom_deser)
+                self.handle_scalar_element(info.idx, info.field.name)
             }
         } else if self.field_map.is_tuple() && tag == "item" {
-            self.handle_tuple_item(dom_deser)
+            self.handle_tuple_item()
         } else if let Some(flattened) = self.field_map.find_flattened_child(tag, namespace).cloned()
         {
-            self.handle_flattened_child(&flattened, dom_deser)
+            self.handle_flattened_child(&flattened)
         } else if let Some(field_idx) = self.field_map.flattened_enum.as_ref().map(|e| e.field_idx)
         {
-            self.handle_flattened_enum(field_idx, dom_deser)
+            self.handle_flattened_enum(field_idx)
         } else if self.field_map.elements_field.is_some() {
-            self.handle_elements_collection(dom_deser)
+            self.handle_elements_collection()
         } else if !self.field_map.flattened_maps.is_empty() {
             self.handle_flattened_map(tag, namespace)
         } else {
@@ -313,10 +319,9 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         &mut self,
         idx: usize,
         is_list: bool,
-        is_array: bool,
+        _is_array: bool,
         is_set: bool,
         field: &'static facet_core::Field,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
     ) -> Result<(), DomDeserializeError<P::Error>> {
         if self.elements_list_started {
             trace!("leaving elements list for flat sequence field");
@@ -395,10 +400,14 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         // Add item
         if is_list {
             trace!(idx, field_name = %field.name, "adding item to flat list");
-            self.with_wip(|wip| Ok(wip.begin_list_item()?.deserialize_with(dom_deser)?.end()?))?;
+            self.with_wip_deser(|wip, dom_deser| {
+                Ok(wip.begin_list_item()?.deserialize_with(dom_deser)?.end()?)
+            })?;
         } else if is_set {
             trace!(idx, field_name = %field.name, "adding item to flat set");
-            self.with_wip(|wip| Ok(wip.begin_set_item()?.deserialize_with(dom_deser)?.end()?))?;
+            self.with_wip_deser(|wip, dom_deser| {
+                Ok(wip.begin_set_item()?.deserialize_with(dom_deser)?.end()?)
+            })?;
         } else {
             // Get the current index first
             let item_idx = match self.started_seqs.get(&idx) {
@@ -406,7 +415,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 _ => return Ok(()),
             };
             trace!(idx, field_name = %field.name, item_idx, "adding item to flat array");
-            self.with_wip(|wip| {
+            self.with_wip_deser(|wip, dom_deser| {
                 Ok(wip
                     .begin_nth_field(item_idx)?
                     .deserialize_with(dom_deser)?
@@ -423,12 +432,11 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
     fn handle_scalar_element(
         &mut self,
         idx: usize,
-        field_name: &str,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
+        _field_name: &str,
     ) -> Result<(), DomDeserializeError<P::Error>> {
         self.leave_active_sequence()?;
-        trace!(idx, field_name, "matched scalar element field");
-        self.with_wip(|wip| {
+        trace!(idx, _field_name, "matched scalar element field");
+        self.with_wip_deser(|wip, dom_deser| {
             Ok(wip
                 .begin_nth_field(idx)?
                 .deserialize_with(dom_deser)?
@@ -436,10 +444,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         })
     }
 
-    fn handle_tuple_item(
-        &mut self,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
-    ) -> Result<(), DomDeserializeError<P::Error>> {
+    fn handle_tuple_item(&mut self) -> Result<(), DomDeserializeError<P::Error>> {
         if let Some(info) = self.field_map.get_tuple_field(self.tuple_position) {
             let idx = info.idx;
             trace!(
@@ -447,7 +452,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 position = self.tuple_position,
                 "matched tuple field by position"
             );
-            self.with_wip(|wip| {
+            self.with_wip_deser(|wip, dom_deser| {
                 Ok(wip
                     .begin_nth_field(idx)?
                     .deserialize_with(dom_deser)?
@@ -459,7 +464,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 position = self.tuple_position,
                 "tuple position out of bounds, skipping"
             );
-            self.parser
+            self.parser()
                 .skip_node()
                 .map_err(DomDeserializeError::Parser)?;
         }
@@ -469,7 +474,6 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
     fn handle_flattened_child(
         &mut self,
         flattened: &FlattenedChildInfo,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
     ) -> Result<(), DomDeserializeError<P::Error>> {
         trace!(
             parent_idx = flattened.parent_idx,
@@ -483,7 +487,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         let child_idx = flattened.child_idx;
         let parent_is_option = flattened.parent_is_option;
 
-        self.with_wip(|mut wip| {
+        self.with_wip_deser(|mut wip, dom_deser| {
             wip = wip.begin_nth_field(parent_idx)?;
             if parent_is_option {
                 wip = wip.begin_some()?;
@@ -502,11 +506,10 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
     fn handle_flattened_enum(
         &mut self,
         field_idx: usize,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
     ) -> Result<(), DomDeserializeError<P::Error>> {
         trace!(field_idx, "matched flattened enum field");
         self.leave_active_sequence()?;
-        self.with_wip(|wip| {
+        self.with_wip_deser(|wip, dom_deser| {
             Ok(wip
                 .begin_nth_field(field_idx)?
                 .deserialize_with(dom_deser)?
@@ -514,10 +517,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         })
     }
 
-    fn handle_elements_collection(
-        &mut self,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
-    ) -> Result<(), DomDeserializeError<P::Error>> {
+    fn handle_elements_collection(&mut self) -> Result<(), DomDeserializeError<P::Error>> {
         if !self.elements_list_started {
             let info = self.field_map.elements_field.as_ref().unwrap();
             let idx = info.idx;
@@ -526,7 +526,9 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             self.elements_list_started = true;
         }
         trace!("adding element to elements collection");
-        self.with_wip(|wip| Ok(wip.begin_list_item()?.deserialize_with(dom_deser)?.end()?))
+        self.with_wip_deser(|wip, dom_deser| {
+            Ok(wip.begin_list_item()?.deserialize_with(dom_deser)?.end()?)
+        })
     }
 
     fn handle_flattened_map(
@@ -545,7 +547,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             trace!(idx, field_name = %info.field.name, tag, "adding to flattened map");
             self.leave_active_sequence()?;
 
-            self.parser.expect_node_start()?;
+            self.parser().expect_node_start()?;
             let element_text = self.read_element_text()?;
 
             self.started_flattened_maps.insert(idx);
@@ -570,15 +572,15 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
     fn read_element_text(&mut self) -> Result<String, DomDeserializeError<P::Error>> {
         loop {
             match self
-                .parser
+                .parser()
                 .peek_event_or_eof("Attribute or ChildrenStart")?
             {
                 DomEvent::Attribute { .. } => {
-                    self.parser.expect_attribute()?;
+                    self.parser().expect_attribute()?;
                 }
                 DomEvent::ChildrenStart => break,
                 DomEvent::NodeEnd => {
-                    self.parser.expect_node_end()?;
+                    self.parser().expect_node_end()?;
                     return Ok(String::new());
                 }
                 other => {
@@ -589,21 +591,21 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 }
             }
         }
-        self.parser.expect_children_start()?;
+        self.parser().expect_children_start()?;
 
         let mut text = String::new();
         loop {
-            match self.parser.peek_event_or_eof("text or ChildrenEnd")? {
+            match self.parser().peek_event_or_eof("text or ChildrenEnd")? {
                 DomEvent::ChildrenEnd => break,
-                DomEvent::Text(_) => text.push_str(&self.parser.expect_text()?),
+                DomEvent::Text(_) => text.push_str(&self.parser().expect_text()?),
                 _ => self
-                    .parser
+                    .parser()
                     .skip_node()
                     .map_err(DomDeserializeError::Parser)?,
             }
         }
-        self.parser.expect_children_end()?;
-        self.parser.expect_node_end()?;
+        self.parser().expect_children_end()?;
+        self.parser().expect_node_end()?;
         Ok(text)
     }
 
@@ -615,13 +617,12 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             });
         }
         trace!(tag, "skipping unknown element");
-        self.parser.skip_node().map_err(DomDeserializeError::Parser)
+        self.parser()
+            .skip_node()
+            .map_err(DomDeserializeError::Parser)
     }
 
-    fn cleanup(
-        &mut self,
-        dom_deser: &mut super::DomDeserializer<'de, BORROW, P>,
-    ) -> Result<(), DomDeserializeError<P::Error>> {
+    fn cleanup(&mut self) -> Result<(), DomDeserializeError<P::Error>> {
         if let Some(idx) = self.active_seq_idx {
             let state = self.started_seqs.get(&idx).unwrap();
             match state {
@@ -667,7 +668,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 let idx = info.idx;
                 trace!(idx, field_name = %info.field.name, text_len = self.text_content.len(), "setting text field");
                 let text = std::mem::take(&mut self.text_content);
-                self.with_wip(|wip| {
+                self.with_wip_deser(|wip, dom_deser| {
                     Ok(dom_deser
                         .set_string_value(wip.begin_nth_field(idx)?, Cow::Owned(text))?
                         .end()?)

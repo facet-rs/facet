@@ -126,7 +126,7 @@ where
             .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
             .and_then(|attr| attr.get_as::<&str>().copied());
 
-        StructDeserializer::new(&mut self.parser, wip, struct_def, ns_all).deserialize(self)
+        StructDeserializer::new(self, wip, struct_def, ns_all).deserialize()
     }
 
     /// Deserialize an enum type.
