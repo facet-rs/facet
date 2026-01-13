@@ -756,6 +756,16 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#"{"timestamps":["2023-01-01T00:00:00Z","2023-06-15T12:30:00Z"]}"#)
     }
 
+    fn chrono_duration() -> CaseSpec {
+        // Duration serializes as (secs, nanos) tuple: 3600 seconds + 500_000_000 nanoseconds
+        CaseSpec::from_str(r#"{"duration":[3600,500000000]}"#)
+    }
+
+    fn chrono_duration_negative() -> CaseSpec {
+        // Negative duration: -90 seconds - 250_000_000 nanoseconds = -90.25 seconds
+        CaseSpec::from_str(r#"{"duration":[-90,-250000000]}"#)
+    }
+
     // ── Bytes crate cases ──
 
     fn bytes_bytes() -> CaseSpec {
