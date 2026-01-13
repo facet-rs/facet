@@ -928,6 +928,9 @@ impl Frame {
                         }
                     }
 
+                    // Check if the container has #[facet(default)] attribute
+                    let container_has_default = self.allocated.shape().has_default_attr();
+
                     // Fill defaults for individual fields
                     for (idx, field) in struct_type.fields.iter().enumerate() {
                         // Skip already-initialized fields
@@ -939,7 +942,9 @@ impl Frame {
                         let field_ptr = unsafe { self.data.field_uninit(field.offset) };
 
                         // Try to initialize with default
-                        if unsafe { Self::try_init_field_default(field, field_ptr) } {
+                        if unsafe {
+                            Self::try_init_field_default(field, field_ptr, container_has_default)
+                        } {
                             // Mark field as initialized
                             iset.set(idx);
                         } else if field.has_default() {
@@ -953,6 +958,9 @@ impl Frame {
                 }
             }
             Tracker::Enum { variant, data, .. } => {
+                // Check if the container has #[facet(default)] attribute
+                let container_has_default = self.allocated.shape().has_default_attr();
+
                 // Handle enum variant fields
                 for (idx, field) in variant.data.fields.iter().enumerate() {
                     // Skip already-initialized fields
@@ -964,7 +972,9 @@ impl Frame {
                     let field_ptr = unsafe { self.data.field_uninit(field.offset) };
 
                     // Try to initialize with default
-                    if unsafe { Self::try_init_field_default(field, field_ptr) } {
+                    if unsafe {
+                        Self::try_init_field_default(field, field_ptr, container_has_default)
+                    } {
                         // Mark field as initialized
                         data.set(idx);
                     } else if field.has_default() {
@@ -987,14 +997,20 @@ impl Frame {
     /// 1. Explicit field-level default_fn (from `#[facet(default = ...)]`)
     /// 2. Type-level default_in_place (from Default impl, including `Option<T>`)
     ///    but only if the field has the DEFAULT flag
-    /// 3. Special cases: `Option<T>` (defaults to None), () (unit type)
+    /// 3. Container-level default: if the container has `#[facet(default)]` and
+    ///    the field's type implements Default, use that
+    /// 4. Special cases: `Option<T>` (defaults to None), () (unit type)
     ///
     /// Returns true if a default was applied, false otherwise.
     ///
     /// # Safety
     ///
     /// `field_ptr` must point to uninitialized memory of the appropriate type.
-    unsafe fn try_init_field_default(field: &Field, field_ptr: PtrUninit) -> bool {
+    unsafe fn try_init_field_default(
+        field: &Field,
+        field_ptr: PtrUninit,
+        container_has_default: bool,
+    ) -> bool {
         use facet_core::DefaultSource;
 
         // First check for explicit field-level default
@@ -1012,6 +1028,16 @@ impl Frame {
                         return true;
                     }
                 }
+            }
+        }
+
+        // If container has #[facet(default)] and the field's type implements Default,
+        // use the type's Default impl. This allows `#[facet(default)]` on a struct to
+        // mean "use Default for any missing fields whose types implement Default".
+        if container_has_default {
+            let field_ptr_mut = unsafe { field_ptr.assume_init() };
+            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+                return true;
             }
         }
 
