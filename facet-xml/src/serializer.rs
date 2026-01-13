@@ -7,12 +7,7 @@ use facet_core::Facet;
 use facet_dom::{DomSerializeError, DomSerializer};
 use facet_reflect::Peek;
 
-/// A function that formats a floating-point number to a writer.
-///
-/// This is used to customize how `f32` and `f64` values are serialized to XML.
-/// The function receives the value (as `f64`, with `f32` values upcast) and
-/// a writer to write the formatted output to.
-pub type FloatFormatter = fn(f64, &mut dyn Write) -> std::io::Result<()>;
+pub use facet_dom::FloatFormatter;
 
 /// Options for XML serialization.
 #[derive(Clone)]
@@ -498,10 +493,11 @@ impl DomSerializer for XmlSerializer {
         {
             self.pending_namespace = Some(ns_uri.to_string());
         } else if !self.pending_is_attribute && !self.pending_is_text {
-            // Apply ns_all to elements only
-            if let Some(ns_all) = &self.current_ns_all {
-                self.pending_namespace = Some(ns_all.clone());
-            }
+            // Apply ns_all to elements only (or None if no ns_all)
+            self.pending_namespace = self.current_ns_all.clone();
+        } else {
+            // Attributes and text don't get namespace from ns_all
+            self.pending_namespace = None;
         }
 
         Ok(())
@@ -528,6 +524,19 @@ impl DomSerializer for XmlSerializer {
 
     fn clear_field_state(&mut self) {
         self.clear_field_state_impl();
+    }
+
+    fn format_float(&self, value: f64) -> String {
+        if let Some(formatter) = self.options.float_formatter {
+            let mut buf = Vec::new();
+            // If the formatter fails, fall back to default Display
+            if formatter(value, &mut buf).is_ok() {
+                if let Ok(s) = String::from_utf8(buf) {
+                    return s;
+                }
+            }
+        }
+        value.to_string()
     }
 
     fn serialize_none(&mut self) -> Result<(), Self::Error> {

@@ -5,6 +5,15 @@
 
 extern crate alloc;
 
+use std::io::Write;
+
+/// A function that formats a floating-point number to a writer.
+///
+/// This is used to customize how `f32` and `f64` values are serialized.
+/// The function receives the value (as `f64`, with `f32` values upcast) and
+/// a writer to write the formatted output to.
+pub type FloatFormatter = fn(f64, &mut dyn Write) -> std::io::Result<()>;
+
 use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -105,6 +114,19 @@ pub trait DomSerializer {
     fn clear_field_state(&mut self) {}
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Value formatting
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Format a floating-point value as a string.
+    ///
+    /// Override this to provide custom float formatting (e.g., fixed decimal places).
+    /// The default implementation uses `Display`. The value is passed as f64
+    /// (f32 values are upcast).
+    fn format_float(&self, value: f64) -> String {
+        value.to_string()
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Option handling
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -167,7 +189,7 @@ where
     }
 
     // Handle scalars
-    if let Some(s) = value_to_string(value) {
+    if let Some(s) = value_to_string(value, serializer) {
         if let Some(tag) = element_name {
             serializer
                 .element_start(tag, None)
@@ -322,7 +344,7 @@ where
             trace!(field_name = %field_item.name, is_attribute = is_attr, "field_metadata result");
 
             if is_attr {
-                let string_value = value_to_string(*field_value);
+                let string_value = value_to_string(*field_value, serializer);
                 trace!(field_name = %field_item.name, value = ?string_value, "attribute field");
                 if let Some(s) = string_value {
                     serializer
@@ -350,7 +372,7 @@ where
             }
 
             if serializer.is_text_field() {
-                if let Some(s) = value_to_string(*field_value) {
+                if let Some(s) = value_to_string(*field_value, serializer) {
                     serializer.text(&s).map_err(DomSerializeError::Backend)?;
                 }
                 serializer.clear_field_state();
@@ -695,7 +717,7 @@ fn deref_if_pointer<'mem, 'facet>(value: Peek<'mem, 'facet>) -> Peek<'mem, 'face
 }
 
 /// Convert a value to a string if it's a scalar type.
-fn value_to_string(value: Peek<'_, '_>) -> Option<String> {
+fn value_to_string<S: DomSerializer>(value: Peek<'_, '_>, serializer: &S) -> Option<String> {
     use facet_core::ScalarType;
 
     // Handle Option<T> by unwrapping if Some, returning None if None
@@ -703,7 +725,7 @@ fn value_to_string(value: Peek<'_, '_>) -> Option<String> {
         && let Ok(opt) = value.into_option()
     {
         return match opt.value() {
-            Some(inner) => value_to_string(inner),
+            Some(inner) => value_to_string(inner, serializer),
             None => None,
         };
     }
@@ -721,8 +743,8 @@ fn value_to_string(value: Peek<'_, '_>) -> Option<String> {
             ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
                 value.as_str()?.to_string()
             }
-            ScalarType::F32 => value.get::<f32>().ok()?.to_string(),
-            ScalarType::F64 => value.get::<f64>().ok()?.to_string(),
+            ScalarType::F32 => serializer.format_float(*value.get::<f32>().ok()? as f64),
+            ScalarType::F64 => serializer.format_float(*value.get::<f64>().ok()?),
             ScalarType::U8 => value.get::<u8>().ok()?.to_string(),
             ScalarType::U16 => value.get::<u16>().ok()?.to_string(),
             ScalarType::U32 => value.get::<u32>().ok()?.to_string(),
