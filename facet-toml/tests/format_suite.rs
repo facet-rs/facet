@@ -351,7 +351,7 @@ impl FormatSuite for TomlSlice {
         // Two flattened structs both have a "shared" field - should error
         CaseSpec::expect_error(
             "field_a = \"a\"\nfield_b = \"b\"\nshared = 1",
-            "duplicate field",
+            "Duplicate field",
         )
     }
 

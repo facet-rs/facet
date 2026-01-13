@@ -79,8 +79,8 @@ fn handle_key<'a>(
     solver: &mut Solver<'a>,
     field: FieldEvidence<'a>,
 ) -> Option<ResolutionHandle<'a>> {
-    let owned_name = field.name.into_owned();
-    match solver.see_key(owned_name) {
+    // Pass the Cow directly - it implements Into<FieldKey>
+    match solver.see_key(field.name) {
         KeyResult::Solved(handle) => Some(handle),
         KeyResult::Unknown | KeyResult::Unambiguous { .. } | KeyResult::Ambiguous { .. } => None,
     }

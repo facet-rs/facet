@@ -110,7 +110,7 @@ where
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
                     // Look up field in the resolution
-                    if let Some(field_info) = resolution.field(key.name.as_ref()) {
+                    if let Some(field_info) = resolution.field_by_name(key.name.as_ref()) {
                         let segments = field_info.path.segments();
 
                         // Check if this path ends with a Variant segment (externally-tagged enum)

@@ -405,7 +405,7 @@ impl FormatSuite for JsonSlice {
         // Two flattened structs both have a "shared" field - should error
         CaseSpec::expect_error(
             r#"{"field_a":"a","field_b":"b","shared":1}"#,
-            "duplicate field",
+            "Duplicate field",
         )
     }
 
