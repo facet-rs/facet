@@ -23,6 +23,7 @@ macro_rules! trace {
 ///
 /// When the `log` feature is disabled, this expands to nothing.
 #[cfg(feature = "log")]
+#[allow(unused_macros)]
 macro_rules! debug {
     ($($arg:tt)*) => {
         ::tracing::debug!($($arg)*)
@@ -31,11 +32,14 @@ macro_rules! debug {
 
 /// Debug-level logging macro (no-op when `log` feature is disabled).
 #[cfg(not(feature = "log"))]
+#[allow(unused_macros)]
 macro_rules! debug {
     ($($arg:tt)*) => {};
 }
 
+#[allow(unused_imports)]
 pub(crate) use debug;
+#[allow(unused_imports)]
 pub(crate) use trace;
 
 mod deserializer;
