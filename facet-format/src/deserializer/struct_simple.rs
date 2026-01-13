@@ -34,7 +34,6 @@ where
         // Hint to non-self-describing parsers how many fields to expect
         self.parser.hint_struct_fields(struct_def.fields.len());
 
-        let struct_has_default = wip.shape().has_default_attr();
         let struct_type_has_default = wip.shape().is(Characteristic::Default);
 
         // Peek at the next event first to handle EOF and null gracefully
@@ -348,30 +347,11 @@ where
             return Ok(wip);
         }
 
-        // Apply defaults for missing fields
-        // First, check if ALL non-elements fields are missing and the struct has a container-level
-        // default. In that case, use the struct's Default impl directly.
-        let all_non_elements_missing = struct_def
-            .fields
-            .iter()
-            .enumerate()
-            .all(|(idx, field)| !fields_set[idx] || field.is_elements());
-
-        if struct_has_default && all_non_elements_missing && wip.shape().is(Characteristic::Default)
-        {
-            // Use the struct's Default impl for all fields at once
-            wip = wip.set_default().map_err(DeserializeError::reflect)?;
-            return Ok(wip);
-        }
-
+        // Initialize empty lists for xml::elements fields that weren't populated
         for (idx, field) in struct_def.fields.iter().enumerate() {
             if fields_set[idx] {
                 continue;
             }
-
-            let field_has_default = field.has_default();
-            let field_type_has_default = field.shape().is(Characteristic::Default);
-            let field_is_option = matches!(field.shape().def, Def::Option(_));
 
             // elements fields with no items should get an empty list
             // begin_list() doesn't push a frame, so we just begin the field, begin the list,
@@ -382,32 +362,11 @@ where
                     .map_err(DeserializeError::reflect)?;
                 wip = wip.begin_list().map_err(DeserializeError::reflect)?;
                 wip = wip.end().map_err(DeserializeError::reflect)?; // end field only
-                continue;
-            }
-
-            if field_has_default || (struct_has_default && field_type_has_default) {
-                wip = wip
-                    .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::reflect)?;
-            } else if field_is_option {
-                wip = wip
-                    .begin_field(field.name)
-                    .map_err(DeserializeError::reflect)?;
-                wip = wip.set_default().map_err(DeserializeError::reflect)?;
-                wip = wip.end().map_err(DeserializeError::reflect)?;
-            } else if field.should_skip_deserializing() {
-                wip = wip
-                    .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::reflect)?;
-            } else {
-                return Err(DeserializeError::MissingField {
-                    field: field.name,
-                    type_name: wip.shape().type_identifier,
-                    span: self.last_span,
-                    path: None,
-                });
             }
         }
+
+        // Defaults for missing fields are applied automatically by facet-reflect's
+        // fill_defaults() when build() or end() is called.
 
         Ok(wip)
     }
