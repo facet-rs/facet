@@ -162,7 +162,7 @@ where
         if let Some(info) = &field_map.elements_field {
             trace!(idx = info.idx, field_name = %info.field.name, "beginning elements list");
             wip = wip.begin_nth_field(info.idx)?;
-            wip = wip.begin_list()?;
+            wip = wip.init_list()?;
             elements_list_started = true;
         }
 
@@ -236,7 +236,7 @@ where
                                         if is_smart_ptr {
                                             wip = wip.begin_smart_ptr()?;
                                         }
-                                        wip = wip.begin_list()?;
+                                        wip = wip.init_list()?;
                                         started_seqs
                                             .insert(info.idx, SeqState::List { is_smart_ptr });
                                     } else {
@@ -255,7 +255,7 @@ where
                                         if *is_smart_ptr {
                                             wip = wip.begin_smart_ptr()?;
                                         }
-                                        wip = wip.begin_list()?;
+                                        wip = wip.init_list()?;
                                     } else {
                                         wip = wip.begin_array()?;
                                     }
@@ -572,7 +572,7 @@ where
         &mut self,
         mut wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        wip = wip.begin_list()?;
+        wip = wip.init_list()?;
 
         loop {
             let event = self.parser.peek_event_or_eof("child or ChildrenEnd")?;
