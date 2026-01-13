@@ -93,6 +93,10 @@ pub enum SvgNode {
     Title(Title),
     Desc(Desc),
     Symbol(Symbol),
+    Filter(Filter),
+    Marker(Marker),
+    #[facet(rename = "linearGradient")]
+    LinearGradient(LinearGradient),
 }
 
 /// SVG group element (`<g>`)
@@ -413,6 +417,91 @@ pub struct Symbol {
     pub height: Option<String>,
     #[facet(xml::elements)]
     pub children: Vec<SvgNode>,
+}
+
+/// SVG filter element (`<filter>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg", skip_all_unless_truthy)]
+pub struct Filter {
+    #[facet(xml::attribute)]
+    pub id: Option<String>,
+    #[facet(xml::elements)]
+    pub children: Vec<FilterPrimitive>,
+}
+
+/// Filter primitive elements
+#[derive(Facet, Debug, Clone)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+#[repr(u8)]
+pub enum FilterPrimitive {
+    #[facet(rename = "feGaussianBlur")]
+    FeGaussianBlur(FeGaussianBlur),
+}
+
+/// feGaussianBlur filter primitive
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg", skip_all_unless_truthy)]
+pub struct FeGaussianBlur {
+    #[facet(xml::attribute)]
+    pub r#in: Option<String>,
+    #[facet(xml::attribute, rename = "stdDeviation")]
+    pub std_deviation: Option<String>,
+}
+
+/// SVG marker element (`<marker>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(
+    xml::ns_all = "http://www.w3.org/2000/svg",
+    rename_all = "camelCase",
+    skip_all_unless_truthy
+)]
+pub struct Marker {
+    #[facet(xml::attribute)]
+    pub id: Option<String>,
+    #[facet(xml::attribute)]
+    pub marker_width: Option<String>,
+    #[facet(xml::attribute)]
+    pub marker_height: Option<String>,
+    #[facet(xml::attribute, rename = "refX")]
+    pub ref_x: Option<String>,
+    #[facet(xml::attribute, rename = "refY")]
+    pub ref_y: Option<String>,
+    #[facet(xml::attribute)]
+    pub orient: Option<String>,
+    #[facet(xml::elements)]
+    pub children: Vec<SvgNode>,
+}
+
+/// SVG linearGradient element (`<linearGradient>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg", skip_all_unless_truthy)]
+pub struct LinearGradient {
+    #[facet(xml::attribute)]
+    pub id: Option<String>,
+    #[facet(xml::attribute)]
+    pub x1: Option<String>,
+    #[facet(xml::attribute)]
+    pub y1: Option<String>,
+    #[facet(xml::attribute)]
+    pub x2: Option<String>,
+    #[facet(xml::attribute)]
+    pub y2: Option<String>,
+    #[facet(xml::elements, rename = "stop")]
+    pub stops: Vec<GradientStop>,
+}
+
+/// Gradient stop element (`<stop>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg", skip_all_unless_truthy)]
+pub struct GradientStop {
+    #[facet(xml::attribute)]
+    pub offset: Option<String>,
+    #[facet(xml::attribute)]
+    pub style: Option<String>,
+    #[facet(xml::attribute, rename = "stop-color")]
+    pub stop_color: Option<String>,
+    #[facet(xml::attribute, rename = "stop-opacity")]
+    pub stop_opacity: Option<String>,
 }
 
 // Re-export XML utilities for convenience
