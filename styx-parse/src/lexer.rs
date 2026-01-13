@@ -1,5 +1,7 @@
 //! Lexer for the Styx configuration language.
 
+#[allow(unused_imports)]
+use crate::trace;
 use crate::{Span, Token, TokenKind};
 
 /// A lexer that produces tokens from Styx source text.
@@ -93,6 +95,7 @@ impl<'src> Lexer<'src> {
     fn token(&self, kind: TokenKind, start: u32) -> Token<'src> {
         let span = Span::new(start, self.pos);
         let text = &self.source[start as usize..self.pos as usize];
+        trace!("Token {:?} at {:?}: {:?}", kind, span, text);
         Token::new(kind, span, text)
     }
 
@@ -286,7 +289,7 @@ impl<'src> Lexer<'src> {
 
     /// Lex a heredoc start: `<<DELIM`.
     ///
-    /// Per `r[scalar.heredoc.syntax]`: delimiter MUST match `[A-Z][A-Z0-9_]*`
+    /// Per parser[scalar.heredoc.syntax]: delimiter MUST match `[A-Z][A-Z0-9_]*`
     /// and not exceed 16 characters.
     // parser[impl scalar.heredoc.syntax]
     fn lex_heredoc_start(&mut self) -> Token<'src> {
@@ -518,7 +521,7 @@ fn is_bare_scalar_start(c: char) -> bool {
     !matches!(c, '{' | '}' | '(' | ')' | ',' | '"' | '=' | '@' | '/') && !c.is_whitespace()
 }
 
-// parser[impl scalar.bare.chars] parser[impl scalar.bare.termination]
+// parser[impl scalar.bare.chars]
 /// Check if a character can continue a bare scalar.
 fn is_bare_scalar_char(c: char) -> bool {
     // Cannot be special chars or whitespace (but `/` is allowed after the first char)

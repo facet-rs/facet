@@ -9,6 +9,8 @@ use crate::callback::ParseCallback;
 use crate::event::{Event, ParseErrorKind, ScalarKind, Separator};
 use crate::lexer::Lexer;
 use crate::token::{Token, TokenKind};
+#[allow(unused_imports)]
+use crate::trace;
 
 /// Event-based parser for Styx documents.
 pub struct Parser<'src> {
@@ -154,6 +156,7 @@ impl<'src> Parser<'src> {
         callback: &mut C,
         closing: Option<TokenKind>,
     ) {
+        trace!("Parsing entries, closing token: {:?}", closing);
         let mut seen_keys: HashSet<KeyValue> = HashSet::new();
         // Track last doc comment span for dangling detection
         // parser[impl comment.doc]
@@ -245,13 +248,13 @@ impl<'src> Parser<'src> {
 
         // parser[impl entry.keys]
         // Heredoc scalars are not allowed as keys
-        if key_atom.kind == ScalarKind::Heredoc {
-            if !callback.event(Event::Error {
+        if key_atom.kind == ScalarKind::Heredoc
+            && !callback.event(Event::Error {
                 span: key_atom.span,
                 kind: ParseErrorKind::InvalidKey,
-            }) {
-                return false;
-            }
+            })
+        {
+            return false;
         }
 
         let key_value = KeyValue::from_atom(key_atom, self);
@@ -623,9 +626,7 @@ impl<'src> Parser<'src> {
     /// Parse an attribute value (bare/quoted/raw scalar, sequence, or object).
     // parser[impl attr.values]
     fn parse_attribute_value(&mut self) -> Option<Atom<'src>> {
-        let Some(token) = self.peek() else {
-            return None;
-        };
+        let token = self.peek()?;
 
         match token.kind {
             TokenKind::BareScalar | TokenKind::QuotedScalar | TokenKind::RawScalar => {
@@ -643,6 +644,7 @@ impl<'src> Parser<'src> {
     /// Parse a scalar atom.
     fn parse_scalar_atom(&mut self) -> Atom<'src> {
         let token = self.advance().unwrap();
+        trace!("Parsing scalar: {:?}", token.kind);
         match token.kind {
             TokenKind::BareScalar => Atom {
                 span: token.span,
@@ -697,6 +699,7 @@ impl<'src> Parser<'src> {
     /// Parse an object atom (for nested objects).
     // parser[impl object.syntax]
     fn parse_object_atom(&mut self) -> Atom<'src> {
+        trace!("Parsing object");
         let open = self.advance().unwrap(); // consume '{'
         let start_span = open.span;
 
@@ -875,6 +878,7 @@ impl<'src> Parser<'src> {
     /// Parse a sequence atom.
     // parser[impl sequence.syntax] parser[impl sequence.elements]
     fn parse_sequence_atom(&mut self) -> Atom<'src> {
+        trace!("Parsing sequence");
         let open = self.advance().unwrap(); // consume '('
         let start_span = open.span;
 
@@ -953,6 +957,7 @@ impl<'src> Parser<'src> {
     /// Parse a tag or unit atom.
     // parser[impl tag.payload] parser[impl value.unit]
     fn parse_tag_or_unit_atom(&mut self) -> Atom<'src> {
+        trace!("Parsing tag or unit");
         let at = self.advance().unwrap(); // consume '@'
         let start_span = at.span;
 
@@ -1001,7 +1006,7 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Check if a tag name is valid per r[tag.syntax].
+    /// Check if a tag name is valid per parser[tag.syntax].
     /// Must match pattern: [A-Za-z_][A-Za-z0-9_.-]*
     // parser[impl tag.syntax]
     fn is_valid_tag_name(name: &str) -> bool {
@@ -1078,13 +1083,13 @@ impl<'src> Parser<'src> {
             } => {
                 // parser[impl tag.syntax]
                 // Emit error for invalid tag name
-                if let Some(span) = invalid_name_span {
-                    if !callback.event(Event::Error {
+                if let Some(span) = invalid_name_span
+                    && !callback.event(Event::Error {
                         span: *span,
                         kind: ParseErrorKind::InvalidTagName,
-                    }) {
-                        return false;
-                    }
+                    })
+                {
+                    return false;
                 }
 
                 if !callback.event(Event::TagStart {
@@ -1094,10 +1099,10 @@ impl<'src> Parser<'src> {
                     return false;
                 }
                 // Emit payload if present
-                if let Some(payload) = payload {
-                    if !self.emit_atom_as_value(payload, callback) {
-                        return false;
-                    }
+                if let Some(payload) = payload
+                    && !self.emit_atom_as_value(payload, callback)
+                {
+                    return false;
                 }
                 // If no payload, it's an implicit unit (TagEnd implies it)
                 callback.event(Event::TagEnd)

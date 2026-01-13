@@ -549,11 +549,11 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
     }
 
     fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
-        if self.peeked_events.is_empty() {
-            if let Some(event) = self.next_event()? {
-                // Insert at front since next_event may have pushed follow-up events
-                self.peeked_events.insert(0, event);
-            }
+        if self.peeked_events.is_empty()
+            && let Some(event) = self.next_event()?
+        {
+            // Insert at front since next_event may have pushed follow-up events
+            self.peeked_events.insert(0, event);
         }
         Ok(self.peeked_events.first().cloned())
     }

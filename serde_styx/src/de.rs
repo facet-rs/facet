@@ -68,10 +68,10 @@ impl<'de> Deserializer<'de> {
 
     /// Skip commas between entries.
     fn skip_comma(&mut self) {
-        if let Some(token) = self.peek_token() {
-            if token.kind == TokenKind::Comma {
-                self.next_token();
-            }
+        if let Some(token) = self.peek_token()
+            && token.kind == TokenKind::Comma
+        {
+            self.next_token();
         }
     }
 
@@ -131,7 +131,7 @@ enum ScalarValue<'de> {
     String(String),
 }
 
-impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
+impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
     type Error = Error;
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
@@ -342,23 +342,24 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     }
 
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
-        if let Some(token) = self.peek_token() {
-            if token.kind == TokenKind::At {
-                // Check if it's just @ (unit/none) or @tag
-                let token = self.next_token();
-                if let Some(next) = self.peek_token() {
-                    if next.kind == TokenKind::BareScalar && next.span.start == token.span.end {
-                        // It's a tag - put back and deserialize as Some
-                        self.peeked_token = Some(Token {
-                            kind: TokenKind::At,
-                            text: "@",
-                            span: token.span,
-                        });
-                        return visitor.visit_some(self);
-                    }
-                }
-                return visitor.visit_none();
+        if let Some(token) = self.peek_token()
+            && token.kind == TokenKind::At
+        {
+            // Check if it's just @ (unit/none) or @tag
+            let token = self.next_token();
+            if let Some(next) = self.peek_token()
+                && next.kind == TokenKind::BareScalar
+                && next.span.start == token.span.end
+            {
+                // It's a tag - put back and deserialize as Some
+                self.peeked_token = Some(Token {
+                    kind: TokenKind::At,
+                    text: "@",
+                    span: token.span,
+                });
+                return visitor.visit_some(self);
             }
+            return visitor.visit_none();
         }
         visitor.visit_some(self)
     }
@@ -410,10 +411,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     }
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
-        if let Some(token) = self.peek_token() {
-            if token.kind == TokenKind::LBrace {
-                self.next_token();
-            }
+        if let Some(token) = self.peek_token()
+            && token.kind == TokenKind::LBrace
+        {
+            self.next_token();
         }
         visitor.visit_map(MapAccess { de: self })
     }
@@ -425,11 +426,11 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         visitor: V,
     ) -> Result<V::Value> {
         // Check if we're at root level (no braces) or explicit struct
-        if let Some(token) = self.peek_token() {
-            if token.kind == TokenKind::LBrace {
-                self.next_token();
-                return visitor.visit_map(MapAccess { de: self });
-            }
+        if let Some(token) = self.peek_token()
+            && token.kind == TokenKind::LBrace
+        {
+            self.next_token();
+            return visitor.visit_map(MapAccess { de: self });
         }
 
         // Implicit root struct
@@ -516,21 +517,21 @@ impl<'de> Deserializer<'de> {
             }
             TokenKind::At => {
                 // Could be unit or tag with value
-                if let Some(next) = self.peek_token() {
-                    if next.kind == TokenKind::BareScalar {
-                        self.next_token();
-                        // Check for payload
-                        if let Some(next) = self.peek_token() {
-                            if !matches!(
-                                next.kind,
-                                TokenKind::RBrace
-                                    | TokenKind::RParen
-                                    | TokenKind::Comma
-                                    | TokenKind::Eof
-                            ) {
-                                self.skip_value()?;
-                            }
-                        }
+                if let Some(next) = self.peek_token()
+                    && next.kind == TokenKind::BareScalar
+                {
+                    self.next_token();
+                    // Check for payload
+                    if let Some(next) = self.peek_token()
+                        && !matches!(
+                            next.kind,
+                            TokenKind::RBrace
+                                | TokenKind::RParen
+                                | TokenKind::Comma
+                                | TokenKind::Eof
+                        )
+                    {
+                        self.skip_value()?;
                     }
                 }
             }

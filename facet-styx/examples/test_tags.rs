@@ -2,6 +2,7 @@ use facet::Facet;
 
 #[derive(Facet, Debug)]
 #[repr(u8)]
+#[allow(dead_code)]
 enum MyEnum {
     Foo,
     Bar { x: i32 },

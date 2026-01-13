@@ -377,7 +377,7 @@ impl KeySerializer {
     }
 }
 
-impl<'a> ser::Serializer for &'a mut KeySerializer {
+impl ser::Serializer for &mut KeySerializer {
     type Ok = ();
     type Error = Error;
 

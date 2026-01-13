@@ -79,10 +79,10 @@ impl StyxWriter {
             return false;
         }
         // Check if we're inside a root struct
-        if let Some(Context::Struct { is_root: true, .. }) = self.stack.first() {
-            if self.depth() == 1 {
-                return false;
-            }
+        if let Some(Context::Struct { is_root: true, .. }) = self.stack.first()
+            && self.depth() == 1
+        {
+            return false;
         }
         // If available width is too small, force multiline
         self.available_width() >= self.options.min_inline_width
@@ -299,11 +299,7 @@ impl StyxWriter {
         self.out.push(b'"');
         for byte in bytes.iter() {
             let hex = |d: u8| {
-                if d < 10 {
-                    b'0' + d
-                } else {
-                    b'a' + (d - 10)
-                }
+                if d < 10 { b'0' + d } else { b'a' + (d - 10) }
             };
             self.out.push(hex(byte >> 4));
             self.out.push(hex(byte & 0xf));

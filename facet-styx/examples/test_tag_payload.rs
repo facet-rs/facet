@@ -3,6 +3,7 @@ use facet::Facet;
 #[derive(Facet, Debug)]
 #[facet(untagged)]
 #[repr(u8)]
+#[allow(dead_code)]
 enum Value {
     #[facet(rename = "optional")]
     Optional(Vec<Value>),

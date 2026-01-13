@@ -101,10 +101,10 @@ pub fn unescape_quoted(s: &str) -> Cow<'_, str> {
                             }
                             hex.push(chars.next().unwrap());
                         }
-                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                            if let Some(ch) = char::from_u32(code) {
-                                result.push(ch);
-                            }
+                        if let Ok(code) = u32::from_str_radix(&hex, 16)
+                            && let Some(ch) = char::from_u32(code)
+                        {
+                            result.push(ch);
                         }
                     } else {
                         // \uXXXX format (4 hex digits)
@@ -118,10 +118,10 @@ pub fn unescape_quoted(s: &str) -> Cow<'_, str> {
                                 }
                             }
                         }
-                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                            if let Some(ch) = char::from_u32(code) {
-                                result.push(ch);
-                            }
+                        if let Ok(code) = u32::from_str_radix(&hex, 16)
+                            && let Some(ch) = char::from_u32(code)
+                        {
+                            result.push(ch);
                         }
                     }
                 }
