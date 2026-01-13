@@ -4,6 +4,7 @@
 //! cases where the tag field appears after other fields in the XML.
 
 use facet::Facet;
+use test_log::test;
 
 #[derive(Debug, PartialEq, Facet)]
 #[facet(tag = "type")]

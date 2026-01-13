@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
+use test_log::test;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Basic struct tests

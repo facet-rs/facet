@@ -2,6 +2,7 @@
 
 use facet::Facet;
 use facet_xml::{self as xml, from_str};
+use test_log::test;
 
 #[test]
 fn test_simple_struct() {

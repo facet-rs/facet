@@ -281,7 +281,7 @@ where
         self.parser.expect_children_end()?;
         self.parser.expect_node_end()?;
 
-        trace!(tag = %tag, "struct deserialization complete");
+        trace!(tag = %_tag, "struct deserialization complete");
         Ok(wip)
     }
 
