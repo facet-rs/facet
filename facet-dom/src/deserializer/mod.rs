@@ -48,7 +48,17 @@ impl<'de, const BORROW: bool, P> DomDeserializer<'de, BORROW, P>
 where
     P: DomParser<'de>,
 {
-    /// Deserialize into an existing Partial.
+    /// Deserialize a value into an existing Partial.
+    ///
+    /// # Parser State Contract
+    ///
+    /// **Entry:** The parser should be positioned such that the next event represents
+    /// the value to deserialize. For structs/enums, this means a `NodeStart` is next
+    /// (peeked but not consumed). For scalars within an element, the parser should be
+    /// inside the element (after `ChildrenStart`).
+    ///
+    /// **Exit:** The parser will have consumed all events related to this value,
+    /// including the closing `NodeEnd` for struct types.
     pub fn deserialize_into(
         &mut self,
         wip: Partial<'de, BORROW>,
@@ -72,6 +82,13 @@ where
         }
     }
 
+    /// Deserialize a struct type.
+    ///
+    /// # Parser State Contract
+    ///
+    /// **Entry:** Parser is positioned before the struct's `NodeStart` (peeked, not consumed).
+    ///
+    /// **Exit:** Parser has consumed through the struct's closing `NodeEnd`.
     fn deserialize_struct(
         &mut self,
         wip: Partial<'de, BORROW>,
@@ -89,7 +106,20 @@ where
     }
 
     /// Deserialize the innards of a struct-like thing (struct, tuple, or enum variant data).
-    /// Expects a NodeStart to have been peeked but not consumed.
+    ///
+    /// # Parser State Contract
+    ///
+    /// **Entry:** Parser is AFTER the struct's `NodeStart` — the NodeStart has already been consumed.
+    ///
+    /// **Exit:** Parser has consumed through the struct's closing `NodeEnd`.
+    ///
+    /// # Processing Order
+    ///
+    /// 1. Process attributes (match to fields marked with `xml::attribute`)
+    /// 2. Consume `ChildrenStart`
+    /// 3. Process child elements and text (match to fields by element name or `xml::text`)
+    /// 4. Consume `ChildrenEnd`
+    /// 5. Consume `NodeEnd`
     fn deserialize_struct_innards(
         &mut self,
         mut wip: Partial<'de, BORROW>,
@@ -201,24 +231,24 @@ where
                             if info.is_list || info.is_array {
                                 // Flat sequence: repeated elements directly as children
                                 // If we're currently inside a different sequence, end it first
-                                if let Some(prev_idx) = active_seq_idx {
-                                    if prev_idx != info.idx {
-                                        trace!(
-                                            prev_idx = prev_idx,
-                                            new_idx = info.idx,
-                                            "switching active flat sequence"
-                                        );
-                                        // End the list/array (begin_nth_field doesn't push a frame,
-                                        // so ending the list/array returns us to the struct level)
+                                if let Some(prev_idx) = active_seq_idx
+                                    && prev_idx != info.idx
+                                {
+                                    trace!(
+                                        prev_idx = prev_idx,
+                                        new_idx = info.idx,
+                                        "switching active flat sequence"
+                                    );
+                                    // End the list/array (begin_nth_field doesn't push a frame,
+                                    // so ending the list/array returns us to the struct level)
+                                    wip = wip.end()?;
+                                    // End smart_ptr if applicable
+                                    if let Some(SeqState::List { is_smart_ptr: true }) =
+                                        started_seqs.get(&prev_idx)
+                                    {
                                         wip = wip.end()?;
-                                        // End smart_ptr if applicable
-                                        if let Some(SeqState::List { is_smart_ptr: true }) =
-                                            started_seqs.get(&prev_idx)
-                                        {
-                                            wip = wip.end()?;
-                                        }
-                                        active_seq_idx = None;
                                     }
+                                    active_seq_idx = None;
                                 }
 
                                 use std::collections::hash_map::Entry;
@@ -366,6 +396,24 @@ where
         Ok(wip)
     }
 
+    /// Deserialize an enum type.
+    ///
+    /// # Parser State Contract
+    ///
+    /// **Entry:** Parser is positioned at either:
+    /// - A `NodeStart` event (element-based variant), or
+    /// - A `Text` event (text-based variant, e.g., for enums with a `#[xml::text]` variant)
+    ///
+    /// **Exit:** All events for this enum have been consumed:
+    /// - If entry was `NodeStart`: through the closing `NodeEnd`
+    /// - If entry was `Text`: just that text event
+    ///
+    /// # Variant Selection
+    ///
+    /// For `NodeStart`: The element tag name is matched against variant names (considering
+    /// `#[rename]` attributes). If no match, looks for a variant with `#[xml::custom_element]`.
+    ///
+    /// For `Text`: Looks for a variant with `#[xml::text]` attribute.
     fn deserialize_enum(
         &mut self,
         mut wip: Partial<'de, BORROW>,
@@ -442,6 +490,17 @@ where
         Ok(wip)
     }
 
+    /// Deserialize text content into an enum by selecting the `#[xml::text]` variant.
+    ///
+    /// # Parser State Contract
+    ///
+    /// **Entry:** The text has already been consumed from the parser (passed as argument).
+    ///
+    /// **Exit:** No parser state change (text was already consumed).
+    ///
+    /// # Fallback
+    ///
+    /// If `wip` is not actually an enum, falls back to `set_string_value`.
     fn deserialize_text_into_enum(
         &mut self,
         mut wip: Partial<'de, BORROW>,
@@ -468,6 +527,24 @@ where
         Ok(wip)
     }
 
+    /// Deserialize a scalar value (string, number, bool, etc.).
+    ///
+    /// # Parser State Contract
+    ///
+    /// **Entry:** Parser is positioned at either:
+    /// - A `Text` event (inline text content), or
+    /// - A `NodeStart` event (element wrapping the text content)
+    ///
+    /// **Exit:** All events for this scalar have been consumed:
+    /// - If entry was `Text`: just that text event
+    /// - If entry was `NodeStart`: through the closing `NodeEnd`
+    ///
+    /// # XML Data Model
+    ///
+    /// In XML, scalars can appear as:
+    /// - Attribute values (handled elsewhere)
+    /// - Text content: `<parent>text here</parent>`
+    /// - Element with text: `<field>value</field>` (element is consumed)
     fn deserialize_scalar(
         &mut self,
         wip: Partial<'de, BORROW>,
@@ -568,6 +645,21 @@ where
         }
     }
 
+    /// Deserialize a list (Vec, slice, etc.) from repeated child elements.
+    ///
+    /// # Parser State Contract
+    ///
+    /// **Entry:** Parser is positioned inside an element, after `ChildrenStart`.
+    /// Child elements will be deserialized as list items.
+    ///
+    /// **Exit:** Parser is positioned at `ChildrenEnd` (peeked, not consumed).
+    /// The caller is responsible for consuming `ChildrenEnd` and `NodeEnd`.
+    ///
+    /// # Note
+    ///
+    /// This is used for "wrapped" list semantics where a parent element contains
+    /// the list items. For "flat" list semantics (items directly as siblings),
+    /// see the flat sequence handling in `deserialize_struct_innards`.
     fn deserialize_list(
         &mut self,
         mut wip: Partial<'de, BORROW>,
@@ -586,6 +678,19 @@ where
         Ok(wip)
     }
 
+    /// Deserialize an Option type.
+    ///
+    /// # Parser State Contract
+    ///
+    /// **Entry:** Parser is positioned where the optional value would be.
+    ///
+    /// **Exit:** If value was present, all events for the value have been consumed.
+    /// If value was absent, no events consumed.
+    ///
+    /// # None Detection
+    ///
+    /// The option is `None` if the next event is `ChildrenEnd` or `NodeEnd`
+    /// (indicating no content). Otherwise, the inner value is deserialized.
     fn deserialize_option(
         &mut self,
         mut wip: Partial<'de, BORROW>,
@@ -599,6 +704,20 @@ where
         Ok(wip)
     }
 
+    /// Deserialize a pointer type (Box, Arc, Rc, etc.).
+    ///
+    /// # Parser State Contract
+    ///
+    /// **Entry:** Parser is positioned at the value that the pointer will wrap.
+    ///
+    /// **Exit:** All events for the inner value have been consumed.
+    ///
+    /// # Pointer Actions
+    ///
+    /// Uses `facet_dessert::begin_pointer` to determine how to handle the pointer:
+    /// - `HandleAsScalar`: Treat as scalar (e.g., `Box<str>`)
+    /// - `SliceBuilder`: Build a slice (e.g., `Arc<[T]>`)
+    /// - `SizedPointee`: Regular pointer to sized type
     fn deserialize_pointer(
         &mut self,
         wip: Partial<'de, BORROW>,
@@ -614,6 +733,16 @@ where
         }
     }
 
+    /// Set a string value on the current partial, parsing it to the appropriate type.
+    ///
+    /// # Parser State Contract
+    ///
+    /// **Entry/Exit:** No parser state change. The string value is passed as an argument.
+    ///
+    /// # Type Handling
+    ///
+    /// Delegates to `facet_dessert::set_string_value` which handles parsing the string
+    /// into the appropriate scalar type (String, &str, integers, floats, bools, etc.).
     fn set_string_value(
         &mut self,
         wip: Partial<'de, BORROW>,
