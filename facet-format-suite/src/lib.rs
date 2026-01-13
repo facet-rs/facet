@@ -457,6 +457,10 @@ pub trait FormatSuite {
     #[cfg(feature = "smol_str")]
     fn smol_str() -> CaseSpec;
 
+    /// Case: `iddqd::IdHashMap` type.
+    #[cfg(feature = "iddqd")]
+    fn iddqd_id_hash_map() -> CaseSpec;
+
     // ── Dynamic value tests ──
 
     /// Case: `facet_value::Value` dynamic type - null.
@@ -793,6 +797,8 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, SmartStringWrapper>(&CASE_SMARTSTRING, S::smartstring),
         #[cfg(feature = "smol_str")]
         SuiteCase::new::<S, SmolStrWrapper>(&CASE_SMOL_STR, S::smol_str),
+        #[cfg(feature = "iddqd")]
+        SuiteCase::new::<S, IddqdIdHashMapWrapper>(&CASE_IDDQD_ID_HASH_MAP, S::iddqd_id_hash_map),
         // Dynamic value cases
         #[cfg(feature = "facet-value")]
         SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_NULL, S::value_null),
@@ -3556,6 +3562,25 @@ const CASE_SMOL_STR: CaseDescriptor<SmolStrWrapper> = CaseDescriptor {
     },
 };
 
+#[cfg(feature = "iddqd")]
+const CASE_IDDQD_ID_HASH_MAP: CaseDescriptor<IddqdIdHashMapWrapper> = CaseDescriptor {
+    id: "third_party::iddqd_id_hash_map",
+    description: "iddqd::IdHashMap type (set-like collection with key extraction)",
+    expected: || {
+        let mut map =
+            iddqd::IdHashMap::with_hasher(std::hash::RandomState::new());
+        map.insert_overwrite(IddqdTestItem {
+            id: 1,
+            name: String::from("Alice"),
+        });
+        map.insert_overwrite(IddqdTestItem {
+            id: 2,
+            name: String::from("Bob"),
+        });
+        IddqdIdHashMapWrapper { items: map }
+    },
+};
+
 // ── Dynamic value case descriptors ──
 
 #[cfg(feature = "facet-value")]
@@ -3770,6 +3795,34 @@ pub struct SmartStringWrapper {
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct SmolStrWrapper {
     pub value: smol_str::SmolStr,
+}
+
+// ── iddqd crate test fixtures ──
+
+/// Test item type for iddqd collections.
+/// Implements `IdHashItem` with `id` as the key.
+#[cfg(feature = "iddqd")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct IddqdTestItem {
+    pub id: u64,
+    pub name: String,
+}
+
+#[cfg(feature = "iddqd")]
+impl iddqd::IdHashItem for IddqdTestItem {
+    type Key<'a> = u64;
+    fn key(&self) -> Self::Key<'_> {
+        self.id
+    }
+    iddqd::id_upcast!();
+}
+
+/// Fixture for `iddqd::IdHashMap` test.
+/// Uses `std::hash::RandomState` as the hasher since it implements `Facet`.
+#[cfg(feature = "iddqd")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct IddqdIdHashMapWrapper {
+    pub items: iddqd::IdHashMap<IddqdTestItem, std::hash::RandomState>,
 }
 
 fn emit_case_showcase<S, T>(

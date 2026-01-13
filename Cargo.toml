@@ -137,6 +137,7 @@ ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
 rust_decimal = "^1.38.0"
+iddqd = { version = "^0.3", default-features = false }
 libtest-mimic = "^0.8.1"
 
 # Allow the facet_no_doc cfg in generated code

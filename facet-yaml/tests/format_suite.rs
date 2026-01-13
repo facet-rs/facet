@@ -707,6 +707,20 @@ impl FormatSuite for YamlSlice {
         CaseSpec::from_str("value: hello world")
     }
 
+    fn iddqd_id_hash_map() -> CaseSpec {
+        // IdHashMap serializes as array of values (Set semantics)
+        CaseSpec::from_str(indoc!(
+            r#"
+            items:
+              - id: 1
+                name: Alice
+              - id: 2
+                name: Bob
+        "#
+        ))
+        .without_roundtrip("IdHashMap iteration order is not deterministic")
+    }
+
     // -- Dynamic value cases --
 
     fn value_null() -> CaseSpec {

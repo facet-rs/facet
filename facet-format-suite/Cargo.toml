@@ -40,6 +40,7 @@ tokio = { version = "1", features = ["rt"], optional = true }
 ulid = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 rust_decimal = { workspace = true, optional = true }
+iddqd = { workspace = true, optional = true }
 
 [dev-dependencies]
 
@@ -61,11 +62,12 @@ compact_str = ["dep:compact_str", "facet/compact_str"]
 smartstring = ["dep:smartstring", "facet/smartstring"]
 smol_str = ["dep:smol_str", "facet/smol_str"]
 rust_decimal = ["dep:rust_decimal", "facet/rust_decimal"]
+iddqd = ["dep:iddqd", "facet/iddqd"]
 facet-value = ["dep:facet-value"]
 # Standard library net types (SocketAddr, IpAddr, etc.)
 net = ["facet/net"]
 # All third-party types
-third-party = ["uuid", "ulid", "camino", "ordered-float", "time", "jiff02", "chrono", "bytes", "bytestring", "compact_str", "smartstring", "smol_str", "rust_decimal", "facet-value"]
+third-party = ["uuid", "ulid", "camino", "ordered-float", "time", "jiff02", "chrono", "bytes", "bytestring", "compact_str", "smartstring", "smol_str", "rust_decimal", "iddqd", "facet-value"]
 
 # Binary format reference implementations
 msgpack = ["dep:rmp-serde", "dep:serde"]

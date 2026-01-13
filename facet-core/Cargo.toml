@@ -20,7 +20,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 auto-traits = []
 default = ["std"]
 # Enable standard library support
-std = ["alloc"]
+std = ["alloc", "iddqd?/std"]
 # Enable allocation support (required for facet-core to function)
 alloc = []
 # Provide Facet trait implementations for NonZero<T> types
@@ -63,6 +63,9 @@ indexmap = ["alloc", "dep:indexmap"]
 rust_decimal = ["alloc", "dep:rust_decimal"]
 # Provide Facet trait implementations for lock_api::Mutex and lock_api::RwLock
 lock_api = ["alloc", "dep:lock_api"]
+# Provide Facet trait implementations for iddqd collection types (IdHashMap, BiHashMap, etc.)
+# Note: IdOrdMap requires std, so it's only available when both iddqd and std features are enabled
+iddqd = ["alloc", "dep:iddqd"]
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.
@@ -99,6 +102,7 @@ url = { version = "2.5.4", optional = true, default-features = false }
 uuid = { workspace = true, optional = true }
 rust_decimal = { workspace = true, optional = true }
 lock_api = { version = "0.4", optional = true, default-features = false }
+iddqd = { workspace = true, optional = true }
 
 
 [dev-dependencies]

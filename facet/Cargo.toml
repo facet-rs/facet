@@ -44,6 +44,7 @@ all-impls = [
     "smol_str",
     "rust_decimal",
     "lock_api",
+    "iddqd",
 ] # Enable all optional Facet trait implementations for third-party types
 alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
 nonzero = ["facet-core/nonzero"] # Provide Facet trait implementations for NonZero<T> types
@@ -96,6 +97,9 @@ rust_decimal = [
 lock_api = [
     "facet-core/lock_api",
 ] # Provide Facet trait implementations for lock_api::Mutex and lock_api::RwLock
+iddqd = [
+    "facet-core/iddqd",
+] # Provide Facet trait implementations for iddqd collection types (IdHashMap, BiHashMap, TriHashMap, IdOrdMap)
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.

@@ -33,7 +33,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 datatest-stable = "0.3"
-facet = { path = "../facet", features = ["doc", "net"] }
+facet = { path = "../facet", features = ["doc", "net", "iddqd"] }
 facet-default = { path = "../facet-default" }
 facet-format = { path = "../facet-format", features = ["net"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net"] }
@@ -53,6 +53,7 @@ default = []
 std = []
 fast = ["dep:zmij", "dep:itoa"]
 net = ["facet-format/net", "facet-core/net"]
+iddqd = ["facet/iddqd"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]

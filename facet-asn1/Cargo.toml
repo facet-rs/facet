@@ -16,6 +16,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [features]
 default = ["std"]
 std = ["facet-core/std", "facet-reflect/std"]
+iddqd = ["facet/iddqd"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.42.0", default-features = false, features = ["alloc"] }
@@ -23,7 +24,7 @@ facet-format = { path = "../facet-format", version = "0.42.0", default-features 
 facet-reflect = { path = "../facet-reflect", version = "0.42.0", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
-facet = { path = "../facet", features = ["all-impls"] }
+facet = { path = "../facet", features = ["all-impls", "iddqd"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net"] }
 libtest-mimic = "0.8"

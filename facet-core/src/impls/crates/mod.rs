@@ -3,6 +3,7 @@ mod bytestring;
 mod camino;
 mod chrono;
 mod compact_str;
+mod iddqd;
 mod indexmap;
 mod jiff;
 mod lock_api;
