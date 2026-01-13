@@ -558,12 +558,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         if requires_full_init {
             // Fill defaults before checking full initialization
-            // This is important for structs in deferred mode that are children of collections
-            // (lists, maps, etc.) - they must be fully initialized before being inserted,
-            // but defaults should be applied first.
-            if self.is_deferred()
-                && let Some(frame) = self.frames_mut().last_mut()
-            {
+            // This handles structs/enums that have fields with #[facet(default)] or
+            // fields whose types implement Default - they should be auto-filled.
+            if let Some(frame) = self.frames_mut().last_mut() {
                 crate::trace!(
                     "end(): Filling defaults before full init check for {}, tracker={:?}",
                     frame.allocated.shape(),
@@ -686,8 +683,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
 
         // Update parent frame's tracking when popping from a child
-        // Capture deferred state before borrowing frames mutably
-        let is_deferred = self.is_deferred();
         let parent_frame = self.frames_mut().last_mut().unwrap();
 
         crate::trace!(
@@ -880,12 +875,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         //   (is_init may never be set to true for these tracker types)
         if let FrameOwnership::Field { field_idx } = popped_frame.ownership {
             // In deferred mode, fill defaults on the child frame before checking initialization.
-            // This handles cases like struct fields inside enum variants inside map values -
-            // the struct's optional fields need defaults filled before we can mark the field
-            // as initialized in the parent enum.
-            if is_deferred {
-                popped_frame.fill_defaults()?;
-            }
+            // Fill defaults for child frame before checking if it's fully initialized.
+            // This handles structs/enums with optional fields that should auto-fill.
+            popped_frame.fill_defaults()?;
             let child_is_initialized = popped_frame.require_full_initialization().is_ok();
             match &mut parent_frame.tracker {
                 Tracker::Struct {

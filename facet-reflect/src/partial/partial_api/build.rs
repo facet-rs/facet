@@ -12,6 +12,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             });
         }
 
+        let frame = self.frames_mut().last_mut().unwrap();
+
+        // Fill in defaults for any unset fields before checking initialization
+        frame.fill_defaults()?;
+
         let frame = self.frames_mut().pop().unwrap();
 
         // Check initialization before proceeding

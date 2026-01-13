@@ -136,7 +136,6 @@ fn wip_option_string_begin_some_drop_issue_1568() {
 /// This mimics what facet-html's deserializer does with GlobalAttrs
 #[test]
 fn wip_option_deferred_flatten_issue_1568() {
-    use facet_reflect::Resolution;
     use std::collections::HashMap;
 
     #[derive(Facet, Debug, Default)]
@@ -157,8 +156,7 @@ fn wip_option_deferred_flatten_issue_1568() {
     let mut partial = Partial::alloc::<Html>().unwrap();
 
     // Enter deferred mode (like FormatDeserializer does for structs with flatten)
-    let resolution = Resolution::new();
-    partial = partial.begin_deferred(resolution).unwrap();
+    partial = partial.begin_deferred().unwrap();
 
     // Navigate to the flattened attrs field
     partial = partial.begin_field("attrs").unwrap();
@@ -362,13 +360,11 @@ fn fuzz_dynamic_value_reenter_existing_key() {
 /// the parent can safely drop it later.
 #[test]
 fn fuzz_dynamic_value_borrowed_in_place_use_after_free() {
-    use facet_reflect::Resolution;
     use facet_value::Value;
 
     // Minimized from fuzzer crash artifact
     let partial = Partial::alloc::<Value>().unwrap();
-    let resolution = Resolution::new();
-    let partial = partial.begin_deferred(resolution).unwrap();
+    let partial = partial.begin_deferred().unwrap();
     let partial = partial.begin_map().unwrap();
     let partial = partial.begin_object_entry("key1").unwrap();
     let partial = partial.begin_map().unwrap();

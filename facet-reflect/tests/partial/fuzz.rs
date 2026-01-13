@@ -12,7 +12,7 @@
 #![allow(unused_assignments)]
 
 use facet::Facet;
-use facet_reflect::{Partial, Resolution};
+use facet_reflect::Partial;
 use proptest::prelude::*;
 use std::collections::HashMap;
 
@@ -277,13 +277,9 @@ fn apply_single_op<'a>(partial: Partial<'a>, op: &'a PartialOp) -> Result<Partia
         PartialOp::SelectVariant(variant) => partial
             .select_variant_named(variant.as_str())
             .map_err(|e| e.to_string())?,
-        PartialOp::BeginDeferred => {
-            // Create a fresh resolution for deferred mode
-            let resolution = Resolution::new();
-            partial
-                .begin_deferred(resolution)
-                .map_err(|e| e.to_string())?
-        }
+        PartialOp::BeginDeferred => partial
+            .begin_deferred()
+            .map_err(|e| e.to_string())?,
         PartialOp::FinishDeferred => partial.finish_deferred().map_err(|e| e.to_string())?,
         PartialOp::Build => {
             // Build consumes the Partial and returns HeapValue
@@ -587,8 +583,7 @@ fn wip_fuzz_invalid_ops_sequence() {
 fn wip_fuzz_deferred_drop_without_finish() {
     // Enter deferred mode, do some work, drop without finish_deferred
     let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
-    let resolution = Resolution::new();
-    let mut partial = partial.begin_deferred(resolution).unwrap();
+    let mut partial = partial.begin_deferred().unwrap();
 
     partial = partial
         .set_field("name", String::from("test"))
@@ -604,8 +599,7 @@ fn wip_fuzz_deferred_drop_without_finish() {
 fn wip_fuzz_deferred_interleaved_fields() {
     // Test the re-entry pattern that deferred mode is designed for
     let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
-    let resolution = Resolution::new();
-    let mut partial = partial.begin_deferred(resolution).unwrap();
+    let mut partial = partial.begin_deferred().unwrap();
 
     // First visit to nested
     partial = partial.begin_field("nested").ok().unwrap();
@@ -630,11 +624,9 @@ fn wip_fuzz_deferred_interleaved_fields() {
 fn wip_fuzz_deferred_double_begin() {
     // Calling begin_deferred twice should return an error on the second call
     let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
-    let resolution1 = Resolution::new();
-    let resolution2 = Resolution::new();
 
-    let partial = partial.begin_deferred(resolution1).unwrap();
-    assert!(partial.begin_deferred(resolution2).is_err()); // Second call should error (partial consumed)
+    let partial = partial.begin_deferred().unwrap();
+    assert!(partial.begin_deferred().is_err()); // Second call should error (partial consumed)
 
     // Note: partial was consumed by the error above, so we can't use it anymore
     // Drop

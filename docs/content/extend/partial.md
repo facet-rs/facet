@@ -23,7 +23,7 @@ use facet_solver::ResolutionBuilder; // or other way to obtain Resolution
 let resolution: Resolution = /* describe the shape (fields, paths) */;
 
 let partial = Partial::alloc::<Config>()?
-    .begin_deferred(resolution)?   // enter deferred mode
+    .begin_deferred()?   // enter deferred mode
     .begin_field("inner")?
         .set_field("x", 1i32)?
     .end()?                        // frame stored, not yet validated
