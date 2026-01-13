@@ -230,6 +230,7 @@ macro_rules! write_int {
 }
 use write_int;
 
+#[cfg(feature = "net")]
 macro_rules! write_display {
     ($buf:expr, $value:expr, $ty:ty) => {{
         if let Ok(v) = $value.get::<$ty>() {
@@ -240,6 +241,7 @@ macro_rules! write_display {
         }
     }};
 }
+#[cfg(feature = "net")]
 use write_display;
 
 /// Buffer for formatting scalar values without heap allocation for small values.

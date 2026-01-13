@@ -409,18 +409,13 @@ impl XmlSerializer {
     }
 
     fn write_text_escaped(&mut self, text: &str) {
+        use std::io::Write;
         if self.options.preserve_entities {
             let escaped = escape_preserving_entities(text, false);
             self.out.extend_from_slice(escaped.as_bytes());
         } else {
-            for b in text.as_bytes() {
-                match *b {
-                    b'&' => self.out.extend_from_slice(b"&amp;"),
-                    b'<' => self.out.extend_from_slice(b"&lt;"),
-                    b'>' => self.out.extend_from_slice(b"&gt;"),
-                    _ => self.out.push(*b),
-                }
-            }
+            // Use EscapingWriter for consistency with attribute escaping
+            let _ = EscapingWriter::text(&mut self.out).write_all(text.as_bytes());
         }
     }
 
