@@ -86,36 +86,8 @@ where
                 }
                 wip = wip.end().map_err(DeserializeError::reflect)?;
 
-                // Set defaults for other fields
-                for (other_idx, other_field) in struct_def.fields.iter().enumerate() {
-                    if other_idx == idx {
-                        continue;
-                    }
-
-                    let field_has_default = other_field.has_default();
-                    let field_type_has_default =
-                        other_field.shape().is(facet_core::Characteristic::Default);
-                    let field_is_option = matches!(other_field.shape().def, Def::Option(_));
-
-                    if field_has_default || (struct_has_default && field_type_has_default) {
-                        wip = wip
-                            .set_nth_field_to_default(other_idx)
-                            .map_err(DeserializeError::reflect)?;
-                    } else if field_is_option {
-                        wip = wip
-                            .begin_field(other_field.name)
-                            .map_err(DeserializeError::reflect)?;
-                        wip = wip.set_default().map_err(DeserializeError::reflect)?;
-                        wip = wip.end().map_err(DeserializeError::reflect)?;
-                    } else if other_field.should_skip_deserializing() {
-                        wip = wip
-                            .set_nth_field_to_default(other_idx)
-                            .map_err(DeserializeError::reflect)?;
-                    }
-                    // If a field is required and not set, that's an error, but we'll
-                    // leave that for the struct-level validation
-                }
-
+                // Defaults for other fields are applied automatically by facet-reflect's
+                // fill_defaults() when build() or end() is called.
                 return Ok(wip);
             }
 
