@@ -109,15 +109,16 @@ fn enum_complex() {
 
 #[test]
 fn enum_unit_variant() {
+    // In XML, unit variants are represented as empty elements
+    // The element name IS the variant discriminant
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
-    #[facet(rename = "value")]
     enum Status {
         Active,
         Inactive,
     }
 
-    let xml = r#"<value>Active</value>"#;
+    let xml = r#"<Active/>"#;
     let parsed: Status = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed, Status::Active);
 }
@@ -158,9 +159,9 @@ fn enum_adjacently_tagged() {
 
 #[test]
 fn enum_variant_rename() {
+    // Variant rename affects the element name in XML
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
-    #[facet(rename = "value")]
     enum Status {
         #[facet(rename = "enabled")]
         Active,
@@ -168,7 +169,7 @@ fn enum_variant_rename() {
         Inactive,
     }
 
-    let xml = r#"<value>enabled</value>"#;
+    let xml = r#"<enabled/>"#;
     let parsed: Status = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed, Status::Active);
 }
