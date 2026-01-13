@@ -2,8 +2,6 @@ extern crate alloc;
 
 use alloc::borrow::Cow;
 use alloc::format;
-use alloc::string::String;
-use core::fmt;
 
 use facet_core::{
     Def, Facet, KnownPointer, NumericType, PrimitiveType, Shape, StructKind, Type, UserType,
@@ -14,6 +12,11 @@ use facet_reflect::{HeapValue, Partial, ReflectError, Resolution, is_spanned_sha
 use crate::{
     ContainerKind, FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
 };
+
+mod error;
+pub use error::*;
+
+mod validate;
 
 /// Result of variant lookup for HTML/XML elements.
 enum VariantMatch {
@@ -476,21 +479,19 @@ where
             Type::User(UserType::Enum(enum_def)) => {
                 self.deserialize_enum_dynamic(wip, hint_shape, enum_def)
             }
-            _ => {
-                match &hint_shape.def {
-                    Def::Scalar => self.deserialize_scalar_dynamic(wip, hint_shape),
-                    Def::List(list_def) => self.deserialize_list_dynamic(wip, list_def.t),
-                    Def::Array(array_def) => {
-                        self.deserialize_array_dynamic(wip, array_def.t, array_def.n)
-                    }
-                    Def::Map(map_def) => self.deserialize_map_dynamic(wip, map_def.k, map_def.v),
-                    Def::Set(set_def) => self.deserialize_list_dynamic(wip, set_def.t),
-                    _ => Err(DeserializeError::Unsupported(format!(
-                        "unsupported hint shape for dynamic deserialization: {:?}",
-                        hint_shape.def
-                    ))),
+            _ => match &hint_shape.def {
+                Def::Scalar => self.deserialize_scalar_dynamic(wip, hint_shape),
+                Def::List(list_def) => self.deserialize_list_dynamic(wip, list_def.t),
+                Def::Array(array_def) => {
+                    self.deserialize_array_dynamic(wip, array_def.t, array_def.n)
                 }
-            }
+                Def::Map(map_def) => self.deserialize_map_dynamic(wip, map_def.k, map_def.v),
+                Def::Set(set_def) => self.deserialize_list_dynamic(wip, set_def.t),
+                _ => Err(DeserializeError::Unsupported(format!(
+                    "unsupported hint shape for dynamic deserialization: {:?}",
+                    hint_shape.def
+                ))),
+            },
         }
     }
 
@@ -555,7 +556,10 @@ where
         self.parser.hint_struct_fields(fields.len());
 
         let event = self.expect_event("tuple start")?;
-        if !matches!(event, ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_)) {
+        if !matches!(
+            event,
+            ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_)
+        ) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "tuple",
                 got: format!("{event:?}"),
@@ -641,9 +645,9 @@ where
                     .iter()
                     .find(|v| Self::get_variant_display_name(v) == variant_name)
                     .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
-                    .ok_or_else(|| DeserializeError::Unsupported(format!(
-                        "unknown variant: {variant_name}"
-                    )))?;
+                    .ok_or_else(|| {
+                        DeserializeError::Unsupported(format!("unknown variant: {variant_name}"))
+                    })?;
 
                 match variant.data.kind {
                     StructKind::Unit => {
@@ -755,7 +759,8 @@ where
                     .map_err(DeserializeError::reflect)?;
                 if variant.data.fields.len() == 1 {
                     // Newtype variant - single field content, no wrapper
-                    wip = self.deserialize_value_recursive(wip, variant.data.fields[0].shape.get())?;
+                    wip =
+                        self.deserialize_value_recursive(wip, variant.data.fields[0].shape.get())?;
                 } else {
                     // Multi-field tuple variant - parser emits SequenceStart
                     let seq_event = self.expect_event("tuple variant start")?;
@@ -1033,7 +1038,10 @@ where
         self.parser.hint_map();
 
         let event = self.expect_event("map start")?;
-        if !matches!(event, ParseEvent::SequenceStart(_) | ParseEvent::StructStart(_)) {
+        if !matches!(
+            event,
+            ParseEvent::SequenceStart(_) | ParseEvent::StructStart(_)
+        ) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "map",
                 got: format!("{event:?}"),
@@ -1443,278 +1451,6 @@ where
             (None, Some(_expected)) => false, // Input has no namespace, field requires one - NO match
             (None, None) => true,             // Neither has namespace - match
         }
-    }
-
-    /// Run validation on a field value.
-    ///
-    /// This checks for `validate::*` attributes on the field and runs
-    /// the appropriate validators on the deserialized value.
-    #[cfg(feature = "validate")]
-    #[allow(unsafe_code)]
-    fn run_field_validators(
-        &self,
-        field: &facet_core::Field,
-        wip: &Partial<'input, BORROW>,
-    ) -> Result<(), DeserializeError<P::Error>> {
-        use facet_core::ValidatorFn;
-
-        // Get the data pointer from the current frame
-        let Some(data_ptr) = wip.data_ptr() else {
-            return Ok(());
-        };
-
-        // Check for validation attributes
-        for attr in field.attributes.iter() {
-            if attr.ns != Some("validate") {
-                continue;
-            }
-
-            let validation_result: Result<(), String> = match attr.key {
-                "custom" => {
-                    // Custom validators store a ValidatorFn function pointer
-                    let validator_fn = unsafe { *attr.data.ptr().get::<ValidatorFn>() };
-                    unsafe { validator_fn(data_ptr) }
-                }
-                "min" => {
-                    let min_val = unsafe { *attr.data.ptr().get::<i64>() };
-                    self.validate_min(data_ptr, wip.shape(), min_val)
-                }
-                "max" => {
-                    let max_val = unsafe { *attr.data.ptr().get::<i64>() };
-                    self.validate_max(data_ptr, wip.shape(), max_val)
-                }
-                "min_length" => {
-                    let min_len = unsafe { *attr.data.ptr().get::<usize>() };
-                    self.validate_min_length(data_ptr, wip.shape(), min_len)
-                }
-                "max_length" => {
-                    let max_len = unsafe { *attr.data.ptr().get::<usize>() };
-                    self.validate_max_length(data_ptr, wip.shape(), max_len)
-                }
-                "email" => self.validate_email(data_ptr, wip.shape()),
-                "url" => self.validate_url(data_ptr, wip.shape()),
-                "regex" => {
-                    let pattern = unsafe { *attr.data.ptr().get::<&'static str>() };
-                    self.validate_regex(data_ptr, wip.shape(), pattern)
-                }
-                "contains" => {
-                    let needle = unsafe { *attr.data.ptr().get::<&'static str>() };
-                    self.validate_contains(data_ptr, wip.shape(), needle)
-                }
-                _ => Ok(()), // Unknown validator, skip
-            };
-
-            if let Err(message) = validation_result {
-                return Err(DeserializeError::Validation {
-                    field: field.name,
-                    message,
-                    span: self.last_span,
-                    path: Some(self.current_path.clone()),
-                });
-            }
-        }
-
-        Ok(())
-    }
-
-    #[cfg(feature = "validate")]
-    #[allow(unsafe_code)]
-    fn validate_min(
-        &self,
-        ptr: facet_core::PtrConst,
-        shape: &'static facet_core::Shape,
-        min_val: i64,
-    ) -> Result<(), String> {
-        use facet_core::ScalarType;
-        let actual = match shape.scalar_type() {
-            Some(ScalarType::I8) => (unsafe { *ptr.get::<i8>() }) as i64,
-            Some(ScalarType::I16) => (unsafe { *ptr.get::<i16>() }) as i64,
-            Some(ScalarType::I32) => (unsafe { *ptr.get::<i32>() }) as i64,
-            Some(ScalarType::I64) => unsafe { *ptr.get::<i64>() },
-            Some(ScalarType::U8) => (unsafe { *ptr.get::<u8>() }) as i64,
-            Some(ScalarType::U16) => (unsafe { *ptr.get::<u16>() }) as i64,
-            Some(ScalarType::U32) => (unsafe { *ptr.get::<u32>() }) as i64,
-            Some(ScalarType::U64) => {
-                let v = unsafe { *ptr.get::<u64>() };
-                if v > i64::MAX as u64 {
-                    return Ok(()); // Value too large to compare, assume valid
-                }
-                v as i64
-            }
-            _ => return Ok(()), // Not a numeric type, skip validation
-        };
-        if actual < min_val {
-            Err(format!("must be >= {}, got {}", min_val, actual))
-        } else {
-            Ok(())
-        }
-    }
-
-    #[cfg(feature = "validate")]
-    #[allow(unsafe_code)]
-    fn validate_max(
-        &self,
-        ptr: facet_core::PtrConst,
-        shape: &'static facet_core::Shape,
-        max_val: i64,
-    ) -> Result<(), String> {
-        use facet_core::ScalarType;
-        let actual = match shape.scalar_type() {
-            Some(ScalarType::I8) => (unsafe { *ptr.get::<i8>() }) as i64,
-            Some(ScalarType::I16) => (unsafe { *ptr.get::<i16>() }) as i64,
-            Some(ScalarType::I32) => (unsafe { *ptr.get::<i32>() }) as i64,
-            Some(ScalarType::I64) => unsafe { *ptr.get::<i64>() },
-            Some(ScalarType::U8) => (unsafe { *ptr.get::<u8>() }) as i64,
-            Some(ScalarType::U16) => (unsafe { *ptr.get::<u16>() }) as i64,
-            Some(ScalarType::U32) => (unsafe { *ptr.get::<u32>() }) as i64,
-            Some(ScalarType::U64) => {
-                let v = unsafe { *ptr.get::<u64>() };
-                if v > i64::MAX as u64 {
-                    return Err(format!("must be <= {}, got {}", max_val, v));
-                }
-                v as i64
-            }
-            _ => return Ok(()), // Not a numeric type, skip validation
-        };
-        if actual > max_val {
-            Err(format!("must be <= {}, got {}", max_val, actual))
-        } else {
-            Ok(())
-        }
-    }
-
-    #[cfg(feature = "validate")]
-    #[allow(unsafe_code)]
-    fn validate_min_length(
-        &self,
-        ptr: facet_core::PtrConst,
-        shape: &'static facet_core::Shape,
-        min_len: usize,
-    ) -> Result<(), String> {
-        let len = self.get_length(ptr, shape)?;
-        if len < min_len {
-            Err(format!("length must be >= {}, got {}", min_len, len))
-        } else {
-            Ok(())
-        }
-    }
-
-    #[cfg(feature = "validate")]
-    #[allow(unsafe_code)]
-    fn validate_max_length(
-        &self,
-        ptr: facet_core::PtrConst,
-        shape: &'static facet_core::Shape,
-        max_len: usize,
-    ) -> Result<(), String> {
-        let len = self.get_length(ptr, shape)?;
-        if len > max_len {
-            Err(format!("length must be <= {}, got {}", max_len, len))
-        } else {
-            Ok(())
-        }
-    }
-
-    #[cfg(feature = "validate")]
-    #[allow(unsafe_code)]
-    fn get_length(
-        &self,
-        ptr: facet_core::PtrConst,
-        shape: &'static facet_core::Shape,
-    ) -> Result<usize, String> {
-        // Check if it's a String
-        if shape.is_type::<String>() {
-            let s = unsafe { ptr.get::<String>() };
-            return Ok(s.len());
-        }
-        // Check if it's a &str
-        if shape.is_type::<&str>() {
-            let s = unsafe { *ptr.get::<&str>() };
-            return Ok(s.len());
-        }
-        // For Vec and other list types, we'd need to check shape.def
-        // For now, return 0 for unknown types
-        Ok(0)
-    }
-
-    #[cfg(feature = "validate")]
-    #[allow(unsafe_code)]
-    fn validate_email(
-        &self,
-        ptr: facet_core::PtrConst,
-        shape: &'static facet_core::Shape,
-    ) -> Result<(), String> {
-        let s = self.get_string(ptr, shape)?;
-        if facet_validate::is_valid_email(s) {
-            Ok(())
-        } else {
-            Err(format!("'{}' is not a valid email address", s))
-        }
-    }
-
-    #[cfg(feature = "validate")]
-    #[allow(unsafe_code)]
-    fn validate_url(
-        &self,
-        ptr: facet_core::PtrConst,
-        shape: &'static facet_core::Shape,
-    ) -> Result<(), String> {
-        let s = self.get_string(ptr, shape)?;
-        if facet_validate::is_valid_url(s) {
-            Ok(())
-        } else {
-            Err(format!("'{}' is not a valid URL", s))
-        }
-    }
-
-    #[cfg(feature = "validate")]
-    #[allow(unsafe_code)]
-    fn validate_regex(
-        &self,
-        ptr: facet_core::PtrConst,
-        shape: &'static facet_core::Shape,
-        pattern: &str,
-    ) -> Result<(), String> {
-        let s = self.get_string(ptr, shape)?;
-        if facet_validate::matches_pattern(s, pattern) {
-            Ok(())
-        } else {
-            Err(format!("'{}' does not match pattern '{}'", s, pattern))
-        }
-    }
-
-    #[cfg(feature = "validate")]
-    #[allow(unsafe_code)]
-    fn validate_contains(
-        &self,
-        ptr: facet_core::PtrConst,
-        shape: &'static facet_core::Shape,
-        needle: &str,
-    ) -> Result<(), String> {
-        let s = self.get_string(ptr, shape)?;
-        if s.contains(needle) {
-            Ok(())
-        } else {
-            Err(format!("'{}' does not contain '{}'", s, needle))
-        }
-    }
-
-    #[cfg(feature = "validate")]
-    #[allow(unsafe_code)]
-    fn get_string<'s>(
-        &self,
-        ptr: facet_core::PtrConst,
-        shape: &'static facet_core::Shape,
-    ) -> Result<&'s str, String> {
-        if shape.is_type::<String>() {
-            let s = unsafe { ptr.get::<String>() };
-            return Ok(s.as_str());
-        }
-        if shape.is_type::<&str>() {
-            let s = unsafe { *ptr.get::<&str>() };
-            return Ok(s);
-        }
-        Err("expected string type".to_string())
     }
 
     fn deserialize_struct(
@@ -2229,7 +1965,11 @@ where
             }
 
             // Also check field aliases
-            if field.alias.iter().any(|a| a.eq_ignore_ascii_case(element_name)) {
+            if field
+                .alias
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(element_name))
+            {
                 return Some((idx, field));
             }
 
@@ -3846,11 +3586,13 @@ where
                 Type::User(UserType::Enum(e)) => e,
                 _ => return Err(DeserializeError::Unsupported("expected enum".into())),
             };
-// First try exact match, then fall back to #[facet(other)] variant
+            // First try exact match, then fall back to #[facet(other)] variant
             let by_display = Self::find_variant_by_display_name(enum_def, tag_name);
             let variant_name = by_display
                 .or_else(|| {
-                    let other = enum_def.variants.iter()
+                    let other = enum_def
+                        .variants
+                        .iter()
                         .find(|v| v.is_other())
                         .map(|v| v.name);
                     other
@@ -3901,10 +3643,13 @@ where
             Type::User(UserType::Enum(e)) => e,
             _ => return Err(DeserializeError::Unsupported("expected enum".into())),
         };
-        let is_using_other_fallback = Self::find_variant_by_display_name(enum_def, &field_key_name).is_none();
+        let is_using_other_fallback =
+            Self::find_variant_by_display_name(enum_def, &field_key_name).is_none();
         let variant_name = Self::find_variant_by_display_name(enum_def, &field_key_name)
             .or_else(|| {
-                enum_def.variants.iter()
+                enum_def
+                    .variants
+                    .iter()
                     .find(|v| v.is_other())
                     .map(|v| v.name)
             })
@@ -5744,192 +5489,5 @@ where
         }
 
         Ok(wip)
-    }
-}
-
-/// Error produced by [`FormatDeserializer`].
-#[derive(Debug)]
-pub enum DeserializeError<E> {
-    /// Error emitted by the format-specific parser.
-    Parser(E),
-    /// Reflection error from Partial operations.
-    Reflect {
-        /// The underlying reflection error.
-        error: ReflectError,
-        /// Source span where the error occurred (if available).
-        span: Option<facet_reflect::Span>,
-        /// Path through the type structure where the error occurred.
-        path: Option<Path>,
-    },
-    /// Type mismatch during deserialization.
-    TypeMismatch {
-        /// The expected type or token.
-        expected: &'static str,
-        /// The actual type or token that was encountered.
-        got: String,
-        /// Source span where the mismatch occurred (if available).
-        span: Option<facet_reflect::Span>,
-        /// Path through the type structure where the error occurred.
-        path: Option<Path>,
-    },
-    /// Unsupported type or operation.
-    Unsupported(String),
-    /// Unknown field encountered when deny_unknown_fields is set.
-    UnknownField {
-        /// The unknown field name.
-        field: String,
-        /// Source span where the unknown field was found (if available).
-        span: Option<facet_reflect::Span>,
-        /// Path through the type structure where the error occurred.
-        path: Option<Path>,
-    },
-    /// Cannot borrow string from input (e.g., escaped string into &str).
-    CannotBorrow {
-        /// Description of why borrowing failed.
-        message: String,
-    },
-    /// Required field missing from input.
-    MissingField {
-        /// The field that is missing.
-        field: &'static str,
-        /// The type that contains the field.
-        type_name: &'static str,
-        /// Source span where the struct was being parsed (if available).
-        span: Option<facet_reflect::Span>,
-        /// Path through the type structure where the error occurred.
-        path: Option<Path>,
-    },
-    /// Field validation failed.
-    #[cfg(feature = "validate")]
-    Validation {
-        /// The field that failed validation.
-        field: &'static str,
-        /// The validation error message.
-        message: String,
-        /// Source span where the invalid value was found.
-        span: Option<facet_reflect::Span>,
-        /// Path through the type structure where the error occurred.
-        path: Option<Path>,
-    },
-    /// Unexpected end of input.
-    UnexpectedEof {
-        /// What was expected before EOF.
-        expected: &'static str,
-    },
-}
-
-impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DeserializeError::Parser(err) => write!(f, "{err}"),
-            DeserializeError::Reflect { error, .. } => write!(f, "{error}"),
-            DeserializeError::TypeMismatch { expected, got, .. } => {
-                write!(f, "type mismatch: expected {expected}, got {got}")
-            }
-            DeserializeError::Unsupported(msg) => write!(f, "unsupported: {msg}"),
-            DeserializeError::UnknownField { field, .. } => write!(f, "unknown field: {field}"),
-            DeserializeError::CannotBorrow { message } => write!(f, "{message}"),
-            DeserializeError::MissingField {
-                field, type_name, ..
-            } => {
-                write!(f, "missing field `{field}` in type `{type_name}`")
-            }
-            #[cfg(feature = "validate")]
-            DeserializeError::Validation { field, message, .. } => {
-                write!(f, "validation failed for field `{field}`: {message}")
-            }
-            DeserializeError::UnexpectedEof { expected } => {
-                write!(f, "unexpected end of input, expected {expected}")
-            }
-        }
-    }
-}
-
-impl<E: fmt::Debug + fmt::Display> std::error::Error for DeserializeError<E> {}
-
-impl<E> DeserializeError<E> {
-    /// Create a Reflect error without span or path information.
-    #[inline]
-    pub const fn reflect(error: ReflectError) -> Self {
-        DeserializeError::Reflect {
-            error,
-            span: None,
-            path: None,
-        }
-    }
-
-    /// Create a Reflect error with span information.
-    #[inline]
-    pub const fn reflect_with_span(error: ReflectError, span: facet_reflect::Span) -> Self {
-        DeserializeError::Reflect {
-            error,
-            span: Some(span),
-            path: None,
-        }
-    }
-
-    /// Create a Reflect error with span and path information.
-    #[inline]
-    pub const fn reflect_with_context(
-        error: ReflectError,
-        span: Option<facet_reflect::Span>,
-        path: Path,
-    ) -> Self {
-        DeserializeError::Reflect {
-            error,
-            span,
-            path: Some(path),
-        }
-    }
-
-    /// Get the path where the error occurred, if available.
-    pub const fn path(&self) -> Option<&Path> {
-        match self {
-            DeserializeError::Reflect { path, .. } => path.as_ref(),
-            DeserializeError::TypeMismatch { path, .. } => path.as_ref(),
-            DeserializeError::UnknownField { path, .. } => path.as_ref(),
-            DeserializeError::MissingField { path, .. } => path.as_ref(),
-            _ => None,
-        }
-    }
-
-    /// Add path information to an error (consumes and returns the modified error).
-    pub fn with_path(self, new_path: Path) -> Self {
-        match self {
-            DeserializeError::Reflect { error, span, .. } => DeserializeError::Reflect {
-                error,
-                span,
-                path: Some(new_path),
-            },
-            DeserializeError::TypeMismatch {
-                expected,
-                got,
-                span,
-                ..
-            } => DeserializeError::TypeMismatch {
-                expected,
-                got,
-                span,
-                path: Some(new_path),
-            },
-            DeserializeError::UnknownField { field, span, .. } => DeserializeError::UnknownField {
-                field,
-                span,
-                path: Some(new_path),
-            },
-            DeserializeError::MissingField {
-                field,
-                type_name,
-                span,
-                ..
-            } => DeserializeError::MissingField {
-                field,
-                type_name,
-                span,
-                path: Some(new_path),
-            },
-            // Other variants don't have path fields
-            other => other,
-        }
     }
 }
