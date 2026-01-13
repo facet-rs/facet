@@ -5,6 +5,9 @@
 //! Canonical definitions live in `docs/content/spec/_index.md`,
 //! `docs/content/rust-spec/_index.md`, and `docs/content/shm-spec/_index.md`.
 
+#[macro_use]
+mod macros;
+
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -2052,59 +2055,53 @@ impl ConnectionHandle {
             self.call_raw_with_channels(method_id, channels, payload)
                 .await
         } else {
-            // Has Rx streams - drain while waiting for response
-            // IMPORTANT: We must send Request BEFORE draining Data to ensure ordering
+            // Has Rx streams - spawn tasks to drain them
+            // IMPORTANT: We must send Request BEFORE spawning drain tasks to ensure ordering
             let response_future = self.call_raw_with_channels(method_id, channels, payload);
-            tokio::pin!(response_future);
 
             let task_tx = self.shared.channel_registry.lock().unwrap().driver_tx();
 
-            // Track which drains are still active
-            let mut drain_active: Vec<bool> = vec![true; drains.len()];
-
-            loop {
-                // Build a future that drains one item from any active receiver
-                let drain_one = async {
-                    for (i, (channel_id, rx)) in drains.iter_mut().enumerate() {
-                        if drain_active[i] {
-                            match rx.recv().await {
-                                Some(data) => {
-                                    let _ = task_tx
-                                        .send(DriverMessage::Data {
-                                            channel_id: *channel_id,
-                                            payload: data,
-                                        })
-                                        .await;
-                                    return Some((i, true)); // Got data, still open
-                                }
-                                None => {
-                                    // Channel closed, send Close
-                                    let _ = task_tx
-                                        .send(DriverMessage::Close {
-                                            channel_id: *channel_id,
-                                        })
-                                        .await;
-                                    return Some((i, false)); // Closed
-                                }
+            // Spawn a task for each drain to forward data to driver
+            for (channel_id, mut rx) in drains {
+                let task_tx = task_tx.clone();
+                tokio::spawn(async move {
+                    loop {
+                        match rx.recv().await {
+                            Some(payload) => {
+                                debug!(
+                                    "drain task: received {} bytes on channel {}",
+                                    payload.len(),
+                                    channel_id
+                                );
+                                // Send data to driver
+                                let _ = task_tx
+                                    .send(DriverMessage::Data {
+                                        channel_id,
+                                        payload,
+                                    })
+                                    .await;
+                                debug!(
+                                    "drain task: sent DriverMessage::Data for channel {}",
+                                    channel_id
+                                );
+                            }
+                            None => {
+                                debug!("drain task: channel {} closed", channel_id);
+                                // Channel closed, send Close and exit
+                                let _ = task_tx.send(DriverMessage::Close { channel_id }).await;
+                                debug!(
+                                    "drain task: sent DriverMessage::Close for channel {}",
+                                    channel_id
+                                );
+                                break;
                             }
                         }
                     }
-                    // All drains inactive, just wait forever
-                    std::future::pending().await
-                };
-
-                tokio::select! {
-                    biased;
-
-                    result = &mut response_future => {
-                        return result;
-                    }
-
-                    Some((i, still_open)) = drain_one => {
-                        drain_active[i] = still_open;
-                    }
-                }
+                });
             }
+
+            // Just await the response - drain tasks run independently
+            response_future.await
         }
     }
 

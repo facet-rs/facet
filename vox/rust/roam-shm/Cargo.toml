@@ -15,6 +15,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 default = ["std"]
 std = ["shm-primitives/std"]
 tokio = ["dep:tokio", "dep:roam-session", "dep:roam-stream"]
+tracing = ["dep:tracing"]
 
 [dependencies]
 shm-primitives = { path = "../shm-primitives", default-features = false }
@@ -25,6 +26,7 @@ roam-session = { path = "../roam-session", optional = true }
 roam-stream = { path = "../roam-stream", optional = true }
 facet-postcard = { workspace = true }
 tokio = { workspace = true, features = ["time", "sync"], optional = true }
+tracing = { workspace = true, optional = true }
 libc = { workspace = true }
 
 [dev-dependencies]
@@ -33,3 +35,12 @@ tempfile = "3"
 libc = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 roam-session = { path = "../roam-session" }
+roam = { path = "../roam" }
+tracing-subscriber = { workspace = true }
+
+[[bin]]
+name = "guest_process"
+path = "tests/support/guest_process_main.rs"
+required-features = ["tokio"]
+test = false
+bench = false

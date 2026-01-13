@@ -64,6 +64,9 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[macro_use]
+mod macros;
+
 pub mod channel;
 pub mod layout;
 pub mod msg;
@@ -114,8 +117,7 @@ pub use guest::ShmGuest;
 
 #[cfg(feature = "std")]
 pub use transport::{
-    ConvertError, OwnedShmHostTransport, ShmGuestTransport, ShmHostGuestTransport,
-    frame_to_message, message_to_frame,
+    ConvertError, ShmGuestTransport, ShmHostGuestTransport, frame_to_message, message_to_frame,
 };
 
 #[cfg(all(feature = "std", unix))]

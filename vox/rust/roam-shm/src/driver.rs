@@ -26,9 +26,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::host::ShmHost;
 use crate::peer::PeerId;
-use crate::transport::{
-    OwnedShmHostTransport, ShmGuestTransport, frame_to_message, message_to_frame,
-};
+use crate::transport::{ShmGuestTransport, frame_to_message, message_to_frame};
 
 /// Negotiated connection parameters from SHM segment header.
 ///
@@ -92,8 +90,7 @@ impl From<std::io::Error> for ShmConnectionError {
 /// This must be spawned or awaited to drive the connection forward.
 /// Use [`ConnectionHandle`] to make outgoing calls.
 ///
-/// The type parameter `T` is the transport type (e.g., `ShmGuestTransport` or
-/// `OwnedShmHostTransport`).
+/// The type parameter `T` is the transport type (e.g., `ShmGuestTransport`).
 pub struct ShmDriver<T, D> {
     io: T,
     dispatcher: D,
@@ -153,21 +150,33 @@ where
     /// Run the driver until the connection closes.
     pub async fn run(mut self) -> Result<(), ShmConnectionError> {
         loop {
+            trace!("driver: starting select loop");
             tokio::select! {
                 biased;
 
                 // Handle all driver messages (Call/Data/Close/Response).
                 // Single channel ensures FIFO ordering.
                 Some(msg) = self.driver_rx.recv() => {
+                    debug!("driver: received driver message");
                     self.handle_driver_message(msg).await?;
                 }
 
                 // Handle incoming messages from peer
                 result = MessageTransport::recv_timeout(&mut self.io, Duration::from_secs(30)) => {
+                    debug!("driver: received message from peer");
                     match self.handle_recv(result).await {
-                        Ok(true) => continue,
-                        Ok(false) => return Ok(()), // Clean shutdown
-                        Err(e) => return Err(e),
+                        Ok(true) => {
+                            debug!("driver: handle_recv returned Ok(true), continuing");
+                            continue;
+                        }
+                        Ok(false) => {
+                            debug!("driver: handle_recv returned Ok(false), shutting down");
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            debug!("driver: handle_recv returned Err, shutting down");
+                            return Err(e);
+                        }
                     }
                 }
             }
@@ -188,6 +197,7 @@ where
                 payload,
                 response_tx,
             } => {
+                debug!("handle_driver_message: Call req={}", request_id);
                 // Store the response channel
                 self.pending_responses.insert(request_id, response_tx);
 
@@ -203,11 +213,21 @@ where
             DriverMessage::Data {
                 channel_id,
                 payload,
-            } => Message::Data {
-                channel_id,
-                payload,
-            },
-            DriverMessage::Close { channel_id } => Message::Close { channel_id },
+            } => {
+                debug!(
+                    "handle_driver_message: Data ch={}, {} bytes",
+                    channel_id,
+                    payload.len()
+                );
+                Message::Data {
+                    channel_id,
+                    payload,
+                }
+            }
+            DriverMessage::Close { channel_id } => {
+                debug!("handle_driver_message: Close ch={}", channel_id);
+                Message::Close { channel_id }
+            }
             DriverMessage::Response {
                 request_id,
                 payload,
@@ -224,7 +244,9 @@ where
                 }
             }
         };
+        debug!("handle_driver_message: sending wire message");
         MessageTransport::send(&mut self.io, &wire_msg).await?;
+        debug!("handle_driver_message: wire message sent");
         Ok(())
     }
 
@@ -364,6 +386,11 @@ where
         channel_id: u64,
         payload: Vec<u8>,
     ) -> Result<(), ShmConnectionError> {
+        debug!(
+            "handle_data called for channel {}, {} bytes",
+            channel_id,
+            payload.len()
+        );
         if channel_id == 0 {
             return Err(self.goodbye("streaming.id.zero-reserved").await);
         }
@@ -374,12 +401,18 @@ where
 
         // Try server registry first, then client registry
         let result = if self.server_channel_registry.contains_incoming(channel_id) {
-            self.server_channel_registry
+            debug!("routing to server_channel_registry");
+            let res = self
+                .server_channel_registry
                 .route_data(channel_id, payload)
-                .await
+                .await;
+            debug!("server_channel_registry.route_data returned {:?}", res);
+            res
         } else if self.handle.contains_channel(channel_id) {
+            debug!("routing to client handle");
             self.handle.route_data(channel_id, payload).await
         } else {
+            debug!("channel {} unknown", channel_id);
             Err(ChannelError::Unknown)
         };
 
@@ -503,71 +536,6 @@ where
     (handle, driver)
 }
 
-/// Establish an SHM connection as the host for a specific peer.
-///
-/// Returns a handle for making calls and a driver future that must be spawned.
-///
-/// **Note:** This function takes ownership of the `ShmHost`. For scenarios with
-/// multiple guests, you'll need a different architecture (e.g., shared host with
-/// per-peer message routing).
-///
-/// # Arguments
-///
-/// * `host` - The SHM host (takes ownership)
-/// * `peer_id` - The peer ID to communicate with
-/// * `dispatcher` - Service dispatcher for handling incoming requests
-///
-/// # Example
-///
-/// ```ignore
-/// use roam_shm::{ShmHost, SegmentConfig, PeerId};
-/// use roam_shm::driver::establish_host_peer;
-///
-/// let host = ShmHost::create("/dev/shm/myapp", SegmentConfig::default())?;
-/// let peer_id = PeerId::new(1).unwrap();
-/// let (handle, driver) = establish_host_peer(host, peer_id, dispatcher);
-/// tokio::spawn(driver.run());
-/// // Use handle to make calls to the guest
-/// ```
-pub fn establish_host_peer<D>(
-    host: ShmHost,
-    peer_id: PeerId,
-    dispatcher: D,
-) -> (ConnectionHandle, ShmDriver<OwnedShmHostTransport, D>)
-where
-    D: ServiceDispatcher,
-{
-    let transport = OwnedShmHostTransport::new(host, peer_id);
-
-    // Get config from segment
-    let config = transport.config();
-    let negotiated = ShmNegotiated {
-        max_payload_size: config.max_payload_size,
-        initial_credit: config.initial_credit,
-    };
-
-    // Create single unified channel for all messages (Call/Data/Close/Response).
-    // Single channel ensures FIFO ordering.
-    let (driver_tx, driver_rx) = mpsc::channel(256);
-
-    // Host is acceptor (uses even stream IDs)
-    // Use infinite credit for now (matches current roam-stream behavior).
-    let initial_credit = u32::MAX;
-    let handle = ConnectionHandle::new(driver_tx.clone(), Role::Acceptor, initial_credit);
-
-    let driver = ShmDriver::new(
-        transport,
-        dispatcher,
-        Role::Acceptor,
-        negotiated,
-        handle.clone(),
-        driver_tx,
-        driver_rx,
-    );
-
-    (handle, driver)
-}
-
 // ============================================================================
 // Multi-Peer Host Driver
 // ============================================================================
@@ -598,6 +566,21 @@ struct PeerConnectionState {
     handle: ConnectionHandle,
 }
 
+/// Command to control the multi-peer host driver.
+enum ControlCommand {
+    /// Create a new peer slot and return a spawn ticket (calls host.add_peer()).
+    CreatePeer {
+        options: crate::spawn::AddPeerOptions,
+        response: oneshot::Sender<Result<crate::spawn::SpawnTicket, std::io::Error>>,
+    },
+    /// Register a peer dynamically with a dispatcher.
+    AddPeer {
+        peer_id: PeerId,
+        dispatcher: Box<dyn ServiceDispatcher>,
+        response: oneshot::Sender<ConnectionHandle>,
+    },
+}
+
 /// Multi-peer host driver for hub topology.
 ///
 /// Unlike `ShmDriver` which handles a single peer, this driver manages
@@ -607,6 +590,9 @@ struct PeerConnectionState {
 /// This driver supports **heterogeneous dispatchers**: each peer can have a
 /// different dispatcher type. This enables bidirectional RPC scenarios where
 /// different cells need different callback services from the host.
+///
+/// Peers can be added either at build time or dynamically while the driver is
+/// running, enabling lazy spawning patterns.
 ///
 /// # Example
 ///
@@ -633,7 +619,12 @@ struct PeerConnectionState {
 ///     .build();
 ///
 /// // Spawn the driver
+/// let driver_handle = driver.handle();
 /// tokio::spawn(driver.run());
+///
+/// // Add more peers dynamically (lazy spawning)
+/// let ticket3 = host.add_peer(options3)?;
+/// let handle3 = driver_handle.add_peer(ticket3.peer_id(), MyDispatcher).await?;
 ///
 /// // Use handles to make calls to specific peers
 /// let client1 = MyServiceClient::new(handles[&ticket1.peer_id()].clone());
@@ -651,6 +642,17 @@ pub struct MultiPeerHostDriver {
 
     /// Buffer for last decoded bytes (for error detection).
     last_decoded: Vec<u8>,
+
+    /// Control channel for dynamic peer addition.
+    control_rx: mpsc::UnboundedReceiver<ControlCommand>,
+}
+
+/// Handle for controlling a running MultiPeerHostDriver.
+///
+/// This handle allows adding new peers dynamically after the driver has started.
+#[derive(Clone)]
+pub struct MultiPeerHostDriverHandle {
+    control_tx: mpsc::UnboundedSender<ControlCommand>,
 }
 
 /// Builder for `MultiPeerHostDriver`.
@@ -673,8 +675,14 @@ impl MultiPeerHostDriverBuilder {
         self
     }
 
-    /// Build the driver and return connection handles for each peer.
-    pub fn build(self) -> (MultiPeerHostDriver, HashMap<PeerId, ConnectionHandle>) {
+    /// Build the driver and return connection handles for each peer and a driver handle.
+    pub fn build(
+        self,
+    ) -> (
+        MultiPeerHostDriver,
+        HashMap<PeerId, ConnectionHandle>,
+        MultiPeerHostDriverHandle,
+    ) {
         let config = self.host.config();
         let negotiated = ShmNegotiated {
             max_payload_size: config.max_payload_size,
@@ -708,14 +716,20 @@ impl MultiPeerHostDriverBuilder {
             );
         }
 
+        // Create control channel for dynamic peer addition
+        let (control_tx, control_rx) = mpsc::unbounded_channel();
+
         let driver = MultiPeerHostDriver {
             host: self.host,
             negotiated,
             peers,
             last_decoded: Vec::new(),
+            control_rx,
         };
 
-        (driver, handles)
+        let driver_handle = MultiPeerHostDriverHandle { control_tx };
+
+        (driver, handles, driver_handle)
     }
 }
 
@@ -733,6 +747,24 @@ impl MultiPeerHostDriver {
         loop {
             // Process all pending work in one pass, then yield
             let mut did_work = false;
+
+            // 0. Process control commands (add peers dynamically)
+            loop {
+                match self.control_rx.try_recv() {
+                    Ok(cmd) => {
+                        self.handle_control_command(cmd);
+                        did_work = true;
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        // All handles dropped, no more commands coming. Exit if no peers left.
+                        if self.peers.is_empty() {
+                            return Ok(());
+                        }
+                        break;
+                    }
+                }
+            }
 
             // 1. Process driver messages from all peers (unified Call/Data/Close/Response)
             let driver_msgs: Vec<_> = self
@@ -761,14 +793,53 @@ impl MultiPeerHostDriver {
                 did_work = true;
             }
 
-            // Check if all peers are gone
-            if self.peers.is_empty() {
-                return Ok(());
-            }
+            // Note: We don't exit when peers.is_empty() because with lazy spawning,
+            // we may start with zero peers and add them dynamically via create_peer().
+            // The driver will keep running until the control channel is closed (when
+            // all MultiPeerHostDriverHandles are dropped).
 
             // Yield to avoid busy-spinning when idle
             if !did_work {
                 tokio::task::yield_now().await;
+            }
+        }
+    }
+
+    /// Handle a control command.
+    fn handle_control_command(&mut self, cmd: ControlCommand) {
+        match cmd {
+            ControlCommand::CreatePeer { options, response } => {
+                // Call host.add_peer() to create a spawn ticket
+                let result = self.host.add_peer(options);
+                let _ = response.send(result);
+            }
+            ControlCommand::AddPeer {
+                peer_id,
+                dispatcher,
+                response,
+            } => {
+                // Create single unified channel for all messages (Call/Data/Close/Response).
+                let (driver_tx, driver_rx) = mpsc::channel(256);
+
+                // Host is acceptor (uses even stream IDs)
+                let initial_credit = u32::MAX;
+                let handle =
+                    ConnectionHandle::new(driver_tx.clone(), Role::Acceptor, initial_credit);
+
+                self.peers.insert(
+                    peer_id,
+                    PeerConnectionState {
+                        dispatcher,
+                        driver_rx,
+                        server_channel_registry: ChannelRegistry::new(driver_tx),
+                        pending_responses: HashMap::new(),
+                        in_flight_server_requests: std::collections::HashSet::new(),
+                        handle: handle.clone(),
+                    },
+                );
+
+                // Send the handle back to the caller
+                let _ = response.send(handle);
             }
         }
     }
@@ -1071,6 +1142,99 @@ impl MultiPeerHostDriver {
     }
 }
 
+impl MultiPeerHostDriverHandle {
+    /// Create a new peer slot and get a spawn ticket (true lazy spawning).
+    ///
+    /// This calls `host.add_peer()` on the driver's owned host, enabling
+    /// dynamic peer creation at runtime without needing to pre-allocate all
+    /// slots before building the driver.
+    ///
+    /// # Returns
+    ///
+    /// A `SpawnTicket` that can be used to spawn the process later.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Driver is running (owns the host)
+    /// let (driver, handles, driver_handle) = build_driver(host);
+    /// tokio::spawn(driver.run());
+    ///
+    /// // Later, on first access (true lazy spawning):
+    /// let ticket = driver_handle.create_peer(AddPeerOptions::default()).await?;
+    /// ticket.spawn(Command::new("my-cell"))?;
+    /// let handle = driver_handle.add_peer(ticket.peer_id, MyDispatcher).await?;
+    /// ```
+    pub async fn create_peer(
+        &self,
+        options: crate::spawn::AddPeerOptions,
+    ) -> Result<crate::spawn::SpawnTicket, ShmConnectionError> {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        let cmd = ControlCommand::CreatePeer {
+            options,
+            response: response_tx,
+        };
+
+        self.control_tx
+            .send(cmd)
+            .map_err(|_| ShmConnectionError::Io(std::io::Error::other("driver has shut down")))?;
+
+        response_rx
+            .await
+            .map_err(|_| {
+                ShmConnectionError::Io(std::io::Error::other("driver failed to create peer"))
+            })?
+            .map_err(ShmConnectionError::Io)
+    }
+
+    /// Register a peer dynamically with the running driver.
+    ///
+    /// This adds the peer's dispatcher so the driver can handle incoming
+    /// requests from this peer. Call this after spawning the process with
+    /// a ticket from `create_peer()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `peer_id` - The peer ID (from SpawnTicket)
+    /// * `dispatcher` - The service dispatcher for handling incoming requests
+    ///
+    /// # Returns
+    ///
+    /// A `ConnectionHandle` for making RPC calls to this peer.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // After calling create_peer and spawning:
+    /// let handle = driver_handle.add_peer(ticket.peer_id, MyDispatcher).await?;
+    /// ```
+    pub async fn add_peer<D>(
+        &self,
+        peer_id: PeerId,
+        dispatcher: D,
+    ) -> Result<ConnectionHandle, ShmConnectionError>
+    where
+        D: ServiceDispatcher + 'static,
+    {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        let cmd = ControlCommand::AddPeer {
+            peer_id,
+            dispatcher: Box::new(dispatcher),
+            response: response_tx,
+        };
+
+        self.control_tx
+            .send(cmd)
+            .map_err(|_| ShmConnectionError::Io(std::io::Error::other("driver has shut down")))?;
+
+        response_rx
+            .await
+            .map_err(|_| ShmConnectionError::Io(std::io::Error::other("driver failed to add peer")))
+    }
+}
+
 /// Establish a multi-peer host driver with homogeneous dispatchers.
 ///
 /// This is a convenience function that creates a `MultiPeerHostDriver` for
@@ -1111,7 +1275,11 @@ impl MultiPeerHostDriver {
 pub fn establish_multi_peer_host<D, I>(
     host: ShmHost,
     peers: I,
-) -> (MultiPeerHostDriver, HashMap<PeerId, ConnectionHandle>)
+) -> (
+    MultiPeerHostDriver,
+    HashMap<PeerId, ConnectionHandle>,
+    MultiPeerHostDriverHandle,
+)
 where
     D: ServiceDispatcher + 'static,
     I: IntoIterator<Item = (PeerId, D)>,

@@ -1946,10 +1946,10 @@ version = "0.5.0"
 dependencies = [
  "facet",
  "facet-postcard",
- "futures-util",
  "roam-frame",
  "roam-wire",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1958,6 +1958,7 @@ version = "0.5.0"
 dependencies = [
  "facet-postcard",
  "libc",
+ "roam",
  "roam-frame",
  "roam-session",
  "roam-stream",
@@ -1965,6 +1966,8 @@ dependencies = [
  "shm-primitives",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "ur-taking-me-with-you",
 ]
 
