@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use facet_core::Def;
-use facet_reflect::Partial;
+use facet_reflect::{FieldCategory, Partial};
 
 use crate::{DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue};
 
@@ -19,6 +19,7 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        use alloc::borrow::Cow;
         use alloc::collections::BTreeSet;
         use facet_core::Characteristic;
         use facet_solver::{PathSegment, Schema, Solver};
@@ -183,6 +184,19 @@ where
                         continue;
                     }
 
+                    // Check if we have a catch-all map for unknown fields
+                    // For flat formats, use FieldCategory::Flat
+                    if let Some(catch_all_info) = resolution.catch_all_map(FieldCategory::Flat) {
+                        // Route unknown field to catch-all map
+                        wip = self.insert_into_catch_all_map(
+                            wip,
+                            catch_all_info,
+                            Cow::Borrowed(key.name.as_ref()),
+                            &mut fields_set,
+                        )?;
+                        continue;
+                    }
+
                     if deny_unknown_fields {
                         return Err(DeserializeError::UnknownField {
                             field: key.name.into_owned(),
@@ -218,6 +232,72 @@ where
         // Finish deferred mode (only if we started it)
         if !already_deferred {
             wip = wip.finish_deferred().map_err(DeserializeError::reflect)?;
+        }
+
+        Ok(wip)
+    }
+
+    /// Insert a key-value pair into a catch-all map field.
+    ///
+    /// This navigates to the catch-all map field (handling Option wrappers),
+    /// initializes it if needed, and inserts the key-value pair.
+    fn insert_into_catch_all_map(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        catch_all_info: &facet_reflect::FieldInfo,
+        key: alloc::borrow::Cow<'_, str>,
+        fields_set: &mut alloc::collections::BTreeSet<&'static str>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        use facet_solver::PathSegment;
+
+        let segments = catch_all_info.path.segments();
+
+        // Extract field names from the path
+        let field_segments: alloc::vec::Vec<&str> = segments
+            .iter()
+            .filter_map(|s| match s {
+                PathSegment::Field(name) => Some(*name),
+                PathSegment::Variant(_, _) => None,
+            })
+            .collect();
+
+        // Track how many segments we opened so we can close them
+        let mut opened_segments: alloc::vec::Vec<bool> = alloc::vec::Vec::new(); // true = is_option
+
+        // Navigate to the map field
+        for &segment in &field_segments {
+            wip = wip
+                .begin_field(segment)
+                .map_err(DeserializeError::reflect)?;
+            let is_option = matches!(wip.shape().def, Def::Option(_));
+            if is_option {
+                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+            }
+            opened_segments.push(is_option);
+        }
+
+        // Initialize the map if this is our first time
+        let map_field_name = catch_all_info.serialized_name;
+        if !fields_set.contains(map_field_name) {
+            wip = wip.init_map().map_err(DeserializeError::reflect)?;
+            fields_set.insert(map_field_name);
+        }
+
+        // Insert the key-value pair
+        wip = wip.begin_key().map_err(DeserializeError::reflect)?;
+        wip = self.set_string_value(wip, alloc::borrow::Cow::Owned(key.into_owned()))?;
+        wip = wip.end().map_err(DeserializeError::reflect)?;
+
+        wip = wip.begin_value().map_err(DeserializeError::reflect)?;
+        wip = self.deserialize_into(wip)?;
+        wip = wip.end().map_err(DeserializeError::reflect)?;
+
+        // Close segments in reverse order
+        for is_option in opened_segments.into_iter().rev() {
+            if is_option {
+                wip = wip.end().map_err(DeserializeError::reflect)?;
+            }
+            wip = wip.end().map_err(DeserializeError::reflect)?;
         }
 
         Ok(wip)

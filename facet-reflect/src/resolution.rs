@@ -17,15 +17,20 @@ use core::fmt;
 
 use facet_core::{Field, Shape};
 
-/// Category of a field in DOM formats (XML, HTML).
+/// Category of a field for format-aware field lookup.
 ///
-/// This categorizes how a field is represented in tree-based formats where
-/// attributes, child elements, and text content are distinct concepts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+/// For flat formats (JSON, TOML, YAML), all fields are `Flat`.
+/// For DOM formats (XML, HTML), fields are categorized by their role
+/// in the tree structure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
 pub enum FieldCategory {
+    /// Regular field in flat formats (JSON, TOML, YAML, etc.)
+    /// All fields are treated as simple key-value pairs.
+    #[default]
+    Flat,
     /// Field is an attribute (`#[facet(attribute)]`, `xml::attribute`, `html::attribute`)
     Attribute,
-    /// Field is a child element (default for structs, or explicit `xml::element`)
+    /// Field is a child element (default for DOM structs, or explicit `xml::element`)
     Element,
     /// Field captures text content (`xml::text`, `html::text`)
     Text,
@@ -36,11 +41,11 @@ pub enum FieldCategory {
 }
 
 impl FieldCategory {
-    /// Determine the category of a field based on its attributes.
+    /// Determine the DOM category of a field based on its attributes.
     ///
-    /// Returns `None` for flattened fields (they don't have a single category)
-    /// or fields that capture unknown content (maps).
-    pub fn from_field(field: &Field) -> Option<Self> {
+    /// Returns `None` for flattened fields (they don't have a single category).
+    /// For non-DOM contexts, use `FieldCategory::Flat` directly.
+    pub fn from_field_dom(field: &Field) -> Option<Self> {
         if field.is_flattened() {
             // Flattened fields don't have a category - their children do
             return None;
@@ -298,9 +303,8 @@ pub struct FieldInfo {
     /// The original field definition (for accessing flags, attributes, etc.)
     pub field: &'static Field,
 
-    /// Category for DOM formats (attribute, element, text, etc.)
-    /// This is `None` for flat formats or when the category cannot be determined.
-    pub category: Option<FieldCategory>,
+    /// Category of this field (Flat for JSON/TOML/YAML, or Attribute/Element/etc. for DOM).
+    pub category: FieldCategory,
 }
 
 impl PartialEq for FieldInfo {
@@ -316,11 +320,10 @@ impl PartialEq for FieldInfo {
 
 impl FieldInfo {
     /// Get the key for this field, used for map lookups.
-    /// If category is set, returns a DOM key; otherwise returns a flat key.
     pub fn key(&self) -> FieldKey<'static> {
         match self.category {
-            Some(cat) => FieldKey::Dom(cat, Cow::Borrowed(self.serialized_name)),
-            None => FieldKey::Flat(Cow::Borrowed(self.serialized_name)),
+            FieldCategory::Flat => FieldKey::Flat(Cow::Borrowed(self.serialized_name)),
+            cat => FieldKey::Dom(cat, Cow::Borrowed(self.serialized_name)),
         }
     }
 }
@@ -370,6 +373,11 @@ pub struct Resolution {
     /// All known key paths at all depths (for depth-aware probing, DOM format).
     /// Each path includes category information for each key.
     dom_known_paths: BTreeSet<DomKeyPath>,
+
+    /// Catch-all map fields for capturing unknown keys, keyed by category.
+    /// For flat formats, `FieldCategory::Flat` captures all unknown keys.
+    /// For DOM formats, can have separate catch-alls for `Attribute` vs `Element`.
+    catch_all_maps: BTreeMap<FieldCategory, FieldInfo>,
 }
 
 /// Error when building a resolution.
@@ -402,7 +410,23 @@ impl Resolution {
             required_field_names: BTreeSet::new(),
             known_paths: BTreeSet::new(),
             dom_known_paths: BTreeSet::new(),
+            catch_all_maps: BTreeMap::new(),
         }
+    }
+
+    /// Set a catch-all map field for capturing unknown keys of a given category.
+    pub fn set_catch_all_map(&mut self, category: FieldCategory, info: FieldInfo) {
+        self.catch_all_maps.insert(category, info);
+    }
+
+    /// Get the catch-all map field for a given category, if any.
+    pub fn catch_all_map(&self, category: FieldCategory) -> Option<&FieldInfo> {
+        self.catch_all_maps.get(&category)
+    }
+
+    /// Get all catch-all maps.
+    pub fn catch_all_maps(&self) -> &BTreeMap<FieldCategory, FieldInfo> {
+        &self.catch_all_maps
     }
 
     /// Add a key path (for depth-aware probing, flat format).
@@ -481,6 +505,10 @@ impl Resolution {
         }
         for path in &other.dom_known_paths {
             self.dom_known_paths.insert(path.clone());
+        }
+        // Merge catch-all maps (other's take precedence for same category)
+        for (cat, info) in &other.catch_all_maps {
+            self.catch_all_maps.insert(*cat, info.clone());
         }
         Ok(())
     }

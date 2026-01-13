@@ -2181,11 +2181,10 @@ impl SchemaBuilder {
                 required,
                 value_shape: field.shape(),
                 field,
-                // Only set category for DOM format
                 category: if self.format == Format::Dom {
-                    FieldCategory::from_field(field)
+                    FieldCategory::from_field_dom(field).unwrap_or(FieldCategory::Element)
                 } else {
-                    None
+                    FieldCategory::Flat
                 },
             };
 
@@ -2512,7 +2511,7 @@ impl SchemaBuilder {
                                     required: !is_optional_flatten,
                                     value_shape: shape, // The enum shape
                                     field,              // The original flatten field
-                                    category: Some(FieldCategory::Element), // Variant selector is like an element
+                                    category: FieldCategory::Element, // Variant selector is like an element
                                 };
                                 forked.add_field(variant_field_info)?;
 
@@ -2573,7 +2572,7 @@ impl SchemaBuilder {
                                     required: !is_optional_flatten,
                                     value_shape: shape, // The enum shape
                                     field,              // The original flatten field
-                                    category: Some(FieldCategory::Element), // Tag is a key field
+                                    category: FieldCategory::Element, // Tag is a key field
                                 };
                                 forked.add_field(tag_field_info)?;
 
@@ -2616,7 +2615,7 @@ impl SchemaBuilder {
                                     required: !is_optional_flatten,
                                     value_shape: shape, // The enum shape
                                     field,              // The original flatten field
-                                    category: Some(FieldCategory::Element), // Tag is a key field
+                                    category: FieldCategory::Element, // Tag is a key field
                                 };
                                 forked.add_field(tag_field_info)?;
 
@@ -2641,6 +2640,64 @@ impl SchemaBuilder {
                 Ok(result)
             }
             _ => {
+                // Check if this is a Map type - if so, it becomes a catch-all for unknown fields
+                if let Def::Map(map_def) = &shape.def {
+                    // Validate: key must be String for catch-all maps
+                    if map_def.k.scalar_type() == Some(facet_core::ScalarType::String) {
+                        // This is a valid catch-all map
+                        let field_info = FieldInfo {
+                            serialized_name: field.name,
+                            path: field_path,
+                            required: false, // Catch-all maps are never required
+                            value_shape: shape,
+                            field,
+                            // For DOM format, determine if this catches attributes or elements
+                            // based on the field's attributes
+                            category: if self.format == Format::Dom {
+                                if field.is_attribute() {
+                                    FieldCategory::Attribute
+                                } else {
+                                    FieldCategory::Element
+                                }
+                            } else {
+                                FieldCategory::Flat
+                            },
+                        };
+
+                        let mut result = configs;
+                        for config in &mut result {
+                            config.set_catch_all_map(field_info.category, field_info.clone());
+                        }
+                        return Ok(result);
+                    }
+                }
+
+                // Check if this is a DynamicValue type (like facet_value::Value) - also a catch-all
+                if matches!(&shape.def, Def::DynamicValue(_)) {
+                    let field_info = FieldInfo {
+                        serialized_name: field.name,
+                        path: field_path,
+                        required: false, // Catch-all dynamic values are never required
+                        value_shape: shape,
+                        field,
+                        category: if self.format == Format::Dom {
+                            if field.is_attribute() {
+                                FieldCategory::Attribute
+                            } else {
+                                FieldCategory::Element
+                            }
+                        } else {
+                            FieldCategory::Flat
+                        },
+                    };
+
+                    let mut result = configs;
+                    for config in &mut result {
+                        config.set_catch_all_map(field_info.category, field_info.clone());
+                    }
+                    return Ok(result);
+                }
+
                 // Can't flatten other types - treat as regular field
                 // For Option<T> flatten, also consider optionality from the wrapper
                 let required =
@@ -2656,11 +2713,10 @@ impl SchemaBuilder {
                     required,
                     value_shape: shape,
                     field,
-                    // Only set category for DOM format
                     category: if self.format == Format::Dom {
-                        FieldCategory::from_field(field)
+                        FieldCategory::from_field_dom(field).unwrap_or(FieldCategory::Element)
                     } else {
-                        None
+                        FieldCategory::Flat
                     },
                 };
 
@@ -2746,14 +2802,8 @@ impl SchemaBuilder {
         if self.format == Format::Dom {
             for (idx, config) in resolutions.iter().enumerate() {
                 for field_info in config.fields().values() {
-                    // Get the category from the field
-                    let category = field_info.category.unwrap_or_else(|| {
-                        // Compute from field if not already set
-                        FieldCategory::from_field(field_info.field)
-                            .unwrap_or(FieldCategory::Element)
-                    });
                     dom_field_to_resolutions
-                        .entry((category, field_info.serialized_name))
+                        .entry((field_info.category, field_info.serialized_name))
                         .or_insert_with(|| ResolutionSet::empty(num_resolutions))
                         .insert(idx);
                 }

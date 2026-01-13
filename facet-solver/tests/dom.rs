@@ -116,7 +116,7 @@ fn test_flattened_struct_with_attributes() {
     assert!(id_field.is_some(), "id field should be present");
     assert_eq!(
         id_field.unwrap().category,
-        Some(FieldCategory::Attribute),
+        FieldCategory::Attribute,
         "id should be an attribute"
     );
 
@@ -124,7 +124,7 @@ fn test_flattened_struct_with_attributes() {
     assert!(class_field.is_some(), "class field should be present");
     assert_eq!(
         class_field.unwrap().category,
-        Some(FieldCategory::Attribute),
+        FieldCategory::Attribute,
         "class should be an attribute"
     );
 
@@ -133,7 +133,7 @@ fn test_flattened_struct_with_attributes() {
     assert!(content_field.is_some(), "content field should be present");
     assert_eq!(
         content_field.unwrap().category,
-        Some(FieldCategory::Element),
+        FieldCategory::Element,
         "content should be an element"
     );
 
@@ -306,7 +306,7 @@ fn test_text_content_field() {
     assert!(content_field.is_some());
     assert_eq!(
         content_field.unwrap().category,
-        Some(FieldCategory::Text),
+        FieldCategory::Text,
         "content should be Text category"
     );
 
