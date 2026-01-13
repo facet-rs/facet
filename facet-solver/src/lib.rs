@@ -15,8 +15,8 @@ use facet_core::{Def, Field, Shape, StructType, Type, UserType, Variant};
 
 // Re-export resolution types from facet-reflect
 pub use facet_reflect::{
-    DuplicateFieldError, FieldCategory, FieldInfo, FieldPath, KeyPath, MatchResult, PathSegment,
-    Resolution, VariantSelection,
+    DuplicateFieldError, FieldCategory, FieldInfo, FieldKey, FieldPath, KeyPath, MatchResult,
+    PathSegment, Resolution, VariantSelection,
 };
 
 /// Format determines how fields are categorized and indexed in the schema.
@@ -39,102 +39,6 @@ pub enum Format {
     /// The solver uses `see_attribute()`, `see_element()`, etc. to report
     /// fields with their category.
     Dom,
-}
-
-/// A key for field lookup in the solver.
-///
-/// For flat formats (JSON, TOML), keys are just field names.
-/// For DOM formats (XML, HTML), keys include a category (attribute, element, text).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Key<'a> {
-    /// Flat format key - just a name (for JSON, TOML, YAML, etc.)
-    Flat(Cow<'a, str>),
-    /// DOM format key - category + name (for XML, HTML)
-    Dom(FieldCategory, Cow<'a, str>),
-}
-
-impl<'a> Key<'a> {
-    /// Create a flat key from a string.
-    pub fn flat(name: impl Into<Cow<'a, str>>) -> Self {
-        Key::Flat(name.into())
-    }
-
-    /// Create a DOM attribute key.
-    pub fn attribute(name: impl Into<Cow<'a, str>>) -> Self {
-        Key::Dom(FieldCategory::Attribute, name.into())
-    }
-
-    /// Create a DOM element key.
-    pub fn element(name: impl Into<Cow<'a, str>>) -> Self {
-        Key::Dom(FieldCategory::Element, name.into())
-    }
-
-    /// Create a DOM text key (name is typically empty or a sentinel).
-    pub fn text() -> Self {
-        Key::Dom(FieldCategory::Text, Cow::Borrowed(""))
-    }
-
-    /// Create a DOM tag key.
-    pub fn tag() -> Self {
-        Key::Dom(FieldCategory::Tag, Cow::Borrowed(""))
-    }
-
-    /// Create a DOM elements key (catch-all for unmatched children).
-    pub fn elements() -> Self {
-        Key::Dom(FieldCategory::Elements, Cow::Borrowed(""))
-    }
-
-    /// Get the name portion of the key.
-    pub fn name(&self) -> &str {
-        match self {
-            Key::Flat(name) => name.as_ref(),
-            Key::Dom(_, name) => name.as_ref(),
-        }
-    }
-
-    /// Get the category if this is a DOM key.
-    pub fn category(&self) -> Option<FieldCategory> {
-        match self {
-            Key::Flat(_) => None,
-            Key::Dom(cat, _) => Some(*cat),
-        }
-    }
-
-    /// Convert to an owned version.
-    pub fn into_owned(self) -> Key<'static> {
-        match self {
-            Key::Flat(name) => Key::Flat(Cow::Owned(name.into_owned())),
-            Key::Dom(cat, name) => Key::Dom(cat, Cow::Owned(name.into_owned())),
-        }
-    }
-}
-
-// Allow &str to be converted to a flat Key for backwards compatibility
-impl<'a> From<&'a str> for Key<'a> {
-    fn from(s: &'a str) -> Self {
-        Key::Flat(Cow::Borrowed(s))
-    }
-}
-
-impl From<String> for Key<'static> {
-    fn from(s: String) -> Self {
-        Key::Flat(Cow::Owned(s))
-    }
-}
-
-impl<'a> From<Cow<'a, str>> for Key<'a> {
-    fn from(s: Cow<'a, str>) -> Self {
-        Key::Flat(s)
-    }
-}
-
-impl fmt::Display for Key<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Key::Flat(name) => write!(f, "{}", name),
-            Key::Dom(cat, name) => write!(f, "{:?}:{}", cat, name),
-        }
-    }
 }
 
 /// Cached schema for a type that may contain flattened fields.
@@ -298,15 +202,18 @@ fn find_disambiguating_fields(configs: &[&Resolution]) -> Vec<String> {
     // Collect all field names across all configs
     let mut all_fields: BTreeSet<&str> = BTreeSet::new();
     for config in configs {
-        for name in config.fields().keys() {
-            all_fields.insert(name);
+        for info in config.fields().values() {
+            all_fields.insert(info.serialized_name);
         }
     }
 
     // Find fields that are in some but not all configs
     let mut disambiguating = Vec::new();
     for field in all_fields {
-        let count = configs.iter().filter(|c| c.field(field).is_some()).count();
+        let count = configs
+            .iter()
+            .filter(|c| c.field_by_name(field).is_some())
+            .count();
         if count > 0 && count < configs.len() {
             disambiguating.push(field.to_string());
         }
@@ -637,8 +544,8 @@ pub struct Solver<'a> {
     /// Bitmask of remaining candidate configuration indices
     candidates: ResolutionSet,
     /// Set of seen keys for required field checking.
-    /// For Flat format, stores Key::Flat. For Dom format, stores Key::Dom.
-    seen_keys: BTreeSet<Key<'a>>,
+    /// For Flat format, stores FieldKey::Flat. For Dom format, stores FieldKey::Dom.
+    seen_keys: BTreeSet<FieldKey<'a>>,
 }
 
 impl<'a> Solver<'a> {
@@ -660,44 +567,46 @@ impl<'a> Solver<'a> {
     ///
     /// Accepts both borrowed (`&str`) and owned (`String`) keys via `Cow`.
     /// For DOM format, use `see_attribute()`, `see_element()`, etc. instead.
-    pub fn see_key(&mut self, key: impl Into<Key<'a>>) -> KeyResult<'a> {
+    pub fn see_key(&mut self, key: impl Into<FieldKey<'a>>) -> KeyResult<'a> {
         let key = key.into();
         self.see_key_internal(key)
     }
 
     /// Report an attribute key (DOM format only).
     pub fn see_attribute(&mut self, name: impl Into<Cow<'a, str>>) -> KeyResult<'a> {
-        self.see_key_internal(Key::attribute(name))
+        self.see_key_internal(FieldKey::attribute(name))
     }
 
     /// Report an element key (DOM format only).
     pub fn see_element(&mut self, name: impl Into<Cow<'a, str>>) -> KeyResult<'a> {
-        self.see_key_internal(Key::element(name))
+        self.see_key_internal(FieldKey::element(name))
     }
 
     /// Report a text content key (DOM format only).
     pub fn see_text(&mut self) -> KeyResult<'a> {
-        self.see_key_internal(Key::text())
+        self.see_key_internal(FieldKey::text())
     }
 
     /// Internal implementation of key lookup.
-    fn see_key_internal(&mut self, key: Key<'a>) -> KeyResult<'a> {
+    fn see_key_internal(&mut self, key: FieldKey<'a>) -> KeyResult<'a> {
         self.seen_keys.insert(key.clone());
 
         // Key-based filtering - use appropriate index based on format
         let resolutions_with_key = match (&key, self.schema.format) {
-            (Key::Flat(name), Format::Flat) => self.schema.field_to_resolutions.get(name.as_ref()),
-            (Key::Flat(name), Format::Dom) => {
+            (FieldKey::Flat(name), Format::Flat) => {
+                self.schema.field_to_resolutions.get(name.as_ref())
+            }
+            (FieldKey::Flat(name), Format::Dom) => {
                 // Flat key on DOM schema - try as element (most common)
                 self.schema
                     .dom_field_to_resolutions
                     .get(&(FieldCategory::Element, name.as_ref()))
             }
-            (Key::Dom(cat, name), Format::Dom) => self
+            (FieldKey::Dom(cat, name), Format::Dom) => self
                 .schema
                 .dom_field_to_resolutions
                 .get(&(*cat, name.as_ref())),
-            (Key::Dom(_, name), Format::Flat) => {
+            (FieldKey::Dom(_, name), Format::Flat) => {
                 // DOM key on flat schema - ignore category
                 self.schema.field_to_resolutions.get(name.as_ref())
             }
@@ -724,18 +633,7 @@ impl<'a> Solver<'a> {
         let mut unique_fields: Vec<&'a FieldInfo> = Vec::new();
         for idx in self.candidates.iter() {
             let config = &self.schema.resolutions[idx];
-            if let Some(info) = config.field(key.name()) {
-                // For DOM format, also check category matches
-                if self.schema.format == Format::Dom {
-                    if let Key::Dom(cat, _) = &key {
-                        let field_cat = info.category.unwrap_or_else(|| {
-                            FieldCategory::from_field(info.field).unwrap_or(FieldCategory::Element)
-                        });
-                        if field_cat != *cat {
-                            continue;
-                        }
-                    }
-                }
+            if let Some(info) = config.field_by_key(&key) {
                 // Deduplicate by shape pointer
                 if !unique_fields
                     .iter()
@@ -917,7 +815,7 @@ impl<'a> Solver<'a> {
 
     /// Get the seen keys.
     /// Get the seen keys.
-    pub const fn seen_keys(&self) -> &BTreeSet<Key<'a>> {
+    pub const fn seen_keys(&self) -> &BTreeSet<FieldKey<'a>> {
         &self.seen_keys
     }
 
@@ -1005,7 +903,7 @@ impl<'a> Solver<'a> {
     /// This is useful when the key is known to be present through means other than
     /// parsing (e.g., type annotations). Call this after `hint_variant` to mark
     /// the variant name as seen so that `finish()` doesn't report it as missing.
-    pub fn mark_seen(&mut self, key: impl Into<Key<'a>>) {
+    pub fn mark_seen(&mut self, key: impl Into<FieldKey<'a>>) {
         self.seen_keys.insert(key.into());
     }
 
@@ -1115,10 +1013,10 @@ impl<'a> Solver<'a> {
                         // For nested paths, we need the parent field
                         // e.g., for ["payload", "value"], get the "payload" field
                         let field = if path.is_empty() {
-                            config.field(key)
+                            config.field_by_name(key)
                         } else {
                             // Return the top-level field that contains this path
-                            config.field(path[0])
+                            config.field_by_name(path[0])
                         }?;
                         Some((field, specificity_score(shape)))
                     })
@@ -1136,7 +1034,7 @@ impl<'a> Solver<'a> {
         }
 
         // Start with the top-level field
-        let top_field = config.field(path[0])?;
+        let top_field = config.field_by_name(path[0])?;
         let mut current_shape = top_field.value_shape;
 
         // Navigate through nested structs
@@ -1205,7 +1103,7 @@ impl<'a> Solver<'a> {
         let all_known_fields: BTreeSet<&'static str> = schema
             .resolutions
             .iter()
-            .flat_map(|r| r.fields().keys().copied())
+            .flat_map(|r| r.fields().values().map(|f| f.serialized_name))
             .collect();
 
         // Find unknown fields (fields in input that don't exist in ANY resolution)
@@ -1323,7 +1221,7 @@ impl<'a> Solver<'a> {
 /// Build a CandidateFailure for a resolution given the seen keys.
 fn build_candidate_failure<'a>(
     config: &Resolution,
-    seen_keys: &BTreeSet<Key<'a>>,
+    seen_keys: &BTreeSet<FieldKey<'a>>,
 ) -> CandidateFailure {
     let missing_fields: Vec<MissingFieldInfo> = config
         .required_field_names()

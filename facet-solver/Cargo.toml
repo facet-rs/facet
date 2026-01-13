@@ -27,6 +27,7 @@ strsim = { workspace = true, optional = true }
 [dev-dependencies]
 divan = { workspace = true }
 facet = { path = "../facet", features = ["all-impls", "doc"] }
+facet-xml = { path = "../facet-xml" }
 json-event-parser = "0.2"
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "ansi"] }
