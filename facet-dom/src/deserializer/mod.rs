@@ -210,6 +210,14 @@ where
                     } else if field_map.text_field.is_some() {
                         trace!("accumulating text for text field");
                         text_content.push_str(&text);
+                    } else if struct_def.kind == StructKind::TupleStruct
+                        && struct_def.fields.len() == 1
+                    {
+                        // Transparent newtype: text content goes to field 0
+                        trace!("setting text content for newtype field 0");
+                        wip = wip.begin_nth_field(0)?;
+                        wip = self.set_string_value(wip, text)?;
+                        wip = wip.end()?;
                     } else {
                         trace!("ignoring text (no text field)");
                     }
