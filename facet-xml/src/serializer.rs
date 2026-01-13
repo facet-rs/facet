@@ -412,7 +412,7 @@ impl DomSerializer for XmlSerializer {
         let ns = namespace
             .map(String::from)
             .or_else(|| self.pending_namespace.take())
-            .or_else(|| self.current_ns_all.take()); // Consume ns_all for the struct's root element
+            .or_else(|| self.current_ns_all.clone()); // Don't consume - used for struct root AND child elements
 
         // Note: close tag will be computed and pushed in write_open_tag_impl
         // when we know if a prefix will be used

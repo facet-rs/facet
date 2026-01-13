@@ -129,7 +129,24 @@ where
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         trace_span!("deserialize_struct_innards");
 
-        let field_map = StructFieldMap::new(struct_def);
+        // Extract xml::ns_all attribute from the shape
+        let ns_all = wip
+            .shape()
+            .attributes
+            .iter()
+            .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+            .and_then(|attr| attr.get_as::<&str>().copied());
+        trace!(ns_all = ?ns_all, "extracted ns_all from shape");
+
+        let field_map = StructFieldMap::new(struct_def, ns_all);
+
+        // Enable deferred mode if struct has flattened fields
+        // This allows us to set fields in flattened structs out of order
+        let using_deferred = field_map.has_flatten;
+        if using_deferred {
+            trace!("enabling deferred mode for struct with flatten");
+            wip = wip.begin_deferred()?;
+        }
 
         let _tag = self.parser.expect_node_start()?;
         trace!(tag = %_tag, "got NodeStart");
@@ -382,6 +399,88 @@ where
                                 .skip_node()
                                 .map_err(DomDeserializeError::Parser)?;
                         }
+                    } else if let Some(flattened) =
+                        field_map.find_flattened_child(&tag, namespace.as_ref().map(|c| c.as_ref()))
+                    {
+                        // Element matches a child field from a flattened struct
+                        // Navigate to parent_struct.child_field and deserialize
+                        trace!(
+                            parent_idx = flattened.parent_idx,
+                            child_idx = flattened.child_idx,
+                            parent_is_option = flattened.parent_is_option,
+                            "matched flattened child field"
+                        );
+
+                        // Need to leave any active sequence first
+                        if let Some(prev_idx) = active_seq_idx {
+                            trace!(prev_idx, "leaving active flat sequence for flattened child");
+                            wip = wip.end()?;
+                            if let Some(SeqState::List { is_smart_ptr: true }) =
+                                started_seqs.get(&prev_idx)
+                            {
+                                wip = wip.end()?;
+                            }
+                            active_seq_idx = None;
+                        }
+                        if elements_list_started {
+                            trace!("leaving elements list for flattened child");
+                            wip = wip.end()?;
+                            elements_list_started = false;
+                        }
+
+                        // Enter the flattened parent field
+                        wip = wip.begin_nth_field(flattened.parent_idx)?;
+
+                        // If the parent is Option<Struct>, we need to enter Some first
+                        if flattened.parent_is_option {
+                            wip = wip.begin_some()?;
+                        }
+
+                        // Enter and deserialize the child field
+                        wip = wip
+                            .begin_nth_field(flattened.child_idx)?
+                            .deserialize_with(self)?
+                            .end()?;
+
+                        // Exit the Option if needed
+                        if flattened.parent_is_option {
+                            wip = wip.end()?;
+                        }
+
+                        // Exit the parent field
+                        wip = wip.end()?;
+                    } else if let Some(flattened_enum) = &field_map.flattened_enum {
+                        // Flattened enum: the child element is the enum variant
+                        // Let deserialize_enum handle the variant matching
+                        trace!(
+                            field_idx = flattened_enum.field_idx,
+                            tag = %tag,
+                            "matched flattened enum field"
+                        );
+
+                        // Need to leave any active sequence first
+                        if let Some(prev_idx) = active_seq_idx {
+                            trace!(prev_idx, "leaving active flat sequence for flattened enum");
+                            wip = wip.end()?;
+                            if let Some(SeqState::List { is_smart_ptr: true }) =
+                                started_seqs.get(&prev_idx)
+                            {
+                                wip = wip.end()?;
+                            }
+                            active_seq_idx = None;
+                        }
+                        if elements_list_started {
+                            trace!("leaving elements list for flattened enum");
+                            wip = wip.end()?;
+                            elements_list_started = false;
+                        }
+
+                        // Enter the flattened enum field and deserialize the enum
+                        // (the element we're looking at IS the enum variant element)
+                        wip = wip
+                            .begin_nth_field(flattened_enum.field_idx)?
+                            .deserialize_with(self)?
+                            .end()?;
                     } else if field_map.elements_field.is_some() {
                         // No specific field matched, add to the elements collection
                         // Lazily start the elements list if not already started
@@ -454,17 +553,25 @@ where
             wip = wip.end()?;
         }
 
-        if let Some(info) = &field_map.text_field
-            && (!text_content.is_empty() || !elements_list_started)
-        {
-            trace!(idx = info.idx, field_name = %info.field.name, text_len = text_content.len(), "setting text field");
-            wip = wip.begin_nth_field(info.idx)?;
-            wip = self.set_string_value(wip, Cow::Owned(text_content))?;
-            wip = wip.end()?;
+        if let Some(info) = &field_map.text_field {
+            // Only set the text field if there's actual content
+            // For Option<String>, empty content should remain None (the default)
+            if !text_content.is_empty() {
+                trace!(idx = info.idx, field_name = %info.field.name, text_len = text_content.len(), "setting text field");
+                wip = wip.begin_nth_field(info.idx)?;
+                wip = self.set_string_value(wip, Cow::Owned(text_content))?;
+                wip = wip.end()?;
+            }
         }
 
         self.parser.expect_children_end()?;
         self.parser.expect_node_end()?;
+
+        // Finish deferred mode if we enabled it
+        if using_deferred {
+            trace!("finishing deferred mode for struct with flatten");
+            wip = wip.finish_deferred()?;
+        }
 
         trace!(tag = %_tag, "struct deserialization complete");
         Ok(wip)
@@ -506,24 +613,36 @@ where
                     }
                 };
 
-                let variant_idx = enum_def
-                    .variants
-                    .iter()
-                    .position(|v| {
-                        let variant_name = v
-                            .get_builtin_attr("rename")
-                            .and_then(|a| a.get_as::<&str>().copied())
-                            .unwrap_or(v.name);
-                        variant_name.eq_ignore_ascii_case(&tag)
-                    })
-                    .or_else(|| enum_def.variants.iter().position(|v| v.is_custom_element()))
-                    .ok_or_else(|| DomDeserializeError::UnknownElement {
-                        tag: tag.to_string(),
-                    })?;
+                // For untagged enums, the element tag is the enum's name (not a variant name)
+                // We need to select the first variant and deserialize the content into it
+                let is_untagged = wip.shape().is_untagged();
+
+                let variant_idx = if is_untagged {
+                    // For untagged enums, select the first (and typically only) variant
+                    // The element tag should match the enum's rename, not a variant name
+                    trace!(tag = %tag, "untagged enum - selecting first variant");
+                    0
+                } else {
+                    // For tagged enums, match the element tag against variant names
+                    enum_def
+                        .variants
+                        .iter()
+                        .position(|v| {
+                            let variant_name = v
+                                .get_builtin_attr("rename")
+                                .and_then(|a| a.get_as::<&str>().copied())
+                                .unwrap_or(v.name);
+                            variant_name.eq_ignore_ascii_case(&tag)
+                        })
+                        .or_else(|| enum_def.variants.iter().position(|v| v.is_custom_element()))
+                        .ok_or_else(|| DomDeserializeError::UnknownElement {
+                            tag: tag.to_string(),
+                        })?
+                };
 
                 let variant = &enum_def.variants[variant_idx];
                 wip = wip.select_nth_variant(variant_idx)?;
-                trace!(variant_name = variant.name, variant_kind = ?variant.data.kind, "selected variant");
+                trace!(variant_name = variant.name, variant_kind = ?variant.data.kind, is_untagged, "selected variant");
 
                 // Handle variant based on its kind
                 match variant.data.kind {
