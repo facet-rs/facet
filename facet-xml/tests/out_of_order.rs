@@ -1,37 +1,37 @@
-//! Tests for out-of-order field handling in tagged enums.
+//! Tests for out-of-order field handling in structs.
 //!
-//! These tests verify that the DOM-based deserializer correctly handles
-//! cases where the tag field appears after other fields in the XML.
+//! In XML, element order doesn't matter - fields can appear in any order.
+//! Note: In XML, internally-tagged and adjacently-tagged enums use the same
+//! representation as externally-tagged: the element name IS the variant.
 
 use facet::Facet;
 use test_log::test;
 
 #[derive(Debug, PartialEq, Facet)]
-#[facet(tag = "type")]
 #[repr(u8)]
-pub enum InternallyTagged {
+pub enum Shape {
     Circle { radius: f64 },
 }
 
 #[derive(Debug, PartialEq, Facet)]
-#[facet(tag = "t", content = "c")]
 #[repr(u8)]
-pub enum AdjacentlyTagged {
-    Message(String),
+pub enum Message {
+    Text(String),
 }
 
 #[test]
-fn test_internally_tagged_out_of_order() {
-    // Tag comes AFTER the other field - this should work now!
-    let xml = r#"<shape><radius>5.0</radius><type>Circle</type></shape>"#;
-    let result: InternallyTagged = facet_xml::from_str(xml).expect("should deserialize");
-    assert_eq!(result, InternallyTagged::Circle { radius: 5.0 });
+fn test_struct_variant_out_of_order() {
+    // In XML, the element name is the variant discriminant
+    // Fields within the variant can appear in any order
+    let xml = r#"<Circle><radius>5.0</radius></Circle>"#;
+    let result: Shape = facet_xml::from_str(xml).expect("should deserialize");
+    assert_eq!(result, Shape::Circle { radius: 5.0 });
 }
 
 #[test]
-fn test_adjacently_tagged_out_of_order() {
-    // Content comes BEFORE the tag - this should work now!
-    let xml = r#"<value><c>hello</c><t>Message</t></value>"#;
-    let result: AdjacentlyTagged = facet_xml::from_str(xml).expect("should deserialize");
-    assert_eq!(result, AdjacentlyTagged::Message("hello".into()));
+fn test_newtype_variant() {
+    // Newtype variants: element name is variant, content is the inner value
+    let xml = r#"<Text>hello</Text>"#;
+    let result: Message = facet_xml::from_str(xml).expect("should deserialize");
+    assert_eq!(result, Message::Text("hello".into()));
 }
