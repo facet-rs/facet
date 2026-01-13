@@ -93,6 +93,36 @@ impl TreeBuilder {
 
     /// Push a value to the current context.
     fn push_value(&mut self, value: Value) {
+        // First, check if we're in an Entry frame with a key - if so, this value completes the entry
+        if let Some(BuilderFrame::Entry { key: Some(_), .. }) = self.stack.last() {
+            // Pop the entry frame and add the complete entry to parent
+            if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.pop() {
+                let key_val = key.unwrap();
+                match self.stack.last_mut() {
+                    Some(BuilderFrame::Object { entries, .. }) => {
+                        entries.push(Entry {
+                            key: key_val,
+                            value,
+                            doc_comment,
+                        });
+                    }
+                    _ => {
+                        self.root_entries.push(Entry {
+                            key: key_val,
+                            value,
+                            doc_comment,
+                        });
+                    }
+                }
+                // Re-push an empty entry frame for potential continuation
+                self.stack.push(BuilderFrame::Entry {
+                    key: None,
+                    doc_comment: None,
+                });
+            }
+            return;
+        }
+
         match self.stack.last_mut() {
             Some(BuilderFrame::Object {
                 entries,
@@ -119,7 +149,7 @@ impl TreeBuilder {
                     // This is the key
                     *key = Some(value);
                 }
-                // If key is already set, this is the value - handled elsewhere
+                // If key is already set, this is the value - handled by the check above
             }
             None => {
                 // Root level - treat as entry in implicit object

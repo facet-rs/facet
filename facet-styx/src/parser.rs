@@ -100,11 +100,12 @@ impl<'de> StyxParser<'de> {
         let mut found = false;
         loop {
             if let Some(token) = self.peek_token()
-                && token.kind == TokenKind::Newline {
-                    self.next_token();
-                    found = true;
-                    continue;
-                }
+                && token.kind == TokenKind::Newline
+            {
+                self.next_token();
+                found = true;
+                continue;
+            }
             break;
         }
         found
@@ -182,9 +183,10 @@ impl<'de> StyxParser<'de> {
                                 hex.push(chars.next().unwrap());
                             }
                             if let Ok(code) = u32::from_str_radix(&hex, 16)
-                                && let Some(ch) = char::from_u32(code) {
-                                    result.push(ch);
-                                }
+                                && let Some(ch) = char::from_u32(code)
+                            {
+                                result.push(ch);
+                            }
                         }
                     }
                     Some(c) => {
@@ -277,12 +279,17 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         // Check if followed by identifier
                         if let Some(next) = self.peek_token()
                             && next.kind == TokenKind::BareScalar
-                                && next.span.start == token.span.end
-                            {
-                                // Tag @name - emit as variant
-                                let name_token = self.next_token();
-                                return Ok(Some(ParseEvent::VariantTag(name_token.text)));
-                            }
+                            && next.span.start == token.span.end
+                        {
+                            // Tag @name - for enum deserialization, facet-format expects:
+                            // - Unit variants: a string scalar with the variant name
+                            // - Struct variants: { VariantName: { ... } }
+                            // So we emit the tag name as a string scalar
+                            let name_token = self.next_token();
+                            return Ok(Some(ParseEvent::Scalar(ScalarValue::Str(Cow::Borrowed(
+                                name_token.text,
+                            )))));
+                        }
                         // Just @ - unit/null
                         return Ok(Some(ParseEvent::Scalar(ScalarValue::Null)));
                     }
@@ -437,11 +444,14 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         self.next_token();
                         if let Some(next) = self.peek_token()
                             && next.kind == TokenKind::BareScalar
-                                && next.span.start == token.span.end
-                            {
-                                let name_token = self.next_token();
-                                return Ok(Some(ParseEvent::VariantTag(name_token.text)));
-                            }
+                            && next.span.start == token.span.end
+                        {
+                            // Tag @name - emit as string scalar for enum deserialization
+                            let name_token = self.next_token();
+                            return Ok(Some(ParseEvent::Scalar(ScalarValue::Str(Cow::Borrowed(
+                                name_token.text,
+                            )))));
+                        }
                         return Ok(Some(ParseEvent::Scalar(ScalarValue::Null)));
                     }
                     _ => {}
@@ -474,7 +484,13 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                     }
                     depth -= 1;
                 }
-                Some(ParseEvent::Scalar(_)) | Some(ParseEvent::VariantTag(_)) => {
+                Some(ParseEvent::Scalar(_)) => {
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                Some(ParseEvent::VariantTag(_)) => {
+                    // We no longer emit VariantTag, but need to handle it for exhaustiveness
                     if depth == 0 {
                         break;
                     }
