@@ -256,7 +256,7 @@ public final class TestbedClient: TestbedCaller {
 
         let response = try await connection.call(methodId: 0x855b3a25d97bfefd, payload: payload)
         var offset = 0
-        let result = try decodeI64(from: payload, offset: &offset)
+        let result = try decodeI64(from: response, offset: &offset)
         return result
     }
 

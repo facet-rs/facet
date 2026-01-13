@@ -11,6 +11,12 @@ description = "High-performance RPC framework with shared memory transport"
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[features]
+default = []
+# Enable JIT compilation for faster postcard serialization.
+# This adds cranelift as a dependency, increasing compile time and binary size.
+jit = ["facet-postcard/jit"]
+
 [dependencies]
 # Re-exported crates for macro-generated code
 roam-session = { path = "../roam-session" }

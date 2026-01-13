@@ -47,7 +47,7 @@ libc = "0.2.180"
 # facet ecosystem
 facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino", "reflect"] }
 facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["jit", "camino"] }
+facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
 facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-value = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-cargo-toml = { git = "https://github.com/bearcove/facet-cargo-toml", branch = "main" }

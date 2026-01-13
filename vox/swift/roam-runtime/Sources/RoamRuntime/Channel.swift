@@ -214,25 +214,23 @@ public actor ChannelRegistry {
     }
 
     /// Register a channel and return its receiver.
-    public func register(_ channelId: ChannelId) -> ChannelReceiver {
+    /// This is async to ensure pending data/close are delivered synchronously
+    /// before returning, avoiding race conditions with the handler.
+    public func register(_ channelId: ChannelId) async -> ChannelReceiver {
         let receiver = ChannelReceiver()
         receivers[channelId] = receiver
         knownChannels.insert(channelId)
 
-        // Deliver pending data
+        // Deliver pending data synchronously - no Task spawning!
         if let pending = pendingData.removeValue(forKey: channelId) {
-            Task {
-                for data in pending {
-                    await receiver.deliver(data)
-                }
+            for data in pending {
+                await receiver.deliver(data)
             }
         }
 
-        // Deliver pending close
+        // Deliver pending close synchronously after all data
         if pendingClose.remove(channelId) != nil {
-            Task {
-                await receiver.deliverClose()
-            }
+            await receiver.deliverClose()
         }
 
         return receiver

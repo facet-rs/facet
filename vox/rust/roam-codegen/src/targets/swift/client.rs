@@ -5,7 +5,7 @@
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use roam_schema::{MethodDetail, ServiceDetail, is_rx, is_tx};
 
-use super::decode::{generate_decode_stmt, generate_decode_stmt_from};
+use super::decode::generate_decode_stmt_from;
 use super::encode::generate_encode_expr;
 use super::types::{format_doc, is_stream, swift_type_client_arg, swift_type_client_return};
 use crate::code_writer::CodeWriter;
@@ -267,7 +267,7 @@ fn generate_streaming_client_body(
         )
         .unwrap();
         w.writeln("var offset = 0").unwrap();
-        let decode_stmt = generate_decode_stmt(method.return_type, "result", "");
+        let decode_stmt = generate_decode_stmt_from(method.return_type, "result", "", "response");
         for line in decode_stmt.lines() {
             w.writeln(line).unwrap();
         }
