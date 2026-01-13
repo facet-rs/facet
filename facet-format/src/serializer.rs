@@ -5,7 +5,7 @@ use alloc::string::String;
 use core::fmt::Debug;
 use core::fmt::Write as _;
 
-use facet_core::{Def, DynDateTimeKind, DynValueKind, ScalarType, StructKind};
+use facet_core::{Def, DynDateTimeKind, DynValueKind, ScalarType, Shape, StructKind};
 use facet_reflect::{HasFields as _, Peek, ReflectError};
 
 use crate::ScalarValue;
@@ -1270,4 +1270,691 @@ where
     }
 
     result
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shape-guided serialization of dynamic values
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Serialize a dynamic value (like `facet_value::Value`) according to a target shape.
+///
+/// This is the inverse of `FormatDeserializer::deserialize_with_shape`. It allows serializing
+/// a `Value` as if it were a typed value matching the shape, without the dynamic value's
+/// type discriminants.
+///
+/// This is useful for non-self-describing formats like postcard where you want to:
+/// 1. Parse JSON into a `Value`
+/// 2. Serialize it to postcard bytes matching a typed schema
+///
+/// # Arguments
+///
+/// * `serializer` - The format serializer to use
+/// * `value` - A `Peek` into a dynamic value type (like `facet_value::Value`)
+/// * `target_shape` - The shape describing the expected wire format
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The value is not a dynamic value type
+/// - The value's structure doesn't match the target shape
+pub fn serialize_value_with_shape<S>(
+    serializer: &mut S,
+    value: Peek<'_, '_>,
+    target_shape: &'static Shape,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    let dynamic = value.into_dynamic_value().map_err(|_| {
+        SerializeError::Unsupported(Cow::Borrowed(
+            "serialize_value_with_shape requires a DynamicValue type",
+        ))
+    })?;
+
+    serialize_dynamic_with_shape(serializer, dynamic, target_shape, value.shape())
+}
+
+fn serialize_dynamic_with_shape<S>(
+    serializer: &mut S,
+    dynamic: facet_reflect::PeekDynamicValue<'_, '_>,
+    target_shape: &'static Shape,
+    value_shape: &'static Shape,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    use facet_core::{ListDef, OptionDef, ScalarType as CoreScalarType, Type, UserType};
+
+    // Handle smart pointers - unwrap to the inner shape
+    if let Def::Pointer(ptr_def) = target_shape.def
+        && let Some(pointee) = ptr_def.pointee
+    {
+        return serialize_dynamic_with_shape(serializer, dynamic, pointee, value_shape);
+    }
+
+    // Handle transparent wrappers via .inner
+    if let Some(inner_shape) = target_shape.inner {
+        // Skip collection types that have .inner for variance but aren't transparent wrappers
+        if !matches!(
+            target_shape.def,
+            Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+        ) {
+            return serialize_dynamic_with_shape(serializer, dynamic, inner_shape, value_shape);
+        }
+    }
+
+    // Handle Option<T>
+    if let Def::Option(OptionDef { t: inner_shape, .. }) = target_shape.def {
+        return serialize_option_from_dynamic(serializer, dynamic, inner_shape, value_shape);
+    }
+
+    // Handle List/Vec
+    if let Def::List(ListDef { t: item_shape, .. }) = target_shape.def {
+        return serialize_list_from_dynamic(serializer, dynamic, item_shape, value_shape);
+    }
+
+    // Handle Array [T; N]
+    if let Def::Array(array_def) = target_shape.def {
+        return serialize_array_from_dynamic(serializer, dynamic, array_def.t, value_shape);
+    }
+
+    // Handle Map
+    if let Def::Map(map_def) = target_shape.def {
+        return serialize_map_from_dynamic(
+            serializer,
+            dynamic,
+            map_def.k,
+            map_def.v,
+            value_shape,
+        );
+    }
+
+    // Handle scalars
+    if let Some(scalar_type) = CoreScalarType::try_from_shape(target_shape) {
+        return serialize_scalar_from_dynamic(serializer, dynamic, scalar_type);
+    }
+
+    // Handle structs and enums by Type
+    match target_shape.ty {
+        Type::User(UserType::Struct(struct_def)) => {
+            serialize_struct_from_dynamic(serializer, dynamic, struct_def, value_shape)
+        }
+        Type::User(UserType::Enum(enum_def)) => {
+            serialize_enum_from_dynamic(serializer, dynamic, enum_def, target_shape, value_shape)
+        }
+        _ => Err(SerializeError::Unsupported(Cow::Owned(alloc::format!(
+            "unsupported target shape for serialize_value_with_shape: {}",
+            target_shape
+        )))),
+    }
+}
+
+fn serialize_option_from_dynamic<S>(
+    serializer: &mut S,
+    dynamic: facet_reflect::PeekDynamicValue<'_, '_>,
+    inner_shape: &'static Shape,
+    value_shape: &'static Shape,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    if dynamic.kind() == DynValueKind::Null {
+        serializer.serialize_none().map_err(SerializeError::Backend)
+    } else {
+        serializer
+            .begin_option_some()
+            .map_err(SerializeError::Backend)?;
+        serialize_dynamic_with_shape(serializer, dynamic, inner_shape, value_shape)
+    }
+}
+
+fn serialize_list_from_dynamic<S>(
+    serializer: &mut S,
+    dynamic: facet_reflect::PeekDynamicValue<'_, '_>,
+    item_shape: &'static Shape,
+    value_shape: &'static Shape,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    let len = dynamic.array_len().ok_or_else(|| {
+        SerializeError::Unsupported(Cow::Borrowed(
+            "expected array value for list/vec target shape",
+        ))
+    })?;
+
+    serializer
+        .begin_seq_with_len(len)
+        .map_err(SerializeError::Backend)?;
+
+    if let Some(iter) = dynamic.array_iter() {
+        for elem in iter {
+            let elem_dyn = elem.into_dynamic_value().map_err(|_| {
+                SerializeError::Internal(Cow::Borrowed("array element is not a dynamic value"))
+            })?;
+            serialize_dynamic_with_shape(serializer, elem_dyn, item_shape, value_shape)?;
+        }
+    }
+
+    serializer.end_seq().map_err(SerializeError::Backend)
+}
+
+fn serialize_array_from_dynamic<S>(
+    serializer: &mut S,
+    dynamic: facet_reflect::PeekDynamicValue<'_, '_>,
+    item_shape: &'static Shape,
+    value_shape: &'static Shape,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    // Arrays don't have length prefix in postcard
+    serializer.begin_seq().map_err(SerializeError::Backend)?;
+
+    if let Some(iter) = dynamic.array_iter() {
+        for elem in iter {
+            let elem_dyn = elem.into_dynamic_value().map_err(|_| {
+                SerializeError::Internal(Cow::Borrowed("array element is not a dynamic value"))
+            })?;
+            serialize_dynamic_with_shape(serializer, elem_dyn, item_shape, value_shape)?;
+        }
+    }
+
+    serializer.end_seq().map_err(SerializeError::Backend)
+}
+
+fn serialize_map_from_dynamic<S>(
+    serializer: &mut S,
+    dynamic: facet_reflect::PeekDynamicValue<'_, '_>,
+    key_shape: &'static Shape,
+    value_shape_inner: &'static Shape,
+    value_shape: &'static Shape,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    let len = dynamic.object_len().ok_or_else(|| {
+        SerializeError::Unsupported(Cow::Borrowed("expected object value for map target shape"))
+    })?;
+
+    match serializer.map_encoding() {
+        MapEncoding::Pairs => {
+            serializer
+                .begin_map_with_len(len)
+                .map_err(SerializeError::Backend)?;
+
+            if let Some(iter) = dynamic.object_iter() {
+                for (key, val) in iter {
+                    // Serialize key according to key_shape
+                    serialize_string_as_scalar(serializer, key, key_shape)?;
+                    // Serialize value
+                    let val_dyn = val.into_dynamic_value().map_err(|_| {
+                        SerializeError::Internal(Cow::Borrowed(
+                            "object value is not a dynamic value",
+                        ))
+                    })?;
+                    serialize_dynamic_with_shape(
+                        serializer,
+                        val_dyn,
+                        value_shape_inner,
+                        value_shape,
+                    )?;
+                }
+            }
+
+            serializer.end_map().map_err(SerializeError::Backend)
+        }
+        MapEncoding::Struct => {
+            serializer.begin_struct().map_err(SerializeError::Backend)?;
+
+            if let Some(iter) = dynamic.object_iter() {
+                for (key, val) in iter {
+                    serializer.field_key(key).map_err(SerializeError::Backend)?;
+                    let val_dyn = val.into_dynamic_value().map_err(|_| {
+                        SerializeError::Internal(Cow::Borrowed(
+                            "object value is not a dynamic value",
+                        ))
+                    })?;
+                    serialize_dynamic_with_shape(
+                        serializer,
+                        val_dyn,
+                        value_shape_inner,
+                        value_shape,
+                    )?;
+                }
+            }
+
+            serializer.end_struct().map_err(SerializeError::Backend)
+        }
+    }
+}
+
+fn serialize_string_as_scalar<S>(
+    serializer: &mut S,
+    s: &str,
+    _key_shape: &'static Shape,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    // For now, serialize string keys directly
+    // TODO: Handle non-string key types if needed
+    serializer
+        .scalar(ScalarValue::Str(Cow::Borrowed(s)))
+        .map_err(SerializeError::Backend)
+}
+
+fn serialize_scalar_from_dynamic<S>(
+    serializer: &mut S,
+    dynamic: facet_reflect::PeekDynamicValue<'_, '_>,
+    scalar_type: facet_core::ScalarType,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    use facet_core::ScalarType as ST;
+
+    match scalar_type {
+        ST::Unit => serializer
+            .scalar(ScalarValue::Null)
+            .map_err(SerializeError::Backend),
+        ST::Bool => {
+            let v = dynamic.as_bool().ok_or_else(|| {
+                SerializeError::Unsupported(Cow::Borrowed("expected bool value"))
+            })?;
+            serializer
+                .scalar(ScalarValue::Bool(v))
+                .map_err(SerializeError::Backend)
+        }
+        ST::Char => {
+            let s = dynamic.as_str().ok_or_else(|| {
+                SerializeError::Unsupported(Cow::Borrowed("expected string value for char"))
+            })?;
+            let c = s.chars().next().ok_or_else(|| {
+                SerializeError::Unsupported(Cow::Borrowed("expected non-empty string for char"))
+            })?;
+            serializer
+                .scalar(ScalarValue::Char(c))
+                .map_err(SerializeError::Backend)
+        }
+        ST::Str | ST::String | ST::CowStr => {
+            let s = dynamic.as_str().ok_or_else(|| {
+                SerializeError::Unsupported(Cow::Borrowed("expected string value"))
+            })?;
+            serializer
+                .scalar(ScalarValue::Str(Cow::Borrowed(s)))
+                .map_err(SerializeError::Backend)
+        }
+        ST::U8 | ST::U16 | ST::U32 | ST::U64 | ST::USize => {
+            let n = dynamic.as_u64().ok_or_else(|| {
+                SerializeError::Unsupported(Cow::Borrowed("expected unsigned integer value"))
+            })?;
+            serializer
+                .scalar(ScalarValue::U64(n))
+                .map_err(SerializeError::Backend)
+        }
+        ST::U128 => {
+            let n = dynamic.as_u64().ok_or_else(|| {
+                SerializeError::Unsupported(Cow::Borrowed("expected unsigned integer value"))
+            })?;
+            serializer
+                .scalar(ScalarValue::U128(n as u128))
+                .map_err(SerializeError::Backend)
+        }
+        ST::I8 | ST::I16 | ST::I32 | ST::I64 | ST::ISize => {
+            let n = dynamic.as_i64().ok_or_else(|| {
+                SerializeError::Unsupported(Cow::Borrowed("expected signed integer value"))
+            })?;
+            serializer
+                .scalar(ScalarValue::I64(n))
+                .map_err(SerializeError::Backend)
+        }
+        ST::I128 => {
+            let n = dynamic.as_i64().ok_or_else(|| {
+                SerializeError::Unsupported(Cow::Borrowed("expected signed integer value"))
+            })?;
+            serializer
+                .scalar(ScalarValue::I128(n as i128))
+                .map_err(SerializeError::Backend)
+        }
+        ST::F32 | ST::F64 => {
+            let n = dynamic.as_f64().ok_or_else(|| {
+                SerializeError::Unsupported(Cow::Borrowed("expected float value"))
+            })?;
+            serializer
+                .scalar(ScalarValue::F64(n))
+                .map_err(SerializeError::Backend)
+        }
+        _ => Err(SerializeError::Unsupported(Cow::Owned(alloc::format!(
+            "unsupported scalar type: {:?}",
+            scalar_type
+        )))),
+    }
+}
+
+fn serialize_struct_from_dynamic<S>(
+    serializer: &mut S,
+    dynamic: facet_reflect::PeekDynamicValue<'_, '_>,
+    struct_def: facet_core::StructType,
+    value_shape: &'static Shape,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    let is_tuple = matches!(
+        struct_def.kind,
+        StructKind::Tuple | StructKind::TupleStruct
+    );
+
+    if is_tuple {
+        // For tuples, expect an array value
+        serializer.begin_seq().map_err(SerializeError::Backend)?;
+
+        let iter = dynamic.array_iter().ok_or_else(|| {
+            SerializeError::Unsupported(Cow::Borrowed("expected array value for tuple"))
+        })?;
+
+        for (field, elem) in struct_def.fields.iter().zip(iter) {
+            let elem_dyn = elem.into_dynamic_value().map_err(|_| {
+                SerializeError::Internal(Cow::Borrowed("tuple element is not a dynamic value"))
+            })?;
+            serialize_dynamic_with_shape(serializer, elem_dyn, field.shape(), value_shape)?;
+        }
+
+        serializer.end_seq().map_err(SerializeError::Backend)
+    } else {
+        // For named structs, expect an object value
+        let field_mode = serializer.struct_field_mode();
+
+        serializer.begin_struct().map_err(SerializeError::Backend)?;
+
+        for field in struct_def.fields {
+            // Skip metadata fields
+            if field.is_metadata() {
+                continue;
+            }
+
+            let field_name = field.name;
+            let field_value = dynamic.object_get(field_name).ok_or_else(|| {
+                SerializeError::Unsupported(Cow::Owned(alloc::format!(
+                    "missing field '{}' in object",
+                    field_name
+                )))
+            })?;
+
+            if field_mode == StructFieldMode::Named {
+                serializer
+                    .field_key(field_name)
+                    .map_err(SerializeError::Backend)?;
+            }
+
+            let field_dyn = field_value.into_dynamic_value().map_err(|_| {
+                SerializeError::Internal(Cow::Borrowed("field value is not a dynamic value"))
+            })?;
+            serialize_dynamic_with_shape(serializer, field_dyn, field.shape(), value_shape)?;
+        }
+
+        serializer.end_struct().map_err(SerializeError::Backend)
+    }
+}
+
+fn serialize_enum_from_dynamic<S>(
+    serializer: &mut S,
+    dynamic: facet_reflect::PeekDynamicValue<'_, '_>,
+    enum_def: facet_core::EnumType,
+    target_shape: &'static Shape,
+    value_shape: &'static Shape,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    // For index-based encoding (postcard), we need to:
+    // 1. Determine the variant from the Value
+    // 2. Emit the variant index
+    // 3. Serialize the variant's payload
+
+    let use_index = serializer.enum_variant_encoding() == EnumVariantEncoding::Index;
+
+    match dynamic.kind() {
+        // Unit variant represented as a string
+        DynValueKind::String => {
+            let variant_name = dynamic.as_str().ok_or_else(|| {
+                SerializeError::Internal(Cow::Borrowed("expected string for unit variant"))
+            })?;
+
+            let (variant_index, variant) = enum_def
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, v)| v.name == variant_name)
+                .ok_or_else(|| {
+                    SerializeError::Unsupported(Cow::Owned(alloc::format!(
+                        "unknown variant '{}'",
+                        variant_name
+                    )))
+                })?;
+
+            if use_index {
+                serializer
+                    .begin_enum_variant(variant_index, variant.name)
+                    .map_err(SerializeError::Backend)?;
+                // Unit variant has no payload
+                Ok(())
+            } else {
+                serializer
+                    .scalar(ScalarValue::Str(Cow::Borrowed(variant.name)))
+                    .map_err(SerializeError::Backend)
+            }
+        }
+
+        // Variant with payload represented as object { "VariantName": payload }
+        DynValueKind::Object => {
+            // For externally tagged enums, the object has a single key = variant name
+            let obj_len = dynamic.object_len().unwrap_or(0);
+            if obj_len != 1 {
+                return Err(SerializeError::Unsupported(Cow::Owned(alloc::format!(
+                    "expected single-key object for enum variant, got {} keys",
+                    obj_len
+                ))));
+            }
+
+            let (variant_name, payload) = dynamic.object_get_entry(0).ok_or_else(|| {
+                SerializeError::Internal(Cow::Borrowed("expected object entry for enum variant"))
+            })?;
+
+            let (variant_index, variant) = enum_def
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, v)| v.name == variant_name)
+                .ok_or_else(|| {
+                    SerializeError::Unsupported(Cow::Owned(alloc::format!(
+                        "unknown variant '{}'",
+                        variant_name
+                    )))
+                })?;
+
+            let payload_dyn = payload.into_dynamic_value().map_err(|_| {
+                SerializeError::Internal(Cow::Borrowed("variant payload is not a dynamic value"))
+            })?;
+
+            if use_index {
+                serializer
+                    .begin_enum_variant(variant_index, variant.name)
+                    .map_err(SerializeError::Backend)?;
+
+                // Serialize payload based on variant kind
+                match variant.data.kind {
+                    StructKind::Unit => {
+                        // No payload to serialize
+                    }
+                    StructKind::TupleStruct | StructKind::Tuple => {
+                        if variant.data.fields.len() == 1 {
+                            // Newtype variant - serialize the single field directly
+                            serialize_dynamic_with_shape(
+                                serializer,
+                                payload_dyn,
+                                variant.data.fields[0].shape(),
+                                value_shape,
+                            )?;
+                        } else {
+                            // Multi-field tuple variant - expect array
+                            let iter = payload_dyn.array_iter().ok_or_else(|| {
+                                SerializeError::Unsupported(Cow::Borrowed(
+                                    "expected array for tuple variant payload",
+                                ))
+                            })?;
+
+                            for (field, elem) in variant.data.fields.iter().zip(iter) {
+                                let elem_dyn = elem.into_dynamic_value().map_err(|_| {
+                                    SerializeError::Internal(Cow::Borrowed(
+                                        "tuple element is not a dynamic value",
+                                    ))
+                                })?;
+                                serialize_dynamic_with_shape(
+                                    serializer,
+                                    elem_dyn,
+                                    field.shape(),
+                                    value_shape,
+                                )?;
+                            }
+                        }
+                    }
+                    StructKind::Struct => {
+                        // Struct variant - expect object
+                        for field in variant.data.fields {
+                            let field_value = payload_dyn.object_get(field.name).ok_or_else(|| {
+                                SerializeError::Unsupported(Cow::Owned(alloc::format!(
+                                    "missing field '{}' in struct variant",
+                                    field.name
+                                )))
+                            })?;
+                            let field_dyn = field_value.into_dynamic_value().map_err(|_| {
+                                SerializeError::Internal(Cow::Borrowed(
+                                    "field value is not a dynamic value",
+                                ))
+                            })?;
+                            serialize_dynamic_with_shape(
+                                serializer,
+                                field_dyn,
+                                field.shape(),
+                                value_shape,
+                            )?;
+                        }
+                    }
+                }
+
+                Ok(())
+            } else {
+                // Externally tagged representation
+                serializer.begin_struct().map_err(SerializeError::Backend)?;
+                serializer
+                    .field_key(variant.name)
+                    .map_err(SerializeError::Backend)?;
+
+                match variant.data.kind {
+                    StructKind::Unit => {
+                        serializer
+                            .scalar(ScalarValue::Null)
+                            .map_err(SerializeError::Backend)?;
+                    }
+                    StructKind::TupleStruct | StructKind::Tuple => {
+                        if variant.data.fields.len() == 1 {
+                            serialize_dynamic_with_shape(
+                                serializer,
+                                payload_dyn,
+                                variant.data.fields[0].shape(),
+                                value_shape,
+                            )?;
+                        } else {
+                            serializer.begin_seq().map_err(SerializeError::Backend)?;
+                            let iter = payload_dyn.array_iter().ok_or_else(|| {
+                                SerializeError::Unsupported(Cow::Borrowed(
+                                    "expected array for tuple variant",
+                                ))
+                            })?;
+                            for (field, elem) in variant.data.fields.iter().zip(iter) {
+                                let elem_dyn = elem.into_dynamic_value().map_err(|_| {
+                                    SerializeError::Internal(Cow::Borrowed(
+                                        "element is not a dynamic value",
+                                    ))
+                                })?;
+                                serialize_dynamic_with_shape(
+                                    serializer,
+                                    elem_dyn,
+                                    field.shape(),
+                                    value_shape,
+                                )?;
+                            }
+                            serializer.end_seq().map_err(SerializeError::Backend)?;
+                        }
+                    }
+                    StructKind::Struct => {
+                        serializer.begin_struct().map_err(SerializeError::Backend)?;
+                        for field in variant.data.fields {
+                            let field_value = payload_dyn.object_get(field.name).ok_or_else(|| {
+                                SerializeError::Unsupported(Cow::Owned(alloc::format!(
+                                    "missing field '{}'",
+                                    field.name
+                                )))
+                            })?;
+                            serializer
+                                .field_key(field.name)
+                                .map_err(SerializeError::Backend)?;
+                            let field_dyn = field_value.into_dynamic_value().map_err(|_| {
+                                SerializeError::Internal(Cow::Borrowed(
+                                    "field is not a dynamic value",
+                                ))
+                            })?;
+                            serialize_dynamic_with_shape(
+                                serializer,
+                                field_dyn,
+                                field.shape(),
+                                value_shape,
+                            )?;
+                        }
+                        serializer.end_struct().map_err(SerializeError::Backend)?;
+                    }
+                }
+
+                serializer.end_struct().map_err(SerializeError::Backend)
+            }
+        }
+
+        // Null could be a unit variant named "Null" (untagged representation)
+        DynValueKind::Null => {
+            // Check if there's a Null variant or fallback for Option-like enums
+            if let Some((variant_index, variant)) = enum_def
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, v)| v.name.eq_ignore_ascii_case("null") || v.name == "None")
+            {
+                if use_index {
+                    serializer
+                        .begin_enum_variant(variant_index, variant.name)
+                        .map_err(SerializeError::Backend)?;
+                    Ok(())
+                } else {
+                    serializer
+                        .scalar(ScalarValue::Str(Cow::Borrowed(variant.name)))
+                        .map_err(SerializeError::Backend)
+                }
+            } else {
+                Err(SerializeError::Unsupported(Cow::Borrowed(
+                    "null value for enum without null/None variant",
+                )))
+            }
+        }
+
+        _ => {
+            // For untagged enums, we might need to try matching variants
+            // This is a simplified implementation - could be extended
+            let _ = target_shape; // Suppress unused warning
+            Err(SerializeError::Unsupported(Cow::Owned(alloc::format!(
+                "unsupported dynamic value kind {:?} for enum serialization",
+                dynamic.kind()
+            ))))
+        }
+    }
 }
