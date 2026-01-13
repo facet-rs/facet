@@ -139,7 +139,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// to be set correctly for `require_full_initialization` to pass.
     ///
     /// `begin_array` does not push a new frame to the stack.
-    pub fn begin_array(mut self) -> Result<Self, ReflectError> {
+    pub fn init_array(mut self) -> Result<Self, ReflectError> {
         crate::trace!("begin_array()");
         let frame = self.frames_mut().last_mut().unwrap();
 

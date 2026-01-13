@@ -1086,7 +1086,7 @@ where
         // Transition to Array tracker state. This is important for empty arrays
         // like [u8; 0] which have no elements to initialize but still need
         // their tracker state set correctly for require_full_initialization to pass.
-        wip = wip.begin_array().map_err(DeserializeError::reflect)?;
+        wip = wip.init_array().map_err(DeserializeError::reflect)?;
 
         let mut index = 0usize;
         loop {

@@ -241,7 +241,7 @@ where
                                             .insert(info.idx, SeqState::List { is_smart_ptr });
                                     } else {
                                         // Array
-                                        wip = wip.begin_array()?;
+                                        wip = wip.init_array()?;
                                         started_seqs
                                             .insert(info.idx, SeqState::Array { next_idx: 0 });
                                     }
@@ -257,7 +257,7 @@ where
                                         }
                                         wip = wip.init_list()?;
                                     } else {
-                                        wip = wip.begin_array()?;
+                                        wip = wip.init_array()?;
                                     }
                                     active_seq_idx = Some(info.idx);
                                 }
