@@ -392,6 +392,12 @@ where
         if elements_list_started {
             trace!(path = %wip.path(), "ending elements list");
             wip = wip.end()?;
+        } else if let Some(info) = &field_map.elements_field {
+            // Elements list was never started (no unmatched elements) - initialize as empty
+            trace!(idx = info.idx, field_name = %info.field.name, "initializing empty elements list");
+            wip = wip.begin_nth_field(info.idx)?;
+            wip = wip.init_list()?;
+            wip = wip.end()?;
         }
 
         if let Some(info) = &field_map.text_field
