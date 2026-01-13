@@ -13,6 +13,8 @@ use core::fmt::Debug;
 use facet_core::{Def, StructKind};
 use facet_reflect::{HasFields as _, Peek, ReflectError};
 
+use crate::tracing_macros::trace;
+
 /// Low-level serializer interface for DOM-based formats (XML, HTML).
 ///
 /// This trait provides callbacks for tree structure events. The shared
@@ -322,6 +324,7 @@ where
         }
 
         // Regular struct
+        trace!(type_id = %value.shape().type_identifier, "serializing struct");
         serializer
             .struct_metadata(value.shape())
             .map_err(DomSerializeError::Backend)?;
@@ -335,6 +338,7 @@ where
                     .unwrap_or(value.shape().type_identifier),
             )
         });
+        trace!(tag = %tag, "element_start");
 
         serializer
             .element_start(&tag, None)
@@ -342,15 +346,22 @@ where
 
         // Collect fields, separate attributes from children
         let fields: Vec<_> = struct_.fields_for_serialize().collect();
+        trace!(field_count = fields.len(), "collected fields for serialize");
 
         // First pass: emit attributes
         for (field_item, field_value) in &fields {
+            trace!(field_name = %field_item.name, "processing field for attributes");
             serializer
                 .field_metadata(field_item)
                 .map_err(DomSerializeError::Backend)?;
 
-            if serializer.is_attribute_field() {
-                if let Some(s) = value_to_string(*field_value) {
+            let is_attr = serializer.is_attribute_field();
+            trace!(field_name = %field_item.name, is_attribute = is_attr, "field_metadata result");
+
+            if is_attr {
+                let string_value = value_to_string(*field_value);
+                trace!(field_name = %field_item.name, value = ?string_value, "attribute field");
+                if let Some(s) = string_value {
                     serializer
                         .attribute(&field_item.name, &s, None)
                         .map_err(DomSerializeError::Backend)?;
@@ -359,6 +370,7 @@ where
             }
         }
 
+        trace!("children_start");
         serializer
             .children_start()
             .map_err(DomSerializeError::Backend)?;
@@ -718,6 +730,16 @@ fn deref_if_pointer<'mem, 'facet>(value: Peek<'mem, 'facet>) -> Peek<'mem, 'face
 /// Convert a value to a string if it's a scalar type.
 fn value_to_string(value: Peek<'_, '_>) -> Option<String> {
     use facet_core::ScalarType;
+
+    // Handle Option<T> by unwrapping if Some, returning None if None
+    if let Def::Option(_) = &value.shape().def {
+        if let Ok(opt) = value.into_option() {
+            return match opt.value() {
+                Some(inner) => value_to_string(inner),
+                None => None,
+            };
+        }
+    }
 
     if let Some(scalar_type) = value.scalar_type() {
         let s = match scalar_type {
