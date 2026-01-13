@@ -324,7 +324,7 @@ impl FormatSuite for XmlSlice {
         // Missing required field "email"
         CaseSpec::expect_error(
             r#"<record><name>Alice</name><age>30</age></record>"#,
-            "missing field",
+            "was not initialized",
         )
     }
 

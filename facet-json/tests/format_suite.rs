@@ -306,7 +306,7 @@ impl FormatSuite for JsonSlice {
 
     fn error_missing_required_field() -> CaseSpec {
         // Missing required field "email"
-        CaseSpec::expect_error(r#"{"name":"Alice","age":30}"#, "missing field")
+        CaseSpec::expect_error(r#"{"name":"Alice","age":30}"#, "was not initialized")
     }
 
     // ── Alias cases ──

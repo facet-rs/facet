@@ -264,7 +264,7 @@ impl FormatSuite for YamlSlice {
 
     fn error_missing_required_field() -> CaseSpec {
         // Missing required field "email"
-        CaseSpec::expect_error("name: Alice\nage: 30", "missing field")
+        CaseSpec::expect_error("name: Alice\nage: 30", "was not initialized")
     }
 
     // -- Alias cases --
