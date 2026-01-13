@@ -17,11 +17,15 @@ pub struct ShapeLike {
     pub ty: TypeLike,
     pub def: DefLike,
     pub type_identifier: String,
+    #[facet(default, skip_unless_truthy)]
     pub type_params: Vec<TypeParamLike>,
+    #[facet(default, skip_unless_truthy)]
     pub doc: Vec<String>,
+    #[facet(default, skip_unless_truthy)]
     pub attributes: Vec<AttrLike>,
+    #[facet(default, skip_unless_truthy)]
     pub type_tag: Option<String>,
-    #[facet(recursive_type)]
+    #[facet(recursive_type, default, skip_unless_truthy)]
     pub inner: Option<Box<ShapeLike>>,
 }
 
@@ -64,6 +68,7 @@ impl From<&facet_core::TypeParam> for TypeParamLike {
 #[derive(facet::Facet, Clone)]
 #[repr(C)]
 pub struct AttrLike {
+    #[facet(default, skip_unless_truthy)]
     pub ns: Option<String>,
     pub key: String,
     pub data: Vec<u8>,
@@ -256,7 +261,9 @@ pub struct FieldLike {
     #[facet(recursive_type)]
     pub shape: Box<ShapeLike>,
     pub offset: usize,
+    #[facet(default, skip_unless_truthy)]
     pub attributes: Vec<AttrLike>,
+    #[facet(default, skip_unless_truthy)]
     pub doc: Vec<String>,
 }
 
@@ -276,9 +283,12 @@ impl From<&Field> for FieldLike {
 #[repr(C)]
 pub struct VariantLike {
     pub name: String,
+    #[facet(default, skip_unless_truthy)]
     pub discriminant: Option<i64>,
+    #[facet(default, skip_unless_truthy)]
     pub attributes: Vec<AttrLike>,
     pub data: StructTypeLike,
+    #[facet(default, skip_unless_truthy)]
     pub doc: Vec<String>,
 }
 
@@ -538,13 +548,14 @@ impl From<&ResultDef> for ResultDefLike {
 #[derive(facet::Facet, Clone)]
 #[repr(C)]
 pub struct PointerDefLike {
-    #[facet(recursive_type)]
+    #[facet(recursive_type, default, skip_unless_truthy)]
     pub pointee: Option<Box<ShapeLike>>,
-    #[facet(recursive_type)]
+    #[facet(recursive_type, default, skip_unless_truthy)]
     pub weak: Option<Box<ShapeLike>>,
-    #[facet(recursive_type)]
+    #[facet(recursive_type, default, skip_unless_truthy)]
     pub strong: Option<Box<ShapeLike>>,
     pub flags: PointerFlags,
+    #[facet(default, skip_unless_truthy)]
     pub known: Option<KnownPointer>,
 }
 
