@@ -20,7 +20,6 @@ mod pointer;
 mod scalar_matches;
 mod setters;
 mod struct_simple;
-mod struct_single_flatten;
 mod struct_with_flatten;
 mod validate;
 
@@ -608,44 +607,7 @@ where
         let has_flatten = struct_def.fields.iter().any(|f| f.is_flattened());
 
         if has_flatten {
-            // Check if any flatten field is an enum (requires solver)
-            // or if there's nested flatten (flatten inside flatten) that isn't just a map
-            let needs_solver = struct_def.fields.iter().any(|f| {
-                if !f.is_flattened() {
-                    return false;
-                }
-                // Get inner type, unwrapping Option if present
-                let inner_shape = match f.shape().def {
-                    Def::Option(opt) => opt.t,
-                    _ => f.shape(),
-                };
-                match inner_shape.ty {
-                    // Enum flatten needs solver
-                    Type::User(UserType::Enum(_)) => true,
-                    // Check for nested flatten (flatten field has its own flatten fields)
-                    // Exclude flattened maps as they just catch unknown keys, not nested fields
-                    Type::User(UserType::Struct(inner_struct)) => {
-                        inner_struct.fields.iter().any(|inner_f| {
-                            inner_f.is_flattened() && {
-                                let inner_inner_shape = match inner_f.shape().def {
-                                    Def::Option(opt) => opt.t,
-                                    _ => inner_f.shape(),
-                                };
-                                // Maps don't create nested field structures
-                                !matches!(inner_inner_shape.def, Def::Map(_))
-                            }
-                        })
-                    }
-                    _ => false,
-                }
-            });
-
-            if needs_solver {
-                self.deserialize_struct_with_flatten(wip)
-            } else {
-                // Simple single-level flatten - use the original approach
-                self.deserialize_struct_single_flatten(wip)
-            }
+            self.deserialize_struct_with_flatten(wip)
         } else {
             self.deserialize_struct_simple(wip)
         }

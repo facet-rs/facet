@@ -864,11 +864,12 @@ var x = '<dt>Term</dt>';
 
     // Check the script content is preserved
     let head = doc.head.as_ref().expect("Should have head");
-    assert!(!head.script.is_empty(), "Should have script element");
+    let scripts: Vec<_> = head.scripts().collect();
+    assert!(!scripts.is_empty(), "Should have script element");
     assert!(
-        head.script[0].text.contains("'<dt>Term</dt>'"),
+        scripts[0].text.contains("'<dt>Term</dt>'"),
         "Script text should contain the HTML string literal, got: {:?}",
-        head.script[0].text
+        scripts[0].text
     );
 
     // Verify document structure wasn't corrupted
@@ -913,7 +914,7 @@ fn custom_elements_in_full_html_document() {
             eprintln!("Parse failed: {}", e);
         }
     }
-    
+
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
     let doc = result.unwrap();
     assert!(doc.head.is_some(), "head should be present");
@@ -945,7 +946,7 @@ more outer code
             eprintln!("Parse failed: {}", e);
         }
     }
-    
+
     // Even if the HTML is malformed, we should get a valid document structure
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
     let doc = result.unwrap();
@@ -969,8 +970,14 @@ fn stray_end_tag_does_not_corrupt_document() {
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
 
     let doc = result.unwrap();
-    assert!(doc.head.is_some(), "head should be present despite stray end tag");
-    assert!(doc.body.is_some(), "body should be present despite stray end tag");
+    assert!(
+        doc.head.is_some(),
+        "head should be present despite stray end tag"
+    );
+    assert!(
+        doc.body.is_some(),
+        "body should be present despite stray end tag"
+    );
 }
 
 // =============================================================================
@@ -1255,7 +1262,10 @@ fn issue_1744_no_stray_spaces_in_h2_pretty() {
         serialized
     );
     // The output should match the input exactly (no extra whitespace)
-    assert_eq!(html, serialized, "Pretty print of text-only element should match input");
+    assert_eq!(
+        html, serialized,
+        "Pretty print of text-only element should match input"
+    );
 }
 
 #[test]

@@ -850,9 +850,10 @@ mod tests {
         let mut deserializer = FormatDeserializer::new(parser);
         let result: Head = deserializer.deserialize().unwrap();
 
-        // Head has dedicated fields for meta elements
-        assert!(!result.meta.is_empty(), "Should have a meta element");
-        assert_eq!(result.meta[0].charset, Some("utf-8".into()));
+        // Head has children, use helper methods to access them
+        let meta: Vec<_> = result.meta().collect();
+        assert!(!meta.is_empty(), "Should have a meta element");
+        assert_eq!(meta[0].charset, Some("utf-8".into()));
     }
 
     #[test]
@@ -877,11 +878,12 @@ mod tests {
 
         // Verify head was parsed correctly
         let head = result.head.as_ref().expect("Should have head");
-        assert!(!head.meta.is_empty(), "Should have meta elements");
-        assert_eq!(head.meta[0].charset, Some("utf-8".into()));
+        let meta: Vec<_> = head.meta().collect();
+        assert!(!meta.is_empty(), "Should have meta elements");
+        assert_eq!(meta[0].charset, Some("utf-8".into()));
 
         // Verify title
-        let title = head.title.as_ref().expect("Should have title");
+        let title = head.title().expect("Should have title");
         assert_eq!(title.text, "Test Page");
 
         // Verify body exists

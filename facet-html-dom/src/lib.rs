@@ -233,24 +233,51 @@ pub struct Head {
     /// Global attributes.
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
-    /// Document title.
-    #[facet(default)]
-    pub title: Option<Title>,
-    /// Base URL element.
-    #[facet(default)]
-    pub base: Option<Base>,
-    /// Linked resources (stylesheets, icons, etc.).
+    /// Child elements (metadata content).
     #[facet(html::elements, default)]
-    pub link: Vec<Link>,
-    /// Metadata elements.
-    #[facet(html::elements, default)]
-    pub meta: Vec<Meta>,
-    /// Inline styles.
-    #[facet(html::elements, default)]
-    pub style: Vec<Style>,
-    /// Scripts.
-    #[facet(html::elements, default)]
-    pub script: Vec<Script>,
+    pub children: Vec<MetadataContent>,
+}
+
+impl Head {
+    /// Get the title element if present.
+    pub fn title(&self) -> Option<&Title> {
+        self.children.iter().find_map(|c| match c {
+            MetadataContent::Title(t) => Some(t),
+            _ => None,
+        })
+    }
+
+    /// Get all meta elements.
+    pub fn meta(&self) -> impl Iterator<Item = &Meta> {
+        self.children.iter().filter_map(|c| match c {
+            MetadataContent::Meta(m) => Some(m),
+            _ => None,
+        })
+    }
+
+    /// Get all link elements.
+    pub fn links(&self) -> impl Iterator<Item = &Link> {
+        self.children.iter().filter_map(|c| match c {
+            MetadataContent::Link(l) => Some(l),
+            _ => None,
+        })
+    }
+
+    /// Get all style elements.
+    pub fn styles(&self) -> impl Iterator<Item = &Style> {
+        self.children.iter().filter_map(|c| match c {
+            MetadataContent::Style(s) => Some(s),
+            _ => None,
+        })
+    }
+
+    /// Get all script elements.
+    pub fn scripts(&self) -> impl Iterator<Item = &Script> {
+        self.children.iter().filter_map(|c| match c {
+            MetadataContent::Script(s) => Some(s),
+            _ => None,
+        })
+    }
 }
 
 /// The document body containing visible content.
@@ -2259,6 +2286,36 @@ pub struct CustomPhrasingElement {
 // =============================================================================
 // Content Categories (Enums for mixed content)
 // =============================================================================
+
+/// Metadata content - elements that can appear in `<head>`.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum MetadataContent {
+    /// Document title.
+    #[facet(rename = "title")]
+    Title(Title),
+    /// Base URL element.
+    #[facet(rename = "base")]
+    Base(Base),
+    /// Linked resources (stylesheets, icons, etc.).
+    #[facet(rename = "link")]
+    Link(Link),
+    /// Metadata elements.
+    #[facet(rename = "meta")]
+    Meta(Meta),
+    /// Inline styles.
+    #[facet(rename = "style")]
+    Style(Style),
+    /// Scripts.
+    #[facet(rename = "script")]
+    Script(Script),
+    /// Noscript element.
+    #[facet(rename = "noscript")]
+    Noscript(Noscript),
+    /// Template element.
+    #[facet(rename = "template")]
+    Template(Template),
+}
 
 /// Flow content - most block and inline elements.
 #[derive(Facet)]
