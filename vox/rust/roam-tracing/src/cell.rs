@@ -17,7 +17,6 @@ use tracing_subscriber::registry::LookupSpan;
 use crate::buffer::LossyBuffer;
 use crate::record::{FieldValue, Level, SpanId, TracingRecord};
 use crate::service::{CellTracing, ConfigResult, TracingConfig};
-use roam::session::{Never, RoamError};
 
 /// Extension stored in span extensions to track our span ID.
 struct SpanIdExt(SpanId);
@@ -227,12 +226,12 @@ pub struct CellTracingService {
 }
 
 impl CellTracing for CellTracingService {
-    async fn configure(&self, config: TracingConfig) -> Result<ConfigResult, RoamError<Never>> {
+    async fn configure(&self, config: TracingConfig) -> ConfigResult {
         *self.config.write().unwrap() = config;
-        Ok(ConfigResult::Ok)
+        ConfigResult::Ok
     }
 
-    async fn subscribe(&self, sink: Tx<TracingRecord>) -> Result<(), RoamError<Never>> {
+    async fn subscribe(&self, sink: Tx<TracingRecord>) {
         // Spawn background task to drain buffer to sink
         let buffer = self.buffer.clone();
         tokio::spawn(async move {
@@ -244,7 +243,6 @@ impl CellTracing for CellTracingService {
                 }
             }
         });
-        Ok(())
     }
 }
 

@@ -9,11 +9,12 @@ use tokio::net::TcpStream;
 use tracing::{debug, error, info, instrument};
 
 // Re-export types from spec_proto
-pub use spec_proto::{Canvas, Color, Message, Person, Point, Rectangle, Shape};
+pub use spec_proto::{
+    Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape,
+};
 
 // Re-export generated service items from spec-proto as a `testbed` module
 mod testbed {
-    pub use roam::session::{Never, RoamError};
     pub use spec_proto::{Testbed, TestbedClient, TestbedDispatcher};
 }
 
@@ -27,15 +28,52 @@ impl testbed::Testbed for TestbedService {
     // ========================================================================
 
     #[instrument(skip(self))]
-    async fn echo(&self, message: String) -> Result<String, testbed::RoamError<testbed::Never>> {
+    async fn echo(&self, message: String) -> String {
         info!("echo called");
-        Ok(message)
+        message
     }
 
     #[instrument(skip(self))]
-    async fn reverse(&self, message: String) -> Result<String, testbed::RoamError<testbed::Never>> {
+    async fn reverse(&self, message: String) -> String {
         info!("reverse called");
-        Ok(message.chars().rev().collect())
+        message.chars().rev().collect()
+    }
+
+    // ========================================================================
+    // Fallible methods (for testing User(E) error path)
+    // ========================================================================
+
+    #[instrument(skip(self))]
+    async fn divide(&self, dividend: i64, divisor: i64) -> Result<i64, MathError> {
+        info!("divide called");
+        if divisor == 0 {
+            Err(MathError::DivisionByZero)
+        } else {
+            Ok(dividend / divisor)
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn lookup(&self, id: u32) -> Result<Person, LookupError> {
+        info!("lookup called");
+        match id {
+            1 => Ok(Person {
+                name: "Alice".to_string(),
+                age: 30,
+                email: Some("alice@example.com".to_string()),
+            }),
+            2 => Ok(Person {
+                name: "Bob".to_string(),
+                age: 25,
+                email: None,
+            }),
+            3 => Ok(Person {
+                name: "Charlie".to_string(),
+                age: 35,
+                email: Some("charlie@example.com".to_string()),
+            }),
+            _ => Err(LookupError::NotFound),
+        }
     }
 
     // ========================================================================
@@ -43,7 +81,7 @@ impl testbed::Testbed for TestbedService {
     // ========================================================================
 
     #[instrument(skip(self, numbers))]
-    async fn sum(&self, mut numbers: Rx<i32>) -> Result<i64, testbed::RoamError<testbed::Never>> {
+    async fn sum(&self, mut numbers: Rx<i32>) -> i64 {
         info!("sum called, starting to receive numbers");
         let mut total: i64 = 0;
         while let Some(n) = numbers.recv().await.ok().flatten() {
@@ -51,15 +89,11 @@ impl testbed::Testbed for TestbedService {
             total += n as i64;
         }
         info!(total, "sum complete");
-        Ok(total)
+        total
     }
 
     #[instrument(skip(self, output))]
-    async fn generate(
-        &self,
-        count: u32,
-        output: Tx<i32>,
-    ) -> Result<(), testbed::RoamError<testbed::Never>> {
+    async fn generate(&self, count: u32, output: Tx<i32>) {
         info!(count, "generate called");
         for i in 0..count as i32 {
             debug!(i, "sending value");
@@ -69,113 +103,78 @@ impl testbed::Testbed for TestbedService {
             }
         }
         info!("generate complete");
-        Ok(())
     }
 
     #[instrument(skip(self, input, output))]
-    async fn transform(
-        &self,
-        mut input: Rx<String>,
-        output: Tx<String>,
-    ) -> Result<(), testbed::RoamError<testbed::Never>> {
+    async fn transform(&self, mut input: Rx<String>, output: Tx<String>) {
         info!("transform called");
         while let Some(s) = input.recv().await.ok().flatten() {
             debug!(?s, "transforming");
             let _ = output.send(&s).await;
         }
         info!("transform complete");
-        Ok(())
     }
 
     // ========================================================================
     // Complex type methods
     // ========================================================================
 
-    async fn echo_point(&self, point: Point) -> Result<Point, testbed::RoamError<testbed::Never>> {
-        Ok(point)
+    async fn echo_point(&self, point: Point) -> Point {
+        point
     }
 
-    async fn create_person(
-        &self,
-        name: String,
-        age: u8,
-        email: Option<String>,
-    ) -> Result<Person, testbed::RoamError<testbed::Never>> {
-        Ok(Person { name, age, email })
+    async fn create_person(&self, name: String, age: u8, email: Option<String>) -> Person {
+        Person { name, age, email }
     }
 
-    async fn rectangle_area(
-        &self,
-        rect: Rectangle,
-    ) -> Result<f64, testbed::RoamError<testbed::Never>> {
+    async fn rectangle_area(&self, rect: Rectangle) -> f64 {
         let width = (rect.bottom_right.x - rect.top_left.x).abs() as f64;
         let height = (rect.bottom_right.y - rect.top_left.y).abs() as f64;
-        Ok(width * height)
+        width * height
     }
 
-    async fn parse_color(
-        &self,
-        name: String,
-    ) -> Result<Option<Color>, testbed::RoamError<testbed::Never>> {
-        let color = match name.to_lowercase().as_str() {
+    async fn parse_color(&self, name: String) -> Option<Color> {
+        match name.to_lowercase().as_str() {
             "red" => Some(Color::Red),
             "green" => Some(Color::Green),
             "blue" => Some(Color::Blue),
             _ => None,
-        };
-        Ok(color)
+        }
     }
 
-    async fn shape_area(&self, shape: Shape) -> Result<f64, testbed::RoamError<testbed::Never>> {
-        let area = match shape {
+    async fn shape_area(&self, shape: Shape) -> f64 {
+        match shape {
             Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
             Shape::Rectangle { width, height } => width * height,
             Shape::Point => 0.0,
-        };
-        Ok(area)
+        }
     }
 
-    async fn create_canvas(
-        &self,
-        name: String,
-        shapes: Vec<Shape>,
-        background: Color,
-    ) -> Result<Canvas, testbed::RoamError<testbed::Never>> {
-        Ok(Canvas {
+    async fn create_canvas(&self, name: String, shapes: Vec<Shape>, background: Color) -> Canvas {
+        Canvas {
             name,
             shapes,
             background,
-        })
+        }
     }
 
-    async fn process_message(
-        &self,
-        msg: Message,
-    ) -> Result<Message, testbed::RoamError<testbed::Never>> {
+    async fn process_message(&self, msg: Message) -> Message {
         // Echo the message back with some transformation
-        let response = match msg {
+        match msg {
             Message::Text(s) => Message::Text(format!("processed: {s}")),
             Message::Number(n) => Message::Number(n * 2),
             Message::Data(d) => Message::Data(d.into_iter().rev().collect()),
-        };
-        Ok(response)
+        }
     }
 
-    async fn get_points(
-        &self,
-        count: u32,
-    ) -> Result<Vec<Point>, testbed::RoamError<testbed::Never>> {
-        let points = (0..count as i32)
+    async fn get_points(&self, count: u32) -> Vec<Point> {
+        (0..count as i32)
             .map(|i| Point { x: i, y: i * 2 })
-            .collect();
-        Ok(points)
+            .collect()
     }
 
-    async fn swap_pair(
-        &self,
-        pair: (i32, String),
-    ) -> Result<(String, i32), testbed::RoamError<testbed::Never>> {
-        Ok((pair.1, pair.0))
+    async fn swap_pair(&self, pair: (i32, String)) -> (String, i32) {
+        (pair.1, pair.0)
     }
 }
 

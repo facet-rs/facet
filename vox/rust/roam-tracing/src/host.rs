@@ -161,12 +161,10 @@ impl TracingHost {
         let (tx, rx) = roam::channel::<TracingRecord>();
 
         // Call subscribe - cell keeps the Tx, we keep the Rx
-        // The inner Result has Never as error type, so unwrap is safe.
         client
             .subscribe(tx)
             .await
-            .map_err(|e| RegisterError::Call(format!("{e:?}")))?
-            .unwrap();
+            .map_err(|e| RegisterError::Call(format!("{e:?}")))?;
 
         // Optionally configure with defaults
         let _ = client.configure(self.default_config.clone()).await;

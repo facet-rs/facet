@@ -55,6 +55,14 @@ pub fn generate_encode_expr(shape: &'static Shape, value: &str) -> String {
             }
         }
         ShapeKind::Pointer { pointee } => generate_encode_expr(pointee, value),
+        ShapeKind::Result { ok, err } => {
+            // Encode Result<T, E> - discriminant 0 = Ok, 1 = Err
+            let ok_encode = generate_encode_closure(ok);
+            let err_encode = generate_encode_closure(err);
+            format!(
+                "{{ switch {value} {{ case .success(let v): return [UInt8(0)] + {ok_encode}(v); case .failure(let e): return [UInt8(1)] + {err_encode}(e) }} }}()"
+            )
+        }
         _ => "[]".into(), // fallback
     }
 }
@@ -170,6 +178,13 @@ pub fn generate_encode_closure(shape: &'static Shape) -> String {
             code
         }
         ShapeKind::Pointer { pointee } => generate_encode_closure(pointee),
+        ShapeKind::Result { ok, err } => {
+            let ok_encode = generate_encode_closure(ok);
+            let err_encode = generate_encode_closure(err);
+            format!(
+                "{{ switch $0 {{ case .success(let v): return [UInt8(0)] + {ok_encode}(v); case .failure(let e): return [UInt8(1)] + {err_encode}(e) }} }}"
+            )
+        }
         _ => "{ _ in [] }".into(), // fallback
     }
 }

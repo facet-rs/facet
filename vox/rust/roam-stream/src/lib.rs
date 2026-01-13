@@ -92,7 +92,7 @@ pub use transport::MessageTransport;
 // Re-export session types for convenience
 pub use roam_session::{
     CallError, Caller, ChannelIdAllocator, ChannelRegistry, ConnectionHandle, Role,
-    ServiceDispatcher,
+    ServiceDispatcher, TransportError,
 };
 
 // Re-export wire types for convenience

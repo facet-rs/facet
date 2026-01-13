@@ -4,8 +4,39 @@ use facet::Facet;
 use roam_hash::method_id_from_detail;
 use roam_schema::{ArgDetail, MethodDetail};
 use roam_wire::{Hello, Message, MetadataValue};
+use spec_proto::MathError;
 use spec_tests::harness::{accept_subject, our_hello, run_async};
 use spec_tests::testbed::method_id;
+
+fn compute_divide_method_id() -> u64 {
+    let detail = MethodDetail {
+        service_name: "Testbed".into(),
+        method_name: "divide".into(),
+        args: vec![
+            ArgDetail {
+                name: "dividend".into(),
+                ty: <i64 as Facet>::SHAPE,
+            },
+            ArgDetail {
+                name: "divisor".into(),
+                ty: <i64 as Facet>::SHAPE,
+            },
+        ],
+        return_type: <Result<i64, MathError> as Facet>::SHAPE,
+        doc: None,
+    };
+    method_id_from_detail(&detail)
+}
+
+/// Wire-level RoamError with user error type E.
+#[derive(Debug, Clone, PartialEq, Eq, Facet)]
+#[repr(u8)]
+enum RoamErrorWithUser<E> {
+    User(E) = 0,
+    UnknownMethod = 1,
+    InvalidPayload = 2,
+    Cancelled = 3,
+}
 
 // TODO: Remove this shim once facet implements `Facet` for `core::convert::Infallible`
 // and for the never type `!`, then use `Infallible` as the error type parameter.
@@ -116,6 +147,80 @@ fn rpc_echo_roundtrip() {
                 }
             }
             Err(e) => return Err(format!("expected Ok response, got Err({e:?})")),
+        }
+
+        let _ = child.kill().await;
+        Ok::<_, String>(())
+    })
+    .unwrap();
+}
+
+// r[verify call.error.user-error] - User error from fallible method is returned as RoamError::User(E)
+// r[verify call.response.encoding] - Response is POSTCARD Result<T, RoamError<E>>
+#[test]
+fn rpc_user_error_roundtrip() {
+    run_async(async {
+        let (mut io, mut child) = accept_subject().await?;
+
+        // Hello exchange.
+        let _ = io
+            .recv_timeout(Duration::from_millis(250))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "expected Hello from subject".to_string())?;
+        io.send(&Message::Hello(our_hello(1024 * 1024)))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Call divide(10, 0) - should return Err(MathError::DivisionByZero)
+        let divide_method_id = compute_divide_method_id();
+        let req_payload =
+            facet_postcard::to_vec(&(10i64, 0i64)).map_err(|e| format!("postcard args: {e}"))?;
+        let req = Message::Request {
+            request_id: 100,
+            method_id: divide_method_id,
+            metadata: metadata_empty(),
+            payload: req_payload,
+        };
+        io.send(&req).await.map_err(|e| e.to_string())?;
+
+        let resp = io
+            .recv_timeout(Duration::from_millis(500))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "expected Response from subject".to_string())?;
+
+        let payload = match resp {
+            Message::Response {
+                request_id,
+                metadata: _,
+                payload,
+            } => {
+                if request_id != 100 {
+                    return Err(format!("response request_id mismatch: {request_id}"));
+                }
+                payload
+            }
+            Message::Goodbye { reason } => return Err(format!("unexpected Goodbye: {reason}")),
+            other => return Err(format!("expected Response, got {other:?}")),
+        };
+
+        // The response should be Result<i64, RoamError<MathError>> = Err(User(DivisionByZero))
+        let decoded: Result<i64, RoamErrorWithUser<MathError>> =
+            facet_postcard::from_slice(&payload).map_err(|e| format!("postcard resp: {e}"))?;
+
+        match decoded {
+            Ok(v) => {
+                return Err(format!("expected Err(User(DivisionByZero)), got Ok({v})"));
+            }
+            Err(RoamErrorWithUser::User(MathError::DivisionByZero)) => {
+                // Success! The user error was properly roundtripped.
+            }
+            Err(other) => {
+                return Err(format!(
+                    "expected Err(User(DivisionByZero)), got Err({other:?})"
+                ));
+            }
         }
 
         let _ = child.kill().await;

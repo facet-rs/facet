@@ -26,20 +26,6 @@ members = [
 ]
 exclude = ["fuzz"]
 
-default-members = [
-    "rust/roam",
-    "rust/roam-wire",
-    "rust/roam-frame",
-    "rust/roam-session",
-    "rust/roam-hash",
-    "rust/roam-schema",
-    "rust/roam-shm",
-    "rust/roam-codegen",
-    "rust/roam-macros",
-    "rust/roam-macros-parse",
-    "rust/roam-stream",
-]
-
 [workspace.package]
 version = "0.5.0"
 edition = "2024"

@@ -1050,7 +1050,7 @@ impl Default for RequestIdGenerator {
 ///
 /// - `A`: Args tuple type (must implement Facet for deserialization)
 /// - `R`: Result ok type (must implement Facet for serialization)
-/// - `E`: Result error type (must implement Facet for serialization)
+/// - `E`: User error type (must implement Facet for serialization)
 /// - `F`: Handler closure type
 /// - `Fut`: Future returned by handler
 ///
@@ -1066,6 +1066,9 @@ impl Default for RequestIdGenerator {
 ///     })
 /// }
 /// ```
+///
+/// The handler returns `Result<R, E>` - user errors are automatically wrapped
+/// in `RoamError::User(e)` for wire serialization.
 pub fn dispatch_call<A, R, E, F, Fut>(
     payload: Vec<u8>,
     request_id: u64,
@@ -1077,7 +1080,7 @@ where
     R: Facet<'static> + Send,
     E: Facet<'static> + Send,
     F: FnOnce(A) -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = Result<R, RoamError<E>>> + Send + 'static,
+    Fut: std::future::Future<Output = Result<R, E>> + Send + 'static,
 {
     // Deserialize args
     let mut args: A = match facet_postcard::from_slice(&payload) {
@@ -1085,7 +1088,7 @@ where
         Err(_) => {
             let task_tx = registry.task_tx();
             return Box::pin(async move {
-                // InvalidPayload error
+                // InvalidPayload error: Result::Err(1) + RoamError::InvalidPayload(2)
                 let _ = task_tx
                     .send(TaskMessage::Response {
                         request_id,
@@ -1105,6 +1108,7 @@ where
         let result = handler(args).await;
         let payload = match result {
             Ok(result) => {
+                // Result::Ok(0) + serialized value
                 let mut out = vec![0u8];
                 match facet_postcard::to_vec(&result) {
                     Ok(bytes) => out.extend(bytes),
@@ -1112,8 +1116,70 @@ where
                 }
                 out
             }
-            Err(_e) => vec![1, 1],
+            Err(user_error) => {
+                // Result::Err(1) + RoamError::User(0) + serialized user error
+                let mut out = vec![1u8, 0u8];
+                match facet_postcard::to_vec(&user_error) {
+                    Ok(bytes) => out.extend(bytes),
+                    Err(_) => return,
+                }
+                out
+            }
         };
+        let _ = task_tx
+            .send(TaskMessage::Response {
+                request_id,
+                payload,
+            })
+            .await;
+    })
+}
+
+/// Dispatch helper for infallible methods (those that return `T` instead of `Result<T, E>`).
+///
+/// Same as `dispatch_call` but for handlers that cannot fail at the application level.
+pub fn dispatch_call_infallible<A, R, F, Fut>(
+    payload: Vec<u8>,
+    request_id: u64,
+    registry: &mut ChannelRegistry,
+    handler: F,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>
+where
+    A: Facet<'static> + Send,
+    R: Facet<'static> + Send,
+    F: FnOnce(A) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = R> + Send + 'static,
+{
+    // Deserialize args
+    let mut args: A = match facet_postcard::from_slice(&payload) {
+        Ok(args) => args,
+        Err(_) => {
+            let task_tx = registry.task_tx();
+            return Box::pin(async move {
+                // InvalidPayload error: Result::Err(1) + RoamError::InvalidPayload(2)
+                let _ = task_tx
+                    .send(TaskMessage::Response {
+                        request_id,
+                        payload: vec![1, 2],
+                    })
+                    .await;
+            });
+        }
+    };
+
+    // Bind streams via reflection
+    registry.bind_streams(&mut args);
+
+    let task_tx = registry.task_tx();
+
+    Box::pin(async move {
+        let result = handler(args).await;
+        // Result::Ok(0) + serialized value
+        let mut payload = vec![0u8];
+        match facet_postcard::to_vec(&result) {
+            Ok(bytes) => payload.extend(bytes),
+            Err(_) => return,
+        }
         let _ = task_tx
             .send(TaskMessage::Response {
                 request_id,
@@ -1248,6 +1314,21 @@ pub enum RoamError<E> {
     Cancelled = 3,
 }
 
+impl<E> RoamError<E> {
+    /// Map the user error type to a different type.
+    pub fn map_user<F, E2>(self, f: F) -> RoamError<E2>
+    where
+        F: FnOnce(E) -> E2,
+    {
+        match self {
+            RoamError::User(e) => RoamError::User(f(e)),
+            RoamError::UnknownMethod => RoamError::UnknownMethod,
+            RoamError::InvalidPayload => RoamError::InvalidPayload,
+            RoamError::Cancelled => RoamError::Cancelled,
+        }
+    }
+}
+
 pub type CallResult<T, E> = ::core::result::Result<T, RoamError<E>>;
 pub type BorrowedCallResult<T, E> = OwnedMessage<CallResult<T, E>>;
 
@@ -1256,53 +1337,189 @@ pub type BorrowedCallResult<T, E> = OwnedMessage<CallResult<T, E>>;
 // ============================================================================
 
 /// Error from making an outgoing call.
+///
+/// This flattens the nested `Result<Result<T, RoamError<E>>, CallError>` pattern
+/// into a single `Result<T, CallError<E>>` for better ergonomics.
+///
+/// The type parameter `E` represents the user's error type from fallible methods.
+/// For infallible methods, use `CallError<Never>`.
 #[derive(Debug)]
-pub enum CallError {
+pub enum CallError<E = Never> {
+    /// The remote returned a roam-level error (user error or protocol error).
+    Roam(RoamError<E>),
     /// Failed to encode request payload.
     Encode(facet_postcard::SerializeError),
     /// Failed to decode response payload.
     Decode(facet_postcard::DeserializeError<facet_postcard::PostcardError>),
+    /// Protocol-level decode error (malformed response structure).
+    Protocol(DecodeError),
     /// Connection was closed before response.
     ConnectionClosed,
     /// Driver task is gone.
     DriverGone,
 }
 
-impl CallError {
-    /// Decode a response payload into the expected type.
-    ///
-    /// This is a convenience method for the common pattern of deserializing
-    /// the response payload after a call.
-    pub fn decode_response<T: Facet<'static>>(payload: &[u8]) -> Result<T, CallError> {
-        facet_postcard::from_slice(payload).map_err(CallError::Decode)
+impl<E> CallError<E> {
+    /// Map the user error type to a different type.
+    pub fn map_user<F, E2>(self, f: F) -> CallError<E2>
+    where
+        F: FnOnce(E) -> E2,
+    {
+        match self {
+            CallError::Roam(roam_err) => CallError::Roam(roam_err.map_user(f)),
+            CallError::Encode(e) => CallError::Encode(e),
+            CallError::Decode(e) => CallError::Decode(e),
+            CallError::Protocol(e) => CallError::Protocol(e),
+            CallError::ConnectionClosed => CallError::ConnectionClosed,
+            CallError::DriverGone => CallError::DriverGone,
+        }
     }
 }
 
-impl std::fmt::Display for CallError {
+impl<E: std::fmt::Debug> std::fmt::Display for CallError<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            CallError::Roam(e) => write!(f, "roam error: {e:?}"),
             CallError::Encode(e) => write!(f, "encode error: {e}"),
             CallError::Decode(e) => write!(f, "decode error: {e}"),
+            CallError::Protocol(e) => write!(f, "protocol error: {e}"),
             CallError::ConnectionClosed => write!(f, "connection closed"),
             CallError::DriverGone => write!(f, "driver task stopped"),
         }
     }
 }
 
-impl std::error::Error for CallError {}
+impl<E: std::fmt::Debug> std::error::Error for CallError<E> {}
+
+/// Transport-level call error (no user error type).
+///
+/// Used by the `Caller` trait which operates at the transport level
+/// before response decoding.
+#[derive(Debug)]
+pub enum TransportError {
+    /// Failed to encode request payload.
+    Encode(facet_postcard::SerializeError),
+    /// Connection was closed before response.
+    ConnectionClosed,
+    /// Driver task is gone.
+    DriverGone,
+}
+
+impl<E> From<TransportError> for CallError<E> {
+    fn from(e: TransportError) -> Self {
+        match e {
+            TransportError::Encode(e) => CallError::Encode(e),
+            TransportError::ConnectionClosed => CallError::ConnectionClosed,
+            TransportError::DriverGone => CallError::DriverGone,
+        }
+    }
+}
+
+impl std::fmt::Display for TransportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransportError::Encode(e) => write!(f, "encode error: {e}"),
+            TransportError::ConnectionClosed => write!(f, "connection closed"),
+            TransportError::DriverGone => write!(f, "driver task stopped"),
+        }
+    }
+}
+
+impl std::error::Error for TransportError {}
+
+/// Error decoding a response payload.
+#[derive(Debug)]
+pub enum DecodeError {
+    /// Empty response payload.
+    EmptyPayload,
+    /// Truncated error response.
+    TruncatedError,
+    /// Unknown RoamError discriminant.
+    UnknownRoamErrorDiscriminant(u8),
+    /// Invalid Result discriminant.
+    InvalidResultDiscriminant(u8),
+    /// Postcard deserialization error.
+    Postcard(facet_postcard::DeserializeError<facet_postcard::PostcardError>),
+}
+
+impl std::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecodeError::EmptyPayload => write!(f, "empty response payload"),
+            DecodeError::TruncatedError => write!(f, "truncated error response"),
+            DecodeError::UnknownRoamErrorDiscriminant(d) => {
+                write!(f, "unknown RoamError discriminant: {d}")
+            }
+            DecodeError::InvalidResultDiscriminant(d) => {
+                write!(f, "invalid Result discriminant: {d}")
+            }
+            DecodeError::Postcard(e) => write!(f, "postcard: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
+
+impl<E> From<DecodeError> for CallError<E> {
+    fn from(e: DecodeError) -> Self {
+        match e {
+            DecodeError::Postcard(pe) => CallError::Decode(pe),
+            other => CallError::Protocol(other),
+        }
+    }
+}
+
+/// Decode a response payload into the expected type.
+///
+/// This is the core response decoding logic used by generated clients.
+/// It handles the wire format: `[0] + value_bytes` for Ok, `[1, discriminant] + error_bytes` for Err.
+///
+/// Returns `Result<T, CallError<E>>` with the decoded value or error.
+pub fn decode_response<T: Facet<'static>, E: Facet<'static>>(
+    payload: &[u8],
+) -> Result<T, CallError<E>> {
+    if payload.is_empty() {
+        return Err(DecodeError::EmptyPayload.into());
+    }
+
+    match payload[0] {
+        0 => {
+            // Ok variant: deserialize the value
+            facet_postcard::from_slice(&payload[1..]).map_err(CallError::Decode)
+        }
+        1 => {
+            // Err variant: deserialize RoamError<E>
+            if payload.len() < 2 {
+                return Err(DecodeError::TruncatedError.into());
+            }
+            let roam_error = match payload[1] {
+                0 => {
+                    // User error
+                    let user_error: E =
+                        facet_postcard::from_slice(&payload[2..]).map_err(CallError::Decode)?;
+                    RoamError::User(user_error)
+                }
+                1 => RoamError::UnknownMethod,
+                2 => RoamError::InvalidPayload,
+                3 => RoamError::Cancelled,
+                d => return Err(DecodeError::UnknownRoamErrorDiscriminant(d).into()),
+            };
+            Err(CallError::Roam(roam_error))
+        }
+        d => Err(DecodeError::InvalidResultDiscriminant(d).into()),
+    }
+}
 
 /// Trait for making RPC calls.
 ///
 /// This abstracts over different connection types (e.g., `ConnectionHandle`,
 /// `ReconnectingClient`) so generated clients can work with any of them.
 ///
-/// The trait uses an associated error type to allow different implementations
-/// to return their own error types while still being usable with generated clients.
+/// All callers return `TransportError` for transport-level failures.
+/// Generated clients convert this to `CallError<E>` which also includes
+/// response-level errors like `RoamError::User(E)`.
 #[allow(async_fn_in_trait)]
 pub trait Caller: Clone + Send + Sync + 'static {
-    /// The error type returned by this caller.
-    type Error: From<CallError> + Send;
-
     /// Make an RPC call with the given method ID and arguments.
     ///
     /// The arguments are mutable because stream bindings (Tx/Rx) need to be
@@ -1313,17 +1530,15 @@ pub trait Caller: Clone + Send + Sync + 'static {
         &self,
         method_id: u64,
         args: &mut T,
-    ) -> Result<Vec<u8>, Self::Error>;
+    ) -> Result<Vec<u8>, TransportError>;
 }
 
 impl Caller for ConnectionHandle {
-    type Error = CallError;
-
     async fn call<T: Facet<'static>>(
         &self,
         method_id: u64,
         args: &mut T,
-    ) -> Result<Vec<u8>, Self::Error> {
+    ) -> Result<Vec<u8>, TransportError> {
         ConnectionHandle::call(self, method_id, args).await
     }
 }
@@ -1337,7 +1552,7 @@ pub enum HandleCommand {
         method_id: u64,
         metadata: Vec<(String, roam_wire::MetadataValue)>,
         payload: Vec<u8>,
-        response_tx: tokio::sync::oneshot::Sender<Result<Vec<u8>, CallError>>,
+        response_tx: tokio::sync::oneshot::Sender<Result<Vec<u8>, TransportError>>,
     },
 }
 
@@ -1427,11 +1642,11 @@ impl ConnectionHandle {
         &self,
         method_id: u64,
         args: &mut T,
-    ) -> Result<Vec<u8>, CallError> {
+    ) -> Result<Vec<u8>, TransportError> {
         // Walk args and bind any streams
         self.bind_streams(args);
 
-        let payload = facet_postcard::to_vec(args).map_err(CallError::Encode)?;
+        let payload = facet_postcard::to_vec(args).map_err(TransportError::Encode)?;
         self.call_raw(method_id, payload).await
     }
 
@@ -1531,7 +1746,11 @@ impl ConnectionHandle {
     /// Make a raw RPC call with pre-serialized payload.
     ///
     /// Returns the raw response payload bytes.
-    pub async fn call_raw(&self, method_id: u64, payload: Vec<u8>) -> Result<Vec<u8>, CallError> {
+    pub async fn call_raw(
+        &self,
+        method_id: u64,
+        payload: Vec<u8>,
+    ) -> Result<Vec<u8>, TransportError> {
         let request_id = self.shared.request_ids.next();
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
@@ -1547,9 +1766,12 @@ impl ConnectionHandle {
             .command_tx
             .send(cmd)
             .await
-            .map_err(|_| CallError::DriverGone)?;
+            .map_err(|_| TransportError::DriverGone)?;
 
-        response_rx.await.map_err(|_| CallError::DriverGone)?
+        response_rx
+            .await
+            .map_err(|_| TransportError::DriverGone)?
+            .map_err(|_| TransportError::ConnectionClosed)
     }
 
     /// Allocate a stream ID for an outgoing stream.

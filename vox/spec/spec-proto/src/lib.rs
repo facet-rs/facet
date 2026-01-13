@@ -20,6 +20,16 @@ pub trait Testbed {
     async fn reverse(&self, message: String) -> String;
 
     // ========================================================================
+    // Fallible methods (for testing User(E) error path)
+    // ========================================================================
+
+    /// Divides two numbers, returning an error if divisor is zero.
+    async fn divide(&self, dividend: i64, divisor: i64) -> Result<i64, MathError>;
+
+    /// Looks up a user by ID, returning an error if not found.
+    async fn lookup(&self, id: u32) -> Result<Person, LookupError>;
+
+    // ========================================================================
     // Streaming methods
     // ========================================================================
 
@@ -130,6 +140,26 @@ pub enum Message {
     Text(String) = 0,
     Number(i64) = 1,
     Data(Vec<u8>) = 2,
+}
+
+// ============================================================================
+// Error types for testing User(E) error path
+// ============================================================================
+
+/// Error from math operations.
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+pub enum MathError {
+    DivisionByZero = 0,
+    Overflow = 1,
+}
+
+/// Error from lookup operations.
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+pub enum LookupError {
+    NotFound = 0,
+    AccessDenied = 1,
 }
 
 pub fn all_services() -> Vec<roam::schema::ServiceDetail> {

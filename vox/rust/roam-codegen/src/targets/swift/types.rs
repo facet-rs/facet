@@ -77,6 +77,10 @@ pub fn collect_named_types(service: &ServiceDetail) -> Vec<(String, &'static Sha
             }
             ShapeKind::Tx { inner } | ShapeKind::Rx { inner } => visit(inner, seen, types),
             ShapeKind::Pointer { pointee } => visit(pointee, seen, types),
+            ShapeKind::Result { ok, err } => {
+                visit(ok, seen, types);
+                visit(err, seen, types);
+            }
             _ => {}
         }
     }
@@ -124,7 +128,13 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
                 out.push_str("}\n\n");
             }
             ShapeKind::Enum(EnumInfo { variants, .. }) => {
-                out.push_str(&format!("public enum {name}: Codable, Sendable {{\n"));
+                // Add Error conformance if the enum name ends with "Error"
+                let protocols = if name.ends_with("Error") {
+                    "Codable, Sendable, Error"
+                } else {
+                    "Codable, Sendable"
+                };
+                out.push_str(&format!("public enum {name}: {protocols} {{\n"));
                 for variant in variants {
                     let variant_name = variant.name.to_lower_camel_case();
                     match classify_variant(variant) {

@@ -7,32 +7,29 @@ import RoamRuntime
 // MARK: - Testbed Method IDs
 
 public enum TestbedMethodId {
-    public static let echo: UInt64 = 0x9aab_c4ba_61fd_5df3
-    public static let reverse: UInt64 = 0xcba1_5460_0f64_0175
-    public static let sum: UInt64 = 0x855b_3a25_d97b_fefd
-    public static let generate: UInt64 = 0x54d2_273d_8cdb_9c38
-    public static let transform: UInt64 = 0x5d98_9560_4eb1_8b19
-    public static let echoPoint: UInt64 = 0x453f_a9bf_6932_528c
-    public static let createPerson: UInt64 = 0x3dd2_31f5_7b1b_ca21
-    public static let rectangleArea: UInt64 = 0xba75_c486_83f1_d9e6
-    public static let parseColor: UInt64 = 0xe285_f31c_6dff_fbfc
-    public static let shapeArea: UInt64 = 0x6e70_6354_167c_00c2
-    public static let createCanvas: UInt64 = 0xa914_982e_7d3c_7b55
-    public static let processMessage: UInt64 = 0xed1d_c0c6_2588_9d30
-    public static let getPoints: UInt64 = 0x5c87_07f5_ae4c_cbcc
-    public static let swapPair: UInt64 = 0xacd1_9a29_fe0d_470c
+    public static let echo: UInt64 = 0x9aabc4ba61fd5df3
+    public static let reverse: UInt64 = 0xcba154600f640175
+    public static let divide: UInt64 = 0xc3964cbee4b1d590
+    public static let lookup: UInt64 = 0xe71a0faedd014e59
+    public static let sum: UInt64 = 0x855b3a25d97bfefd
+    public static let generate: UInt64 = 0x54d2273d8cdb9c38
+    public static let transform: UInt64 = 0x5d9895604eb18b19
+    public static let echoPoint: UInt64 = 0x453fa9bf6932528c
+    public static let createPerson: UInt64 = 0x3dd231f57b1bca21
+    public static let rectangleArea: UInt64 = 0xba75c48683f1d9e6
+    public static let parseColor: UInt64 = 0xe285f31c6dfffbfc
+    public static let shapeArea: UInt64 = 0x6e706354167c00c2
+    public static let createCanvas: UInt64 = 0xa914982e7d3c7b55
+    public static let processMessage: UInt64 = 0xed1dc0c625889d30
+    public static let getPoints: UInt64 = 0x5c8707f5ae4ccbcc
+    public static let swapPair: UInt64 = 0xacd19a29fe0d470c
 }
 
 // MARK: - Testbed Types
 
-public struct Point: Codable, Sendable {
-    public var x: Int32
-    public var y: Int32
-
-    public init(x: Int32, y: Int32) {
-        self.x = x
-        self.y = y
-    }
+public enum MathError: Codable, Sendable, Error {
+    case divisionByZero
+    case overflow
 }
 
 public struct Person: Codable, Sendable {
@@ -44,6 +41,21 @@ public struct Person: Codable, Sendable {
         self.name = name
         self.age = age
         self.email = email
+    }
+}
+
+public enum LookupError: Codable, Sendable, Error {
+    case notFound
+    case accessDenied
+}
+
+public struct Point: Codable, Sendable {
+    public var x: Int32
+    public var y: Int32
+
+    public init(x: Int32, y: Int32) {
+        self.x = x
+        self.y = y
     }
 }
 
@@ -92,23 +104,27 @@ public enum Message: Codable, Sendable {
 // MARK: - Testbed Client
 
 ///  Testbed service for conformance testing.
-///
-///  Combines unary, streaming, and complex type methods for comprehensive testing.
+/// 
+///  Combines simple RPC, channeling, and complex type methods for comprehensive testing.
 public protocol TestbedCaller {
     ///  Echoes the message back.
     func echo(message: String) async throws -> String
     ///  Returns the message reversed.
     func reverse(message: String) async throws -> String
+    ///  Divides two numbers, returning an error if divisor is zero.
+    func divide(dividend: Int64, divisor: Int64) async throws -> Result<Int64, MathError>
+    ///  Looks up a user by ID, returning an error if not found.
+    func lookup(id: UInt32) async throws -> Result<Person, LookupError>
     ///  Client sends numbers, server returns their sum.
-    ///
+    /// 
     ///  Tests: client→server streaming. Server receives via `Rx<T>`, returns scalar.
     func sum(numbers: UnboundRx<Int32>) async throws -> Int64
     ///  Server streams numbers back to client.
-    ///
+    /// 
     ///  Tests: server→client streaming. Server sends via `Tx<T>`.
     func generate(count: UInt32, output: UnboundTx<Int32>) async throws
     ///  Bidirectional: client sends strings, server echoes each back.
-    ///
+    /// 
     ///  Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
     func transform(input: UnboundRx<String>, output: UnboundTx<String>) async throws
     ///  Echo a point back.
@@ -142,7 +158,7 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeString(message)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0x9aab_c4ba_61fd_5df3, payload: payload)
+        let response = try await connection.call(methodId: 0x9aabc4ba61fd5df3, payload: payload)
         var offset = 0
         let result = try decodeString(from: response, offset: &offset)
         return result
@@ -152,9 +168,73 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeString(message)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0xcba1_5460_0f64_0175, payload: payload)
+        let response = try await connection.call(methodId: 0xcba154600f640175, payload: payload)
         var offset = 0
         let result = try decodeString(from: response, offset: &offset)
+        return result
+    }
+
+    public func divide(dividend: Int64, divisor: Int64) async throws -> Result<Int64, MathError> {
+        var payloadBytes: [UInt8] = []
+        payloadBytes += encodeI64(dividend)
+        payloadBytes += encodeI64(divisor)
+        let payload = Data(payloadBytes)
+        let response = try await connection.call(methodId: 0xc3964cbee4b1d590, payload: payload)
+        var offset = 0
+        let _result_disc = try decodeU8(from: response, offset: &offset)
+        let result: Result<Int64, MathError>
+        switch _result_disc {
+        case 0:
+            let _result_ok = try decodeI64(from: response, offset: &offset)
+            result = .success(_result_ok)
+        case 1:
+            let __result_err_disc = try decodeU8(from: response, offset: &offset)
+            let _result_err: MathError
+            switch __result_err_disc {
+            case 0:
+                _result_err = .divisionByZero
+            case 1:
+                _result_err = .overflow
+            default:
+                throw RoamError.decodeError("unknown enum variant")
+            }
+            result = .failure(_result_err)
+        default:
+            throw RoamError.decodeError("invalid Result discriminant")
+        }
+        return result
+    }
+
+    public func lookup(id: UInt32) async throws -> Result<Person, LookupError> {
+        var payloadBytes: [UInt8] = []
+        payloadBytes += encodeU32(id)
+        let payload = Data(payloadBytes)
+        let response = try await connection.call(methodId: 0xe71a0faedd014e59, payload: payload)
+        var offset = 0
+        let _result_disc = try decodeU8(from: response, offset: &offset)
+        let result: Result<Person, LookupError>
+        switch _result_disc {
+        case 0:
+            let __result_ok_name = try decodeString(from: response, offset: &offset)
+            let __result_ok_age = try decodeU8(from: response, offset: &offset)
+            let __result_ok_email = try decodeOption(from: response, offset: &offset, decoder: { data, off in try decodeString(from: data, offset: &off) })
+            let _result_ok = Person(name: __result_ok_name, age: __result_ok_age, email: __result_ok_email)
+            result = .success(_result_ok)
+        case 1:
+            let __result_err_disc = try decodeU8(from: response, offset: &offset)
+            let _result_err: LookupError
+            switch __result_err_disc {
+            case 0:
+                _result_err = .notFound
+            case 1:
+                _result_err = .accessDenied
+            default:
+                throw RoamError.decodeError("unknown enum variant")
+            }
+            result = .failure(_result_err)
+        default:
+            throw RoamError.decodeError("invalid Result discriminant")
+        }
         return result
     }
 
@@ -174,7 +254,7 @@ public final class TestbedClient: TestbedCaller {
         payloadBytes += encodeVarint(numbers.channelId)
         let payload = Data(payloadBytes)
 
-        let response = try await connection.call(methodId: 0x855b_3a25_d97b_fefd, payload: payload)
+        let response = try await connection.call(methodId: 0x855b3a25d97bfefd, payload: payload)
         var offset = 0
         let result = try decodeI64(from: payload, offset: &offset)
         return result
@@ -197,7 +277,7 @@ public final class TestbedClient: TestbedCaller {
         payloadBytes += encodeVarint(output.channelId)
         let payload = Data(payloadBytes)
 
-        _ = try await connection.call(methodId: 0x54d2_273d_8cdb_9c38, payload: payload)
+        _ = try await connection.call(methodId: 0x54d2273d8cdb9c38, payload: payload)
     }
 
     public func transform(input: UnboundRx<String>, output: UnboundTx<String>) async throws {
@@ -217,14 +297,14 @@ public final class TestbedClient: TestbedCaller {
         payloadBytes += encodeVarint(output.channelId)
         let payload = Data(payloadBytes)
 
-        _ = try await connection.call(methodId: 0x5d98_9560_4eb1_8b19, payload: payload)
+        _ = try await connection.call(methodId: 0x5d9895604eb18b19, payload: payload)
     }
 
     public func echoPoint(point: Point) async throws -> Point {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeI32(point.x) + encodeI32(point.y)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0x453f_a9bf_6932_528c, payload: payload)
+        let response = try await connection.call(methodId: 0x453fa9bf6932528c, payload: payload)
         var offset = 0
         let _result_x = try decodeI32(from: response, offset: &offset)
         let _result_y = try decodeI32(from: response, offset: &offset)
@@ -238,25 +318,20 @@ public final class TestbedClient: TestbedCaller {
         payloadBytes += encodeU8(age)
         payloadBytes += encodeOption(email, encoder: { encodeString($0) })
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0x3dd2_31f5_7b1b_ca21, payload: payload)
+        let response = try await connection.call(methodId: 0x3dd231f57b1bca21, payload: payload)
         var offset = 0
         let _result_name = try decodeString(from: response, offset: &offset)
         let _result_age = try decodeU8(from: response, offset: &offset)
-        let _result_email = try decodeOption(
-            from: response, offset: &offset,
-            decoder: { data, off in try decodeString(from: data, offset: &off) })
+        let _result_email = try decodeOption(from: response, offset: &offset, decoder: { data, off in try decodeString(from: data, offset: &off) })
         let result = Person(name: _result_name, age: _result_age, email: _result_email)
         return result
     }
 
     public func rectangleArea(rect: Rectangle) async throws -> Double {
         var payloadBytes: [UInt8] = []
-        payloadBytes +=
-            encodeI32(rect.topLeft.x) + encodeI32(rect.topLeft.y) + encodeI32(rect.bottomRight.x)
-            + encodeI32(rect.bottomRight.y)
-            + encodeOption(rect.label, encoder: { encodeString($0) })
+        payloadBytes += encodeI32(rect.topLeft.x) + encodeI32(rect.topLeft.y) + encodeI32(rect.bottomRight.x) + encodeI32(rect.bottomRight.y) + encodeOption(rect.label, encoder: { encodeString($0) })
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0xba75_c486_83f1_d9e6, payload: payload)
+        let response = try await connection.call(methodId: 0xba75c48683f1d9e6, payload: payload)
         var offset = 0
         let result = try decodeF64(from: response, offset: &offset)
         return result
@@ -266,25 +341,23 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeString(name)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0xe285_f31c_6dff_fbfc, payload: payload)
+        let response = try await connection.call(methodId: 0xe285f31c6dfffbfc, payload: payload)
         var offset = 0
-        let result = try decodeOption(
-            from: response, offset: &offset,
-            decoder: { data, off in
-                let disc = try decodeU8(from: data, offset: &off)
-                let result: Color
-                switch disc {
-                case 0:
-                    result = .red
-                case 1:
-                    result = .green
-                case 2:
-                    result = .blue
-                default:
-                    throw RoamError.decodeError("unknown enum variant")
-                }
-                return result
-            })
+        let result = try decodeOption(from: response, offset: &offset, decoder: { data, off in
+            let disc = try decodeU8(from: data, offset: &off)
+            let result: Color
+            switch disc {
+            case 0:
+                result = .red
+            case 1:
+                result = .green
+            case 2:
+                result = .blue
+            default:
+                throw RoamError.decodeError("unknown enum variant")
+            }
+            return result
+        })
         return result
     }
 
@@ -292,54 +365,48 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += []
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0x6e70_6354_167c_00c2, payload: payload)
+        let response = try await connection.call(methodId: 0x6e706354167c00c2, payload: payload)
         var offset = 0
         let result = try decodeF64(from: response, offset: &offset)
         return result
     }
 
-    public func createCanvas(name: String, shapes: [Shape], background: Color) async throws
-        -> Canvas
-    {
+    public func createCanvas(name: String, shapes: [Shape], background: Color) async throws -> Canvas {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeString(name)
-        payloadBytes += encodeVec(
-            shapes,
-            encoder: { v in
-                switch v {
-                case .circle(let radius):
-                    return [UInt8(0)] + encodeF64(radius)
-                case .rectangle(let width, let height):
-                    return [UInt8(1)] + encodeF64(width) + encodeF64(height)
-                case .point:
-                    return [UInt8(2)]
-                }
-            })
+        payloadBytes += encodeVec(shapes, encoder: { v in
+    switch v {
+    case .circle(let radius):
+        return [UInt8(0)] + encodeF64(radius)
+    case .rectangle(let width, let height):
+        return [UInt8(1)] + encodeF64(width) + encodeF64(height)
+    case .point:
+        return [UInt8(2)]
+    }
+})
         payloadBytes += []
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0xa914_982e_7d3c_7b55, payload: payload)
+        let response = try await connection.call(methodId: 0xa914982e7d3c7b55, payload: payload)
         var offset = 0
         let _result_name = try decodeString(from: response, offset: &offset)
-        let _result_shapes = try decodeVec(
-            from: response, offset: &offset,
-            decoder: { data, off in
-                let disc = try decodeU8(from: data, offset: &off)
-                let result: Shape
-                switch disc {
-                case 0:
-                    let _radius = try decodeF64(from: data, offset: &off)
-                    result = .circle(radius: _radius)
-                case 1:
-                    let _width = try decodeF64(from: data, offset: &off)
-                    let _height = try decodeF64(from: data, offset: &off)
-                    result = .rectangle(width: _width, height: _height)
-                case 2:
-                    result = .point
-                default:
-                    throw RoamError.decodeError("unknown enum variant")
-                }
-                return result
-            })
+        let _result_shapes = try decodeVec(from: response, offset: &offset, decoder: { data, off in
+            let disc = try decodeU8(from: data, offset: &off)
+            let result: Shape
+            switch disc {
+            case 0:
+                let _radius = try decodeF64(from: data, offset: &off)
+                result = .circle(radius: _radius)
+            case 1:
+                let _width = try decodeF64(from: data, offset: &off)
+                let _height = try decodeF64(from: data, offset: &off)
+                result = .rectangle(width: _width, height: _height)
+            case 2:
+                result = .point
+            default:
+                throw RoamError.decodeError("unknown enum variant")
+            }
+            return result
+        })
         let __result_background_disc = try decodeU8(from: response, offset: &offset)
         let _result_background: Color
         switch __result_background_disc {
@@ -352,8 +419,7 @@ public final class TestbedClient: TestbedCaller {
         default:
             throw RoamError.decodeError("unknown enum variant")
         }
-        let result = Canvas(
-            name: _result_name, shapes: _result_shapes, background: _result_background)
+        let result = Canvas(name: _result_name, shapes: _result_shapes, background: _result_background)
         return result
     }
 
@@ -361,7 +427,7 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += []
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0xed1d_c0c6_2588_9d30, payload: payload)
+        let response = try await connection.call(methodId: 0xed1dc0c625889d30, payload: payload)
         var offset = 0
         let _result_disc = try decodeU8(from: response, offset: &offset)
         let result: Message
@@ -385,15 +451,13 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeU32(count)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0x5c87_07f5_ae4c_cbcc, payload: payload)
+        let response = try await connection.call(methodId: 0x5c8707f5ae4ccbcc, payload: payload)
         var offset = 0
-        let result = try decodeVec(
-            from: response, offset: &offset,
-            decoder: { data, off in
-                let _x = try decodeI32(from: data, offset: &off)
-                let _y = try decodeI32(from: data, offset: &off)
-                return Point(x: _x, y: _y)
-            })
+        let result = try decodeVec(from: response, offset: &offset, decoder: { data, off in
+            let _x = try decodeI32(from: data, offset: &off)
+            let _y = try decodeI32(from: data, offset: &off)
+            return Point(x: _x, y: _y)
+        })
         return result
     }
 
@@ -401,12 +465,9 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += { encodeI32($0) }(pair.0) + { encodeString($0) }(pair.1)
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0xacd1_9a29_fe0d_470c, payload: payload)
+        let response = try await connection.call(methodId: 0xacd19a29fe0d470c, payload: payload)
         var offset = 0
-        let result = try decodeTuple2(
-            from: response, offset: &offset,
-            decoderA: { data, off in try decodeString(from: data, offset: &off) },
-            decoderB: { data, off in try decodeI32(from: data, offset: &off) })
+        let result = try decodeTuple2(from: response, offset: &offset, decoderA: { data, off in try decodeString(from: data, offset: &off) }, decoderB: { data, off in try decodeI32(from: data, offset: &off) })
         return result
     }
 }
@@ -414,23 +475,27 @@ public final class TestbedClient: TestbedCaller {
 // MARK: - Testbed Server
 
 ///  Testbed service for conformance testing.
-///
-///  Combines unary, streaming, and complex type methods for comprehensive testing.
+/// 
+///  Combines simple RPC, channeling, and complex type methods for comprehensive testing.
 public protocol TestbedHandler {
     ///  Echoes the message back.
     func echo(message: String) async throws -> String
     ///  Returns the message reversed.
     func reverse(message: String) async throws -> String
+    ///  Divides two numbers, returning an error if divisor is zero.
+    func divide(dividend: Int64, divisor: Int64) async throws -> Result<Int64, MathError>
+    ///  Looks up a user by ID, returning an error if not found.
+    func lookup(id: UInt32) async throws -> Result<Person, LookupError>
     ///  Client sends numbers, server returns their sum.
-    ///
+    /// 
     ///  Tests: client→server streaming. Server receives via `Rx<T>`, returns scalar.
     func sum(numbers: Rx<Int32>) async throws -> Int64
     ///  Server streams numbers back to client.
-    ///
+    /// 
     ///  Tests: server→client streaming. Server sends via `Tx<T>`.
     func generate(count: UInt32, output: Tx<Int32>) async throws
     ///  Bidirectional: client sends strings, server echoes each back.
-    ///
+    /// 
     ///  Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
     func transform(input: Rx<String>, output: Tx<String>) async throws
     ///  Echo a point back.
@@ -462,33 +527,37 @@ public final class TestbedDispatcher {
 
     public func dispatch(methodId: UInt64, payload: Data) async throws -> Data {
         switch methodId {
-        case 0x9aab_c4ba_61fd_5df3:
+        case 0x9aabc4ba61fd5df3:
             return try await dispatchecho(payload: payload)
-        case 0xcba1_5460_0f64_0175:
+        case 0xcba154600f640175:
             return try await dispatchreverse(payload: payload)
-        case 0x855b_3a25_d97b_fefd:
+        case 0xc3964cbee4b1d590:
+            return try await dispatchdivide(payload: payload)
+        case 0xe71a0faedd014e59:
+            return try await dispatchlookup(payload: payload)
+        case 0x855b3a25d97bfefd:
             return try await dispatchsum(payload: payload)
-        case 0x54d2_273d_8cdb_9c38:
+        case 0x54d2273d8cdb9c38:
             return try await dispatchgenerate(payload: payload)
-        case 0x5d98_9560_4eb1_8b19:
+        case 0x5d9895604eb18b19:
             return try await dispatchtransform(payload: payload)
-        case 0x453f_a9bf_6932_528c:
+        case 0x453fa9bf6932528c:
             return try await dispatchechoPoint(payload: payload)
-        case 0x3dd2_31f5_7b1b_ca21:
+        case 0x3dd231f57b1bca21:
             return try await dispatchcreatePerson(payload: payload)
-        case 0xba75_c486_83f1_d9e6:
+        case 0xba75c48683f1d9e6:
             return try await dispatchrectangleArea(payload: payload)
-        case 0xe285_f31c_6dff_fbfc:
+        case 0xe285f31c6dfffbfc:
             return try await dispatchparseColor(payload: payload)
-        case 0x6e70_6354_167c_00c2:
+        case 0x6e706354167c00c2:
             return try await dispatchshapeArea(payload: payload)
-        case 0xa914_982e_7d3c_7b55:
+        case 0xa914982e7d3c7b55:
             return try await dispatchcreateCanvas(payload: payload)
-        case 0xed1d_c0c6_2588_9d30:
+        case 0xed1dc0c625889d30:
             return try await dispatchprocessMessage(payload: payload)
-        case 0x5c87_07f5_ae4c_cbcc:
+        case 0x5c8707f5ae4ccbcc:
             return try await dispatchgetPoints(payload: payload)
-        case 0xacd1_9a29_fe0d_470c:
+        case 0xacd19a29fe0d470c:
             return try await dispatchswapPair(payload: payload)
         default:
             throw RoamError.unknownMethod
@@ -507,6 +576,35 @@ public final class TestbedDispatcher {
         let message = try decodeString(from: payload, offset: &offset)
         let result = try await handler.reverse(message: message)
         return Data(encodeResultOk(result, encoder: { encodeString($0) }))
+    }
+
+    private func dispatchdivide(payload: Data) async throws -> Data {
+        var offset = 0
+        let dividend = try decodeI64(from: payload, offset: &offset)
+        let divisor = try decodeI64(from: payload, offset: &offset)
+        let result = try await handler.divide(dividend: dividend, divisor: divisor)
+        return Data(encodeResultOk(result, encoder: { switch $0 { case .success(let v): return [UInt8(0)] + { encodeI64($0) }(v); case .failure(let e): return [UInt8(1)] + { v in
+    switch v {
+    case .divisionByZero:
+        return [UInt8(0)]
+    case .overflow:
+        return [UInt8(1)]
+    }
+}(e) } }))
+    }
+
+    private func dispatchlookup(payload: Data) async throws -> Data {
+        var offset = 0
+        let id = try decodeU32(from: payload, offset: &offset)
+        let result = try await handler.lookup(id: id)
+        return Data(encodeResultOk(result, encoder: { switch $0 { case .success(let v): return [UInt8(0)] + { encodeString($0.name) + encodeU8($0.age) + encodeOption($0.email, encoder: { encodeString($0) }) }(v); case .failure(let e): return [UInt8(1)] + { v in
+    switch v {
+    case .notFound:
+        return [UInt8(0)]
+    case .accessDenied:
+        return [UInt8(1)]
+    }
+}(e) } }))
     }
 
     private func dispatchsum(payload: Data) async throws -> Data {
@@ -537,17 +635,9 @@ public final class TestbedDispatcher {
         var offset = 0
         let name = try decodeString(from: payload, offset: &offset)
         let age = try decodeU8(from: payload, offset: &offset)
-        let email = try decodeOption(
-            from: payload, offset: &offset,
-            decoder: { data, off in try decodeString(from: data, offset: &off) })
+        let email = try decodeOption(from: payload, offset: &offset, decoder: { data, off in try decodeString(from: data, offset: &off) })
         let result = try await handler.createPerson(name: name, age: age, email: email)
-        return Data(
-            encodeResultOk(
-                result,
-                encoder: {
-                    encodeString($0.name) + encodeU8($0.age)
-                        + encodeOption($0.email, encoder: { encodeString($0) })
-                }))
+        return Data(encodeResultOk(result, encoder: { encodeString($0.name) + encodeU8($0.age) + encodeOption($0.email, encoder: { encodeString($0) }) }))
     }
 
     private func dispatchrectangleArea(payload: Data) async throws -> Data {
@@ -558,11 +648,8 @@ public final class TestbedDispatcher {
         let __rect_bottomRight_x = try decodeI32(from: payload, offset: &offset)
         let __rect_bottomRight_y = try decodeI32(from: payload, offset: &offset)
         let _rect_bottomRight = Point(x: __rect_bottomRight_x, y: __rect_bottomRight_y)
-        let _rect_label = try decodeOption(
-            from: payload, offset: &offset,
-            decoder: { data, off in try decodeString(from: data, offset: &off) })
-        let rect = Rectangle(
-            topLeft: _rect_topLeft, bottomRight: _rect_bottomRight, label: _rect_label)
+        let _rect_label = try decodeOption(from: payload, offset: &offset, decoder: { data, off in try decodeString(from: data, offset: &off) })
+        let rect = Rectangle(topLeft: _rect_topLeft, bottomRight: _rect_bottomRight, label: _rect_label)
         let result = try await handler.rectangleArea(rect: rect)
         return Data(encodeResultOk(result, encoder: { encodeF64($0) }))
     }
@@ -571,23 +658,16 @@ public final class TestbedDispatcher {
         var offset = 0
         let name = try decodeString(from: payload, offset: &offset)
         let result = try await handler.parseColor(name: name)
-        return Data(
-            encodeResultOk(
-                result,
-                encoder: {
-                    encodeOption(
-                        $0,
-                        encoder: { v in
-                            switch v {
-                            case .red:
-                                return [UInt8(0)]
-                            case .green:
-                                return [UInt8(1)]
-                            case .blue:
-                                return [UInt8(2)]
-                            }
-                        })
-                }))
+        return Data(encodeResultOk(result, encoder: { encodeOption($0, encoder: { v in
+    switch v {
+    case .red:
+        return [UInt8(0)]
+    case .green:
+        return [UInt8(1)]
+    case .blue:
+        return [UInt8(2)]
+    }
+}) }))
     }
 
     private func dispatchshapeArea(payload: Data) async throws -> Data {
@@ -614,26 +694,24 @@ public final class TestbedDispatcher {
     private func dispatchcreateCanvas(payload: Data) async throws -> Data {
         var offset = 0
         let name = try decodeString(from: payload, offset: &offset)
-        let shapes = try decodeVec(
-            from: payload, offset: &offset,
-            decoder: { data, off in
-                let disc = try decodeU8(from: data, offset: &off)
-                let result: Shape
-                switch disc {
-                case 0:
-                    let _radius = try decodeF64(from: data, offset: &off)
-                    result = .circle(radius: _radius)
-                case 1:
-                    let _width = try decodeF64(from: data, offset: &off)
-                    let _height = try decodeF64(from: data, offset: &off)
-                    result = .rectangle(width: _width, height: _height)
-                case 2:
-                    result = .point
-                default:
-                    throw RoamError.decodeError("unknown enum variant")
-                }
-                return result
-            })
+        let shapes = try decodeVec(from: payload, offset: &offset, decoder: { data, off in
+            let disc = try decodeU8(from: data, offset: &off)
+            let result: Shape
+            switch disc {
+            case 0:
+                let _radius = try decodeF64(from: data, offset: &off)
+                result = .circle(radius: _radius)
+            case 1:
+                let _width = try decodeF64(from: data, offset: &off)
+                let _height = try decodeF64(from: data, offset: &off)
+                result = .rectangle(width: _width, height: _height)
+            case 2:
+                result = .point
+            default:
+                throw RoamError.decodeError("unknown enum variant")
+            }
+            return result
+        })
         let _background_disc = try decodeU8(from: payload, offset: &offset)
         let background: Color
         switch _background_disc {
@@ -646,26 +724,17 @@ public final class TestbedDispatcher {
         default:
             throw RoamError.decodeError("unknown enum variant")
         }
-        let result = try await handler.createCanvas(
-            name: name, shapes: shapes, background: background)
-        return Data(
-            encodeResultOk(
-                result,
-                encoder: {
-                    encodeString($0.name)
-                        + encodeVec(
-                            $0.shapes,
-                            encoder: { v in
-                                switch v {
-                                case .circle(let radius):
-                                    return [UInt8(0)] + encodeF64(radius)
-                                case .rectangle(let width, let height):
-                                    return [UInt8(1)] + encodeF64(width) + encodeF64(height)
-                                case .point:
-                                    return [UInt8(2)]
-                                }
-                            }) + []
-                }))
+        let result = try await handler.createCanvas(name: name, shapes: shapes, background: background)
+        return Data(encodeResultOk(result, encoder: { encodeString($0.name) + encodeVec($0.shapes, encoder: { v in
+    switch v {
+    case .circle(let radius):
+        return [UInt8(0)] + encodeF64(radius)
+    case .rectangle(let width, let height):
+        return [UInt8(1)] + encodeF64(width) + encodeF64(height)
+    case .point:
+        return [UInt8(2)]
+    }
+}) + [] }))
     }
 
     private func dispatchprocessMessage(payload: Data) async throws -> Data {
@@ -686,40 +755,30 @@ public final class TestbedDispatcher {
             throw RoamError.decodeError("unknown enum variant")
         }
         let result = try await handler.processMessage(msg: msg)
-        return Data(
-            encodeResultOk(
-                result,
-                encoder: { v in
-                    switch v {
-                    case .text(let val):
-                        return [UInt8(0)] + encodeString(val)
-                    case .number(let val):
-                        return [UInt8(1)] + encodeI64(val)
-                    case .data(let val):
-                        return [UInt8(2)] + encodeBytes(Array(val))
-                    }
-                }))
+        return Data(encodeResultOk(result, encoder: { v in
+    switch v {
+    case .text(let val):
+        return [UInt8(0)] + encodeString(val)
+    case .number(let val):
+        return [UInt8(1)] + encodeI64(val)
+    case .data(let val):
+        return [UInt8(2)] + encodeBytes(Array(val))
+    }
+}))
     }
 
     private func dispatchgetPoints(payload: Data) async throws -> Data {
         var offset = 0
         let count = try decodeU32(from: payload, offset: &offset)
         let result = try await handler.getPoints(count: count)
-        return Data(
-            encodeResultOk(
-                result, encoder: { encodeVec($0, encoder: { encodeI32($0.x) + encodeI32($0.y) }) }))
+        return Data(encodeResultOk(result, encoder: { encodeVec($0, encoder: { encodeI32($0.x) + encodeI32($0.y) }) }))
     }
 
     private func dispatchswapPair(payload: Data) async throws -> Data {
         var offset = 0
-        let pair = try decodeTuple2(
-            from: payload, offset: &offset,
-            decoderA: { data, off in try decodeI32(from: data, offset: &off) },
-            decoderB: { data, off in try decodeString(from: data, offset: &off) })
+        let pair = try decodeTuple2(from: payload, offset: &offset, decoderA: { data, off in try decodeI32(from: data, offset: &off) }, decoderB: { data, off in try decodeString(from: data, offset: &off) })
         let result = try await handler.swapPair(pair: pair)
-        return Data(
-            encodeResultOk(
-                result, encoder: { { encodeString($0) }($0.0) + { encodeI32($0) }($0.1) }))
+        return Data(encodeResultOk(result, encoder: { { encodeString($0) }($0.0) + { encodeI32($0) }($0.1) }))
     }
 }
 
@@ -728,9 +787,7 @@ public final class TestbedStreamingDispatcher {
     private let registry: IncomingChannelRegistry
     private let taskSender: TaskSender
 
-    public init(
-        handler: TestbedHandler, registry: IncomingChannelRegistry, taskSender: @escaping TaskSender
-    ) {
+    public init(handler: TestbedHandler, registry: IncomingChannelRegistry, taskSender: @escaping TaskSender) {
         self.handler = handler
         self.registry = registry
         self.taskSender = taskSender
@@ -738,33 +795,37 @@ public final class TestbedStreamingDispatcher {
 
     public func dispatch(methodId: UInt64, requestId: UInt64, payload: Data) async {
         switch methodId {
-        case 0x9aab_c4ba_61fd_5df3:
+        case 0x9aabc4ba61fd5df3:
             await dispatchecho(requestId: requestId, payload: payload)
-        case 0xcba1_5460_0f64_0175:
+        case 0xcba154600f640175:
             await dispatchreverse(requestId: requestId, payload: payload)
-        case 0x855b_3a25_d97b_fefd:
+        case 0xc3964cbee4b1d590:
+            await dispatchdivide(requestId: requestId, payload: payload)
+        case 0xe71a0faedd014e59:
+            await dispatchlookup(requestId: requestId, payload: payload)
+        case 0x855b3a25d97bfefd:
             await dispatchsum(requestId: requestId, payload: payload)
-        case 0x54d2_273d_8cdb_9c38:
+        case 0x54d2273d8cdb9c38:
             await dispatchgenerate(requestId: requestId, payload: payload)
-        case 0x5d98_9560_4eb1_8b19:
+        case 0x5d9895604eb18b19:
             await dispatchtransform(requestId: requestId, payload: payload)
-        case 0x453f_a9bf_6932_528c:
+        case 0x453fa9bf6932528c:
             await dispatchechoPoint(requestId: requestId, payload: payload)
-        case 0x3dd2_31f5_7b1b_ca21:
+        case 0x3dd231f57b1bca21:
             await dispatchcreatePerson(requestId: requestId, payload: payload)
-        case 0xba75_c486_83f1_d9e6:
+        case 0xba75c48683f1d9e6:
             await dispatchrectangleArea(requestId: requestId, payload: payload)
-        case 0xe285_f31c_6dff_fbfc:
+        case 0xe285f31c6dfffbfc:
             await dispatchparseColor(requestId: requestId, payload: payload)
-        case 0x6e70_6354_167c_00c2:
+        case 0x6e706354167c00c2:
             await dispatchshapeArea(requestId: requestId, payload: payload)
-        case 0xa914_982e_7d3c_7b55:
+        case 0xa914982e7d3c7b55:
             await dispatchcreateCanvas(requestId: requestId, payload: payload)
-        case 0xed1d_c0c6_2588_9d30:
+        case 0xed1dc0c625889d30:
             await dispatchprocessMessage(requestId: requestId, payload: payload)
-        case 0x5c87_07f5_ae4c_cbcc:
+        case 0x5c8707f5ae4ccbcc:
             await dispatchgetPoints(requestId: requestId, payload: payload)
-        case 0xacd1_9a29_fe0d_470c:
+        case 0xacd19a29fe0d470c:
             await dispatchswapPair(requestId: requestId, payload: payload)
         default:
             taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
@@ -774,11 +835,9 @@ public final class TestbedStreamingDispatcher {
     /// Pre-register channel IDs from a request payload.
     /// Call this synchronously before spawning the dispatch task to avoid
     /// race conditions where Data arrives before channels are registered.
-    public static func preregisterChannels(
-        methodId: UInt64, payload: Data, registry: ChannelRegistry
-    ) async {
+    public static func preregisterChannels(methodId: UInt64, payload: Data, registry: ChannelRegistry) async {
         switch methodId {
-        case 0x855b_3a25_d97b_fefd:
+        case 0x855b3a25d97bfefd:
             do {
                 var offset = 0
                 let numbersChannelId = try decodeVarint(from: payload, offset: &offset)
@@ -786,12 +845,12 @@ public final class TestbedStreamingDispatcher {
             } catch {
                 // Ignore parse errors - dispatch will handle them
             }
-        case 0x5d98_9560_4eb1_8b19:
+        case 0x5d9895604eb18b19:
             do {
                 var offset = 0
                 let inputChannelId = try decodeVarint(from: payload, offset: &offset)
                 await registry.markKnown(inputChannelId)
-                _ = try decodeVarint(from: payload, offset: &offset)  // output
+                _ = try decodeVarint(from: payload, offset: &offset) // output
             } catch {
                 // Ignore parse errors - dispatch will handle them
             }
@@ -805,10 +864,7 @@ public final class TestbedStreamingDispatcher {
             var offset = 0
             let message = try decodeString(from: payload, offset: &offset)
             let result = try await handler.echo(message: message)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(result, encoder: { encodeString($0) })))
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeString($0) })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -819,10 +875,44 @@ public final class TestbedStreamingDispatcher {
             var offset = 0
             let message = try decodeString(from: payload, offset: &offset)
             let result = try await handler.reverse(message: message)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(result, encoder: { encodeString($0) })))
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeString($0) })))
+        } catch {
+            taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+        }
+    }
+
+    private func dispatchdivide(requestId: UInt64, payload: Data) async {
+        do {
+            var offset = 0
+            let dividend = try decodeI64(from: payload, offset: &offset)
+            let divisor = try decodeI64(from: payload, offset: &offset)
+            let result = try await handler.divide(dividend: dividend, divisor: divisor)
+            taskSender(.response(requestId: requestId, payload: { switch result { case .success(let v): return [UInt8(0)] + { encodeI64($0) }(v); case .failure(let e): return [UInt8(1), UInt8(0)] + { v in
+    switch v {
+    case .divisionByZero:
+        return [UInt8(0)]
+    case .overflow:
+        return [UInt8(1)]
+    }
+}(e) } }()))
+        } catch {
+            taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+        }
+    }
+
+    private func dispatchlookup(requestId: UInt64, payload: Data) async {
+        do {
+            var offset = 0
+            let id = try decodeU32(from: payload, offset: &offset)
+            let result = try await handler.lookup(id: id)
+            taskSender(.response(requestId: requestId, payload: { switch result { case .success(let v): return [UInt8(0)] + { encodeString($0.name) + encodeU8($0.age) + encodeOption($0.email, encoder: { encodeString($0) }) }(v); case .failure(let e): return [UInt8(1), UInt8(0)] + { v in
+    switch v {
+    case .notFound:
+        return [UInt8(0)]
+    case .accessDenied:
+        return [UInt8(1)]
+    }
+}(e) } }()))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -833,17 +923,12 @@ public final class TestbedStreamingDispatcher {
             var offset = 0
             let numbersChannelId = try decodeVarint(from: payload, offset: &offset)
             let numbersReceiver = await registry.register(numbersChannelId)
-            let numbers = createServerRx(
-                channelId: numbersChannelId, receiver: numbersReceiver,
-                deserialize: { bytes in
-                    var off = 0
-                    return try decodeI32(from: Data(bytes), offset: &off)
-                })
+            let numbers = createServerRx(channelId: numbersChannelId, receiver: numbersReceiver, deserialize: { bytes in
+                var off = 0
+                return try decodeI32(from: Data(bytes), offset: &off)
+            })
             let result = try await handler.sum(numbers: numbers)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(result, encoder: { encodeI64($0) })))
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeI64($0) })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -854,12 +939,10 @@ public final class TestbedStreamingDispatcher {
             var offset = 0
             let count = try decodeU32(from: payload, offset: &offset)
             let outputChannelId = try decodeVarint(from: payload, offset: &offset)
-            let output = createServerTx(
-                channelId: outputChannelId, taskSender: taskSender, serialize: ({ encodeI32($0) }))
+            let output = createServerTx(channelId: outputChannelId, taskSender: taskSender, serialize: ({ encodeI32($0) }))
             try await handler.generate(count: count, output: output)
             output.close()
-            taskSender(
-                .response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
+            taskSender(.response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -870,20 +953,15 @@ public final class TestbedStreamingDispatcher {
             var offset = 0
             let inputChannelId = try decodeVarint(from: payload, offset: &offset)
             let inputReceiver = await registry.register(inputChannelId)
-            let input = createServerRx(
-                channelId: inputChannelId, receiver: inputReceiver,
-                deserialize: { bytes in
-                    var off = 0
-                    return try decodeString(from: Data(bytes), offset: &off)
-                })
+            let input = createServerRx(channelId: inputChannelId, receiver: inputReceiver, deserialize: { bytes in
+                var off = 0
+                return try decodeString(from: Data(bytes), offset: &off)
+            })
             let outputChannelId = try decodeVarint(from: payload, offset: &offset)
-            let output = createServerTx(
-                channelId: outputChannelId, taskSender: taskSender,
-                serialize: ({ encodeString($0) }))
+            let output = createServerTx(channelId: outputChannelId, taskSender: taskSender, serialize: ({ encodeString($0) }))
             try await handler.transform(input: input, output: output)
             output.close()
-            taskSender(
-                .response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
+            taskSender(.response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -896,11 +974,7 @@ public final class TestbedStreamingDispatcher {
             let _point_y = try decodeI32(from: payload, offset: &offset)
             let point = Point(x: _point_x, y: _point_y)
             let result = try await handler.echoPoint(point: point)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(result, encoder: { encodeI32($0.x) + encodeI32($0.y) }))
-            )
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeI32($0.x) + encodeI32($0.y) })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -911,19 +985,9 @@ public final class TestbedStreamingDispatcher {
             var offset = 0
             let name = try decodeString(from: payload, offset: &offset)
             let age = try decodeU8(from: payload, offset: &offset)
-            let email = try decodeOption(
-                from: payload, offset: &offset,
-                decoder: { data, off in try decodeString(from: data, offset: &off) })
+            let email = try decodeOption(from: payload, offset: &offset, decoder: { data, off in try decodeString(from: data, offset: &off) })
             let result = try await handler.createPerson(name: name, age: age, email: email)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(
-                        result,
-                        encoder: {
-                            encodeString($0.name) + encodeU8($0.age)
-                                + encodeOption($0.email, encoder: { encodeString($0) })
-                        })))
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeString($0.name) + encodeU8($0.age) + encodeOption($0.email, encoder: { encodeString($0) }) })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -938,16 +1002,10 @@ public final class TestbedStreamingDispatcher {
             let __rect_bottomRight_x = try decodeI32(from: payload, offset: &offset)
             let __rect_bottomRight_y = try decodeI32(from: payload, offset: &offset)
             let _rect_bottomRight = Point(x: __rect_bottomRight_x, y: __rect_bottomRight_y)
-            let _rect_label = try decodeOption(
-                from: payload, offset: &offset,
-                decoder: { data, off in try decodeString(from: data, offset: &off) })
-            let rect = Rectangle(
-                topLeft: _rect_topLeft, bottomRight: _rect_bottomRight, label: _rect_label)
+            let _rect_label = try decodeOption(from: payload, offset: &offset, decoder: { data, off in try decodeString(from: data, offset: &off) })
+            let rect = Rectangle(topLeft: _rect_topLeft, bottomRight: _rect_bottomRight, label: _rect_label)
             let result = try await handler.rectangleArea(rect: rect)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(result, encoder: { encodeF64($0) })))
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeF64($0) })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -958,25 +1016,16 @@ public final class TestbedStreamingDispatcher {
             var offset = 0
             let name = try decodeString(from: payload, offset: &offset)
             let result = try await handler.parseColor(name: name)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(
-                        result,
-                        encoder: {
-                            encodeOption(
-                                $0,
-                                encoder: { v in
-                                    switch v {
-                                    case .red:
-                                        return [UInt8(0)]
-                                    case .green:
-                                        return [UInt8(1)]
-                                    case .blue:
-                                        return [UInt8(2)]
-                                    }
-                                })
-                        })))
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeOption($0, encoder: { v in
+    switch v {
+    case .red:
+        return [UInt8(0)]
+    case .green:
+        return [UInt8(1)]
+    case .blue:
+        return [UInt8(2)]
+    }
+}) })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -1001,10 +1050,7 @@ public final class TestbedStreamingDispatcher {
                 throw RoamError.decodeError("unknown enum variant")
             }
             let result = try await handler.shapeArea(shape: shape)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(result, encoder: { encodeF64($0) })))
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeF64($0) })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -1014,26 +1060,24 @@ public final class TestbedStreamingDispatcher {
         do {
             var offset = 0
             let name = try decodeString(from: payload, offset: &offset)
-            let shapes = try decodeVec(
-                from: payload, offset: &offset,
-                decoder: { data, off in
-                    let disc = try decodeU8(from: data, offset: &off)
-                    let result: Shape
-                    switch disc {
-                    case 0:
-                        let _radius = try decodeF64(from: data, offset: &off)
-                        result = .circle(radius: _radius)
-                    case 1:
-                        let _width = try decodeF64(from: data, offset: &off)
-                        let _height = try decodeF64(from: data, offset: &off)
-                        result = .rectangle(width: _width, height: _height)
-                    case 2:
-                        result = .point
-                    default:
-                        throw RoamError.decodeError("unknown enum variant")
-                    }
-                    return result
-                })
+            let shapes = try decodeVec(from: payload, offset: &offset, decoder: { data, off in
+                let disc = try decodeU8(from: data, offset: &off)
+                let result: Shape
+                switch disc {
+                case 0:
+                    let _radius = try decodeF64(from: data, offset: &off)
+                    result = .circle(radius: _radius)
+                case 1:
+                    let _width = try decodeF64(from: data, offset: &off)
+                    let _height = try decodeF64(from: data, offset: &off)
+                    result = .rectangle(width: _width, height: _height)
+                case 2:
+                    result = .point
+                default:
+                    throw RoamError.decodeError("unknown enum variant")
+                }
+                return result
+            })
             let _background_disc = try decodeU8(from: payload, offset: &offset)
             let background: Color
             switch _background_disc {
@@ -1046,28 +1090,17 @@ public final class TestbedStreamingDispatcher {
             default:
                 throw RoamError.decodeError("unknown enum variant")
             }
-            let result = try await handler.createCanvas(
-                name: name, shapes: shapes, background: background)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(
-                        result,
-                        encoder: {
-                            encodeString($0.name)
-                                + encodeVec(
-                                    $0.shapes,
-                                    encoder: { v in
-                                        switch v {
-                                        case .circle(let radius):
-                                            return [UInt8(0)] + encodeF64(radius)
-                                        case .rectangle(let width, let height):
-                                            return [UInt8(1)] + encodeF64(width) + encodeF64(height)
-                                        case .point:
-                                            return [UInt8(2)]
-                                        }
-                                    }) + []
-                        })))
+            let result = try await handler.createCanvas(name: name, shapes: shapes, background: background)
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeString($0.name) + encodeVec($0.shapes, encoder: { v in
+    switch v {
+    case .circle(let radius):
+        return [UInt8(0)] + encodeF64(radius)
+    case .rectangle(let width, let height):
+        return [UInt8(1)] + encodeF64(width) + encodeF64(height)
+    case .point:
+        return [UInt8(2)]
+    }
+}) + [] })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -1092,21 +1125,16 @@ public final class TestbedStreamingDispatcher {
                 throw RoamError.decodeError("unknown enum variant")
             }
             let result = try await handler.processMessage(msg: msg)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(
-                        result,
-                        encoder: { v in
-                            switch v {
-                            case .text(let val):
-                                return [UInt8(0)] + encodeString(val)
-                            case .number(let val):
-                                return [UInt8(1)] + encodeI64(val)
-                            case .data(let val):
-                                return [UInt8(2)] + encodeBytes(Array(val))
-                            }
-                        })))
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { v in
+    switch v {
+    case .text(let val):
+        return [UInt8(0)] + encodeString(val)
+    case .number(let val):
+        return [UInt8(1)] + encodeI64(val)
+    case .data(let val):
+        return [UInt8(2)] + encodeBytes(Array(val))
+    }
+})))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -1117,13 +1145,7 @@ public final class TestbedStreamingDispatcher {
             var offset = 0
             let count = try decodeU32(from: payload, offset: &offset)
             let result = try await handler.getPoints(count: count)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(
-                        result,
-                        encoder: { encodeVec($0, encoder: { encodeI32($0.x) + encodeI32($0.y) }) }))
-            )
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeVec($0, encoder: { encodeI32($0.x) + encodeI32($0.y) }) })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -1132,16 +1154,9 @@ public final class TestbedStreamingDispatcher {
     private func dispatchswapPair(requestId: UInt64, payload: Data) async {
         do {
             var offset = 0
-            let pair = try decodeTuple2(
-                from: payload, offset: &offset,
-                decoderA: { data, off in try decodeI32(from: data, offset: &off) },
-                decoderB: { data, off in try decodeString(from: data, offset: &off) })
+            let pair = try decodeTuple2(from: payload, offset: &offset, decoderA: { data, off in try decodeI32(from: data, offset: &off) }, decoderB: { data, off in try decodeString(from: data, offset: &off) })
             let result = try await handler.swapPair(pair: pair)
-            taskSender(
-                .response(
-                    requestId: requestId,
-                    payload: encodeResultOk(
-                        result, encoder: { { encodeString($0) }($0.0) + { encodeI32($0) }($0.1) })))
+            taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: { { encodeString($0) }($0.0) + { encodeI32($0) }($0.1) })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }
@@ -1154,32 +1169,18 @@ public final class TestbedStreamingDispatcher {
 public let testbed_schemas: [String: MethodSchema] = [
     "echo": MethodSchema(args: [.string]),
     "reverse": MethodSchema(args: [.string]),
+    "divide": MethodSchema(args: [.i64, .i64]),
+    "lookup": MethodSchema(args: [.u32]),
     "sum": MethodSchema(args: [.rx(element: .i32)]),
     "generate": MethodSchema(args: [.u32, .tx(element: .i32)]),
     "transform": MethodSchema(args: [.rx(element: .string), .tx(element: .string)]),
     "echoPoint": MethodSchema(args: [.struct(fields: [("x", .i32), ("y", .i32)])]),
     "createPerson": MethodSchema(args: [.string, .u8, .option(inner: .string)]),
-    "rectangleArea": MethodSchema(args: [
-        .struct(fields: [
-            ("top_left", .struct(fields: [("x", .i32), ("y", .i32)])),
-            ("bottom_right", .struct(fields: [("x", .i32), ("y", .i32)])),
-            ("label", .option(inner: .string)),
-        ])
-    ]),
+    "rectangleArea": MethodSchema(args: [.struct(fields: [("top_left", .struct(fields: [("x", .i32), ("y", .i32)])), ("bottom_right", .struct(fields: [("x", .i32), ("y", .i32)])), ("label", .option(inner: .string))])]),
     "parseColor": MethodSchema(args: [.string]),
-    "shapeArea": MethodSchema(args: [
-        .enum(variants: [("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", [])])
-    ]),
-    "createCanvas": MethodSchema(args: [
-        .string,
-        .vec(
-            element: .enum(variants: [
-                ("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", []),
-            ])), .enum(variants: [("Red", []), ("Green", []), ("Blue", [])]),
-    ]),
-    "processMessage": MethodSchema(args: [
-        .enum(variants: [("Text", [.string]), ("Number", [.i64]), ("Data", [.bytes])])
-    ]),
+    "shapeArea": MethodSchema(args: [.enum(variants: [("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", [])])]),
+    "createCanvas": MethodSchema(args: [.string, .vec(element: .enum(variants: [("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", [])])), .enum(variants: [("Red", []), ("Green", []), ("Blue", [])])]),
+    "processMessage": MethodSchema(args: [.enum(variants: [("Text", [.string]), ("Number", [.i64]), ("Data", [.bytes])])]),
     "getPoints": MethodSchema(args: [.u32]),
     "swapPair": MethodSchema(args: [.bytes]),
 ]
@@ -1208,68 +1209,21 @@ public struct TestbedSerializers: BindingSerializers {
 
     public func rxDeserializer(for schema: Schema) -> @Sendable ([UInt8]) throws -> Any {
         switch schema {
-        case .bool:
-            return {
-                var o = 0
-                return try decodeBool(from: Data($0), offset: &o)
-            }
-        case .u8:
-            return {
-                var o = 0
-                return try decodeU8(from: Data($0), offset: &o)
-            }
-        case .i8:
-            return {
-                var o = 0
-                return try decodeI8(from: Data($0), offset: &o)
-            }
-        case .u16:
-            return {
-                var o = 0
-                return try decodeU16(from: Data($0), offset: &o)
-            }
-        case .i16:
-            return {
-                var o = 0
-                return try decodeI16(from: Data($0), offset: &o)
-            }
-        case .u32:
-            return {
-                var o = 0
-                return try decodeU32(from: Data($0), offset: &o)
-            }
-        case .i32:
-            return {
-                var o = 0
-                return try decodeI32(from: Data($0), offset: &o)
-            }
-        case .u64:
-            return {
-                var o = 0
-                return try decodeVarint(from: Data($0), offset: &o)
-            }
-        case .i64:
-            return {
-                var o = 0
-                return try decodeI64(from: Data($0), offset: &o)
-            }
-        case .f32:
-            return {
-                var o = 0
-                return try decodeF32(from: Data($0), offset: &o)
-            }
-        case .f64:
-            return {
-                var o = 0
-                return try decodeF64(from: Data($0), offset: &o)
-            }
-        case .string:
-            return {
-                var o = 0
-                return try decodeString(from: Data($0), offset: &o)
-            }
+        case .bool: return { var o = 0; return try decodeBool(from: Data($0), offset: &o) }
+        case .u8: return { var o = 0; return try decodeU8(from: Data($0), offset: &o) }
+        case .i8: return { var o = 0; return try decodeI8(from: Data($0), offset: &o) }
+        case .u16: return { var o = 0; return try decodeU16(from: Data($0), offset: &o) }
+        case .i16: return { var o = 0; return try decodeI16(from: Data($0), offset: &o) }
+        case .u32: return { var o = 0; return try decodeU32(from: Data($0), offset: &o) }
+        case .i32: return { var o = 0; return try decodeI32(from: Data($0), offset: &o) }
+        case .u64: return { var o = 0; return try decodeVarint(from: Data($0), offset: &o) }
+        case .i64: return { var o = 0; return try decodeI64(from: Data($0), offset: &o) }
+        case .f32: return { var o = 0; return try decodeF32(from: Data($0), offset: &o) }
+        case .f64: return { var o = 0; return try decodeF64(from: Data($0), offset: &o) }
+        case .string: return { var o = 0; return try decodeString(from: Data($0), offset: &o) }
         case .bytes: return { Data($0) }
         default: fatalError("Unsupported schema for Rx deserialization: \(schema)")
         }
     }
 }
+

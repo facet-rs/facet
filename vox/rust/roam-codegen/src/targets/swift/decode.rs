@@ -175,6 +175,45 @@ pub fn generate_decode_stmt_from(
             out
         }
         ShapeKind::Pointer { pointee } => generate_decode_stmt(pointee, var_name, indent),
+        ShapeKind::Result { ok, err } => {
+            // Decode Result<T, E> - discriminant 0 = Ok, 1 = Err
+            let ok_type = super::types::swift_type_base(ok);
+            let err_type = super::types::swift_type_base(err);
+            let mut out = String::new();
+            out.push_str(&format!(
+                "{indent}let _{var_name}_disc = try decodeU8(from: {data_var}, offset: &offset)\n"
+            ));
+            out.push_str(&format!(
+                "{indent}let {var_name}: Result<{ok_type}, {err_type}>\n"
+            ));
+            out.push_str(&format!("{indent}switch _{var_name}_disc {{\n"));
+            out.push_str(&format!("{indent}case 0:\n"));
+            out.push_str(&generate_decode_stmt_from(
+                ok,
+                &format!("_{var_name}_ok"),
+                &format!("{indent}    "),
+                data_var,
+            ));
+            out.push_str(&format!(
+                "{indent}    {var_name} = .success(_{var_name}_ok)\n"
+            ));
+            out.push_str(&format!("{indent}case 1:\n"));
+            out.push_str(&generate_decode_stmt_from(
+                err,
+                &format!("_{var_name}_err"),
+                &format!("{indent}    "),
+                data_var,
+            ));
+            out.push_str(&format!(
+                "{indent}    {var_name} = .failure(_{var_name}_err)\n"
+            ));
+            out.push_str(&format!("{indent}default:\n"));
+            out.push_str(&format!(
+                "{indent}    throw RoamError.decodeError(\"invalid Result discriminant\")\n"
+            ));
+            out.push_str(&format!("{indent}}}\n"));
+            out
+        }
         _ => {
             // Fallback for unsupported types
             format!("{indent}let {var_name}: Any = () // unsupported type\n")

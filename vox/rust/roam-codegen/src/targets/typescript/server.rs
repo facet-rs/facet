@@ -3,7 +3,7 @@
 //! Generates server handler interface and method dispatch logic.
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
-use roam_schema::{ServiceDetail, is_rx, is_tx};
+use roam_schema::{ServiceDetail, ShapeKind, classify_shape, is_rx, is_tx};
 
 use super::decode::{generate_decode_stmt_server, generate_decode_stmt_server_streaming};
 use super::encode::generate_encode_expr;
@@ -191,10 +191,27 @@ pub fn generate_streaming_handlers(service: &ServiceDetail) -> String {
         }
 
         // Encode and send response via taskSender
-        let encode_expr = generate_encode_expr(method.return_type, "result");
-        out.push_str(&format!(
-            "      taskSender({{ kind: 'response', requestId, payload: encodeResultOk({encode_expr}) }});\n"
-        ));
+        // Check if return type is Result<T, E> - if so, encode as Result<T, RoamError<User(E)>>
+        if let ShapeKind::Result { ok, err } = classify_shape(method.return_type) {
+            // Handler returns { ok: true; value: T } | { ok: false; error: E }
+            // Wire format: [0] + T for success, [1, 0] + E for User error
+            let ok_encode = generate_encode_expr(ok, "result.value");
+            let err_encode = generate_encode_expr(err, "result.error");
+            out.push_str("      if (result.ok) {\n");
+            out.push_str(&format!(
+                "        taskSender({{ kind: 'response', requestId, payload: concat(encodeU8(0), {ok_encode}) }});\n"
+            ));
+            out.push_str("      } else {\n");
+            out.push_str(&format!(
+                "        taskSender({{ kind: 'response', requestId, payload: concat(encodeU8(1), encodeU8(0), {err_encode}) }});\n"
+            ));
+            out.push_str("      }\n");
+        } else {
+            let encode_expr = generate_encode_expr(method.return_type, "result");
+            out.push_str(&format!(
+                "      taskSender({{ kind: 'response', requestId, payload: encodeResultOk({encode_expr}) }});\n"
+            ));
+        }
 
         out.push_str("    } catch (e) {\n");
         out.push_str(

@@ -22,21 +22,7 @@ swift *args:
     swift build --package-path swift/subject
     SUBJECT_CMD="sh swift/subject/subject-swift.sh" cargo nextest run -p spec-tests {{ quote(args) }}
 
-go *args:
-    cd go && go build -o subject/subject-go ./subject
-    SUBJECT_CMD="./go/subject/subject-go" cargo nextest run -p spec-tests {{ quote(args) }}
-
-java *args:
-    sh java/subject/build.sh
-    SUBJECT_CMD="sh java/subject/subject-java.sh" cargo nextest run -p spec-tests {{ quote(args) }}
-
-python *args:
-    SUBJECT_CMD="python3 python/subject/subject.py" cargo nextest run -p spec-tests {{ quote(args) }}
-
 all *args:
     just rust {{ quote(args) }}
     just ts {{ quote(args) }}
     just swift {{ quote(args) }}
-    just go {{ quote(args) }}
-    just java {{ quote(args) }}
-    just python {{ quote(args) }}

@@ -7,10 +7,10 @@
 //! This server uses the roam runtime (dispatcher, channels, etc.) to
 //! provide a real roam peer for the TypeScript client to talk to.
 
-use roam::session::{Never, RoamError, Rx, Tx};
+use roam::session::{Rx, Tx};
 use roam_stream::HandshakeConfig;
 use roam_websocket::{WsTransport, ws_accept};
-use spec_proto::{Canvas, Color, Message, Person, Point, Rectangle, Shape};
+use spec_proto::{Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape};
 use spec_proto::{Testbed, TestbedDispatcher};
 use std::env;
 use tokio::net::TcpListener;
@@ -21,106 +21,119 @@ use tokio_tungstenite::accept_async;
 struct TestbedService;
 
 impl Testbed for TestbedService {
-    async fn echo(&self, message: String) -> Result<String, RoamError<Never>> {
-        Ok(message)
+    async fn echo(&self, message: String) -> String {
+        message
     }
 
-    async fn reverse(&self, message: String) -> Result<String, RoamError<Never>> {
-        Ok(message.chars().rev().collect())
+    async fn reverse(&self, message: String) -> String {
+        message.chars().rev().collect()
     }
 
-    async fn sum(&self, mut numbers: Rx<i32>) -> Result<i64, RoamError<Never>> {
+    async fn divide(&self, dividend: i64, divisor: i64) -> Result<i64, MathError> {
+        if divisor == 0 {
+            Err(MathError::DivisionByZero)
+        } else {
+            Ok(dividend / divisor)
+        }
+    }
+
+    async fn lookup(&self, id: u32) -> Result<Person, LookupError> {
+        // Only IDs 1-3 exist
+        match id {
+            1 => Ok(Person {
+                name: "Alice".to_string(),
+                age: 30,
+                email: Some("alice@example.com".to_string()),
+            }),
+            2 => Ok(Person {
+                name: "Bob".to_string(),
+                age: 25,
+                email: None,
+            }),
+            3 => Ok(Person {
+                name: "Charlie".to_string(),
+                age: 35,
+                email: Some("charlie@example.com".to_string()),
+            }),
+            _ => Err(LookupError::NotFound),
+        }
+    }
+
+    async fn sum(&self, mut numbers: Rx<i32>) -> i64 {
         let mut total: i64 = 0;
         while let Some(n) = numbers.recv().await.ok().flatten() {
             total += n as i64;
         }
-        Ok(total)
+        total
     }
 
-    async fn generate(&self, count: u32, output: Tx<i32>) -> Result<(), RoamError<Never>> {
+    async fn generate(&self, count: u32, output: Tx<i32>) {
         for i in 0..count as i32 {
             let _ = output.send(&i).await;
         }
-        Ok(())
     }
 
-    async fn transform(
-        &self,
-        mut input: Rx<String>,
-        output: Tx<String>,
-    ) -> Result<(), RoamError<Never>> {
+    async fn transform(&self, mut input: Rx<String>, output: Tx<String>) {
         while let Some(s) = input.recv().await.ok().flatten() {
             let _ = output.send(&s).await;
         }
-        Ok(())
     }
 
-    async fn echo_point(&self, point: Point) -> Result<Point, RoamError<Never>> {
-        Ok(point)
+    async fn echo_point(&self, point: Point) -> Point {
+        point
     }
 
-    async fn create_person(
-        &self,
-        name: String,
-        age: u8,
-        email: Option<String>,
-    ) -> Result<Person, RoamError<Never>> {
-        Ok(Person { name, age, email })
+    async fn create_person(&self, name: String, age: u8, email: Option<String>) -> Person {
+        Person { name, age, email }
     }
 
-    async fn rectangle_area(&self, rect: Rectangle) -> Result<f64, RoamError<Never>> {
+    async fn rectangle_area(&self, rect: Rectangle) -> f64 {
         let width = (rect.bottom_right.x - rect.top_left.x).abs() as f64;
         let height = (rect.bottom_right.y - rect.top_left.y).abs() as f64;
-        Ok(width * height)
+        width * height
     }
 
-    async fn parse_color(&self, name: String) -> Result<Option<Color>, RoamError<Never>> {
+    async fn parse_color(&self, name: String) -> Option<Color> {
         match name.to_lowercase().as_str() {
-            "red" => Ok(Some(Color::Red)),
-            "green" => Ok(Some(Color::Green)),
-            "blue" => Ok(Some(Color::Blue)),
-            _ => Ok(None),
+            "red" => Some(Color::Red),
+            "green" => Some(Color::Green),
+            "blue" => Some(Color::Blue),
+            _ => None,
         }
     }
 
-    async fn shape_area(&self, shape: Shape) -> Result<f64, RoamError<Never>> {
-        let area = match shape {
+    async fn shape_area(&self, shape: Shape) -> f64 {
+        match shape {
             Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
             Shape::Rectangle { width, height } => width * height,
             Shape::Point => 0.0,
-        };
-        Ok(area)
-    }
-
-    async fn create_canvas(
-        &self,
-        name: String,
-        shapes: Vec<Shape>,
-        background: Color,
-    ) -> Result<Canvas, RoamError<Never>> {
-        Ok(Canvas {
-            name,
-            shapes,
-            background,
-        })
-    }
-
-    async fn process_message(&self, msg: Message) -> Result<Message, RoamError<Never>> {
-        match msg {
-            Message::Text(text) => Ok(Message::Text(format!("Processed: {}", text))),
-            Message::Number(n) => Ok(Message::Number(n * 2)),
-            Message::Data(data) => Ok(Message::Data(data.into_iter().rev().collect())),
         }
     }
 
-    async fn get_points(&self, count: u32) -> Result<Vec<Point>, RoamError<Never>> {
-        Ok((0..count as i32)
-            .map(|i| Point { x: i, y: i * 2 })
-            .collect())
+    async fn create_canvas(&self, name: String, shapes: Vec<Shape>, background: Color) -> Canvas {
+        Canvas {
+            name,
+            shapes,
+            background,
+        }
     }
 
-    async fn swap_pair(&self, pair: (i32, String)) -> Result<(String, i32), RoamError<Never>> {
-        Ok((pair.1, pair.0))
+    async fn process_message(&self, msg: Message) -> Message {
+        match msg {
+            Message::Text(text) => Message::Text(format!("Processed: {}", text)),
+            Message::Number(n) => Message::Number(n * 2),
+            Message::Data(data) => Message::Data(data.into_iter().rev().collect()),
+        }
+    }
+
+    async fn get_points(&self, count: u32) -> Vec<Point> {
+        (0..count as i32)
+            .map(|i| Point { x: i, y: i * 2 })
+            .collect()
+    }
+
+    async fn swap_pair(&self, pair: (i32, String)) -> (String, i32) {
+        (pair.1, pair.0)
     }
 }
 

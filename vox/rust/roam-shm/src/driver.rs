@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use roam_session::{
-    CallError, ChannelError, ChannelRegistry, ConnectionHandle, HandleCommand, Role,
-    ServiceDispatcher, TaskMessage,
+    ChannelError, ChannelRegistry, ConnectionHandle, HandleCommand, Role, ServiceDispatcher,
+    TaskMessage, TransportError,
 };
 use roam_stream::MessageTransport;
 use roam_wire::Message;
@@ -91,7 +91,7 @@ pub struct ShmDriver<T, D> {
 
     /// Pending responses for outgoing calls we made.
     /// request_id → oneshot sender for the response.
-    pending_responses: HashMap<u64, oneshot::Sender<Result<Vec<u8>, CallError>>>,
+    pending_responses: HashMap<u64, oneshot::Sender<Result<Vec<u8>, TransportError>>>,
 
     /// In-flight requests we're serving (to detect duplicates).
     in_flight_server_requests: std::collections::HashSet<u64>,
@@ -264,7 +264,7 @@ where
             Message::Goodbye { .. } => {
                 // Fail all pending responses
                 for (_, tx) in self.pending_responses.drain() {
-                    let _ = tx.send(Err(CallError::ConnectionClosed));
+                    let _ = tx.send(Err(TransportError::ConnectionClosed));
                 }
                 return Err(ShmConnectionError::Closed);
             }
@@ -418,7 +418,7 @@ where
     async fn goodbye(&mut self, rule_id: &'static str) -> ShmConnectionError {
         // Fail all pending responses
         for (_, tx) in self.pending_responses.drain() {
-            let _ = tx.send(Err(CallError::ConnectionClosed));
+            let _ = tx.send(Err(TransportError::ConnectionClosed));
         }
 
         let _ = MessageTransport::send(
@@ -578,7 +578,7 @@ struct PeerConnectionState<D> {
     server_channel_registry: ChannelRegistry,
 
     /// Pending responses for outgoing calls we made to this peer.
-    pending_responses: HashMap<u64, oneshot::Sender<Result<Vec<u8>, CallError>>>,
+    pending_responses: HashMap<u64, oneshot::Sender<Result<Vec<u8>, TransportError>>>,
 
     /// In-flight requests we're serving for this peer.
     in_flight_server_requests: std::collections::HashSet<u64>,
@@ -848,7 +848,7 @@ where
                 // Fail all pending responses for this peer
                 if let Some(state) = self.peers.get_mut(&peer_id) {
                     for (_, tx) in state.pending_responses.drain() {
-                        let _ = tx.send(Err(CallError::ConnectionClosed));
+                        let _ = tx.send(Err(TransportError::ConnectionClosed));
                     }
                 }
                 // Remove the peer
@@ -1049,7 +1049,7 @@ where
         // Fail all pending responses for this peer
         if let Some(state) = self.peers.get_mut(&peer_id) {
             for (_, tx) in state.pending_responses.drain() {
-                let _ = tx.send(Err(CallError::ConnectionClosed));
+                let _ = tx.send(Err(TransportError::ConnectionClosed));
             }
         }
 

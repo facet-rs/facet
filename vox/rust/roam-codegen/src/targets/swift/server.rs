@@ -487,12 +487,24 @@ fn generate_streaming_dispatch_method(w: &mut CodeWriter<&mut String>, method: &
                         arg_names.join(", ")
                     )
                     .unwrap();
-                    let encode_closure = generate_encode_closure(method.return_type);
-                    cw_writeln!(
-                        w,
-                        "taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: {encode_closure})))"
-                    )
-                    .unwrap();
+                    // Check if return type is Result<T, E> - if so, encode as Result<T, RoamError<User(E)>>
+                    if let ShapeKind::Result { ok, err } = classify_shape(method.return_type) {
+                        let ok_encode = generate_encode_closure(ok);
+                        let err_encode = generate_encode_closure(err);
+                        // Wire format: [0] + T for success, [1, 0] + E for User error
+                        cw_writeln!(
+                            w,
+                            "taskSender(.response(requestId: requestId, payload: {{ switch result {{ case .success(let v): return [UInt8(0)] + {ok_encode}(v); case .failure(let e): return [UInt8(1), UInt8(0)] + {err_encode}(e) }} }}()))"
+                        )
+                        .unwrap();
+                    } else {
+                        let encode_closure = generate_encode_closure(method.return_type);
+                        cw_writeln!(
+                            w,
+                            "taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: {encode_closure})))"
+                        )
+                        .unwrap();
+                    }
                 }
             }
         }

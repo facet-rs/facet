@@ -12,6 +12,8 @@ import type {
   Shape,
   Canvas,
   Message,
+  MathError,
+  LookupError,
 } from "@bearcove/roam-generated/testbed.ts";
 import {
   testbed_streamingHandlers,
@@ -41,6 +43,30 @@ class TestbedService implements TestbedHandler {
 
   reverse(message: string): string {
     return Array.from(message).reverse().join("");
+  }
+
+  // Fallible methods
+  divide(
+    dividend: bigint,
+    divisor: bigint,
+  ): { ok: true; value: bigint } | { ok: false; error: MathError } {
+    if (divisor === 0n) {
+      return { ok: false, error: { tag: "DivisionByZero" } };
+    }
+    return { ok: true, value: dividend / divisor };
+  }
+
+  lookup(id: number): { ok: true; value: Person } | { ok: false; error: LookupError } {
+    switch (id) {
+      case 1:
+        return { ok: true, value: { name: "Alice", age: 30, email: "alice@example.com" } };
+      case 2:
+        return { ok: true, value: { name: "Bob", age: 25, email: null } };
+      case 3:
+        return { ok: true, value: { name: "Charlie", age: 35, email: "charlie@example.com" } };
+      default:
+        return { ok: false, error: { tag: "NotFound" } };
+    }
   }
 
   // Streaming methods

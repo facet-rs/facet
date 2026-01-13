@@ -54,8 +54,8 @@ use std::time::Duration;
 
 use facet::Facet;
 use roam_session::{
-    CallError, ChannelError, ChannelRegistry, ConnectionHandle, HandleCommand, RoamError, Role,
-    ServiceDispatcher, TaskMessage,
+    ChannelError, ChannelRegistry, ConnectionHandle, HandleCommand, RoamError, Role,
+    ServiceDispatcher, TaskMessage, TransportError,
 };
 use roam_wire::{Hello, Message};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -222,8 +222,8 @@ pub enum ConnectError {
     },
     /// Connection failed.
     ConnectFailed(io::Error),
-    /// RPC error (not transport-related).
-    Rpc(CallError),
+    /// RPC error during connection setup.
+    Rpc(TransportError),
 }
 
 impl std::fmt::Display for ConnectError {
@@ -251,8 +251,8 @@ impl std::error::Error for ConnectError {
     }
 }
 
-impl From<CallError> for ConnectError {
-    fn from(e: CallError) -> Self {
+impl From<TransportError> for ConnectError {
+    fn from(e: TransportError) -> Self {
         ConnectError::Rpc(e)
     }
 }
@@ -514,9 +514,10 @@ where
 
             match handle.call_raw(method_id, payload.clone()).await {
                 Ok(response) => return Ok(response),
-                Err(CallError::Encode(e)) => return Err(ConnectError::Rpc(CallError::Encode(e))),
-                Err(CallError::Decode(e)) => return Err(ConnectError::Rpc(CallError::Decode(e))),
-                Err(CallError::ConnectionClosed) | Err(CallError::DriverGone) => {
+                Err(TransportError::Encode(e)) => {
+                    return Err(ConnectError::Rpc(TransportError::Encode(e)));
+                }
+                Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                     {
                         let mut state = self.state.lock().await;
                         *state = None;
@@ -550,40 +551,37 @@ where
     C: Connector,
     D: ServiceDispatcher + Clone + 'static,
 {
-    type Error = ConnectError;
-
     async fn call<T: Facet<'static>>(
         &self,
         method_id: u64,
         args: &mut T,
-    ) -> Result<Vec<u8>, Self::Error> {
-        let mut last_error: Option<io::Error> = None;
+    ) -> Result<Vec<u8>, TransportError> {
         let mut attempt = 0u32;
 
         loop {
             let handle = match self.ensure_connected().await {
                 Ok(h) => h,
-                Err(ConnectError::ConnectFailed(e)) => {
+                Err(ConnectError::ConnectFailed(_)) => {
                     attempt += 1;
                     if attempt >= self.retry_policy.max_attempts {
-                        return Err(ConnectError::RetriesExhausted {
-                            original: last_error.unwrap_or(e),
-                            attempts: attempt,
-                        });
+                        return Err(TransportError::ConnectionClosed);
                     }
-                    last_error = Some(e);
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
                     tokio::time::sleep(backoff).await;
                     continue;
                 }
-                Err(e) => return Err(e),
+                Err(ConnectError::RetriesExhausted { .. }) => {
+                    return Err(TransportError::ConnectionClosed);
+                }
+                Err(ConnectError::Rpc(e)) => return Err(e),
             };
 
             match handle.call(method_id, args).await {
                 Ok(response) => return Ok(response),
-                Err(CallError::Encode(e)) => return Err(ConnectError::Rpc(CallError::Encode(e))),
-                Err(CallError::Decode(e)) => return Err(ConnectError::Rpc(CallError::Decode(e))),
-                Err(CallError::ConnectionClosed) | Err(CallError::DriverGone) => {
+                Err(TransportError::Encode(e)) => {
+                    return Err(TransportError::Encode(e));
+                }
+                Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                     {
                         let mut state = self.state.lock().await;
                         *state = None;
@@ -591,19 +589,9 @@ where
 
                     attempt += 1;
                     if attempt >= self.retry_policy.max_attempts {
-                        let error = last_error.unwrap_or_else(|| {
-                            io::Error::new(io::ErrorKind::ConnectionReset, "connection closed")
-                        });
-                        return Err(ConnectError::RetriesExhausted {
-                            original: error,
-                            attempts: attempt,
-                        });
+                        return Err(TransportError::ConnectionClosed);
                     }
 
-                    last_error = Some(io::Error::new(
-                        io::ErrorKind::ConnectionReset,
-                        "connection closed",
-                    ));
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
                     tokio::time::sleep(backoff).await;
                 }
@@ -740,9 +728,10 @@ where
 
             match handle.call_raw(method_id, payload.clone()).await {
                 Ok(response) => return Ok(response),
-                Err(CallError::Encode(e)) => return Err(ConnectError::Rpc(CallError::Encode(e))),
-                Err(CallError::Decode(e)) => return Err(ConnectError::Rpc(CallError::Decode(e))),
-                Err(CallError::ConnectionClosed) | Err(CallError::DriverGone) => {
+                Err(TransportError::Encode(e)) => {
+                    return Err(ConnectError::Rpc(TransportError::Encode(e)));
+                }
+                Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                     {
                         let mut state = self.state.lock().await;
                         *state = None;
@@ -776,40 +765,37 @@ where
     C: MessageConnector,
     D: ServiceDispatcher + Clone + 'static,
 {
-    type Error = ConnectError;
-
     async fn call<T: Facet<'static>>(
         &self,
         method_id: u64,
         args: &mut T,
-    ) -> Result<Vec<u8>, Self::Error> {
-        let mut last_error: Option<io::Error> = None;
+    ) -> Result<Vec<u8>, TransportError> {
         let mut attempt = 0u32;
 
         loop {
             let handle = match self.ensure_connected().await {
                 Ok(h) => h,
-                Err(ConnectError::ConnectFailed(e)) => {
+                Err(ConnectError::ConnectFailed(_)) => {
                     attempt += 1;
                     if attempt >= self.retry_policy.max_attempts {
-                        return Err(ConnectError::RetriesExhausted {
-                            original: last_error.unwrap_or(e),
-                            attempts: attempt,
-                        });
+                        return Err(TransportError::ConnectionClosed);
                     }
-                    last_error = Some(e);
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
                     tokio::time::sleep(backoff).await;
                     continue;
                 }
-                Err(e) => return Err(e),
+                Err(ConnectError::RetriesExhausted { .. }) => {
+                    return Err(TransportError::ConnectionClosed);
+                }
+                Err(ConnectError::Rpc(e)) => return Err(e),
             };
 
             match handle.call(method_id, args).await {
                 Ok(response) => return Ok(response),
-                Err(CallError::Encode(e)) => return Err(ConnectError::Rpc(CallError::Encode(e))),
-                Err(CallError::Decode(e)) => return Err(ConnectError::Rpc(CallError::Decode(e))),
-                Err(CallError::ConnectionClosed) | Err(CallError::DriverGone) => {
+                Err(TransportError::Encode(e)) => {
+                    return Err(TransportError::Encode(e));
+                }
+                Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                     {
                         let mut state = self.state.lock().await;
                         *state = None;
@@ -817,19 +803,9 @@ where
 
                     attempt += 1;
                     if attempt >= self.retry_policy.max_attempts {
-                        let error = last_error.unwrap_or_else(|| {
-                            io::Error::new(io::ErrorKind::ConnectionReset, "connection closed")
-                        });
-                        return Err(ConnectError::RetriesExhausted {
-                            original: error,
-                            attempts: attempt,
-                        });
+                        return Err(TransportError::ConnectionClosed);
                     }
 
-                    last_error = Some(io::Error::new(
-                        io::ErrorKind::ConnectionReset,
-                        "connection closed",
-                    ));
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
                     tokio::time::sleep(backoff).await;
                 }
@@ -854,7 +830,7 @@ pub struct Driver<T, D> {
     handle: ConnectionHandle,
     command_rx: mpsc::Receiver<HandleCommand>,
     server_channel_registry: ChannelRegistry,
-    pending_responses: HashMap<u64, oneshot::Sender<Result<Vec<u8>, CallError>>>,
+    pending_responses: HashMap<u64, oneshot::Sender<Result<Vec<u8>, TransportError>>>,
     in_flight_server_requests: std::collections::HashSet<u64>,
     task_rx: mpsc::Receiver<TaskMessage>,
 }
@@ -973,7 +949,7 @@ where
             Message::Hello(_) => {}
             Message::Goodbye { .. } => {
                 for (_, tx) in self.pending_responses.drain() {
-                    let _ = tx.send(Err(CallError::ConnectionClosed));
+                    let _ = tx.send(Err(TransportError::ConnectionClosed));
                 }
                 return Err(ConnectionError::Closed);
             }
@@ -1117,7 +1093,7 @@ where
 
     async fn goodbye(&mut self, rule_id: &'static str) -> ConnectionError {
         for (_, tx) in self.pending_responses.drain() {
-            let _ = tx.send(Err(CallError::ConnectionClosed));
+            let _ = tx.send(Err(TransportError::ConnectionClosed));
         }
 
         let _ = self

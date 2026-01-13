@@ -89,6 +89,10 @@ pub fn collect_named_types(service: &ServiceDetail) -> Vec<(String, &'static Sha
             }
             ShapeKind::Tx { inner } | ShapeKind::Rx { inner } => visit(inner, seen, types),
             ShapeKind::Pointer { pointee } => visit(pointee, seen, types),
+            ShapeKind::Result { ok, err } => {
+                visit(ok, seen, types);
+                visit(err, seen, types);
+            }
             // Scalars, slices, opaque - no named types to collect
             _ => {}
         }

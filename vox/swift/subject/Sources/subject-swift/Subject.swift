@@ -21,6 +21,28 @@ struct TestbedService: TestbedHandler {
         return String(message.reversed())
     }
 
+    func divide(dividend: Int64, divisor: Int64) async throws -> Result<Int64, MathError> {
+        log("divide called: \(dividend) / \(divisor)")
+        if divisor == 0 {
+            return .failure(.divisionByZero)
+        }
+        return .success(dividend / divisor)
+    }
+
+    func lookup(id: UInt32) async throws -> Result<Person, LookupError> {
+        log("lookup called: \(id)")
+        switch id {
+        case 1:
+            return .success(Person(name: "Alice", age: 30, email: "alice@example.com"))
+        case 2:
+            return .success(Person(name: "Bob", age: 25, email: nil))
+        case 3:
+            return .success(Person(name: "Charlie", age: 35, email: "charlie@example.com"))
+        default:
+            return .failure(.notFound)
+        }
+    }
+
     func sum(numbers: Rx<Int32>) async throws -> Int64 {
         log("sum called, starting to receive numbers")
         var total: Int64 = 0
