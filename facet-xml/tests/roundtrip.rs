@@ -124,30 +124,34 @@ fn enum_unit_variant() {
 
 #[test]
 fn enum_internally_tagged() {
+    // In XML, internally-tagged enums are serialized the same as externally-tagged:
+    // the element name IS the variant discriminant. The tag attribute is ignored.
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
-    #[facet(tag = "type", rename = "shape")]
+    #[facet(tag = "type")]
     enum Shape {
         Circle { radius: f64 },
         Rectangle { width: f64, height: f64 },
     }
 
-    let xml = r#"<shape><type>Circle</type><radius>5.0</radius></shape>"#;
+    let xml = r#"<Circle><radius>5.0</radius></Circle>"#;
     let parsed: Shape = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed, Shape::Circle { radius: 5.0 });
 }
 
 #[test]
 fn enum_adjacently_tagged() {
+    // In XML, adjacently-tagged enums are serialized the same as externally-tagged:
+    // the element name IS the variant discriminant. The tag/content attributes are ignored.
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
-    #[facet(tag = "t", content = "c", rename = "value")]
+    #[facet(tag = "t", content = "c")]
     enum Message {
         Message(String),
         Count(u32),
     }
 
-    let xml = r#"<value><t>Message</t><c>hello</c></value>"#;
+    let xml = r#"<Message>hello</Message>"#;
     let parsed: Message = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed, Message::Message("hello".into()));
 }
