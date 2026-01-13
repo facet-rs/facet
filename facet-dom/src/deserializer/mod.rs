@@ -14,6 +14,26 @@ mod field_map;
 
 use field_map::StructFieldMap;
 
+/// Extension trait for chaining deserialization on `Partial`.
+trait PartialDeserializeExt<'de, const BORROW: bool, P: DomParser<'de>> {
+    /// Deserialize into this partial using the given deserializer.
+    fn deserialize_with(
+        self,
+        deserializer: &mut DomDeserializer<'de, BORROW, P>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>>;
+}
+
+impl<'de, const BORROW: bool, P: DomParser<'de>> PartialDeserializeExt<'de, BORROW, P>
+    for Partial<'de, BORROW>
+{
+    fn deserialize_with(
+        self,
+        deserializer: &mut DomDeserializer<'de, BORROW, P>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        deserializer.deserialize_into(self)
+    }
+}
+
 /// DOM deserializer.
 ///
 /// The `BORROW` parameter controls whether strings can be borrowed from the input:
@@ -202,25 +222,25 @@ where
                                 // Add item to sequence
                                 if info.is_list {
                                     trace!(idx = info.idx, field_name = %info.field.name, "adding item to flat list");
-                                    wip = wip.begin_list_item()?;
-                                    wip = self.deserialize_into(wip)?;
-                                    wip = wip.end()?;
+                                    wip = wip.begin_list_item()?.deserialize_with(self)?.end()?;
                                 } else {
                                     // Array: use begin_nth_field with the current index
                                     let state = started_seqs.get_mut(&info.idx).unwrap();
                                     if let SeqState::Array { next_idx } = state {
                                         trace!(idx = info.idx, field_name = %info.field.name, item_idx = *next_idx, "adding item to flat array");
-                                        wip = wip.begin_nth_field(*next_idx)?;
-                                        wip = self.deserialize_into(wip)?;
-                                        wip = wip.end()?;
+                                        wip = wip
+                                            .begin_nth_field(*next_idx)?
+                                            .deserialize_with(self)?
+                                            .end()?;
                                         *next_idx += 1;
                                     }
                                 }
                             } else {
                                 trace!(idx = info.idx, field_name = %info.field.name, "matched scalar element field");
-                                wip = wip.begin_nth_field(info.idx)?;
-                                wip = self.deserialize_into(wip)?;
-                                wip = wip.end()?;
+                                wip = wip
+                                    .begin_nth_field(info.idx)?
+                                    .deserialize_with(self)?
+                                    .end()?;
                             }
                         } else {
                             trace!(tag = %tag, "skipping unknown element");
@@ -230,9 +250,7 @@ where
                         }
                     } else {
                         trace!("adding element to elements collection");
-                        wip = wip.begin_list_item()?;
-                        wip = self.deserialize_into(wip)?;
-                        wip = wip.end()?;
+                        wip = wip.begin_list_item()?.deserialize_with(self)?.end()?;
                     }
                 }
                 DomEvent::Comment(_) => {
@@ -339,9 +357,7 @@ where
                     StructKind::TupleStruct => {
                         // Newtype variant: deserialize the inner type
                         // The variant data has one field (index 0)
-                        wip = wip.begin_nth_field(0)?;
-                        wip = self.deserialize_into(wip)?;
-                        wip = wip.end()?;
+                        wip = wip.begin_nth_field(0)?.deserialize_with(self)?.end()?;
                     }
                     StructKind::Struct | StructKind::Tuple => {
                         // Struct/tuple variant: deserialize using the variant's data as a StructType
@@ -502,9 +518,7 @@ where
                 break;
             }
 
-            wip = wip.begin_list_item()?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
+            wip = wip.begin_list_item()?.deserialize_with(self)?.end()?;
         }
 
         Ok(wip)
@@ -518,9 +532,7 @@ where
         if matches!(event, DomEvent::ChildrenEnd | DomEvent::NodeEnd) {
             wip = wip.set_default()?;
         } else {
-            wip = wip.begin_some()?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
+            wip = wip.begin_some()?.deserialize_with(self)?.end()?;
         }
         Ok(wip)
     }
@@ -531,18 +543,12 @@ where
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         use facet_dessert::{PointerAction, begin_pointer};
 
-        let (mut wip, action) = begin_pointer(wip)?;
+        let (wip, action) = begin_pointer(wip)?;
 
         match action {
             PointerAction::HandleAsScalar => self.deserialize_scalar(wip),
-            PointerAction::SliceBuilder => {
-                wip = self.deserialize_list(wip)?;
-                Ok(wip.end()?)
-            }
-            PointerAction::SizedPointee => {
-                wip = self.deserialize_into(wip)?;
-                Ok(wip.end()?)
-            }
+            PointerAction::SliceBuilder => Ok(self.deserialize_list(wip)?.end()?),
+            PointerAction::SizedPointee => Ok(wip.deserialize_with(self)?.end()?),
         }
     }
 
