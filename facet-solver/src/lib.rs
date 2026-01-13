@@ -602,10 +602,26 @@ impl<'a> Solver<'a> {
                     .dom_field_to_resolutions
                     .get(&(FieldCategory::Element, name.as_ref()))
             }
-            (FieldKey::Dom(cat, name), Format::Dom) => self
-                .schema
-                .dom_field_to_resolutions
-                .get(&(*cat, name.as_ref())),
+            (FieldKey::Dom(cat, name), Format::Dom) => {
+                // For Text/Tag/Elements categories, the name is often empty
+                // because there's only one such field per struct. Search by category.
+                if matches!(
+                    cat,
+                    FieldCategory::Text | FieldCategory::Tag | FieldCategory::Elements
+                ) && name.is_empty()
+                {
+                    // Find any field with this category
+                    self.schema
+                        .dom_field_to_resolutions
+                        .iter()
+                        .find(|((c, _), _)| c == cat)
+                        .map(|(_, rs)| rs)
+                } else {
+                    self.schema
+                        .dom_field_to_resolutions
+                        .get(&(*cat, name.as_ref()))
+                }
+            }
             (FieldKey::Dom(_, name), Format::Flat) => {
                 // DOM key on flat schema - ignore category
                 self.schema.field_to_resolutions.get(name.as_ref())
@@ -1181,7 +1197,7 @@ impl<'a> Solver<'a> {
                             .collect();
                         let missing_detailed: Vec<_> = missing
                             .iter()
-                            .filter_map(|name| config.field(name))
+                            .filter_map(|name| config.field_by_name(name))
                             .map(MissingFieldInfo::from_field_info)
                             .collect();
                         (missing, missing_detailed, Some(config.describe()))
@@ -1227,13 +1243,13 @@ fn build_candidate_failure<'a>(
         .required_field_names()
         .iter()
         .filter(|f| !seen_keys.iter().any(|k| k.name() == **f))
-        .filter_map(|f| config.field(f))
+        .filter_map(|f| config.field_by_name(f))
         .map(MissingFieldInfo::from_field_info)
         .collect();
 
     let unknown_fields: Vec<String> = seen_keys
         .iter()
-        .filter(|k| !config.fields().contains_key(k.name()))
+        .filter(|k| config.field_by_key(k).is_none())
         .map(|k| k.name().to_string())
         .collect();
 
@@ -1273,11 +1289,11 @@ fn compute_closeness_score(
         let mut best_similarity = 0.0f64;
         let mut best_match: Option<&str> = None;
 
-        for known in config.fields().keys() {
-            let similarity = strsim::jaro_winkler(unknown, known);
+        for info in config.fields().values() {
+            let similarity = strsim::jaro_winkler(unknown, info.serialized_name);
             if similarity >= SIMILARITY_THRESHOLD && similarity > best_similarity {
                 best_similarity = similarity;
-                best_match = Some(known);
+                best_match = Some(info.serialized_name);
             }
         }
 
@@ -2706,9 +2722,9 @@ impl SchemaBuilder {
         // Build inverted index: field_name → bitmask of config indices (for Flat format)
         let mut field_to_resolutions: BTreeMap<&'static str, ResolutionSet> = BTreeMap::new();
         for (idx, config) in resolutions.iter().enumerate() {
-            for field_name in config.fields().keys() {
+            for field_info in config.fields().values() {
                 field_to_resolutions
-                    .entry(*field_name)
+                    .entry(field_info.serialized_name)
                     .or_insert_with(|| ResolutionSet::empty(num_resolutions))
                     .insert(idx);
             }
@@ -2719,7 +2735,7 @@ impl SchemaBuilder {
             BTreeMap::new();
         if self.format == Format::Dom {
             for (idx, config) in resolutions.iter().enumerate() {
-                for (field_name, field_info) in config.fields() {
+                for field_info in config.fields().values() {
                     // Get the category from the field
                     let category = field_info.category.unwrap_or_else(|| {
                         // Compute from field if not already set
@@ -2727,7 +2743,7 @@ impl SchemaBuilder {
                             .unwrap_or(FieldCategory::Element)
                     });
                     dom_field_to_resolutions
-                        .entry((category, *field_name))
+                        .entry((category, field_info.serialized_name))
                         .or_insert_with(|| ResolutionSet::empty(num_resolutions))
                         .insert(idx);
                 }
