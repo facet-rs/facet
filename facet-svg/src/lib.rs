@@ -16,9 +16,8 @@
 //! ```
 
 use facet::Facet;
-use facet_format::FormatDeserializer;
 use facet_xml as xml;
-use facet_xml::{XmlParser, to_vec};
+use facet_xml::to_vec;
 
 mod path;
 mod points;
@@ -30,19 +29,17 @@ pub use points::{Point, Points, PointsProxy};
 pub const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
 /// Error type for SVG parsing
-pub type Error = facet_format::DeserializeError<facet_xml::XmlError>;
+pub type Error = facet_xml::DeserializeError<facet_xml::XmlError>;
 
 /// Error type for SVG serialization
-pub type SerializeError = facet_format::SerializeError<facet_xml::XmlSerializeError>;
+pub type SerializeError = facet_xml::SerializeError<facet_xml::XmlSerializeError>;
 
 /// Deserialize an SVG from a string.
-pub fn from_str<'input, T>(xml: &'input str) -> Result<T, Error>
+pub fn from_str<T>(s: &str) -> Result<T, Error>
 where
-    T: Facet<'input>,
+    T: for<'a> Facet<'a>,
 {
-    let parser = XmlParser::new(xml.as_bytes());
-    let mut de = FormatDeserializer::new(parser);
-    de.deserialize()
+    facet_xml::from_str(s)
 }
 
 /// Serialize an SVG value to a string.

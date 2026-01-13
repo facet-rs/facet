@@ -45,10 +45,6 @@ serde-xml-rs = "0.8.2"
 test-log = { version = "0.2", features = ["trace"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-[[bench]]
-name = "vs_jit"
-harness = false
-
 [features]
 default = []
 std = []

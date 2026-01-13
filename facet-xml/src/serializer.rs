@@ -21,13 +21,13 @@ fn write_scalar_value(
     float_formatter: Option<FloatFormatter>,
 ) -> std::io::Result<bool> {
     // Handle Option<T> by unwrapping if Some
-    if let Def::Option(_) = &value.shape().def {
-        if let Ok(opt) = value.into_option() {
-            return match opt.value() {
-                Some(inner) => write_scalar_value(out, inner, float_formatter),
-                None => Ok(false),
-            };
-        }
+    if let Def::Option(_) = &value.shape().def
+        && let Ok(opt) = value.into_option()
+    {
+        return match opt.value() {
+            Some(inner) => write_scalar_value(out, inner, float_formatter),
+            None => Ok(false),
+        };
     }
 
     let Some(scalar_type) = value.scalar_type() else {
@@ -628,10 +628,10 @@ impl DomSerializer for XmlSerializer {
         if let Some(formatter) = self.options.float_formatter {
             let mut buf = Vec::new();
             // If the formatter fails, fall back to default Display
-            if formatter(value, &mut buf).is_ok() {
-                if let Ok(s) = String::from_utf8(buf) {
-                    return s;
-                }
+            if formatter(value, &mut buf).is_ok()
+                && let Ok(s) = String::from_utf8(buf)
+            {
+                return s;
             }
         }
         value.to_string()
