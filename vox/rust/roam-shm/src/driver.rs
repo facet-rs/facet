@@ -585,9 +585,13 @@ where
 // ============================================================================
 
 /// Per-peer state for the multi-peer host driver.
-struct PeerConnectionState<D> {
+///
+/// Uses `Box<dyn ServiceDispatcher>` to allow each peer to have a different
+/// dispatcher type, enabling heterogeneous bidirectional RPC scenarios.
+struct PeerConnectionState {
     /// Dispatcher for handling incoming requests from this peer.
-    dispatcher: D,
+    /// Boxed to allow different dispatcher types per peer.
+    dispatcher: Box<dyn ServiceDispatcher>,
 
     /// Channel for receiving commands from the ConnectionHandle.
     command_rx: mpsc::Receiver<HandleCommand>,
@@ -614,6 +618,10 @@ struct PeerConnectionState<D> {
 /// multiple peers over a single `ShmHost`. Each peer gets its own
 /// `ConnectionHandle` for making RPC calls.
 ///
+/// This driver supports **heterogeneous dispatchers**: each peer can have a
+/// different dispatcher type. This enables bidirectional RPC scenarios where
+/// different cells need different callback services from the host.
+///
 /// # Example
 ///
 /// ```ignore
@@ -626,10 +634,16 @@ struct PeerConnectionState<D> {
 /// let ticket1 = host.add_peer(options1)?;
 /// let ticket2 = host.add_peer(options2)?;
 ///
-/// // Create driver with dispatchers for each peer
+/// // Create driver with different dispatchers per peer
 /// let (driver, handles) = MultiPeerHostDriver::new(host)
-///     .add_peer(ticket1.peer_id(), dispatcher1)
-///     .add_peer(ticket2.peer_id(), dispatcher2)
+///     // Simple peer only needs lifecycle dispatcher
+///     .add_peer(ticket1.peer_id(), CellLifecycleDispatcher::new(lifecycle.clone()))
+///     // Complex peer needs routed dispatcher for bidirectional RPC
+///     .add_peer(ticket2.peer_id(), RoutedDispatcher::new(
+///         CellLifecycleDispatcher::new(lifecycle.clone()),
+///         TemplateHostDispatcher::new(template_host),
+///         &CELL_LIFECYCLE_METHODS,
+///     ))
 ///     .build();
 ///
 /// // Spawn the driver
@@ -639,7 +653,7 @@ struct PeerConnectionState<D> {
 /// let client1 = MyServiceClient::new(handles[&ticket1.peer_id()].clone());
 /// client1.do_thing().await?;
 /// ```
-pub struct MultiPeerHostDriver<D> {
+pub struct MultiPeerHostDriver {
     /// The SHM host (owned).
     host: ShmHost,
 
@@ -647,30 +661,34 @@ pub struct MultiPeerHostDriver<D> {
     negotiated: ShmNegotiated,
 
     /// Per-peer connection state.
-    peers: HashMap<PeerId, PeerConnectionState<D>>,
+    peers: HashMap<PeerId, PeerConnectionState>,
 
     /// Buffer for last decoded bytes (for error detection).
     last_decoded: Vec<u8>,
 }
 
 /// Builder for `MultiPeerHostDriver`.
-pub struct MultiPeerHostDriverBuilder<D> {
+pub struct MultiPeerHostDriverBuilder {
     host: ShmHost,
-    peers: Vec<(PeerId, D)>,
+    peers: Vec<(PeerId, Box<dyn ServiceDispatcher>)>,
 }
 
-impl<D> MultiPeerHostDriverBuilder<D>
-where
-    D: ServiceDispatcher,
-{
+impl MultiPeerHostDriverBuilder {
     /// Add a peer with its dispatcher.
-    pub fn add_peer(mut self, peer_id: PeerId, dispatcher: D) -> Self {
-        self.peers.push((peer_id, dispatcher));
+    ///
+    /// Each peer can have a different dispatcher type, enabling heterogeneous
+    /// bidirectional RPC scenarios where different cells need different
+    /// callback services from the host.
+    pub fn add_peer<D>(mut self, peer_id: PeerId, dispatcher: D) -> Self
+    where
+        D: ServiceDispatcher + 'static,
+    {
+        self.peers.push((peer_id, Box::new(dispatcher)));
         self
     }
 
     /// Build the driver and return connection handles for each peer.
-    pub fn build(self) -> (MultiPeerHostDriver<D>, HashMap<PeerId, ConnectionHandle>) {
+    pub fn build(self) -> (MultiPeerHostDriver, HashMap<PeerId, ConnectionHandle>) {
         let config = self.host.config();
         let negotiated = ShmNegotiated {
             max_payload_size: config.max_payload_size,
@@ -716,12 +734,9 @@ where
     }
 }
 
-impl<D> MultiPeerHostDriver<D>
-where
-    D: ServiceDispatcher,
-{
+impl MultiPeerHostDriver {
     /// Create a new builder for the multi-peer host driver.
-    pub fn new(host: ShmHost) -> MultiPeerHostDriverBuilder<D> {
+    pub fn new(host: ShmHost) -> MultiPeerHostDriverBuilder {
         MultiPeerHostDriverBuilder {
             host,
             peers: Vec::new(),
@@ -1093,10 +1108,12 @@ where
     }
 }
 
-/// Establish a multi-peer host driver.
+/// Establish a multi-peer host driver with homogeneous dispatchers.
 ///
 /// This is a convenience function that creates a `MultiPeerHostDriver` for
-/// scenarios where all peers use the same dispatcher type.
+/// scenarios where all peers use the same dispatcher type. For heterogeneous
+/// dispatchers (different types per peer), use `MultiPeerHostDriver::new()`
+/// directly with the builder pattern.
 ///
 /// # Arguments
 ///
@@ -1114,6 +1131,7 @@ where
 /// let ticket1 = host.add_peer(options)?;
 /// let ticket2 = host.add_peer(options)?;
 ///
+/// // Homogeneous dispatchers (same type for all peers)
 /// let (driver, handles) = establish_multi_peer_host(
 ///     host,
 ///     vec![
@@ -1130,9 +1148,9 @@ where
 pub fn establish_multi_peer_host<D, I>(
     host: ShmHost,
     peers: I,
-) -> (MultiPeerHostDriver<D>, HashMap<PeerId, ConnectionHandle>)
+) -> (MultiPeerHostDriver, HashMap<PeerId, ConnectionHandle>)
 where
-    D: ServiceDispatcher,
+    D: ServiceDispatcher + 'static,
     I: IntoIterator<Item = (PeerId, D)>,
 {
     let mut builder = MultiPeerHostDriver::new(host);
