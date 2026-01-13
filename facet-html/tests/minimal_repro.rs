@@ -4,7 +4,7 @@
 use facet_html_dom::Html;
 
 // Issue #1568: Crash during error cleanup
-#[test]
+#[test_log::test]
 fn issue_1568_html_parse_error_cleanup() {
     // Simplified HTML that previously triggered a crash during error cleanup.
     let html = r#"<ul><li>text <code>code</code></li></ul>"#;
@@ -19,7 +19,7 @@ fn issue_1568_html_parse_error_cleanup() {
 // Issue #1575: facet-html crashes on <li> with parentheses
 // Root cause: Vec<Li> fields in Ul/Ol structs were missing #[facet(xml::elements)]
 // attribute, which is required to properly group repeated child elements into a Vec.
-#[test]
+#[test_log::test]
 fn issue_1575_li_with_parentheses() {
     // This HTML previously crashed with SIGABRT when parsing
     let html = r#"<!DOCTYPE html>
@@ -37,7 +37,7 @@ fn issue_1575_li_with_parentheses() {
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
 }
 
-#[test]
+#[test_log::test]
 fn issue_1575_simple_li_with_parentheses() {
     let html = r#"<ul><li>Some text (with parentheses)</li></ul>"#;
 
@@ -45,7 +45,7 @@ fn issue_1575_simple_li_with_parentheses() {
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
 }
 
-#[test]
+#[test_log::test]
 fn issue_1575_li_with_description_and_parentheses() {
     let html = r#"<ul><li>Item - description (detail)</li></ul>"#;
 
@@ -53,7 +53,7 @@ fn issue_1575_li_with_description_and_parentheses() {
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
 }
 
-#[test]
+#[test_log::test]
 fn issue_1575_li_with_mixed_content() {
     use facet_html_dom::{FlowContent, Ul};
 
@@ -81,7 +81,7 @@ fn issue_1575_li_with_mixed_content() {
 // The problem was that script tags with `src` attribute were serializing attributes
 // as child elements like `<script><src>/js/app.js</src></script>` instead of
 // `<script src="/js/app.js"></script>`, which could not be re-parsed.
-#[test]
+#[test_log::test]
 fn issue_1578_script_roundtrip() {
     let input = r#"<html><body><script src="/js/app.js"></script></body></html>"#;
 
@@ -112,7 +112,7 @@ fn issue_1578_script_roundtrip() {
     assert!(!body.children.is_empty(), "body should have children");
 }
 
-#[test]
+#[test_log::test]
 fn issue_1578_script_with_inline_content() {
     let input = r#"<script>console.log("hello");</script>"#;
 
@@ -132,7 +132,7 @@ fn issue_1578_script_with_inline_content() {
 // Issue #1578: Comprehensive round-trip test for ALL HTML elements with ALL attributes
 // This ensures that every element's attributes are properly serialized as HTML attributes
 // (not child elements) and can be re-parsed.
-#[test]
+#[test_log::test]
 fn issue_1578_comprehensive_roundtrip_all_elements() {
     // A comprehensive HTML document that exercises all elements with their attributes
     let input = r##"<!DOCTYPE html>
@@ -337,7 +337,7 @@ fn issue_1578_comprehensive_roundtrip_all_elements() {
 }
 
 // Issue #1621: data-* attributes not captured in flattened HashMap extra field
-#[test]
+#[test_log::test]
 fn issue_1621_data_attributes_captured() {
     use facet_html_dom::FlowContent;
 
@@ -368,7 +368,7 @@ fn issue_1621_data_attributes_captured() {
 }
 
 // Simpler test for issue #1621: direct div parsing
-#[test]
+#[test_log::test]
 fn issue_1621_data_attributes_direct() {
     use facet_html_dom::Div;
 
@@ -391,7 +391,7 @@ fn issue_1621_data_attributes_direct() {
 }
 
 // Debug test to understand what's being parsed
-#[test]
+#[test_log::test]
 fn issue_1629_debug() {
     use facet_html_dom::{Div, FlowContent};
 
@@ -415,7 +415,7 @@ fn issue_1629_debug() {
 
 // Issue #1629: Custom elements (like <a-k>, <a-f> from arborium syntax highlighting)
 // are dropped during parse/serialize roundtrip.
-#[test]
+#[test_log::test]
 fn issue_1629_custom_elements_preserved() {
     use facet_html_dom::{Div, FlowContent};
 
@@ -483,7 +483,7 @@ fn issue_1629_custom_elements_preserved() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn issue_1629_custom_elements_roundtrip() {
     use facet_html_dom::Div;
 
@@ -516,7 +516,7 @@ fn issue_1629_custom_elements_roundtrip() {
 // When facet-html serializes HTML containing <pre> or <code> elements, it adds
 // indentation and newlines between child elements. Inside preformatted content,
 // this whitespace is significant and breaks the rendering.
-#[test]
+#[test_log::test]
 fn issue_1633_preformatted_whitespace_preserved() {
     use facet_html_dom::Pre;
 
@@ -568,7 +568,7 @@ fn issue_1633_preformatted_whitespace_preserved() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn issue_1633_nested_preformatted_elements() {
     use facet_html_dom::Div;
 
@@ -595,7 +595,7 @@ fn issue_1633_nested_preformatted_elements() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn issue_1633_roundtrip_preserves_preformatted() {
     use facet_html_dom::Pre;
 
@@ -615,7 +615,7 @@ fn issue_1633_roundtrip_preserves_preformatted() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn issue_1633_textarea_whitespace_preserved() {
     use facet_html_dom::Textarea;
 
@@ -635,7 +635,7 @@ Line 3</textarea>"#;
     );
 }
 
-#[test]
+#[test_log::test]
 fn issue_1656_deserialization_of_extra_element() {
     let input = r#"<html><extra>value</extra></html>"#;
     let html: facet_html_dom::Html = facet_html::from_str(input).unwrap();
@@ -643,7 +643,7 @@ fn issue_1656_deserialization_of_extra_element() {
     assert_eq!(output, r#"<html></html>"#);
 }
 
-#[test]
+#[test_log::test]
 fn issue_1656_deserialization_of_extra_attribute() {
     let input = r#"<html extra="value"></html>"#;
     let html: facet_html_dom::Html = facet_html::from_str(input).unwrap();
@@ -651,7 +651,7 @@ fn issue_1656_deserialization_of_extra_attribute() {
     assert_eq!(output, input);
 }
 
-#[test]
+#[test_log::test]
 fn preserve_meaningful_ws_1() {
     let input = indoc::indoc! {r#"
         <html><body><pre>
@@ -666,7 +666,7 @@ fn preserve_meaningful_ws_1() {
     assert_eq!(output, input);
 }
 
-#[test]
+#[test_log::test]
 fn preserve_meaningful_ws_2() {
     let input = indoc::indoc! {r#"
         <html><body><pre>
@@ -685,7 +685,7 @@ fn preserve_meaningful_ws_2() {
 // When arborium syntax-highlights code, it produces custom elements like <a-k>, <a-f>, etc.
 // These are inside <pre><code>...</code></pre>. The newlines between lines of code
 // are being stripped during parse/serialize.
-#[test]
+#[test_log::test]
 fn issue_code_highlighting_newlines_preserved() {
     use facet_html_dom::Pre;
 
@@ -733,7 +733,7 @@ fn issue_code_highlighting_newlines_preserved() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn issue_code_highlighting_simple_two_lines() {
     use facet_html_dom::Pre;
 
@@ -751,7 +751,7 @@ fn issue_code_highlighting_simple_two_lines() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn issue_code_highlighting_text_nodes_with_newlines() {
     use facet_html_dom::Code;
 
@@ -770,7 +770,7 @@ fn issue_code_highlighting_text_nodes_with_newlines() {
 
 // Test the ACTUAL use case: parsing a full HTML document with code blocks in the body.
 // This is what dodeca's HTML cell does.
-#[test]
+#[test_log::test]
 fn issue_full_document_with_code_block() {
     use facet_html_dom::Html;
 
@@ -814,7 +814,7 @@ fn issue_full_document_with_code_block() {
 // Issue #1737: HTML-like closing tags inside <script> corrupt document parsing
 // When parsing HTML with <script> tags containing HTML-like content in JavaScript strings
 // (e.g., '</dt>'), facet-html was incorrectly interpreting these as actual HTML closing tags.
-#[test]
+#[test_log::test]
 fn issue_1737_script_with_html_closing_tag_in_string() {
     use facet_html_dom::Script;
 
@@ -828,7 +828,7 @@ fn issue_1737_script_with_html_closing_tag_in_string() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn issue_1737_script_with_complex_html_in_strings() {
     use facet_html_dom::Script;
 
@@ -843,7 +843,7 @@ fn issue_1737_script_with_complex_html_in_strings() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn issue_1737_full_document_with_script_html_strings() {
     use facet_html_dom::Html;
 
@@ -876,7 +876,7 @@ var x = '<dt>Term</dt>';
     assert!(doc.body.is_some(), "Should have body");
 }
 
-#[test]
+#[test_log::test]
 fn issue_1737_style_with_html_like_content() {
     use facet_html_dom::Style;
 
@@ -893,7 +893,7 @@ fn issue_1737_style_with_html_like_content() {
 }
 
 // Test full Html document with custom elements (like arborium syntax highlighting)
-#[test]
+#[test_log::test]
 fn custom_elements_in_full_html_document() {
     let html = r#"<!DOCTYPE html>
 <html lang="en">
@@ -922,7 +922,7 @@ fn custom_elements_in_full_html_document() {
 }
 
 // Test nested pre/code blocks (malformed but should not produce empty document)
-#[test]
+#[test_log::test]
 fn nested_pre_code_blocks() {
     let html = r#"<!DOCTYPE html>
 <html lang="en">
@@ -957,7 +957,7 @@ more outer code
 // Stray end tag for custom element should not corrupt document structure
 // This was causing the entire document to become empty when an end tag
 // like </a-c> appeared with no matching start tag.
-#[test]
+#[test_log::test]
 fn stray_end_tag_does_not_corrupt_document() {
     // This HTML has a stray </a-c> end tag after nested pre/code
     // (two <a-c> elements already closed, then stray </a-c>)
@@ -988,7 +988,7 @@ fn stray_end_tag_does_not_corrupt_document() {
 
 use facet_html_dom::{Blockquote, Code, Div, Figcaption, H1, Label, Li, P, Pre, Td};
 
-#[test]
+#[test_log::test]
 fn canonical_inline_link_in_text() {
     // Inline <a> should not have spaces added around it
     let html = "<p>See the <a href=\"#\">documentation</a> for details.</p>";
@@ -997,7 +997,7 @@ fn canonical_inline_link_in_text() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_multiple_inline_elements() {
     // Multiple inline elements in a row
     let html = "<p>This is <strong>bold</strong> and <em>italic</em> text.</p>";
@@ -1006,7 +1006,7 @@ fn canonical_multiple_inline_elements() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_nested_inline_elements() {
     // Nested inline elements
     let html = "<p>This is <strong><em>bold italic</em></strong> text.</p>";
@@ -1015,7 +1015,7 @@ fn canonical_nested_inline_elements() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_inline_code_in_text() {
     // Inline <code> in text
     let html = "<p>Use the <code>foo()</code> function.</p>";
@@ -1024,7 +1024,7 @@ fn canonical_inline_code_in_text() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_link_with_code() {
     // Link containing code
     let html = "<p>See <a href=\"#\"><code>example</code></a> here.</p>";
@@ -1033,7 +1033,7 @@ fn canonical_link_with_code() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_list_item_with_link() {
     // List item with inline link - this was the original bug
     let html = "<li>First item with <a href=\"#\">link</a>.</li>";
@@ -1042,7 +1042,7 @@ fn canonical_list_item_with_link() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_span_in_div() {
     // Span (inline) in div (block)
     let html = "<div>Text with <span class=\"highlight\">highlighted</span> word.</div>";
@@ -1053,7 +1053,7 @@ fn canonical_span_in_div() {
 
 // --- Block/inline boundaries ---
 
-#[test]
+#[test_log::test]
 fn canonical_inline_at_start_of_block() {
     let html = "<p><strong>Bold</strong> then text.</p>";
     let parsed: P = facet_html::from_str(html).expect("parse");
@@ -1061,7 +1061,7 @@ fn canonical_inline_at_start_of_block() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_inline_at_end_of_block() {
     let html = "<p>Text then <em>italic</em></p>";
     let parsed: P = facet_html::from_str(html).expect("parse");
@@ -1069,7 +1069,7 @@ fn canonical_inline_at_end_of_block() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_only_inline_in_block() {
     let html = "<p><a href=\"#\">just a link</a></p>";
     let parsed: P = facet_html::from_str(html).expect("parse");
@@ -1077,7 +1077,7 @@ fn canonical_only_inline_in_block() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_adjacent_inline_no_text() {
     let html = "<p><strong>bold</strong><em>italic</em></p>";
     let parsed: P = facet_html::from_str(html).expect("parse");
@@ -1085,7 +1085,7 @@ fn canonical_adjacent_inline_no_text() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_inline_with_whitespace_between() {
     let html = "<p><b>a</b> <i>b</i></p>";
     let parsed: P = facet_html::from_str(html).expect("parse");
@@ -1095,7 +1095,7 @@ fn canonical_inline_with_whitespace_between() {
 
 // --- Void inline elements ---
 
-#[test]
+#[test_log::test]
 fn canonical_img_in_text() {
     let html = "<p>See <img src=\"x.png\" alt=\"img\"> here.</p>";
     let parsed: P = facet_html::from_str(html).expect("parse");
@@ -1103,7 +1103,7 @@ fn canonical_img_in_text() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_br_in_text() {
     let html = "<p>Line one<br>Line two</p>";
     let parsed: P = facet_html::from_str(html).expect("parse");
@@ -1111,7 +1111,7 @@ fn canonical_br_in_text() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_input_in_label() {
     let html = "<label>Name: <input type=\"text\"></label>";
     let parsed: Label = facet_html::from_str(html).expect("parse");
@@ -1121,7 +1121,7 @@ fn canonical_input_in_label() {
 
 // --- Nesting depth ---
 
-#[test]
+#[test_log::test]
 fn canonical_deeply_nested_inline() {
     let html = "<p><a href=\"#\"><strong><em><code>deep</code></em></strong></a></p>";
     let parsed: P = facet_html::from_str(html).expect("parse");
@@ -1129,7 +1129,7 @@ fn canonical_deeply_nested_inline() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_inline_in_inline_in_block() {
     let html = "<div><span><a href=\"#\">link</a></span></div>";
     let parsed: Div = facet_html::from_str(html).expect("parse");
@@ -1139,7 +1139,7 @@ fn canonical_inline_in_inline_in_block() {
 
 // --- Different block containers ---
 
-#[test]
+#[test_log::test]
 fn canonical_inline_in_heading() {
     let html = "<h1>Title with <code>code</code></h1>";
     let parsed: H1 = facet_html::from_str(html).expect("parse");
@@ -1147,7 +1147,7 @@ fn canonical_inline_in_heading() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_inline_in_blockquote() {
     let html = "<blockquote>Quote with <cite>citation</cite></blockquote>";
     let parsed: Blockquote = facet_html::from_str(html).expect("parse");
@@ -1155,7 +1155,7 @@ fn canonical_inline_in_blockquote() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_inline_in_td() {
     let html = "<td>Cell with <strong>bold</strong></td>";
     let parsed: Td = facet_html::from_str(html).expect("parse");
@@ -1163,7 +1163,7 @@ fn canonical_inline_in_td() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_inline_in_figcaption() {
     let html = "<figcaption>Caption <em>emphasized</em></figcaption>";
     let parsed: Figcaption = facet_html::from_str(html).expect("parse");
@@ -1173,7 +1173,7 @@ fn canonical_inline_in_figcaption() {
 
 // --- List edge cases ---
 
-#[test]
+#[test_log::test]
 fn canonical_li_starting_with_inline() {
     let html = "<li><code>cmd</code> - description</li>";
     let parsed: Li = facet_html::from_str(html).expect("parse");
@@ -1181,7 +1181,7 @@ fn canonical_li_starting_with_inline() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_li_ending_with_inline() {
     let html = "<li>description - <code>cmd</code></li>";
     let parsed: Li = facet_html::from_str(html).expect("parse");
@@ -1191,7 +1191,7 @@ fn canonical_li_ending_with_inline() {
 
 // --- Custom elements (syntax highlighting) ---
 
-#[test]
+#[test_log::test]
 fn canonical_custom_inline_elements() {
     let html = "<code><a-k>fn</a-k> <a-f>main</a-f>()</code>";
     let parsed: Code = facet_html::from_str(html).expect("parse");
@@ -1199,7 +1199,7 @@ fn canonical_custom_inline_elements() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn canonical_mixed_custom_and_standard() {
     let html = "<p>The <a-k>keyword</a-k> and <code>code</code></p>";
     let parsed: P = facet_html::from_str(html).expect("parse");
@@ -1209,7 +1209,7 @@ fn canonical_mixed_custom_and_standard() {
 
 // --- Whitespace sensitive contexts ---
 
-#[test]
+#[test_log::test]
 fn canonical_pre_with_inline_spans() {
     let html = "<pre><code><span>line1</span>\n<span>line2</span></code></pre>";
     let parsed: Pre = facet_html::from_str(html).expect("parse");
@@ -1224,7 +1224,7 @@ fn canonical_pre_with_inline_spans() {
 // - `<a href="#">Link</a>` gets newlines/spaces inside
 use facet_html_dom::{A, H2};
 
-#[test]
+#[test_log::test]
 fn issue_1744_no_stray_spaces_in_h2() {
     let html = "<h2>Start here</h2>";
     let parsed: H2 = facet_html::from_str(html).expect("parse");
@@ -1244,7 +1244,7 @@ fn issue_1744_no_stray_spaces_in_h2() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn issue_1744_no_stray_spaces_in_h2_pretty() {
     let html = "<h2>Start here</h2>";
     let parsed: H2 = facet_html::from_str(html).expect("parse");
@@ -1268,7 +1268,7 @@ fn issue_1744_no_stray_spaces_in_h2_pretty() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn issue_1744_no_stray_spaces_in_h2_with_id() {
     let html = "<h2 id=\"start-here\">Start here</h2>";
     let parsed: H2 = facet_html::from_str(html).expect("parse");
@@ -1287,7 +1287,7 @@ fn issue_1744_no_stray_spaces_in_h2_with_id() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn issue_1744_no_stray_spaces_in_code() {
     let html = "<code>Value</code>";
     let parsed: Code = facet_html::from_str(html).expect("parse");
@@ -1301,7 +1301,7 @@ fn issue_1744_no_stray_spaces_in_code() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn issue_1744_no_stray_spaces_in_link() {
     let html = "<a href=\"#\">Link text</a>";
     let parsed: A = facet_html::from_str(html).expect("parse");
@@ -1331,7 +1331,7 @@ fn issue_1744_no_stray_spaces_in_link() {
     assert_eq!(html, serialized, "Canonical HTML should roundtrip exactly");
 }
 
-#[test]
+#[test_log::test]
 fn issue_1744_li_with_multiple_inline_elements() {
     // This is the exact pattern from the user's screenshot
     let html = "<li><a href=\"@/guide/dynamic-values.md\">Dynamic Values</a> _ <code>Value</code>, <code>assert_same!</code>, <code>RawJson</code></li>";
@@ -1362,7 +1362,7 @@ fn issue_1744_li_with_multiple_inline_elements() {
 }
 
 // Verify that pretty-printing DOES add newlines between block-level siblings (the correct case)
-#[test]
+#[test_log::test]
 fn issue_1744_pretty_does_add_newlines_between_blocks() {
     // A div with multiple block children - newlines between them ARE correct
     let html = "<div><p>First</p><p>Second</p></div>";

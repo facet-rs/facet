@@ -7,6 +7,7 @@ use facet_reflect::Partial;
 
 use crate::{
     ContainerKind, DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue,
+    trace,
 };
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
@@ -66,9 +67,9 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        tracing::trace!("deserialize_enum_externally_tagged called");
+        trace!("deserialize_enum_externally_tagged called");
         let event = self.expect_peek("value")?;
-        tracing::trace!(?event, "peeked event");
+        trace!(?event, "peeked event");
         // Check for unit variant (just a string)
         if let ParseEvent::Scalar(
             ScalarValue::Str(variant_name) | ScalarValue::StringlyTyped(variant_name),

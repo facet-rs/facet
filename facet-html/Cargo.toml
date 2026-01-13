@@ -36,6 +36,7 @@ facet-html-dom = { path = "../facet-html-dom" }
 facet-showcase = { path = "../facet-showcase" }
 datatest-stable = "0.3"
 indoc.workspace = true
+test-log = { version = "0.2.19", features = ["trace"] }
 
 [[test]]
 name = "roundtrip"
@@ -44,6 +45,7 @@ harness = false
 [features]
 default = []
 fast = ["dep:zmij", "dep:itoa"]
+log = ["facet-format/log", "facet-reflect/log"]
 
 [lints]
 workspace = true

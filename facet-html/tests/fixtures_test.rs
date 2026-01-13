@@ -37,7 +37,7 @@ fn fixtures_dir() -> std::path::PathBuf {
 }
 
 /// Test that we can at least parse (tokenize) all fixture files without panicking.
-#[test]
+#[test_log::test]
 fn parse_all_fixtures_without_panic() {
     let fixtures = fixtures_dir();
     if !fixtures.exists() {
@@ -81,7 +81,7 @@ fn parse_all_fixtures_without_panic() {
 }
 
 /// Test that all fixtures produce valid ParseEvent streams.
-#[test]
+#[test_log::test]
 fn all_fixtures_produce_valid_events() {
     use facet_format::FormatParser;
 
@@ -135,7 +135,7 @@ fn all_fixtures_produce_valid_events() {
 /// This test verifies that when the HTML parser encounters a type mismatch,
 /// it returns an error cleanly instead of panicking with SIGABRT during the
 /// Drop implementation of Partial<true>.
-#[test]
+#[test_log::test]
 fn issue_1568_no_panic_on_error_cleanup() {
     use facet_html_dom::Html;
 

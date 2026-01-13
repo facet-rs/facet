@@ -7,6 +7,7 @@ use facet_reflect::Partial;
 
 use crate::{
     DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
+    trace,
 };
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
@@ -221,7 +222,7 @@ where
         self.parser.hint_enum(&variants);
 
         let event = self.expect_event("enum")?;
-        tracing::trace!(?event, "deserialize_enum_dynamic got event");
+        trace!(?event, "deserialize_enum_dynamic got event");
 
         match event {
             ParseEvent::Scalar(ScalarValue::Str(s)) => {

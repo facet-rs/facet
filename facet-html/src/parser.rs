@@ -477,7 +477,7 @@ mod tests {
     use facet::Facet;
     use facet_format::FormatDeserializer;
 
-    #[test]
+    #[test_log::test]
     fn test_simple_element() {
         let html = b"<div>hello</div>";
         let events = build_events(html).unwrap();
@@ -498,7 +498,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_element_with_attribute() {
         let html = b"<div class=\"foo\">hello</div>";
         let events = build_events(html).unwrap();
@@ -523,7 +523,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_nested_elements() {
         let html = b"<div><span>inner</span></div>";
         let events = build_events(html).unwrap();
@@ -552,7 +552,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_void_element() {
         let html = b"<div><br><span>after</span></div>";
         let events = build_events(html).unwrap();
@@ -560,7 +560,7 @@ mod tests {
         assert!(!events.is_empty());
     }
 
-    #[test]
+    #[test_log::test]
     fn test_deserialize_simple_struct() {
         #[derive(Debug, Facet, PartialEq)]
         struct Div {
@@ -575,7 +575,7 @@ mod tests {
         assert_eq!(result.class, Some("container".into()));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_deserialize_nested() {
         use facet_xml as xml;
 
@@ -613,7 +613,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_deserialize_with_text() {
         use facet_xml as xml;
 
@@ -654,7 +654,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_deserialize_multiple_attributes() {
         #[derive(Debug, Facet, PartialEq)]
         struct Link {
@@ -680,7 +680,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_deserialize_predefined_img() {
         use facet_html_dom::Img;
 
@@ -694,7 +694,7 @@ mod tests {
         assert_eq!(result.height, Some("200".into()));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_deserialize_predefined_a() {
         use facet_html_dom::{A, PhrasingContent};
 
@@ -708,7 +708,7 @@ mod tests {
         assert!(matches!(&result.children[0], PhrasingContent::Text(t) if t == "Click me"));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_deserialize_predefined_div_with_class() {
         use facet_html_dom::{Div, FlowContent};
 
@@ -722,7 +722,7 @@ mod tests {
         assert!(matches!(&result.children[0], FlowContent::Text(t) if t == "Hello World"));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_mixed_content_events() {
         // Test: <p>Hello <strong>world</strong> there</p>
         // Should produce events with text nodes in their correct positions
@@ -771,7 +771,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_mixed_content_deserialization() {
         use facet_html_dom::{P, PhrasingContent};
 
@@ -795,7 +795,7 @@ mod tests {
         assert!(matches!(&result.children[2], PhrasingContent::Text(t) if t == " there"));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_mixed_content_multiple_elements() {
         use facet_html_dom::{P, PhrasingContent};
 
@@ -825,7 +825,7 @@ mod tests {
         assert!(matches!(&result.children[4], PhrasingContent::Text(t) if t == " end"));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_deserialize_meta_charset() {
         use facet_html_dom::Meta;
 
@@ -839,7 +839,7 @@ mod tests {
         assert_eq!(result.charset, Some("utf-8".into()));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_deserialize_head_with_meta_charset() {
         use facet_html_dom::Head;
 
@@ -856,7 +856,7 @@ mod tests {
         assert_eq!(meta[0].charset, Some("utf-8".into()));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_deserialize_full_html_document_with_meta_charset() {
         use facet_html_dom::Html;
 
@@ -890,7 +890,7 @@ mod tests {
         assert!(result.body.is_some(), "Should have body");
     }
 
-    #[test]
+    #[test_log::test]
     fn test_doctype_captured() {
         use facet_html_dom::Html;
 
@@ -913,7 +913,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_doctype_not_present() {
         use facet_html_dom::Html;
 

@@ -3,6 +3,41 @@
 
 //! Prototype types for the format codex deserializer.
 
+/// Trace-level logging macro that forwards to `tracing::trace!` when the `log` feature is enabled.
+///
+/// When the `log` feature is disabled, this expands to nothing.
+#[cfg(feature = "log")]
+macro_rules! trace {
+    ($($arg:tt)*) => {
+        ::tracing::trace!($($arg)*)
+    };
+}
+
+/// Trace-level logging macro (no-op when `log` feature is disabled).
+#[cfg(not(feature = "log"))]
+macro_rules! trace {
+    ($($arg:tt)*) => {};
+}
+
+/// Debug-level logging macro that forwards to `tracing::debug!` when the `log` feature is enabled.
+///
+/// When the `log` feature is disabled, this expands to nothing.
+#[cfg(feature = "log")]
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        ::tracing::debug!($($arg)*)
+    };
+}
+
+/// Debug-level logging macro (no-op when `log` feature is disabled).
+#[cfg(not(feature = "log"))]
+macro_rules! debug {
+    ($($arg:tt)*) => {};
+}
+
+pub(crate) use debug;
+pub(crate) use trace;
+
 mod deserializer;
 mod event;
 mod evidence;

@@ -65,8 +65,7 @@ const INLINE_ELEMENTS: &[&str] = &[
     // Text-level semantics
     "a", "abbr", "b", "bdi", "bdo", "br", "cite", "code", "data", "dfn", "em", "i", "kbd", "mark",
     "q", "ruby", "rt", "rp", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u",
-    "var", "wbr",
-    // Embedded content (inline)
+    "var", "wbr", // Embedded content (inline)
     "img", "picture", "audio", "video", "canvas", "iframe", "embed", "object", "svg", "math",
     // Form elements that can appear inline
     "button", "input", "label", "select", "textarea", "output", "meter", "progress",
@@ -1135,7 +1134,7 @@ mod tests {
         text: String,
     }
 
-    #[test]
+    #[test_log::test]
     fn test_simple_element() {
         let div = SimpleDiv {
             class: Some("container".into()),
@@ -1163,7 +1162,7 @@ mod tests {
         assert!(html.contains("</div>"), "Expected </div>, got: {}", html);
     }
 
-    #[test]
+    #[test_log::test]
     fn test_pretty_print() {
         // Text-only elements should be inline (no newlines)
         let div = SimpleDiv {
@@ -1179,7 +1178,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_pretty_print_nested() {
         // Nested elements should have newlines and indentation
         let container = Container {
@@ -1216,7 +1215,7 @@ mod tests {
         alt: Option<String>,
     }
 
-    #[test]
+    #[test_log::test]
     fn test_void_element() {
         let img = Image {
             src: "photo.jpg".into(),
@@ -1243,7 +1242,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_void_element_self_closing() {
         let img = Image {
             src: "photo.jpg".into(),
@@ -1266,7 +1265,7 @@ mod tests {
         checked: Option<bool>,
     }
 
-    #[test]
+    #[test_log::test]
     fn test_boolean_attributes() {
         let input = Input {
             input_type: "checkbox".into(),
@@ -1293,7 +1292,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_escape_special_chars() {
         let div = SimpleDiv {
             class: None,
@@ -1347,7 +1346,7 @@ mod tests {
         text: String,
     }
 
-    #[test]
+    #[test_log::test]
     fn test_nested_elements_with_enums() {
         let container = Container {
             class: Some("wrapper".into()),
@@ -1368,7 +1367,7 @@ mod tests {
         assert_eq!(html, expected);
     }
 
-    #[test]
+    #[test_log::test]
     fn test_nested_elements_pretty_print() {
         let container = Container {
             class: Some("wrapper".into()),
@@ -1389,7 +1388,7 @@ mod tests {
         assert_eq!(html, expected);
     }
 
-    #[test]
+    #[test_log::test]
     fn test_empty_container() {
         let container = Container {
             class: Some("empty".into()),
@@ -1404,7 +1403,7 @@ mod tests {
         assert_eq!(html_pretty, r#"<div class="empty"></div>"#);
     }
 
-    #[test]
+    #[test_log::test]
     fn test_deeply_nested() {
         // Container with a span that has its own nested content
         #[derive(Debug, Facet)]
@@ -1457,7 +1456,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_event_handlers() {
         use facet_html_dom::{Button, GlobalAttrs};
 
@@ -1490,7 +1489,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_event_handlers_with_escaping() {
         use facet_html_dom::{Div, FlowContent, GlobalAttrs};
 
@@ -1516,7 +1515,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[test_log::test]
     fn test_doctype_roundtrip() {
         use crate::parser::HtmlParser;
         use facet_format::FormatDeserializer;
