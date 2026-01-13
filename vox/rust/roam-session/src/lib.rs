@@ -1751,13 +1751,26 @@ impl ConnectionHandle {
         method_id: u64,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, TransportError> {
+        self.call_raw_with_metadata(method_id, payload, Vec::new())
+            .await
+    }
+
+    /// Make a raw RPC call with pre-serialized payload and metadata.
+    ///
+    /// Returns the raw response payload bytes.
+    pub async fn call_raw_with_metadata(
+        &self,
+        method_id: u64,
+        payload: Vec<u8>,
+        metadata: Vec<(String, roam_wire::MetadataValue)>,
+    ) -> Result<Vec<u8>, TransportError> {
         let request_id = self.shared.request_ids.next();
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
         let cmd = HandleCommand::Call {
             request_id,
             method_id,
-            metadata: Vec::new(),
+            metadata,
             payload,
             response_tx,
         };

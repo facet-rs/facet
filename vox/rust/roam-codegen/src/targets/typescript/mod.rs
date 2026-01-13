@@ -11,6 +11,7 @@
 pub mod client;
 pub mod decode;
 pub mod encode;
+pub mod http_client;
 pub mod schema;
 pub mod server;
 pub mod types;
@@ -19,6 +20,7 @@ use crate::code_writer::CodeWriter;
 use roam_schema::{MethodDetail, ServiceDetail};
 
 pub use client::generate_client;
+pub use http_client::generate_http_client;
 pub use schema::generate_schemas;
 pub use server::generate_server;
 pub use types::{collect_named_types, generate_named_types};

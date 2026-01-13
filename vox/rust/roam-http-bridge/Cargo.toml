@@ -1,0 +1,38 @@
+[package]
+name = "roam-http-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HTTP/JSON bridge for roam RPC services"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+roam-schema = { path = "../roam-schema" }
+roam-hash = { path = "../roam-hash" }
+roam-session = { path = "../roam-session" }
+roam-wire = { path = "../roam-wire" }
+
+facet.workspace = true
+facet-core.workspace = true
+facet-json.workspace = true
+facet-postcard.workspace = true
+facet-value.workspace = true
+
+axum = "0.8"
+tokio.workspace = true
+tracing.workspace = true
+http = "1"
+base64 = "0.22"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
+roam-stream = { path = "../roam-stream" }
+spec-proto = { path = "../../spec/spec-proto" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
