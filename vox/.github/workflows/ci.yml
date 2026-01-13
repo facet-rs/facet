@@ -188,3 +188,21 @@ jobs:
         run: cargo nextest run -p spec-tests
         env:
           SUBJECT_CMD: "sh swift/subject/subject-swift.sh"
+
+  rust-windows:
+    name: Rust / Windows
+    runs-on: depot-windows-2025-16
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test shm-primitives
+        run: cargo test -p shm-primitives --features std
+
+      - name: Test roam-shm
+        run: cargo test -p roam-shm --features std

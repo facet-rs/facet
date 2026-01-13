@@ -13,11 +13,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use roam_frame::{Frame, MsgDesc, Payload};
+use roam_shm::AddPeerOptions;
 use roam_shm::guest::{AttachError, SendError, ShmGuest};
 use roam_shm::host::ShmHost;
 use roam_shm::layout::{SegmentConfig, SegmentHeader};
 use roam_shm::msg_type;
-use roam_shm::spawn::AddPeerOptions;
 
 // =============================================================================
 // Guest Never Connects Scenarios
@@ -421,6 +421,7 @@ fn test_attach_error_host_goodbye() {
 
 /// Test AttachError::SlotNotReserved when using wrong ticket.
 #[test]
+#[cfg(unix)]
 fn test_attach_error_slot_not_reserved() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -456,8 +457,47 @@ fn test_attach_error_slot_not_reserved() {
     assert!(matches!(result, Err(AttachError::SlotNotReserved)));
 }
 
+/// Test AttachError::SlotNotReserved when using wrong ticket (Windows).
+#[test]
+#[cfg(windows)]
+fn test_attach_error_slot_not_reserved() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _guard = rt.enter();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("wrong_ticket.shm");
+
+    let config = SegmentConfig {
+        max_guests: 4,
+        ..SegmentConfig::default()
+    };
+    let mut host = ShmHost::create(&path, config).unwrap();
+
+    // Reserve slot 1
+    let ticket = host
+        .add_peer(AddPeerOptions {
+            peer_name: Some("real-guest".to_string()),
+            on_death: None,
+        })
+        .unwrap();
+
+    // Create fake spawn args pointing to a different (unreserved) peer ID
+    let fake_args = roam_shm::SpawnArgs {
+        hub_path: path.clone(),
+        peer_id: roam_shm::peer::PeerId::from_index(1).unwrap(), // Slot 2, not reserved
+        doorbell_pipe: ticket.doorbell_pipe().to_string(), // Reuse the pipe (doesn't matter for this test)
+    };
+
+    let result = ShmGuest::attach_with_ticket(&fake_args);
+    assert!(matches!(result, Err(AttachError::SlotNotReserved)));
+}
+
 /// Test AttachError::InvalidPeerId when peer_id is out of range.
 #[test]
+#[cfg(unix)]
 fn test_attach_error_invalid_peer_id() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -479,6 +519,36 @@ fn test_attach_error_invalid_peer_id() {
         hub_path: path.clone(),
         peer_id: roam_shm::peer::PeerId::from_index(4).unwrap(), // Slot 5, out of range
         doorbell_fd: -1,                                         // Doesn't matter
+    };
+
+    let result = ShmGuest::attach_with_ticket(&fake_args);
+    assert!(matches!(result, Err(AttachError::InvalidPeerId)));
+}
+
+/// Test AttachError::InvalidPeerId when peer_id is out of range (Windows).
+#[test]
+#[cfg(windows)]
+fn test_attach_error_invalid_peer_id() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _guard = rt.enter();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("invalid_peer.shm");
+
+    let config = SegmentConfig {
+        max_guests: 2, // Only 2 guests allowed
+        ..SegmentConfig::default()
+    };
+    let _host = ShmHost::create(&path, config).unwrap();
+
+    // Create spawn args with peer_id = 5, but max_guests = 2
+    let fake_args = roam_shm::SpawnArgs {
+        hub_path: path.clone(),
+        peer_id: roam_shm::peer::PeerId::from_index(4).unwrap(), // Slot 5, out of range
+        doorbell_pipe: String::new(),                            // Doesn't matter
     };
 
     let result = ShmGuest::attach_with_ticket(&fake_args);

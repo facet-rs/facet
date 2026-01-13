@@ -26,19 +26,29 @@ pub use treiber::{
 // OS-level primitives for SHM (requires std)
 #[cfg(all(feature = "std", unix))]
 pub mod doorbell;
+#[cfg(all(feature = "std", windows))]
+pub mod doorbell_windows;
 #[cfg(feature = "std")]
 pub mod futex;
 #[cfg(all(feature = "std", unix))]
 pub mod mmap;
+#[cfg(all(feature = "std", windows))]
+pub mod mmap_windows;
 
 #[cfg(all(feature = "std", unix))]
 pub use doorbell::{
     Doorbell, SignalResult, clear_cloexec, close_peer_fd, set_nonblocking, validate_fd,
 };
+#[cfg(all(feature = "std", windows))]
+pub use doorbell_windows::{
+    Doorbell, SignalResult, close_handle, set_handle_inheritable, validate_handle,
+};
 #[cfg(feature = "std")]
 pub use futex::{futex_signal, futex_wait, futex_wait_async, futex_wait_async_ptr, futex_wake};
 #[cfg(all(feature = "std", unix))]
 pub use mmap::MmapRegion;
+#[cfg(all(feature = "std", windows))]
+pub use mmap_windows::MmapRegion;
 
 #[cfg(all(test, loom))]
 mod loom_tests;

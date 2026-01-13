@@ -85,6 +85,8 @@ pub mod driver;
 
 #[cfg(all(feature = "std", unix))]
 pub mod spawn;
+#[cfg(all(feature = "std", windows))]
+pub mod spawn_windows;
 
 #[cfg(feature = "std")]
 pub mod wait;
@@ -118,6 +120,8 @@ pub use transport::{
 
 #[cfg(all(feature = "std", unix))]
 pub use spawn::{AddPeerOptions, DeathCallback, SpawnArgs, SpawnArgsError, SpawnTicket};
+#[cfg(all(feature = "std", windows))]
+pub use spawn_windows::{AddPeerOptions, DeathCallback, SpawnArgs, SpawnArgsError, SpawnTicket};
 
 #[cfg(feature = "std")]
 pub use wait::{

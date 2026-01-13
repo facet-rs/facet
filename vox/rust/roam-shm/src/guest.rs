@@ -18,7 +18,10 @@ use crate::layout::{
 };
 use crate::peer::{PeerEntry, PeerId};
 use crate::slot_pool::SlotPool;
+#[cfg(unix)]
 use crate::spawn::SpawnArgs;
+#[cfg(windows)]
+use crate::spawn_windows::SpawnArgs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecvError {
