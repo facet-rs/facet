@@ -31,6 +31,8 @@ picante-macros = { path = "../picante-macros", optional = true }
 [features]
 default = ["macros"]
 macros = ["dep:picante-macros"]
+# JIT-compiled deserialization using Cranelift - improves performance but adds significant compile time
+jit = ["facet-postcard/jit"]
 
 [dev-dependencies]
 divan.workspace = true
