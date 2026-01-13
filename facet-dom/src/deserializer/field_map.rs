@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use facet_core::{Def, Field, StructType};
+use facet_core::{Def, Field, StructKind, StructType};
 
 use crate::tracing_macros::{trace, trace_span};
 
@@ -35,6 +35,9 @@ pub(crate) struct StructFieldMap {
     pub elements_field: Option<FieldInfo>,
     /// The field marked with `xml::text` (collects text content)
     pub text_field: Option<FieldInfo>,
+    /// For tuple structs: fields in order for positional matching.
+    /// Uses `<item>` elements matched by position.
+    pub tuple_fields: Option<Vec<FieldInfo>>,
 }
 
 impl StructFieldMap {
@@ -109,11 +112,40 @@ impl StructFieldMap {
             }
         }
 
+        // For tuple structs, build positional field list
+        let tuple_fields = if matches!(struct_def.kind, StructKind::TupleStruct | StructKind::Tuple)
+        {
+            trace!(
+                field_count = struct_def.fields.len(),
+                "building tuple field list"
+            );
+            let fields: Vec<FieldInfo> = struct_def
+                .fields
+                .iter()
+                .enumerate()
+                .map(|(idx, field)| {
+                    let shape = field.shape();
+                    let (is_list, is_array) = classify_sequence_shape(shape);
+                    FieldInfo {
+                        idx,
+                        field,
+                        is_list,
+                        is_array,
+                        namespace: None,
+                    }
+                })
+                .collect();
+            Some(fields)
+        } else {
+            None
+        };
+
         trace!(
             attribute_count = attribute_fields.len(),
             element_count = element_fields.len(),
             has_elements = elements_field.is_some(),
             has_text = text_field.is_some(),
+            is_tuple = tuple_fields.is_some(),
             "field map built"
         );
 
@@ -122,6 +154,7 @@ impl StructFieldMap {
             element_fields,
             elements_field,
             text_field,
+            tuple_fields,
         }
     }
 
@@ -169,6 +202,19 @@ impl StructFieldMap {
         });
         trace!(tag, ?namespace, found = result.is_some(), "find_element");
         result
+    }
+
+    /// Get a tuple field by position index.
+    /// Returns None if this is not a tuple struct or if the index is out of bounds.
+    pub fn get_tuple_field(&self, index: usize) -> Option<&FieldInfo> {
+        self.tuple_fields
+            .as_ref()
+            .and_then(|fields| fields.get(index))
+    }
+
+    /// Returns true if this is a tuple struct (fields matched by position).
+    pub fn is_tuple(&self) -> bool {
+        self.tuple_fields.is_some()
     }
 }
 

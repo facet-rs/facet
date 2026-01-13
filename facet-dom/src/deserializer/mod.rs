@@ -191,6 +191,9 @@ where
         // Track whether we've started the xml::elements collection (lazy initialization)
         let mut elements_list_started = false;
 
+        // For tuple structs: track position for positional matching
+        let mut tuple_position: usize = 0;
+
         trace!("processing children");
         loop {
             let event = self.parser.peek_event_or_eof("child or ChildrenEnd")?;
@@ -344,6 +347,28 @@ where
                                 .begin_nth_field(info.idx)?
                                 .deserialize_with(self)?
                                 .end()?;
+                        }
+                    } else if field_map.is_tuple() && tag == "item" {
+                        // Tuple struct: match <item> elements by position
+                        if let Some(info) = field_map.get_tuple_field(tuple_position) {
+                            trace!(
+                                idx = info.idx,
+                                position = tuple_position,
+                                "matched tuple field by position"
+                            );
+                            wip = wip
+                                .begin_nth_field(info.idx)?
+                                .deserialize_with(self)?
+                                .end()?;
+                            tuple_position += 1;
+                        } else {
+                            trace!(
+                                position = tuple_position,
+                                "tuple position out of bounds, skipping"
+                            );
+                            self.parser
+                                .skip_node()
+                                .map_err(DomDeserializeError::Parser)?;
                         }
                     } else if field_map.elements_field.is_some() {
                         // No specific field matched, add to the elements collection

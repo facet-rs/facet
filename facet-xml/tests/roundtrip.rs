@@ -560,14 +560,15 @@ fn tuple_simple() {
     #[derive(Facet, Debug, PartialEq)]
     #[facet(rename = "record")]
     struct Record {
-        #[facet(rename = "item")]
-        triple: (String, u32, bool),
+        data: (i32, String, bool),
     }
 
-    let xml =
-        r#"<record><triple><item>hello</item><item>42</item><item>true</item></triple></record>"#;
+    // Tuples use <item> elements matched by position
+    let xml = r#"<record><data><item>42</item><item>hello</item><item>true</item></data></record>"#;
     let parsed: Record = facet_xml::from_str(xml).unwrap();
-    assert_eq!(parsed.triple, ("hello".into(), 42, true));
+    assert_eq!(parsed.data.0, 42);
+    assert_eq!(parsed.data.1, "hello");
+    assert!(parsed.data.2);
 }
 
 #[test]
