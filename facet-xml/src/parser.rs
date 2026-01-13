@@ -421,7 +421,7 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError>
                         None => QName::local(attr_local),
                     };
                     let value = attr
-                        .unescape_value()
+                        .decode_and_unescape_value(reader.decoder())
                         .map_err(|e| XmlError::ParseError(e.to_string()))?
                         .into_owned();
                     attributes.push((attr_qname, value));
