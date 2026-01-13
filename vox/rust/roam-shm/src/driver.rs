@@ -645,6 +645,18 @@ pub struct MultiPeerHostDriver {
 
     /// Control channel for dynamic peer addition.
     control_rx: mpsc::UnboundedReceiver<ControlCommand>,
+
+    /// Ring notifications from doorbell tasks (peer has messages ready).
+    ring_rx: mpsc::UnboundedReceiver<PeerId>,
+
+    /// Sender for ring notifications (cloned for each doorbell task).
+    ring_tx: mpsc::UnboundedSender<PeerId>,
+
+    /// Unified channel for driver messages from all peers (outgoing calls).
+    driver_msg_rx: mpsc::UnboundedReceiver<(PeerId, DriverMessage)>,
+
+    /// Sender for unified driver messages (cloned for each peer forwarder task).
+    driver_msg_tx: mpsc::UnboundedSender<(PeerId, DriverMessage)>,
 }
 
 /// Handle for controlling a running MultiPeerHostDriver.
@@ -677,7 +689,7 @@ impl MultiPeerHostDriverBuilder {
 
     /// Build the driver and return connection handles for each peer and a driver handle.
     pub fn build(
-        self,
+        mut self,
     ) -> (
         MultiPeerHostDriver,
         HashMap<PeerId, ConnectionHandle>,
@@ -692,10 +704,16 @@ impl MultiPeerHostDriverBuilder {
         let mut peers = HashMap::new();
         let mut handles = HashMap::new();
 
+        // Create ring channel for doorbell notifications
+        let (ring_tx, ring_rx) = mpsc::unbounded_channel();
+
+        // Create unified channel for driver messages from all peers
+        let (driver_msg_tx, driver_msg_rx) = mpsc::unbounded_channel();
+
         for (peer_id, dispatcher) in self.peers {
             // Create single unified channel for all messages (Call/Data/Close/Response).
             // Single channel ensures FIFO ordering.
-            let (driver_tx, driver_rx) = mpsc::channel(256);
+            let (driver_tx, mut driver_rx) = mpsc::channel(256);
 
             // Host is acceptor (uses even stream IDs)
             let initial_credit = u32::MAX;
@@ -707,13 +725,59 @@ impl MultiPeerHostDriverBuilder {
                 peer_id,
                 PeerConnectionState {
                     dispatcher,
-                    driver_rx,
+                    driver_rx: mpsc::channel(1).1, // Dummy receiver, we'll forward from the real one
                     server_channel_registry: ChannelRegistry::new(driver_tx),
                     pending_responses: HashMap::new(),
                     in_flight_server_requests: std::collections::HashSet::new(),
                     handle,
                 },
             );
+
+            // Spawn forwarder task for this peer's driver messages
+            let driver_msg_tx_clone = driver_msg_tx.clone();
+            tokio::spawn(async move {
+                while let Some(msg) = driver_rx.recv().await {
+                    if driver_msg_tx_clone.send((peer_id, msg)).is_err() {
+                        // Driver shut down
+                        break;
+                    }
+                }
+            });
+
+            // Spawn doorbell task for this peer
+            if let Some(doorbell) = self.host.take_doorbell(peer_id) {
+                let ring_tx_clone = ring_tx.clone();
+                tokio::spawn(async move {
+                    trace!("Doorbell waiter task started for peer {:?}", peer_id);
+                    loop {
+                        trace!("Doorbell waiter: waiting for peer {:?}", peer_id);
+                        match doorbell.wait().await {
+                            Ok(()) => {
+                                trace!("Doorbell waiter: peer {:?} rang doorbell!", peer_id);
+                                // Peer rang doorbell, notify driver
+                                if ring_tx_clone.send(peer_id).is_err() {
+                                    trace!(
+                                        "Doorbell waiter: driver shut down for peer {:?}",
+                                        peer_id
+                                    );
+                                    break;
+                                }
+                                trace!("Doorbell waiter: notification sent for peer {:?}", peer_id);
+                            }
+                            Err(e) => {
+                                trace!("Doorbell waiter: error for peer {:?}: {:?}", peer_id, e);
+                                // Doorbell error (peer died or fd closed)
+                                break;
+                            }
+                        }
+                    }
+                    trace!("Doorbell waiter task exiting for peer {:?}", peer_id);
+                });
+
+                // Manually trigger an immediate SHM poll for this peer to catch any messages
+                // that arrived before the doorbell waiter task started waiting.
+                let _ = ring_tx.send(peer_id);
+            }
         }
 
         // Create control channel for dynamic peer addition
@@ -725,6 +789,10 @@ impl MultiPeerHostDriverBuilder {
             peers,
             last_decoded: Vec::new(),
             control_rx,
+            ring_rx,
+            ring_tx: ring_tx.clone(),
+            driver_msg_rx,
+            driver_msg_tx: driver_msg_tx.clone(),
         };
 
         let driver_handle = MultiPeerHostDriverHandle { control_tx };
@@ -744,63 +812,47 @@ impl MultiPeerHostDriver {
 
     /// Run the driver until all peers disconnect or an error occurs.
     pub async fn run(mut self) -> Result<(), ShmConnectionError> {
-        loop {
-            // Process all pending work in one pass, then yield
-            let mut did_work = false;
+        info!(
+            "MultiPeerHostDriver::run() entered, peers={}",
+            self.peers.len()
+        );
 
-            // 0. Process control commands (add peers dynamically)
-            loop {
-                match self.control_rx.try_recv() {
-                    Ok(cmd) => {
-                        self.handle_control_command(cmd);
-                        did_work = true;
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        // All handles dropped, no more commands coming. Exit if no peers left.
-                        if self.peers.is_empty() {
-                            return Ok(());
-                        }
-                        break;
+        loop {
+            tokio::select! {
+                // Control commands (add peers dynamically)
+                Some(cmd) = self.control_rx.recv() => {
+                    trace!("MultiPeerHostDriver: received control command");
+                    self.handle_control_command(cmd);
+                }
+
+                // Doorbell rang - peer has SHM messages ready
+                Some(peer_id) = self.ring_rx.recv() => {
+                    trace!("MultiPeerHostDriver: doorbell rang for peer {:?}", peer_id);
+                    // Poll SHM host for ALL ready messages (not just from the peer that rang)
+                    let messages = self.host.poll();
+                    for (pid, frame) in messages {
+                        self.last_decoded = frame.payload_bytes().to_vec();
+
+                        let msg = frame_to_message(frame).map_err(|e| {
+                            ShmConnectionError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                        })?;
+
+                        trace!("MultiPeerHostDriver: handling SHM message from peer {:?}", pid);
+                        self.handle_message(pid, msg).await?;
                     }
                 }
-            }
 
-            // 1. Process driver messages from all peers (unified Call/Data/Close/Response)
-            let driver_msgs: Vec<_> = self
-                .peers
-                .iter_mut()
-                .filter_map(|(peer_id, state)| {
-                    state.driver_rx.try_recv().ok().map(|msg| (*peer_id, msg))
-                })
-                .collect();
+                // Driver message (outgoing call from ConnectionHandle)
+                Some((peer_id, msg)) = self.driver_msg_rx.recv() => {
+                    trace!("MultiPeerHostDriver: received driver message for peer {:?}", peer_id);
+                    self.handle_driver_message(peer_id, msg).await?;
+                }
 
-            for (peer_id, msg) in driver_msgs {
-                self.handle_driver_message(peer_id, msg).await?;
-                did_work = true;
-            }
-
-            // 2. Poll SHM host for incoming messages
-            let messages = self.host.poll();
-            for (peer_id, frame) in messages {
-                self.last_decoded = frame.payload_bytes().to_vec();
-
-                let msg = frame_to_message(frame).map_err(|e| {
-                    ShmConnectionError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-                })?;
-
-                self.handle_message(peer_id, msg).await?;
-                did_work = true;
-            }
-
-            // Note: We don't exit when peers.is_empty() because with lazy spawning,
-            // we may start with zero peers and add them dynamically via create_peer().
-            // The driver will keep running until the control channel is closed (when
-            // all MultiPeerHostDriverHandles are dropped).
-
-            // Yield to avoid busy-spinning when idle
-            if !did_work {
-                tokio::task::yield_now().await;
+                // All channels closed - shut down
+                else => {
+                    warn!("MultiPeerHostDriver: all channels closed, shutting down");
+                    return Ok(());
+                }
             }
         }
     }
@@ -818,8 +870,9 @@ impl MultiPeerHostDriver {
                 dispatcher,
                 response,
             } => {
+                info!("MultiPeerHostDriver: adding peer {:?} dynamically", peer_id);
                 // Create single unified channel for all messages (Call/Data/Close/Response).
-                let (driver_tx, driver_rx) = mpsc::channel(256);
+                let (driver_tx, mut driver_rx) = mpsc::channel(256);
 
                 // Host is acceptor (uses even stream IDs)
                 let initial_credit = u32::MAX;
@@ -830,13 +883,66 @@ impl MultiPeerHostDriver {
                     peer_id,
                     PeerConnectionState {
                         dispatcher,
-                        driver_rx,
+                        driver_rx: mpsc::channel(1).1, // Dummy receiver, we forward from the real one
                         server_channel_registry: ChannelRegistry::new(driver_tx),
                         pending_responses: HashMap::new(),
                         in_flight_server_requests: std::collections::HashSet::new(),
                         handle: handle.clone(),
                     },
                 );
+                info!("MultiPeerHostDriver: {} peers now active", self.peers.len());
+
+                // Spawn forwarder task for this peer's driver messages
+                let driver_msg_tx = self.driver_msg_tx.clone();
+                tokio::spawn(async move {
+                    while let Some(msg) = driver_rx.recv().await {
+                        if driver_msg_tx.send((peer_id, msg)).is_err() {
+                            // Driver shut down
+                            break;
+                        }
+                    }
+                });
+
+                // Spawn doorbell task for this peer
+                if let Some(doorbell) = self.host.take_doorbell(peer_id) {
+                    let ring_tx = self.ring_tx.clone();
+                    tokio::spawn(async move {
+                        trace!("Doorbell waiter task started for peer {:?}", peer_id);
+                        loop {
+                            trace!("Doorbell waiter: waiting for peer {:?}", peer_id);
+                            match doorbell.wait().await {
+                                Ok(()) => {
+                                    trace!("Doorbell waiter: peer {:?} rang doorbell!", peer_id);
+                                    // Peer rang doorbell, notify driver
+                                    if ring_tx.send(peer_id).is_err() {
+                                        trace!(
+                                            "Doorbell waiter: driver shut down for peer {:?}",
+                                            peer_id
+                                        );
+                                        break;
+                                    }
+                                    trace!(
+                                        "Doorbell waiter: notification sent for peer {:?}",
+                                        peer_id
+                                    );
+                                }
+                                Err(e) => {
+                                    trace!(
+                                        "Doorbell waiter: error for peer {:?}: {:?}",
+                                        peer_id, e
+                                    );
+                                    // Doorbell error (peer died or fd closed)
+                                    break;
+                                }
+                            }
+                        }
+                        trace!("Doorbell waiter task exiting for peer {:?}", peer_id);
+                    });
+
+                    // Manually trigger an immediate SHM poll for this peer to catch any messages
+                    // that arrived before the doorbell waiter task started waiting.
+                    let _ = self.ring_tx.send(peer_id);
+                }
 
                 // Send the handle back to the caller
                 let _ = response.send(handle);
@@ -920,7 +1026,15 @@ impl MultiPeerHostDriver {
                     }
                 }
                 // Remove the peer
+                info!(
+                    "MultiPeerHostDriver: peer {:?} disconnected, removing from registry",
+                    peer_id
+                );
                 self.peers.remove(&peer_id);
+                info!(
+                    "MultiPeerHostDriver: {} peers remaining after disconnect",
+                    self.peers.len()
+                );
                 return Ok(());
             }
             Message::Request {

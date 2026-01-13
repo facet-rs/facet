@@ -839,6 +839,19 @@ impl ShmHost {
             .map(|doorbell| doorbell.signal())
     }
 
+    /// Take ownership of a peer's doorbell (for async waiting in driver).
+    ///
+    /// This removes the doorbell from the host's tracking, transferring ownership
+    /// to the caller (typically the driver). After this call, `ring_doorbell()` and
+    /// `check_doorbell_deaths()` will no longer have access to this peer's doorbell.
+    ///
+    /// Returns `None` if the peer doesn't exist or has no doorbell.
+    pub fn take_doorbell(&mut self, peer_id: PeerId) -> Option<Doorbell> {
+        self.guests
+            .get_mut(&peer_id)
+            .and_then(|state| state.doorbell.take())
+    }
+
     /// Initiate host goodbye (graceful shutdown).
     ///
     /// shm[impl shm.goodbye.host]

@@ -426,15 +426,40 @@ pub struct ShmGuestTransport {
     guest: ShmGuest,
     /// Buffer for last decoded bytes (for error detection)
     last_decoded: Vec<u8>,
+    /// Doorbell for notifying the host of new messages
+    doorbell: Option<shm_primitives::Doorbell>,
 }
 
 impl ShmGuestTransport {
     /// Create a new transport wrapper around an ShmGuest.
+    #[deprecated(note = "Use new_with_doorbell instead - doorbell signaling is required")]
     pub fn new(guest: ShmGuest) -> Self {
         Self {
             guest,
             last_decoded: Vec::new(),
+            doorbell: None,
         }
+    }
+
+    /// Create a new transport with doorbell signaling.
+    pub fn new_with_doorbell(guest: ShmGuest, doorbell: shm_primitives::Doorbell) -> Self {
+        Self {
+            guest,
+            last_decoded: Vec::new(),
+            doorbell: Some(doorbell),
+        }
+    }
+
+    /// Create a new transport from spawn args (includes doorbell setup).
+    ///
+    /// This is a convenience constructor that creates both the guest and doorbell
+    /// from spawn args, which is the typical usage pattern.
+    #[cfg(unix)]
+    pub fn from_spawn_args(args: &crate::spawn::SpawnArgs) -> io::Result<Self> {
+        let guest = ShmGuest::attach_with_ticket(args)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        let doorbell = shm_primitives::Doorbell::from_raw_fd(args.doorbell_fd)?;
+        Ok(Self::new_with_doorbell(guest, doorbell))
     }
 
     /// Get the underlying guest.
@@ -469,7 +494,14 @@ impl ShmGuestTransport {
                 io::Error::new(io::ErrorKind::InvalidData, "payload too large")
             }
             SendError::SlotExhausted => io::Error::new(io::ErrorKind::WouldBlock, "slot exhausted"),
-        })
+        })?;
+
+        // Ring doorbell to notify host of new message
+        if let Some(doorbell) = &self.doorbell {
+            doorbell.signal();
+        }
+
+        Ok(())
     }
 
     /// Try to receive a message (non-blocking).
