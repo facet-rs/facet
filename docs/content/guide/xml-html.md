@@ -85,7 +85,10 @@ Parses:
 
 #### `xml::elements` / `html::elements`
 
-Marks a field as collecting multiple child elements of the same type.
+Marks a field as collecting multiple child elements of the same type. The element name is determined by:
+
+1. **`rename` attribute**: If present, use that exact name
+2. **Singularization**: Otherwise, singularize the field name (`authors` → `author`, `entries` → `entry`)
 
 ```rust
 #[derive(Facet)]
@@ -93,6 +96,7 @@ struct Playlist {
     #[facet(xml::attribute)]
     name: String,
     
+    // Element name is "track" (singularized from "tracks")
     #[facet(xml::elements)]
     tracks: Vec<Track>,
 }
@@ -110,12 +114,23 @@ struct Track {
 Parses:
 ```xml
 <Playlist name="Favorites">
-    <Track title="Song A" duration="180"/>
-    <Track title="Song B" duration="240"/>
+    <track title="Song A" duration="180"/>
+    <track title="Song B" duration="240"/>
 </Playlist>
 ```
 
-**Note:** Elements are "flat" — child elements appear directly without a wrapper. This matches serde-xml-rs behavior.
+You can override the element name with `rename`:
+
+```rust
+#[derive(Facet)]
+struct Feed {
+    // Explicit element name "item" instead of singularized "entry"
+    #[facet(xml::elements, rename = "item")]
+    entries: Vec<Entry>,
+}
+```
+
+**Note:** Elements are "flat" — child elements appear directly without a wrapper.
 
 #### `xml::text` / `html::text`
 
@@ -276,9 +291,13 @@ Parses:
 
 ## Collections: Lists, Sets, and Maps
 
-### Lists and Sets (Flat)
+### Lists and Sets with `xml::elements` (Flat)
 
-Lists (`Vec<T>`) and sets (`HashSet<T>`, `BTreeSet<T>`) use a **flat** model — items appear directly as child elements without a wrapper. Use `#[facet(rename = "...")]` to control the element name:
+When marked with `xml::elements`, lists (`Vec<T>`) and sets (`HashSet<T>`, `BTreeSet<T>`) use a **flat** model — items appear directly as child elements without a wrapper.
+
+The element name is determined by:
+1. **`rename` attribute**: Use that exact name if present
+2. **Singularization**: Otherwise, singularize the field name (`tracks` → `track`, `categories` → `category`)
 
 ```rust
 use facet::Facet;
@@ -289,7 +308,8 @@ struct Playlist {
     #[facet(xml::attribute)]
     name: String,
     
-    #[facet(xml::elements, rename = "track")]
+    // Element name is "track" (singularized from "tracks")
+    #[facet(xml::elements)]
     tracks: Vec<Track>,
 }
 
@@ -309,6 +329,37 @@ Serializes to:
 ```
 
 Note: There is no `<tracks>` wrapper element. Each `Track` becomes a `<track>` element directly under `<Playlist>`.
+
+### Lists and Sets with `xml::element` (Wrapped)
+
+When marked with `xml::element` (singular), the collection is wrapped in a single element:
+
+```rust
+use facet::Facet;
+use facet_xml as xml;
+
+#[derive(Facet)]
+struct Playlist {
+    #[facet(xml::attribute)]
+    name: String,
+    
+    // "tracks" is a wrapper element containing Track items
+    #[facet(xml::element)]
+    tracks: Vec<Track>,
+}
+```
+
+Serializes to:
+```xml
+<Playlist name="Favorites">
+    <tracks>
+        <Track title="Song A"/>
+        <Track title="Song B"/>
+    </tracks>
+</Playlist>
+```
+
+Use this when your XML schema expects a wrapper element around the collection.
 
 ### Maps (Wrapped)
 
@@ -340,11 +391,14 @@ The field `values` (renamed to `data`) becomes the wrapper element, and each map
 
 **Important:** Map keys must be valid XML element names (no spaces, must start with a letter or underscore, etc.).
 
-### Why Different Models?
+### Summary: Choosing Between `xml::element` and `xml::elements`
 
-This matches serde-xml-rs behavior:
-- **Lists flat**: Common in real-world XML (RSS feeds, SVG shapes, SOAP arrays)
-- **Maps wrapped**: Provides clear grouping and avoids ambiguity with other fields
+| Attribute | Behavior | Element Name | Use Case |
+|-----------|----------|--------------|----------|
+| `xml::element` | Wrapped | Field name (or `rename`) | `<tracks><Track/>...</tracks>` |
+| `xml::elements` | Flat | Singularized field name (or `rename`) | `<track/><track/>...` |
+
+The flat model (`xml::elements`) is more common in real-world XML (RSS, Atom, SVG, SOAP).
 
 ### Capturing Unknown Attributes
 
@@ -376,7 +430,7 @@ Parses: `<div id="widget" data-user-id="123" aria-label="Card">Content</div>`
 
 The `extra_attrs` field will contain `{"data-user-id": "123", "aria-label": "Card"}`.
 
-**Note:** Flattened maps capture unknown **attributes**, not child elements. This is a limitation matching serde-xml-rs.
+**Note:** Flattened maps capture unknown **attributes**, not child elements.
 
 ## Basic Usage
 
@@ -444,7 +498,7 @@ struct Item {
 
 ## Migration from 0.42.0 to 0.43.0
 
-Version 0.43.0 changed the list serialization format from **wrapped** to **flat** (matching serde-xml-rs behavior).
+Version 0.43.0 changed the list serialization format from **wrapped** to **flat**.
 
 ### What Changed
 
@@ -504,7 +558,7 @@ struct TrackList {
 
 ### Why This Change?
 
-The flat format is more common in real-world XML (RSS, Atom, SVG, SOAP) and matches how serde-xml-rs works, making migration easier.
+The flat format is more common in real-world XML (RSS, Atom, SVG, SOAP).
 
 ## See Also
 
