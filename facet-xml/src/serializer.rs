@@ -844,7 +844,7 @@ impl FormatSerializer for XmlSerializer {
 
             // Convert scalar to string for attribute value
             let value = match scalar {
-                ScalarValue::Null => "null".to_string(),
+                ScalarValue::Null | ScalarValue::Unit => "null".to_string(),
                 ScalarValue::Bool(v) => if v { "true" } else { "false" }.to_string(),
                 ScalarValue::Char(c) => c.to_string(),
                 ScalarValue::I64(v) => v.to_string(),
@@ -878,7 +878,7 @@ impl FormatSerializer for XmlSerializer {
 
             // Write the text content directly
             match scalar {
-                ScalarValue::Null => self.write_text_escaped("null"),
+                ScalarValue::Null | ScalarValue::Unit => self.write_text_escaped("null"),
                 ScalarValue::Bool(v) => self.write_text_escaped(if v { "true" } else { "false" }),
                 ScalarValue::Char(c) => {
                     let mut buf = [0u8; 4];
@@ -906,7 +906,7 @@ impl FormatSerializer for XmlSerializer {
         let close = self.open_value_element_if_needed()?;
 
         match scalar {
-            ScalarValue::Null => {
+            ScalarValue::Null | ScalarValue::Unit => {
                 // Encode as the literal "null" to round-trip through parse_scalar.
                 self.write_text_escaped("null");
             }

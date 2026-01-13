@@ -246,7 +246,7 @@ impl FormatSerializer for TomlSerializer {
         }
 
         match scalar {
-            ScalarValue::Null => {
+            ScalarValue::Null | ScalarValue::Unit => {
                 // TOML doesn't have null - this is an error
                 return Err(TomlSerializeError {
                     msg: "TOML does not support null values".into(),

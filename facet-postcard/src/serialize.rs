@@ -325,7 +325,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
 
     fn scalar(&mut self, scalar: facet_format::ScalarValue<'_>) -> Result<(), Self::Error> {
         match scalar {
-            facet_format::ScalarValue::Null => Ok(()),
+            facet_format::ScalarValue::Null | facet_format::ScalarValue::Unit => Ok(()),
             facet_format::ScalarValue::Bool(v) => self.writer.write_byte(if v { 1 } else { 0 }),
             facet_format::ScalarValue::Char(c) => {
                 // Postcard encodes char as UTF-8
