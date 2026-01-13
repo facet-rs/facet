@@ -21,7 +21,6 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         use alloc::collections::BTreeSet;
         use facet_core::Characteristic;
-        use facet_reflect::Resolution;
         use facet_solver::{PathSegment, Schema, Solver};
 
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
@@ -94,13 +93,11 @@ where
         // Enter deferred mode for flatten handling (if not already in deferred mode)
         let already_deferred = wip.is_deferred();
         if !already_deferred {
-            let reflect_resolution = Resolution::new();
-            wip = wip
-                .begin_deferred(reflect_resolution)
-                .map_err(DeserializeError::reflect)?;
+            wip = wip.begin_deferred().map_err(DeserializeError::reflect)?;
         }
 
         // Track which fields have been set (by serialized name - uses 'static str from resolution)
+
         let mut fields_set: BTreeSet<&'static str> = BTreeSet::new();
 
         // Track currently open path segments: (field_name, is_option, is_variant)

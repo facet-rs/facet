@@ -5,7 +5,7 @@ use alloc::format;
 
 use facet_core::{Def, Facet, NumericType, PrimitiveType, Shape, StructKind, Type, UserType};
 pub use facet_path::{Path, PathStep};
-use facet_reflect::{HeapValue, Partial, Resolution, is_spanned_shape};
+use facet_reflect::{HeapValue, Partial, is_spanned_shape};
 
 use crate::{
     ContainerKind, FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
@@ -116,9 +116,7 @@ where
     {
         let wip: Partial<'input, true> =
             Partial::alloc::<T>().map_err(DeserializeError::reflect)?;
-        let wip = wip
-            .begin_deferred(Resolution::new())
-            .map_err(DeserializeError::reflect)?;
+        let wip = wip.begin_deferred().map_err(DeserializeError::reflect)?;
         let partial = self.deserialize_into(wip)?;
         let partial = partial
             .finish_deferred()
@@ -191,9 +189,7 @@ where
                 Partial::alloc_owned::<T>().map_err(DeserializeError::reflect)?,
             )
         };
-        let wip = wip
-            .begin_deferred(Resolution::new())
-            .map_err(DeserializeError::reflect)?;
+        let wip = wip.begin_deferred().map_err(DeserializeError::reflect)?;
         let partial = self.deserialize_into(wip)?;
         let partial = partial
             .finish_deferred()
@@ -1236,7 +1232,6 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         use alloc::collections::BTreeMap;
         use facet_core::Characteristic;
-        use facet_reflect::Resolution;
 
         // Get struct fields for lookup
         let struct_type_name = wip.shape().type_identifier;
@@ -1433,10 +1428,7 @@ where
         // Enter deferred mode for flatten handling (if not already in deferred mode)
         let already_deferred = wip.is_deferred();
         if !already_deferred {
-            let resolution = Resolution::new();
-            wip = wip
-                .begin_deferred(resolution)
-                .map_err(DeserializeError::reflect)?;
+            wip = wip.begin_deferred().map_err(DeserializeError::reflect)?;
         }
 
         // Track xml::elements field state for collecting child elements into lists
@@ -2424,12 +2416,11 @@ where
             let by_display = Self::find_variant_by_display_name(enum_def, tag_name);
             let variant_name = by_display
                 .or_else(|| {
-                    let other = enum_def
+                    enum_def
                         .variants
                         .iter()
                         .find(|v| v.is_other())
-                        .map(|v| v.name);
-                    other
+                        .map(|v| v.name)
                 })
                 .ok_or_else(|| DeserializeError::TypeMismatch {
                     expected: "known enum variant",

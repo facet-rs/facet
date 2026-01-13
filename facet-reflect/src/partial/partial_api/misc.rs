@@ -100,7 +100,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     ///
     /// Returns an error if already in deferred mode.
     #[inline]
-    pub fn begin_deferred(mut self, resolution: Resolution) -> Result<Self, ReflectError> {
+    pub fn begin_deferred(mut self) -> Result<Self, ReflectError> {
         // Cannot enable deferred mode if already in deferred mode
         if self.is_deferred() {
             return Err(ReflectError::InvariantViolation {

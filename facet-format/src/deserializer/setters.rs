@@ -2,7 +2,7 @@ extern crate alloc;
 
 use std::borrow::Cow;
 
-use facet_core::{Def, KnownPointer};
+use facet_core::{Def, KnownPointer, ScalarType};
 use facet_reflect::{Partial, ReflectError};
 
 use crate::{DeserializeError, FormatDeserializer, FormatParser, ScalarValue};
@@ -16,11 +16,8 @@ where
         mut wip: Partial<'input, BORROW>,
         scalar: ScalarValue<'input>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        panic!(
-            "this is using type_identifier for type identification which is... well I know what the field is named but it's VERBOTEN"
-        );
-
         let shape = wip.shape();
+        let scalar_type = shape.scalar_type();
         // Capture the span for error reporting - this is where the scalar value was parsed
         let span = self.last_span;
         let reflect_err = |e: ReflectError| DeserializeError::Reflect {
@@ -40,133 +37,101 @@ where
                 wip = wip.set(c).map_err(&reflect_err)?;
             }
             ScalarValue::I64(n) => {
-                // Handle signed types
-                if shape.type_identifier == "i8" {
-                    wip = wip.set(n as i8).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "i16" {
-                    wip = wip.set(n as i16).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "i32" {
-                    wip = wip.set(n as i32).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "i64" {
-                    wip = wip.set(n).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "i128" {
-                    wip = wip.set(n as i128).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "isize" {
-                    wip = wip.set(n as isize).map_err(&reflect_err)?;
-                // Handle unsigned types (I64 can fit in unsigned if non-negative)
-                } else if shape.type_identifier == "u8" {
-                    wip = wip.set(n as u8).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "u16" {
-                    wip = wip.set(n as u16).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "u32" {
-                    wip = wip.set(n as u32).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "u64" {
-                    wip = wip.set(n as u64).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "u128" {
-                    wip = wip.set(n as u128).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "usize" {
-                    wip = wip.set(n as usize).map_err(&reflect_err)?;
-                // Handle floats
-                } else if shape.type_identifier == "f32" {
-                    wip = wip.set(n as f32).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "f64" {
-                    wip = wip.set(n as f64).map_err(&reflect_err)?;
-                // Handle String - stringify the number
-                } else if shape.type_identifier == "String" {
-                    wip = wip
-                        .set(alloc::string::ToString::to_string(&n))
-                        .map_err(&reflect_err)?;
-                } else {
-                    wip = wip.set(n).map_err(&reflect_err)?;
+                match scalar_type {
+                    // Handle signed types
+                    Some(ScalarType::I8) => wip = wip.set(n as i8).map_err(&reflect_err)?,
+                    Some(ScalarType::I16) => wip = wip.set(n as i16).map_err(&reflect_err)?,
+                    Some(ScalarType::I32) => wip = wip.set(n as i32).map_err(&reflect_err)?,
+                    Some(ScalarType::I64) => wip = wip.set(n).map_err(&reflect_err)?,
+                    Some(ScalarType::I128) => wip = wip.set(n as i128).map_err(&reflect_err)?,
+                    Some(ScalarType::ISize) => wip = wip.set(n as isize).map_err(&reflect_err)?,
+                    // Handle unsigned types (I64 can fit in unsigned if non-negative)
+                    Some(ScalarType::U8) => wip = wip.set(n as u8).map_err(&reflect_err)?,
+                    Some(ScalarType::U16) => wip = wip.set(n as u16).map_err(&reflect_err)?,
+                    Some(ScalarType::U32) => wip = wip.set(n as u32).map_err(&reflect_err)?,
+                    Some(ScalarType::U64) => wip = wip.set(n as u64).map_err(&reflect_err)?,
+                    Some(ScalarType::U128) => wip = wip.set(n as u128).map_err(&reflect_err)?,
+                    Some(ScalarType::USize) => wip = wip.set(n as usize).map_err(&reflect_err)?,
+                    // Handle floats
+                    Some(ScalarType::F32) => wip = wip.set(n as f32).map_err(&reflect_err)?,
+                    Some(ScalarType::F64) => wip = wip.set(n as f64).map_err(&reflect_err)?,
+                    // Handle String - stringify the number
+                    Some(ScalarType::String) => {
+                        wip = wip
+                            .set(alloc::string::ToString::to_string(&n))
+                            .map_err(&reflect_err)?
+                    }
+                    _ => wip = wip.set(n).map_err(&reflect_err)?,
                 }
             }
             ScalarValue::U64(n) => {
-                // Handle unsigned types
-                if shape.type_identifier == "u8" {
-                    wip = wip.set(n as u8).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "u16" {
-                    wip = wip.set(n as u16).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "u32" {
-                    wip = wip.set(n as u32).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "u64" {
-                    wip = wip.set(n).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "u128" {
-                    wip = wip.set(n as u128).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "usize" {
-                    wip = wip.set(n as usize).map_err(&reflect_err)?;
-                // Handle signed types (U64 can fit in signed if small enough)
-                } else if shape.type_identifier == "i8" {
-                    wip = wip.set(n as i8).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "i16" {
-                    wip = wip.set(n as i16).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "i32" {
-                    wip = wip.set(n as i32).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "i64" {
-                    wip = wip.set(n as i64).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "i128" {
-                    wip = wip.set(n as i128).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "isize" {
-                    wip = wip.set(n as isize).map_err(&reflect_err)?;
-                // Handle floats
-                } else if shape.type_identifier == "f32" {
-                    wip = wip.set(n as f32).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "f64" {
-                    wip = wip.set(n as f64).map_err(&reflect_err)?;
-                // Handle String - stringify the number
-                } else if shape.type_identifier == "String" {
-                    wip = wip
-                        .set(alloc::string::ToString::to_string(&n))
-                        .map_err(&reflect_err)?;
-                } else {
-                    wip = wip.set(n).map_err(&reflect_err)?;
+                match scalar_type {
+                    // Handle unsigned types
+                    Some(ScalarType::U8) => wip = wip.set(n as u8).map_err(&reflect_err)?,
+                    Some(ScalarType::U16) => wip = wip.set(n as u16).map_err(&reflect_err)?,
+                    Some(ScalarType::U32) => wip = wip.set(n as u32).map_err(&reflect_err)?,
+                    Some(ScalarType::U64) => wip = wip.set(n).map_err(&reflect_err)?,
+                    Some(ScalarType::U128) => wip = wip.set(n as u128).map_err(&reflect_err)?,
+                    Some(ScalarType::USize) => wip = wip.set(n as usize).map_err(&reflect_err)?,
+                    // Handle signed types (U64 can fit in signed if small enough)
+                    Some(ScalarType::I8) => wip = wip.set(n as i8).map_err(&reflect_err)?,
+                    Some(ScalarType::I16) => wip = wip.set(n as i16).map_err(&reflect_err)?,
+                    Some(ScalarType::I32) => wip = wip.set(n as i32).map_err(&reflect_err)?,
+                    Some(ScalarType::I64) => wip = wip.set(n as i64).map_err(&reflect_err)?,
+                    Some(ScalarType::I128) => wip = wip.set(n as i128).map_err(&reflect_err)?,
+                    Some(ScalarType::ISize) => wip = wip.set(n as isize).map_err(&reflect_err)?,
+                    // Handle floats
+                    Some(ScalarType::F32) => wip = wip.set(n as f32).map_err(&reflect_err)?,
+                    Some(ScalarType::F64) => wip = wip.set(n as f64).map_err(&reflect_err)?,
+                    // Handle String - stringify the number
+                    Some(ScalarType::String) => {
+                        wip = wip
+                            .set(alloc::string::ToString::to_string(&n))
+                            .map_err(&reflect_err)?
+                    }
+                    _ => wip = wip.set(n).map_err(&reflect_err)?,
                 }
             }
             ScalarValue::U128(n) => {
-                // Handle u128 scalar
-                if shape.type_identifier == "u128" {
-                    wip = wip.set(n).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "i128" {
-                    wip = wip.set(n as i128).map_err(&reflect_err)?;
-                } else {
+                match scalar_type {
+                    Some(ScalarType::U128) => wip = wip.set(n).map_err(&reflect_err)?,
+                    Some(ScalarType::I128) => wip = wip.set(n as i128).map_err(&reflect_err)?,
                     // For smaller types, truncate (caller should have used correct hint)
-                    wip = wip.set(n as u64).map_err(&reflect_err)?;
+                    _ => wip = wip.set(n as u64).map_err(&reflect_err)?,
                 }
             }
             ScalarValue::I128(n) => {
-                // Handle i128 scalar
-                if shape.type_identifier == "i128" {
-                    wip = wip.set(n).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "u128" {
-                    wip = wip.set(n as u128).map_err(&reflect_err)?;
-                } else {
+                match scalar_type {
+                    Some(ScalarType::I128) => wip = wip.set(n).map_err(&reflect_err)?,
+                    Some(ScalarType::U128) => wip = wip.set(n as u128).map_err(&reflect_err)?,
                     // For smaller types, truncate (caller should have used correct hint)
-                    wip = wip.set(n as i64).map_err(&reflect_err)?;
+                    _ => wip = wip.set(n as i64).map_err(&reflect_err)?,
                 }
             }
             ScalarValue::F64(n) => {
-                if shape.type_identifier == "f32" {
-                    wip = wip.set(n as f32).map_err(&reflect_err)?;
-                } else if shape.type_identifier == "f64" {
-                    wip = wip.set(n).map_err(&reflect_err)?;
-                } else if shape.vtable.has_try_from() && shape.inner.is_some() {
-                    // For opaque types with try_from (like NotNan, OrderedFloat), use
-                    // begin_inner() + set + end() to trigger conversion
-                    let inner_shape = shape.inner.unwrap();
-                    wip = wip.begin_inner().map_err(&reflect_err)?;
-                    if inner_shape.is_type::<f32>() {
-                        wip = wip.set(n as f32).map_err(&reflect_err)?;
-                    } else {
-                        wip = wip.set(n).map_err(&reflect_err)?;
+                match scalar_type {
+                    Some(ScalarType::F32) => wip = wip.set(n as f32).map_err(&reflect_err)?,
+                    Some(ScalarType::F64) => wip = wip.set(n).map_err(&reflect_err)?,
+                    _ if shape.vtable.has_try_from() && shape.inner.is_some() => {
+                        // For opaque types with try_from (like NotNan, OrderedFloat), use
+                        // begin_inner() + set + end() to trigger conversion
+                        let inner_shape = shape.inner.unwrap();
+                        wip = wip.begin_inner().map_err(&reflect_err)?;
+                        if inner_shape.is_type::<f32>() {
+                            wip = wip.set(n as f32).map_err(&reflect_err)?;
+                        } else {
+                            wip = wip.set(n).map_err(&reflect_err)?;
+                        }
+                        wip = wip.end().map_err(&reflect_err)?;
                     }
-                    wip = wip.end().map_err(&reflect_err)?;
-                } else if shape.vtable.has_parse() {
-                    // For types that support parsing (like Decimal), convert to string
-                    // and use parse_from_str to preserve their parsing semantics
-                    wip = wip
-                        .parse_from_str(&alloc::string::ToString::to_string(&n))
-                        .map_err(&reflect_err)?;
-                } else {
-                    wip = wip.set(n).map_err(&reflect_err)?;
+                    _ if shape.vtable.has_parse() => {
+                        // For types that support parsing (like Decimal), convert to string
+                        // and use parse_from_str to preserve their parsing semantics
+                        wip = wip
+                            .parse_from_str(&alloc::string::ToString::to_string(&n))
+                            .map_err(&reflect_err)?;
+                    }
+                    _ => wip = wip.set(n).map_err(&reflect_err)?,
                 }
             }
             ScalarValue::Str(s) => {

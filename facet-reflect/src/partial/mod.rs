@@ -115,7 +115,7 @@ mod iset;
 
 mod partial_api;
 
-use crate::{KeyPath, ReflectError, Resolution, TrackerKind, trace};
+use crate::{KeyPath, ReflectError, TrackerKind, trace};
 
 use core::marker::PhantomData;
 

@@ -2,7 +2,7 @@ extern crate alloc;
 
 use std::borrow::Cow;
 
-use facet_core::{Shape, StructKind};
+use facet_core::{ScalarType, Shape, StructKind};
 use facet_reflect::Partial;
 
 use crate::{
@@ -150,30 +150,34 @@ where
             ParseEvent::Scalar(ScalarValue::U64(u)) => {
                 wip = wip.set(u).map_err(DeserializeError::reflect)?;
             }
-            ParseEvent::VariantTag(variant_name) => {
+            ParseEvent::VariantTag(input_tag) => {
+                // `input_tag`: the variant name as it appeared in the input (e.g. "SomethingUnknown")
+                // `variant.name`: the Rust identifier of the matched variant (e.g. "Other")
+                //
+                // These differ when using #[facet(other)] to catch unknown variants.
+
                 // Find variant by display name (respecting rename) or fall back to #[facet(other)]
                 let is_using_other_fallback = !enum_def
                     .variants
                     .iter()
-                    .any(|v| Self::get_variant_display_name(&v) == variant_name);
+                    .any(|v| Self::get_variant_display_name(v) == input_tag);
                 let variant = enum_def
                     .variants
                     .iter()
-                    .find(|v| Self::get_variant_display_name(v) == variant_name)
+                    .find(|v| Self::get_variant_display_name(v) == input_tag)
                     .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
                     .ok_or_else(|| {
-                        DeserializeError::Unsupported(format!("unknown variant: {variant_name}"))
+                        DeserializeError::Unsupported(format!("unknown variant: {input_tag}"))
                     })?;
 
                 match variant.data.kind {
                     StructKind::Unit => {
-                        // For #[facet(other)] fallback, use the original tag name
-                        // Otherwise use the variant's Rust name
                         if is_using_other_fallback {
-                            panic!("those two variants are the same");
-                            wip = self.set_string_value(wip, Cow::Borrowed(variant_name))?;
+                            // #[facet(other)] fallback: preserve the original input tag
+                            // so that "SomethingUnknown" round-trips correctly
+                            wip = self.set_string_value(wip, Cow::Borrowed(input_tag))?;
                         } else {
-                            panic!("those two variants are the same");
+                            // Direct match: use the Rust variant name
                             wip = self.set_string_value(wip, Cow::Borrowed(variant.name))?;
                         }
                     }
@@ -231,25 +235,25 @@ where
         mut wip: Partial<'input, BORROW>,
         hint_shape: &'static Shape,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        panic!("using type_identifier for this is wrong - compare type_id");
-        let hint = match hint_shape.type_identifier {
-            "bool" => Some(ScalarTypeHint::Bool),
-            "u8" => Some(ScalarTypeHint::U8),
-            "u16" => Some(ScalarTypeHint::U16),
-            "u32" => Some(ScalarTypeHint::U32),
-            "u64" => Some(ScalarTypeHint::U64),
-            "u128" => Some(ScalarTypeHint::U128),
-            "usize" => Some(ScalarTypeHint::Usize),
-            "i8" => Some(ScalarTypeHint::I8),
-            "i16" => Some(ScalarTypeHint::I16),
-            "i32" => Some(ScalarTypeHint::I32),
-            "i64" => Some(ScalarTypeHint::I64),
-            "i128" => Some(ScalarTypeHint::I128),
-            "isize" => Some(ScalarTypeHint::Isize),
-            "f32" => Some(ScalarTypeHint::F32),
-            "f64" => Some(ScalarTypeHint::F64),
-            "String" | "&str" => Some(ScalarTypeHint::String),
-            "char" => Some(ScalarTypeHint::Char),
+        let hint = match hint_shape.scalar_type() {
+            Some(ScalarType::Bool) => Some(ScalarTypeHint::Bool),
+            Some(ScalarType::U8) => Some(ScalarTypeHint::U8),
+            Some(ScalarType::U16) => Some(ScalarTypeHint::U16),
+            Some(ScalarType::U32) => Some(ScalarTypeHint::U32),
+            Some(ScalarType::U64) => Some(ScalarTypeHint::U64),
+            Some(ScalarType::U128) => Some(ScalarTypeHint::U128),
+            Some(ScalarType::USize) => Some(ScalarTypeHint::Usize),
+            Some(ScalarType::I8) => Some(ScalarTypeHint::I8),
+            Some(ScalarType::I16) => Some(ScalarTypeHint::I16),
+            Some(ScalarType::I32) => Some(ScalarTypeHint::I32),
+            Some(ScalarType::I64) => Some(ScalarTypeHint::I64),
+            Some(ScalarType::I128) => Some(ScalarTypeHint::I128),
+            Some(ScalarType::ISize) => Some(ScalarTypeHint::Isize),
+            Some(ScalarType::F32) => Some(ScalarTypeHint::F32),
+            Some(ScalarType::F64) => Some(ScalarTypeHint::F64),
+            Some(ScalarType::Char) => Some(ScalarTypeHint::Char),
+            Some(ScalarType::String | ScalarType::CowStr) => Some(ScalarTypeHint::String),
+            Some(ScalarType::Str) => Some(ScalarTypeHint::String),
             _ if hint_shape.is_from_str() => Some(ScalarTypeHint::String),
             _ => None,
         };
@@ -405,10 +409,23 @@ where
 
         wip = wip.begin_map().map_err(DeserializeError::reflect)?;
 
-        let key_hint = match key_shape.type_identifier {
-            "String" | "&str" => Some(ScalarTypeHint::String),
-            "i64" | "i32" | "i16" | "i8" | "isize" => Some(ScalarTypeHint::I64),
-            "u64" | "u32" | "u16" | "u8" | "usize" => Some(ScalarTypeHint::U64),
+        let key_hint = match key_shape.scalar_type() {
+            Some(ScalarType::String | ScalarType::CowStr) => Some(ScalarTypeHint::String),
+            Some(ScalarType::Str) => Some(ScalarTypeHint::String),
+            Some(
+                ScalarType::I64
+                | ScalarType::I32
+                | ScalarType::I16
+                | ScalarType::I8
+                | ScalarType::ISize,
+            ) => Some(ScalarTypeHint::I64),
+            Some(
+                ScalarType::U64
+                | ScalarType::U32
+                | ScalarType::U16
+                | ScalarType::U8
+                | ScalarType::USize,
+            ) => Some(ScalarTypeHint::U64),
             _ => None,
         };
 
