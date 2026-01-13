@@ -155,6 +155,8 @@ where
         }
         let mut started_seqs: std::collections::HashMap<usize, SeqState> =
             std::collections::HashMap::new();
+        // Track which flat sequence is currently active (we're inside its list/array context)
+        let mut active_seq_idx: Option<usize> = None;
 
         let mut elements_list_started = false;
         if let Some(info) = &field_map.elements_field {
@@ -198,8 +200,32 @@ where
                         {
                             if info.is_list || info.is_array {
                                 // Flat sequence: repeated elements directly as children
+                                // If we're currently inside a different sequence, end it first
+                                if let Some(prev_idx) = active_seq_idx {
+                                    if prev_idx != info.idx {
+                                        trace!(
+                                            prev_idx = prev_idx,
+                                            new_idx = info.idx,
+                                            "switching active flat sequence"
+                                        );
+                                        // End the list/array (begin_nth_field doesn't push a frame,
+                                        // so ending the list/array returns us to the struct level)
+                                        wip = wip.end()?;
+                                        // End smart_ptr if applicable
+                                        if let Some(SeqState::List { is_smart_ptr: true }) =
+                                            started_seqs.get(&prev_idx)
+                                        {
+                                            wip = wip.end()?;
+                                        }
+                                        active_seq_idx = None;
+                                    }
+                                }
+
                                 use std::collections::hash_map::Entry;
-                                if let Entry::Vacant(entry) = started_seqs.entry(info.idx) {
+                                let need_start =
+                                    matches!(started_seqs.entry(info.idx), Entry::Vacant(_));
+
+                                if need_start {
                                     trace!(idx = info.idx, field_name = %info.field.name, is_list = info.is_list, is_array = info.is_array, "starting flat sequence field");
                                     wip = wip.begin_nth_field(info.idx)?;
 
@@ -211,12 +237,29 @@ where
                                             wip = wip.begin_smart_ptr()?;
                                         }
                                         wip = wip.begin_list()?;
-                                        entry.insert(SeqState::List { is_smart_ptr });
+                                        started_seqs
+                                            .insert(info.idx, SeqState::List { is_smart_ptr });
                                     } else {
                                         // Array
                                         wip = wip.begin_array()?;
-                                        entry.insert(SeqState::Array { next_idx: 0 });
+                                        started_seqs
+                                            .insert(info.idx, SeqState::Array { next_idx: 0 });
                                     }
+                                    active_seq_idx = Some(info.idx);
+                                } else if active_seq_idx != Some(info.idx) {
+                                    // Sequence was started before but we left it; re-enter it
+                                    trace!(idx = info.idx, field_name = %info.field.name, "re-entering flat sequence field");
+                                    wip = wip.begin_nth_field(info.idx)?;
+                                    let state = started_seqs.get(&info.idx).unwrap();
+                                    if let SeqState::List { is_smart_ptr } = state {
+                                        if *is_smart_ptr {
+                                            wip = wip.begin_smart_ptr()?;
+                                        }
+                                        wip = wip.begin_list()?;
+                                    } else {
+                                        wip = wip.begin_array()?;
+                                    }
+                                    active_seq_idx = Some(info.idx);
                                 }
 
                                 // Add item to sequence
@@ -236,6 +279,22 @@ where
                                     }
                                 }
                             } else {
+                                // Scalar field - need to leave any active sequence first
+                                if let Some(prev_idx) = active_seq_idx {
+                                    trace!(
+                                        prev_idx = prev_idx,
+                                        "leaving active flat sequence for scalar field"
+                                    );
+                                    // End the list/array
+                                    wip = wip.end()?;
+                                    // End smart_ptr if applicable
+                                    if let Some(SeqState::List { is_smart_ptr: true }) =
+                                        started_seqs.get(&prev_idx)
+                                    {
+                                        wip = wip.end()?;
+                                    }
+                                    active_seq_idx = None;
+                                }
                                 trace!(idx = info.idx, field_name = %info.field.name, "matched scalar element field");
                                 wip = wip
                                     .begin_nth_field(info.idx)?
@@ -266,19 +325,22 @@ where
             }
         }
 
-        // Close all started flat sequences (lists and arrays)
-        for state in started_seqs.values() {
+        // Close the currently active flat sequence (if any)
+        if let Some(idx) = active_seq_idx {
+            let state = started_seqs.get(&idx).unwrap();
             match state {
                 SeqState::List { is_smart_ptr } => {
-                    trace!(path = %wip.path(), is_smart_ptr, "ending flat list field");
+                    trace!(path = %wip.path(), is_smart_ptr, "ending active flat list");
+                    wip = wip.end()?; // end list
                     if *is_smart_ptr {
-                        wip = wip.end()?; // end smart pointer (converts builder to Arc/Box/etc)
+                        wip = wip.end()?; // end smart pointer
                     }
-                    wip = wip.end()?; // end field
+                    // Note: begin_nth_field doesn't push a frame, so no extra end() needed
                 }
                 SeqState::Array { .. } => {
-                    trace!(path = %wip.path(), "ending flat array field");
-                    wip = wip.end()?; // end field
+                    trace!(path = %wip.path(), "ending active flat array");
+                    wip = wip.end()?; // end array
+                    // Note: begin_nth_field doesn't push a frame, so no extra end() needed
                 }
             }
         }

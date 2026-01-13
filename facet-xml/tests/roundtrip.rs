@@ -68,7 +68,8 @@ fn struct_nested() {
         tags: Vec<String>,
     }
 
-    let xml = r#"<parent><id>42</id><child><code>alpha</code><active>true</active></child><tags><item>core</item><item>json</item></tags></parent>"#;
+    // Flat list: <item> elements appear directly as children (no <tags> wrapper)
+    let xml = r#"<parent><id>42</id><child><code>alpha</code><active>true</active></child><item>core</item><item>json</item></parent>"#;
     let parsed: Parent = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed.id, 42);
     assert_eq!(parsed.child.code, "alpha");
@@ -625,6 +626,71 @@ fn array_fixed_size() {
     assert_eq!(parsed.values, [1, 2, 3]);
 }
 
+/// Test explicit wrapper struct for wrapped list format.
+///
+/// Since 0.43.0, facet-xml uses flat lists by default. If you need the old
+/// wrapped format (where list items are inside a wrapper element named after
+/// the field), you can use an explicit wrapper struct.
+#[test]
+fn explicit_wrapper_for_wrapped_lists() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Track {
+        title: String,
+    }
+
+    // The wrapper struct holds the Vec and specifies the item element name
+    #[derive(Facet, Debug, PartialEq)]
+    struct TrackList {
+        #[facet(rename = "track")]
+        items: Vec<Track>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "Playlist")]
+    struct Playlist {
+        name: String,
+        // Use xml::element (single) pointing to the wrapper struct
+        tracks: TrackList,
+    }
+
+    // This is the "wrapped" format: tracks wrapper contains track children
+    let xml = r#"<Playlist><name>Favorites</name><tracks><track><title>Song A</title></track><track><title>Song B</title></track></tracks></Playlist>"#;
+    let parsed: Playlist = facet_xml::from_str(xml).unwrap();
+
+    assert_eq!(parsed.name, "Favorites");
+    assert_eq!(parsed.tracks.items.len(), 2);
+    assert_eq!(parsed.tracks.items[0].title, "Song A");
+    assert_eq!(parsed.tracks.items[1].title, "Song B");
+
+    // Roundtrip: serialize and deserialize again
+    let serialized = facet_xml::to_string(&parsed).unwrap();
+    let reparsed: Playlist = facet_xml::from_str(&serialized).unwrap();
+    assert_eq!(parsed, reparsed);
+}
+
+/// Test multiple flat lists in the same struct.
+///
+/// With flat lists, each list uses its renamed element name to distinguish items.
+/// NOTE: Elements for each list must be contiguous (all books together, all magazines together).
+#[test]
+fn multiple_flat_lists_in_struct() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "library")]
+    struct Library {
+        #[facet(rename = "book")]
+        books: Vec<String>,
+        #[facet(rename = "magazine")]
+        magazines: Vec<String>,
+    }
+
+    // Elements for each list are contiguous (not interleaved)
+    let xml = r#"<library><book>1984</book><book>Dune</book><book>Foundation</book><magazine>Time</magazine><magazine>Nature</magazine></library>"#;
+    let parsed: Library = facet_xml::from_str(xml).unwrap();
+
+    assert_eq!(parsed.books, vec!["1984", "Dune", "Foundation"]);
+    assert_eq!(parsed.magazines, vec!["Time", "Nature"]);
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Smart pointer tests
 // ══════════════════════════════════════════════════════════════════════════════
@@ -882,7 +948,9 @@ fn bytes_vec_u8() {
         data: Vec<u8>,
     }
 
-    let xml = r#"<record><data><value>0</value><value>128</value><value>255</value><value>42</value></data></record>"#;
+    // Flat list: repeated <value> elements directly as children (no wrapper)
+    let xml =
+        r#"<record><value>0</value><value>128</value><value>255</value><value>42</value></record>"#;
     let parsed: Record = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed.data, vec![0, 128, 255, 42]);
 }
