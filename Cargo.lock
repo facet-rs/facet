@@ -2189,6 +2189,8 @@ dependencies = [
  "indoc",
  "itoa",
  "quick-xml",
+ "test-log",
+ "tracing-subscriber",
  "zmij",
 ]
 
@@ -5339,6 +5341,7 @@ dependencies = [
  "once_cell",
  "regex-automata",
  "sharded-slab",
+ "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",

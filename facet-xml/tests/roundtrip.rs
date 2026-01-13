@@ -31,7 +31,7 @@ fn struct_single_field() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn sequence_numbers() {
     #[derive(Facet, Debug, PartialEq)]
     #[facet(rename = "numbers")]

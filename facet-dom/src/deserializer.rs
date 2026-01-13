@@ -1,5 +1,8 @@
 //! Tree-based deserializer for DOM documents.
 
+#![deny(let_underscore_drop)]
+#![deny(clippy::let_underscore_must_use)]
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
@@ -288,6 +291,7 @@ where
         wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let shape = wip.shape();
+        trace!(type_id = %shape.type_identifier, def = ?shape.def, "deserialize_into");
 
         // Dispatch based on type
         match &shape.ty {
@@ -305,15 +309,18 @@ where
         }
     }
 
-    /// Expect the next event to be of a specific kind.
-    fn expect_event(
+    /// Get the next event, returning an error if EOF.
+    fn next_event(
         &mut self,
         expected: &'static str,
     ) -> Result<DomEvent<'de>, DomDeserializeError<P::Error>> {
-        self.parser
+        let event = self
+            .parser
             .next_event()
             .map_err(DomDeserializeError::Parser)?
-            .ok_or(DomDeserializeError::UnexpectedEof { expected })
+            .ok_or(DomDeserializeError::UnexpectedEof { expected })?;
+        trace!(expected, event = ?event, "next_event");
+        Ok(event)
     }
 
     /// Peek at the next event.
@@ -321,10 +328,92 @@ where
         &mut self,
         expected: &'static str,
     ) -> Result<&DomEvent<'de>, DomDeserializeError<P::Error>> {
-        self.parser
+        let event = self
+            .parser
             .peek_event()
             .map_err(DomDeserializeError::Parser)?
-            .ok_or(DomDeserializeError::UnexpectedEof { expected })
+            .ok_or(DomDeserializeError::UnexpectedEof { expected })?;
+        trace!(expected, event = ?event, "peek_event");
+        Ok(event)
+    }
+
+    /// Expect and consume a NodeStart event, returning the tag name.
+    fn expect_node_start(&mut self) -> Result<Cow<'de, str>, DomDeserializeError<P::Error>> {
+        match self.next_event("NodeStart")? {
+            DomEvent::NodeStart { tag, .. } => Ok(tag),
+            other => Err(DomDeserializeError::TypeMismatch {
+                expected: "NodeStart",
+                got: format!("{other:?}"),
+            }),
+        }
+    }
+
+    /// Expect and consume a ChildrenStart event.
+    fn expect_children_start(&mut self) -> Result<(), DomDeserializeError<P::Error>> {
+        match self.next_event("ChildrenStart")? {
+            DomEvent::ChildrenStart => Ok(()),
+            other => Err(DomDeserializeError::TypeMismatch {
+                expected: "ChildrenStart",
+                got: format!("{other:?}"),
+            }),
+        }
+    }
+
+    /// Expect and consume a ChildrenEnd event.
+    fn expect_children_end(&mut self) -> Result<(), DomDeserializeError<P::Error>> {
+        match self.next_event("ChildrenEnd")? {
+            DomEvent::ChildrenEnd => Ok(()),
+            other => Err(DomDeserializeError::TypeMismatch {
+                expected: "ChildrenEnd",
+                got: format!("{other:?}"),
+            }),
+        }
+    }
+
+    /// Expect and consume a NodeEnd event.
+    fn expect_node_end(&mut self) -> Result<(), DomDeserializeError<P::Error>> {
+        match self.next_event("NodeEnd")? {
+            DomEvent::NodeEnd => Ok(()),
+            other => Err(DomDeserializeError::TypeMismatch {
+                expected: "NodeEnd",
+                got: format!("{other:?}"),
+            }),
+        }
+    }
+
+    /// Expect and consume a Text event, returning the text content.
+    fn expect_text(&mut self) -> Result<Cow<'de, str>, DomDeserializeError<P::Error>> {
+        match self.next_event("Text")? {
+            DomEvent::Text(text) => Ok(text),
+            other => Err(DomDeserializeError::TypeMismatch {
+                expected: "Text",
+                got: format!("{other:?}"),
+            }),
+        }
+    }
+
+    /// Expect and consume an Attribute event, returning (name, value).
+    fn expect_attribute(
+        &mut self,
+    ) -> Result<(Cow<'de, str>, Cow<'de, str>), DomDeserializeError<P::Error>> {
+        match self.next_event("Attribute")? {
+            DomEvent::Attribute { name, value, .. } => Ok((name, value)),
+            other => Err(DomDeserializeError::TypeMismatch {
+                expected: "Attribute",
+                got: format!("{other:?}"),
+            }),
+        }
+    }
+
+    /// Expect and consume a Comment event, returning the comment text.
+    fn expect_comment(&mut self) -> Result<Cow<'de, str>, DomDeserializeError<P::Error>> {
+        match self.next_event("Comment")? {
+            DomEvent::Comment(text) => Ok(text),
+            other => Err(DomDeserializeError::TypeMismatch {
+                expected: "Comment",
+                got: format!("{other:?}"),
+            }),
+        }
     }
 
     /// Deserialize a struct from an element.
@@ -347,19 +436,8 @@ where
         let field_map = StructFieldMap::new(struct_def);
 
         // Expect NodeStart
-        let event = self.expect_event("NodeStart")?;
-        let tag = match event {
-            DomEvent::NodeStart { tag, .. } => {
-                trace!(tag = %tag, "got NodeStart");
-                tag
-            }
-            other => {
-                return Err(DomDeserializeError::TypeMismatch {
-                    expected: "NodeStart",
-                    got: format!("{other:?}"),
-                });
-            }
-        };
+        let tag = self.expect_node_start()?;
+        trace!(tag = %tag, "got NodeStart");
 
         // Process attributes
         trace!("processing attributes");
@@ -367,19 +445,17 @@ where
             let event = self.peek_event("Attribute or ChildrenStart")?;
             match event {
                 DomEvent::Attribute { .. } => {
-                    let event = self.expect_event("Attribute")?;
-                    if let DomEvent::Attribute { name, value, .. } = event {
-                        trace!(name = %name, value = %value, "got Attribute");
-                        if let Some(info) = field_map.find_attribute(&name) {
-                            trace!(idx = info.idx, field_name = %info.field.name, "matched attribute field");
-                            wip = wip
-                                .begin_nth_field(info.idx)
-                                .map_err(DomDeserializeError::Reflect)?;
-                            wip = self.set_string_value(wip, value)?;
-                            wip = wip.end().map_err(DomDeserializeError::Reflect)?;
-                        } else {
-                            trace!(name = %name, "ignoring unknown attribute");
-                        }
+                    let (name, value) = self.expect_attribute()?;
+                    trace!(name = %name, value = %value, "got Attribute");
+                    if let Some(info) = field_map.find_attribute(&name) {
+                        trace!(idx = info.idx, field_name = %info.field.name, "matched attribute field");
+                        wip = wip
+                            .begin_nth_field(info.idx)
+                            .map_err(DomDeserializeError::Reflect)?;
+                        wip = self.set_string_value(wip, value)?;
+                        wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                    } else {
+                        trace!(name = %name, "ignoring unknown attribute");
                     }
                 }
                 DomEvent::ChildrenStart => {
@@ -388,7 +464,7 @@ where
                 }
                 DomEvent::NodeEnd => {
                     trace!("void element (no children)");
-                    let _ = self.expect_event("NodeEnd")?;
+                    self.expect_node_end()?;
                     return Ok(wip);
                 }
                 other => {
@@ -401,7 +477,7 @@ where
         }
 
         // Consume ChildrenStart
-        let _ = self.expect_event("ChildrenStart")?;
+        self.expect_children_start()?;
 
         // Track text content for text field
         let mut text_content = String::new();
@@ -430,22 +506,20 @@ where
                     break;
                 }
                 DomEvent::Text(_) => {
-                    let event = self.expect_event("Text")?;
-                    if let DomEvent::Text(text) = event {
-                        trace!(text_len = text.len(), "got Text");
-                        if elements_list_started {
-                            trace!("adding text as list item (mixed content)");
-                            wip = wip
-                                .begin_list_item()
-                                .map_err(DomDeserializeError::Reflect)?;
-                            wip = self.deserialize_text_into_enum(wip, text)?;
-                            wip = wip.end().map_err(DomDeserializeError::Reflect)?;
-                        } else if field_map.text_field.is_some() {
-                            trace!("accumulating text for text field");
-                            text_content.push_str(&text);
-                        } else {
-                            trace!("ignoring text (no text field)");
-                        }
+                    let text = self.expect_text()?;
+                    trace!(text_len = text.len(), "got Text");
+                    if elements_list_started {
+                        trace!("adding text as list item (mixed content)");
+                        wip = wip
+                            .begin_list_item()
+                            .map_err(DomDeserializeError::Reflect)?;
+                        wip = self.deserialize_text_into_enum(wip, text)?;
+                        wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                    } else if field_map.text_field.is_some() {
+                        trace!("accumulating text for text field");
+                        text_content.push_str(&text);
+                    } else {
+                        trace!("ignoring text (no text field)");
                     }
                 }
                 DomEvent::NodeStart { tag, .. } => {
@@ -461,20 +535,25 @@ where
 
                                 // Start the list if not already started
                                 if !started_lists.get(&info.idx).copied().unwrap_or(false) {
-                                    trace!(idx = info.idx, "starting list field");
+                                    trace!(path = %wip.path(), "begin_nth_field for list");
                                     wip = wip
                                         .begin_nth_field(info.idx)
                                         .map_err(DomDeserializeError::Reflect)?;
+                                    trace!(path = %wip.path(), "begin_list");
                                     wip = wip.begin_list().map_err(DomDeserializeError::Reflect)?;
                                     started_lists.insert(info.idx, true);
                                 }
 
                                 // Add item to the list - deserialize the element content as the item type
+                                trace!(path = %wip.path(), "begin_list_item");
                                 wip = wip
                                     .begin_list_item()
                                     .map_err(DomDeserializeError::Reflect)?;
+                                trace!(path = %wip.path(), "after begin_list_item, before deserialize_into");
                                 wip = self.deserialize_into(wip)?;
+                                trace!(path = %wip.path(), "after deserialize_into, before end");
                                 wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                                trace!(path = %wip.path(), "after end (list item)");
                             } else {
                                 // Non-list field: deserialize directly
                                 trace!(idx = info.idx, field_name = %info.field.name, "matched scalar element field");
@@ -501,7 +580,7 @@ where
                 }
                 DomEvent::Comment(_) => {
                     trace!("skipping comment");
-                    let _ = self.expect_event("Comment")?;
+                    let _comment = self.expect_comment()?;
                 }
                 other => {
                     return Err(DomDeserializeError::TypeMismatch {
@@ -513,19 +592,21 @@ where
         }
 
         // End all started list fields
+        // Note: begin_nth_field pushes a frame, begin_list() just initializes the list on that frame
+        // So we only need one end() to pop the field frame
         for (idx, started) in &started_lists {
             if *started {
-                trace!(idx, "ending list field");
-                wip = wip.end().map_err(DomDeserializeError::Reflect)?; // end list
-                wip = wip.end().map_err(DomDeserializeError::Reflect)?; // end field
+                trace!(idx, path = %wip.path(), "ending list field");
+                wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                trace!(idx, path = %wip.path(), "after ending list field");
             }
         }
 
         // End the elements list if it was started
+        // Same as above: begin_nth_field + begin_list = one frame, so one end()
         if elements_list_started {
-            trace!("ending elements list");
-            wip = wip.end().map_err(DomDeserializeError::Reflect)?; // end list
-            wip = wip.end().map_err(DomDeserializeError::Reflect)?; // end field
+            trace!(path = %wip.path(), "ending elements list");
+            wip = wip.end().map_err(DomDeserializeError::Reflect)?;
         }
 
         // Set the text field if we accumulated text
@@ -541,10 +622,10 @@ where
         }
 
         // Consume ChildrenEnd
-        let _ = self.expect_event("ChildrenEnd")?;
+        self.expect_children_end()?;
 
         // Consume NodeEnd
-        let _ = self.expect_event("NodeEnd")?;
+        self.expect_node_end()?;
 
         trace!(tag = %tag, "struct deserialization complete");
         Ok(wip)
@@ -596,10 +677,8 @@ where
             }
             DomEvent::Text(_) => {
                 // Text variant
-                let event = self.expect_event("Text")?;
-                if let DomEvent::Text(text) = event {
-                    wip = self.deserialize_text_into_enum(wip, text)?;
-                }
+                let text = self.expect_text()?;
+                wip = self.deserialize_text_into_enum(wip, text)?;
             }
             other => {
                 return Err(DomDeserializeError::TypeMismatch {
@@ -648,40 +727,45 @@ where
         &mut self,
         wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        trace!("deserialize_scalar called");
         // For scalars in DOM context, we might get:
         // 1. Raw text (e.g., inside a parent element's text content)
         // 2. Text wrapped in an element (e.g., <name>facet</name>)
         let event = self.peek_event("Text or NodeStart")?;
+        trace!(event = ?event, "peeked event in deserialize_scalar");
         match event {
             DomEvent::Text(_) => {
-                let event = self.expect_event("Text")?;
-                if let DomEvent::Text(text) = event {
-                    self.set_string_value(wip, text)
-                } else {
-                    unreachable!()
-                }
+                trace!("deserialize_scalar: matched Text arm");
+                let text = self.expect_text()?;
+                self.set_string_value(wip, text)
             }
             DomEvent::NodeStart { .. } => {
-                // Consume NodeStart
-                let _ = self.expect_event("NodeStart")?;
+                trace!("deserialize_scalar: matched NodeStart arm");
+                let tag = self.expect_node_start()?;
+                trace!(tag = %tag, "deserialize_scalar: consumed NodeStart");
 
                 // Skip attributes if any, then consume ChildrenStart
                 loop {
                     let event = self.peek_event("Attribute or ChildrenStart or NodeEnd")?;
+                    trace!(event = ?event, "deserialize_scalar: in attr loop");
                     match event {
                         DomEvent::Attribute { .. } => {
-                            let _ = self.expect_event("Attribute")?;
+                            let (name, _value) = self.expect_attribute()?;
+                            trace!(name = %name, "deserialize_scalar: consumed Attribute");
                         }
                         DomEvent::ChildrenStart => {
-                            let _ = self.expect_event("ChildrenStart")?;
+                            self.expect_children_start()?;
+                            trace!("deserialize_scalar: consumed ChildrenStart");
                             break;
                         }
                         DomEvent::NodeEnd => {
                             // Void element with no content - empty string
-                            let _ = self.expect_event("NodeEnd")?;
+                            self.expect_node_end()?;
+                            trace!("deserialize_scalar: void element, returning empty string");
                             return self.set_string_value(wip, Cow::Borrowed(""));
                         }
                         other => {
+                            trace!(other = ?other, "deserialize_scalar: unexpected event in attr loop");
                             return Err(DomDeserializeError::TypeMismatch {
                                 expected: "Attribute or ChildrenStart or NodeEnd",
                                 got: format!("{other:?}"),
@@ -691,27 +775,30 @@ where
                 }
 
                 // Now read text content (might be empty or have nested elements we ignore)
+                trace!("deserialize_scalar: starting text content loop");
                 let mut text_content = String::new();
                 loop {
                     let event = self.peek_event("Text or ChildrenEnd")?;
+                    trace!(event = ?event, "deserialize_scalar: in text content loop");
                     match event {
                         DomEvent::Text(_) => {
-                            let event = self.expect_event("Text")?;
-                            if let DomEvent::Text(text) = event {
-                                text_content.push_str(&text);
-                            }
+                            let text = self.expect_text()?;
+                            trace!(text = %text, "deserialize_scalar: got text");
+                            text_content.push_str(&text);
                         }
                         DomEvent::ChildrenEnd => {
+                            trace!("deserialize_scalar: got ChildrenEnd, breaking text loop");
                             break;
                         }
                         DomEvent::NodeStart { .. } => {
                             // Skip nested elements
+                            trace!("deserialize_scalar: skipping nested NodeStart");
                             self.parser
                                 .skip_node()
                                 .map_err(DomDeserializeError::Parser)?;
                         }
                         DomEvent::Comment(_) => {
-                            let _ = self.expect_event("Comment")?;
+                            let _comment = self.expect_comment()?;
                         }
                         other => {
                             return Err(DomDeserializeError::TypeMismatch {
@@ -723,8 +810,11 @@ where
                 }
 
                 // Consume ChildrenEnd and NodeEnd
-                let _ = self.expect_event("ChildrenEnd")?;
-                let _ = self.expect_event("NodeEnd")?;
+                trace!("deserialize_scalar: consuming ChildrenEnd");
+                self.expect_children_end()?;
+                trace!("deserialize_scalar: consuming NodeEnd");
+                self.expect_node_end()?;
+                trace!(text_content = %text_content, "deserialize_scalar: setting string value");
 
                 self.set_string_value(wip, Cow::Owned(text_content))
             }

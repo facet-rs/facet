@@ -40,6 +40,8 @@ divan = { workspace = true }
 facet = { path = "../facet", features = ["doc", "net"] }
 facet-diff = { path = "../facet-diff" }
 indoc = { workspace = true }
+test-log = { version = "0.2", features = ["trace"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [[bench]]
 name = "vs_jit"
@@ -50,6 +52,7 @@ default = []
 std = []
 fast = ["dep:zmij", "dep:itoa"]
 net = ["facet-core/net"]
+tracing = ["facet-dom/tracing", "facet-reflect/tracing"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
