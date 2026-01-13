@@ -211,6 +211,11 @@ where
         // Track whether we've started the xml::elements collection (lazy initialization)
         let mut elements_list_started = false;
 
+        // Track which flattened map (if any) has been started (lazy initialization)
+        // Maps field index to whether it's been initialized
+        let mut started_flattened_maps: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+
         // For tuple structs: track position for positional matching
         let mut tuple_position: usize = 0;
 
@@ -493,6 +498,105 @@ where
                         }
                         trace!("adding element to elements collection");
                         wip = wip.begin_list_item()?.deserialize_with(self)?.end()?;
+                    } else if !field_map.flattened_maps.is_empty() {
+                        // Unknown element - try to add to a flattened map
+                        // First match wins (by namespace, or first one if no namespace constraints)
+                        let map_info = field_map.flattened_maps.iter().find(|info| {
+                            // Match if no namespace constraint, or namespace matches exactly
+                            info.namespace.is_none()
+                                || info.namespace == namespace.as_ref().map(|c| c.as_ref())
+                        });
+
+                        if let Some(info) = map_info {
+                            trace!(idx = info.idx, field_name = %info.field.name, tag = %tag, "adding to flattened map");
+
+                            // Need to leave any active sequence first
+                            if let Some(prev_idx) = active_seq_idx {
+                                trace!(prev_idx, "leaving active flat sequence for flattened map");
+                                wip = wip.end()?;
+                                if let Some(SeqState::List { is_smart_ptr: true }) =
+                                    started_seqs.get(&prev_idx)
+                                {
+                                    wip = wip.end()?;
+                                }
+                                active_seq_idx = None;
+                            }
+                            if elements_list_started {
+                                trace!("leaving elements list for flattened map");
+                                wip = wip.end()?;
+                                elements_list_started = false;
+                            }
+
+                            // Read the element's text content as the value
+                            self.parser.expect_node_start()?;
+
+                            // Skip attributes and get text content
+                            let element_text = 'get_text: {
+                                loop {
+                                    match self
+                                        .parser
+                                        .peek_event_or_eof("Attribute or ChildrenStart")?
+                                    {
+                                        DomEvent::Attribute { .. } => {
+                                            self.parser.expect_attribute()?;
+                                        }
+                                        DomEvent::ChildrenStart => break,
+                                        DomEvent::NodeEnd => {
+                                            // Void element with no text content
+                                            self.parser.expect_node_end()?;
+                                            break 'get_text String::new();
+                                        }
+                                        other => {
+                                            return Err(DomDeserializeError::TypeMismatch {
+                                                expected: "Attribute or ChildrenStart",
+                                                got: format!("{other:?}"),
+                                            });
+                                        }
+                                    }
+                                }
+                                self.parser.expect_children_start()?;
+
+                                let mut text = String::new();
+                                loop {
+                                    match self.parser.peek_event_or_eof("text or ChildrenEnd")? {
+                                        DomEvent::ChildrenEnd => break,
+                                        DomEvent::Text(_) => {
+                                            text.push_str(&self.parser.expect_text()?);
+                                        }
+                                        _ => {
+                                            self.parser
+                                                .skip_node()
+                                                .map_err(DomDeserializeError::Parser)?;
+                                        }
+                                    }
+                                }
+                                self.parser.expect_children_end()?;
+                                self.parser.expect_node_end()?;
+                                text
+                            };
+
+                            // Initialize map (idempotent) and add entry
+                            let _need_init = started_flattened_maps.insert(info.idx);
+                            wip = wip
+                                .begin_nth_field(info.idx)?
+                                .init_map()?
+                                .begin_key()?
+                                .set::<String>(tag.to_string())?
+                                .end()?
+                                .begin_value()?
+                                .set::<String>(element_text)?
+                                .end()?
+                                .end()?;
+                        } else if wip.shape().has_deny_unknown_fields_attr() {
+                            return Err(DomDeserializeError::UnknownElement {
+                                tag: tag.to_string(),
+                            });
+                        } else {
+                            trace!(tag = %tag, "skipping unknown element (no matching flattened map namespace)");
+                            self.parser
+                                .skip_node()
+                                .map_err(DomDeserializeError::Parser)?;
+                        }
                     } else if wip.shape().has_deny_unknown_fields_attr() {
                         return Err(DomDeserializeError::UnknownElement {
                             tag: tag.to_string(),

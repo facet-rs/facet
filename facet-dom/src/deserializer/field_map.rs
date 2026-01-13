@@ -69,6 +69,9 @@ pub(crate) struct StructFieldMap {
     /// Flattened enum field - enum variants match against child elements directly.
     /// Only one flattened enum is supported per struct.
     pub flattened_enum: Option<FlattenedEnumInfo>,
+    /// Flattened map fields - capture unknown elements as key-value pairs.
+    /// Multiple flattened maps are supported; first match wins.
+    pub flattened_maps: Vec<FieldInfo>,
     /// Whether this struct has any flattened fields (requires deferred mode)
     pub has_flatten: bool,
 }
@@ -88,6 +91,7 @@ impl StructFieldMap {
         let mut text_field = None;
         let mut flattened_children: HashMap<&'static str, Vec<FlattenedChildInfo>> = HashMap::new();
         let mut flattened_enum: Option<FlattenedEnumInfo> = None;
+        let mut flattened_maps: Vec<FieldInfo> = Vec::new();
         let mut has_flatten = false;
 
         for (idx, field) in struct_def.fields.iter().enumerate() {
@@ -177,6 +181,22 @@ impl StructFieldMap {
                                 .push(flattened_child);
                         }
                     }
+                } else if is_flattened_map(field) {
+                    // Flattened map - captures unknown elements as key-value pairs
+                    let shape = field.shape();
+                    let namespace: Option<&'static str> = field
+                        .get_attr(Some("xml"), "ns")
+                        .and_then(|attr| attr.get_as::<&str>().copied());
+
+                    trace!(idx, field_name = %field.name, "found flattened map field");
+                    flattened_maps.push(FieldInfo {
+                        idx,
+                        field,
+                        is_list: false,
+                        is_array: false,
+                        is_set: false,
+                        namespace,
+                    });
                 }
                 continue; // Don't register the flattened field itself as an element
             }
@@ -291,6 +311,7 @@ impl StructFieldMap {
             element_count = element_fields.len(),
             flattened_count = flattened_children.len(),
             has_flattened_enum = flattened_enum.is_some(),
+            flattened_maps_count = flattened_maps.len(),
             has_flatten,
             has_elements = elements_field.is_some(),
             has_text = text_field.is_some(),
@@ -306,6 +327,7 @@ impl StructFieldMap {
             tuple_fields,
             flattened_children,
             flattened_enum,
+            flattened_maps,
             has_flatten,
         }
     }
@@ -439,6 +461,26 @@ fn get_flattened_struct_def(field: &'static Field) -> Option<&'static StructType
     }
 
     None
+}
+
+/// Check if a flattened field is a map type (HashMap, BTreeMap, etc.)
+fn is_flattened_map(field: &'static Field) -> bool {
+    let shape = field.shape();
+
+    // Check for direct map
+    if matches!(&shape.def, Def::Map(_)) {
+        return true;
+    }
+
+    // Check for Option<Map>
+    if let Def::Option(option_def) = &shape.def {
+        let inner_shape = option_def.t();
+        if matches!(&inner_shape.def, Def::Map(_)) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Classify a shape as list, array, set, or neither. Returns (is_list, is_array, is_set).
