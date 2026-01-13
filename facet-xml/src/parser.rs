@@ -411,7 +411,7 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError>
                         continue; // Skip prefixed namespace declarations
                     }
 
-                    let (attr_resolve, _) = reader.resolve_attribute(key);
+                    let (attr_resolve, _) = reader.resolver().resolve_attribute(key);
                     let attr_ns = resolve_namespace(attr_resolve)?;
                     let attr_local = core::str::from_utf8(key.local_name().as_ref())
                         .map_err(XmlError::InvalidUtf8)?
