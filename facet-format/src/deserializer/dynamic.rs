@@ -13,6 +13,90 @@ impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
     P: FormatParser<'input>,
 {
+    /// Deserialize any value into a DynamicValue type (e.g., facet_value::Value).
+    ///
+    /// This handles all value types by inspecting the parse events and calling
+    /// the appropriate methods on the Partial, which delegates to the DynamicValue vtable.
+    pub(crate) fn deserialize_dynamic_value(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        self.parser.hint_dynamic_value();
+        let event = self.expect_peek("value for dynamic value")?;
+
+        match event {
+            ParseEvent::Scalar(_) => {
+                // Consume the scalar
+                let event = self.expect_event("scalar")?;
+                if let ParseEvent::Scalar(scalar) = event {
+                    // Use set_scalar which already handles all scalar types
+                    wip = self.set_scalar(wip, scalar)?;
+                }
+            }
+            ParseEvent::SequenceStart(_) => {
+                // Array/list
+                self.expect_event("sequence start")?; // consume '['
+                wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+
+                loop {
+                    let event = self.expect_peek("value or end")?;
+                    if matches!(event, ParseEvent::SequenceEnd) {
+                        self.expect_event("sequence end")?;
+                        break;
+                    }
+
+                    wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
+                    wip = self.deserialize_dynamic_value(wip)?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                }
+            }
+            ParseEvent::StructStart(_) => {
+                // Object/map/table
+                self.expect_event("struct start")?; // consume '{'
+                wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+
+                loop {
+                    let event = self.expect_peek("field key or end")?;
+                    if matches!(event, ParseEvent::StructEnd) {
+                        self.expect_event("struct end")?;
+                        break;
+                    }
+
+                    // Parse the key
+                    let key_event = self.expect_event("field key")?;
+                    let key = match key_event {
+                        ParseEvent::FieldKey(field_key) => field_key.name.into_owned(),
+                        _ => {
+                            return Err(DeserializeError::TypeMismatch {
+                                expected: "field key",
+                                got: format!("{:?}", key_event),
+                                span: self.last_span,
+                                path: None,
+                            });
+                        }
+                    };
+
+                    // Begin the object entry and deserialize the value
+                    wip = wip
+                        .begin_object_entry(&key)
+                        .map_err(DeserializeError::reflect)?;
+                    wip = self.deserialize_dynamic_value(wip)?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                }
+            }
+            _ => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "scalar, sequence, or struct",
+                    got: format!("{:?}", event),
+                    span: self.last_span,
+                    path: None,
+                });
+            }
+        }
+
+        Ok(wip)
+    }
+
     pub(crate) fn deserialize_struct_dynamic(
         &mut self,
         mut wip: Partial<'input, BORROW>,
