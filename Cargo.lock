@@ -1593,7 +1593,6 @@ name = "facet-atom"
 version = "0.42.0"
 dependencies = [
  "facet",
- "facet-format",
  "facet-xml",
  "indoc",
 ]

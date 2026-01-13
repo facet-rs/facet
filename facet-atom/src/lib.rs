@@ -36,36 +36,30 @@
 //! All types use the Atom namespace `http://www.w3.org/2005/Atom` as specified in RFC 4287.
 
 use facet::Facet;
-use facet_format::FormatDeserializer;
 use facet_xml as xml;
-use facet_xml::{XmlParser, to_vec};
 
 pub const ATOM_NS: &str = "http://www.w3.org/2005/Atom";
 
 /// Error type for Atom parsing
-pub type Error = facet_format::DeserializeError<facet_xml::XmlError>;
+pub type Error = facet_xml::DeserializeError<facet_xml::XmlError>;
 
 /// Error type for Atom serialization
-pub type SerializeError = facet_format::SerializeError<facet_xml::XmlSerializeError>;
+pub type SerializeError = facet_xml::SerializeError<facet_xml::XmlSerializeError>;
 
 /// Deserialize an Atom document from a string.
-pub fn from_str<'input, T>(xml: &'input str) -> Result<T, Error>
+pub fn from_str<'input, T>(input: &'input str) -> Result<T, Error>
 where
     T: Facet<'input>,
 {
-    let parser = XmlParser::new(xml.as_bytes());
-    let mut de = FormatDeserializer::new(parser);
-    de.deserialize()
+    facet_xml::from_str_borrowed(input)
 }
 
 /// Deserialize an Atom document from bytes.
-pub fn from_slice<'input, T>(xml: &'input [u8]) -> Result<T, Error>
+pub fn from_slice<'input, T>(input: &'input [u8]) -> Result<T, Error>
 where
     T: Facet<'input>,
 {
-    let parser = XmlParser::new(xml);
-    let mut de = FormatDeserializer::new(parser);
-    de.deserialize()
+    facet_xml::from_slice_borrowed(input)
 }
 
 /// Serialize an Atom value to a string.
@@ -73,8 +67,7 @@ pub fn to_string<'facet, T>(value: &T) -> Result<String, SerializeError>
 where
     T: Facet<'facet> + ?Sized,
 {
-    let bytes = to_vec(value)?;
-    Ok(String::from_utf8(bytes).expect("XmlSerializer produces valid UTF-8"))
+    facet_xml::to_string(value)
 }
 
 // =============================================================================

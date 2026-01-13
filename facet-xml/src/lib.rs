@@ -80,8 +80,9 @@ pub use serializer::{
     to_string_pretty, to_string_with_options, to_vec, to_vec_with_options,
 };
 
-// Re-export DeserializeError for convenience
+// Re-export error types for convenience
 pub use facet_dom::DomDeserializeError as DeserializeError;
+pub use facet_dom::DomSerializeError as SerializeError;
 
 /// Deserialize a value from an XML string into an owned type.
 ///
@@ -142,6 +143,34 @@ where
 {
     let parser = XmlParser::new(input);
     let mut de = facet_dom::DomDeserializer::new_owned(parser);
+    de.deserialize()
+}
+
+/// Deserialize a value from an XML string, allowing borrowing from the input.
+///
+/// Use this when the deserialized type can borrow from the input string
+/// (e.g., contains `&'a str` fields). The input must outlive the result.
+///
+/// For most use cases, prefer [`from_str`] which produces owned types.
+pub fn from_str_borrowed<'input, T>(input: &'input str) -> Result<T, DeserializeError<XmlError>>
+where
+    T: facet_core::Facet<'input>,
+{
+    from_slice_borrowed(input.as_bytes())
+}
+
+/// Deserialize a value from XML bytes, allowing borrowing from the input.
+///
+/// Use this when the deserialized type can borrow from the input bytes
+/// (e.g., contains `&'a str` fields). The input must outlive the result.
+///
+/// For most use cases, prefer [`from_slice`] which produces owned types.
+pub fn from_slice_borrowed<'input, T>(input: &'input [u8]) -> Result<T, DeserializeError<XmlError>>
+where
+    T: facet_core::Facet<'input>,
+{
+    let parser = XmlParser::new(input);
+    let mut de = facet_dom::DomDeserializer::new(parser);
     de.deserialize()
 }
 
