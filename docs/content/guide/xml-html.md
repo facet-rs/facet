@@ -149,14 +149,14 @@ struct Paragraph {
 
 Parses: `<p class="intro">Hello, world!</p>`
 
-#### `xml::element_name` / `html::element_name`
+#### `xml::tag` / `html::tag`
 
 Captures the actual element tag name into a field. Useful for dynamic element handling.
 
 ```rust
 #[derive(Facet)]
 struct AnyElement {
-    #[facet(html::element_name)]
+    #[facet(html::tag)]
     tag: String,
     
     #[facet(html::text)]
@@ -402,7 +402,9 @@ The flat model (`xml::elements`) is more common in real-world XML (RSS, Atom, SV
 
 ### Capturing Unknown Attributes
 
-Use `#[facet(flatten)]` with a `HashMap` to capture unknown **attributes** (not elements):
+Use `#[facet(flatten)]` with a `HashMap` to capture unknown attributes and elements.
+
+#### Capturing Unknown Attributes
 
 ```rust
 use facet::Facet;
@@ -430,7 +432,31 @@ Parses: `<div id="widget" data-user-id="123" aria-label="Card">Content</div>`
 
 The `extra_attrs` field will contain `{"data-user-id": "123", "aria-label": "Card"}`.
 
-**Note:** Flattened maps capture unknown **attributes**, not child elements.
+#### Capturing Unknown Child Elements
+
+In XML, text-only child elements can also be captured in a flattened `HashMap`:
+
+```rust
+use facet::Facet;
+use std::collections::HashMap;
+
+#[derive(Facet)]
+#[facet(rename = "config")]
+struct Config {
+    #[facet(flatten, default)]
+    settings: HashMap<String, String>,
+}
+```
+
+Parses:
+```xml
+<config>
+    <timeout>30</timeout>
+    <host>localhost</host>
+</config>
+```
+
+The `settings` field will contain `{"timeout": "30", "host": "localhost"}`.
 
 ## Basic Usage
 

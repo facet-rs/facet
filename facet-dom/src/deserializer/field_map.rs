@@ -61,6 +61,8 @@ pub(crate) struct StructFieldMap {
     pub elements_field: Option<FieldInfo>,
     /// The field marked with `xml::text` (collects text content)
     pub text_field: Option<FieldInfo>,
+    /// The field marked with `xml::tag` or `html::tag` (captures element tag name)
+    pub tag_field: Option<FieldInfo>,
     /// For tuple structs: fields in order for positional matching.
     /// Uses `<item>` elements matched by position.
     pub tuple_fields: Option<Vec<FieldInfo>>,
@@ -73,6 +75,9 @@ pub(crate) struct StructFieldMap {
     /// Flattened map fields - capture unknown elements as key-value pairs.
     /// Multiple flattened maps are supported; first match wins.
     pub flattened_maps: Vec<FieldInfo>,
+    /// Flattened attribute map fields - capture unknown attributes as key-value pairs.
+    /// Multiple are supported; first match wins.
+    pub flattened_attr_maps: Vec<FieldInfo>,
     /// Whether this struct has any flattened fields (requires deferred mode)
     pub has_flatten: bool,
 }
@@ -90,9 +95,11 @@ impl StructFieldMap {
         let mut element_fields: HashMap<&'static str, Vec<FieldInfo>> = HashMap::new();
         let mut elements_field = None;
         let mut text_field = None;
+        let mut tag_field = None;
         let mut flattened_children: HashMap<&'static str, Vec<FlattenedChildInfo>> = HashMap::new();
         let mut flattened_enum: Option<FlattenedEnumInfo> = None;
         let mut flattened_maps: Vec<FieldInfo> = Vec::new();
+        let mut flattened_attr_maps: Vec<FieldInfo> = Vec::new();
         let mut has_flatten = false;
 
         for (idx, field) in struct_def.fields.iter().enumerate() {
@@ -183,21 +190,24 @@ impl StructFieldMap {
                         }
                     }
                 } else if is_flattened_map(field) {
-                    // Flattened map - captures unknown elements as key-value pairs
+                    // Flattened map - captures unknown elements AND attributes as key-value pairs
                     let _shape = field.shape();
                     let namespace: Option<&'static str> = field
                         .get_attr(Some("xml"), "ns")
                         .and_then(|attr| attr.get_as::<&str>().copied());
 
                     trace!(idx, field_name = %field.name, "found flattened map field");
-                    flattened_maps.push(FieldInfo {
+                    let info = FieldInfo {
                         idx,
                         field,
                         is_list: false,
                         is_array: false,
                         is_set: false,
                         namespace,
-                    });
+                    };
+                    // Add to both element and attribute capture lists
+                    flattened_maps.push(info.clone());
+                    flattened_attr_maps.push(info);
                 }
                 continue; // Don't register the flattened field itself as an element
             }
@@ -253,6 +263,17 @@ impl StructFieldMap {
                     namespace,
                 };
                 text_field = Some(info);
+            } else if field.is_tag() {
+                trace!(idx, field_name = %field.name, "found tag field");
+                let info = FieldInfo {
+                    idx,
+                    field,
+                    is_list,
+                    is_array,
+                    is_set,
+                    namespace,
+                };
+                tag_field = Some(info);
             } else {
                 // Default: unmarked fields and explicit xml::element fields are child elements
                 // Apply ns_all to elements without explicit namespace
@@ -317,6 +338,7 @@ impl StructFieldMap {
             has_flatten,
             has_elements = elements_field.is_some(),
             has_text = text_field.is_some(),
+            has_tag = tag_field.is_some(),
             is_tuple = tuple_fields.is_some(),
             "field map built"
         );
@@ -326,10 +348,12 @@ impl StructFieldMap {
             element_fields,
             elements_field,
             text_field,
+            tag_field,
             tuple_fields,
             flattened_children,
             flattened_enum,
             flattened_maps,
+            flattened_attr_maps,
             has_flatten,
         }
     }

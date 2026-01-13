@@ -973,3 +973,253 @@ fn bytes_vec_u8() {
     let parsed: Record = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed.data, vec![0, 128, 255, 42]);
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// xml::tag tests - capturing element tag names dynamically
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn xml_tag_captures_element_name() {
+    use facet_xml as xml;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct AnyElement {
+        #[facet(xml::tag)]
+        tag: String,
+
+        #[facet(xml::text, default)]
+        content: String,
+    }
+
+    let xml = r#"<custom-element>Hello</custom-element>"#;
+    let parsed: AnyElement = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.tag, "custom-element");
+    assert_eq!(parsed.content, "Hello");
+}
+
+#[test]
+fn xml_tag_with_attributes() {
+    use facet_xml as xml;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct DynamicElement {
+        #[facet(xml::tag)]
+        tag: String,
+
+        #[facet(xml::attribute, default)]
+        id: Option<String>,
+
+        #[facet(xml::text, default)]
+        text: String,
+    }
+
+    let xml = r#"<widget id="main">Content</widget>"#;
+    let parsed: DynamicElement = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.tag, "widget");
+    assert_eq!(parsed.id, Some("main".to_string()));
+    assert_eq!(parsed.text, "Content");
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// xml::elements singularization tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn elements_singularization_tracks_to_track() {
+    use facet_xml as xml;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Track {
+        #[facet(xml::attribute)]
+        title: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "playlist")]
+    struct Playlist {
+        // Field name "tracks" should singularize to "track" for element matching
+        #[facet(xml::elements)]
+        tracks: Vec<Track>,
+    }
+
+    let xml = r#"<playlist><track title="Song A"/><track title="Song B"/></playlist>"#;
+    let parsed: Playlist = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.tracks.len(), 2);
+    assert_eq!(parsed.tracks[0].title, "Song A");
+    assert_eq!(parsed.tracks[1].title, "Song B");
+}
+
+#[test]
+fn elements_singularization_entries_to_entry() {
+    use facet_xml as xml;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Entry {
+        #[facet(xml::text)]
+        value: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "feed")]
+    struct Feed {
+        // Field name "entries" should singularize to "entry" for element matching
+        #[facet(xml::elements)]
+        entries: Vec<Entry>,
+    }
+
+    let xml = r#"<feed><entry>First</entry><entry>Second</entry></feed>"#;
+    let parsed: Feed = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.entries.len(), 2);
+    assert_eq!(parsed.entries[0].value, "First");
+    assert_eq!(parsed.entries[1].value, "Second");
+}
+
+#[test]
+fn elements_singularization_categories_to_category() {
+    use facet_xml as xml;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Category {
+        #[facet(xml::attribute)]
+        name: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "store")]
+    struct Store {
+        // Field name "categories" should singularize to "category"
+        #[facet(xml::elements)]
+        categories: Vec<Category>,
+    }
+
+    let xml = r#"<store><category name="Books"/><category name="Music"/></store>"#;
+    let parsed: Store = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.categories.len(), 2);
+    assert_eq!(parsed.categories[0].name, "Books");
+    assert_eq!(parsed.categories[1].name, "Music");
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// xml::elements with rename attribute tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn elements_rename_overrides_singularization() {
+    use facet_xml as xml;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Item {
+        #[facet(xml::text)]
+        value: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "container")]
+    struct Container {
+        // Explicit rename = "item" overrides default singularization of "things" -> "thing"
+        #[facet(xml::elements, rename = "item")]
+        things: Vec<Item>,
+    }
+
+    let xml = r#"<container><item>One</item><item>Two</item></container>"#;
+    let parsed: Container = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.things.len(), 2);
+    assert_eq!(parsed.things[0].value, "One");
+    assert_eq!(parsed.things[1].value, "Two");
+}
+
+#[test]
+fn elements_rename_with_different_casing() {
+    use facet_xml as xml;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Person {
+        #[facet(xml::attribute)]
+        name: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "team")]
+    struct Team {
+        // Explicit rename = "Person" (capitalized) instead of default "member"
+        #[facet(xml::elements, rename = "Person")]
+        members: Vec<Person>,
+    }
+
+    let xml = r#"<team><Person name="Alice"/><Person name="Bob"/></team>"#;
+    let parsed: Team = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.members.len(), 2);
+    assert_eq!(parsed.members[0].name, "Alice");
+    assert_eq!(parsed.members[1].name, "Bob");
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// flatten with HashMap for unknown attributes tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn flatten_hashmap_captures_unknown_attributes() {
+    use facet_xml as xml;
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "div")]
+    struct DivWithExtras {
+        #[facet(xml::attribute)]
+        id: Option<String>,
+
+        #[facet(xml::attribute)]
+        class: Option<String>,
+
+        /// Captures data-*, aria-*, and other unknown attributes
+        #[facet(flatten, default)]
+        extra_attrs: HashMap<String, String>,
+
+        #[facet(xml::text, default)]
+        content: String,
+    }
+
+    let xml = r#"<div id="widget" data-user-id="123" aria-label="Card">Content</div>"#;
+    let parsed: DivWithExtras = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.id, Some("widget".to_string()));
+    assert_eq!(parsed.class, None);
+    assert_eq!(parsed.content, "Content");
+    assert_eq!(
+        parsed.extra_attrs.get("data-user-id"),
+        Some(&"123".to_string())
+    );
+    assert_eq!(
+        parsed.extra_attrs.get("aria-label"),
+        Some(&"Card".to_string())
+    );
+}
+
+#[test]
+fn flatten_hashmap_with_known_and_unknown_attrs() {
+    use facet_xml as xml;
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "input")]
+    struct Input {
+        #[facet(xml::attribute)]
+        name: String,
+
+        #[facet(xml::attribute, rename = "type")]
+        input_type: String,
+
+        #[facet(flatten, default)]
+        extras: HashMap<String, String>,
+    }
+
+    let xml = r#"<input name="email" type="text" placeholder="Enter email" required="true"/>"#;
+    let parsed: Input = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.name, "email");
+    assert_eq!(parsed.input_type, "text");
+    assert_eq!(
+        parsed.extras.get("placeholder"),
+        Some(&"Enter email".to_string())
+    );
+    assert_eq!(parsed.extras.get("required"), Some(&"true".to_string()));
+    // Known attributes should NOT be in extras
+    assert_eq!(parsed.extras.get("name"), None);
+    assert_eq!(parsed.extras.get("type"), None);
+}

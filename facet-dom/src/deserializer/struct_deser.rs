@@ -2,7 +2,6 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::marker::PhantomData;
 
 use facet_core::{Def, StructKind, StructType};
 use facet_reflect::Partial;
@@ -44,16 +43,17 @@ pub(crate) struct StructDeserializer<'de, 'p, const BORROW: bool, P: DomParser<'
     /// Whether we've started the xml::elements collection
     elements_list_started: bool,
 
-    /// Which flattened maps have been initialized
+    /// Which flattened element maps have been initialized
     started_flattened_maps: HashSet<usize>,
+
+    /// Which flattened attribute maps have been initialized
+    started_flattened_attr_maps: HashSet<usize>,
 
     /// Position for tuple struct positional matching
     tuple_position: usize,
 
-    /// Tag from NodeStart (for tracing)
-    tag: String,
-
-    _marker: PhantomData<&'de ()>,
+    /// Tag from NodeStart (for tracing and xml::tag field)
+    tag: Cow<'de, str>,
 }
 
 impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p, BORROW, P> {
@@ -73,9 +73,9 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             active_seq_idx: None,
             elements_list_started: false,
             started_flattened_maps: HashSet::new(),
+            started_flattened_attr_maps: HashSet::new(),
             tuple_position: 0,
-            tag: String::new(),
-            _marker: PhantomData,
+            tag: Cow::Borrowed(""),
         }
     }
 
@@ -94,8 +94,19 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             self.using_deferred = true;
         }
 
-        self.tag = self.parser().expect_node_start()?.to_string();
+        self.tag = self.parser().expect_node_start()?;
         trace!(tag = %self.tag, "got NodeStart");
+
+        // Set the tag field if present (xml::tag or html::tag)
+        if let Some(info) = &self.field_map.tag_field {
+            let idx = info.idx;
+            trace!(idx, field_name = %info.field.name, tag = %self.tag, "setting tag field");
+            let tag = self.tag.clone();
+            wip = self
+                .dom_deser
+                .set_string_value(wip.begin_nth_field(idx)?, tag)?
+                .end()?;
+        }
 
         wip = self.process_attributes(wip)?;
 
@@ -141,6 +152,31 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                             .dom_deser
                             .set_string_value(wip.begin_nth_field(idx)?, value)?
                             .end()?;
+                    } else if !self.field_map.flattened_attr_maps.is_empty() {
+                        // Try to add to flattened attribute map
+                        let map_info = self.field_map.flattened_attr_maps.iter().find(|info| {
+                            info.namespace.is_none()
+                                || info.namespace == namespace.as_ref().map(|c| c.as_ref())
+                        });
+
+                        if let Some(info) = map_info {
+                            let idx = info.idx;
+                            trace!(idx, field_name = %info.field.name, attr_name = %name, "adding to flattened attr map");
+
+                            self.started_flattened_attr_maps.insert(idx);
+                            wip = wip
+                                .begin_nth_field(idx)?
+                                .init_map()?
+                                .begin_key()?
+                                .set::<String>(name.to_string())?
+                                .end()?
+                                .begin_value()?
+                                .set::<String>(value.to_string())?
+                                .end()?
+                                .end()?;
+                        } else {
+                            trace!(name = %name, "ignoring unknown attribute (no matching flattened map)");
+                        }
                     } else {
                         trace!(name = %name, "ignoring unknown attribute");
                     }

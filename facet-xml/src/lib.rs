@@ -31,7 +31,8 @@
 //! attributes, and children. Text is always a child node, never the element itself.
 //! This preserves the DOM structure and enables tag name capture via `#[facet(html::tag)]`.
 //!
-//! This difference affects how unknown/dynamic children are captured:
+//! This difference affects how unknown/dynamic content is captured. A flattened `HashMap`
+//! can capture both unknown attributes and unknown child elements:
 //!
 //! ```rust
 //! use facet::Facet;
@@ -49,6 +50,29 @@
 //! let config: Config = facet_xml::from_str(xml).unwrap();
 //! assert_eq!(config.settings.get("timeout"), Some(&"30".to_string()));
 //! assert_eq!(config.settings.get("host"), Some(&"localhost".to_string()));
+//! ```
+//!
+//! Unknown attributes are also captured:
+//!
+//! ```rust
+//! use facet::Facet;
+//! use facet_xml as xml;
+//! use std::collections::HashMap;
+//!
+//! #[derive(Debug, Facet)]
+//! #[facet(rename = "div")]
+//! struct Div {
+//!     #[facet(xml::attribute)]
+//!     id: Option<String>,
+//!
+//!     #[facet(flatten, default)]
+//!     extra_attrs: HashMap<String, String>,
+//! }
+//!
+//! let xml = r#"<div id="main" data-value="123"></div>"#;
+//! let div: Div = facet_xml::from_str(xml).unwrap();
+//! assert_eq!(div.id, Some("main".to_string()));
+//! assert_eq!(div.extra_attrs.get("data-value"), Some(&"123".to_string()));
 //! ```
 //!
 //! The same pattern would not work with `facet-html` because HTML elements are always
@@ -181,7 +205,7 @@ where
 //   #[facet(xml::elements)]
 //   #[facet(xml::attribute)]
 //   #[facet(xml::text)]
-//   #[facet(xml::element_name)]
+//   #[facet(xml::tag)]
 
 // Generate XML attribute grammar using the grammar DSL.
 // This generates:
@@ -202,8 +226,11 @@ facet::define_attr_grammar! {
         Attribute,
         /// Marks a field as the text content of the element
         Text,
-        /// Marks a field as storing the XML element name dynamically
-        ElementName,
+        /// Marks a field as storing the XML element tag name dynamically.
+        ///
+        /// Used on a `String` field to capture the tag name of an element
+        /// during deserialization. When serializing, this value becomes the element's tag.
+        Tag,
         /// Specifies the XML namespace URI for this field.
         ///
         /// Usage: `#[facet(xml::ns = "http://example.com/ns")]`
