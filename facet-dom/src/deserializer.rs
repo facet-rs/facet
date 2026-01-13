@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
-use facet_core::{Def, Facet, Field, StructType, Type, UserType};
+use facet_core::{Def, Facet, Field, Shape, StructType, Type, UserType};
 use facet_reflect::{HeapValue, Partial};
 
 use crate::{DomEvent, DomParser};
@@ -24,25 +24,36 @@ macro_rules! trace_span {
     };
 }
 
+/// Info about a field in a struct for deserialization purposes.
+#[derive(Clone, Copy)]
+struct FieldInfo {
+    idx: usize,
+    field: &'static Field,
+    /// True if this field is a list type (Vec, etc.)
+    is_list: bool,
+    /// For list fields, the shape of the list item
+    item_shape: Option<&'static Shape>,
+}
+
 /// Precomputed field lookup map for a struct.
 ///
 /// This separates "what fields does this struct have" from the parsing loop,
 /// making the code cleaner and avoiding repeated linear scans.
 struct StructFieldMap {
-    /// Fields marked with `xml::attribute`, keyed by lowercase name/rename
-    attribute_fields: HashMap<String, (usize, &'static Field)>,
-    /// Fields marked with `xml::element`, keyed by lowercase name/rename
-    element_fields: HashMap<String, (usize, &'static Field)>,
+    /// Fields marked with `xml::attribute`, keyed by name/rename
+    attribute_fields: HashMap<String, FieldInfo>,
+    /// Fields that are child elements, keyed by name/rename
+    element_fields: HashMap<String, FieldInfo>,
     /// The field marked with `xml::elements` (collects all unmatched children)
-    elements_field: Option<(usize, &'static Field)>,
+    elements_field: Option<FieldInfo>,
     /// The field marked with `xml::text` (collects text content)
-    text_field: Option<(usize, &'static Field)>,
+    text_field: Option<FieldInfo>,
 }
 
 impl StructFieldMap {
     /// Build the field map from a struct definition.
     fn new(struct_def: &'static StructType) -> Self {
-        trace_span!("StructFieldMap::new", type_name = %struct_def.name);
+        trace_span!("StructFieldMap::new");
 
         let mut attribute_fields = HashMap::new();
         let mut element_fields = HashMap::new();
@@ -53,18 +64,33 @@ impl StructFieldMap {
             // Use exact name - case-sensitive matching for XML
             let name = field.rename.unwrap_or(field.name).to_string();
 
+            // Check if this field is a list type
+            let shape = field.shape();
+            let (is_list, item_shape) = match &shape.def {
+                Def::List(list_def) => (true, Some(list_def.t)),
+                _ => (false, None),
+            };
+
+            let info = FieldInfo {
+                idx,
+                field,
+                is_list,
+                item_shape,
+            };
+
             if field.is_attribute() {
                 trace!(idx, field_name = %field.name, key = %name, "found attribute field");
-                attribute_fields.insert(name, (idx, field));
-            } else if field.is_element() {
-                trace!(idx, field_name = %field.name, key = %name, "found element field");
-                element_fields.insert(name, (idx, field));
+                attribute_fields.insert(name, info);
             } else if field.is_elements() {
                 trace!(idx, field_name = %field.name, "found elements collection field");
-                elements_field = Some((idx, field));
+                elements_field = Some(info);
             } else if field.is_text() {
                 trace!(idx, field_name = %field.name, "found text field");
-                text_field = Some((idx, field));
+                text_field = Some(info);
+            } else {
+                // Default: unmarked fields and explicit xml::element fields are child elements
+                trace!(idx, field_name = %field.name, key = %name, is_list, "found element field (default or explicit)");
+                element_fields.insert(name, info);
             }
         }
 
@@ -85,14 +111,14 @@ impl StructFieldMap {
     }
 
     /// Find an attribute field by name (exact match).
-    fn find_attribute(&self, name: &str) -> Option<(usize, &'static Field)> {
+    fn find_attribute(&self, name: &str) -> Option<FieldInfo> {
         let result = self.attribute_fields.get(name).copied();
         trace!(name, found = result.is_some(), "find_attribute");
         result
     }
 
     /// Find an element field by tag name (exact match).
-    fn find_element(&self, tag: &str) -> Option<(usize, &'static Field)> {
+    fn find_element(&self, tag: &str) -> Option<FieldInfo> {
         let result = self.element_fields.get(tag).copied();
         trace!(tag, found = result.is_some(), "find_element");
         result
@@ -315,7 +341,7 @@ where
             }
         };
 
-        trace_span!("deserialize_struct", type_name = %struct_def.name);
+        trace_span!("deserialize_struct");
 
         // Build field map once upfront
         let field_map = StructFieldMap::new(struct_def);
@@ -344,10 +370,10 @@ where
                     let event = self.expect_event("Attribute")?;
                     if let DomEvent::Attribute { name, value, .. } = event {
                         trace!(name = %name, value = %value, "got Attribute");
-                        if let Some((idx, field)) = field_map.find_attribute(&name) {
-                            trace!(idx, field_name = %field.name, "matched attribute field");
+                        if let Some(info) = field_map.find_attribute(&name) {
+                            trace!(idx = info.idx, field_name = %info.field.name, "matched attribute field");
                             wip = wip
-                                .begin_nth_field(idx)
+                                .begin_nth_field(info.idx)
                                 .map_err(DomDeserializeError::Reflect)?;
                             wip = self.set_string_value(wip, value)?;
                             wip = wip.end().map_err(DomDeserializeError::Reflect)?;
@@ -380,12 +406,15 @@ where
         // Track text content for text field
         let mut text_content = String::new();
 
+        // Track which list fields have been started (field index -> true if started)
+        let mut started_lists: HashMap<usize, bool> = HashMap::new();
+
         // If there's an elements field, begin the list before processing children
         let mut elements_list_started = false;
-        if let Some((elements_idx, field)) = field_map.elements_field {
-            trace!(idx = elements_idx, field_name = %field.name, "beginning elements list");
+        if let Some(info) = field_map.elements_field {
+            trace!(idx = info.idx, field_name = %info.field.name, "beginning elements list");
             wip = wip
-                .begin_nth_field(elements_idx)
+                .begin_nth_field(info.idx)
                 .map_err(DomDeserializeError::Reflect)?;
             wip = wip.begin_list().map_err(DomDeserializeError::Reflect)?;
             elements_list_started = true;
@@ -425,13 +454,36 @@ where
 
                     if !elements_list_started {
                         // Check if this matches an individual element field
-                        if let Some((idx, field)) = field_map.find_element(&tag) {
-                            trace!(idx, field_name = %field.name, "matched element field");
-                            wip = wip
-                                .begin_nth_field(idx)
-                                .map_err(DomDeserializeError::Reflect)?;
-                            wip = self.deserialize_into(wip)?;
-                            wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                        if let Some(info) = field_map.find_element(&tag) {
+                            if info.is_list {
+                                // List field: add item to the list
+                                trace!(idx = info.idx, field_name = %info.field.name, "matched list element field");
+
+                                // Start the list if not already started
+                                if !started_lists.get(&info.idx).copied().unwrap_or(false) {
+                                    trace!(idx = info.idx, "starting list field");
+                                    wip = wip
+                                        .begin_nth_field(info.idx)
+                                        .map_err(DomDeserializeError::Reflect)?;
+                                    wip = wip.begin_list().map_err(DomDeserializeError::Reflect)?;
+                                    started_lists.insert(info.idx, true);
+                                }
+
+                                // Add item to the list - deserialize the element content as the item type
+                                wip = wip
+                                    .begin_list_item()
+                                    .map_err(DomDeserializeError::Reflect)?;
+                                wip = self.deserialize_into(wip)?;
+                                wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                            } else {
+                                // Non-list field: deserialize directly
+                                trace!(idx = info.idx, field_name = %info.field.name, "matched scalar element field");
+                                wip = wip
+                                    .begin_nth_field(info.idx)
+                                    .map_err(DomDeserializeError::Reflect)?;
+                                wip = self.deserialize_into(wip)?;
+                                wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                            }
                         } else {
                             trace!(tag = %tag, "skipping unknown element");
                             self.parser
@@ -460,6 +512,15 @@ where
             }
         }
 
+        // End all started list fields
+        for (idx, started) in &started_lists {
+            if *started {
+                trace!(idx, "ending list field");
+                wip = wip.end().map_err(DomDeserializeError::Reflect)?; // end list
+                wip = wip.end().map_err(DomDeserializeError::Reflect)?; // end field
+            }
+        }
+
         // End the elements list if it was started
         if elements_list_started {
             trace!("ending elements list");
@@ -468,11 +529,11 @@ where
         }
 
         // Set the text field if we accumulated text
-        if let Some((text_idx, field)) = field_map.text_field {
+        if let Some(info) = field_map.text_field {
             if !text_content.is_empty() || !elements_list_started {
-                trace!(idx = text_idx, field_name = %field.name, text_len = text_content.len(), "setting text field");
+                trace!(idx = info.idx, field_name = %info.field.name, text_len = text_content.len(), "setting text field");
                 wip = wip
-                    .begin_nth_field(text_idx)
+                    .begin_nth_field(info.idx)
                     .map_err(DomDeserializeError::Reflect)?;
                 wip = self.set_string_value(wip, Cow::Owned(text_content))?;
                 wip = wip.end().map_err(DomDeserializeError::Reflect)?;
@@ -587,12 +648,88 @@ where
         &mut self,
         wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        // For scalars in DOM context, we expect text content
-        let event = self.expect_event("Text")?;
+        // For scalars in DOM context, we might get:
+        // 1. Raw text (e.g., inside a parent element's text content)
+        // 2. Text wrapped in an element (e.g., <name>facet</name>)
+        let event = self.peek_event("Text or NodeStart")?;
         match event {
-            DomEvent::Text(text) => self.set_string_value(wip, text),
+            DomEvent::Text(_) => {
+                let event = self.expect_event("Text")?;
+                if let DomEvent::Text(text) = event {
+                    self.set_string_value(wip, text)
+                } else {
+                    unreachable!()
+                }
+            }
+            DomEvent::NodeStart { .. } => {
+                // Consume NodeStart
+                let _ = self.expect_event("NodeStart")?;
+
+                // Skip attributes if any, then consume ChildrenStart
+                loop {
+                    let event = self.peek_event("Attribute or ChildrenStart or NodeEnd")?;
+                    match event {
+                        DomEvent::Attribute { .. } => {
+                            let _ = self.expect_event("Attribute")?;
+                        }
+                        DomEvent::ChildrenStart => {
+                            let _ = self.expect_event("ChildrenStart")?;
+                            break;
+                        }
+                        DomEvent::NodeEnd => {
+                            // Void element with no content - empty string
+                            let _ = self.expect_event("NodeEnd")?;
+                            return self.set_string_value(wip, Cow::Borrowed(""));
+                        }
+                        other => {
+                            return Err(DomDeserializeError::TypeMismatch {
+                                expected: "Attribute or ChildrenStart or NodeEnd",
+                                got: format!("{other:?}"),
+                            });
+                        }
+                    }
+                }
+
+                // Now read text content (might be empty or have nested elements we ignore)
+                let mut text_content = String::new();
+                loop {
+                    let event = self.peek_event("Text or ChildrenEnd")?;
+                    match event {
+                        DomEvent::Text(_) => {
+                            let event = self.expect_event("Text")?;
+                            if let DomEvent::Text(text) = event {
+                                text_content.push_str(&text);
+                            }
+                        }
+                        DomEvent::ChildrenEnd => {
+                            break;
+                        }
+                        DomEvent::NodeStart { .. } => {
+                            // Skip nested elements
+                            self.parser
+                                .skip_node()
+                                .map_err(DomDeserializeError::Parser)?;
+                        }
+                        DomEvent::Comment(_) => {
+                            let _ = self.expect_event("Comment")?;
+                        }
+                        other => {
+                            return Err(DomDeserializeError::TypeMismatch {
+                                expected: "Text or ChildrenEnd",
+                                got: format!("{other:?}"),
+                            });
+                        }
+                    }
+                }
+
+                // Consume ChildrenEnd and NodeEnd
+                let _ = self.expect_event("ChildrenEnd")?;
+                let _ = self.expect_event("NodeEnd")?;
+
+                self.set_string_value(wip, Cow::Owned(text_content))
+            }
             other => Err(DomDeserializeError::TypeMismatch {
-                expected: "Text",
+                expected: "Text or NodeStart",
                 got: format!("{other:?}"),
             }),
         }
@@ -642,22 +779,35 @@ where
     }
 
     /// Set a string value, handling type conversion.
+    ///
+    /// This is "stringly typed" - the value came from XML text content and needs
+    /// to be parsed into the appropriate type (u32, bool, etc.) if possible.
     fn set_string_value(
         &mut self,
         mut wip: Partial<'de, BORROW>,
         value: Cow<'de, str>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        let shape = wip.shape();
+
         // Handle Option<T>
-        if matches!(&wip.shape().def, Def::Option(_)) {
+        if matches!(&shape.def, Def::Option(_)) {
             wip = wip.begin_some().map_err(DomDeserializeError::Reflect)?;
             wip = self.set_string_value(wip, value)?;
             wip = wip.end().map_err(DomDeserializeError::Reflect)?;
             return Ok(wip);
         }
 
-        // Use facet-dessert for string setting
-        let span = self.parser.current_span();
-        facet_dessert::set_string_value(wip, value, span).map_err(|e| match e {
+        // For types that support parsing (numbers, bools, etc.), use parse_from_str
+        if shape.vtable.has_parse() {
+            wip = wip
+                .parse_from_str(value.as_ref())
+                .map_err(DomDeserializeError::Reflect)?;
+            return Ok(wip);
+        }
+
+        // Use facet-dessert for string types (String, &str, Cow<str>)
+        facet_dessert::set_string_value(wip, value, self.parser.current_span()).map_err(|e| match e
+        {
             facet_dessert::DessertError::Reflect { error, .. } => {
                 DomDeserializeError::Reflect(error)
             }
