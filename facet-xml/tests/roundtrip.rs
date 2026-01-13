@@ -1223,3 +1223,48 @@ fn flatten_hashmap_with_known_and_unknown_attrs() {
     assert_eq!(parsed.extras.get("name"), None);
     assert_eq!(parsed.extras.get("type"), None);
 }
+
+#[test]
+fn flatten_hashmap_captures_unknown_elements() {
+    // Flattened HashMap also captures unknown text-only child elements
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "config")]
+    struct Config {
+        #[facet(flatten, default)]
+        settings: HashMap<String, String>,
+    }
+
+    let xml = r#"<config><timeout>30</timeout><host>localhost</host><port>8080</port></config>"#;
+    let parsed: Config = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.settings.get("timeout"), Some(&"30".to_string()));
+    assert_eq!(parsed.settings.get("host"), Some(&"localhost".to_string()));
+    assert_eq!(parsed.settings.get("port"), Some(&"8080".to_string()));
+}
+
+#[test]
+fn flatten_hashmap_captures_both_attributes_and_elements() {
+    use facet_xml as xml;
+
+    // A single flattened HashMap captures both unknown attributes AND unknown elements
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "config")]
+    struct Config {
+        #[facet(xml::attribute)]
+        name: String,
+
+        #[facet(flatten, default)]
+        extras: HashMap<String, String>,
+    }
+
+    let xml =
+        r#"<config name="app" version="1.0"><timeout>30</timeout><debug>true</debug></config>"#;
+    let parsed: Config = facet_xml::from_str(xml).unwrap();
+    assert_eq!(parsed.name, "app");
+    // Unknown attribute captured
+    assert_eq!(parsed.extras.get("version"), Some(&"1.0".to_string()));
+    // Unknown elements captured
+    assert_eq!(parsed.extras.get("timeout"), Some(&"30".to_string()));
+    assert_eq!(parsed.extras.get("debug"), Some(&"true".to_string()));
+    // Known attribute NOT in extras
+    assert_eq!(parsed.extras.get("name"), None);
+}
