@@ -2,7 +2,7 @@ extern crate alloc;
 
 use std::borrow::Cow;
 
-use facet_core::{Def, StructKind, Type, UserType};
+use facet_core::{StructKind, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::{DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue};
@@ -202,8 +202,6 @@ where
         mut wip: Partial<'input, BORROW>,
         tag_key: &str,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        use facet_core::Characteristic;
-
         // Step 1: Probe to find the tag value (handles out-of-order fields)
         let probe = self
             .parser
@@ -271,11 +269,7 @@ where
             return Ok(wip);
         }
 
-        // Track which fields have been set
-        let num_fields = variant_fields.len();
-        let mut fields_set = alloc::vec![false; num_fields];
-
-        // Step 4: Process all fields (they can come in any order now)
+        // Process all fields (they can come in any order now)
         loop {
             let event = self.expect_event("value")?;
             match event {
@@ -305,7 +299,6 @@ where
                             .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_into(wip)?;
                         wip = wip.end().map_err(DeserializeError::reflect)?;
-                        fields_set[idx] = true;
                     } else {
                         // Unknown field - skip
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
@@ -322,39 +315,8 @@ where
             }
         }
 
-        // Apply defaults for missing fields
-        for (idx, field) in variant_fields.iter().enumerate() {
-            if fields_set[idx] {
-                continue;
-            }
-
-            let field_has_default = field.has_default();
-            let field_type_has_default = field.shape().is(Characteristic::Default);
-            let field_is_option = matches!(field.shape().def, Def::Option(_));
-
-            if field_has_default || field_type_has_default {
-                wip = wip
-                    .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::reflect)?;
-            } else if field_is_option {
-                wip = wip
-                    .begin_nth_field(idx)
-                    .map_err(DeserializeError::reflect)?;
-                wip = wip.set_default().map_err(DeserializeError::reflect)?;
-                wip = wip.end().map_err(DeserializeError::reflect)?;
-            } else if field.should_skip_deserializing() {
-                wip = wip
-                    .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::reflect)?;
-            } else {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "field to be present or have default",
-                    got: format!("missing field '{}'", field.name),
-                    span: self.last_span,
-                    path: None,
-                });
-            }
-        }
+        // Defaults for missing fields are applied automatically by facet-reflect's
+        // fill_defaults() when build() or end() is called.
 
         Ok(wip)
     }
