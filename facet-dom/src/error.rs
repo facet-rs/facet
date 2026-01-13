@@ -7,13 +7,16 @@ use std::fmt;
 pub enum DomDeserializeError<E> {
     /// Parser error.
     Parser(E),
+
     /// Reflection error.
     Reflect(facet_reflect::ReflectError),
+
     /// Unexpected end of input.
     UnexpectedEof {
         /// What was expected.
         expected: &'static str,
     },
+
     /// Type mismatch.
     TypeMismatch {
         /// What was expected.
@@ -21,16 +24,19 @@ pub enum DomDeserializeError<E> {
         /// What was found.
         got: String,
     },
+
     /// Unknown element.
     UnknownElement {
         /// The element tag name.
         tag: String,
     },
+
     /// Missing required attribute.
     MissingAttribute {
         /// The attribute name.
         name: &'static str,
     },
+
     /// Unsupported type.
     Unsupported(String),
 }

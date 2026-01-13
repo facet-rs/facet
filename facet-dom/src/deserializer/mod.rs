@@ -7,7 +7,7 @@ use facet_reflect::Partial;
 
 use crate::error::DomDeserializeError;
 use crate::tracing_macros::{trace, trace_span};
-use crate::{DomEvent, DomParser, DomParserExt};
+use crate::{AttributeRecord, DomEvent, DomParser, DomParserExt};
 
 mod entrypoints;
 mod field_map;
@@ -78,15 +78,13 @@ where
                 .peek_event_or_eof("Attribute or ChildrenStart")?;
             match event {
                 DomEvent::Attribute { .. } => {
-                    let (name, value) = self.parser.expect_attribute()?;
+                    let AttributeRecord { name, value } = self.parser.expect_attribute()?;
                     trace!(name = %name, value = %value, "got Attribute");
                     if let Some(info) = field_map.find_attribute(&name) {
                         trace!(idx = info.idx, field_name = %info.field.name, "matched attribute field");
-                        wip = wip
-                            .begin_nth_field(info.idx)
-                            .map_err(DomDeserializeError::Reflect)?;
+                        wip = wip.begin_nth_field(info.idx)?;
                         wip = self.set_string_value(wip, value)?;
-                        wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                        wip = wip.end()?;
                     } else {
                         trace!(name = %name, "ignoring unknown attribute");
                     }
@@ -116,10 +114,8 @@ where
         let mut elements_list_started = false;
         if let Some(info) = &field_map.elements_field {
             trace!(idx = info.idx, field_name = %info.field.name, "beginning elements list");
-            wip = wip
-                .begin_nth_field(info.idx)
-                .map_err(DomDeserializeError::Reflect)?;
-            wip = wip.begin_list().map_err(DomDeserializeError::Reflect)?;
+            wip = wip.begin_nth_field(info.idx)?;
+            wip = wip.begin_list()?;
             elements_list_started = true;
         }
 
@@ -136,11 +132,9 @@ where
                     trace!(text_len = text.len(), "got Text");
                     if elements_list_started {
                         trace!("adding text as list item (mixed content)");
-                        wip = wip
-                            .begin_list_item()
-                            .map_err(DomDeserializeError::Reflect)?;
+                        wip = wip.begin_list_item()?;
                         wip = self.deserialize_text_into_enum(wip, text)?;
-                        wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                        wip = wip.end()?;
                     } else if field_map.text_field.is_some() {
                         trace!("accumulating text for text field");
                         text_content.push_str(&text);
@@ -160,11 +154,9 @@ where
                                 self.parser.expect_node_start()?;
 
                                 trace!(path = %wip.path(), "begin_nth_field for wrapped list");
-                                wip = wip
-                                    .begin_nth_field(info.idx)
-                                    .map_err(DomDeserializeError::Reflect)?;
+                                wip = wip.begin_nth_field(info.idx)?;
                                 trace!(path = %wip.path(), "begin_list");
-                                wip = wip.begin_list().map_err(DomDeserializeError::Reflect)?;
+                                wip = wip.begin_list()?;
 
                                 let wrapper_event =
                                     self.parser.peek_event_or_eof("ChildrenStart or NodeEnd")?;
@@ -190,13 +182,9 @@ where
                                                 let item_tag = item_tag.clone();
                                                 if item_tag == item_name {
                                                     trace!(item_tag = %item_tag, "matched list item");
-                                                    wip = wip
-                                                        .begin_list_item()
-                                                        .map_err(DomDeserializeError::Reflect)?;
+                                                    wip = wip.begin_list_item()?;
                                                     wip = self.deserialize_into(wip)?;
-                                                    wip = wip
-                                                        .end()
-                                                        .map_err(DomDeserializeError::Reflect)?;
+                                                    wip = wip.end()?;
                                                 } else {
                                                     trace!(item_tag = %item_tag, expected = item_name, "skipping non-matching element in list wrapper");
                                                     self.parser
@@ -224,15 +212,13 @@ where
                                 }
 
                                 trace!(path = %wip.path(), "ending wrapped list field");
-                                wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                                wip = wip.end()?;
                                 trace!(path = %wip.path(), "after ending wrapped list field");
                             } else {
                                 trace!(idx = info.idx, field_name = %info.field.name, "matched scalar element field");
-                                wip = wip
-                                    .begin_nth_field(info.idx)
-                                    .map_err(DomDeserializeError::Reflect)?;
+                                wip = wip.begin_nth_field(info.idx)?;
                                 wip = self.deserialize_into(wip)?;
-                                wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                                wip = wip.end()?;
                             }
                         } else {
                             trace!(tag = %tag, "skipping unknown element");
@@ -242,11 +228,9 @@ where
                         }
                     } else {
                         trace!("adding element to elements collection");
-                        wip = wip
-                            .begin_list_item()
-                            .map_err(DomDeserializeError::Reflect)?;
+                        wip = wip.begin_list_item()?;
                         wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+                        wip = wip.end()?;
                     }
                 }
                 DomEvent::Comment(_) => {
@@ -264,18 +248,16 @@ where
 
         if elements_list_started {
             trace!(path = %wip.path(), "ending elements list");
-            wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+            wip = wip.end()?;
         }
 
-        if let Some(info) = &field_map.text_field {
-            if !text_content.is_empty() || !elements_list_started {
-                trace!(idx = info.idx, field_name = %info.field.name, text_len = text_content.len(), "setting text field");
-                wip = wip
-                    .begin_nth_field(info.idx)
-                    .map_err(DomDeserializeError::Reflect)?;
-                wip = self.set_string_value(wip, Cow::Owned(text_content))?;
-                wip = wip.end().map_err(DomDeserializeError::Reflect)?;
-            }
+        if let Some(info) = &field_map.text_field
+            && (!text_content.is_empty() || !elements_list_started)
+        {
+            trace!(idx = info.idx, field_name = %info.field.name, text_len = text_content.len(), "setting text field");
+            wip = wip.begin_nth_field(info.idx)?;
+            wip = self.set_string_value(wip, Cow::Owned(text_content))?;
+            wip = wip.end()?;
         }
 
         self.parser.expect_children_end()?;
@@ -318,9 +300,7 @@ where
                         tag: tag.to_string(),
                     })?;
 
-                wip = wip
-                    .select_nth_variant(variant_idx)
-                    .map_err(DomDeserializeError::Reflect)?;
+                wip = wip.select_nth_variant(variant_idx)?;
                 wip = self.deserialize_into(wip)?;
             }
             DomEvent::Text(_) => {
@@ -358,9 +338,7 @@ where
                 DomDeserializeError::Unsupported("enum has no Text variant for text content".into())
             })?;
 
-        wip = wip
-            .select_nth_variant(text_variant_idx)
-            .map_err(DomDeserializeError::Reflect)?;
+        wip = wip.select_nth_variant(text_variant_idx)?;
         wip = self.set_string_value(wip, text)?;
 
         Ok(wip)
@@ -391,7 +369,10 @@ where
                     trace!(event = ?event, "deserialize_scalar: in attr loop");
                     match event {
                         DomEvent::Attribute { .. } => {
-                            let (_name, _value) = self.parser.expect_attribute()?;
+                            let AttributeRecord {
+                                name: _name,
+                                value: _value,
+                            } = self.parser.expect_attribute()?;
                             trace!(name = %_name, "deserialize_scalar: consumed Attribute");
                         }
                         DomEvent::ChildrenStart => {
@@ -466,7 +447,7 @@ where
         &mut self,
         mut wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        wip = wip.begin_list().map_err(DomDeserializeError::Reflect)?;
+        wip = wip.begin_list()?;
 
         loop {
             let event = self.parser.peek_event_or_eof("child or ChildrenEnd")?;
@@ -474,11 +455,9 @@ where
                 break;
             }
 
-            wip = wip
-                .begin_list_item()
-                .map_err(DomDeserializeError::Reflect)?;
+            wip = wip.begin_list_item()?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+            wip = wip.end()?;
         }
 
         Ok(wip)
@@ -490,11 +469,11 @@ where
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let event = self.parser.peek_event_or_eof("value")?;
         if matches!(event, DomEvent::ChildrenEnd | DomEvent::NodeEnd) {
-            wip = wip.set_default().map_err(DomDeserializeError::Reflect)?;
+            wip = wip.set_default()?;
         } else {
-            wip = wip.begin_some().map_err(DomDeserializeError::Reflect)?;
+            wip = wip.begin_some()?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+            wip = wip.end()?;
         }
         Ok(wip)
     }
