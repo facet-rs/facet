@@ -12,10 +12,12 @@ pub(crate) struct FieldInfo {
     pub idx: usize,
     #[allow(dead_code)]
     pub field: &'static Field,
-    /// True if this field is a list type (Vec, etc.) - NOT an array
+    /// True if this field is a list type (Vec, etc.) - NOT an array or set
     pub is_list: bool,
     /// True if this field is a fixed-size array [T; N]
     pub is_array: bool,
+    /// True if this field is a set type (HashSet, BTreeSet, etc.)
+    pub is_set: bool,
     /// The namespace URI this field must match (from `xml::ns` attribute), if any.
     pub namespace: Option<&'static str>,
 }
@@ -51,10 +53,10 @@ impl StructFieldMap {
         let mut text_field = None;
 
         for (idx, field) in struct_def.fields.iter().enumerate() {
-            // Check if this field is a list type or array
+            // Check if this field is a list, array, or set type
             // Need to look through pointers (Arc<[T]>, Box<[T]>, etc.)
             let shape = field.shape();
-            let (is_list, is_array) = classify_sequence_shape(shape);
+            let (is_list, is_array, is_set) = classify_sequence_shape(shape);
 
             // Extract namespace from xml::ns attribute if present
             let namespace: Option<&'static str> = field
@@ -75,6 +77,7 @@ impl StructFieldMap {
                     field,
                     is_list,
                     is_array,
+                    is_set,
                     namespace,
                 };
                 attribute_fields.entry(attr_key).or_default().push(info);
@@ -85,6 +88,7 @@ impl StructFieldMap {
                     field,
                     is_list,
                     is_array,
+                    is_set,
                     namespace,
                 };
                 elements_field = Some(info);
@@ -95,17 +99,19 @@ impl StructFieldMap {
                     field,
                     is_list,
                     is_array,
+                    is_set,
                     namespace,
                 };
                 text_field = Some(info);
             } else {
                 // Default: unmarked fields and explicit xml::element fields are child elements
-                trace!(idx, field_name = %field.name, field_rename = ?field.rename, key = %element_key, is_list, is_array, namespace = ?namespace, "found element field");
+                trace!(idx, field_name = %field.name, field_rename = ?field.rename, key = %element_key, is_list, is_array, is_set, namespace = ?namespace, "found element field");
                 let info = FieldInfo {
                     idx,
                     field,
                     is_list,
                     is_array,
+                    is_set,
                     namespace,
                 };
                 element_fields.entry(element_key).or_default().push(info);
@@ -125,12 +131,13 @@ impl StructFieldMap {
                 .enumerate()
                 .map(|(idx, field)| {
                     let shape = field.shape();
-                    let (is_list, is_array) = classify_sequence_shape(shape);
+                    let (is_list, is_array, is_set) = classify_sequence_shape(shape);
                     FieldInfo {
                         idx,
                         field,
                         is_list,
                         is_array,
+                        is_set,
                         namespace: None,
                     }
                 })
@@ -218,19 +225,20 @@ impl StructFieldMap {
     }
 }
 
-/// Classify a shape as list, array, or neither. Returns (is_list, is_array).
-/// Lists are Vec, slices. Arrays are [T; N]. Looks through pointers.
-fn classify_sequence_shape(shape: &facet_core::Shape) -> (bool, bool) {
+/// Classify a shape as list, array, set, or neither. Returns (is_list, is_array, is_set).
+/// Lists are Vec, slices. Arrays are [T; N]. Sets are HashSet, BTreeSet. Looks through pointers.
+fn classify_sequence_shape(shape: &facet_core::Shape) -> (bool, bool, bool) {
     match &shape.def {
-        Def::List(_) | Def::Slice(_) => (true, false),
-        Def::Array(_) => (false, true),
+        Def::List(_) | Def::Slice(_) => (true, false, false),
+        Def::Array(_) => (false, true, false),
+        Def::Set(_) => (false, false, true),
         Def::Pointer(ptr_def) => {
             // Look through Arc<[T]>, Box<[T]>, Rc<[T]>, etc.
             ptr_def
                 .pointee()
                 .map(classify_sequence_shape)
-                .unwrap_or((false, false))
+                .unwrap_or((false, false, false))
         }
-        _ => (false, false),
+        _ => (false, false, false),
     }
 }

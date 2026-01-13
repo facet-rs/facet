@@ -73,6 +73,7 @@ where
                 Def::Scalar => self.deserialize_scalar(wip),
                 Def::Pointer(_) => self.deserialize_pointer(wip),
                 Def::List(_) => self.deserialize_list(wip),
+                Def::Set(_) => self.deserialize_set(wip),
                 Def::Option(_) => self.deserialize_option(wip),
                 _ => Err(DomDeserializeError::Unsupported(format!(
                     "unsupported type: {:?}",
@@ -178,10 +179,11 @@ where
 
         let mut text_content = String::new();
 
-        // Track which sequence fields have been started (for flat list/array deserialization)
+        // Track which sequence fields have been started (for flat list/array/set deserialization)
         enum SeqState {
             List { is_smart_ptr: bool },
             Array { next_idx: usize },
+            Set,
         }
         let mut started_seqs: std::collections::HashMap<usize, SeqState> =
             std::collections::HashMap::new();
@@ -235,7 +237,7 @@ where
                     if let Some(info) =
                         field_map.find_element(&tag, namespace.as_ref().map(|c| c.as_ref()))
                     {
-                        if info.is_list || info.is_array {
+                        if info.is_list || info.is_array || info.is_set {
                             // Flat sequence: repeated elements directly as children
                             // If we're currently inside the elements list, end it first
                             if elements_list_started {
@@ -269,7 +271,7 @@ where
                                 matches!(started_seqs.entry(info.idx), Entry::Vacant(_));
 
                             if need_start {
-                                trace!(idx = info.idx, field_name = %info.field.name, is_list = info.is_list, is_array = info.is_array, "starting flat sequence field");
+                                trace!(idx = info.idx, field_name = %info.field.name, is_list = info.is_list, is_array = info.is_array, is_set = info.is_set, "starting flat sequence field");
                                 wip = wip.begin_nth_field(info.idx)?;
 
                                 if info.is_list {
@@ -281,6 +283,10 @@ where
                                     }
                                     wip = wip.init_list()?;
                                     started_seqs.insert(info.idx, SeqState::List { is_smart_ptr });
+                                } else if info.is_set {
+                                    // Set (HashSet, BTreeSet, etc.)
+                                    wip = wip.init_set()?;
+                                    started_seqs.insert(info.idx, SeqState::Set);
                                 } else {
                                     // Array
                                     wip = wip.init_array()?;
@@ -297,6 +303,8 @@ where
                                         wip = wip.begin_smart_ptr()?;
                                     }
                                     wip = wip.init_list()?;
+                                } else if let SeqState::Set = state {
+                                    wip = wip.init_set()?;
                                 } else {
                                     wip = wip.init_array()?;
                                 }
@@ -307,6 +315,9 @@ where
                             if info.is_list {
                                 trace!(idx = info.idx, field_name = %info.field.name, "adding item to flat list");
                                 wip = wip.begin_list_item()?.deserialize_with(self)?.end()?;
+                            } else if info.is_set {
+                                trace!(idx = info.idx, field_name = %info.field.name, "adding item to flat set");
+                                wip = wip.begin_set_item()?.deserialize_with(self)?.end()?;
                             } else {
                                 // Array: use begin_nth_field with the current index
                                 let state = started_seqs.get_mut(&info.idx).unwrap();
@@ -417,6 +428,11 @@ where
                 SeqState::Array { .. } => {
                     trace!(path = %wip.path(), "ending active flat array");
                     wip = wip.end()?; // end array
+                    // Note: begin_nth_field doesn't push a frame, so no extra end() needed
+                }
+                SeqState::Set => {
+                    trace!(path = %wip.path(), "ending active flat set");
+                    wip = wip.end()?; // end set
                     // Note: begin_nth_field doesn't push a frame, so no extra end() needed
                 }
             }
@@ -726,6 +742,27 @@ where
             }
 
             wip = wip.begin_list_item()?.deserialize_with(self)?.end()?;
+        }
+
+        Ok(wip)
+    }
+
+    /// Deserialize a set type (HashSet, BTreeSet, etc.).
+    ///
+    /// Works the same as lists: each child element becomes a set item.
+    fn deserialize_set(
+        &mut self,
+        mut wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        wip = wip.init_set()?;
+
+        loop {
+            let event = self.parser.peek_event_or_eof("child or ChildrenEnd")?;
+            if matches!(event, DomEvent::ChildrenEnd) {
+                break;
+            }
+
+            wip = wip.begin_set_item()?.deserialize_with(self)?.end()?;
         }
 
         Ok(wip)
