@@ -155,6 +155,9 @@ impl<'src> Parser<'src> {
         closing: Option<TokenKind>,
     ) {
         let mut seen_keys: HashSet<KeyValue> = HashSet::new();
+        // Track last doc comment span for dangling detection
+        // [impl r[comment.doc]]
+        let mut pending_doc_comment: Option<Span> = None;
 
         self.skip_whitespace_and_newlines();
 
@@ -172,6 +175,7 @@ impl<'src> Parser<'src> {
             // Handle doc comments
             if token.kind == TokenKind::DocComment {
                 let token = self.advance().unwrap();
+                pending_doc_comment = Some(token.span);
                 if !callback.event(Event::DocComment {
                     span: token.span,
                     text: token.text,
@@ -195,6 +199,9 @@ impl<'src> Parser<'src> {
                 continue;
             }
 
+            // We're about to parse an entry, so any pending doc comment is attached
+            pending_doc_comment = None;
+
             // Parse entry with duplicate key detection
             if !self.parse_entry_with_dup_check(callback, &mut seen_keys) {
                 return;
@@ -202,6 +209,15 @@ impl<'src> Parser<'src> {
 
             // Skip entry separator (newlines or comma handled in parse_entry)
             self.skip_whitespace_and_newlines();
+        }
+
+        // [impl r[comment.doc]]
+        // If we exited with a pending doc comment, it's dangling (not followed by entry)
+        if let Some(span) = pending_doc_comment {
+            callback.event(Event::Error {
+                span,
+                kind: ParseErrorKind::DanglingDocComment,
+            });
         }
     }
 
@@ -691,6 +707,9 @@ impl<'src> Parser<'src> {
         let mut duplicate_key_spans: Vec<Span> = Vec::new();
         // [impl r[object.separators]]
         let mut mixed_separator_spans: Vec<Span> = Vec::new();
+        // [impl r[comment.doc]]
+        let mut pending_doc_comment: Option<Span> = None;
+        let mut dangling_doc_comment_spans: Vec<Span> = Vec::new();
 
         loop {
             // Only skip horizontal whitespace initially
@@ -698,6 +717,10 @@ impl<'src> Parser<'src> {
 
             let Some(token) = self.peek() else {
                 // Unclosed object - EOF
+                // Check for dangling doc comment
+                if let Some(span) = pending_doc_comment {
+                    dangling_doc_comment_spans.push(span);
+                }
                 break;
             };
 
@@ -706,6 +729,10 @@ impl<'src> Parser<'src> {
 
             match token.kind {
                 TokenKind::RBrace => {
+                    // Check for dangling doc comment before closing
+                    if let Some(span) = pending_doc_comment {
+                        dangling_doc_comment_spans.push(span);
+                    }
                     let close = self.advance().unwrap();
                     end_span = close.span;
                     break;
@@ -735,17 +762,29 @@ impl<'src> Parser<'src> {
                     self.advance();
                 }
 
-                TokenKind::LineComment | TokenKind::DocComment => {
-                    // Skip comments inside objects
+                TokenKind::LineComment => {
+                    // Skip line comments
+                    self.advance();
+                }
+
+                TokenKind::DocComment => {
+                    // Track doc comment for dangling detection
+                    pending_doc_comment = Some(token_span);
                     self.advance();
                 }
 
                 TokenKind::Eof => {
                     // Unclosed object
+                    if let Some(span) = pending_doc_comment {
+                        dangling_doc_comment_spans.push(span);
+                    }
                     break;
                 }
 
                 _ => {
+                    // About to parse entry, clear pending doc comment
+                    pending_doc_comment = None;
+
                     // Parse entry atoms
                     let entry_atoms = self.collect_entry_atoms();
                     if !entry_atoms.is_empty() {
@@ -791,6 +830,7 @@ impl<'src> Parser<'src> {
                 separator: separator_mode.unwrap_or(Separator::Newline),
                 duplicate_key_spans,
                 mixed_separator_spans,
+                dangling_doc_comment_spans,
             },
         }
     }
@@ -826,6 +866,7 @@ impl<'src> Parser<'src> {
                 separator: Separator::Newline,
                 duplicate_key_spans: Vec::new(), // Nested objects from keypaths can't have duplicates
                 mixed_separator_spans: Vec::new(), // Nested objects from keypaths can't have mixed separators
+                dangling_doc_comment_spans: Vec::new(), // Nested objects from keypaths can't have doc comments
             },
         }
     }
@@ -1066,6 +1107,7 @@ impl<'src> Parser<'src> {
                 separator,
                 duplicate_key_spans,
                 mixed_separator_spans,
+                dangling_doc_comment_spans,
             } => {
                 if !callback.event(Event::ObjectStart {
                     span: atom.span,
@@ -1091,6 +1133,17 @@ impl<'src> Parser<'src> {
                     if !callback.event(Event::Error {
                         span: *mix_span,
                         kind: ParseErrorKind::MixedSeparators,
+                    }) {
+                        return false;
+                    }
+                }
+
+                // [impl r[comment.doc]]
+                // Emit errors for dangling doc comments
+                for doc_span in dangling_doc_comment_spans {
+                    if !callback.event(Event::Error {
+                        span: *doc_span,
+                        kind: ParseErrorKind::DanglingDocComment,
                     }) {
                         return false;
                     }
@@ -1321,6 +1374,9 @@ enum AtomContent<'src> {
         /// Spans of mixed separators (for error reporting).
         // [impl r[object.separators]]
         mixed_separator_spans: Vec<Span>,
+        /// Spans of dangling doc comments (for error reporting).
+        // [impl r[comment.doc]]
+        dangling_doc_comment_spans: Vec<Span>,
     },
     /// A sequence with parsed elements.
     // [impl r[sequence.syntax]] [impl r[sequence.elements]]
@@ -1533,6 +1589,66 @@ mod tests {
     fn test_doc_comments() {
         let events = parse("/// doc\nfoo bar");
         assert!(events.iter().any(|e| matches!(e, Event::DocComment { .. })));
+    }
+
+    // [verify r[comment.doc]]
+    #[test]
+    fn test_doc_comment_followed_by_entry_ok() {
+        let events = parse("/// documentation\nkey value");
+        // Doc comment followed by entry is valid
+        assert!(events.iter().any(|e| matches!(e, Event::DocComment { .. })));
+        assert!(!events.iter().any(|e| matches!(
+            e,
+            Event::Error {
+                kind: ParseErrorKind::DanglingDocComment,
+                ..
+            }
+        )));
+    }
+
+    // [verify r[comment.doc]]
+    #[test]
+    fn test_doc_comment_at_eof_error() {
+        let events = parse("foo bar\n/// dangling");
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Event::Error {
+                kind: ParseErrorKind::DanglingDocComment,
+                ..
+            }
+        )));
+    }
+
+    // [verify r[comment.doc]]
+    #[test]
+    fn test_doc_comment_before_closing_brace_error() {
+        let events = parse("{foo bar\n/// dangling\n}");
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Event::Error {
+                kind: ParseErrorKind::DanglingDocComment,
+                ..
+            }
+        )));
+    }
+
+    // [verify r[comment.doc]]
+    #[test]
+    fn test_multiple_doc_comments_before_entry_ok() {
+        let events = parse("/// line 1\n/// line 2\nkey value");
+        // Multiple consecutive doc comments before entry is fine
+        let doc_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::DocComment { .. }))
+            .count();
+        assert_eq!(doc_count, 2);
+        assert!(!events.iter().any(|e| matches!(
+            e,
+            Event::Error {
+                kind: ParseErrorKind::DanglingDocComment,
+                ..
+            }
+        )));
     }
 
     // [verify r[object.syntax]]

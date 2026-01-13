@@ -284,6 +284,10 @@ impl<'src> Lexer<'src> {
     }
 
     /// Lex a heredoc start: `<<DELIM`.
+    ///
+    /// Per `r[scalar.heredoc.syntax]`: delimiter MUST match `[A-Z][A-Z0-9_]*`
+    /// and not exceed 16 characters.
+    // [impl r[scalar.heredoc.syntax]]
     fn lex_heredoc_start(&mut self) -> Token<'src> {
         let start = self.pos;
 
@@ -291,8 +295,28 @@ impl<'src> Lexer<'src> {
         self.advance();
         self.advance();
 
-        // Collect delimiter (uppercase letters, digits, underscores)
         let delim_start = self.pos as usize;
+
+        // First char MUST be uppercase letter
+        match self.peek() {
+            Some(c) if c.is_ascii_uppercase() => {
+                self.advance();
+            }
+            _ => {
+                // Invalid delimiter - first char not uppercase letter
+                // Consume any remaining delimiter-like chars for error recovery
+                while let Some(c) = self.peek() {
+                    if c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                return self.token(TokenKind::Error, start);
+            }
+        }
+
+        // Rest: uppercase, digit, or underscore
         while let Some(c) = self.peek() {
             if c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' {
                 self.advance();
@@ -300,7 +324,13 @@ impl<'src> Lexer<'src> {
                 break;
             }
         }
-        let delimiter = self.source[delim_start..self.pos as usize].to_string();
+
+        let delimiter = &self.source[delim_start..self.pos as usize];
+
+        // Check length <= 16
+        if delimiter.len() > 16 {
+            return self.token(TokenKind::Error, start);
+        }
 
         // Consume newline after delimiter
         if self.peek() == Some('\r') {
@@ -311,7 +341,9 @@ impl<'src> Lexer<'src> {
         }
 
         // Set state for heredoc content
-        self.heredoc_state = Some(HeredocState { delimiter });
+        self.heredoc_state = Some(HeredocState {
+            delimiter: delimiter.to_string(),
+        });
 
         self.token(TokenKind::HeredocStart, start)
     }
@@ -581,6 +613,57 @@ mod tests {
                 (TokenKind::HeredocContent, "hello\nworld\n"),
                 (TokenKind::HeredocEnd, "EOF"),
             ]
+        );
+    }
+
+    // [verify r[scalar.heredoc.syntax]]
+    #[test]
+    fn test_heredoc_valid_delimiters() {
+        // Single uppercase letter
+        assert!(lex("<<A\nx\nA").iter().all(|t| t.0 != TokenKind::Error));
+        // Multiple uppercase letters
+        assert!(lex("<<EOF\nx\nEOF").iter().all(|t| t.0 != TokenKind::Error));
+        // With digits after first char
+        assert!(
+            lex("<<MY123\nx\nMY123")
+                .iter()
+                .all(|t| t.0 != TokenKind::Error)
+        );
+        // With underscores
+        assert!(
+            lex("<<MY_DELIM\nx\nMY_DELIM")
+                .iter()
+                .all(|t| t.0 != TokenKind::Error)
+        );
+        // 16 chars (max allowed)
+        assert!(
+            lex("<<ABCDEFGHIJKLMNOP\nx\nABCDEFGHIJKLMNOP")
+                .iter()
+                .all(|t| t.0 != TokenKind::Error)
+        );
+    }
+
+    // [verify r[scalar.heredoc.syntax]]
+    #[test]
+    fn test_heredoc_must_start_uppercase() {
+        // Starts with digit - error
+        assert!(lex("<<123FOO").iter().any(|t| t.0 == TokenKind::Error));
+        // Starts with underscore - error
+        assert!(lex("<<_FOO").iter().any(|t| t.0 == TokenKind::Error));
+        // Lowercase - error (lexer won't even recognize it as heredoc delimiter chars)
+        let tokens = lex("<<foo");
+        // This will be << followed by bare scalar "foo"
+        assert!(!tokens.iter().any(|t| t.0 == TokenKind::HeredocStart));
+    }
+
+    // [verify r[scalar.heredoc.syntax]]
+    #[test]
+    fn test_heredoc_max_16_chars() {
+        // 17 chars - error
+        assert!(
+            lex("<<ABCDEFGHIJKLMNOPQ\nx\nABCDEFGHIJKLMNOPQ")
+                .iter()
+                .any(|t| t.0 == TokenKind::Error)
         );
     }
 }
