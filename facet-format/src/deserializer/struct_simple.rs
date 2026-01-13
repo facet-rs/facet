@@ -6,7 +6,7 @@ use facet_reflect::Partial;
 
 use crate::{
     DeserializeError, FieldLocationHint, FormatDeserializer, FormatParser, ParseEvent, ScalarValue,
-    deserializer::VariantMatch,
+    deserializer::VariantMatch, trace,
 };
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
@@ -171,6 +171,7 @@ where
                     }
                 }
                 ParseEvent::FieldKey(key) => {
+                    trace!(?key, "deserialize_struct_simple: got FieldKey");
                     // Look up field in struct fields (direct match)
                     // Exclude xml::elements fields - they accumulate repeated child elements
                     // and must be handled via find_elements_field_for_element below
@@ -186,6 +187,11 @@ where
                     });
 
                     if let Some((idx, field)) = field_info {
+                        trace!(
+                            idx,
+                            field_name = field.name,
+                            "deserialize_struct_simple: matched direct field"
+                        );
                         // End any open xml::elements field before switching to a different field
                         // Note: begin_list() doesn't push a frame, so we only end the field
                         if let Some((elem_idx, true)) = elements_field_state
@@ -242,6 +248,11 @@ where
                             ns_all,
                         )
                     {
+                        trace!(
+                            idx,
+                            field_name = field.name,
+                            "deserialize_struct_simple: matched xml::elements field"
+                        );
                         // Start or continue the list for this elements field
                         match elements_field_state {
                             None => {
@@ -315,6 +326,7 @@ where
                             self.parser.peek_event().ok().flatten()
                         && s.chars().all(|c| c.is_whitespace())
                     {
+                        trace!("deserialize_struct_simple: skipping whitespace-only text field");
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                         continue;
                     }
@@ -327,6 +339,7 @@ where
                         });
                     } else {
                         // Unknown field - skip it
+                        trace!(field_name = ?key.name, location = ?key.location, "deserialize_struct_simple: skipping unknown field");
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                     }
                 }

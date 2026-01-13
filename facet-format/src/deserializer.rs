@@ -8,7 +8,7 @@ pub use facet_path::{Path, PathStep};
 use facet_reflect::{HeapValue, Partial, is_spanned_shape};
 
 use crate::{
-    ContainerKind, FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
+    ContainerKind, FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue, trace,
 };
 
 mod error;
@@ -262,6 +262,7 @@ where
             .next_event()
             .map_err(DeserializeError::Parser)?
             .ok_or(DeserializeError::UnexpectedEof { expected })?;
+        trace!(?event, expected, "expect_event: got event");
         // Capture the span of the consumed event for error reporting
         self.last_span = self.parser.current_span();
         Ok(event)
@@ -273,10 +274,13 @@ where
         &mut self,
         expected: &'static str,
     ) -> Result<ParseEvent<'input>, DeserializeError<P::Error>> {
-        self.parser
+        let event = self
+            .parser
             .peek_event()
             .map_err(DeserializeError::Parser)?
-            .ok_or(DeserializeError::UnexpectedEof { expected })
+            .ok_or(DeserializeError::UnexpectedEof { expected })?;
+        trace!(?event, expected, "expect_peek: peeked event");
+        Ok(event)
     }
 
     /// Push a step onto the current path (for error reporting).
@@ -303,6 +307,10 @@ where
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let shape = wip.shape();
+        trace!(
+            shape_name = shape.type_identifier,
+            "deserialize_into: starting"
+        );
 
         // Check for raw capture type (e.g., RawJson)
         // Raw capture types are tuple structs with a single Cow<str> field
@@ -397,22 +405,45 @@ where
         match &shape.ty {
             Type::User(UserType::Struct(struct_def)) => {
                 if matches!(struct_def.kind, StructKind::Tuple | StructKind::TupleStruct) {
+                    trace!("deserialize_into: dispatching to deserialize_tuple");
                     return self.deserialize_tuple(wip);
                 }
+                trace!("deserialize_into: dispatching to deserialize_struct");
                 return self.deserialize_struct(wip);
             }
-            Type::User(UserType::Enum(_)) => return self.deserialize_enum(wip),
+            Type::User(UserType::Enum(_)) => {
+                trace!("deserialize_into: dispatching to deserialize_enum");
+                return self.deserialize_enum(wip);
+            }
             _ => {}
         }
 
         // Priority 6: Check Def for containers and scalars
         match &shape.def {
-            Def::Scalar => self.deserialize_scalar(wip),
-            Def::List(_) => self.deserialize_list(wip),
-            Def::Map(_) => self.deserialize_map(wip),
-            Def::Array(_) => self.deserialize_array(wip),
-            Def::Set(_) => self.deserialize_set(wip),
-            Def::DynamicValue(_) => self.deserialize_dynamic_value(wip),
+            Def::Scalar => {
+                trace!("deserialize_into: dispatching to deserialize_scalar");
+                self.deserialize_scalar(wip)
+            }
+            Def::List(_) => {
+                trace!("deserialize_into: dispatching to deserialize_list");
+                self.deserialize_list(wip)
+            }
+            Def::Map(_) => {
+                trace!("deserialize_into: dispatching to deserialize_map");
+                self.deserialize_map(wip)
+            }
+            Def::Array(_) => {
+                trace!("deserialize_into: dispatching to deserialize_array");
+                self.deserialize_array(wip)
+            }
+            Def::Set(_) => {
+                trace!("deserialize_into: dispatching to deserialize_set");
+                self.deserialize_set(wip)
+            }
+            Def::DynamicValue(_) => {
+                trace!("deserialize_into: dispatching to deserialize_dynamic_value");
+                self.deserialize_dynamic_value(wip)
+            }
             _ => Err(DeserializeError::Unsupported(format!(
                 "unsupported shape def: {:?}",
                 shape.def
@@ -938,17 +969,25 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        trace!("deserialize_list: starting");
         // Hint to non-self-describing parsers that a sequence is expected
         self.parser.hint_sequence();
 
         let event = self.expect_event("value")?;
+        trace!(?event, "deserialize_list: got container start event");
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
         // In struct mode, we skip FieldKey events and treat values as sequence items
         // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
         let struct_mode = match event {
-            ParseEvent::SequenceStart(_) => false,
-            ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+            ParseEvent::SequenceStart(_) => {
+                trace!("deserialize_list: using sequence mode");
+                false
+            }
+            ParseEvent::StructStart(kind) if kind.is_ambiguous() => {
+                trace!("deserialize_list: using struct mode (ambiguous container)");
+                true
+            }
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "array",
@@ -969,27 +1008,35 @@ where
 
         // Initialize the list
         wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+        trace!("deserialize_list: initialized list, starting loop");
 
+        let mut item_count = 0;
         loop {
             let event = self.expect_peek("value")?;
+            trace!(?event, item_count, "deserialize_list: loop iteration");
 
             // Check for end of container
             if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
                 self.expect_event("value")?;
+                trace!(item_count, "deserialize_list: reached end of container");
                 break;
             }
 
             // In struct mode, skip FieldKey events (they're just labels for items)
             if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
+                trace!("deserialize_list: skipping FieldKey in struct mode");
                 self.expect_event("value")?;
                 continue;
             }
 
+            trace!(item_count, "deserialize_list: deserializing list item");
             wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
             wip = wip.end().map_err(DeserializeError::reflect)?;
+            item_count += 1;
         }
 
+        trace!(item_count, "deserialize_list: completed with items");
         Ok(wip)
     }
 
