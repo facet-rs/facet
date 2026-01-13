@@ -215,8 +215,8 @@ where
         }
 
         for item in list.iter() {
-            // Each item gets wrapped in an <item> element (or type name for xml::elements)
-            serialize_value(serializer, item, Some("item"))?;
+            // Let each item determine its own element name from its type
+            serialize_value(serializer, item, None)?;
         }
 
         if let Some(tag) = element_name
@@ -732,13 +732,13 @@ fn value_to_string(value: Peek<'_, '_>) -> Option<String> {
     use facet_core::ScalarType;
 
     // Handle Option<T> by unwrapping if Some, returning None if None
-    if let Def::Option(_) = &value.shape().def {
-        if let Ok(opt) = value.into_option() {
-            return match opt.value() {
-                Some(inner) => value_to_string(inner),
-                None => None,
-            };
-        }
+    if let Def::Option(_) = &value.shape().def
+        && let Ok(opt) = value.into_option()
+    {
+        return match opt.value() {
+            Some(inner) => value_to_string(inner),
+            None => None,
+        };
     }
 
     if let Some(scalar_type) = value.scalar_type() {

@@ -64,7 +64,7 @@ mod axum;
 #[cfg(feature = "diff")]
 mod diff_serialize;
 
-pub use dom_parser::{XmlDomError, XmlDomParser};
+pub use dom_parser::{XmlError, XmlParser};
 
 #[cfg(feature = "axum")]
 pub use axum::{Xml, XmlRejection};
@@ -105,7 +105,7 @@ pub use facet_dom::DomDeserializeError as DeserializeError;
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str<T>(input: &str) -> Result<T, DeserializeError<XmlDomError>>
+pub fn from_str<T>(input: &str) -> Result<T, DeserializeError<XmlError>>
 where
     T: facet_core::Facet<'static>,
 {
@@ -135,11 +135,11 @@ where
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<XmlDomError>>
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<XmlError>>
 where
     T: facet_core::Facet<'static>,
 {
-    let parser = XmlDomParser::new(input);
+    let parser = XmlParser::new(input);
     let mut de = facet_dom::DomDeserializer::new_owned(parser);
     de.deserialize()
 }

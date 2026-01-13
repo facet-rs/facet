@@ -10,6 +10,84 @@ use std::borrow::Cow;
 use facet_core::{Def, KnownPointer};
 use facet_reflect::{Partial, ReflectError, Span};
 
+/// Result of checking if a pointer type needs special handling.
+pub enum PointerAction {
+    /// Pointer to str (Cow<str>, &str, Arc<str>, Box<str>, Rc<str>) - should be handled as a scalar/string.
+    /// `set_string_value` already handles these via `begin_smart_ptr` internally.
+    HandleAsScalar,
+    /// Smart pointer with slice builder (Arc<[T]>, Box<[T]>) - deserialize as list, then end().
+    SliceBuilder,
+    /// Smart pointer with sized pointee (Arc<T>, Box<T>) - deserialize inner, then end().
+    SizedPointee,
+}
+
+/// Prepare a smart pointer for deserialization.
+///
+/// This handles the common logic of:
+/// 1. Detecting string pointers (Cow<str>, &str, Arc<str>, Box<str>, Rc<str>) which should be handled as scalars
+/// 2. Calling `begin_smart_ptr()` for other pointer types
+/// 3. Detecting whether it's a slice builder or sized pointee
+///
+/// Returns the prepared `Partial` and an action indicating what the caller should do next.
+///
+/// # Usage
+/// ```ignore
+/// match begin_pointer(wip)? {
+///     (wip, PointerAction::HandleAsScalar) => {
+///         // Handle as scalar/string - set_string_value handles all str pointers
+///         deserialize_scalar(wip)
+///     }
+///     (wip, PointerAction::SliceBuilder) => {
+///         // Arc<[T]>, Box<[T]>, etc - deserialize list items
+///         let wip = deserialize_list(wip)?;
+///         wip.end()
+///     }
+///     (wip, PointerAction::SizedPointee) => {
+///         // Arc<T>, Box<T> - deserialize inner
+///         let wip = deserialize_into(wip)?;
+///         wip.end()
+///     }
+/// }
+/// ```
+pub fn begin_pointer<'input, const BORROW: bool>(
+    mut wip: Partial<'input, BORROW>,
+) -> Result<(Partial<'input, BORROW>, PointerAction), DessertError> {
+    let shape = wip.shape();
+    let ptr_def = match &shape.def {
+        Def::Pointer(ptr_def) => ptr_def,
+        _ => {
+            return Err(DessertError::Reflect {
+                error: ReflectError::OperationFailed {
+                    shape,
+                    operation: "begin_pointer requires a pointer type",
+                },
+                span: None,
+            });
+        }
+    };
+
+    // All string pointers (Cow<str>, &str, Arc<str>, Box<str>, Rc<str>) - handle as scalar
+    // set_string_value handles begin_smart_ptr internally for Arc/Box/Rc
+    if ptr_def
+        .pointee()
+        .is_some_and(|p| p.type_identifier == "str")
+    {
+        return Ok((wip, PointerAction::HandleAsScalar));
+    }
+
+    // Regular smart pointer (Box, Arc, Rc) with non-str pointee
+    wip = wip.begin_smart_ptr()?;
+
+    // Check if begin_smart_ptr set up a slice builder (for Arc<[T]>, Rc<[T]>, Box<[T]>)
+    let action = if wip.is_building_smart_ptr_slice() {
+        PointerAction::SliceBuilder
+    } else {
+        PointerAction::SizedPointee
+    };
+
+    Ok((wip, action))
+}
+
 /// Error type for dessert operations.
 #[derive(Debug)]
 pub enum DessertError {
@@ -125,6 +203,22 @@ fn set_string_value_inner<'input, const BORROW: bool>(
             .is_some_and(|p| p.type_identifier == "str")
     {
         wip = wip.set(s).map_err(&reflect_err)?;
+        return Ok(wip);
+    }
+
+    // Arc<str>, Box<str>, Rc<str> - use begin_smart_ptr + set(String) + end()
+    if let Def::Pointer(ptr_def) = shape.def
+        && matches!(
+            ptr_def.known,
+            Some(KnownPointer::Arc | KnownPointer::Box | KnownPointer::Rc)
+        )
+        && ptr_def
+            .pointee()
+            .is_some_and(|p| p.type_identifier == "str")
+    {
+        wip = wip.begin_smart_ptr().map_err(&reflect_err)?;
+        wip = wip.set(s.into_owned()).map_err(&reflect_err)?;
+        wip = wip.end().map_err(&reflect_err)?;
         return Ok(wip);
     }
 

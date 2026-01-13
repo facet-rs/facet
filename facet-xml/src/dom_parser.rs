@@ -16,7 +16,7 @@ use quick_xml::name::ResolveResult;
 
 /// XML parsing error.
 #[derive(Debug, Clone)]
-pub enum XmlDomError {
+pub enum XmlError {
     /// Error from quick-xml.
     Parse(String),
     /// Unexpected end of input.
@@ -27,21 +27,21 @@ pub enum XmlDomError {
     InvalidUtf8(core::str::Utf8Error),
 }
 
-impl fmt::Display for XmlDomError {
+impl fmt::Display for XmlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            XmlDomError::Parse(msg) => write!(f, "XML parse error: {}", msg),
-            XmlDomError::UnexpectedEof => write!(f, "Unexpected end of XML"),
-            XmlDomError::UnbalancedTags => write!(f, "Unbalanced XML tags"),
-            XmlDomError::InvalidUtf8(e) => write!(f, "Invalid UTF-8 in XML: {}", e),
+            XmlError::Parse(msg) => write!(f, "XML parse error: {}", msg),
+            XmlError::UnexpectedEof => write!(f, "Unexpected end of XML"),
+            XmlError::UnbalancedTags => write!(f, "Unbalanced XML tags"),
+            XmlError::InvalidUtf8(e) => write!(f, "Invalid UTF-8 in XML: {}", e),
         }
     }
 }
 
-impl std::error::Error for XmlDomError {}
+impl std::error::Error for XmlError {}
 
 /// Streaming XML parser implementing `DomParser`.
-pub struct XmlDomParser<'de> {
+pub struct XmlParser<'de> {
     reader: NsReader<Cursor<&'de [u8]>>,
     /// Buffer for quick-xml events
     buf: Vec<u8>,
@@ -77,7 +77,7 @@ enum ParserState {
     Done,
 }
 
-impl<'de> XmlDomParser<'de> {
+impl<'de> XmlParser<'de> {
     /// Create a new streaming XML parser.
     pub fn new(input: &'de [u8]) -> Self {
         let mut reader = NsReader::from_reader(Cursor::new(input));
@@ -96,7 +96,7 @@ impl<'de> XmlDomParser<'de> {
     }
 
     /// Read the next raw event from quick-xml and convert to DomEvent.
-    fn read_next(&mut self) -> Result<Option<DomEvent<'de>>, XmlDomError> {
+    fn read_next(&mut self) -> Result<Option<DomEvent<'de>>, XmlError> {
         loop {
             match self.state {
                 ParserState::Done => return Ok(None),
@@ -148,7 +148,7 @@ impl<'de> XmlDomParser<'de> {
                     let (resolve, event) = self
                         .reader
                         .read_resolved_event_into(&mut self.buf)
-                        .map_err(|e| XmlDomError::Parse(e.to_string()))?;
+                        .map_err(|e| XmlError::Parse(e.to_string()))?;
 
                     // Resolve element namespace upfront
                     let elem_ns = resolve_namespace(resolve)?;
@@ -160,7 +160,7 @@ impl<'de> XmlDomParser<'de> {
                             // Get element local name
                             let local_name = e.local_name();
                             let local = core::str::from_utf8(local_name.as_ref())
-                                .map_err(XmlDomError::InvalidUtf8)?;
+                                .map_err(XmlError::InvalidUtf8)?;
                             let local_owned = local.to_string();
 
                             // Collect attributes
@@ -168,27 +168,27 @@ impl<'de> XmlDomParser<'de> {
                             self.attr_idx = 0;
 
                             for attr in e.attributes() {
-                                let attr = attr.map_err(|e| XmlDomError::Parse(e.to_string()))?;
+                                let attr = attr.map_err(|e| XmlError::Parse(e.to_string()))?;
 
                                 // Skip xmlns declarations
                                 let key = attr.key;
                                 if key.as_ref() == b"xmlns" {
                                     continue;
                                 }
-                                if let Some(prefix) = key.prefix() {
-                                    if prefix.as_ref() == b"xmlns" {
-                                        continue;
-                                    }
+                                if let Some(prefix) = key.prefix()
+                                    && prefix.as_ref() == b"xmlns"
+                                {
+                                    continue;
                                 }
 
                                 let (attr_resolve, _) = self.reader.resolve_attribute(key);
                                 let attr_ns = resolve_namespace(attr_resolve)?;
                                 let attr_local_name = key.local_name();
                                 let attr_local = core::str::from_utf8(attr_local_name.as_ref())
-                                    .map_err(XmlDomError::InvalidUtf8)?;
+                                    .map_err(XmlError::InvalidUtf8)?;
                                 let value = attr
                                     .unescape_value()
-                                    .map_err(|e| XmlDomError::Parse(e.to_string()))?;
+                                    .map_err(|e| XmlError::Parse(e.to_string()))?;
 
                                 self.pending_attrs.push((
                                     attr_ns,
@@ -215,27 +215,27 @@ impl<'de> XmlDomParser<'de> {
                             self.state = ParserState::NeedChildrenEnd;
                         }
                         Event::Text(e) => {
-                            let text = e.decode().map_err(|e| XmlDomError::Parse(e.to_string()))?;
+                            let text = e.decode().map_err(|e| XmlError::Parse(e.to_string()))?;
                             let trimmed = text.trim();
                             if !trimmed.is_empty() {
                                 return Ok(Some(DomEvent::Text(Cow::Owned(trimmed.to_string()))));
                             }
                         }
                         Event::CData(e) => {
-                            let text = core::str::from_utf8(e.as_ref())
-                                .map_err(XmlDomError::InvalidUtf8)?;
+                            let text =
+                                core::str::from_utf8(e.as_ref()).map_err(XmlError::InvalidUtf8)?;
                             if !text.is_empty() {
                                 return Ok(Some(DomEvent::Text(Cow::Owned(text.to_string()))));
                             }
                         }
                         Event::Comment(e) => {
-                            let text = core::str::from_utf8(e.as_ref())
-                                .map_err(XmlDomError::InvalidUtf8)?;
+                            let text =
+                                core::str::from_utf8(e.as_ref()).map_err(XmlError::InvalidUtf8)?;
                             return Ok(Some(DomEvent::Comment(Cow::Owned(text.to_string()))));
                         }
                         Event::PI(e) => {
-                            let content = core::str::from_utf8(e.as_ref())
-                                .map_err(XmlDomError::InvalidUtf8)?;
+                            let content =
+                                core::str::from_utf8(e.as_ref()).map_err(XmlError::InvalidUtf8)?;
                             let (target, data) = content
                                 .split_once(char::is_whitespace)
                                 .unwrap_or((content, ""));
@@ -248,8 +248,8 @@ impl<'de> XmlDomParser<'de> {
                             // XML declaration - skip
                         }
                         Event::DocType(e) => {
-                            let text = core::str::from_utf8(e.as_ref())
-                                .map_err(XmlDomError::InvalidUtf8)?;
+                            let text =
+                                core::str::from_utf8(e.as_ref()).map_err(XmlError::InvalidUtf8)?;
                             return Ok(Some(DomEvent::Doctype(Cow::Owned(text.to_string()))));
                         }
                         Event::Eof => {
@@ -257,7 +257,7 @@ impl<'de> XmlDomParser<'de> {
                             return Ok(None);
                         }
                         Event::GeneralRef(e) => {
-                            let raw = e.decode().map_err(|e| XmlDomError::Parse(e.to_string()))?;
+                            let raw = e.decode().map_err(|e| XmlError::Parse(e.to_string()))?;
                             let resolved = resolve_entity(&raw)?;
                             return Ok(Some(DomEvent::Text(Cow::Owned(resolved))));
                         }
@@ -268,8 +268,8 @@ impl<'de> XmlDomParser<'de> {
     }
 }
 
-impl<'de> DomParser<'de> for XmlDomParser<'de> {
-    type Error = XmlDomError;
+impl<'de> DomParser<'de> for XmlParser<'de> {
+    type Error = XmlError;
 
     fn next_event(&mut self) -> Result<Option<DomEvent<'de>>, Self::Error> {
         if let Some(event) = self.peeked.take() {
@@ -310,7 +310,7 @@ impl<'de> DomParser<'de> for XmlDomParser<'de> {
 }
 
 /// Resolve a namespace from quick-xml's ResolveResult.
-fn resolve_namespace(resolve: ResolveResult<'_>) -> Result<Option<String>, XmlDomError> {
+fn resolve_namespace(resolve: ResolveResult<'_>) -> Result<Option<String>, XmlError> {
     match resolve {
         ResolveResult::Bound(ns) => Ok(Some(String::from_utf8_lossy(ns.as_ref()).into_owned())),
         ResolveResult::Unbound => Ok(None),
@@ -319,7 +319,7 @@ fn resolve_namespace(resolve: ResolveResult<'_>) -> Result<Option<String>, XmlDo
 }
 
 /// Resolve a general entity reference.
-fn resolve_entity(raw: &str) -> Result<String, XmlDomError> {
+fn resolve_entity(raw: &str) -> Result<String, XmlError> {
     if let Some(resolved) = resolve_xml_entity(raw) {
         return Ok(resolved.into());
     }
@@ -327,14 +327,14 @@ fn resolve_entity(raw: &str) -> Result<String, XmlDomError> {
     if let Some(rest) = raw.strip_prefix('#') {
         let code = if let Some(hex) = rest.strip_prefix('x').or_else(|| rest.strip_prefix('X')) {
             u32::from_str_radix(hex, 16)
-                .map_err(|_| XmlDomError::Parse(format!("Invalid hex entity: #{}", rest)))?
+                .map_err(|_| XmlError::Parse(format!("Invalid hex entity: #{}", rest)))?
         } else {
             rest.parse::<u32>()
-                .map_err(|_| XmlDomError::Parse(format!("Invalid decimal entity: #{}", rest)))?
+                .map_err(|_| XmlError::Parse(format!("Invalid decimal entity: #{}", rest)))?
         };
 
         let ch = char::from_u32(code)
-            .ok_or_else(|| XmlDomError::Parse(format!("Invalid Unicode: {}", code)))?;
+            .ok_or_else(|| XmlError::Parse(format!("Invalid Unicode: {}", code)))?;
         return Ok(ch.to_string());
     }
 

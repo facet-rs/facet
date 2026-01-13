@@ -189,6 +189,8 @@ pub struct XmlSerializer {
     pending_attributes: Vec<(String, String, Option<String>)>,
     /// Deferred element info: (tag_name, namespace)
     deferred_element: Option<(String, Option<String>)>,
+    /// True if the next element should establish a default namespace (from ns_all)
+    pending_establish_default_ns: bool,
 }
 
 impl XmlSerializer {
@@ -215,6 +217,7 @@ impl XmlSerializer {
             collecting_attributes: false,
             pending_attributes: Vec::new(),
             deferred_element: None,
+            pending_establish_default_ns: false,
         }
     }
 
@@ -233,27 +236,45 @@ impl XmlSerializer {
         self.write_indent();
         self.out.push(b'<');
 
+        // Track the close tag (may include prefix)
+        let close_tag: String;
+
         // Handle namespace for element
         if let Some(ns_uri) = namespace {
             if self.current_default_ns.as_deref() == Some(ns_uri) {
-                // Element is in the default namespace - use unprefixed form
+                // Element is in the current default namespace - use unprefixed form
                 self.out.extend_from_slice(name.as_bytes());
+                close_tag = name.to_string();
+            } else if self.pending_establish_default_ns {
+                // This is a struct root with ns_all - establish as default namespace
+                self.out.extend_from_slice(name.as_bytes());
+                self.out.extend_from_slice(b" xmlns=\"");
+                self.out.extend_from_slice(ns_uri.as_bytes());
+                self.out.push(b'"');
+                self.current_default_ns = Some(ns_uri.to_string());
+                self.pending_establish_default_ns = false;
+                close_tag = name.to_string();
             } else {
-                // Get or create a prefix for this namespace
+                // Field-level namespace - use prefix
                 let prefix = self.get_or_create_prefix(ns_uri);
                 self.out.extend_from_slice(prefix.as_bytes());
                 self.out.push(b':');
                 self.out.extend_from_slice(name.as_bytes());
-                // Write xmlns declaration
+                // Write xmlns declaration for this prefix
                 self.out.extend_from_slice(b" xmlns:");
                 self.out.extend_from_slice(prefix.as_bytes());
                 self.out.extend_from_slice(b"=\"");
                 self.out.extend_from_slice(ns_uri.as_bytes());
                 self.out.push(b'"');
+                close_tag = format!("{}:{}", prefix, name);
             }
         } else {
             self.out.extend_from_slice(name.as_bytes());
+            close_tag = name.to_string();
         }
+
+        // Push the close tag for element_end
+        self.element_stack.push(close_tag);
 
         // Write buffered attributes
         let attrs: Vec<_> = self.pending_attributes.drain(..).collect();
@@ -387,25 +408,16 @@ impl DomSerializer for XmlSerializer {
         self.flush_deferred_element();
 
         // Defer this element until we've collected all attributes
+        // Priority: explicit namespace > pending_namespace > current_ns_all (for struct roots)
         let ns = namespace
             .map(String::from)
-            .or_else(|| self.pending_namespace.take());
+            .or_else(|| self.pending_namespace.take())
+            .or_else(|| self.current_ns_all.take()); // Consume ns_all for the struct's root element
 
-        // Compute the close tag before storing the deferred element
-        let close_tag = if let Some(ref ns_uri) = ns {
-            if self.current_default_ns.as_deref() == Some(ns_uri.as_str()) {
-                tag.to_string()
-            } else {
-                let prefix = self.get_or_create_prefix(ns_uri);
-                format!("{}:{}", prefix, tag)
-            }
-        } else {
-            tag.to_string()
-        };
-
+        // Note: close tag will be computed and pushed in write_open_tag_impl
+        // when we know if a prefix will be used
         self.deferred_element = Some((tag.to_string(), ns));
         self.collecting_attributes = true;
-        self.element_stack.push(close_tag);
 
         Ok(())
     }
@@ -416,7 +428,10 @@ impl DomSerializer for XmlSerializer {
         value: &str,
         namespace: Option<&str>,
     ) -> Result<(), Self::Error> {
-        let ns = namespace.map(String::from);
+        // Use the pending namespace from field_metadata if no explicit namespace given
+        let ns = namespace
+            .map(String::from)
+            .or_else(|| self.pending_namespace.clone());
         self.pending_attributes
             .push((name.to_string(), value.to_string(), ns));
         Ok(())
@@ -454,6 +469,9 @@ impl DomSerializer for XmlSerializer {
             .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
             .and_then(|attr| attr.get_as::<&str>().copied())
             .map(String::from);
+
+        // If ns_all is set, the next element_start should establish it as default namespace
+        self.pending_establish_default_ns = self.current_ns_all.is_some();
 
         Ok(())
     }

@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use facet_core::{Def, Type, UserType};
+use facet_core::{Def, StructKind, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::error::DomDeserializeError;
@@ -40,7 +40,8 @@ where
             Type::User(UserType::Struct(_)) => self.deserialize_struct(wip),
             Type::User(UserType::Enum(_)) => self.deserialize_enum(wip),
             _ => match &shape.def {
-                Def::Scalar | Def::Pointer(_) => self.deserialize_scalar(wip),
+                Def::Scalar => self.deserialize_scalar(wip),
+                Def::Pointer(_) => self.deserialize_pointer(wip),
                 Def::List(_) => self.deserialize_list(wip),
                 Def::Option(_) => self.deserialize_option(wip),
                 _ => Err(DomDeserializeError::Unsupported(format!(
@@ -53,7 +54,7 @@ where
 
     fn deserialize_struct(
         &mut self,
-        mut wip: Partial<'de, BORROW>,
+        wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let struct_def = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def,
@@ -64,7 +65,17 @@ where
             }
         };
 
-        trace_span!("deserialize_struct");
+        self.deserialize_struct_innards(wip, struct_def)
+    }
+
+    /// Deserialize the innards of a struct-like thing (struct, tuple, or enum variant data).
+    /// Expects a NodeStart to have been peeked but not consumed.
+    fn deserialize_struct_innards(
+        &mut self,
+        mut wip: Partial<'de, BORROW>,
+        struct_def: &'static facet_core::StructType,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        trace_span!("deserialize_struct_innards");
 
         let field_map = StructFieldMap::new(struct_def);
 
@@ -117,6 +128,14 @@ where
 
         let mut text_content = String::new();
 
+        // Track which sequence fields have been started (for flat list/array deserialization)
+        enum SeqState {
+            List { is_smart_ptr: bool },
+            Array { next_idx: usize },
+        }
+        let mut started_seqs: std::collections::HashMap<usize, SeqState> =
+            std::collections::HashMap::new();
+
         let mut elements_list_started = false;
         if let Some(info) = &field_map.elements_field {
             trace!(idx = info.idx, field_name = %info.field.name, "beginning elements list");
@@ -157,72 +176,46 @@ where
                         if let Some(info) =
                             field_map.find_element(&tag, namespace.as_ref().map(|c| c.as_ref()))
                         {
-                            if info.is_list {
-                                trace!(idx = info.idx, field_name = %info.field.name, "matched wrapped list field");
+                            if info.is_list || info.is_array {
+                                // Flat sequence: repeated elements directly as children
+                                use std::collections::hash_map::Entry;
+                                if let Entry::Vacant(entry) = started_seqs.entry(info.idx) {
+                                    trace!(idx = info.idx, field_name = %info.field.name, is_list = info.is_list, is_array = info.is_array, "starting flat sequence field");
+                                    wip = wip.begin_nth_field(info.idx)?;
 
-                                self.parser.expect_node_start()?;
-
-                                trace!(path = %wip.path(), "begin_nth_field for wrapped list");
-                                wip = wip.begin_nth_field(info.idx)?;
-                                trace!(path = %wip.path(), "begin_list");
-                                wip = wip.begin_list()?;
-
-                                let wrapper_event =
-                                    self.parser.peek_event_or_eof("ChildrenStart or NodeEnd")?;
-                                if matches!(wrapper_event, DomEvent::NodeEnd) {
-                                    trace!("empty wrapper element");
-                                    self.parser.expect_node_end()?;
-                                } else {
-                                    self.parser.expect_children_start()?;
-
-                                    let item_name =
-                                        info.item_element_name.as_deref().unwrap_or("item");
-                                    trace!(item_name, "processing wrapped list items");
-
-                                    loop {
-                                        let item_event =
-                                            self.parser.peek_event_or_eof("item or ChildrenEnd")?;
-                                        match item_event {
-                                            DomEvent::ChildrenEnd => {
-                                                trace!("wrapped list items done");
-                                                break;
-                                            }
-                                            DomEvent::NodeStart { tag: item_tag, .. } => {
-                                                let item_tag = item_tag.clone();
-                                                if item_tag == item_name {
-                                                    trace!(item_tag = %item_tag, "matched list item");
-                                                    wip = wip.begin_list_item()?;
-                                                    wip = self.deserialize_into(wip)?;
-                                                    wip = wip.end()?;
-                                                } else {
-                                                    trace!(item_tag = %item_tag, expected = item_name, "skipping non-matching element in list wrapper");
-                                                    self.parser
-                                                        .skip_node()
-                                                        .map_err(DomDeserializeError::Parser)?;
-                                                }
-                                            }
-                                            DomEvent::Text(_) => {
-                                                let _text = self.parser.expect_text()?;
-                                            }
-                                            DomEvent::Comment(_) => {
-                                                let _comment = self.parser.expect_comment()?;
-                                            }
-                                            other => {
-                                                return Err(DomDeserializeError::TypeMismatch {
-                                                    expected: "list item or ChildrenEnd",
-                                                    got: format!("{other:?}"),
-                                                });
-                                            }
+                                    if info.is_list {
+                                        // Handle pointer-wrapped lists (Arc<[T]>, Box<[T]>, etc.)
+                                        let is_smart_ptr =
+                                            matches!(info.field.shape().def, Def::Pointer(_));
+                                        if is_smart_ptr {
+                                            wip = wip.begin_smart_ptr()?;
                                         }
+                                        wip = wip.begin_list()?;
+                                        entry.insert(SeqState::List { is_smart_ptr });
+                                    } else {
+                                        // Array
+                                        wip = wip.begin_array()?;
+                                        entry.insert(SeqState::Array { next_idx: 0 });
                                     }
-
-                                    self.parser.expect_children_end()?;
-                                    self.parser.expect_node_end()?;
                                 }
 
-                                trace!(path = %wip.path(), "ending wrapped list field");
-                                wip = wip.end()?;
-                                trace!(path = %wip.path(), "after ending wrapped list field");
+                                // Add item to sequence
+                                if info.is_list {
+                                    trace!(idx = info.idx, field_name = %info.field.name, "adding item to flat list");
+                                    wip = wip.begin_list_item()?;
+                                    wip = self.deserialize_into(wip)?;
+                                    wip = wip.end()?;
+                                } else {
+                                    // Array: use begin_nth_field with the current index
+                                    let state = started_seqs.get_mut(&info.idx).unwrap();
+                                    if let SeqState::Array { next_idx } = state {
+                                        trace!(idx = info.idx, field_name = %info.field.name, item_idx = *next_idx, "adding item to flat array");
+                                        wip = wip.begin_nth_field(*next_idx)?;
+                                        wip = self.deserialize_into(wip)?;
+                                        wip = wip.end()?;
+                                        *next_idx += 1;
+                                    }
+                                }
                             } else {
                                 trace!(idx = info.idx, field_name = %info.field.name, "matched scalar element field");
                                 wip = wip.begin_nth_field(info.idx)?;
@@ -251,6 +244,23 @@ where
                         expected: "child content",
                         got: format!("{other:?}"),
                     });
+                }
+            }
+        }
+
+        // Close all started flat sequences (lists and arrays)
+        for state in started_seqs.values() {
+            match state {
+                SeqState::List { is_smart_ptr } => {
+                    trace!(path = %wip.path(), is_smart_ptr, "ending flat list field");
+                    if *is_smart_ptr {
+                        wip = wip.end()?; // end smart pointer (converts builder to Arc/Box/etc)
+                    }
+                    wip = wip.end()?; // end field
+                }
+                SeqState::Array { .. } => {
+                    trace!(path = %wip.path(), "ending flat array field");
+                    wip = wip.end()?; // end field
                 }
             }
         }
@@ -309,8 +319,35 @@ where
                         tag: tag.to_string(),
                     })?;
 
+                let variant = &enum_def.variants[variant_idx];
                 wip = wip.select_nth_variant(variant_idx)?;
-                wip = self.deserialize_into(wip)?;
+                trace!(variant_name = variant.name, variant_kind = ?variant.data.kind, "selected variant");
+
+                // Handle variant based on its kind
+                match variant.data.kind {
+                    StructKind::Unit => {
+                        // Unit variant: just consume the element
+                        self.parser.expect_node_start()?;
+                        // Skip to end of element
+                        let event = self.parser.peek_event_or_eof("ChildrenStart or NodeEnd")?;
+                        if matches!(event, DomEvent::ChildrenStart) {
+                            self.parser.expect_children_start()?;
+                            self.parser.expect_children_end()?;
+                        }
+                        self.parser.expect_node_end()?;
+                    }
+                    StructKind::TupleStruct => {
+                        // Newtype variant: deserialize the inner type
+                        // The variant data has one field (index 0)
+                        wip = wip.begin_nth_field(0)?;
+                        wip = self.deserialize_into(wip)?;
+                        wip = wip.end()?;
+                    }
+                    StructKind::Struct | StructKind::Tuple => {
+                        // Struct/tuple variant: deserialize using the variant's data as a StructType
+                        wip = self.deserialize_struct_innards(wip, &variant.data)?;
+                    }
+                }
             }
             DomEvent::Text(_) => {
                 let text = self.parser.expect_text()?;
@@ -486,6 +523,27 @@ where
             wip = wip.end()?;
         }
         Ok(wip)
+    }
+
+    fn deserialize_pointer(
+        &mut self,
+        wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        use facet_dessert::{PointerAction, begin_pointer};
+
+        let (mut wip, action) = begin_pointer(wip)?;
+
+        match action {
+            PointerAction::HandleAsScalar => self.deserialize_scalar(wip),
+            PointerAction::SliceBuilder => {
+                wip = self.deserialize_list(wip)?;
+                Ok(wip.end()?)
+            }
+            PointerAction::SizedPointee => {
+                wip = self.deserialize_into(wip)?;
+                Ok(wip.end()?)
+            }
+        }
     }
 
     fn set_string_value(

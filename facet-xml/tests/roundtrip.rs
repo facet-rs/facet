@@ -619,8 +619,8 @@ fn array_fixed_size() {
         values: [u32; 3],
     }
 
-    let xml =
-        r#"<record><values><value>1</value><value>2</value><value>3</value></values></record>"#;
+    // Flat list: repeated <value> elements directly as children (no wrapper)
+    let xml = r#"<record><value>1</value><value>2</value><value>3</value></record>"#;
     let parsed: Record = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed.values, [1, 2, 3]);
 }
@@ -700,12 +700,13 @@ fn arc_slice() {
     #[facet(rename = "record")]
     struct Record {
         #[facet(rename = "item")]
-        inner: Arc<[u32]>,
+        items: Arc<[u32]>,
     }
 
-    let xml = r#"<record><inner><item>1</item><item>2</item><item>3</item><item>4</item></inner></record>"#;
+    // Flat list: repeated <item> elements directly as children (serde-xml style)
+    let xml = r#"<record><item>1</item><item>2</item><item>3</item><item>4</item></record>"#;
     let parsed: Record = facet_xml::from_str(xml).unwrap();
-    assert_eq!(&*parsed.inner, &[1, 2, 3, 4]);
+    assert_eq!(&*parsed.items, &[1, 2, 3, 4]);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

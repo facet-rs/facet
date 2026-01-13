@@ -1,6 +1,5 @@
 //! Precomputed field lookup for struct deserialization.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 
 use facet_core::{Def, Field, StructType};
@@ -13,10 +12,10 @@ pub(crate) struct FieldInfo {
     pub idx: usize,
     #[allow(dead_code)]
     pub field: &'static Field,
-    /// True if this field is a list type (Vec, etc.)
+    /// True if this field is a list type (Vec, etc.) - NOT an array
     pub is_list: bool,
-    /// For list fields, the element name for each item (from rename, or "item" default)
-    pub item_element_name: Option<Cow<'static, str>>,
+    /// True if this field is a fixed-size array [T; N]
+    pub is_array: bool,
     /// The namespace URI this field must match (from `xml::ns` attribute), if any.
     pub namespace: Option<&'static str>,
 }
@@ -26,10 +25,12 @@ pub(crate) struct FieldInfo {
 /// This separates "what fields does this struct have" from the parsing loop,
 /// making the code cleaner and avoiding repeated linear scans.
 pub(crate) struct StructFieldMap {
-    /// Fields marked with `xml::attribute`, keyed by name/rename
-    attribute_fields: HashMap<&'static str, FieldInfo>,
-    /// Fields that are child elements, keyed by name/rename
-    element_fields: HashMap<&'static str, FieldInfo>,
+    /// Fields marked with `xml::attribute`, keyed by name/rename.
+    /// Multiple fields can have the same name if they have different namespace constraints.
+    attribute_fields: HashMap<&'static str, Vec<FieldInfo>>,
+    /// Fields that are child elements, keyed by name/rename.
+    /// Multiple fields can have the same name if they have different namespace constraints.
+    element_fields: HashMap<&'static str, Vec<FieldInfo>>,
     /// The field marked with `xml::elements` (collects all unmatched children)
     pub elements_field: Option<FieldInfo>,
     /// The field marked with `xml::text` (collects text content)
@@ -41,40 +42,26 @@ impl StructFieldMap {
     pub fn new(struct_def: &'static StructType) -> Self {
         trace_span!("StructFieldMap::new");
 
-        let mut attribute_fields = HashMap::new();
-        let mut element_fields = HashMap::new();
+        let mut attribute_fields: HashMap<&'static str, Vec<FieldInfo>> = HashMap::new();
+        let mut element_fields: HashMap<&'static str, Vec<FieldInfo>> = HashMap::new();
         let mut elements_field = None;
         let mut text_field = None;
 
         for (idx, field) in struct_def.fields.iter().enumerate() {
-            // Check if this field is a list type
+            // Check if this field is a list type or array
+            // Need to look through pointers (Arc<[T]>, Box<[T]>, etc.)
             let shape = field.shape();
-            let is_list = matches!(&shape.def, Def::List(_));
+            let (is_list, is_array) = classify_sequence_shape(shape);
 
             // Extract namespace from xml::ns attribute if present
             let namespace: Option<&'static str> = field
                 .get_attr(Some("xml"), "ns")
                 .and_then(|attr| attr.get_as::<&str>().copied());
 
-            // For list fields:
-            //   - wrapper element uses field name
-            //   - item elements use rename (or "item" default)
-            // For non-list fields:
-            //   - element uses rename if present, else field name
-            let (element_key, item_element_name): (&'static str, Option<Cow<'static, str>>) =
-                if is_list {
-                    // List field: wrapper is field name, items are rename or "item"
-                    let wrapper_name = field.name;
-                    let item_name: Cow<'static, str> = field
-                        .rename
-                        .map(Cow::Borrowed)
-                        .unwrap_or(Cow::Borrowed("item"));
-                    (wrapper_name, Some(item_name))
-                } else {
-                    // Non-list field: use rename if present, else field name
-                    let name = field.rename.unwrap_or(field.name);
-                    (name, None)
-                };
+            // For all fields (list or not):
+            //   - element name uses rename if present, else field name
+            // For list fields, this is the repeated item element name (flat, no wrapper)
+            let element_key = field.rename.unwrap_or(field.name);
 
             if field.is_attribute() {
                 // Attributes always use rename or field name directly
@@ -84,17 +71,17 @@ impl StructFieldMap {
                     idx,
                     field,
                     is_list,
-                    item_element_name,
+                    is_array,
                     namespace,
                 };
-                attribute_fields.insert(attr_key, info);
+                attribute_fields.entry(attr_key).or_default().push(info);
             } else if field.is_elements() {
                 trace!(idx, field_name = %field.name, "found elements collection field");
                 let info = FieldInfo {
                     idx,
                     field,
                     is_list,
-                    item_element_name,
+                    is_array,
                     namespace,
                 };
                 elements_field = Some(info);
@@ -104,21 +91,21 @@ impl StructFieldMap {
                     idx,
                     field,
                     is_list,
-                    item_element_name,
+                    is_array,
                     namespace,
                 };
                 text_field = Some(info);
             } else {
                 // Default: unmarked fields and explicit xml::element fields are child elements
-                trace!(idx, field_name = %field.name, field_rename = ?field.rename, key = %element_key, is_list, item_element_name = ?item_element_name, namespace = ?namespace, "found element field");
+                trace!(idx, field_name = %field.name, field_rename = ?field.rename, key = %element_key, is_list, is_array, namespace = ?namespace, "found element field");
                 let info = FieldInfo {
                     idx,
                     field,
                     is_list,
-                    item_element_name,
+                    is_array,
                     namespace,
                 };
-                element_fields.insert(element_key, info);
+                element_fields.entry(element_key).or_default().push(info);
             }
         }
 
@@ -143,14 +130,19 @@ impl StructFieldMap {
     /// Returns `Some` if the name matches AND the namespace matches:
     /// - If the field has no namespace constraint, it matches any namespace
     /// - If the field has a namespace constraint, the incoming namespace must match exactly
+    ///
+    /// When multiple fields have the same name, prefers exact namespace match over wildcard.
     pub fn find_attribute(&self, name: &str, namespace: Option<&str>) -> Option<&FieldInfo> {
-        let result = self.attribute_fields.get(name).filter(|info| {
-            match info.namespace {
-                // Field has no namespace constraint - matches any namespace
-                None => true,
-                // Field requires specific namespace - must match exactly
-                Some(required_ns) => namespace == Some(required_ns),
+        let result = self.attribute_fields.get(name).and_then(|fields| {
+            // First try to find an exact namespace match
+            let exact_match = fields
+                .iter()
+                .find(|info| info.namespace.is_some() && info.namespace == namespace);
+            if exact_match.is_some() {
+                return exact_match;
             }
+            // Fall back to a field with no namespace constraint
+            fields.iter().find(|info| info.namespace.is_none())
         });
         trace!(name, ?namespace, found = result.is_some(), "find_attribute");
         result
@@ -161,16 +153,38 @@ impl StructFieldMap {
     /// Returns `Some` if the name matches AND the namespace matches:
     /// - If the field has no namespace constraint, it matches any namespace
     /// - If the field has a namespace constraint, the incoming namespace must match exactly
+    ///
+    /// When multiple fields have the same name, prefers exact namespace match over wildcard.
     pub fn find_element(&self, tag: &str, namespace: Option<&str>) -> Option<&FieldInfo> {
-        let result = self.element_fields.get(tag).filter(|info| {
-            match info.namespace {
-                // Field has no namespace constraint - matches any namespace
-                None => true,
-                // Field requires specific namespace - must match exactly
-                Some(required_ns) => namespace == Some(required_ns),
+        let result = self.element_fields.get(tag).and_then(|fields| {
+            // First try to find an exact namespace match
+            let exact_match = fields
+                .iter()
+                .find(|info| info.namespace.is_some() && info.namespace == namespace);
+            if exact_match.is_some() {
+                return exact_match;
             }
+            // Fall back to a field with no namespace constraint
+            fields.iter().find(|info| info.namespace.is_none())
         });
         trace!(tag, ?namespace, found = result.is_some(), "find_element");
         result
+    }
+}
+
+/// Classify a shape as list, array, or neither. Returns (is_list, is_array).
+/// Lists are Vec, slices. Arrays are [T; N]. Looks through pointers.
+fn classify_sequence_shape(shape: &facet_core::Shape) -> (bool, bool) {
+    match &shape.def {
+        Def::List(_) | Def::Slice(_) => (true, false),
+        Def::Array(_) => (false, true),
+        Def::Pointer(ptr_def) => {
+            // Look through Arc<[T]>, Box<[T]>, Rc<[T]>, etc.
+            ptr_def
+                .pointee()
+                .map(classify_sequence_shape)
+                .unwrap_or((false, false))
+        }
+        _ => (false, false),
     }
 }

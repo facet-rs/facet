@@ -40,7 +40,6 @@ use facet_format::FormatDeserializer;
 use facet_xml as xml;
 use facet_xml::{XmlParser, to_vec};
 
-/// Atom namespace URI as defined in RFC 4287
 pub const ATOM_NS: &str = "http://www.w3.org/2005/Atom";
 
 /// Error type for Atom parsing
