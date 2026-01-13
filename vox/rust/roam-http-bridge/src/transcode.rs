@@ -9,6 +9,14 @@
 use crate::BridgeError;
 use facet_core::Shape;
 use facet_value::Value;
+use roam_schema::{is_rx, is_tx};
+
+/// Check if a shape represents a channel type (Rx<T> or Tx<T>).
+///
+/// Channel types use `#[facet(proxy = u64)]` and serialize as just the channel ID.
+fn is_channel_shape(shape: &'static Shape) -> bool {
+    is_rx(shape) || is_tx(shape)
+}
 
 /// Transcode JSON array to postcard bytes using arg shapes.
 ///
@@ -45,8 +53,17 @@ pub fn json_args_to_postcard(
     // This produces the same bytes as serializing a typed tuple
     let mut result = Vec::new();
     for (arg, shape) in args.iter().zip(arg_shapes.iter()) {
-        let bytes = facet_postcard::to_vec_with_shape(arg, shape)
-            .map_err(|e| BridgeError::bad_request(format!("Failed to encode argument: {e}")))?;
+        // Channel types (Rx<T>, Tx<T>) serialize as just u64 (the channel ID)
+        // due to their #[facet(proxy = u64)] attribute
+        let bytes = if is_channel_shape(shape) {
+            // Serialize the number as u64 directly using u64's shape
+            facet_postcard::to_vec_with_shape(arg, <u64 as facet::Facet>::SHAPE).map_err(|e| {
+                BridgeError::bad_request(format!("Failed to encode channel ID: {e}"))
+            })?
+        } else {
+            facet_postcard::to_vec_with_shape(arg, shape)
+                .map_err(|e| BridgeError::bad_request(format!("Failed to encode argument: {e}")))?
+        };
         result.extend(bytes);
     }
 

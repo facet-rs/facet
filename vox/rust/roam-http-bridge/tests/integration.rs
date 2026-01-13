@@ -181,9 +181,15 @@ async fn connect_to_roam(addr: SocketAddr) -> roam_stream::Client<BridgeConnecto
 }
 
 /// Start the HTTP bridge server.
+///
+/// Note: Returns the roam_client to keep the connection alive.
 async fn start_bridge_server(
     roam_client: roam_stream::Client<BridgeConnector, NoDispatcher>,
-) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+) -> (
+    SocketAddr,
+    tokio::task::JoinHandle<()>,
+    roam_stream::Client<BridgeConnector, NoDispatcher>,
+) {
     // Get a handle from the client
     let handle = roam_client.handle().await.unwrap();
 
@@ -198,11 +204,12 @@ async fn start_bridge_server(
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let handle = tokio::spawn(async move {
+    let join_handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
 
-    (addr, handle)
+    // Return the client to keep the connection alive
+    (addr, join_handle, roam_client)
 }
 
 #[tokio::test]
@@ -217,7 +224,7 @@ async fn test_echo_via_http_bridge() {
     let roam_client = connect_to_roam(roam_addr).await;
 
     // 3. Start HTTP bridge
-    let (bridge_addr, _bridge_handle) = start_bridge_server(roam_client).await;
+    let (bridge_addr, _bridge_handle, _roam_client) = start_bridge_server(roam_client).await;
 
     // Give bridge time to start
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -249,7 +256,7 @@ async fn test_reverse_via_http_bridge() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let roam_client = connect_to_roam(roam_addr).await;
-    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -273,7 +280,7 @@ async fn test_echo_point_via_http_bridge() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let roam_client = connect_to_roam(roam_addr).await;
-    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -298,7 +305,7 @@ async fn test_streaming_method_rejected() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let roam_client = connect_to_roam(roam_addr).await;
-    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -320,7 +327,7 @@ async fn test_unknown_method() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let roam_client = connect_to_roam(roam_addr).await;
-    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -349,7 +356,7 @@ async fn test_websocket_connect_with_subprotocol() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let roam_client = connect_to_roam(roam_addr).await;
-    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Connect with the roam-bridge.v1 subprotocol
@@ -397,7 +404,7 @@ async fn test_websocket_echo_rpc() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let roam_client = connect_to_roam(roam_addr).await;
-    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Connect with the roam-bridge.v1 subprotocol
@@ -456,7 +463,7 @@ async fn test_websocket_reverse_rpc() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let roam_client = connect_to_roam(roam_addr).await;
-    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let url = format!("ws://{}/api/@ws", bridge_addr);
@@ -511,7 +518,7 @@ async fn test_websocket_unknown_method() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let roam_client = connect_to_roam(roam_addr).await;
-    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let url = format!("ws://{}/api/@ws", bridge_addr);
@@ -569,7 +576,7 @@ async fn test_websocket_multiplexing() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let roam_client = connect_to_roam(roam_addr).await;
-    let (bridge_addr, _) = start_bridge_server(roam_client).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let url = format!("ws://{}/api/@ws", bridge_addr);
@@ -644,6 +651,265 @@ async fn test_websocket_multiplexing() {
     assert_eq!(responses[&1]["result"], "first");
     assert_eq!(responses[&2]["result"], "second");
     assert_eq!(responses[&3]["result"], "driht"); // reversed
+
+    write.close().await.unwrap();
+}
+
+// ============================================================================
+// WebSocket streaming tests
+// ============================================================================
+
+/// Helper to create a WebSocket connection to the bridge.
+async fn ws_connect(
+    bridge_addr: std::net::SocketAddr,
+) -> (
+    futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        tungstenite::Message,
+    >,
+    futures_util::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    >,
+) {
+    let url = format!("ws://{}/api/@ws", bridge_addr);
+    let request = tungstenite::http::Request::builder()
+        .uri(&url)
+        .header("Sec-WebSocket-Protocol", "roam-bridge.v1")
+        .header("Host", bridge_addr.to_string())
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header(
+            "Sec-WebSocket-Key",
+            tungstenite::handshake::client::generate_key(),
+        )
+        .body(())
+        .unwrap();
+
+    let (ws_stream, _) = connect_async(request).await.unwrap();
+    ws_stream.split()
+}
+
+/// Test streaming sum: client sends numbers via Rx, server returns total.
+///
+/// Method signature: `sum(numbers: Rx<i32>) -> i64`
+#[tokio::test]
+async fn test_websocket_streaming_sum() {
+    let (roam_addr, _) = start_roam_server().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let roam_client = connect_to_roam(roam_addr).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let (mut write, mut read) = ws_connect(bridge_addr).await;
+
+    // Client-allocated channel ID for the Rx<i32> stream
+    let channel_id = 100u64;
+
+    // Send the request with channel ID in args
+    // Method: sum(numbers: Rx<i32>) -> i64
+    let request_json = serde_json::json!({
+        "type": "request",
+        "id": 1,
+        "service": "Testbed",
+        "method": "sum",
+        "args": [channel_id]  // Rx<i32> is represented as channel ID
+    });
+    write
+        .send(tungstenite::Message::Text(request_json.to_string().into()))
+        .await
+        .unwrap();
+
+    // Send some numbers via data messages
+    for n in [10, 20, 30] {
+        let data_json = serde_json::json!({
+            "type": "data",
+            "channel": channel_id,
+            "value": n
+        });
+        write
+            .send(tungstenite::Message::Text(data_json.to_string().into()))
+            .await
+            .unwrap();
+    }
+
+    // Close the channel to signal end of stream
+    let close_json = serde_json::json!({
+        "type": "close",
+        "channel": channel_id
+    });
+    write
+        .send(tungstenite::Message::Text(close_json.to_string().into()))
+        .await
+        .unwrap();
+
+    // Read the response
+    let response = read.next().await.unwrap().unwrap();
+    if let tungstenite::Message::Text(text) = response {
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        eprintln!("Got response: {}", json);
+        assert_eq!(json["type"], "response", "Expected response, got {}", json);
+        assert_eq!(json["id"], 1);
+        assert_eq!(json["result"], 60); // 10 + 20 + 30
+    } else {
+        panic!("Expected text message, got {:?}", response);
+    }
+
+    write.close().await.unwrap();
+}
+
+/// Test streaming generate: server sends numbers via Tx.
+///
+/// Method signature: `generate(count: u32, output: Tx<i32>)`
+#[tokio::test]
+async fn test_websocket_streaming_generate() {
+    let (roam_addr, _) = start_roam_server().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let roam_client = connect_to_roam(roam_addr).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let (mut write, mut read) = ws_connect(bridge_addr).await;
+
+    // Client-allocated channel ID for the Tx<i32> stream (output)
+    let output_channel_id = 200u64;
+
+    // Send the request: generate 5 numbers
+    // Method: generate(count: u32, output: Tx<i32>)
+    let request_json = serde_json::json!({
+        "type": "request",
+        "id": 2,
+        "service": "Testbed",
+        "method": "generate",
+        "args": [5, output_channel_id]  // count=5, Tx<i32> channel
+    });
+    write
+        .send(tungstenite::Message::Text(request_json.to_string().into()))
+        .await
+        .unwrap();
+
+    // Collect data messages from the server
+    let mut received_numbers: Vec<i32> = Vec::new();
+
+    loop {
+        let msg = read.next().await.unwrap().unwrap();
+        if let tungstenite::Message::Text(text) = msg {
+            let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+            match json["type"].as_str() {
+                Some("data") => {
+                    assert_eq!(json["channel"], output_channel_id);
+                    let value = json["value"].as_i64().unwrap() as i32;
+                    received_numbers.push(value);
+                }
+                Some("response") => {
+                    // Response indicates the call completed
+                    assert_eq!(json["id"], 2);
+                    break;
+                }
+                other => panic!("Unexpected message type: {:?}", other),
+            }
+        } else {
+            panic!("Expected text message, got {:?}", msg);
+        }
+    }
+
+    // Server should have sent 0, 1, 2, 3, 4
+    assert_eq!(received_numbers, vec![0, 1, 2, 3, 4]);
+
+    write.close().await.unwrap();
+}
+
+/// Test bidirectional streaming: client sends strings, server echoes back uppercased.
+///
+/// Method signature: `transform(input: Rx<String>, output: Tx<String>)`
+#[tokio::test]
+async fn test_websocket_streaming_transform() {
+    let (roam_addr, _) = start_roam_server().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let roam_client = connect_to_roam(roam_addr).await;
+    let (bridge_addr, _, _roam_client) = start_bridge_server(roam_client).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let (mut write, mut read) = ws_connect(bridge_addr).await;
+
+    // Client-allocated channel IDs
+    let input_channel_id = 300u64; // Rx<String> - client sends
+    let output_channel_id = 301u64; // Tx<String> - server sends
+
+    // Send the request
+    // Method: transform(input: Rx<String>, output: Tx<String>)
+    let request_json = serde_json::json!({
+        "type": "request",
+        "id": 3,
+        "service": "Testbed",
+        "method": "transform",
+        "args": [input_channel_id, output_channel_id]
+    });
+    write
+        .send(tungstenite::Message::Text(request_json.to_string().into()))
+        .await
+        .unwrap();
+
+    // Send some strings
+    for s in ["hello", "world"] {
+        let data_json = serde_json::json!({
+            "type": "data",
+            "channel": input_channel_id,
+            "value": s
+        });
+        write
+            .send(tungstenite::Message::Text(data_json.to_string().into()))
+            .await
+            .unwrap();
+
+        // Give server time to process
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    // Close the input channel
+    let close_json = serde_json::json!({
+        "type": "close",
+        "channel": input_channel_id
+    });
+    write
+        .send(tungstenite::Message::Text(close_json.to_string().into()))
+        .await
+        .unwrap();
+
+    // Collect output messages
+    let mut received_strings: Vec<String> = Vec::new();
+
+    loop {
+        let msg = read.next().await.unwrap().unwrap();
+        if let tungstenite::Message::Text(text) = msg {
+            let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+            match json["type"].as_str() {
+                Some("data") => {
+                    assert_eq!(json["channel"], output_channel_id);
+                    let value = json["value"].as_str().unwrap().to_string();
+                    received_strings.push(value);
+                }
+                Some("response") => {
+                    // Response indicates the call completed
+                    assert_eq!(json["id"], 3);
+                    break;
+                }
+                other => panic!("Unexpected message type: {:?}", other),
+            }
+        } else {
+            panic!("Expected text message, got {:?}", msg);
+        }
+    }
+
+    // Server should have echoed back uppercased strings
+    assert_eq!(received_strings, vec!["HELLO", "WORLD"]);
 
     write.close().await.unwrap();
 }

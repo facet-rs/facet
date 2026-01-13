@@ -2279,6 +2279,13 @@ impl ConnectionHandle {
         self.shared.channel_ids.next()
     }
 
+    /// Allocate a unique request ID for an outgoing call.
+    ///
+    /// Used when manually constructing DriverMessage::Call.
+    pub fn alloc_request_id(&self) -> u64 {
+        self.shared.request_ids.next()
+    }
+
     /// Register an incoming stream (we receive data from peer).
     ///
     /// Used when schema has `Tx<T>` (callee sends to caller) - we receive that data.

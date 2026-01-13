@@ -28,6 +28,9 @@
 
 #![deny(unsafe_code)]
 
+#[macro_use]
+mod macros;
+
 mod error;
 mod metadata;
 mod router;
@@ -71,6 +74,12 @@ pub trait BridgeService: Send + Sync + 'static {
         json_body: &'a [u8],
         metadata: BridgeMetadata,
     ) -> BoxFuture<'a, Result<BridgeResponse, BridgeError>>;
+
+    /// Get the underlying connection handle for streaming calls.
+    ///
+    /// This is required for WebSocket streaming where we need direct access
+    /// to channel allocation and data routing.
+    fn connection_handle(&self) -> &roam_session::ConnectionHandle;
 }
 
 /// Response from a bridged RPC call.

@@ -11,7 +11,8 @@ use facet_core::{Def, Shape};
 use futures_util::{SinkExt, StreamExt};
 #[allow(unused_imports)]
 use roam_schema::{MethodDetail, contains_stream, is_rx, is_tx};
-use tokio::sync::mpsc;
+use roam_session::TransportError;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{BridgeError, BridgeService, ProtocolErrorKind};
 
@@ -44,13 +45,13 @@ pub async fn handle_websocket(
                 let json = match serde_json::to_string(&msg) {
                     Ok(j) => j,
                     Err(e) => {
-                        tracing::error!("Failed to serialize outgoing message: {}", e);
+                        error!("Failed to serialize outgoing message: {}", e);
                         continue;
                     }
                 };
                 // r[bridge.ws.text-frames]
                 if ws_sink.send(Message::Text(json.into())).await.is_err() {
-                    tracing::debug!("WebSocket send failed, closing");
+                    debug!("WebSocket send failed, closing");
                     break;
                 }
             }
@@ -69,7 +70,7 @@ pub async fn handle_websocket(
         let msg = match msg_result {
             Ok(m) => m,
             Err(e) => {
-                tracing::debug!("WebSocket receive error: {}", e);
+                debug!("WebSocket receive error: {}", e);
                 break;
             }
         };
@@ -83,7 +84,7 @@ pub async fn handle_websocket(
                         if let Err(e) =
                             handle_client_message(client_msg, Arc::clone(&session)).await
                         {
-                            tracing::warn!("Error handling client message: {}", e);
+                            warn!("Error handling client message: {}", e);
                             // Send goodbye on protocol error
                             let _ = outgoing_tx
                                 .send(ServerMessage::goodbye(format!("error: {}", e)))
@@ -92,7 +93,7 @@ pub async fn handle_websocket(
                         }
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to parse client message: {}", e);
+                        warn!("Failed to parse client message: {}", e);
                         let _ = outgoing_tx
                             .send(ServerMessage::goodbye("bridge.ws.message-format"))
                             .await;
@@ -102,7 +103,7 @@ pub async fn handle_websocket(
             }
             Message::Binary(_) => {
                 // r[bridge.ws.text-frames] - Binary frames not allowed
-                tracing::warn!("Received binary frame, protocol violation");
+                warn!("Received binary frame, protocol violation");
                 let _ = outgoing_tx
                     .send(ServerMessage::goodbye("bridge.ws.text-frames"))
                     .await;
@@ -122,7 +123,7 @@ pub async fn handle_websocket(
                 // Ignore pong
             }
             Message::Close(_) => {
-                tracing::debug!("Client closed WebSocket");
+                debug!("Client closed WebSocket");
                 break;
             }
         }
@@ -208,41 +209,59 @@ async fn handle_request(
         session_guard.register_call(request_id, service_name.clone(), method_name.clone());
     }
 
-    // Spawn a task to handle the call
-    let session_clone = Arc::clone(&session);
-    tokio::spawn(async move {
-        let result = if has_channels {
-            handle_streaming_call(
-                session_clone.clone(),
-                request_id,
-                service,
-                &method_detail,
-                method_id,
-                args,
-            )
-            .await
-        } else {
-            handle_simple_call(
-                session_clone.clone(),
-                request_id,
-                service,
-                &method_detail,
-                method_id,
-                args,
-            )
-            .await
-        };
+    // For streaming calls, set up channels first before spawning
+    // This ensures channels are registered before any data messages arrive
+    if has_channels {
+        let streaming_state = setup_streaming_call(
+            Arc::clone(&session),
+            request_id,
+            Arc::clone(&service),
+            &method_detail,
+            method_id,
+            args,
+        )
+        .await?;
 
-        // Complete the call and send response
-        {
-            let mut session_guard = session_clone.lock().await;
-            session_guard.complete_call(request_id);
+        // Spawn a task to run the streaming call (channels are already registered)
+        let session_clone = Arc::clone(&session);
+        tokio::spawn(async move {
+            let result = run_streaming_call(session_clone.clone(), streaming_state).await;
 
-            if let Err(e) = result {
-                tracing::warn!("Call {} failed: {}", request_id, e);
+            // Complete the call
+            {
+                let mut session_guard = session_clone.lock().await;
+                session_guard.complete_call(request_id);
+
+                if let Err(e) = result {
+                    warn!("Streaming call {} failed: {}", request_id, e);
+                }
             }
-        }
-    });
+        });
+    } else {
+        // Simple calls can be spawned directly
+        let session_clone = Arc::clone(&session);
+        tokio::spawn(async move {
+            let result = handle_simple_call(
+                session_clone.clone(),
+                request_id,
+                service,
+                &method_detail,
+                method_id,
+                args,
+            )
+            .await;
+
+            // Complete the call and send response
+            {
+                let mut session_guard = session_clone.lock().await;
+                session_guard.complete_call(request_id);
+
+                if let Err(e) = result {
+                    warn!("Call {} failed: {}", request_id, e);
+                }
+            }
+        });
+    }
 
     Ok(())
 }
@@ -282,72 +301,134 @@ async fn handle_simple_call(
     }
 }
 
-/// Handle a streaming RPC call with channels.
-async fn handle_streaming_call(
+/// State needed to run a streaming call after setup.
+struct StreamingCallState {
+    #[allow(dead_code)]
     session: Arc<tokio::sync::Mutex<WsSession>>,
     request_id: u64,
-    _service: Arc<dyn BridgeService>,
-    method: &MethodDetail,
-    _method_id: u64,
-    args: serde_json::Value,
-) -> Result<(), BridgeError> {
-    // For streaming calls, we need to:
-    // 1. Parse the args to find channel IDs
-    // 2. Set up channel routing for Tx channels (client->server)
-    // 3. Set up channel routing for Rx channels (server->client)
-    // 4. Make the roam call with channel binding
-    // 5. Forward data messages bidirectionally
+    ws_to_roam_rx_map: HashMap<u64, (u64, &'static Shape)>,
+    roam_to_ws_tx_map: HashMap<u64, (u64, &'static Shape)>,
+    roam_receivers: Vec<(u64, mpsc::Receiver<Vec<u8>>)>,
+    /// Response receiver - the call has already been sent when this is set
+    response_rx: oneshot::Receiver<Result<Vec<u8>, TransportError>>,
+    return_shape: &'static Shape,
+    error_shape: Option<&'static Shape>,
+}
 
-    // For now, we'll use a simplified approach that works with the existing
-    // BridgeService trait. A full implementation would require direct access
-    // to the ConnectionHandle.
+/// Set up a streaming call by registering channels.
+///
+/// This must be called synchronously before the task is spawned,
+/// so that channels are registered before any data messages arrive.
+///
+/// r[bridge.ws.streaming]
+async fn setup_streaming_call(
+    session: Arc<tokio::sync::Mutex<WsSession>>,
+    request_id: u64,
+    service: Arc<dyn BridgeService>,
+    method: &MethodDetail,
+    method_id: u64,
+    args: serde_json::Value,
+) -> Result<StreamingCallState, BridgeError> {
+    // Get the connection handle for streaming support
+    let handle = service.connection_handle().clone();
 
     // Extract channel info from method signature
-    let mut tx_channels: Vec<(usize, &'static Shape)> = Vec::new(); // Client sends to server
-    let mut rx_channels: Vec<(usize, &'static Shape)> = Vec::new(); // Server sends to client
+    let mut rx_channels: Vec<(usize, &'static Shape)> = Vec::new();
+    let mut tx_channels: Vec<(usize, &'static Shape)> = Vec::new();
 
     for (i, arg) in method.args.iter().enumerate() {
-        if is_tx(arg.ty) {
-            // Tx<T> from caller's POV means client sends, server receives
-            if let Some(elem_shape) = get_channel_element_type(arg.ty) {
-                tx_channels.push((i, elem_shape));
-            }
-        } else if is_rx(arg.ty) {
-            // Rx<T> from caller's POV means client receives, server sends
+        if is_rx(arg.ty) {
             if let Some(elem_shape) = get_channel_element_type(arg.ty) {
                 rx_channels.push((i, elem_shape));
+            }
+        } else if is_tx(arg.ty) {
+            if let Some(elem_shape) = get_channel_element_type(arg.ty) {
+                tx_channels.push((i, elem_shape));
             }
         }
     }
 
-    // Extract channel IDs from args
+    // Extract WebSocket channel IDs from args
     let args_array = args
         .as_array()
         .ok_or_else(|| BridgeError::bad_request("Args must be a JSON array"))?;
 
-    // Register channels for each Tx argument (client -> server)
-    for (arg_idx, elem_shape) in &tx_channels {
-        if let Some(channel_id) = args_array.get(*arg_idx).and_then(|v| v.as_u64()) {
-            // Create a channel for forwarding data to the roam connection
-            let (roam_tx, _roam_rx) = mpsc::channel::<Vec<u8>>(256);
+    // Build channel mappings
+    let mut roam_channel_ids: Vec<u64> = Vec::new();
+    let mut ws_to_roam_rx_map: HashMap<u64, (u64, &'static Shape)> = HashMap::new();
+    let mut roam_to_ws_tx_map: HashMap<u64, (u64, &'static Shape)> = HashMap::new();
 
-            let mut session_guard = session.lock().await;
-            session_guard.register_channel(
-                channel_id,
-                request_id,
-                ChannelDirection::ClientToServer,
-                elem_shape,
-                Some(roam_tx),
-            );
+    // Process Rx channels (client sends to server)
+    for (arg_idx, elem_shape) in &rx_channels {
+        if let Some(ws_channel_id) = args_array.get(*arg_idx).and_then(|v| v.as_u64()) {
+            let roam_channel_id = handle.alloc_channel_id();
+            roam_channel_ids.push(roam_channel_id);
+            ws_to_roam_rx_map.insert(ws_channel_id, (roam_channel_id, elem_shape));
         }
     }
 
-    // Register channels for each Rx argument (server -> client)
-    for (arg_idx, elem_shape) in &rx_channels {
-        if let Some(channel_id) = args_array.get(*arg_idx).and_then(|v| v.as_u64()) {
-            let mut session_guard = session.lock().await;
+    // Process Tx channels (server sends to client)
+    for (arg_idx, elem_shape) in &tx_channels {
+        if let Some(ws_channel_id) = args_array.get(*arg_idx).and_then(|v| v.as_u64()) {
+            let roam_channel_id = handle.alloc_channel_id();
+            roam_channel_ids.push(roam_channel_id);
+            roam_to_ws_tx_map.insert(roam_channel_id, (ws_channel_id, elem_shape));
+        }
+    }
+
+    // Build args with roam channel IDs substituted
+    let mut modified_args = args_array.clone();
+    let mut roam_channel_idx = 0;
+    for (i, arg) in method.args.iter().enumerate() {
+        if is_rx(arg.ty) || is_tx(arg.ty) {
+            if roam_channel_idx < roam_channel_ids.len() {
+                modified_args[i] = serde_json::Value::Number(serde_json::Number::from(
+                    roam_channel_ids[roam_channel_idx],
+                ));
+                roam_channel_idx += 1;
+            }
+        }
+    }
+
+    // Transcode the modified args to postcard
+    let arg_shapes: Vec<&'static Shape> = method.args.iter().map(|a| a.ty).collect();
+    let args_json = serde_json::to_vec(&modified_args)
+        .map_err(|e| BridgeError::bad_request(format!("Failed to serialize args: {}", e)))?;
+    let postcard_payload = crate::transcode::json_args_to_postcard(&args_json, &arg_shapes)?;
+
+    // Set up channels for receiving data from roam (Tx channels)
+    let mut roam_receivers: Vec<(u64, mpsc::Receiver<Vec<u8>>)> = Vec::new();
+    for (&roam_channel_id, _) in &roam_to_ws_tx_map {
+        let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
+        handle.register_incoming(roam_channel_id, tx);
+        roam_receivers.push((roam_channel_id, rx));
+    }
+
+    // Get the driver_tx for sending Data/Close messages to roam
+    let driver_tx = handle.driver_tx();
+
+    // Register WebSocket channels in the session BEFORE sending the call
+    // This is critical - channels must be registered before any data messages arrive
+    {
+        let mut session_guard = session.lock().await;
+
+        // Store driver_tx for handle_data to use
+        session_guard.set_driver_tx(driver_tx.clone());
+
+        for (&ws_channel_id, &(roam_channel_id, elem_shape)) in &ws_to_roam_rx_map {
+            let (ws_data_tx, _ws_data_rx) = mpsc::channel::<Vec<u8>>(256);
             session_guard.register_channel(
-                channel_id,
+                ws_channel_id,
+                request_id,
+                ChannelDirection::ClientToServer,
+                elem_shape,
+                Some(ws_data_tx),
+            );
+            session_guard.set_roam_channel_id(ws_channel_id, roam_channel_id);
+        }
+        for (_, (ws_channel_id, elem_shape)) in &roam_to_ws_tx_map {
+            session_guard.register_channel(
+                *ws_channel_id,
                 request_id,
                 ChannelDirection::ServerToClient,
                 elem_shape,
@@ -356,15 +437,207 @@ async fn handle_streaming_call(
         }
     }
 
-    // For now, return an error indicating streaming is not yet fully implemented
-    // TODO: Implement full streaming support with ConnectionHandle::call
-    let session_guard = session.lock().await;
-    session_guard
-        .send(ServerMessage::protocol_error(
-            request_id,
-            "streaming_not_implemented",
-        ))
+    // Create the response channel and send the Call message IMMEDIATELY
+    // This ensures the Request is queued before any Data messages can be forwarded
+    let (response_tx, response_rx) = oneshot::channel();
+    let roam_request_id = handle.alloc_request_id();
+
+    let call_msg = roam_session::DriverMessage::Call {
+        request_id: roam_request_id,
+        method_id,
+        metadata: Vec::new(),
+        channels: roam_channel_ids,
+        payload: postcard_payload,
+        response_tx,
+    };
+
+    driver_tx
+        .send(call_msg)
         .await
+        .map_err(|_| BridgeError::internal("Failed to send call to roam driver"))?;
+
+    let (return_shape, error_shape) = extract_result_types(method);
+
+    Ok(StreamingCallState {
+        session,
+        request_id,
+        ws_to_roam_rx_map,
+        roam_to_ws_tx_map,
+        roam_receivers,
+        response_rx,
+        return_shape,
+        error_shape,
+    })
+}
+
+/// Run a streaming call after setup.
+async fn run_streaming_call(
+    session: Arc<tokio::sync::Mutex<WsSession>>,
+    state: StreamingCallState,
+) -> Result<(), BridgeError> {
+    let StreamingCallState {
+        request_id,
+        ws_to_roam_rx_map,
+        roam_to_ws_tx_map,
+        roam_receivers,
+        response_rx,
+        return_shape,
+        error_shape,
+        ..
+    } = state;
+
+    let outgoing_tx = {
+        let session_guard = session.lock().await;
+        session_guard.outgoing_tx().clone()
+    };
+
+    // Spawn tasks to forward data from roam to WebSocket (Tx channels)
+    for (roam_channel_id, mut rx) in roam_receivers {
+        let (ws_channel_id, elem_shape) = roam_to_ws_tx_map[&roam_channel_id];
+        let outgoing_tx = outgoing_tx.clone();
+        tokio::spawn(async move {
+            while let Some(postcard_data) = rx.recv().await {
+                match crate::transcode::postcard_to_json_with_shape(&postcard_data, elem_shape) {
+                    Ok(json_bytes) => {
+                        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&json_bytes)
+                        {
+                            let _ = outgoing_tx
+                                .send(ServerMessage::data(ws_channel_id, value))
+                                .await;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to transcode channel data: {}", e);
+                    }
+                }
+            }
+        });
+    }
+
+    // Wait for the response - the call was already sent in setup_streaming_call
+    let response = response_rx
+        .await
+        .map_err(|_| BridgeError::internal("Response channel closed"))?;
+
+    // Clean up channels in session
+    {
+        let mut session_guard = session.lock().await;
+        for &ws_channel_id in ws_to_roam_rx_map.keys() {
+            session_guard.remove_channel(ws_channel_id);
+        }
+        for (_, (ws_channel_id, _)) in &roam_to_ws_tx_map {
+            session_guard.remove_channel(*ws_channel_id);
+        }
+    }
+
+    // Send the response
+    let session_guard = session.lock().await;
+    match response {
+        Ok(response_bytes) => {
+            if response_bytes.is_empty() {
+                return session_guard
+                    .send(ServerMessage::protocol_error(request_id, "empty_response"))
+                    .await;
+            }
+
+            match response_bytes[0] {
+                0x00 => {
+                    let value_bytes = &response_bytes[1..];
+                    match crate::transcode::postcard_to_json_with_shape(value_bytes, return_shape) {
+                        Ok(json_bytes) => {
+                            let value: serde_json::Value = serde_json::from_slice(&json_bytes)
+                                .unwrap_or(serde_json::Value::Null);
+                            session_guard
+                                .send(ServerMessage::success(request_id, value))
+                                .await
+                        }
+                        Err(e) => {
+                            warn!("Failed to transcode response: {}", e);
+                            session_guard
+                                .send(ServerMessage::protocol_error(request_id, "transcode_error"))
+                                .await
+                        }
+                    }
+                }
+                0x01 => {
+                    if response_bytes.len() < 2 {
+                        return session_guard
+                            .send(ServerMessage::protocol_error(request_id, "truncated_error"))
+                            .await;
+                    }
+                    match response_bytes[1] {
+                        0x00 => {
+                            if let Some(err_shape) = error_shape {
+                                let error_bytes = &response_bytes[2..];
+                                match crate::transcode::postcard_to_json_with_shape(
+                                    error_bytes,
+                                    err_shape,
+                                ) {
+                                    Ok(json_bytes) => {
+                                        let value: serde_json::Value =
+                                            serde_json::from_slice(&json_bytes)
+                                                .unwrap_or(serde_json::Value::Null);
+                                        session_guard
+                                            .send(ServerMessage::user_error(request_id, value))
+                                            .await
+                                    }
+                                    Err(_) => {
+                                        session_guard
+                                            .send(ServerMessage::protocol_error(
+                                                request_id,
+                                                "transcode_error",
+                                            ))
+                                            .await
+                                    }
+                                }
+                            } else {
+                                session_guard
+                                    .send(ServerMessage::user_error(
+                                        request_id,
+                                        serde_json::Value::Null,
+                                    ))
+                                    .await
+                            }
+                        }
+                        0x01 => {
+                            session_guard
+                                .send(ServerMessage::protocol_error(request_id, "unknown_method"))
+                                .await
+                        }
+                        0x02 => {
+                            session_guard
+                                .send(ServerMessage::protocol_error(request_id, "invalid_payload"))
+                                .await
+                        }
+                        0x03 => {
+                            session_guard
+                                .send(ServerMessage::protocol_error(request_id, "cancelled"))
+                                .await
+                        }
+                        _ => {
+                            session_guard
+                                .send(ServerMessage::protocol_error(request_id, "unknown_error"))
+                                .await
+                        }
+                    }
+                }
+                _ => {
+                    session_guard
+                        .send(ServerMessage::protocol_error(
+                            request_id,
+                            "invalid_response",
+                        ))
+                        .await
+                }
+            }
+        }
+        Err(e) => {
+            error!("Streaming call {} failed: {:?}", request_id, e);
+            session_guard
+                .send(ServerMessage::protocol_error(request_id, "call_failed"))
+                .await
+        }
+    }
 }
 
 /// Handle incoming data on a channel.
@@ -375,34 +648,61 @@ async fn handle_data(
     channel_id: u64,
     value: serde_json::Value,
 ) -> Result<(), BridgeError> {
-    let mut session_guard = session.lock().await;
+    use roam_session::DriverMessage;
 
-    let channel = session_guard
-        .get_channel_mut(channel_id)
+    trace!("handle_data: channel={}, value={}", channel_id, value);
+
+    let session_guard = session.lock().await;
+
+    let channel = session_guard.get_channel(channel_id);
+    trace!(
+        "handle_data: channel state = {:?}",
+        channel.map(|c| c.direction)
+    );
+
+    let channel = channel
         .ok_or_else(|| BridgeError::bad_request(format!("Unknown channel: {}", channel_id)))?;
 
     // Verify direction (only client->server channels accept data from client)
     if channel.direction != ChannelDirection::ClientToServer {
         return Err(BridgeError::bad_request(format!(
-            "Channel {} is not a Tx channel",
+            "Channel {} is not a client-to-server channel",
             channel_id
         )));
     }
 
+    // Get the roam channel ID
+    let roam_channel_id = channel.roam_channel_id.ok_or_else(|| {
+        BridgeError::internal(format!("No roam channel ID for channel {}", channel_id))
+    })?;
+
+    // Get the element shape for transcoding
+    let element_shape = channel.element_shape;
+
+    // Get the driver_tx for sending to roam
+    let driver_tx = session_guard
+        .driver_tx()
+        .cloned()
+        .ok_or_else(|| BridgeError::internal("No driver_tx available"))?;
+
+    // Drop the session guard before async operations
+    drop(session_guard);
+
     // Convert JSON value to postcard using the element shape
-    let json_bytes = serde_json::to_vec(&value)
+    // Wrap value in an array for transcode (it expects array of args)
+    let json_bytes = serde_json::to_vec(&[&value])
         .map_err(|e| BridgeError::bad_request(format!("Invalid value: {}", e)))?;
 
-    let postcard_bytes =
-        crate::transcode::json_args_to_postcard(&json_bytes, &[channel.element_shape])?;
+    let postcard_bytes = crate::transcode::json_args_to_postcard(&json_bytes, &[element_shape])?;
 
-    // Forward to the roam connection
-    if let Some(roam_tx) = &channel.roam_tx {
-        roam_tx
-            .send(postcard_bytes)
-            .await
-            .map_err(|_| BridgeError::internal("Channel send failed"))?;
-    }
+    // Forward to the roam connection via DriverMessage::Data
+    driver_tx
+        .send(DriverMessage::Data {
+            channel_id: roam_channel_id,
+            payload: postcard_bytes,
+        })
+        .await
+        .map_err(|_| BridgeError::internal("Failed to send data to roam"))?;
 
     Ok(())
 }
@@ -414,17 +714,37 @@ async fn handle_close(
     session: Arc<tokio::sync::Mutex<WsSession>>,
     channel_id: u64,
 ) -> Result<(), BridgeError> {
+    use roam_session::DriverMessage;
+
     let mut session_guard = session.lock().await;
 
-    let channel = session_guard.remove_channel(channel_id);
+    let channel = session_guard.get_channel(channel_id);
 
     if let Some(channel) = channel {
-        // Dropping the roam_tx will signal close to the roam connection
+        // Only client->server channels can be closed by the client
         if channel.direction != ChannelDirection::ClientToServer {
             return Err(BridgeError::bad_request(format!(
                 "Channel {} cannot be closed by client",
                 channel_id
             )));
+        }
+
+        // Get the roam channel ID and driver_tx
+        if let (Some(roam_channel_id), Some(driver_tx)) =
+            (channel.roam_channel_id, session_guard.driver_tx().cloned())
+        {
+            // Remove the channel from tracking
+            session_guard.remove_channel(channel_id);
+            drop(session_guard);
+
+            // Send Close to roam
+            let _ = driver_tx
+                .send(DriverMessage::Close {
+                    channel_id: roam_channel_id,
+                })
+                .await;
+        } else {
+            session_guard.remove_channel(channel_id);
         }
     }
 
@@ -470,7 +790,7 @@ async fn handle_cancel(
 
     if session_guard.cancel_call(request_id) {
         // TODO: Actually propagate cancellation to the roam call
-        tracing::debug!("Cancelled request {}", request_id);
+        debug!("Cancelled request {}", request_id);
     }
 
     Ok(())

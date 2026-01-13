@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use facet_core::Shape;
+use roam_session::DriverMessage;
 use tokio::sync::mpsc;
 
 use crate::{BridgeError, BridgeService};
@@ -24,6 +25,8 @@ pub struct WsSession {
     channels: HashMap<u64, ChannelState>,
     /// Sender for outgoing messages to the WebSocket.
     outgoing_tx: mpsc::Sender<ServerMessage>,
+    /// Sender for messages to the roam connection (for streaming).
+    driver_tx: Option<mpsc::Sender<DriverMessage>>,
     /// Initial credit for new channels (bytes).
     initial_credit: u64,
 }
@@ -61,6 +64,8 @@ pub struct ChannelState {
     pub element_shape: &'static Shape,
     /// Sender for Data messages to the roam connection (ClientToServer channels).
     pub roam_tx: Option<mpsc::Sender<Vec<u8>>>,
+    /// The corresponding roam channel ID (for forwarding).
+    pub roam_channel_id: Option<u64>,
     /// Outstanding credit (bytes) for this channel.
     pub credit: u64,
 }
@@ -77,8 +82,19 @@ impl WsSession {
             calls: HashMap::new(),
             channels: HashMap::new(),
             outgoing_tx,
+            driver_tx: None,
             initial_credit: 65536, // Default: 64KB initial credit
         }
+    }
+
+    /// Set the driver_tx for sending messages to the roam connection.
+    pub fn set_driver_tx(&mut self, driver_tx: mpsc::Sender<DriverMessage>) {
+        self.driver_tx = Some(driver_tx);
+    }
+
+    /// Get the driver_tx for sending messages to the roam connection.
+    pub fn driver_tx(&self) -> Option<&mpsc::Sender<DriverMessage>> {
+        self.driver_tx.as_ref()
     }
 
     /// Get the services map.
@@ -139,9 +155,24 @@ impl WsSession {
                 direction,
                 element_shape,
                 roam_tx,
+                roam_channel_id: None,
                 credit: self.initial_credit,
             },
         );
+    }
+
+    /// Set the roam channel ID for a WebSocket channel.
+    pub fn set_roam_channel_id(&mut self, ws_channel_id: u64, roam_channel_id: u64) {
+        if let Some(channel) = self.channels.get_mut(&ws_channel_id) {
+            channel.roam_channel_id = Some(roam_channel_id);
+        }
+    }
+
+    /// Get the roam channel ID for a WebSocket channel.
+    pub fn get_roam_channel_id(&self, ws_channel_id: u64) -> Option<u64> {
+        self.channels
+            .get(&ws_channel_id)
+            .and_then(|c| c.roam_channel_id)
     }
 
     /// Get a channel state.

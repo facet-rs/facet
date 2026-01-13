@@ -107,6 +107,10 @@ impl BridgeService for GenericBridgeService {
         self.detail
     }
 
+    fn connection_handle(&self) -> &ConnectionHandle {
+        &self.handle
+    }
+
     fn call_json<'a>(
         &'a self,
         method_name: &'a str,
