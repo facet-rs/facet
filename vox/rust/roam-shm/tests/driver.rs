@@ -11,7 +11,7 @@
 use std::pin::Pin;
 
 use roam_session::{ChannelRegistry, Rx, ServiceDispatcher, Tx, channel, dispatch_call};
-use roam_shm::driver::{establish_guest, establish_host_peer};
+use roam_shm::driver::{establish_guest, establish_host_peer, establish_multi_peer_host};
 use roam_shm::guest::ShmGuest;
 use roam_shm::host::ShmHost;
 use roam_shm::layout::SegmentConfig;
@@ -308,4 +308,128 @@ async fn server_streaming_generate() {
     // Wait for all streamed values
     let values = collector.await.unwrap();
     assert_eq!(values, vec![0, 1, 2, 3, 4]);
+}
+
+// ============================================================================
+// Multi-peer host driver tests
+// ============================================================================
+
+fn create_host_and_two_guests() -> (ShmHost, ShmGuest, ShmGuest) {
+    let config = SegmentConfig::default();
+    let host = ShmHost::create_heap(config).unwrap();
+    let region = host.region();
+
+    let guest1 = ShmGuest::attach(region.clone()).unwrap();
+    let guest2 = ShmGuest::attach(region).unwrap();
+
+    (host, guest1, guest2)
+}
+
+/// Test that multi-peer host driver can handle multiple guests.
+#[tokio::test]
+async fn multi_peer_host_two_guests() {
+    let (host, guest1, guest2) = create_host_and_two_guests();
+    let peer_id1 = guest1.peer_id();
+    let peer_id2 = guest2.peer_id();
+
+    // Set up guest drivers
+    let guest1_transport = ShmGuestTransport::new(guest1);
+    let (guest1_handle, guest1_driver) = establish_guest(guest1_transport, TestService);
+
+    let guest2_transport = ShmGuestTransport::new(guest2);
+    let (guest2_handle, guest2_driver) = establish_guest(guest2_transport, TestService);
+
+    // Set up multi-peer host driver
+    let (host_driver, host_handles) =
+        establish_multi_peer_host(host, vec![(peer_id1, TestService), (peer_id2, TestService)]);
+
+    // Spawn all drivers
+    tokio::spawn(guest1_driver.run());
+    tokio::spawn(guest2_driver.run());
+    tokio::spawn(host_driver.run());
+
+    // Both guests can make calls
+    let input1 = "Hello from guest 1".to_string();
+    let payload1 = facet_postcard::to_vec(&input1).unwrap();
+    let response1 = guest1_handle.call_raw(1, payload1).await.unwrap();
+    assert_eq!(response1[0], 0);
+    let result1: String = facet_postcard::from_slice(&response1[1..]).unwrap();
+    assert_eq!(result1, input1);
+
+    let input2 = "Hello from guest 2".to_string();
+    let payload2 = facet_postcard::to_vec(&input2).unwrap();
+    let response2 = guest2_handle.call_raw(1, payload2).await.unwrap();
+    assert_eq!(response2[0], 0);
+    let result2: String = facet_postcard::from_slice(&response2[1..]).unwrap();
+    assert_eq!(result2, input2);
+
+    // Host can call specific guests
+    let host_handle1 = host_handles.get(&peer_id1).unwrap();
+    let input3 = "Hello to guest 1 from host".to_string();
+    let payload3 = facet_postcard::to_vec(&input3).unwrap();
+    let response3 = host_handle1.call_raw(1, payload3).await.unwrap();
+    assert_eq!(response3[0], 0);
+    let result3: String = facet_postcard::from_slice(&response3[1..]).unwrap();
+    assert_eq!(result3, input3);
+
+    let host_handle2 = host_handles.get(&peer_id2).unwrap();
+    let input4 = "Hello to guest 2 from host".to_string();
+    let payload4 = facet_postcard::to_vec(&input4).unwrap();
+    let response4 = host_handle2.call_raw(1, payload4).await.unwrap();
+    assert_eq!(response4[0], 0);
+    let result4: String = facet_postcard::from_slice(&response4[1..]).unwrap();
+    assert_eq!(result4, input4);
+}
+
+/// Test concurrent calls from multiple guests.
+#[tokio::test]
+async fn multi_peer_concurrent_calls() {
+    let (host, guest1, guest2) = create_host_and_two_guests();
+    let peer_id1 = guest1.peer_id();
+    let peer_id2 = guest2.peer_id();
+
+    let guest1_transport = ShmGuestTransport::new(guest1);
+    let (guest1_handle, guest1_driver) = establish_guest(guest1_transport, TestService);
+
+    let guest2_transport = ShmGuestTransport::new(guest2);
+    let (guest2_handle, guest2_driver) = establish_guest(guest2_transport, TestService);
+
+    let (host_driver, _host_handles) =
+        establish_multi_peer_host(host, vec![(peer_id1, TestService), (peer_id2, TestService)]);
+
+    tokio::spawn(guest1_driver.run());
+    tokio::spawn(guest2_driver.run());
+    tokio::spawn(host_driver.run());
+
+    // Make concurrent calls from both guests
+    let task1 = {
+        let handle = guest1_handle.clone();
+        tokio::spawn(async move {
+            for i in 0i32..5 {
+                let args = (i, 100);
+                let payload = facet_postcard::to_vec(&args).unwrap();
+                let response = handle.call_raw(2, payload).await.unwrap();
+                assert_eq!(response[0], 0);
+                let result: i32 = facet_postcard::from_slice(&response[1..]).unwrap();
+                assert_eq!(result, i + 100);
+            }
+        })
+    };
+
+    let task2 = {
+        let handle = guest2_handle.clone();
+        tokio::spawn(async move {
+            for i in 0i32..5 {
+                let args = (i, 200);
+                let payload = facet_postcard::to_vec(&args).unwrap();
+                let response = handle.call_raw(2, payload).await.unwrap();
+                assert_eq!(response[0], 0);
+                let result: i32 = facet_postcard::from_slice(&response[1..]).unwrap();
+                assert_eq!(result, i + 200);
+            }
+        })
+    };
+
+    task1.await.unwrap();
+    task2.await.unwrap();
 }
