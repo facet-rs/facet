@@ -119,9 +119,13 @@ pub use transport::{
 };
 
 #[cfg(all(feature = "std", unix))]
-pub use spawn::{AddPeerOptions, DeathCallback, SpawnArgs, SpawnArgsError, SpawnTicket};
+pub use spawn::{
+    AddPeerOptions, DeathCallback, SpawnArgs, SpawnArgsError, SpawnTicket, die_with_parent,
+};
 #[cfg(all(feature = "std", windows))]
-pub use spawn_windows::{AddPeerOptions, DeathCallback, SpawnArgs, SpawnArgsError, SpawnTicket};
+pub use spawn_windows::{
+    AddPeerOptions, DeathCallback, SpawnArgs, SpawnArgsError, SpawnTicket, die_with_parent,
+};
 
 #[cfg(feature = "std")]
 pub use wait::{

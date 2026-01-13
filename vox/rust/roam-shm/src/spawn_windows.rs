@@ -9,12 +9,22 @@
 //! On Windows, doorbell communication uses named pipes instead of socketpairs.
 //! The pipe name is passed to the child process via command line.
 //!
+//! # Ensuring child processes die with parent
+//!
+//! Use [`SpawnTicket::spawn`] to spawn a child that will automatically be
+//! terminated when the parent dies (even via TerminateProcess). The child should call
+//! [`die_with_parent`] early in its main function.
+//!
 //! shm[impl shm.spawn.ticket]
 
+use std::io;
 use std::path::PathBuf;
+use std::process::{Child, Command};
 use std::sync::Arc;
 
 use crate::peer::PeerId;
+
+pub use ur_taking_me_with_you::die_with_parent;
 
 /// Callback invoked when a peer dies.
 ///
@@ -83,6 +93,30 @@ impl SpawnTicket {
             format!("--peer-id={}", self.peer_id.get()),
             format!("--doorbell-pipe={}", self.doorbell_pipe),
         ]
+    }
+
+    /// Spawn a child process using this ticket.
+    ///
+    /// This is a convenience method that:
+    /// 1. Adds the spawn arguments to the command
+    /// 2. Spawns the child with die-with-parent behavior
+    ///
+    /// The spawned child will automatically be terminated when the parent dies,
+    /// even via TerminateProcess. The child should call
+    /// [`die_with_parent`] early in its main function.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let ticket = host.add_peer(AddPeerOptions::default())?;
+    /// let mut cmd = Command::new("my-cell");
+    /// let child = ticket.spawn(cmd)?;
+    /// ```
+    ///
+    /// shm[impl shm.spawn.ticket]
+    pub fn spawn(&self, mut command: Command) -> io::Result<Child> {
+        command.args(self.to_args());
+        ur_taking_me_with_you::spawn_dying_with_parent(command)
     }
 }
 

@@ -17,6 +17,7 @@ members = [
     "rust/roam-http-bridge",
     "rust/subject-rust",
     "rust/shm-primitives",
+    "rust/ur-taking-me-with-you",
     # Compliance suite
     "spec/spec-proto",
     "spec/spec-tests",

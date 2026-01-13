@@ -19,6 +19,7 @@ tokio = ["dep:tokio", "dep:roam-session", "dep:roam-stream"]
 [dependencies]
 shm-primitives = { path = "../shm-primitives", default-features = false }
 roam-frame = { path = "../roam-frame" }
+ur-taking-me-with-you = { path = "../ur-taking-me-with-you" }
 roam-wire = { path = "../roam-wire" }
 roam-session = { path = "../roam-session", optional = true }
 roam-stream = { path = "../roam-stream", optional = true }
