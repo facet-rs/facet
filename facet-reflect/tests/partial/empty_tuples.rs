@@ -168,17 +168,14 @@ fn test_is_field_set_for_nested_empty_tuples() {
 fn test_building_nested_empty_tuples_without_navigation() {
     // With the new behavior, we should be able to build trivially constructible tuples
 
-    // ((),) - should now work without navigation
+    // ((),) - now works without navigation because fill_defaults handles ()
     // SAFETY: Shape comes from trusted Facet impl
     let partial = unsafe { Partial::alloc_shape(<((),)>::SHAPE) }.unwrap();
-    let result = partial.build();
-    // This will still fail because build() checks actual initialization, not just is_field_set
-    assert!(
-        result.is_err(),
-        "Still fails - build() requires actual initialization"
-    );
+    let built = partial.build().unwrap();
+    let value: ((),) = built.materialize().unwrap();
+    assert_eq!(value, ((),));
 
-    // Navigation is still required for build to succeed
+    // Navigation also works
     // SAFETY: Shape comes from trusted Facet impl
     let mut partial = unsafe { Partial::alloc_shape(<((),)>::SHAPE) }.unwrap();
     partial = partial.begin_nth_field(0).unwrap();

@@ -594,7 +594,7 @@ impl Frame {
             Tracker::Struct { iset, .. } => {
                 // Drop initialized struct fields
                 if let Type::User(UserType::Struct(struct_type)) = self.allocated.shape().ty {
-                    if iset.all_set() {
+                    if iset.all_set(struct_type.fields.len()) {
                         unsafe {
                             self.allocated
                                 .shape()
@@ -1065,12 +1065,11 @@ impl Frame {
                 }
             }
             Tracker::Struct { iset, .. } => {
-                if iset.all_set() {
-                    Ok(())
-                } else {
-                    // Attempt to find the first uninitialized field, if possible
-                    match self.allocated.shape().ty {
-                        Type::User(UserType::Struct(struct_type)) => {
+                match self.allocated.shape().ty {
+                    Type::User(UserType::Struct(struct_type)) => {
+                        if iset.all_set(struct_type.fields.len()) {
+                            Ok(())
+                        } else {
                             // Find index of the first bit not set
                             let first_missing_idx =
                                 (0..struct_type.fields.len()).find(|&idx| !iset.get(idx));
@@ -1087,10 +1086,10 @@ impl Frame {
                                 })
                             }
                         }
-                        _ => Err(ReflectError::UninitializedValue {
-                            shape: self.allocated.shape(),
-                        }),
                     }
+                    _ => Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    }),
                 }
             }
             Tracker::Enum { variant, data, .. } => {

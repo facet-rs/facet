@@ -175,7 +175,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             let was_fully_init = frame.is_init && matches!(frame.tracker, Tracker::Scalar);
             let mut iset = ISet::new(struct_type.fields.len());
             if was_fully_init {
-                iset.set_all();
+                iset.set_all(struct_type.fields.len());
             }
             frame.tracker = Tracker::Struct {
                 iset,

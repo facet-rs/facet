@@ -5,30 +5,40 @@ pub struct ISet {
 }
 
 impl ISet {
-    /// The maximum index that can be tracked.
-    pub const MAX_INDEX: usize = 63;
+    /// The maximum number of fields that can be tracked (64).
+    pub const MAX_FIELDS: usize = 64;
 
     /// Creates a new ISet with all bits set except for the lowest `count` bits, which are unset.
     ///
     /// # Panics
     ///
-    /// Panics if `count` >= 64 (max 63 fields due to shift overflow).
+    /// Panics if `count` > MAX_FIELDS.
     #[inline]
     pub fn new(count: usize) -> Self {
-        if count >= 64 {
+        if count > Self::MAX_FIELDS {
             panic!(
-                "ISet can only track up to 63 fields. Count {count} is out of bounds (shift overflow at 64)."
+                "ISet can only track up to {} fields. Count {count} is out of bounds.",
+                Self::MAX_FIELDS
             );
         }
-        let flags = !((1u64 << count) - 1);
+        // For count=MAX_FIELDS, we want flags=0 (all fields unset)
+        // For count<MAX_FIELDS, flags = !((1 << count) - 1) sets bits >= count
+        let flags = if count == Self::MAX_FIELDS {
+            0
+        } else {
+            !((1u64 << count) - 1)
+        };
         Self { flags }
     }
 
     /// Sets the bit at the given index.
     #[inline]
     pub fn set(&mut self, index: usize) {
-        if index >= 64 {
-            panic!("ISet can only track up to 64 fields. Index {index} is out of bounds.");
+        if index >= Self::MAX_FIELDS {
+            panic!(
+                "ISet can only track up to {} fields. Index {index} is out of bounds.",
+                Self::MAX_FIELDS
+            );
         }
         self.flags |= 1 << index;
     }
@@ -36,8 +46,11 @@ impl ISet {
     /// Unsets the bit at the given index.
     #[inline]
     pub fn unset(&mut self, index: usize) {
-        if index >= 64 {
-            panic!("ISet can only track up to 64 fields. Index {index} is out of bounds.");
+        if index >= Self::MAX_FIELDS {
+            panic!(
+                "ISet can only track up to {} fields. Index {index} is out of bounds.",
+                Self::MAX_FIELDS
+            );
         }
         self.flags &= !(1 << index);
     }
@@ -45,21 +58,36 @@ impl ISet {
     /// Checks if the bit at the given index is set.
     #[inline]
     pub fn get(&self, index: usize) -> bool {
-        if index >= 64 {
-            panic!("ISet can only track up to 64 fields. Index {index} is out of bounds.");
+        if index >= Self::MAX_FIELDS {
+            panic!(
+                "ISet can only track up to {} fields. Index {index} is out of bounds.",
+                Self::MAX_FIELDS
+            );
         }
         (self.flags & (1 << index)) != 0
     }
 
-    /// Returns true if all bits up to MAX_INDEX are set.
+    /// Returns true if all bits up to `count` are set.
     #[inline]
-    pub const fn all_set(&self) -> bool {
-        self.flags == u64::MAX >> (63 - Self::MAX_INDEX)
+    pub const fn all_set(&self, count: usize) -> bool {
+        // Check that the lowest `count` bits are all set
+        if count == 0 {
+            return true;
+        }
+        if count >= Self::MAX_FIELDS {
+            return self.flags == u64::MAX;
+        }
+        let mask = (1u64 << count) - 1;
+        (self.flags & mask) == mask
     }
 
-    /// Sets all bits up to MAX_INDEX.
+    /// Sets all bits up to `count`.
     #[inline]
-    pub const fn set_all(&mut self) {
-        self.flags = u64::MAX >> (63 - Self::MAX_INDEX);
+    pub const fn set_all(&mut self, count: usize) {
+        if count >= Self::MAX_FIELDS {
+            self.flags = u64::MAX;
+        } else {
+            self.flags |= (1u64 << count) - 1;
+        }
     }
 }

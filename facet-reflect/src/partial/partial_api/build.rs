@@ -15,12 +15,32 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Fill in defaults for any unset fields before checking initialization
+        crate::trace!(
+            "build(): calling fill_defaults for {}, tracker={:?}, is_init={}",
+            frame.allocated.shape(),
+            frame.tracker.kind(),
+            frame.is_init
+        );
         frame.fill_defaults()?;
+        crate::trace!(
+            "build(): after fill_defaults, tracker={:?}, is_init={}",
+            frame.tracker.kind(),
+            frame.is_init
+        );
 
         let frame = self.frames_mut().pop().unwrap();
 
         // Check initialization before proceeding
-        if let Err(e) = frame.require_full_initialization() {
+        crate::trace!(
+            "build(): calling require_full_initialization, tracker={:?}",
+            frame.tracker.kind()
+        );
+        let init_result = frame.require_full_initialization();
+        crate::trace!(
+            "build(): require_full_initialization returned {:?}",
+            init_result.is_ok()
+        );
+        if let Err(e) = init_result {
             // Put the frame back so Drop can handle cleanup properly
             self.frames_mut().push(frame);
             return Err(e);
