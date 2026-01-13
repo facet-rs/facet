@@ -7,6 +7,7 @@ edition = "2024"
 facet-core = "0.42"
 facet-format = "0.42"
 facet-reflect = "0.42"
+styx-format = { path = "../styx-format" }
 styx-parse = { path = "../styx-parse" }
 
 [dev-dependencies]

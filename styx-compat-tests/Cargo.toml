@@ -1,0 +1,14 @@
+[package]
+name = "styx-compat-tests"
+version = "0.1.0"
+edition = "2024"
+description = "Cross-compatibility tests between facet-styx and serde_styx"
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+facet = "0.42"
+facet-styx = { path = "../facet-styx" }
+serde = { version = "1.0", features = ["derive"] }
+serde_styx = { path = "../serde_styx" }

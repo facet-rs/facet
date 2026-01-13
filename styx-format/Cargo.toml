@@ -1,0 +1,9 @@
+[package]
+name = "styx-format"
+version = "0.1.0"
+edition = "2024"
+description = "Core formatting and parsing utilities for Styx"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+styx-parse = { path = "../styx-parse" }

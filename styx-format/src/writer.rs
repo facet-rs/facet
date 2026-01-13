@@ -1,0 +1,508 @@
+//! Low-level Styx output writer.
+//!
+//! Provides a structured way to build Styx output with proper formatting,
+//! independent of any serialization framework.
+
+use crate::options::FormatOptions;
+use crate::scalar::{can_be_bare, count_escapes, count_newlines, escape_quoted};
+
+/// Context for tracking serialization state.
+#[derive(Debug, Clone, Copy)]
+pub enum Context {
+    /// Inside a struct/object - tracks if we've written any fields
+    Struct { first: bool, is_root: bool },
+    /// Inside a sequence - tracks if we've written any items
+    Seq { first: bool },
+}
+
+/// Low-level Styx output writer.
+///
+/// This writer handles the formatting logic for Styx output, including:
+/// - Indentation and newlines
+/// - Scalar quoting decisions
+/// - Inline vs multi-line formatting
+pub struct StyxWriter {
+    out: Vec<u8>,
+    stack: Vec<Context>,
+    options: FormatOptions,
+}
+
+impl StyxWriter {
+    /// Create a new writer with default options.
+    pub fn new() -> Self {
+        Self::with_options(FormatOptions::default())
+    }
+
+    /// Create a new writer with the given options.
+    pub fn with_options(options: FormatOptions) -> Self {
+        Self {
+            out: Vec::new(),
+            stack: Vec::new(),
+            options,
+        }
+    }
+
+    /// Consume the writer and return the output bytes.
+    pub fn finish(self) -> Vec<u8> {
+        self.out
+    }
+
+    /// Consume the writer and return the output as a String.
+    ///
+    /// # Panics
+    /// Panics if the output is not valid UTF-8 (should never happen with Styx).
+    pub fn finish_string(self) -> String {
+        String::from_utf8(self.out).expect("Styx output should always be valid UTF-8")
+    }
+
+    /// Current nesting depth.
+    pub fn depth(&self) -> usize {
+        self.stack.len()
+    }
+
+    /// Calculate available width at current depth.
+    pub fn available_width(&self) -> usize {
+        let used = self.depth() * self.options.indent.len();
+        self.options.max_width.saturating_sub(used)
+    }
+
+    /// Check if we should use inline formatting at current depth.
+    pub fn should_inline(&self) -> bool {
+        if self.options.force_inline {
+            return true;
+        }
+        if self.options.force_multiline {
+            return false;
+        }
+        // Root level always uses newlines
+        if self.depth() == 0 {
+            return false;
+        }
+        // Check if we're inside a root struct
+        if let Some(Context::Struct { is_root: true, .. }) = self.stack.first() {
+            if self.depth() == 1 {
+                return false;
+            }
+        }
+        // If available width is too small, force multiline
+        self.available_width() >= self.options.min_inline_width
+    }
+
+    /// Write indentation for the current depth.
+    pub fn write_indent(&mut self) {
+        for _ in 0..self.depth() {
+            self.out.extend_from_slice(self.options.indent.as_bytes());
+        }
+    }
+
+    /// Write a newline and indentation.
+    pub fn write_newline_indent(&mut self) {
+        self.out.push(b'\n');
+        self.write_indent();
+    }
+
+    /// Write raw bytes to the output.
+    pub fn write_raw(&mut self, bytes: &[u8]) {
+        self.out.extend_from_slice(bytes);
+    }
+
+    /// Write a raw string to the output.
+    pub fn write_str(&mut self, s: &str) {
+        self.out.extend_from_slice(s.as_bytes());
+    }
+
+    /// Write a single byte.
+    pub fn write_byte(&mut self, b: u8) {
+        self.out.push(b);
+    }
+
+    /// Begin a struct/object.
+    ///
+    /// If `is_root` is true, no braces are written (implicit root object).
+    pub fn begin_struct(&mut self, is_root: bool) {
+        self.before_value();
+
+        if is_root {
+            self.stack.push(Context::Struct {
+                first: true,
+                is_root: true,
+            });
+        } else {
+            self.out.push(b'{');
+            self.stack.push(Context::Struct {
+                first: true,
+                is_root: false,
+            });
+        }
+    }
+
+    /// Write a field key.
+    ///
+    /// Returns an error message if called outside of a struct context.
+    pub fn field_key(&mut self, key: &str) -> Result<(), &'static str> {
+        // Extract state first to avoid borrow conflicts
+        let (is_struct, is_first, is_root) = match self.stack.last() {
+            Some(Context::Struct { first, is_root }) => (true, *first, *is_root),
+            _ => (false, true, false),
+        };
+
+        if !is_struct {
+            return Err("field_key called outside of struct");
+        }
+
+        let should_inline = self.should_inline();
+
+        if !is_first {
+            if should_inline && !is_root {
+                self.out.extend_from_slice(b", ");
+            } else {
+                self.write_newline_indent();
+            }
+        } else {
+            // First field
+            if !is_root && !should_inline {
+                self.write_newline_indent();
+            }
+        }
+
+        // Update the first flag
+        if let Some(Context::Struct { first, .. }) = self.stack.last_mut() {
+            *first = false;
+        }
+
+        // Write the key - keys are typically bare identifiers
+        if can_be_bare(key) {
+            self.out.extend_from_slice(key.as_bytes());
+        } else {
+            self.write_quoted_string(key);
+        }
+        self.out.push(b' ');
+        Ok(())
+    }
+
+    /// End a struct/object.
+    ///
+    /// Returns an error message if called without a matching begin_struct.
+    pub fn end_struct(&mut self) -> Result<(), &'static str> {
+        // Check should_inline before popping (need stack state)
+        let should_inline = self.should_inline();
+
+        match self.stack.pop() {
+            Some(Context::Struct { first, is_root }) => {
+                if is_root {
+                    // Root struct: add trailing newline if we wrote anything
+                    if !first {
+                        self.out.push(b'\n');
+                    }
+                } else {
+                    if !first && !should_inline {
+                        // Dedent before closing brace
+                        self.write_newline_indent();
+                    }
+                    self.out.push(b'}');
+                }
+                Ok(())
+            }
+            _ => Err("end_struct called without matching begin_struct"),
+        }
+    }
+
+    /// Begin a sequence.
+    pub fn begin_seq(&mut self) {
+        self.before_value();
+        self.out.push(b'(');
+        self.stack.push(Context::Seq { first: true });
+    }
+
+    /// End a sequence.
+    ///
+    /// Returns an error message if called without a matching begin_seq.
+    pub fn end_seq(&mut self) -> Result<(), &'static str> {
+        // Check should_inline before popping (need stack state)
+        let should_inline = self.should_inline();
+
+        match self.stack.pop() {
+            Some(Context::Seq { first }) => {
+                if !first && !should_inline {
+                    self.write_newline_indent();
+                }
+                self.out.push(b')');
+                Ok(())
+            }
+            _ => Err("end_seq called without matching begin_seq"),
+        }
+    }
+
+    /// Write a null/unit value.
+    pub fn write_null(&mut self) {
+        self.before_value();
+        self.out.push(b'@');
+    }
+
+    /// Write a boolean value.
+    pub fn write_bool(&mut self, v: bool) {
+        self.before_value();
+        if v {
+            self.out.extend_from_slice(b"true");
+        } else {
+            self.out.extend_from_slice(b"false");
+        }
+    }
+
+    /// Write an i64 value.
+    pub fn write_i64(&mut self, v: i64) {
+        self.before_value();
+        self.out.extend_from_slice(v.to_string().as_bytes());
+    }
+
+    /// Write a u64 value.
+    pub fn write_u64(&mut self, v: u64) {
+        self.before_value();
+        self.out.extend_from_slice(v.to_string().as_bytes());
+    }
+
+    /// Write an i128 value.
+    pub fn write_i128(&mut self, v: i128) {
+        self.before_value();
+        self.out.extend_from_slice(v.to_string().as_bytes());
+    }
+
+    /// Write a u128 value.
+    pub fn write_u128(&mut self, v: u128) {
+        self.before_value();
+        self.out.extend_from_slice(v.to_string().as_bytes());
+    }
+
+    /// Write an f64 value.
+    pub fn write_f64(&mut self, v: f64) {
+        self.before_value();
+        self.out.extend_from_slice(v.to_string().as_bytes());
+    }
+
+    /// Write a string value with appropriate quoting.
+    pub fn write_string(&mut self, s: &str) {
+        self.before_value();
+        self.write_scalar_string(s);
+    }
+
+    /// Write a char value.
+    pub fn write_char(&mut self, c: char) {
+        self.before_value();
+        let mut buf = [0u8; 4];
+        let s = c.encode_utf8(&mut buf);
+        self.write_scalar_string(s);
+    }
+
+    /// Write bytes as hex-encoded string.
+    pub fn write_bytes(&mut self, bytes: &[u8]) {
+        self.before_value();
+        self.out.push(b'"');
+        for byte in bytes.iter() {
+            let hex = |d: u8| {
+                if d < 10 {
+                    b'0' + d
+                } else {
+                    b'a' + (d - 10)
+                }
+            };
+            self.out.push(hex(byte >> 4));
+            self.out.push(hex(byte & 0xf));
+        }
+        self.out.push(b'"');
+    }
+
+    /// Write a variant tag (e.g., `@some`).
+    pub fn write_variant_tag(&mut self, name: &str) {
+        self.before_value();
+        self.out.push(b'@');
+        self.out.extend_from_slice(name.as_bytes());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Internal helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Handle separator before a value in a container.
+    fn before_value(&mut self) {
+        // Extract state first to avoid borrow conflicts
+        let (is_seq, is_first) = match self.stack.last() {
+            Some(Context::Seq { first }) => (true, *first),
+            _ => (false, true),
+        };
+
+        if is_seq && !is_first {
+            if self.should_inline() {
+                self.out.push(b' ');
+            } else {
+                self.write_newline_indent();
+            }
+        }
+
+        // Update the first flag
+        if let Some(Context::Seq { first }) = self.stack.last_mut() {
+            *first = false;
+        }
+    }
+
+    /// Write a scalar value with appropriate quoting.
+    fn write_scalar_string(&mut self, s: &str) {
+        // Rule 1: Prefer bare scalars when valid
+        if can_be_bare(s) {
+            self.out.extend_from_slice(s.as_bytes());
+            return;
+        }
+
+        let newline_count = count_newlines(s);
+        let escape_count = count_escapes(s);
+
+        // Rule 3: Use heredocs for multi-line text
+        if newline_count >= self.options.heredoc_line_threshold {
+            self.write_heredoc(s);
+            return;
+        }
+
+        // Rule 2: Use raw strings for complex escaping (> 3 escapes)
+        if escape_count > 3 && !s.contains("\"#") {
+            self.write_raw_string(s);
+            return;
+        }
+
+        // Default: quoted string
+        self.write_quoted_string(s);
+    }
+
+    /// Write a quoted string with proper escaping.
+    fn write_quoted_string(&mut self, s: &str) {
+        self.out.push(b'"');
+        let escaped = escape_quoted(s);
+        self.out.extend_from_slice(escaped.as_bytes());
+        self.out.push(b'"');
+    }
+
+    /// Write a raw string (r#"..."#).
+    fn write_raw_string(&mut self, s: &str) {
+        // Find the minimum number of # needed
+        let mut hashes = 0;
+        let mut check = String::from("\"");
+        while s.contains(&check) {
+            hashes += 1;
+            check = format!("\"{}#", "#".repeat(hashes - 1));
+        }
+
+        self.out.push(b'r');
+        for _ in 0..hashes {
+            self.out.push(b'#');
+        }
+        self.out.push(b'"');
+        self.out.extend_from_slice(s.as_bytes());
+        self.out.push(b'"');
+        for _ in 0..hashes {
+            self.out.push(b'#');
+        }
+    }
+
+    /// Write a heredoc string.
+    fn write_heredoc(&mut self, s: &str) {
+        // Find a delimiter that doesn't appear in the string
+        let delimiters = ["TEXT", "END", "HEREDOC", "DOC", "STR", "CONTENT"];
+        let delimiter = delimiters
+            .iter()
+            .find(|d| !s.contains(*d))
+            .unwrap_or(&"TEXT");
+
+        self.out.extend_from_slice(b"<<");
+        self.out.extend_from_slice(delimiter.as_bytes());
+        self.out.push(b'\n');
+        self.out.extend_from_slice(s.as_bytes());
+        if !s.ends_with('\n') {
+            self.out.push(b'\n');
+        }
+        self.out.extend_from_slice(delimiter.as_bytes());
+    }
+}
+
+impl Default for StyxWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_struct() {
+        let mut w = StyxWriter::new();
+        w.begin_struct(true);
+        w.field_key("name").unwrap();
+        w.write_string("hello");
+        w.field_key("value").unwrap();
+        w.write_i64(42);
+        w.end_struct().unwrap();
+
+        let result = w.finish_string();
+        assert!(result.contains("name hello"));
+        assert!(result.contains("value 42"));
+    }
+
+    #[test]
+    fn test_nested_inline() {
+        let mut w = StyxWriter::with_options(FormatOptions::default());
+        w.begin_struct(true);
+        w.field_key("point").unwrap();
+        w.begin_struct(false);
+        w.field_key("x").unwrap();
+        w.write_i64(10);
+        w.field_key("y").unwrap();
+        w.write_i64(20);
+        w.end_struct().unwrap();
+        w.end_struct().unwrap();
+
+        let result = w.finish_string();
+        // Nested struct should be inline
+        assert!(result.contains("{x 10, y 20}"));
+    }
+
+    #[test]
+    fn test_sequence() {
+        let mut w = StyxWriter::new();
+        w.begin_struct(true);
+        w.field_key("items").unwrap();
+        w.begin_seq();
+        w.write_i64(1);
+        w.write_i64(2);
+        w.write_i64(3);
+        w.end_seq().unwrap();
+        w.end_struct().unwrap();
+
+        let result = w.finish_string();
+        assert!(result.contains("items (1 2 3)"));
+    }
+
+    #[test]
+    fn test_quoted_string() {
+        let mut w = StyxWriter::new();
+        w.begin_struct(true);
+        w.field_key("message").unwrap();
+        w.write_string("hello world");
+        w.end_struct().unwrap();
+
+        let result = w.finish_string();
+        assert!(result.contains("message \"hello world\""));
+    }
+
+    #[test]
+    fn test_force_inline() {
+        let mut w = StyxWriter::with_options(FormatOptions::default().inline());
+        w.begin_struct(false);
+        w.field_key("a").unwrap();
+        w.write_i64(1);
+        w.field_key("b").unwrap();
+        w.write_i64(2);
+        w.end_struct().unwrap();
+
+        let result = w.finish_string();
+        assert_eq!(result, "{a 1, b 2}");
+    }
+}
