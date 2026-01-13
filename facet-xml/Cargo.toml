@@ -23,13 +23,15 @@ facet-format = { path = "../facet-format", version = "0.42.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
 
 # XML parsing - using quick-xml which is the most mature Rust XML parser
-quick-xml = "0.38"
+quick-xml = { version = "0.39", default-features = false }
 zmij = { version = "1", optional = true }
 itoa = { version = "1", optional = true }
 
 # Streaming support
 corosensei = { version = "0.3", optional = true }
-tokio = { version = "1", default-features = false, optional = true, features = ["io-util"] }
+tokio = { version = "1", default-features = false, optional = true, features = [
+    "io-util",
+] }
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
@@ -44,7 +46,11 @@ divan = { workspace = true }
 facet = { path = "../facet", features = ["doc", "net"] }
 facet-diff = { path = "../facet-diff" }
 facet-format = { path = "../facet-format", features = ["jit", "net"] }
-facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "tokio", "net"] }
+facet-format-suite = { path = "../facet-format-suite", features = [
+    "third-party",
+    "tokio",
+    "net",
+] }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 tokio = { version = "1", features = ["rt", "macros"] }
