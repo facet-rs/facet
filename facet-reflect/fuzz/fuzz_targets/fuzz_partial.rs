@@ -105,12 +105,12 @@ enum PartialOp {
     SetBool(bool),
     SetString(SmallString),
     End,
-    BeginList,
+    InitList,
     BeginListItem,
-    BeginMap,
+    InitMap,
     BeginKey,
     BeginValue,
-    BeginSet,
+    InitSet,
     BeginSetItem,
     BeginSome,
     BeginInner,
@@ -131,7 +131,7 @@ enum PartialOp {
     SelectNthVariant(u8),
     SelectVariantNamed(SmallString),
     // Array operations
-    BeginArray,
+    InitArray,
     // Parsing operations
     ParseFromStr(SmallString),
     // Custom deserialization
@@ -220,12 +220,12 @@ fn apply_op<'a>(partial: Partial<'a>, op: &PartialOp) -> Option<Partial<'a>> {
         PartialOp::SetBool(v) => partial.set(*v).ok(),
         PartialOp::SetString(s) => partial.set(s.0.clone()).ok(),
         PartialOp::End => partial.end().ok(),
-        PartialOp::BeginList => partial.begin_list().ok(),
+        PartialOp::InitList => partial.init_list().ok(),
         PartialOp::BeginListItem => partial.begin_list_item().ok(),
-        PartialOp::BeginMap => partial.begin_map().ok(),
+        PartialOp::InitMap => partial.init_map().ok(),
         PartialOp::BeginKey => partial.begin_key().ok(),
         PartialOp::BeginValue => partial.begin_value().ok(),
-        PartialOp::BeginSet => partial.begin_set().ok(),
+        PartialOp::InitSet => partial.init_set().ok(),
         PartialOp::BeginSetItem => partial.begin_set_item().ok(),
         PartialOp::BeginSome => partial.begin_some().ok(),
         PartialOp::BeginInner => partial.begin_inner().ok(),
@@ -234,10 +234,7 @@ fn apply_op<'a>(partial: Partial<'a>, op: &PartialOp) -> Option<Partial<'a>> {
         PartialOp::SetNthFieldToDefault(idx) => {
             partial.set_nth_field_to_default(*idx as usize).ok()
         }
-        PartialOp::BeginDeferred => {
-            let resolution = Resolution::new();
-            partial.begin_deferred(resolution).ok()
-        }
+        PartialOp::BeginDeferred => partial.begin_deferred().ok(),
         PartialOp::FinishDeferred => partial.finish_deferred().ok(),
         PartialOp::Build => {
             // Build consumes the partial and returns a HeapValue
@@ -255,7 +252,7 @@ fn apply_op<'a>(partial: Partial<'a>, op: &PartialOp) -> Option<Partial<'a>> {
         PartialOp::BeginErr => partial.begin_err().ok(),
         PartialOp::SelectNthVariant(idx) => partial.select_nth_variant(*idx as usize).ok(),
         PartialOp::SelectVariantNamed(name) => partial.select_variant_named(&name.0).ok(),
-        PartialOp::BeginArray => partial.begin_array().ok(),
+        PartialOp::InitArray => partial.init_array().ok(),
         PartialOp::ParseFromStr(s) => partial.parse_from_str(&s.0).ok(),
         PartialOp::BeginCustomDeserialization => partial.begin_custom_deserialization().ok(),
     }
