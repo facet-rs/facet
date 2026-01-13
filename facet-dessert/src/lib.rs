@@ -51,17 +51,41 @@ impl std::error::Error for DessertError {
     }
 }
 
-/// Set a string value, handling `&str`, `Cow<str>`, and `String` appropriately.
+impl From<ReflectError> for DessertError {
+    fn from(error: ReflectError) -> Self {
+        DessertError::Reflect { error, span: None }
+    }
+}
+
+/// Set a string value, handling `Option<T>`, parseable types, and string types.
 ///
-/// # Type Parameters
-/// - `'input`: The lifetime of the input data
-/// - `BORROW`: Whether borrowing from input is allowed
-///
-/// # Arguments
-/// - `wip`: The partial value being constructed
-/// - `s`: The string value to set
-/// - `span`: Optional span for error reporting
+/// This function handles:
+/// 1. `Option<T>` - unwraps to Some and recurses
+/// 2. Types with `parse_from_str` (numbers, bools, etc.)
+/// 3. String types (`&str`, `Cow<str>`, `String`)
 pub fn set_string_value<'input, const BORROW: bool>(
+    mut wip: Partial<'input, BORROW>,
+    s: Cow<'input, str>,
+    span: Option<Span>,
+) -> Result<Partial<'input, BORROW>, DessertError> {
+    let shape = wip.shape();
+
+    if matches!(&shape.def, Def::Option(_)) {
+        wip = wip.begin_some()?;
+        wip = set_string_value(wip, s, span)?;
+        wip = wip.end()?;
+        return Ok(wip);
+    }
+
+    if shape.vtable.has_parse() {
+        wip = wip.parse_from_str(s.as_ref())?;
+        return Ok(wip);
+    }
+
+    set_string_value_inner(wip, s, span)
+}
+
+fn set_string_value_inner<'input, const BORROW: bool>(
     mut wip: Partial<'input, BORROW>,
     s: Cow<'input, str>,
     span: Option<Span>,
@@ -70,14 +94,12 @@ pub fn set_string_value<'input, const BORROW: bool>(
 
     let reflect_err = |e: ReflectError| DessertError::Reflect { error: e, span };
 
-    // Check if target is &str (shared reference to str)
     if let Def::Pointer(ptr_def) = shape.def
         && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
         && ptr_def
             .pointee()
             .is_some_and(|p| p.type_identifier == "str")
     {
-        // In owned mode, we cannot borrow from input at all
         if !BORROW {
             return Err(DessertError::CannotBorrow {
                 message: "cannot deserialize into &str when borrowing is disabled - use String or Cow<str> instead".into(),
@@ -96,7 +118,6 @@ pub fn set_string_value<'input, const BORROW: bool>(
         }
     }
 
-    // Check if target is Cow<str>
     if let Def::Pointer(ptr_def) = shape.def
         && matches!(ptr_def.known, Some(KnownPointer::Cow))
         && ptr_def
@@ -107,7 +128,6 @@ pub fn set_string_value<'input, const BORROW: bool>(
         return Ok(wip);
     }
 
-    // Default: convert to owned String
     wip = wip.set(s.into_owned()).map_err(&reflect_err)?;
     Ok(wip)
 }
@@ -116,15 +136,6 @@ pub fn set_string_value<'input, const BORROW: bool>(
 ///
 /// This handles `&[u8]`, `Cow<[u8]>`, and `Vec<u8>` appropriately based on
 /// whether borrowing is enabled and whether the data is borrowed or owned.
-///
-/// # Type Parameters
-/// - `'input`: The lifetime of the input data
-/// - `BORROW`: Whether borrowing from input is allowed
-///
-/// # Arguments
-/// - `wip`: The partial value being constructed
-/// - `b`: The bytes value to set
-/// - `span`: Optional span for error reporting
 pub fn set_bytes_value<'input, const BORROW: bool>(
     mut wip: Partial<'input, BORROW>,
     b: Cow<'input, [u8]>,
@@ -134,15 +145,12 @@ pub fn set_bytes_value<'input, const BORROW: bool>(
 
     let reflect_err = |e: ReflectError| DessertError::Reflect { error: e, span };
 
-    // Helper to check if a shape is a byte slice ([u8])
     let is_byte_slice = |pointee: &facet_core::Shape| matches!(pointee.def, Def::Slice(slice_def) if slice_def.t.type_identifier == "u8");
 
-    // Check if target is &[u8] (shared reference to byte slice)
     if let Def::Pointer(ptr_def) = shape.def
         && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
         && ptr_def.pointee().is_some_and(is_byte_slice)
     {
-        // In owned mode, we cannot borrow from input at all
         if !BORROW {
             return Err(DessertError::CannotBorrow {
                 message: "cannot deserialize into &[u8] when borrowing is disabled - use Vec<u8> or Cow<[u8]> instead".into(),
@@ -163,7 +171,6 @@ pub fn set_bytes_value<'input, const BORROW: bool>(
         }
     }
 
-    // Check if target is Cow<[u8]>
     if let Def::Pointer(ptr_def) = shape.def
         && matches!(ptr_def.known, Some(KnownPointer::Cow))
         && ptr_def.pointee().is_some_and(is_byte_slice)
@@ -172,7 +179,6 @@ pub fn set_bytes_value<'input, const BORROW: bool>(
         return Ok(wip);
     }
 
-    // Default: convert to owned Vec<u8>
     wip = wip.set(b.into_owned()).map_err(&reflect_err)?;
     Ok(wip)
 }

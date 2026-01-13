@@ -50,7 +50,7 @@ fn sequence_numbers() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn struct_nested() {
     #[derive(Facet, Debug, PartialEq)]
     struct Child {

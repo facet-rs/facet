@@ -5,18 +5,20 @@
 //! - Nodes have a tag name
 //! - Nodes can have attributes (key-value pairs)
 //! - Nodes can have children (mixed content: text and child elements interleaved)
-//!
-//! This is fundamentally different from facet-format's event model, which is
-//! designed for flat key-value formats like JSON and TOML.
 
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 mod deserializer;
+mod error;
 mod event;
 mod parser;
+mod parser_ext;
 mod serializer;
+mod tracing_macros;
 
 pub use deserializer::*;
+pub use error::*;
 pub use event::*;
 pub use parser::*;
+pub use parser_ext::*;
 pub use serializer::*;
