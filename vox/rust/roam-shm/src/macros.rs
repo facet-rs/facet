@@ -7,6 +7,8 @@
 // trace! - Very verbose: function entry/exit, loop iterations, hot paths
 // -----------------------------------------------------------------------------
 
+#![allow(unused_macro_rules)]
+
 #[cfg(feature = "tracing")]
 macro_rules! trace {
     ($($arg:tt)*) => { ::tracing::trace!($($arg)*) }

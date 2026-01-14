@@ -494,11 +494,11 @@ where
 /// # Example
 ///
 /// ```ignore
-/// use roam_shm::{ShmGuest, ShmGuestTransport};
+/// use roam_shm::transport::ShmGuestTransport;
 /// use roam_shm::driver::establish_guest;
 ///
-/// let guest = ShmGuest::attach_path("/dev/shm/myapp")?;
-/// let transport = ShmGuestTransport::new(guest);
+/// // For spawned processes, use from_spawn_args:
+/// let transport = ShmGuestTransport::from_spawn_args(&args)?;
 /// let (handle, driver) = establish_guest(transport, dispatcher);
 /// tokio::spawn(driver.run());
 /// // Use handle to make calls
@@ -849,6 +849,7 @@ impl MultiPeerHostDriver {
         impl Drop for NoisyGuard {
             fn drop(&mut self) {
                 tracing::warn!("the driver is dropping now children!");
+                panic!("someone IS DROPPING OUR DRIVER");
             }
         }
         let _guard = NoisyGuard;

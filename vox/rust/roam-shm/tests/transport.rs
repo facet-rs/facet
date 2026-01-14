@@ -21,11 +21,17 @@ fn create_host_and_guest() -> (ShmHost, ShmGuest) {
     (host, guest)
 }
 
+fn create_guest_transport(guest: ShmGuest) -> ShmGuestTransport {
+    let (_host_doorbell, guest_doorbell_fd) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd).unwrap();
+    ShmGuestTransport::new_with_doorbell(guest, guest_doorbell)
+}
+
 #[test]
 fn guest_transport_send_request() {
     let (mut host, guest) = create_host_and_guest();
     let peer_id = guest.peer_id();
-    let mut transport = ShmGuestTransport::new(guest);
+    let mut transport = create_guest_transport(guest);
 
     // Send a Request message through the transport
     let msg = Message::Request {
@@ -57,7 +63,7 @@ fn guest_transport_send_request() {
 fn guest_transport_recv_response() {
     let (mut host, guest) = create_host_and_guest();
     let peer_id = guest.peer_id();
-    let mut transport = ShmGuestTransport::new(guest);
+    let mut transport = create_guest_transport(guest);
 
     // Host sends a Response message
     let msg = Message::Response {
@@ -78,7 +84,7 @@ fn guest_transport_recv_response() {
 fn host_guest_transport_roundtrip() {
     let (mut host, guest) = create_host_and_guest();
     let peer_id = guest.peer_id();
-    let mut guest_transport = ShmGuestTransport::new(guest);
+    let mut guest_transport = create_guest_transport(guest);
 
     // Guest sends request
     let request = Message::Request {
@@ -121,7 +127,7 @@ fn host_guest_transport_roundtrip() {
 fn streaming_data_messages() {
     let (mut host, guest) = create_host_and_guest();
     let _peer_id = guest.peer_id();
-    let mut guest_transport = ShmGuestTransport::new(guest);
+    let mut guest_transport = create_guest_transport(guest);
 
     // Send multiple Data messages (simulating a stream)
     for i in 0..5 {
@@ -159,7 +165,7 @@ fn streaming_data_messages() {
 #[test]
 fn cancel_message() {
     let (mut host, guest) = create_host_and_guest();
-    let mut guest_transport = ShmGuestTransport::new(guest);
+    let mut guest_transport = create_guest_transport(guest);
 
     // Send a request, then cancel it
     let request = Message::Request {
@@ -192,7 +198,7 @@ fn cancel_message() {
 fn reset_message() {
     let (mut host, guest) = create_host_and_guest();
     let peer_id = guest.peer_id();
-    let mut guest_transport = ShmGuestTransport::new(guest);
+    let mut guest_transport = create_guest_transport(guest);
 
     // Host sends Reset to guest
     let reset = Message::Reset { channel_id: 42 };
@@ -207,7 +213,7 @@ fn reset_message() {
 #[test]
 fn goodbye_message() {
     let (mut host, guest) = create_host_and_guest();
-    let mut guest_transport = ShmGuestTransport::new(guest);
+    let mut guest_transport = create_guest_transport(guest);
 
     // Guest sends Goodbye
     let goodbye = Message::Goodbye {
@@ -227,7 +233,7 @@ fn goodbye_message() {
 #[test]
 fn large_metadata() {
     let (mut host, guest) = create_host_and_guest();
-    let mut guest_transport = ShmGuestTransport::new(guest);
+    let mut guest_transport = create_guest_transport(guest);
 
     // Create a request with lots of metadata
     let mut metadata = Vec::new();
@@ -259,7 +265,7 @@ fn large_metadata() {
 #[test]
 fn empty_metadata_and_payload() {
     let (mut host, guest) = create_host_and_guest();
-    let mut guest_transport = ShmGuestTransport::new(guest);
+    let mut guest_transport = create_guest_transport(guest);
 
     let request = Message::Request {
         request_id: 1,
@@ -280,7 +286,7 @@ fn empty_metadata_and_payload() {
 #[test]
 fn recv_timeout_no_message() {
     let (_host, guest) = create_host_and_guest();
-    let mut transport = ShmGuestTransport::new(guest);
+    let mut transport = create_guest_transport(guest);
 
     // No message sent, should timeout
     let result = transport.recv_timeout(std::time::Duration::from_millis(10));

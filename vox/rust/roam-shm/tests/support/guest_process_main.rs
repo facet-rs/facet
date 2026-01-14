@@ -11,7 +11,6 @@
 
 use roam_session::{ChannelRegistry, Rx, ServiceDispatcher, Tx, dispatch_call};
 use roam_shm::driver::establish_guest;
-use roam_shm::guest::ShmGuest;
 use roam_shm::spawn::{SpawnArgs, die_with_parent};
 use roam_shm::transport::ShmGuestTransport;
 use std::pin::Pin;
@@ -90,11 +89,9 @@ async fn main() {
     // Parse spawn arguments from command line
     let args = SpawnArgs::from_env().expect("failed to parse spawn args");
 
-    // Attach to SHM segment using the ticket
-    let guest = ShmGuest::attach_with_ticket(&args).expect("failed to attach to SHM");
-
-    // Create guest transport and driver
-    let transport = ShmGuestTransport::new(guest);
+    // Create guest transport from spawn args (includes doorbell setup)
+    let transport =
+        ShmGuestTransport::from_spawn_args(&args).expect("failed to create guest transport");
     let (_handle, driver) = establish_guest(transport, TestService);
 
     // Run the driver until the host disconnects
