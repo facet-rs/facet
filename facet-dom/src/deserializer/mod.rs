@@ -66,7 +66,11 @@ where
         wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let shape = wip.shape();
-        trace!(type_id = %shape.type_identifier, def = ?shape.def, "deserialize_into");
+        use owo_colors::OwoColorize;
+        let module_path = shape.module_path.unwrap_or("?");
+        let module = module_path.dimmed();
+        let name = shape.cyan();
+        trace!(into = %format_args!("{module}::{name}"));
 
         match &shape.ty {
             Type::User(UserType::Struct(_)) => self.deserialize_struct(wip),

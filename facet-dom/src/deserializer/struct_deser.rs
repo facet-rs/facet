@@ -113,7 +113,6 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         }
 
         self.tag = self.parser().expect_node_start()?;
-        trace!(tag = %self.tag, expected = %self.expected_name, "got NodeStart");
 
         // Validate root element name matches expected, unless struct has a tag field
         // (which means it accepts any element name)
@@ -126,7 +125,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         // Set the tag field if present (xml::tag or html::tag)
         if let Some(info) = &self.field_map.tag_field {
             let idx = info.idx;
-            trace!(idx, field_name = %info.field.name, tag = %self.tag, "setting tag field");
+            trace!("→ .{}", info.field.name);
             let tag = self.tag.clone();
             wip = self
                 .dom_deser
@@ -143,11 +142,9 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         self.parser().expect_node_end()?;
 
         if self.using_deferred {
-            trace!("finishing deferred mode for struct with flatten");
             wip = wip.finish_deferred()?;
         }
 
-        trace!(tag = %self.tag, "struct deserialization complete");
         Ok(wip)
     }
 
@@ -155,7 +152,6 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         &mut self,
         mut wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        trace!("processing attributes");
         loop {
             match self
                 .parser()
@@ -167,17 +163,15 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                         value,
                         namespace,
                     } = self.parser().expect_attribute()?;
-                    trace!(name = %name, value = %value, namespace = ?namespace, "got Attribute");
                     if let Some(info) = self
                         .field_map
                         .find_attribute(&name, namespace.as_ref().map(|c| c.as_ref()))
                     {
-                        let idx = info.idx;
-                        trace!(idx, field_name = %info.field.name, "matched attribute field");
+                        trace!("→ .{}", info.field.name);
                         // Use set_string_value_with_proxy to handle field-level proxies
                         wip = self
                             .dom_deser
-                            .set_string_value_with_proxy(wip.begin_nth_field(idx)?, value)?
+                            .set_string_value_with_proxy(wip.begin_nth_field(info.idx)?, value)?
                             .end()?;
                     } else if let Some(flattened) = self
                         .field_map
@@ -185,11 +179,11 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                         .cloned()
                     {
                         // Handle attribute from a flattened struct (e.g., GlobalAttrs)
-                        let parent_idx = flattened.parent_idx;
-                        let child_idx = flattened.child_idx;
-                        trace!(parent_idx, child_idx, field_name = %flattened.child_info.field.name, "matched flattened attribute field");
+                        trace!("→ (flatten).{}", flattened.child_info.field.name);
 
                         // Navigate into the flattened parent, then to the child field
+                        let parent_idx = flattened.parent_idx;
+                        let child_idx = flattened.child_idx;
                         let parent_wip = wip.begin_nth_field(parent_idx)?;
                         let parent_wip = if flattened.parent_is_option {
                             parent_wip.begin_some()?
@@ -209,13 +203,11 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                         wip = wip.end()?;
                     } else if let Some(info) = &self.field_map.attributes_field {
                         // Catch-all Vec<String> for all attribute values
-                        let idx = info.idx;
                         if !self.attributes_list_started {
-                            trace!(idx, field_name = %info.field.name, "starting attributes list");
-                            wip = wip.begin_nth_field(idx)?.init_list()?;
+                            trace!("→ .{}[]", info.field.name);
+                            wip = wip.begin_nth_field(info.idx)?.init_list()?;
                             self.attributes_list_started = true;
                         }
-                        trace!(idx, value = %value, "adding attribute value to list");
                         wip = wip.begin_list_item()?;
                         wip = self.dom_deser.set_string_value(wip, value)?.end()?;
                     } else if !self.field_map.flattened_attr_maps.is_empty() {
@@ -226,12 +218,10 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                         });
 
                         if let Some(info) = map_info {
-                            let idx = info.idx;
-                            trace!(idx, field_name = %info.field.name, attr_name = %name, "adding to flattened attr map");
-
-                            self.started_flattened_attr_maps.insert(idx);
+                            trace!("→ .{}[{}]", info.field.name, name);
+                            self.started_flattened_attr_maps.insert(info.idx);
                             wip = wip
-                                .begin_nth_field(idx)?
+                                .begin_nth_field(info.idx)?
                                 .init_map()?
                                 .begin_key()?
                                 .set::<String>(name.to_string())?
@@ -244,23 +234,17 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                             return Err(DomDeserializeError::UnknownAttribute {
                                 name: name.to_string(),
                             });
-                        } else {
-                            trace!(name = %name, "ignoring unknown attribute (no matching flattened map)");
                         }
                     } else if self.deny_unknown_fields {
                         return Err(DomDeserializeError::UnknownAttribute {
                             name: name.to_string(),
                         });
-                    } else {
-                        trace!(name = %name, "ignoring unknown attribute");
                     }
                 }
                 DomEvent::ChildrenStart => {
-                    trace!("attributes done, starting children");
                     break;
                 }
                 DomEvent::NodeEnd => {
-                    trace!("void element (no children)");
                     self.parser().expect_node_end()?;
                     return Ok(wip);
                 }
@@ -279,11 +263,9 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         &mut self,
         mut wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        trace!("processing children");
         loop {
             match self.parser().peek_event_or_eof("child or ChildrenEnd")? {
                 DomEvent::ChildrenEnd => {
-                    trace!("children done");
                     break;
                 }
                 DomEvent::Text(_) => {
@@ -295,7 +277,6 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                     wip = self.handle_child_element(wip, &tag, namespace.as_deref())?;
                 }
                 DomEvent::Comment(_) => {
-                    trace!("skipping comment");
                     self.parser().expect_comment()?;
                 }
                 other => {
@@ -314,10 +295,8 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         mut wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let text = self.parser().expect_text()?;
-        trace!(text_len = text.len(), "got Text");
 
         if self.elements_list_started {
-            trace!("adding text as list item (mixed content)");
             wip = wip.begin_list_item()?;
             wip = self
                 .dom_deser
@@ -326,28 +305,23 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         } else if let Some(info) = &self.field_map.text_field {
             if info.is_list || info.is_set {
                 // Vec<String> or HashSet<String> with xml::text - each text node is a list item
-                let idx = info.idx;
                 if !self.text_list_started {
-                    trace!(idx, field_name = %info.field.name, "starting text list");
-                    wip = wip.begin_nth_field(idx)?.init_list()?;
+                    trace!("→ .{}[]", info.field.name);
+                    wip = wip.begin_nth_field(info.idx)?.init_list()?;
                     self.text_list_started = true;
                 }
-                trace!("adding text as list item");
                 wip = wip.begin_list_item()?;
                 wip = self.dom_deser.set_string_value(wip, text)?.end()?;
             } else {
                 // Single String with xml::text - accumulate text
-                trace!("accumulating text for text field");
                 self.text_content.push_str(&text);
             }
         } else if self.field_map.elements_field.is_some() {
             // Mixed content: text before any elements - start the list and add text
             let info = self.field_map.elements_field.as_ref().unwrap();
-            let idx = info.idx;
-            trace!(idx, field_name = %info.field.name, "starting elements list for initial text");
-            wip = wip.begin_nth_field(idx)?.init_list()?;
+            trace!("→ .{}[]", info.field.name);
+            wip = wip.begin_nth_field(info.idx)?.init_list()?;
             self.elements_list_started = true;
-            trace!("adding text as list item (mixed content)");
             wip = wip.begin_list_item()?;
             wip = self
                 .dom_deser
@@ -356,13 +330,11 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         } else if self.struct_def.kind == StructKind::TupleStruct
             && self.struct_def.fields.len() == 1
         {
-            trace!("setting text content for newtype field 0");
+            trace!("→ .0");
             wip = self
                 .dom_deser
                 .set_string_value(wip.begin_nth_field(0)?, text)?
                 .end()?;
-        } else {
-            trace!("ignoring text (no text field)");
         }
         Ok(wip)
     }

@@ -109,4 +109,93 @@ impl<'a> DomEvent<'a> {
     pub fn is_children_end(&self) -> bool {
         matches!(self, DomEvent::ChildrenEnd)
     }
+
+    /// Wrap this event for XML-like trace formatting.
+    pub fn trace(&self) -> TraceFmt<'_, 'a> {
+        TraceFmt(self)
+    }
+}
+
+/// Newtype for XML-like trace formatting of DOM events.
+pub struct TraceFmt<'r, 'a>(pub &'r DomEvent<'a>);
+
+impl std::fmt::Display for TraceFmt<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use owo_colors::OwoColorize;
+
+        match self.0 {
+            DomEvent::NodeStart { tag, namespace } => {
+                if let Some(ns) = namespace {
+                    write!(f, "NodeStart {}<{}:{}>", "<".cyan(), ns, tag.cyan())
+                } else {
+                    write!(f, "NodeStart {}{}{}", "<".cyan(), tag.cyan(), ">".cyan())
+                }
+            }
+            DomEvent::NodeEnd => write!(f, "NodeEnd {}", "</>".cyan()),
+            DomEvent::Attribute {
+                name,
+                value,
+                namespace,
+            } => {
+                if let Some(ns) = namespace {
+                    write!(
+                        f,
+                        "Attribute {}{}:{}={}{}{}",
+                        "@".yellow(),
+                        ns,
+                        name.yellow(),
+                        "\"".yellow(),
+                        value,
+                        "\"".yellow()
+                    )
+                } else {
+                    write!(
+                        f,
+                        "Attribute {}{}={}{}{}",
+                        "@".yellow(),
+                        name.yellow(),
+                        "\"".yellow(),
+                        value,
+                        "\"".yellow()
+                    )
+                }
+            }
+            DomEvent::ChildrenStart => write!(f, "{}", "ChildrenStart".dimmed()),
+            DomEvent::ChildrenEnd => write!(f, "{}", "ChildrenEnd".dimmed()),
+            DomEvent::Text(t) => {
+                let preview: String = t.chars().take(40).collect();
+                if t.len() > 40 {
+                    write!(
+                        f,
+                        "Text {}{}{}",
+                        "\"".green(),
+                        preview.green(),
+                        "...\"".green()
+                    )
+                } else {
+                    write!(
+                        f,
+                        "Text {}{}{}",
+                        "\"".green(),
+                        preview.green(),
+                        "\"".green()
+                    )
+                }
+            }
+            DomEvent::Comment(c) => {
+                let preview: String = c.chars().take(20).collect();
+                write!(
+                    f,
+                    "Comment {}{}{}",
+                    "<!--".dimmed(),
+                    preview.dimmed(),
+                    "-->".dimmed()
+                )
+            }
+            DomEvent::ProcessingInstruction { target, data } => {
+                write!(f, "ProcessingInstruction <?{target} {data}?>")
+            }
+            DomEvent::Doctype(d) => write!(f, "Doctype <!DOCTYPE {d}>"),
+        }
+    }
 }

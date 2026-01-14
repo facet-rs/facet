@@ -16,7 +16,7 @@ pub trait DomParserExt<'de>: DomParser<'de> {
             .next_event()
             .map_err(DomDeserializeError::Parser)?
             .ok_or(DomDeserializeError::UnexpectedEof { expected })?;
-        trace!(expected, event = ?event, "next_event");
+        trace!(event = %event.trace(), kind = %"next");
         Ok(event)
     }
 
@@ -29,7 +29,7 @@ pub trait DomParserExt<'de>: DomParser<'de> {
             .peek_event()
             .map_err(DomDeserializeError::Parser)?
             .ok_or(DomDeserializeError::UnexpectedEof { expected })?;
-        trace!(expected, event = ?event, "peek_event");
+        trace!(event = %event.trace(), kind = %"peek");
         Ok(event)
     }
 

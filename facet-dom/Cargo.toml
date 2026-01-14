@@ -23,6 +23,7 @@ facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
 facet-singularize = { path = "../facet-singularize", version = "0.42.0" }
 facet-solver = { path = "../facet-solver", version = "0.42.0" }
 heck = "0.5.0"
+owo-colors = { workspace = true }
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]

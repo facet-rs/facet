@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use facet_core::{Def, Field, StructKind, StructType, Type, UserType};
 
 use crate::naming::dom_key;
-use crate::trace;
 use facet_singularize::singularize;
 
 /// Info about a field in a struct for deserialization purposes.
@@ -113,7 +112,6 @@ impl StructFieldMap {
             // Check if this field is flattened
             if field.is_flattened() {
                 has_flatten = true;
-                trace!(idx, field_name = %field.name, "found flattened field");
 
                 // Check if the parent field is Option<Struct>
                 let parent_is_option = matches!(field.shape().def, Def::Option(_));
@@ -126,7 +124,6 @@ impl StructFieldMap {
                         .get_attr(Some("xml"), "ns")
                         .and_then(|attr| attr.get_as::<&str>().copied());
 
-                    trace!(idx, field_name = %field.name, "found flattened enum field");
                     flattened_enum = Some(FlattenedEnumInfo {
                         field_idx: idx,
                         field_info: FieldInfo {
@@ -171,17 +168,6 @@ impl StructFieldMap {
                         // Determine if this is an attribute field or an element field
                         let is_attribute = child_field.is_attribute();
 
-                        trace!(
-                            parent_idx = idx,
-                            parent_name = %field.name,
-                            child_idx,
-                            child_name = %child_field.name,
-                            child_key = %child_key,
-                            parent_is_option,
-                            is_attribute,
-                            "registering flattened child"
-                        );
-
                         if is_attribute {
                             // Register as flattened attribute
                             flattened_attributes
@@ -191,12 +177,6 @@ impl StructFieldMap {
 
                             // Also register alias if present
                             if let Some(alias) = child_field.alias {
-                                trace!(
-                                    parent_idx = idx,
-                                    child_idx,
-                                    alias = %alias,
-                                    "registering flattened attribute alias"
-                                );
                                 flattened_attributes
                                     .entry(alias.to_string())
                                     .or_default()
@@ -213,12 +193,6 @@ impl StructFieldMap {
                             if (is_list || is_set) && child_field.rename.is_none() {
                                 let singular_key = singularize(&child_key);
                                 if singular_key != child_key {
-                                    trace!(
-                                        parent_idx = idx,
-                                        child_idx,
-                                        singular_key = %singular_key,
-                                        "registering singularized key for flattened list child"
-                                    );
                                     flattened_children
                                         .entry(singular_key)
                                         .or_default()
@@ -228,12 +202,6 @@ impl StructFieldMap {
 
                             // Also register alias if present
                             if let Some(alias) = child_field.alias {
-                                trace!(
-                                    parent_idx = idx,
-                                    child_idx,
-                                    alias = %alias,
-                                    "registering flattened child alias"
-                                );
                                 flattened_children
                                     .entry(alias.to_string())
                                     .or_default()
@@ -248,7 +216,6 @@ impl StructFieldMap {
                         .get_attr(Some("xml"), "ns")
                         .and_then(|attr| attr.get_as::<&str>().copied());
 
-                    trace!(idx, field_name = %field.name, "found flattened map field");
                     let info = FieldInfo {
                         idx,
                         field,
@@ -290,12 +257,10 @@ impl StructFieldMap {
                 };
                 // Check if this is a catch-all for attribute values (Vec/Set without rename)
                 if (is_list || is_set) && field.rename.is_none() {
-                    trace!(idx, field_name = %field.name, "found attributes collection field (catch-all)");
                     attributes_field = Some(info);
                 } else {
                     // Named attribute: uses rename or lowerCamelCase(field.name)
                     let attr_key = dom_key(field.rename, field.name);
-                    trace!(idx, field_name = %field.name, key = %attr_key, namespace = ?namespace, "found attribute field");
                     attribute_fields
                         .entry(attr_key)
                         .or_default()
@@ -303,7 +268,6 @@ impl StructFieldMap {
 
                     // Also register alias if present (aliases are used as-is, no conversion)
                     if let Some(alias) = field.alias {
-                        trace!(idx, field_name = %field.name, alias = %alias, "registering alias for attribute field");
                         attribute_fields
                             .entry(alias.to_string())
                             .or_default()
@@ -312,7 +276,6 @@ impl StructFieldMap {
                 }
             } else if field.is_elements() && field.rename.is_none() {
                 // xml::elements without rename = catch-all for unmatched children
-                trace!(idx, field_name = %field.name, "found elements collection field (catch-all)");
                 let info = FieldInfo {
                     idx,
                     field,
@@ -323,7 +286,6 @@ impl StructFieldMap {
                 };
                 elements_field = Some(info);
             } else if field.is_text() {
-                trace!(idx, field_name = %field.name, "found text field");
                 let info = FieldInfo {
                     idx,
                     field,
@@ -334,7 +296,6 @@ impl StructFieldMap {
                 };
                 text_field = Some(info);
             } else if field.is_tag() {
-                trace!(idx, field_name = %field.name, "found tag field");
                 let info = FieldInfo {
                     idx,
                     field,
@@ -348,7 +309,6 @@ impl StructFieldMap {
                 // Default: unmarked fields and explicit xml::element fields are child elements
                 // Apply ns_all to elements without explicit namespace
                 let effective_namespace = namespace.or(ns_all);
-                trace!(idx, field_name = %field.name, field_rename = ?field.rename, key = %element_key, alias = ?field.alias, is_list, is_array, is_set, namespace = ?effective_namespace, "found element field");
                 let info = FieldInfo {
                     idx,
                     field,
@@ -368,7 +328,6 @@ impl StructFieldMap {
                     let singular_key = singularize(&element_key);
                     // Only register if singularization actually changed the name
                     if singular_key != element_key {
-                        trace!(idx, field_name = %field.name, singular_key = %singular_key, "registering singularized key for list field");
                         element_fields
                             .entry(singular_key)
                             .or_default()
@@ -378,7 +337,6 @@ impl StructFieldMap {
 
                 // Also register alias if present (aliases are used as-is, no conversion)
                 if let Some(alias) = field.alias {
-                    trace!(idx, field_name = %field.name, alias = %alias, "registering alias for element field");
                     element_fields
                         .entry(alias.to_string())
                         .or_default()
@@ -390,10 +348,6 @@ impl StructFieldMap {
         // For tuple structs, build positional field list
         let tuple_fields = if matches!(struct_def.kind, StructKind::TupleStruct | StructKind::Tuple)
         {
-            trace!(
-                field_count = struct_def.fields.len(),
-                "building tuple field list"
-            );
             let fields: Vec<FieldInfo> = struct_def
                 .fields
                 .iter()
@@ -415,20 +369,6 @@ impl StructFieldMap {
         } else {
             None
         };
-
-        trace!(
-            attribute_count = attribute_fields.len(),
-            element_count = element_fields.len(),
-            flattened_count = flattened_children.len(),
-            has_flattened_enum = flattened_enum.is_some(),
-            flattened_maps_count = flattened_maps.len(),
-            has_flatten,
-            has_elements = elements_field.is_some(),
-            has_text = text_field.is_some(),
-            has_tag = tag_field.is_some(),
-            is_tuple = tuple_fields.is_some(),
-            "field map built"
-        );
 
         Self {
             attribute_fields,
@@ -466,7 +406,6 @@ impl StructFieldMap {
             // Fall back to a field with no namespace constraint
             fields.iter().find(|info| info.namespace.is_none())
         });
-        trace!(name, ?namespace, found = result.is_some(), "find_attribute");
         result
     }
 
@@ -489,7 +428,6 @@ impl StructFieldMap {
             // Fall back to a field with no namespace constraint
             fields.iter().find(|info| info.namespace.is_none())
         });
-        trace!(tag, ?namespace, found = result.is_some(), "find_element");
         result
     }
 
@@ -514,12 +452,6 @@ impl StructFieldMap {
                 .iter()
                 .find(|info| info.child_info.namespace.is_none())
         });
-        trace!(
-            tag,
-            ?namespace,
-            found = result.is_some(),
-            "find_flattened_child"
-        );
         result
     }
 
@@ -544,12 +476,6 @@ impl StructFieldMap {
                 .iter()
                 .find(|info| info.child_info.namespace.is_none())
         });
-        trace!(
-            name,
-            ?namespace,
-            found = result.is_some(),
-            "find_flattened_attribute"
-        );
         result
     }
 
