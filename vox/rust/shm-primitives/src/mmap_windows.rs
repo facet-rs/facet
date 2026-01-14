@@ -3,17 +3,19 @@
 //! This module provides `MmapRegion`, a file-backed memory region that can be
 //! shared across processes using Windows file mapping APIs.
 
-use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
+use std::vec::Vec;
 
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+};
 use windows_sys::Win32::Storage::FileSystem::{
     CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE,
+    FILE_SHARE_WRITE,
 };
 use windows_sys::Win32::System::Memory::{
     CreateFileMappingW, FILE_MAP_ALL_ACCESS, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile,
@@ -83,7 +85,7 @@ impl MmapRegion {
                     std::ptr::null(),
                     CREATE_ALWAYS,
                     FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE,
-                    0,
+                    std::ptr::null_mut(),
                 )
             };
 
@@ -103,7 +105,8 @@ impl MmapRegion {
                 .truncate(true)
                 .open(path)
                 .map_err(|e| {
-                    let msg = std::format!("Failed to create SHM file at {}: {}", path.display(), e);
+                    let msg =
+                        std::format!("Failed to create SHM file at {}: {}", path.display(), e);
                     io::Error::new(e.kind(), msg)
                 })?
         };
@@ -162,7 +165,10 @@ impl MmapRegion {
     /// shm[impl shm.file.attach]
     pub fn attach(path: &Path) -> io::Result<Self> {
         // Open existing file for read/write
-        let file = OpenOptions::new().read(true).write(true).open(path)
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
             .map_err(|e| {
                 let msg = std::format!("Failed to open SHM file at {}: {}", path.display(), e);
                 io::Error::new(e.kind(), msg)
