@@ -232,12 +232,13 @@ where
                     }
                     StructKind::Struct | StructKind::Tuple => {
                         // Struct/tuple variant: deserialize using the variant's data as a StructType
-                        // The expected element name is the variant name (already renamed)
-                        wip = self.deserialize_struct_innards(
-                            wip,
-                            &variant.data,
-                            Cow::Borrowed(variant.name),
-                        )?;
+                        // Compute effective element name: use rename if present, else lowerCamelCase
+                        let expected_name: Cow<'_, str> = variant
+                            .get_builtin_attr("rename")
+                            .and_then(|a| a.get_as::<&str>().copied())
+                            .map(Cow::Borrowed)
+                            .unwrap_or_else(|| to_element_name(variant.name));
+                        wip = self.deserialize_struct_innards(wip, &variant.data, expected_name)?;
                     }
                 }
             }
