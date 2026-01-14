@@ -670,15 +670,14 @@ fn explicit_wrapper_for_wrapped_lists() {
     }
 
     #[derive(Facet, Debug, PartialEq)]
-    #[facet(rename = "Playlist")]
     struct Playlist {
         name: String,
-        // Use xml::element (single) pointing to the wrapper struct
+        // The field name "tracks" determines the element name
         tracks: TrackList,
     }
 
     // This is the "wrapped" format: tracks wrapper contains track children
-    let xml = r#"<Playlist><name>Favorites</name><tracks><track><title>Song A</title></track><track><title>Song B</title></track></tracks></Playlist>"#;
+    let xml = r#"<playlist><name>Favorites</name><tracks><track><title>Song A</title></track><track><title>Song B</title></track></tracks></playlist>"#;
     let parsed: Playlist = facet_xml::from_str(xml).unwrap();
 
     assert_eq!(parsed.name, "Favorites");

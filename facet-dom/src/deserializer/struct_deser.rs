@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use facet_core::{Def, StructKind, StructType};
+use facet_core::{Def, StructKind, StructType, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::error::DomDeserializeError;
@@ -540,10 +540,47 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         wip = self.leave_active_sequence(wip)?;
         trace!(idx, "matched scalar element field");
-        wip = wip
-            .begin_nth_field(idx)?
-            .deserialize_with(self.dom_deser)?
-            .end()?;
+
+        let field = &self.struct_def.fields[idx];
+        let field_shape = field.shape();
+
+        // Check if the field type is a struct - if so, we need to deserialize it
+        // using the field's element name, not the type's name
+        if let Type::User(UserType::Struct(inner_struct_def)) = &field_shape.ty {
+            // Compute expected element name from field: rename > lowerCamelCase(field.name)
+            // Note: effective_name() returns rename if set, else field.name
+            // We still need to convert to lowerCamelCase if not renamed
+            let expected_name: Cow<'static, str> = if field.rename.is_some() {
+                Cow::Borrowed(field.effective_name())
+            } else {
+                crate::naming::to_element_name(field.name)
+            };
+
+            // Get ns_all from the inner struct's shape
+            let ns_all = field_shape
+                .attributes
+                .iter()
+                .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+                .and_then(|attr| attr.get_as::<&str>().copied());
+
+            let deny_unknown_fields = field_shape.has_deny_unknown_fields_attr();
+
+            wip = wip.begin_nth_field(idx)?;
+            wip = StructDeserializer::new(
+                self.dom_deser,
+                inner_struct_def,
+                ns_all,
+                expected_name,
+                deny_unknown_fields,
+            )
+            .deserialize(wip)?;
+            wip = wip.end()?;
+        } else {
+            wip = wip
+                .begin_nth_field(idx)?
+                .deserialize_with(self.dom_deser)?
+                .end()?;
+        }
         Ok(wip)
     }
 
