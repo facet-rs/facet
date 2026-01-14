@@ -6,8 +6,6 @@
 //! shm[verify shm.handshake]
 //! shm[verify shm.flow.no-credit-message]
 
-#![cfg(feature = "tokio")]
-
 use roam_session::{Rx, Tx};
 use roam_shm::driver::{establish_guest, establish_multi_peer_host};
 use roam_shm::guest::ShmGuest;
@@ -247,13 +245,10 @@ async fn multiple_sequential_calls() {
 /// shm[verify shm.handshake]
 #[tokio::test]
 async fn client_streaming_sum() {
-    #[cfg(feature = "tracing")]
-    {
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .with_test_writer()
-            .try_init();
-    }
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_test_writer()
+        .try_init();
 
     let (host, guest) = create_host_and_guest();
     let peer_id = guest.peer_id();
