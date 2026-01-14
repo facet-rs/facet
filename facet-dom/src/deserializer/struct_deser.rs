@@ -56,6 +56,9 @@ pub(crate) struct StructDeserializer<'de, 'p, const BORROW: bool, P: DomParser<'
     /// Which flattened attribute maps have been initialized
     started_flattened_attr_maps: HashSet<usize>,
 
+    /// Which nested flattened attribute maps have been initialized (parent_idx, child_idx)
+    started_nested_flattened_attr_maps: HashSet<(usize, usize)>,
+
     /// Whether unknown fields should cause an error
     deny_unknown_fields: bool,
 
@@ -91,6 +94,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             attributes_list_started: false,
             started_flattened_maps: HashSet::new(),
             started_flattened_attr_maps: HashSet::new(),
+            started_nested_flattened_attr_maps: HashSet::new(),
             deny_unknown_fields,
             tuple_position: 0,
             tag: Cow::Borrowed(""),
@@ -211,35 +215,84 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                         }
                         wip = wip.begin_list_item()?;
                         wip = self.dom_deser.set_string_value(wip, value)?.end()?;
-                    } else if !self.field_map.flattened_attr_maps.is_empty() {
-                        // Try to add to flattened attribute map
-                        let map_info = self.field_map.flattened_attr_maps.iter().find(|info| {
-                            info.namespace.is_none()
-                                || info.namespace == namespace.as_ref().map(|c| c.as_ref())
-                        });
+                    } else {
+                        // Try to add to flattened attribute map (direct or nested)
+                        let mut handled = false;
 
-                        if let Some(info) = map_info {
-                            trace!("→ .{}[{}]", info.field.name, name);
-                            self.started_flattened_attr_maps.insert(info.idx);
-                            wip = wip
-                                .begin_nth_field(info.idx)?
-                                .init_map()?
-                                .begin_key()?
-                                .set::<String>(name.to_string())?
-                                .end()?
-                                .begin_value()?
-                                .set::<String>(value.to_string())?
-                                .end()?
-                                .end()?;
-                        } else if self.deny_unknown_fields {
+                        // First try direct flattened attr maps
+                        if !self.field_map.flattened_attr_maps.is_empty() {
+                            let map_info = self.field_map.flattened_attr_maps.iter().find(|info| {
+                                info.namespace.is_none()
+                                    || info.namespace == namespace.as_ref().map(|c| c.as_ref())
+                            });
+
+                            if let Some(info) = map_info {
+                                trace!("→ .{}[{}]", info.field.name, name);
+                                self.started_flattened_attr_maps.insert(info.idx);
+                                wip = wip
+                                    .begin_nth_field(info.idx)?
+                                    .init_map()?
+                                    .begin_key()?
+                                    .set::<String>(name.to_string())?
+                                    .end()?
+                                    .begin_value()?
+                                    .set::<String>(value.to_string())?
+                                    .end()?
+                                    .end()?;
+                                handled = true;
+                            }
+                        }
+
+                        // Then try nested flattened attr maps (e.g., flattened struct with flattened HashMap inside)
+                        if !handled && !self.field_map.nested_flattened_attr_maps.is_empty() {
+                            let nested_info = self
+                                .field_map
+                                .nested_flattened_attr_maps
+                                .iter()
+                                .find(|info| {
+                                    info.child_info.namespace.is_none()
+                                        || info.child_info.namespace
+                                            == namespace.as_ref().map(|c| c.as_ref())
+                                });
+
+                            if let Some(info) = nested_info {
+                                trace!("→ (flatten).{}[{}]", info.child_info.field.name, name);
+                                let key = (info.parent_idx, info.child_idx);
+                                let is_first =
+                                    !self.started_nested_flattened_attr_maps.contains(&key);
+                                self.started_nested_flattened_attr_maps.insert(key);
+
+                                // Navigate to parent field, then child field
+                                wip = wip.begin_nth_field(info.parent_idx)?;
+                                if info.parent_is_option {
+                                    wip = wip.begin_some()?;
+                                }
+                                wip = wip.begin_nth_field(info.child_idx)?;
+                                if is_first {
+                                    wip = wip.init_map()?;
+                                }
+                                wip = wip
+                                    .begin_key()?
+                                    .set::<String>(name.to_string())?
+                                    .end()?
+                                    .begin_value()?
+                                    .set::<String>(value.to_string())?
+                                    .end()?
+                                    .end()?;
+                                // End parent (and option if needed)
+                                if info.parent_is_option {
+                                    wip = wip.end()?;
+                                }
+                                wip = wip.end()?;
+                                handled = true;
+                            }
+                        }
+
+                        if !handled && self.deny_unknown_fields {
                             return Err(DomDeserializeError::UnknownAttribute {
                                 name: name.to_string(),
                             });
                         }
-                    } else if self.deny_unknown_fields {
-                        return Err(DomDeserializeError::UnknownAttribute {
-                            name: name.to_string(),
-                        });
                     }
                 }
                 DomEvent::ChildrenStart => {

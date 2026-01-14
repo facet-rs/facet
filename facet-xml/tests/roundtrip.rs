@@ -96,7 +96,7 @@ fn enum_complex() {
         inner: MyEnum,
     }
 
-    let xml = r#"<enum><Label><name>facet</name><level>7</level></Label></enum>"#;
+    let xml = r#"<enum><label><name>facet</name><level>7</level></label></enum>"#;
     let parsed: Wrapper = facet_xml::from_str(xml).unwrap();
     assert_eq!(
         parsed.inner,

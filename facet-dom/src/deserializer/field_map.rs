@@ -49,6 +49,20 @@ pub(crate) struct FlattenedEnumInfo {
     pub field_info: FieldInfo,
 }
 
+/// Info about a flattened map that's nested inside another flattened struct.
+/// E.g., struct A { #[facet(flatten)] b: B } where B { #[facet(flatten)] extra: HashMap }
+#[derive(Clone)]
+pub(crate) struct NestedFlattenedMapInfo {
+    /// Index of the flattened parent field in the outer struct (e.g., `b` in A)
+    pub parent_idx: usize,
+    /// Index of the map field within the flattened struct (e.g., `extra` in B)
+    pub child_idx: usize,
+    /// Info about the map field
+    pub child_info: FieldInfo,
+    /// Whether the parent field is an Option<Struct>
+    pub parent_is_option: bool,
+}
+
 /// Precomputed field lookup map for a struct.
 ///
 /// This separates "what fields does this struct have" from the parsing loop,
@@ -86,6 +100,8 @@ pub(crate) struct StructFieldMap {
     /// Flattened attribute map fields - capture unknown attributes as key-value pairs.
     /// Multiple are supported; first match wins.
     pub flattened_attr_maps: Vec<FieldInfo>,
+    /// Nested flattened attribute map fields (inside another flattened struct) - capture unknown attributes.
+    pub nested_flattened_attr_maps: Vec<NestedFlattenedMapInfo>,
     /// Whether this struct has any flattened fields (requires deferred mode)
     pub has_flatten: bool,
 }
@@ -108,6 +124,7 @@ impl StructFieldMap {
         let mut flattened_enum: Option<FlattenedEnumInfo> = None;
         let mut flattened_maps: Vec<FieldInfo> = Vec::new();
         let mut flattened_attr_maps: Vec<FieldInfo> = Vec::new();
+        let mut nested_flattened_attr_maps: Vec<NestedFlattenedMapInfo> = Vec::new();
         let mut has_flatten = false;
 
         for (idx, field) in struct_def.fields.iter().enumerate() {
@@ -144,6 +161,34 @@ impl StructFieldMap {
                 // Get the inner struct's fields
                 if let Some(inner_struct_def) = get_flattened_struct_def(field) {
                     for (child_idx, child_field) in inner_struct_def.fields.iter().enumerate() {
+                        // Check if this child field is itself a flattened map
+                        // (e.g., #[facet(flatten)] extra: HashMap<String, String>)
+                        if child_field.is_flattened() && is_flattened_map(child_field) {
+                            let namespace: Option<&'static str> = child_field
+                                .get_attr(Some("xml"), "ns")
+                                .and_then(|attr| attr.get_as::<&str>().copied());
+
+                            let info = FieldInfo {
+                                idx: child_idx,
+                                field: child_field,
+                                is_list: false,
+                                is_array: false,
+                                is_set: false,
+                                is_tuple: false,
+                                namespace,
+                            };
+
+                            // Register as nested flattened map info
+                            let nested_info = NestedFlattenedMapInfo {
+                                parent_idx: idx,
+                                child_idx,
+                                child_info: info.clone(),
+                                parent_is_option,
+                            };
+                            nested_flattened_attr_maps.push(nested_info);
+                            continue;
+                        }
+
                         let child_shape = child_field.shape();
                         let (is_list, is_array, is_set, is_tuple) =
                             classify_sequence_shape(child_shape);
@@ -397,6 +442,7 @@ impl StructFieldMap {
             flattened_enum,
             flattened_maps,
             flattened_attr_maps,
+            nested_flattened_attr_maps,
             has_flatten,
         }
     }
