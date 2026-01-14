@@ -2,33 +2,35 @@
 
 XML serialization and deserialization for Rust using the facet reflection framework.
 
-## A Simple Example
+## Child Elements
 
-Given this XML:
+By default, fields are matched against child elements with the same name.
 
 ```xml
-<name>Ella</name>
+<person>
+    <name>Ella</name>
+    <age>42</age>
+</person>
 ```
-
-You can deserialize it into a struct:
 
 ```rust
 # use facet::Facet;
 # use facet_xml as xml;
 #[derive(Facet, Debug)]
-#[facet(rename = "name")]
-struct Name {
-    #[facet(xml::text)]
-    value: String,
+#[facet(rename = "person")]
+struct Person {
+    name: String, // captures "Ella"
+    age: u32,     // captures 42
 }
-# let xml_str = "<name>Ella</name>";
-# let name: Name = facet_xml::from_str(xml_str).unwrap();
-# assert_eq!(name.value, "Ella");
+# let xml_str = "<person><name>Ella</name><age>42</age></person>";
+# let person: Person = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(person.name, "Ella");
+# assert_eq!(person.age, 42);
 ```
 
-The `#[facet(rename = "name")]` makes the struct match the `<name>` element, and `#[facet(xml::text)]` captures the text content inside.
-
 ## Attributes
+
+But you can also tag them as attributes:
 
 ```xml
 <link href="/home">Home</link>
@@ -41,13 +43,135 @@ The `#[facet(rename = "name")]` makes the struct match the `<name>` element, and
 #[facet(rename = "link")]
 struct Link {
     #[facet(xml::attribute)]
-    href: String,
+    href: String,      // captures "/home"
     
     #[facet(xml::text)]
-    text: String,
+    text: String,      // captures "Home"
 }
 # let xml_str = r#"<link href="/home">Home</link>"#;
 # let link: Link = facet_xml::from_str(xml_str).unwrap();
 # assert_eq!(link.href, "/home");
 # assert_eq!(link.text, "Home");
+```
+
+## Text
+
+Or as text:
+
+```xml
+<name>Ella</name>
+```
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug)]
+#[facet(rename = "name")]
+struct Name {
+    #[facet(xml::text)]
+    value: String, // captures "Ella"
+}
+# let xml_str = "<name>Ella</name>";
+# let name: Name = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(name.value, "Ella");
+```
+
+The `#[facet(rename = "name")]` makes the struct match the `<name>` element, and `#[facet(xml::text)]` captures the text content inside.
+
+## Lists
+
+For list types (`Vec`, etc.), facet-xml collects items. By default, items are child elements with the **singularized** field name (via `facet-singularize`).
+
+### Default: child elements with singularized name
+
+```xml
+<playlist>
+    <track>Song A</track>
+    <track>Song B</track>
+</playlist>
+```
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug)]
+#[facet(rename = "playlist")]
+struct Playlist {
+    tracks: Vec<String>, // "tracks" → expects <track> elements
+}
+# let xml_str = "<playlist><track>Song A</track><track>Song B</track></playlist>";
+# let playlist: Playlist = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(playlist.tracks, vec!["Song A", "Song B"]);
+```
+
+### Override element name with `rename`
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug)]
+#[facet(rename = "playlist")]
+struct Playlist {
+    #[facet(rename = "song")]
+    tracks: Vec<String>, // expects <song> instead of <track>
+}
+# let xml_str = "<playlist><song>Song A</song><song>Song B</song></playlist>";
+# let playlist: Playlist = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(playlist.tracks, vec!["Song A", "Song B"]);
+```
+
+### Explicit `xml::elements` (same as default)
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug)]
+#[facet(rename = "playlist")]
+struct Playlist {
+    #[facet(xml::elements)]
+    tracks: Vec<String>,
+}
+# let xml_str = "<playlist><track>Song A</track><track>Song B</track></playlist>";
+# let playlist: Playlist = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(playlist.tracks, vec!["Song A", "Song B"]);
+```
+
+### Collect text nodes with `xml::text`
+
+```xml
+<message>Hello <b>world</b>!</message>
+```
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug)]
+#[facet(rename = "message")]
+struct Message {
+    #[facet(xml::text)]
+    parts: Vec<String>, // collects text nodes: ["Hello ", "!"]
+}
+# let xml_str = "<message>Hello world!</message>";
+# let msg: Message = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(msg.parts, vec!["Hello world!"]);
+```
+
+### Collect attributes with `xml::attribute`
+
+```xml
+<element foo="1" bar="2" baz="3"/>
+```
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug)]
+#[facet(rename = "element")]
+struct Element {
+    #[facet(xml::attribute)]
+    values: Vec<String>, // collects all attribute values
+}
+# let xml_str = r#"<element foo="1" bar="2" baz="3"/>"#;
+# let elem: Element = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(elem.values, vec!["1", "2", "3"]);
 ```
