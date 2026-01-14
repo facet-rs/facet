@@ -1854,6 +1854,7 @@ dependencies = [
  "smol_str",
  "time",
  "tokio",
+ "tracing",
  "ulid",
  "uuid",
 ]

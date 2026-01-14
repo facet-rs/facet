@@ -11,6 +11,7 @@ use facet_reflect::Peek;
 pub struct SerializeOptions {
     /// Whether to pretty-print with indentation (default: false)
     pub pretty: bool,
+
     /// Indentation string for pretty-printing (default: "  ")
     pub indent: &'static str,
 }

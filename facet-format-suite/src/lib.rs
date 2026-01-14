@@ -1044,11 +1044,13 @@ where
         CasePayload::Skip { reason } => CaseOutcome::Skipped(reason),
         CasePayload::Input(input) => {
             let expected = (desc.expected)();
+            tracing::info!("=================== Deserializing");
             let actual = match S::deserialize::<T>(input) {
                 Ok(value) => value,
                 Err(err) => return CaseOutcome::Failed(err.to_string()),
             };
 
+            tracing::info!("=================== Emitting showcase");
             emit_case_showcase::<S, T>(
                 desc,
                 note,
@@ -1058,6 +1060,7 @@ where
                 &actual,
             );
 
+            tracing::info!("=================== Comparing deserialized value");
             // Compare deserialized value against expected
             let first_assert = panic::catch_unwind(AssertUnwindSafe(|| match compare_mode {
                 CompareMode::Reflection => {
@@ -1085,6 +1088,7 @@ where
                 return CaseOutcome::Passed;
             }
 
+            tracing::info!("=================== Serializing");
             let Some(serialized) = S::serialize(&actual) else {
                 return CaseOutcome::Passed;
             };
@@ -1098,6 +1102,10 @@ where
                     ));
                 }
             };
+
+            if let Ok(serialized) = std::str::from_utf8(&serialized) {
+                tracing::info!(%serialized, "=================== Serialized result");
+            }
 
             let roundtripped = match S::deserialize::<T>(&serialized) {
                 Ok(value) => value,

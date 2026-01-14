@@ -86,6 +86,19 @@ pub struct Field {
     /// key for the struct field (for tuples and tuple-structs, this is the 0-based index)
     pub name: &'static str,
 
+    /// Renamed field name for serialization/deserialization.
+    ///
+    /// Set by `#[facet(rename = "name")]`. When present, serializers/deserializers
+    /// should use this name instead of the field's actual name.
+    pub rename: Option<&'static str>,
+
+    /// Alternative name(s) accepted during deserialization.
+    ///
+    /// Set by `#[facet(alias = "name")]`. During deserialization, this name
+    /// is accepted in addition to the primary name (or renamed name).
+    // TODO: This should probably be `&'static [&'static str]` to support multiple aliases
+    pub alias: Option<&'static str>,
+
     /// shape of the inner type
     ///
     /// [`ShapeRef`] wraps a function that returns the shape, enabling lazy evaluation
@@ -101,19 +114,6 @@ pub struct Field {
     /// `flatten`, `skip`, etc. These are set by the derive macro based on
     /// `#[facet(...)]` attributes with `#[storage(flag)]` in the grammar.
     pub flags: FieldFlags,
-
-    /// Renamed field name for serialization/deserialization.
-    ///
-    /// Set by `#[facet(rename = "name")]`. When present, serializers/deserializers
-    /// should use this name instead of the field's actual name.
-    pub rename: Option<&'static str>,
-
-    /// Alternative name(s) accepted during deserialization.
-    ///
-    /// Set by `#[facet(alias = "name")]`. During deserialization, this name
-    /// is accepted in addition to the primary name (or renamed name).
-    // TODO: This should probably be `&'static [&'static str]` to support multiple aliases
-    pub alias: Option<&'static str>,
 
     /// arbitrary attributes set via the derive macro
     ///
@@ -281,8 +281,11 @@ impl Field {
     ///
     /// Returns `rename` if set, otherwise returns the field's actual name.
     #[inline]
-    pub fn effective_name(&self) -> &'static str {
-        self.rename.unwrap_or(self.name)
+    pub const fn effective_name(&self) -> &'static str {
+        match self.rename {
+            Some(name) => name,
+            None => self.name,
+        }
     }
 }
 

@@ -17,6 +17,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+tracing = { workspace = true }
 arborium = { workspace = true, features = ["lang-rust", "lang-xml", "lang-yaml"] }
 bytes = { workspace = true, optional = true }
 bytestring = { workspace = true, optional = true }

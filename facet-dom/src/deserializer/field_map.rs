@@ -581,10 +581,10 @@ fn classify_sequence_shape(shape: &facet_core::Shape) -> (bool, bool, bool, bool
         }
         _ => {
             // Check for tuple types
-            if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
-                if struct_def.kind == StructKind::Tuple {
-                    return (false, false, false, true);
-                }
+            if let Type::User(UserType::Struct(struct_def)) = &shape.ty
+                && struct_def.kind == StructKind::Tuple
+            {
+                return (false, false, false, true);
             }
             (false, false, false, false)
         }

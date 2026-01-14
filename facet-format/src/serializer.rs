@@ -605,6 +605,8 @@ where
 
             // Collect fields and sort according to format preference
             let mut fields: alloc::vec::Vec<_> = struct_.fields_for_serialize().collect();
+            tracing::trace!(?fields, "Got fields_for_serialize");
+
             sort_fields_if_needed(serializer, &mut fields);
             let field_mode = serializer.struct_field_mode();
 
@@ -614,7 +616,7 @@ where
                     .map_err(SerializeError::Backend)?;
                 if field_mode == StructFieldMode::Named {
                     serializer
-                        .field_key(&field_item.name)
+                        .field_key(field_item.effective_name())
                         .map_err(SerializeError::Backend)?;
                 }
                 // Check for field-level proxy
@@ -697,7 +699,7 @@ where
                                 .map_err(SerializeError::Backend)?;
                             if field_mode == StructFieldMode::Named {
                                 serializer
-                                    .field_key(&field_item.name)
+                                    .field_key(field_item.effective_name())
                                     .map_err(SerializeError::Backend)?;
                             }
                             // Check for field-level proxy
@@ -746,7 +748,7 @@ where
                                 .map_err(SerializeError::Backend)?;
                             if field_mode == StructFieldMode::Named {
                                 serializer
-                                    .field_key(&field_item.name)
+                                    .field_key(field_item.effective_name())
                                     .map_err(SerializeError::Backend)?;
                             }
                             // Check for field-level proxy
@@ -869,7 +871,7 @@ where
                         .map_err(SerializeError::Backend)?;
                     if field_mode == StructFieldMode::Named {
                         serializer
-                            .field_key(&field_item.name)
+                            .field_key(field_item.effective_name())
                             .map_err(SerializeError::Backend)?;
                     }
                     // Check for field-level proxy
@@ -1191,7 +1193,7 @@ where
                     .field_metadata(&field_item)
                     .map_err(SerializeError::Backend)?;
                 serializer
-                    .field_key(&field_item.name)
+                    .field_key(field_item.effective_name())
                     .map_err(SerializeError::Backend)?;
                 // Check for field-level proxy
                 if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
@@ -1360,13 +1362,7 @@ where
 
     // Handle Map
     if let Def::Map(map_def) = target_shape.def {
-        return serialize_map_from_dynamic(
-            serializer,
-            dynamic,
-            map_def.k,
-            map_def.v,
-            value_shape,
-        );
+        return serialize_map_from_dynamic(serializer, dynamic, map_def.k, map_def.v, value_shape);
     }
 
     // Handle scalars
@@ -1559,9 +1555,9 @@ where
             .scalar(ScalarValue::Null)
             .map_err(SerializeError::Backend),
         ST::Bool => {
-            let v = dynamic.as_bool().ok_or_else(|| {
-                SerializeError::Unsupported(Cow::Borrowed("expected bool value"))
-            })?;
+            let v = dynamic
+                .as_bool()
+                .ok_or_else(|| SerializeError::Unsupported(Cow::Borrowed("expected bool value")))?;
             serializer
                 .scalar(ScalarValue::Bool(v))
                 .map_err(SerializeError::Backend)
@@ -1641,10 +1637,7 @@ fn serialize_struct_from_dynamic<S>(
 where
     S: FormatSerializer,
 {
-    let is_tuple = matches!(
-        struct_def.kind,
-        StructKind::Tuple | StructKind::TupleStruct
-    );
+    let is_tuple = matches!(struct_def.kind, StructKind::Tuple | StructKind::TupleStruct);
 
     if is_tuple {
         // For tuples, expect an array value
@@ -1823,12 +1816,13 @@ where
                     StructKind::Struct => {
                         // Struct variant - expect object
                         for field in variant.data.fields {
-                            let field_value = payload_dyn.object_get(field.name).ok_or_else(|| {
-                                SerializeError::Unsupported(Cow::Owned(alloc::format!(
-                                    "missing field '{}' in struct variant",
-                                    field.name
-                                )))
-                            })?;
+                            let field_value =
+                                payload_dyn.object_get(field.name).ok_or_else(|| {
+                                    SerializeError::Unsupported(Cow::Owned(alloc::format!(
+                                        "missing field '{}' in struct variant",
+                                        field.name
+                                    )))
+                                })?;
                             let field_dyn = field_value.into_dynamic_value().map_err(|_| {
                                 SerializeError::Internal(Cow::Borrowed(
                                     "field value is not a dynamic value",
@@ -1892,12 +1886,13 @@ where
                     StructKind::Struct => {
                         serializer.begin_struct().map_err(SerializeError::Backend)?;
                         for field in variant.data.fields {
-                            let field_value = payload_dyn.object_get(field.name).ok_or_else(|| {
-                                SerializeError::Unsupported(Cow::Owned(alloc::format!(
-                                    "missing field '{}'",
-                                    field.name
-                                )))
-                            })?;
+                            let field_value =
+                                payload_dyn.object_get(field.name).ok_or_else(|| {
+                                    SerializeError::Unsupported(Cow::Owned(alloc::format!(
+                                        "missing field '{}'",
+                                        field.name
+                                    )))
+                                })?;
                             serializer
                                 .field_key(field.name)
                                 .map_err(SerializeError::Backend)?;
