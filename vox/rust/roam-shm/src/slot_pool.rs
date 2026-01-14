@@ -136,10 +136,18 @@ impl SlotPool {
                         let generation = unsafe { &*gen_ptr }
                             .fetch_add(1, Ordering::AcqRel)
                             .wrapping_add(1);
-                        return Some(SlotHandle {
+                        let handle = SlotHandle {
                             index: slot_index,
                             generation,
-                        });
+                        };
+                        trace!(
+                            slot_index,
+                            generation,
+                            allocated = self.allocated_count(),
+                            total = self.slots_per_guest,
+                            "slot allocated"
+                        );
+                        return Some(handle);
                     }
                     Err(actual) => current = actual,
                 }
@@ -178,6 +186,13 @@ impl SlotPool {
         let mask = 1u64 << bit;
         let word_ptr = unsafe { &*self.bitmap_ptr().add(word) };
         let _ = word_ptr.fetch_or(mask, Ordering::Release);
+        trace!(
+            slot_index = handle.index,
+            generation = handle.generation,
+            allocated = self.allocated_count(),
+            total = self.slots_per_guest,
+            "slot freed"
+        );
         Ok(())
     }
 

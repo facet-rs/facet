@@ -470,28 +470,61 @@ impl ShmGuestTransport {
         self.guest.config()
     }
 
-    /// Send a message.
-    pub fn send(&mut self, msg: &Message) -> io::Result<()> {
+    /// Send a message (async with backpressure).
+    ///
+    /// If slots are exhausted, waits for the doorbell (host signals when slots are freed)
+    /// and retries. This provides backpressure instead of failing immediately.
+    pub async fn send(&mut self, msg: &Message) -> io::Result<()> {
         let frame =
             message_to_frame(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        self.guest.send(frame).map_err(|e| match e {
-            SendError::HostGoodbye => {
-                io::Error::new(io::ErrorKind::ConnectionReset, "host goodbye")
+        loop {
+            match self.guest.send(frame.clone()) {
+                Ok(()) => {
+                    // Ring doorbell to notify host of new message
+                    if let Some(doorbell) = &self.doorbell {
+                        doorbell.signal();
+                    }
+                    return Ok(());
+                }
+                Err(SendError::SlotExhausted) => {
+                    // Wait for host to free slots (it rings our doorbell when it does)
+                    if let Some(doorbell) = &self.doorbell {
+                        tracing::debug!("slot exhaustion: waiting for doorbell");
+                        doorbell.wait().await?;
+                        tracing::debug!("slot exhaustion: doorbell rang, retrying send");
+                        // Retry after wakeup
+                        continue;
+                    } else {
+                        // No doorbell - can't wait, must fail
+                        return Err(io::Error::new(io::ErrorKind::Other, "slot exhausted"));
+                    }
+                }
+                Err(SendError::RingFull) => {
+                    // Ring full - also wait for doorbell and retry
+                    if let Some(doorbell) = &self.doorbell {
+                        tracing::debug!("ring full: waiting for doorbell");
+                        doorbell.wait().await?;
+                        tracing::debug!("ring full: doorbell rang, retrying send");
+                        continue;
+                    } else {
+                        return Err(io::Error::new(io::ErrorKind::Other, "ring full"));
+                    }
+                }
+                Err(SendError::HostGoodbye) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "host goodbye",
+                    ));
+                }
+                Err(SendError::PayloadTooLarge) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "payload too large",
+                    ));
+                }
             }
-            SendError::RingFull => io::Error::new(io::ErrorKind::Other, "ring full"),
-            SendError::PayloadTooLarge => {
-                io::Error::new(io::ErrorKind::InvalidData, "payload too large")
-            }
-            SendError::SlotExhausted => io::Error::new(io::ErrorKind::Other, "slot exhausted"),
-        })?;
-
-        // Ring doorbell to notify host of new message
-        if let Some(doorbell) = &self.doorbell {
-            doorbell.signal();
         }
-
-        Ok(())
     }
 
     /// Try to receive a message (non-blocking).
@@ -644,10 +677,10 @@ mod async_transport {
     impl MessageTransport for ShmGuestTransport {
         /// Send a message over the SHM transport.
         ///
-        /// This is synchronous internally but wrapped as async for the trait.
+        /// If slots are exhausted, waits for the doorbell (host signals when slots are freed)
+        /// and retries. This provides backpressure instead of failing immediately.
         async fn send(&mut self, msg: &Message) -> io::Result<()> {
-            // SHM send is synchronous and fast, no need for spawn_blocking
-            ShmGuestTransport::send(self, msg)
+            ShmGuestTransport::send(self, msg).await
         }
 
         /// Receive a message with timeout.

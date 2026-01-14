@@ -417,6 +417,7 @@ impl ShmHost {
         let mut crashed_guests = Vec::new();
         let mut goodbye_guests = Vec::new();
         let mut bad_guests = Vec::new();
+        let mut slots_freed_for: Vec<PeerId> = Vec::new();
 
         for i in 0..self.layout.config.max_guests {
             let Some(peer_id) = PeerId::from_index(i as u8) else {
@@ -465,9 +466,13 @@ impl ShmHost {
                 let desc_offset = ring_offset as usize + slot * DESC_SIZE;
                 let desc = unsafe { ptr::read(self.region.offset(desc_offset) as *const MsgDesc) };
 
-                // Get payload
+                // Get payload (also frees the slot if non-inline)
                 match self.get_payload(&desc, peer_id) {
                     Ok(payload) => {
+                        // Track if we freed a slot (non-inline payload)
+                        if !payload.is_inline() && !slots_freed_for.contains(&peer_id) {
+                            slots_freed_for.push(peer_id);
+                        }
                         let frame = Frame { desc, payload };
                         messages.push((peer_id, frame));
                     }
@@ -507,6 +512,12 @@ impl ShmHost {
         }
         for peer_id in bad_guests {
             self.handle_guest_crash(peer_id);
+        }
+
+        // Ring doorbell for any guests whose slots were freed (for backpressure wakeup)
+        // shm[impl shm.backpressure.slot-freed-notify]
+        for peer_id in slots_freed_for {
+            self.ring_doorbell(peer_id);
         }
 
         messages

@@ -18,6 +18,9 @@ use tokio::sync::mpsc;
 
 pub use roam_frame::{Frame, MsgDesc, OwnedMessage, Payload};
 
+const CHANNEL_SIZE: usize = 1024;
+const RX_STREAM_BUFFER_SIZE: usize = 1024;
+
 // ============================================================================
 // Streaming types
 // ============================================================================
@@ -565,7 +568,7 @@ impl std::error::Error for RxError {}
 /// let sum = fut.await?;
 /// ```
 pub fn channel<T: 'static>() -> (Tx<T>, Rx<T>) {
-    let (sender, receiver) = mpsc::channel::<Vec<u8>>(64);
+    let (sender, receiver) = mpsc::channel::<Vec<u8>>(CHANNEL_SIZE);
     (Tx::unbound(sender), Rx::unbound(receiver))
 }
 
@@ -905,7 +908,7 @@ impl ChannelRegistry {
             };
 
             // Create channel and set receiver slot
-            let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
+            let (tx, rx) = mpsc::channel::<Vec<u8>>(RX_STREAM_BUFFER_SIZE);
 
             if let Ok(mut receiver_field) = ps.field_by_name("receiver")
                 && let Ok(slot) = receiver_field.get_mut::<ReceiverSlot>()

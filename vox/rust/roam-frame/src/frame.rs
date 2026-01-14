@@ -51,7 +51,7 @@ impl MsgDesc {
 }
 
 /// Payload storage for a frame.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Payload {
     /// Payload bytes live inside `MsgDesc::inline_payload`.
     Inline,
@@ -88,7 +88,7 @@ impl Payload {
 }
 
 /// Owned frame for sending, receiving, or routing.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Frame {
     pub desc: MsgDesc,
     pub payload: Payload,
