@@ -4,25 +4,9 @@ weight = 6
 insert_anchor_links = "heading"
 +++
 
-## Philosophy
-
-We're building software for the next 20 years. The test that's failing today will fail again someday — maybe in 6 months, maybe in 5 years. When it does, we want to flip a feature flag and immediately see what's happening inside, not rediscover the debugging journey from scratch.
-
-Every time you add a `println!` to understand what's going on, you're doing valuable work — you're identifying the points in the code where visibility matters. That knowledge shouldn't be thrown away after the bug is fixed.
-
-**Tracing calls are observability infrastructure for your future self.**
-
-The pattern described here makes that observability zero-cost: when the feature is off, the macros compile to nothing. So there's no reason to remove them. Keep them. Accumulate them. Build a codebase that can be illuminated on demand.
-
-## The Rule
-
-**Never use `println!` or `eprintln!` for debugging. They are evil.**
-
-**Never use `#[instrument]`**. It requires `tracing-attributes` which pulls in `syn`, adding 15-20 seconds to compile times.
-
 ## How It Works
 
-Facet uses [tracing](https://docs.rs/tracing) as an optional dependency with crate-level forwarding macros that compile to nothing when the feature is disabled.
+Facet uses [tracing](https://docs.rs/tracing) as an optional dependency with crate-level forwarding macros that compile to nothing when the feature is disabled. We avoid `#[instrument]` because it pulls in `syn`.
 
 ### The Forwarding Macros
 
@@ -41,8 +25,10 @@ macro_rules! trace {
 }
 ```
 
+**Why forwarding macros?** The `tracing` crate itself already compiles to zero runtime cost when no subscriber is registered. The reason we use forwarding macros is to **avoid pulling in the `tracing` dependency at all** when the feature is disabled. This keeps the dependency tree small and compile times fast for users who don't need tracing.
+
 This pattern:
-- Compiles to **nothing** when `tracing` feature is disabled (zero runtime cost)
+- Avoids the `tracing` dependency entirely when the feature is disabled
 - Automatically enables tracing in tests via `cfg(test)`
 - Forwards to the real `tracing::trace!` when enabled
 
@@ -89,7 +75,7 @@ use facet_testhelpers::test;
 #[test]
 fn my_test() {
     // Tracing subscriber is automatically set up
-    // FACET_LOG=trace will show trace output
+    // Default is trace level — use FACET_LOG to filter if too verbose
 }
 ```
 
@@ -114,61 +100,16 @@ fn process_field(field: &Field, value: &Value) -> Result<(), Error> {
 }
 ```
 
-Use appropriate levels:
-- `trace!` — Very verbose: function entry/exit, loop iterations, detailed state
-- `debug!` — Intermediate values, decision points, key milestones
-- `info!` — High-level operations (usually for production logs)
-- `warn!` / `error!` — Problems and failures
+## Filtering Output
 
-**Prefer `debug!` and `trace!`** for debugging instrumentation. These are the levels you'll use most when investigating test failures.
-
-## Running Tests with Tracing
+The default is `trace` level (very verbose). Use `FACET_LOG` to filter:
 
 ```bash
-# Run tests with default trace-level output
-cargo nextest run -p facet-json
+# Only facet_format at debug level
+FACET_LOG=facet_format=debug cargo nextest run -p facet-json
 
-# Filter to specific modules/crates
-FACET_LOG=facet_format=trace cargo nextest run -p facet-json
-
-# Run a specific test with full tracing
-FACET_LOG=trace cargo nextest run -p facet-json -E 'test(rename)'
+# Multiple targets
+FACET_LOG=facet_format=trace,facet_reflect=debug cargo nextest run
 ```
 
-The `FACET_LOG` variable uses [tracing's filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html):
-
-```bash
-# Everything at trace level
-FACET_LOG=trace
-
-# Only facet_format at debug, everything else at warn
-FACET_LOG=warn,facet_format=debug
-
-# Multiple crates
-FACET_LOG=facet_format=trace,facet_reflect=debug
-```
-
-## Production Use
-
-To enable tracing in a release build:
-
-```bash
-RUST_LOG=info cargo run --release --features tracing
-```
-
-Or enable it in your application's `Cargo.toml`:
-
-```toml
-[dependencies]
-facet-json = { version = "...", features = ["tracing"] }
-```
-
-## Key Principles
-
-1. **Never remove tracing calls** — They're zero-cost when disabled. Keep them as documentation of important code paths.
-
-2. **Use the crate-local macros** — Import `use crate::trace;`, not `use tracing::trace;`. This ensures the conditional compilation works.
-
-3. **Prefer structured fields** — Use `trace!(field_name, ?debug_value, "message")` rather than format strings. Structured fields are more useful for filtering and analysis.
-
-4. **Add tracing when debugging** — If you add a `println!` to understand something, convert it to a `trace!` or `debug!` call before committing. Your future self will thank you.
+See [Targets](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/targets/struct.Targets.html) for the full syntax.
