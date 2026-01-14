@@ -4,6 +4,7 @@
 
 use facet::Facet;
 use facet_xml as xml;
+use test_log::test;
 
 // ============================================================================
 // Basic enum variants

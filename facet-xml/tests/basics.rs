@@ -2,6 +2,7 @@
 
 use facet::Facet;
 use facet_xml as xml;
+use test_log::test;
 
 // ============================================================================
 // xml::element - explicit single child element

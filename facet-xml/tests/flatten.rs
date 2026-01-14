@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use facet::Facet;
 use facet_xml as xml;
+use test_log::test;
 
 // ============================================================================
 // flatten - flattened structs

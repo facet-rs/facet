@@ -28,7 +28,7 @@ zmij = { version = "1", optional = true }
 itoa = { version = "1", optional = true }
 
 # Tracing (optional - compiles to nothing when disabled)
-tracing = { workspace = true, default-features = false, optional = true }
+tracing = { workspace = true, optional = true }
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
@@ -42,7 +42,7 @@ indoc = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde-xml-rs = "0.8.2"
 test-log = { version = "0.2", features = ["trace"] }
-tracing = { workspace = true, default-features = false }
+tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 facet-dom = { path = "../facet-dom", features = ["tracing"] }
 facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
