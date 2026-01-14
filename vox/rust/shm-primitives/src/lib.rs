@@ -17,30 +17,19 @@ pub use treiber::{
 };
 
 // OS-level primitives for SHM
-#[cfg(unix)]
-pub mod doorbell;
-#[cfg(windows)]
-pub mod doorbell_windows;
 pub mod futex;
-#[cfg(unix)]
-pub mod mmap;
-#[cfg(windows)]
-pub mod mmap_windows;
 
 #[cfg(unix)]
-pub use doorbell::{
-    Doorbell, DoorbellHandle, SignalResult, clear_cloexec, close_peer_fd, set_nonblocking,
-    validate_fd,
-};
-#[cfg(windows)]
-pub use doorbell_windows::{
-    Doorbell, DoorbellHandle, SignalResult, close_handle, set_handle_inheritable, validate_handle,
-};
-pub use futex::{futex_signal, futex_wait, futex_wait_async, futex_wait_async_ptr, futex_wake};
+mod unix;
 #[cfg(unix)]
-pub use mmap::{FileCleanup, MmapRegion};
+pub use unix::*;
+
 #[cfg(windows)]
-pub use mmap_windows::{FileCleanup, MmapRegion};
+mod windows;
+#[cfg(windows)]
+pub use windows::*;
+
+pub use futex::{futex_signal, futex_wait, futex_wait_async, futex_wait_async_ptr, futex_wake};
 
 #[cfg(all(test, loom))]
 mod loom_tests;
