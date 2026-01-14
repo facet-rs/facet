@@ -245,10 +245,13 @@ async fn multiple_sequential_calls() {
 /// shm[verify shm.handshake]
 #[tokio::test]
 async fn client_streaming_sum() {
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_test_writer()
-        .try_init();
+    #[cfg(feature = "tracing")]
+    {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_test_writer()
+            .try_init();
+    }
 
     let (host, guest) = create_host_and_guest();
     let peer_id = guest.peer_id();

@@ -858,7 +858,7 @@ impl MultiPeerHostDriver {
         struct NoisyGuard;
         impl Drop for NoisyGuard {
             fn drop(&mut self) {
-                tracing::warn!("the driver is dropping now children!");
+                warn!("the driver is dropping now children!");
                 panic!("someone IS DROPPING OUR DRIVER");
             }
         }
