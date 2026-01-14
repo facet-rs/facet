@@ -293,30 +293,12 @@ where
     if let Ok(struct_) = value.into_struct() {
         let kind = struct_.ty().kind;
 
-        // For tuples, serialize as a sequence
+        // For tuples, serialize as a flat sequence (like Vec)
+        // Each tuple field becomes a sibling element with the same tag name
         if kind == StructKind::Tuple || kind == StructKind::TupleStruct {
-            if let Some(tag) = element_name {
-                serializer
-                    .element_start(tag, None)
-                    .map_err(DomSerializeError::Backend)?;
-                serializer
-                    .children_start()
-                    .map_err(DomSerializeError::Backend)?;
-            }
-
             for (_field_item, field_value) in struct_.fields_for_serialize() {
-                serialize_value(serializer, field_value, Some("item"))?;
+                serialize_value(serializer, field_value, element_name)?;
             }
-
-            if let Some(tag) = element_name {
-                serializer
-                    .children_end()
-                    .map_err(DomSerializeError::Backend)?;
-                serializer
-                    .element_end(tag)
-                    .map_err(DomSerializeError::Backend)?;
-            }
-
             return Ok(());
         }
 

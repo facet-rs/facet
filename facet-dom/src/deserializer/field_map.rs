@@ -19,6 +19,8 @@ pub(crate) struct FieldInfo {
     pub is_array: bool,
     /// True if this field is a set type (HashSet, BTreeSet, etc.)
     pub is_set: bool,
+    /// True if this field is a tuple type (i32, String, bool)
+    pub is_tuple: bool,
     /// The namespace URI this field must match (from `xml::ns` attribute), if any.
     pub namespace: Option<&'static str>,
 }
@@ -119,7 +121,7 @@ impl StructFieldMap {
                 // Check if this is a flattened enum
                 if is_flattened_enum(field) {
                     let shape = field.shape();
-                    let (is_list, is_array, is_set) = classify_sequence_shape(shape);
+                    let (is_list, is_array, is_set, is_tuple) = classify_sequence_shape(shape);
                     let namespace: Option<&'static str> = field
                         .get_attr(Some("xml"), "ns")
                         .and_then(|attr| attr.get_as::<&str>().copied());
@@ -132,6 +134,7 @@ impl StructFieldMap {
                             is_list,
                             is_array,
                             is_set,
+                            is_tuple,
                             namespace,
                         },
                     });
@@ -142,7 +145,8 @@ impl StructFieldMap {
                 if let Some(inner_struct_def) = get_flattened_struct_def(field) {
                     for (child_idx, child_field) in inner_struct_def.fields.iter().enumerate() {
                         let child_shape = child_field.shape();
-                        let (is_list, is_array, is_set) = classify_sequence_shape(child_shape);
+                        let (is_list, is_array, is_set, is_tuple) =
+                            classify_sequence_shape(child_shape);
                         let namespace: Option<&'static str> = child_field
                             .get_attr(Some("xml"), "ns")
                             .and_then(|attr| attr.get_as::<&str>().copied());
@@ -155,6 +159,7 @@ impl StructFieldMap {
                             is_list,
                             is_array,
                             is_set,
+                            is_tuple,
                             namespace,
                         };
 
@@ -190,7 +195,8 @@ impl StructFieldMap {
                                 .push(flattened_child.clone());
 
                             // For list/set fields without explicit rename, also register singularized form
-                            if (is_list || is_set) && child_field.rename.is_none() {
+                            // (but not for tuples - they use the field name directly)
+                            if (is_list || is_set) && !is_tuple && child_field.rename.is_none() {
                                 let singular_key = singularize(&child_key);
                                 if singular_key != child_key {
                                     flattened_children
@@ -222,6 +228,7 @@ impl StructFieldMap {
                         is_list: false,
                         is_array: false,
                         is_set: false,
+                        is_tuple: false,
                         namespace,
                     };
                     // Add to both element and attribute capture lists
@@ -231,10 +238,10 @@ impl StructFieldMap {
                 continue; // Don't register the flattened field itself as an element
             }
 
-            // Check if this field is a list, array, or set type
+            // Check if this field is a list, array, set, or tuple type
             // Need to look through pointers (Arc<[T]>, Box<[T]>, etc.)
             let shape = field.shape();
-            let (is_list, is_array, is_set) = classify_sequence_shape(shape);
+            let (is_list, is_array, is_set, is_tuple) = classify_sequence_shape(shape);
 
             // Extract namespace from xml::ns attribute if present
             let namespace: Option<&'static str> = field
@@ -253,6 +260,7 @@ impl StructFieldMap {
                     is_list,
                     is_array,
                     is_set,
+                    is_tuple,
                     namespace,
                 };
                 // Check if this is a catch-all for attribute values (Vec/Set without rename)
@@ -282,6 +290,7 @@ impl StructFieldMap {
                     is_list,
                     is_array,
                     is_set,
+                    is_tuple,
                     namespace,
                 };
                 elements_field = Some(info);
@@ -292,6 +301,7 @@ impl StructFieldMap {
                     is_list,
                     is_array,
                     is_set,
+                    is_tuple,
                     namespace,
                 };
                 text_field = Some(info);
@@ -302,6 +312,7 @@ impl StructFieldMap {
                     is_list,
                     is_array,
                     is_set,
+                    is_tuple,
                     namespace,
                 };
                 tag_field = Some(info);
@@ -315,6 +326,7 @@ impl StructFieldMap {
                     is_list,
                     is_array,
                     is_set,
+                    is_tuple,
                     namespace: effective_namespace,
                 };
                 element_fields
@@ -324,7 +336,8 @@ impl StructFieldMap {
 
                 // For list/set fields without explicit rename, also register the singularized form
                 // e.g., field "tracks" (Vec<T>) also matches element <track>
-                if (is_list || is_set) && field.rename.is_none() {
+                // (but not for tuples - they use the field name directly)
+                if (is_list || is_set) && !is_tuple && field.rename.is_none() {
                     let singular_key = singularize(&element_key);
                     // Only register if singularization actually changed the name
                     if singular_key != element_key {
@@ -354,13 +367,14 @@ impl StructFieldMap {
                 .enumerate()
                 .map(|(idx, field)| {
                     let shape = field.shape();
-                    let (is_list, is_array, is_set) = classify_sequence_shape(shape);
+                    let (is_list, is_array, is_set, is_tuple) = classify_sequence_shape(shape);
                     FieldInfo {
                         idx,
                         field,
                         is_list,
                         is_array,
                         is_set,
+                        is_tuple,
                         namespace: None,
                     }
                 })
@@ -554,20 +568,29 @@ fn is_flattened_map(field: &'static Field) -> bool {
     false
 }
 
-/// Classify a shape as list, array, set, or neither. Returns (is_list, is_array, is_set).
-/// Lists are Vec, slices. Arrays are [T; N]. Sets are HashSet, BTreeSet. Looks through pointers.
-fn classify_sequence_shape(shape: &facet_core::Shape) -> (bool, bool, bool) {
+/// Classify a shape as list, array, set, tuple, or neither. Returns (is_list, is_array, is_set, is_tuple).
+/// Lists are Vec, slices. Arrays are [T; N]. Sets are HashSet, BTreeSet. Tuples are (T, U, V).
+/// Looks through pointers.
+fn classify_sequence_shape(shape: &facet_core::Shape) -> (bool, bool, bool, bool) {
     match &shape.def {
-        Def::List(_) | Def::Slice(_) => (true, false, false),
-        Def::Array(_) => (false, true, false),
-        Def::Set(_) => (false, false, true),
+        Def::List(_) | Def::Slice(_) => (true, false, false, false),
+        Def::Array(_) => (false, true, false, false),
+        Def::Set(_) => (false, false, true, false),
         Def::Pointer(ptr_def) => {
             // Look through Arc<[T]>, Box<[T]>, Rc<[T]>, etc.
             ptr_def
                 .pointee()
                 .map(classify_sequence_shape)
-                .unwrap_or((false, false, false))
+                .unwrap_or((false, false, false, false))
         }
-        _ => (false, false, false),
+        _ => {
+            // Check for tuple types
+            if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+                if struct_def.kind == StructKind::Tuple {
+                    return (false, false, false, true);
+                }
+            }
+            (false, false, false, false)
+        }
     }
 }

@@ -195,3 +195,44 @@ struct Element {
 # let elem: Element = facet_xml::from_str(xml_str).unwrap();
 # assert_eq!(elem.values, vec!["1", "2", "3"]);
 ```
+
+## Tuples
+
+Tuples are treated like lists: each element becomes a child element with the field's name (or singularized name for plural field names). Elements are matched by position.
+
+```xml
+<record>
+    <value>42</value>
+    <value>hello</value>
+    <value>true</value>
+</record>
+```
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename = "record")]
+struct Record {
+    #[facet(rename = "value")]
+    data: (i32, String, bool),
+}
+# let xml_str = "<record><value>42</value><value>hello</value><value>true</value></record>";
+# let record: Record = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(record.data, (42, "hello".to_string(), true));
+```
+
+Without `rename`, the field name is used directly (no singularization for tuples since tuple fields typically have singular names):
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename = "record")]
+struct Record {
+    data: (i32, String, bool),
+}
+# let xml_str = "<record><data>42</data><data>hello</data><data>true</data></record>";
+# let record: Record = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(record.data, (42, "hello".to_string(), true));
+```

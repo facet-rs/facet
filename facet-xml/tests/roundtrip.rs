@@ -566,8 +566,8 @@ fn tuple_simple() {
         data: (i32, String, bool),
     }
 
-    // Tuples use <item> elements matched by position
-    let xml = r#"<record><data><item>42</item><item>hello</item><item>true</item></data></record>"#;
+    // Tuples are treated like lists: each element uses the field name
+    let xml = r#"<record><data>42</data><data>hello</data><data>true</data></record>"#;
     let parsed: Record = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed.data.0, 42);
     assert_eq!(parsed.data.1, "hello");

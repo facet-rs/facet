@@ -18,6 +18,7 @@ pub(crate) enum SeqState {
     List { is_smart_ptr: bool },
     Array { next_idx: usize },
     Set,
+    Tuple { next_idx: usize },
 }
 
 /// Deserializer for struct types.
@@ -348,12 +349,20 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         trace!(tag = %tag, namespace = ?namespace, "got child NodeStart");
 
         if let Some(info) = self.field_map.find_element(tag, namespace) {
-            if info.is_list || info.is_array || info.is_set {
-                self.handle_flat_sequence(wip, info.idx, info.is_list, info.is_set, info.field)
+            if info.is_list || info.is_array || info.is_set || info.is_tuple {
+                self.handle_flat_sequence(
+                    wip,
+                    info.idx,
+                    info.is_list,
+                    info.is_set,
+                    info.is_tuple,
+                    info.field,
+                )
             } else {
                 self.handle_scalar_element(wip, info.idx)
             }
         } else if self.field_map.is_tuple() && tag == "item" {
+            // Legacy support for <item> elements in tuple structs (deprecated)
             self.handle_tuple_item(wip)
         } else if let Some(flattened) = self.field_map.find_flattened_child(tag, namespace).cloned()
         {
@@ -399,6 +408,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         idx: usize,
         is_list: bool,
         is_set: bool,
+        is_tuple: bool,
         field: &'static facet_core::Field,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         if self.elements_list_started {
@@ -440,6 +450,11 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             } else if is_set {
                 wip = wip.begin_nth_field(idx)?.init_set()?;
                 self.started_seqs.insert(idx, SeqState::Set);
+            } else if is_tuple {
+                // Tuples: just navigate into the field, items are accessed by position
+                wip = wip.begin_nth_field(idx)?;
+                self.started_seqs
+                    .insert(idx, SeqState::Tuple { next_idx: 0 });
             } else {
                 wip = wip.begin_nth_field(idx)?.init_array()?;
                 self.started_seqs
@@ -464,6 +479,9 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 SeqState::Array { .. } => {
                     wip = wip.begin_nth_field(idx)?.init_array()?;
                 }
+                SeqState::Tuple { .. } => {
+                    wip = wip.begin_nth_field(idx)?;
+                }
             }
             self.active_seq_idx = Some(idx);
         }
@@ -481,8 +499,23 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 .begin_set_item()?
                 .deserialize_with(self.dom_deser)?
                 .end()?;
+        } else if is_tuple {
+            // Tuples: access by position using begin_nth_field
+            let item_idx = match self.started_seqs.get(&idx) {
+                Some(SeqState::Tuple { next_idx }) => *next_idx,
+                _ => return Ok(wip),
+            };
+            trace!(idx, field_name = %field.name, item_idx, "adding item to flat tuple");
+            wip = wip
+                .begin_nth_field(item_idx)?
+                .deserialize_with(self.dom_deser)?
+                .end()?;
+            // Increment after
+            if let Some(SeqState::Tuple { next_idx }) = self.started_seqs.get_mut(&idx) {
+                *next_idx += 1;
+            }
         } else {
-            // Get the current index first
+            // Arrays: access by position using begin_nth_field
             let item_idx = match self.started_seqs.get(&idx) {
                 Some(SeqState::Array { next_idx }) => *next_idx,
                 _ => return Ok(wip),
@@ -718,6 +751,10 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 }
                 SeqState::Set => {
                     trace!(path = %wip.path(), "ending active flat set");
+                    wip = wip.end()?;
+                }
+                SeqState::Tuple { .. } => {
+                    trace!(path = %wip.path(), "ending active flat tuple");
                     wip = wip.end()?;
                 }
             }
