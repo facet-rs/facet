@@ -1,6 +1,7 @@
 use super::*;
 use crate::process_struct::{
     TraitSources, gen_field_from_pfield, gen_trait_bounds, gen_type_ops, gen_vtable,
+    phantom_attr_use,
 };
 use proc_macro2::Literal;
 use quote::{format_ident, quote, quote_spanned};
@@ -121,6 +122,37 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 
     // Get the facet crate path (custom or default ::facet)
     let facet_crate = pe.container.attrs.facet_crate();
+
+    // Collect phantom use statements for IDE hover support on attribute names.
+    // These link attribute spans to their facet::builtin::Attr variants.
+    let mut phantom_attr_uses: Vec<TokenStream> = Vec::new();
+    // Container-level attributes
+    for attr in &pe.container.attrs.facet {
+        if let Some(phantom) = phantom_attr_use(attr, &facet_crate) {
+            phantom_attr_uses.push(phantom);
+        }
+    }
+    // Variant-level and field-level attributes
+    for variant in &pe.variants {
+        for attr in &variant.attrs.facet {
+            if let Some(phantom) = phantom_attr_use(attr, &facet_crate) {
+                phantom_attr_uses.push(phantom);
+            }
+        }
+        // Fields within the variant (from variant.kind)
+        let fields: &[PStructField] = match &variant.kind {
+            PVariantKind::Unit => &[],
+            PVariantKind::Tuple { fields } => fields,
+            PVariantKind::Struct { fields } => fields,
+        };
+        for field in fields {
+            for attr in &field.attrs.facet {
+                if let Some(phantom) = phantom_attr_use(attr, &facet_crate) {
+                    phantom_attr_uses.push(phantom);
+                }
+            }
+        }
+    }
 
     let type_name_fn =
         generate_type_name_fn(enum_name, parsed.generics.as_ref(), opaque, &facet_crate);
@@ -975,8 +1007,20 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let static_decl =
         crate::derive::generate_static_decl(enum_name, &facet_crate, has_type_or_const_generics);
 
+    // Generate phantom use block for IDE hover support on attribute names.
+    // This links attribute spans to facet::builtin::Attr variants.
+    let phantom_attr_block = if phantom_attr_uses.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            const _: () = { #(#phantom_attr_uses)* };
+        }
+    };
+
     // Generate the impl
     quote! {
+        #phantom_attr_block
+
         // Suppress dead_code warnings for enum variants constructed via reflection.
         // See: https://github.com/facet-rs/facet/issues/996
         const _: () = {

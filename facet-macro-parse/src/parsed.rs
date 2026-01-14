@@ -221,7 +221,7 @@ impl PFacetAttr {
     pub fn key_str(&self) -> String {
         match &self.key {
             AttrKey::Ident(ident) => ident.to_string(),
-            AttrKey::Where(_) => "where".to_string(),
+            AttrKey::Where(w) => w.as_str().to_string(),
         }
     }
 }
@@ -711,7 +711,7 @@ impl PAttrs {
 
         for attr in &facet_attrs {
             if attr.is_builtin() {
-                match attr.key_str().as_str() {
+                match &*attr.key_str() {
                     "rename" => {
                         let s = attr.args.to_string();
                         let trimmed = s.trim().trim_matches('"');
