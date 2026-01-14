@@ -457,9 +457,9 @@ fn vec_with_xml_text_collects_multiple_text_nodes() {
         parts: Vec<String>,
     }
 
-    // Text nodes around a child element
+    // Text nodes around a child element (note: XML parser trims whitespace from text nodes)
     let result: Message = facet_xml::from_str("<message>Hello <b>world</b>!</message>").unwrap();
-    assert_eq!(result.parts, vec!["Hello ", "!"]);
+    assert_eq!(result.parts, vec!["Hello", "!"]);
 }
 
 // ============================================================================

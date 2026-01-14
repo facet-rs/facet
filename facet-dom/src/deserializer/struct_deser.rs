@@ -43,11 +43,20 @@ pub(crate) struct StructDeserializer<'de, 'p, const BORROW: bool, P: DomParser<'
     /// Whether we've started the xml::elements collection
     elements_list_started: bool,
 
+    /// Whether we've started the xml::text list (for Vec<String> text fields)
+    text_list_started: bool,
+
+    /// Whether we've started the xml::attribute catch-all list (for Vec<String> attribute fields)
+    attributes_list_started: bool,
+
     /// Which flattened element maps have been initialized
     started_flattened_maps: HashSet<usize>,
 
     /// Which flattened attribute maps have been initialized
     started_flattened_attr_maps: HashSet<usize>,
+
+    /// Whether unknown fields should cause an error
+    deny_unknown_fields: bool,
 
     /// Position for tuple struct positional matching
     tuple_position: usize,
@@ -67,6 +76,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         expected_name: Cow<'static, str>,
     ) -> Self {
         let field_map = StructFieldMap::new(struct_def, ns_all);
+        let deny_unknown_fields = struct_def.shape.has_deny_unknown_fields_attr();
         Self {
             dom_deser,
             field_map,
@@ -76,8 +86,11 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             started_seqs: HashMap::new(),
             active_seq_idx: None,
             elements_list_started: false,
+            text_list_started: false,
+            attributes_list_started: false,
             started_flattened_maps: HashSet::new(),
             started_flattened_attr_maps: HashSet::new(),
+            deny_unknown_fields,
             tuple_position: 0,
             tag: Cow::Borrowed(""),
             expected_name,
@@ -194,6 +207,17 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                             wip = wip.end()?;
                         }
                         wip = wip.end()?;
+                    } else if let Some(info) = &self.field_map.attributes_field {
+                        // Catch-all Vec<String> for all attribute values
+                        let idx = info.idx;
+                        if !self.attributes_list_started {
+                            trace!(idx, field_name = %info.field.name, "starting attributes list");
+                            wip = wip.begin_nth_field(idx)?.init_list()?;
+                            self.attributes_list_started = true;
+                        }
+                        trace!(idx, value = %value, "adding attribute value to list");
+                        wip = wip.begin_list_item()?;
+                        wip = self.dom_deser.set_string_value(wip, value)?.end()?;
                     } else if !self.field_map.flattened_attr_maps.is_empty() {
                         // Try to add to flattened attribute map
                         let map_info = self.field_map.flattened_attr_maps.iter().find(|info| {
@@ -291,9 +315,23 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 .dom_deser
                 .deserialize_text_into_enum(wip, text)?
                 .end()?;
-        } else if self.field_map.text_field.is_some() {
-            trace!("accumulating text for text field");
-            self.text_content.push_str(&text);
+        } else if let Some(info) = &self.field_map.text_field {
+            if info.is_list || info.is_set {
+                // Vec<String> or HashSet<String> with xml::text - each text node is a list item
+                let idx = info.idx;
+                if !self.text_list_started {
+                    trace!(idx, field_name = %info.field.name, "starting text list");
+                    wip = wip.begin_nth_field(idx)?.init_list()?;
+                    self.text_list_started = true;
+                }
+                trace!("adding text as list item");
+                wip = wip.begin_list_item()?;
+                wip = self.dom_deser.set_string_value(wip, text)?.end()?;
+            } else {
+                // Single String with xml::text - accumulate text
+                trace!("accumulating text for text field");
+                self.text_content.push_str(&text);
+            }
         } else if self.field_map.elements_field.is_some() {
             // Mixed content: text before any elements - start the list and add text
             let info = self.field_map.elements_field.as_ref().unwrap();
@@ -714,16 +752,41 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
         }
 
-        if let Some(info) = &self.field_map.text_field
-            && !self.text_content.is_empty()
-        {
-            let idx = info.idx;
-            trace!(idx, field_name = %info.field.name, text_len = self.text_content.len(), "setting text field");
-            let text = std::mem::take(&mut self.text_content);
-            wip = self
-                .dom_deser
-                .set_string_value(wip.begin_nth_field(idx)?, Cow::Owned(text))?
-                .end()?;
+        // Handle attributes catch-all field finalization
+        if let Some(info) = &self.field_map.attributes_field {
+            if self.attributes_list_started {
+                // End the attributes list (Vec<String> with xml::attribute catch-all)
+                trace!(path = %wip.path(), "ending attributes list");
+                wip = wip.end()?;
+            } else {
+                // Empty attributes list - initialize empty
+                let idx = info.idx;
+                trace!(idx, field_name = %info.field.name, "initializing empty attributes list");
+                wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
+            }
+        }
+
+        // Handle text field finalization
+        if let Some(info) = &self.field_map.text_field {
+            if self.text_list_started {
+                // End the text list (Vec<String> with xml::text)
+                trace!(path = %wip.path(), "ending text list");
+                wip = wip.end()?;
+            } else if info.is_list || info.is_set {
+                // Empty text list - initialize empty
+                let idx = info.idx;
+                trace!(idx, field_name = %info.field.name, "initializing empty text list");
+                wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
+            } else if !self.text_content.is_empty() {
+                // Single String with accumulated text
+                let idx = info.idx;
+                trace!(idx, field_name = %info.field.name, text_len = self.text_content.len(), "setting text field");
+                let text = std::mem::take(&mut self.text_content);
+                wip = self
+                    .dom_deser
+                    .set_string_value(wip.begin_nth_field(idx)?, Cow::Owned(text))?
+                    .end()?;
+            }
         }
         Ok(wip)
     }

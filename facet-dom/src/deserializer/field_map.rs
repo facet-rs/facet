@@ -6,6 +6,7 @@ use facet_core::{Def, Field, StructKind, StructType, Type, UserType};
 
 use crate::naming::dom_key;
 use crate::tracing_macros::{trace, trace_span};
+use facet_singularize::singularize;
 
 /// Info about a field in a struct for deserialization purposes.
 #[derive(Clone)]
@@ -60,6 +61,8 @@ pub(crate) struct StructFieldMap {
     element_fields: HashMap<String, Vec<FieldInfo>>,
     /// The field marked with `xml::elements` (collects all unmatched children)
     pub elements_field: Option<FieldInfo>,
+    /// The field marked with `xml::attribute` as a catch-all (collects all unmatched attribute values)
+    pub attributes_field: Option<FieldInfo>,
     /// The field marked with `xml::text` (collects text content)
     pub text_field: Option<FieldInfo>,
     /// The field marked with `xml::tag` or `html::tag` (captures element tag name)
@@ -98,6 +101,7 @@ impl StructFieldMap {
         let mut attribute_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
         let mut element_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
         let mut elements_field = None;
+        let mut attributes_field = None;
         let mut text_field = None;
         let mut tag_field = None;
         let mut flattened_children: HashMap<String, Vec<FlattenedChildInfo>> = HashMap::new();
@@ -207,6 +211,23 @@ impl StructFieldMap {
                                 .or_default()
                                 .push(flattened_child.clone());
 
+                            // For list/set fields without explicit rename, also register singularized form
+                            if (is_list || is_set) && child_field.rename.is_none() {
+                                let singular_key = singularize(&child_key);
+                                if singular_key != child_key {
+                                    trace!(
+                                        parent_idx = idx,
+                                        child_idx,
+                                        singular_key = %singular_key,
+                                        "registering singularized key for flattened list child"
+                                    );
+                                    flattened_children
+                                        .entry(singular_key)
+                                        .or_default()
+                                        .push(flattened_child.clone());
+                                }
+                            }
+
                             // Also register alias if present
                             if let Some(alias) = child_field.alias {
                                 trace!(
@@ -261,9 +282,6 @@ impl StructFieldMap {
             let element_key = dom_key(field.rename, field.name);
 
             if field.is_attribute() {
-                // Attributes use rename or lowerCamelCase(field.name)
-                let attr_key = dom_key(field.rename, field.name);
-                trace!(idx, field_name = %field.name, key = %attr_key, namespace = ?namespace, "found attribute field");
                 let info = FieldInfo {
                     idx,
                     field,
@@ -272,7 +290,28 @@ impl StructFieldMap {
                     is_set,
                     namespace,
                 };
-                attribute_fields.entry(attr_key).or_default().push(info);
+                // Check if this is a catch-all for attribute values (Vec/Set without rename)
+                if (is_list || is_set) && field.rename.is_none() {
+                    trace!(idx, field_name = %field.name, "found attributes collection field (catch-all)");
+                    attributes_field = Some(info);
+                } else {
+                    // Named attribute: uses rename or lowerCamelCase(field.name)
+                    let attr_key = dom_key(field.rename, field.name);
+                    trace!(idx, field_name = %field.name, key = %attr_key, namespace = ?namespace, "found attribute field");
+                    attribute_fields
+                        .entry(attr_key)
+                        .or_default()
+                        .push(info.clone());
+
+                    // Also register alias if present (aliases are used as-is, no conversion)
+                    if let Some(alias) = field.alias {
+                        trace!(idx, field_name = %field.name, alias = %alias, "registering alias for attribute field");
+                        attribute_fields
+                            .entry(alias.to_string())
+                            .or_default()
+                            .push(info);
+                    }
+                }
             } else if field.is_elements() && field.rename.is_none() {
                 // xml::elements without rename = catch-all for unmatched children
                 trace!(idx, field_name = %field.name, "found elements collection field (catch-all)");
@@ -321,9 +360,23 @@ impl StructFieldMap {
                     namespace: effective_namespace,
                 };
                 element_fields
-                    .entry(element_key)
+                    .entry(element_key.clone())
                     .or_default()
                     .push(info.clone());
+
+                // For list/set fields without explicit rename, also register the singularized form
+                // e.g., field "tracks" (Vec<T>) also matches element <track>
+                if (is_list || is_set) && field.rename.is_none() {
+                    let singular_key = singularize(&element_key);
+                    // Only register if singularization actually changed the name
+                    if singular_key != element_key {
+                        trace!(idx, field_name = %field.name, singular_key = %singular_key, "registering singularized key for list field");
+                        element_fields
+                            .entry(singular_key)
+                            .or_default()
+                            .push(info.clone());
+                    }
+                }
 
                 // Also register alias if present (aliases are used as-is, no conversion)
                 if let Some(alias) = field.alias {
@@ -383,6 +436,7 @@ impl StructFieldMap {
             attribute_fields,
             element_fields,
             elements_field,
+            attributes_field,
             text_field,
             tag_field,
             tuple_fields,

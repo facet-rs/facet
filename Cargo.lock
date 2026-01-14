@@ -1779,6 +1779,7 @@ dependencies = [
  "facet-core",
  "facet-dessert",
  "facet-reflect",
+ "facet-singularize",
  "facet-solver",
  "heck",
  "tracing",
