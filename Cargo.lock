@@ -2297,6 +2297,8 @@ dependencies = [
  "facet-diff",
  "facet-diff-core",
  "facet-reflect",
+ "facet-testhelpers",
+ "tracing",
 ]
 
 [[package]]

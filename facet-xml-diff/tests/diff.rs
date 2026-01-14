@@ -2,8 +2,8 @@
 
 use facet::Facet;
 use facet_diff::FacetDiff;
+use facet_testhelpers::test;
 use facet_xml_diff::{DiffSerializeOptions, diff_to_string, diff_to_string_with_options};
-use test_log::test;
 
 #[derive(Facet, Debug, PartialEq, Clone)]
 struct Point {
