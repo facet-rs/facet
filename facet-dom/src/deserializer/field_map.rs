@@ -35,7 +35,7 @@ pub(crate) struct FlattenedChildInfo {
     pub child_idx: usize,
     /// Info about the child field (is_list, is_array, etc.)
     pub child_info: FieldInfo,
-    /// Whether the parent field is an Option<Struct> (requires begin_some())
+    /// Whether the parent field is an `Option<Struct>` (requires begin_some())
     pub parent_is_option: bool,
 }
 
@@ -59,7 +59,7 @@ pub(crate) struct NestedFlattenedMapInfo {
     pub child_idx: usize,
     /// Info about the map field
     pub child_info: FieldInfo,
-    /// Whether the parent field is an Option<Struct>
+    /// Whether the parent field is an `Option<Struct>`
     pub parent_is_option: bool,
 }
 
@@ -605,7 +605,7 @@ fn is_flattened_enum(field: &'static Field) -> bool {
 }
 
 /// Get the inner struct definition from a flattened field.
-/// Handles direct structs and Option<Struct>.
+/// Handles direct structs and `Option<Struct>`.
 fn get_flattened_struct_def(field: &'static Field) -> Option<&'static StructType> {
     let shape = field.shape();
 

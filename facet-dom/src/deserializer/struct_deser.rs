@@ -44,10 +44,10 @@ pub(crate) struct StructDeserializer<'de, 'p, const BORROW: bool, P: DomParser<'
     /// Which elements lists have been started (keyed by field index)
     started_elements_lists: HashSet<usize>,
 
-    /// Whether we've started the xml::text list (for Vec<String> text fields)
+    /// Whether we've started the xml::text list (for `Vec<String>` text fields)
     text_list_started: bool,
 
-    /// Whether we've started the xml::attribute catch-all list (for Vec<String> attribute fields)
+    /// Whether we've started the xml::attribute catch-all list (for `Vec<String>` attribute fields)
     attributes_list_started: bool,
 
     /// Which flattened element maps have been initialized
@@ -56,7 +56,7 @@ pub(crate) struct StructDeserializer<'de, 'p, const BORROW: bool, P: DomParser<'
     /// Which flattened attribute maps have been initialized
     started_flattened_attr_maps: HashSet<usize>,
 
-    /// Whether we've ever started the flattened enum list (for Vec<Enum> with flatten)
+    /// Whether we've ever started the flattened enum list (for `Vec<Enum>` with flatten)
     flattened_enum_list_started: bool,
 
     /// Whether the flattened enum list is currently active (we're inside it)
@@ -1142,7 +1142,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             wip = wip.end()?;
         }
         // Then initialize any elements fields that were never started as empty lists
-        for (_element_name, info) in &self.field_map.elements_fields {
+        for info in self.field_map.elements_fields.values() {
             let idx = info.idx;
             if !self.started_elements_lists.contains(&idx) {
                 trace!(idx, field_name = %info.field.name, "initializing empty elements list");
@@ -1188,21 +1188,21 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         }
 
         // Handle flattened enum list finalization
-        if let Some(enum_info) = &self.field_map.flattened_enum {
-            if enum_info.field_info.is_list {
-                if self.flattened_enum_list_active {
-                    // Currently inside the list - close it
-                    trace!(path = %wip.path(), "ending flattened enum list (active)");
-                    wip = wip.end()?;
-                } else if self.flattened_enum_list_started {
-                    // List was started but we left it - it's already closed, nothing to do
-                    trace!(path = %wip.path(), "flattened enum list already closed");
-                } else {
-                    // Empty list - initialize empty
-                    let idx = enum_info.field_idx;
-                    trace!(idx, "initializing empty flattened enum list");
-                    wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
-                }
+        if let Some(enum_info) = &self.field_map.flattened_enum
+            && enum_info.field_info.is_list
+        {
+            if self.flattened_enum_list_active {
+                // Currently inside the list - close it
+                trace!(path = %wip.path(), "ending flattened enum list (active)");
+                wip = wip.end()?;
+            } else if self.flattened_enum_list_started {
+                // List was started but we left it - it's already closed, nothing to do
+                trace!(path = %wip.path(), "flattened enum list already closed");
+            } else {
+                // Empty list - initialize empty
+                let idx = enum_info.field_idx;
+                trace!(idx, "initializing empty flattened enum list");
+                wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
             }
         }
 

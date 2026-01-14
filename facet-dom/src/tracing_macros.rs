@@ -5,10 +5,17 @@
 //! - Running tests (`cfg(test)`) - tracing is always available in tests
 
 /// Emit a trace-level log message.
+#[cfg(any(test, feature = "tracing"))]
 #[macro_export]
 macro_rules! trace {
     ($($arg:tt)*) => {
-        #[cfg(any(test, feature = "tracing"))]
         tracing::trace!($($arg)*);
     };
+}
+
+/// Emit a trace-level log message (no-op version).
+#[cfg(not(any(test, feature = "tracing")))]
+#[macro_export]
+macro_rules! trace {
+    ($($arg:tt)*) => {};
 }

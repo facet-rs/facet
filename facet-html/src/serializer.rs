@@ -391,7 +391,7 @@ impl DomSerializer for HtmlSerializer {
         let is_inline = is_inline_element(tag);
         let needs_deferred_newline = if let Some(parent) = self.element_stack.last_mut() {
             parent.has_content = true;
-            let needs_newline = if !is_inline {
+            if !is_inline {
                 parent.has_block_content = true;
                 // Check if we need to write the deferred newline now
                 if parent.needs_newline_before_block {
@@ -402,8 +402,7 @@ impl DomSerializer for HtmlSerializer {
                 }
             } else {
                 false
-            };
-            needs_newline
+            }
         } else {
             false
         };

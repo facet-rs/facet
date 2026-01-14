@@ -16,12 +16,19 @@ Each crate that uses tracing defines forwarding macros like this:
 // src/tracing_macros.rs
 
 /// Emit a trace-level log message.
+#[cfg(any(test, feature = "tracing"))]
 #[macro_export]
 macro_rules! trace {
     ($($arg:tt)*) => {
-        #[cfg(any(test, feature = "tracing"))]
         tracing::trace!($($arg)*);
     };
+}
+
+/// Emit a trace-level log message (no-op version).
+#[cfg(not(any(test, feature = "tracing")))]
+#[macro_export]
+macro_rules! trace {
+    ($($arg:tt)*) => {};
 }
 ```
 
@@ -31,6 +38,7 @@ This pattern:
 - Avoids the `tracing` dependency entirely when the feature is disabled
 - Automatically enables tracing in tests via `cfg(test)`
 - Forwards to the real `tracing::trace!` when enabled
+- The no-op version expands to nothing (tracing's special syntax like `%` and `?` can't be consumed by `format_args!()`)
 
 You can add macros for other levels (`debug!`, `info!`, `warn!`, `error!`) following the same pattern.
 
