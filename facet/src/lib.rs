@@ -243,14 +243,34 @@ pub mod builtin {
             /// Adds custom trait bounds to the generated Facet impl.
             /// The bounds are added to the where clause alongside auto-generated bounds.
             ///
-            /// Usage: `#[facet(bound = "T: Clone + Send")]`
+            /// Usage: `#[facet(where T: Clone + Send)]`
             ///
             /// When you need a type parameter to implement Facet (e.g., for proxy types),
-            /// use a higher-ranked trait bound: `#[facet(bound = "T: for<'f> Facet<'f>")]`
+            /// use a higher-ranked trait bound: `#[facet(where T: for<'f> Facet<'f>)]`
             ///
             /// If HRTB is too restrictive, you can use the internal lifetime `'ʄ` directly:
-            /// `#[facet(bound = "T: Facet<'ʄ>")]` (note: `'ʄ` is internal and may change).
-            Bound(&'static str),
+            /// `#[facet(where T: Facet<'ʄ>)]` (note: `'ʄ` is internal and may change).
+            Where(&'static str),
+
+            /// Adds custom traits to the generated Facet impl.
+            ///
+            /// Usage: `#[facet(traits(Trait1, Trait2))]`
+            ///
+            /// When you need a type parameter to implement Facet (e.g., for proxy types),
+            /// use a higher-ranked trait bound: `#[facet(traits(for<'f> Facet<'f>))]`
+            ///
+            /// If HRTB is too restrictive, you can use the internal lifetime `'ʄ` directly:
+            /// `#[facet(traits(Facet<'ʄ>))]` (note: `'ʄ` is internal and may change).
+            Traits(Vec<String>),
+
+            /// Automatically identifies which traits are implemented by the type.
+            AutoTraits,
+
+            /// Adds metadata to the annotated field.
+            Metadata(&'static str),
+
+            /// Specifies `facet`'s path in case it's not in the default location.
+            Crate(&'static str)
         }
     }
 
