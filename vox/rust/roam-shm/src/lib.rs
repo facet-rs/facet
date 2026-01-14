@@ -78,7 +78,6 @@ pub mod guest;
 pub mod host;
 pub mod spawn;
 pub mod transport;
-pub mod wait;
 
 // Re-export key types
 pub use channel::{
@@ -108,11 +107,6 @@ pub use transport::{
 
 pub use spawn::{
     AddPeerOptions, DeathCallback, SpawnArgs, SpawnArgsError, SpawnTicket, die_with_parent,
-};
-
-pub use wait::{
-    WaitError, wait_for_credit, wait_for_ring_data, wait_for_ring_space, wait_for_slot,
-    wake_credit_waiters, wake_ring_consumers, wake_ring_producers, wake_slot_waiters,
 };
 
 /// Handshake is implicit via segment header.

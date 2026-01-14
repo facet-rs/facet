@@ -17,8 +17,6 @@ pub use treiber::{
 };
 
 // OS-level primitives for SHM
-pub mod futex;
-
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
@@ -28,8 +26,6 @@ pub use unix::*;
 mod windows;
 #[cfg(windows)]
 pub use windows::*;
-
-pub use futex::{futex_signal, futex_wait, futex_wait_async, futex_wait_async_ptr, futex_wake};
 
 #[cfg(all(test, loom))]
 mod loom_tests;
