@@ -97,7 +97,8 @@ where
         &mut self,
         wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        let struct_def = match &wip.shape().ty {
+        let shape = wip.shape();
+        let struct_def = match &shape.ty {
             Type::User(UserType::Struct(def)) => def,
             _ => {
                 return Err(DomDeserializeError::Unsupported(
@@ -106,7 +107,13 @@ where
             }
         };
 
-        self.deserialize_struct_innards(wip, struct_def)
+        // Compute expected element name from shape: rename > lowerCamelCase(type_identifier)
+        let expected_name = shape
+            .get_builtin_attr_value::<&str>("rename")
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|| to_element_name(shape.type_identifier));
+
+        self.deserialize_struct_innards(wip, struct_def, expected_name)
     }
 
     /// Deserialize the innards of a struct-like thing (struct, tuple, or enum variant data).
@@ -116,6 +123,7 @@ where
         &mut self,
         wip: Partial<'de, BORROW>,
         struct_def: &'static facet_core::StructType,
+        expected_name: Cow<'static, str>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         trace_span!("deserialize_struct_innards");
 
@@ -126,13 +134,6 @@ where
             .iter()
             .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
             .and_then(|attr| attr.get_as::<&str>().copied());
-
-        // Compute expected element name: rename > lowerCamelCase(type_identifier)
-        let expected_name = wip
-            .shape()
-            .get_builtin_attr_value::<&str>("rename")
-            .map(Cow::Borrowed)
-            .unwrap_or_else(|| to_element_name(wip.shape().type_identifier));
 
         // Check if deny_unknown_fields is set
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
@@ -187,17 +188,13 @@ where
                     trace!(tag = %tag, "untagged enum - selecting first variant");
                     0
                 } else {
-                    // For tagged enums, match the element tag against variant names
+                    // For tagged enums, match the element tag against variant names.
+                    // The variant name already has renaming applied (via #[facet(rename = "...")]
+                    // or #[facet(rename_all = "...")]), so we compare directly.
                     enum_def
                         .variants
                         .iter()
-                        .position(|v| {
-                            let variant_name = v
-                                .get_builtin_attr("rename")
-                                .and_then(|a| a.get_as::<&str>().copied())
-                                .unwrap_or(v.name);
-                            variant_name.eq_ignore_ascii_case(&tag)
-                        })
+                        .position(|v| v.name == tag)
                         .or_else(|| enum_def.variants.iter().position(|v| v.is_custom_element()))
                         .ok_or_else(|| DomDeserializeError::UnknownElement {
                             tag: tag.to_string(),
@@ -228,7 +225,12 @@ where
                     }
                     StructKind::Struct | StructKind::Tuple => {
                         // Struct/tuple variant: deserialize using the variant's data as a StructType
-                        wip = self.deserialize_struct_innards(wip, &variant.data)?;
+                        // The expected element name is the variant name (already renamed)
+                        wip = self.deserialize_struct_innards(
+                            wip,
+                            &variant.data,
+                            Cow::Borrowed(variant.name),
+                        )?;
                     }
                 }
             }
