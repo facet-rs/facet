@@ -1,6 +1,9 @@
 #![doc = include_str!("../README.md.in")]
 #![deny(unsafe_code)]
 
+#[macro_use]
+mod tracing_macros;
+
 mod dom_parser;
 mod escaping;
 mod serializer;

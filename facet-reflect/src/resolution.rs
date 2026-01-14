@@ -527,7 +527,7 @@ impl Resolution {
         let mut missing_required = Vec::new();
         let mut missing_optional = Vec::new();
 
-        for (_key, info) in &self.fields {
+        for info in self.fields.values() {
             if !input_fields
                 .iter()
                 .any(|k| k.as_ref() == info.serialized_name)

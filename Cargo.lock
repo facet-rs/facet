@@ -2262,6 +2262,7 @@ dependencies = [
  "serde",
  "serde-xml-rs",
  "test-log",
+ "tracing",
  "tracing-subscriber",
  "zmij",
 ]

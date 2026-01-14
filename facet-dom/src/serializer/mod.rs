@@ -27,7 +27,7 @@ use facet_core::{Def, StructKind};
 use facet_reflect::{HasFields as _, Peek, ReflectError};
 
 use crate::naming::to_element_name;
-use crate::tracing_macros::trace;
+use crate::trace;
 
 /// Low-level serializer interface for DOM-based formats (XML, HTML).
 ///

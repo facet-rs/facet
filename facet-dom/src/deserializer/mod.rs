@@ -7,7 +7,7 @@ use facet_reflect::Partial;
 
 use crate::error::DomDeserializeError;
 use crate::naming::to_element_name;
-use crate::tracing_macros::{trace, trace_span};
+use crate::trace;
 use crate::{AttributeRecord, DomEvent, DomParser, DomParserExt};
 
 mod entrypoints;
@@ -125,8 +125,6 @@ where
         struct_def: &'static facet_core::StructType,
         expected_name: Cow<'static, str>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        trace_span!("deserialize_struct_innards");
-
         // Extract xml::ns_all attribute from the shape
         let ns_all = wip
             .shape()

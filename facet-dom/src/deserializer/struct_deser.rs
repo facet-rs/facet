@@ -7,7 +7,7 @@ use facet_core::{Def, StructKind, StructType};
 use facet_reflect::Partial;
 
 use crate::error::DomDeserializeError;
-use crate::tracing_macros::trace;
+use crate::trace;
 use crate::{AttributeRecord, DomEvent, DomParser, DomParserExt};
 
 use super::PartialDeserializeExt;

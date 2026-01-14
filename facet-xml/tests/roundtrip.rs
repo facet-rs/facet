@@ -34,6 +34,8 @@ fn struct_single_field() {
 
 #[test_log::test]
 fn sequence_numbers() {
+    tracing::trace!("BOOH");
+
     #[derive(Facet, Debug, PartialEq)]
     #[facet(rename = "numbers")]
     struct Numbers {
@@ -499,7 +501,8 @@ fn scalar_integers() {
         unsigned_64: u64,
     }
 
-    let xml = r#"<record><signed_8>-128</signed_8><unsigned_8>255</unsigned_8><signed_32>-2147483648</signed_32><unsigned_32>4294967295</unsigned_32><signed_64>-9223372036854775808</signed_64><unsigned_64>18446744073709551615</unsigned_64></record>"#;
+    // Field names use lowerCamelCase: signed_8 -> signed8, etc.
+    let xml = r#"<record><signed8>-128</signed8><unsigned8>255</unsigned8><signed32>-2147483648</signed32><unsigned32>4294967295</unsigned32><signed64>-9223372036854775808</signed64><unsigned64>18446744073709551615</unsigned64></record>"#;
     let parsed: Record = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed.signed_8, -128);
     assert_eq!(parsed.unsigned_8, 255);
@@ -516,7 +519,8 @@ fn scalar_floats() {
         float_64: f64,
     }
 
-    let xml = r#"<record><float_32>1.5</float_32><float_64>2.25</float_64></record>"#;
+    // Field names use lowerCamelCase: float_32 -> float32, etc.
+    let xml = r#"<record><float32>1.5</float32><float64>2.25</float64></record>"#;
     let parsed: Record = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed.float_32, 1.5);
     assert_eq!(parsed.float_64, 2.25);
@@ -880,7 +884,7 @@ fn unit_struct() {
     #[derive(Facet, Debug, PartialEq)]
     struct UnitStruct;
 
-    let xml = r#"<UnitStruct/>"#;
+    let xml = r#"<unitStruct/>"#;
     let parsed: UnitStruct = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed, UnitStruct);
 }

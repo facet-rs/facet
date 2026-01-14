@@ -80,6 +80,8 @@ enum ParserState {
 impl<'de> XmlParser<'de> {
     /// Create a new streaming XML parser.
     pub fn new(input: &'de [u8]) -> Self {
+        trace!(input_len = input.len(), "creating XML parser");
+
         let mut reader = NsReader::from_reader(Cursor::new(input));
         reader.config_mut().trim_text(true);
 

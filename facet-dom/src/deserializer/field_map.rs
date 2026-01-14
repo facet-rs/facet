@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use facet_core::{Def, Field, StructKind, StructType, Type, UserType};
 
 use crate::naming::dom_key;
-use crate::tracing_macros::{trace, trace_span};
+use crate::trace;
 use facet_singularize::singularize;
 
 /// Info about a field in a struct for deserialization purposes.
@@ -96,8 +96,6 @@ impl StructFieldMap {
     /// have an explicit `xml::ns` attribute. When set, fields without `xml::ns` will
     /// inherit this namespace.
     pub fn new(struct_def: &'static StructType, ns_all: Option<&'static str>) -> Self {
-        trace_span!("StructFieldMap::new");
-
         let mut attribute_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
         let mut element_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
         let mut elements_field = None;

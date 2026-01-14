@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use crate::tracing_macros::trace;
+use crate::trace;
 use crate::{DomDeserializeError, DomEvent, DomParser};
 
 /// Extension trait adding convenience methods to any `DomParser`.
