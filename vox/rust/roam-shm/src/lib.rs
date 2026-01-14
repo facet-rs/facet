@@ -109,6 +109,10 @@ pub use var_slot_pool::{SizeClassHeader, VarFreeError, VarSlotHandle, VarSlotPoo
 // Re-export MsgDesc from roam-frame
 pub use roam_frame::{Frame, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT, MsgDesc, Payload};
 
+// Re-export FileCleanup from shm-primitives
+#[cfg(feature = "std")]
+pub use shm_primitives::FileCleanup;
+
 #[cfg(feature = "std")]
 pub use host::ShmHost;
 

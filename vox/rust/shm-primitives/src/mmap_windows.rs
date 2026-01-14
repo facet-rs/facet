@@ -3,18 +3,35 @@
 //! This module provides `MmapRegion`, a file-backed memory region that can be
 //! shared across processes using Windows file mapping APIs.
 
+use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::ffi::OsStrExt;
+use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
 
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Storage::FileSystem::{
+    CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE,
+};
 use windows_sys::Win32::System::Memory::{
     CreateFileMappingW, FILE_MAP_ALL_ACCESS, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile,
     PAGE_READWRITE, UnmapViewOfFile,
 };
 
 use crate::Region;
+
+/// Cleanup behavior for memory-mapped files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileCleanup {
+    /// Keep the file after all processes exit (manual cleanup required).
+    Manual,
+    /// Automatically delete the file when all processes exit.
+    /// On Unix: file is unlinked immediately (stays alive while mapped).
+    /// On Windows: file is opened with FILE_FLAG_DELETE_ON_CLOSE.
+    Auto,
+}
 
 /// File-backed memory-mapped region for cross-process shared memory.
 ///
@@ -41,7 +58,7 @@ impl MmapRegion {
     /// into memory. The file is created with default permissions.
     ///
     /// shm[impl shm.file.create]
-    pub fn create(path: &Path, size: usize) -> io::Result<Self> {
+    pub fn create(path: &Path, size: usize, cleanup: FileCleanup) -> io::Result<Self> {
         if size == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -50,12 +67,40 @@ impl MmapRegion {
         }
 
         // 1. Open or create file with read/write, truncate
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
+        let file = if cleanup == FileCleanup::Auto {
+            // Use raw Windows API to set FILE_FLAG_DELETE_ON_CLOSE
+            let path_wide: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+            let handle = unsafe {
+                CreateFileW(
+                    path_wide.as_ptr(),
+                    GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    std::ptr::null(),
+                    CREATE_ALWAYS,
+                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE,
+                    0,
+                )
+            };
+
+            if handle == INVALID_HANDLE_VALUE {
+                return Err(io::Error::last_os_error());
+            }
+
+            // SAFETY: We just created this handle
+            unsafe { File::from_raw_handle(handle as _) }
+        } else {
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(path)?
+        };
 
         // 2. Truncate to desired size
         file.set_len(size as u64)?;
@@ -99,7 +144,7 @@ impl MmapRegion {
             file,
             mapping_handle,
             path: path.to_path_buf(),
-            owns_file: true,
+            owns_file: cleanup == FileCleanup::Manual,
         })
     }
 
@@ -319,7 +364,7 @@ mod tests {
         let path = dir.path().join("test.shm");
 
         // Create region
-        let region1 = MmapRegion::create(&path, 4096).unwrap();
+        let region1 = MmapRegion::create(&path, 4096, FileCleanup::Manual).unwrap();
         assert_eq!(region1.len(), 4096);
         assert!(path.exists());
 
@@ -348,7 +393,7 @@ mod tests {
         let path = dir.path().join("cleanup.shm");
 
         {
-            let _region = MmapRegion::create(&path, 1024).unwrap();
+            let _region = MmapRegion::create(&path, 1024, FileCleanup::Manual).unwrap();
             assert!(path.exists());
         }
 
@@ -361,7 +406,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("attached.shm");
 
-        let owner = MmapRegion::create(&path, 1024).unwrap();
+        let owner = MmapRegion::create(&path, 1024, FileCleanup::Manual).unwrap();
 
         {
             let _attached = MmapRegion::attach(&path).unwrap();
@@ -381,7 +426,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shared.shm");
 
-        let region1 = MmapRegion::create(&path, 4096).unwrap();
+        let region1 = MmapRegion::create(&path, 4096, FileCleanup::Manual).unwrap();
         let region2 = MmapRegion::attach(&path).unwrap();
 
         // Write from region2
@@ -402,7 +447,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("zero.shm");
 
-        let result = MmapRegion::create(&path, 0);
+        let result = MmapRegion::create(&path, 0, FileCleanup::Manual);
         assert!(result.is_err());
     }
 
@@ -411,7 +456,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("resize.shm");
 
-        let mut region = MmapRegion::create(&path, 4096).unwrap();
+        let mut region = MmapRegion::create(&path, 4096, FileCleanup::Manual).unwrap();
         assert_eq!(region.len(), 4096);
 
         // Write data at the start
@@ -440,7 +485,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shrink.shm");
 
-        let mut region = MmapRegion::create(&path, 8192).unwrap();
+        let mut region = MmapRegion::create(&path, 8192, FileCleanup::Manual).unwrap();
         let result = region.resize(4096);
         assert!(result.is_err());
     }
@@ -451,7 +496,7 @@ mod tests {
         let path = dir.path().join("remap.shm");
 
         // Create owner region
-        let mut owner = MmapRegion::create(&path, 4096).unwrap();
+        let mut owner = MmapRegion::create(&path, 4096, FileCleanup::Manual).unwrap();
 
         // Attach guest
         let mut guest = MmapRegion::attach(&path).unwrap();
@@ -475,7 +520,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shared_resize.shm");
 
-        let mut owner = MmapRegion::create(&path, 4096).unwrap();
+        let mut owner = MmapRegion::create(&path, 4096, FileCleanup::Manual).unwrap();
         let mut guest = MmapRegion::attach(&path).unwrap();
 
         // Write from owner

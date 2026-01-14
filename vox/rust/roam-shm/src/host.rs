@@ -99,7 +99,11 @@ impl ShmHost {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
         // Create file-backed memory
-        let backing = MmapRegion::create(path.as_ref(), layout.total_size as usize)?;
+        let backing = MmapRegion::create(
+            path.as_ref(),
+            layout.total_size as usize,
+            config.file_cleanup,
+        )?;
         let region = backing.region();
 
         // Initialize segment header

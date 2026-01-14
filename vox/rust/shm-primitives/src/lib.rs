@@ -46,9 +46,9 @@ pub use doorbell_windows::{
 #[cfg(feature = "std")]
 pub use futex::{futex_signal, futex_wait, futex_wait_async, futex_wait_async_ptr, futex_wake};
 #[cfg(all(feature = "std", unix))]
-pub use mmap::MmapRegion;
+pub use mmap::{FileCleanup, MmapRegion};
 #[cfg(all(feature = "std", windows))]
-pub use mmap_windows::MmapRegion;
+pub use mmap_windows::{FileCleanup, MmapRegion};
 
 #[cfg(all(test, loom))]
 mod loom_tests;

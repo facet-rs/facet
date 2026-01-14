@@ -226,6 +226,10 @@ pub struct SegmentConfig {
     /// If `Some`, uses a shared variable-size pool instead of per-guest fixed pools.
     /// shm[impl shm.varslot.shared]
     pub var_slot_classes: Option<Vec<SizeClass>>,
+    /// File cleanup behavior for the backing file.
+    ///
+    /// Controls whether the file is automatically deleted when all processes die.
+    pub file_cleanup: shm_primitives::FileCleanup,
 }
 
 impl Default for SegmentConfig {
@@ -242,6 +246,7 @@ impl Default for SegmentConfig {
             max_channels: 256,
             heartbeat_interval: 0,  // Disabled by default
             var_slot_classes: None, // Use fixed-size pools by default
+            file_cleanup: shm_primitives::FileCleanup::Manual,
         }
     }
 }

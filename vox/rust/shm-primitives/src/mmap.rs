@@ -11,6 +11,17 @@ use std::path::{Path, PathBuf};
 
 use crate::Region;
 
+/// Cleanup behavior for memory-mapped files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileCleanup {
+    /// Keep the file after all processes exit (manual cleanup required).
+    Manual,
+    /// Automatically delete the file when all processes exit.
+    /// On Unix: file is unlinked immediately (stays alive while mapped).
+    /// On Windows: file is opened with FILE_FLAG_DELETE_ON_CLOSE.
+    Auto,
+}
+
 /// File-backed memory-mapped region for cross-process shared memory.
 ///
 /// shm[impl shm.file.mmap-posix]
@@ -36,7 +47,7 @@ impl MmapRegion {
     ///
     /// shm[impl shm.file.create]
     /// shm[impl shm.file.permissions]
-    pub fn create(path: &Path, size: usize) -> io::Result<Self> {
+    pub fn create(path: &Path, size: usize, cleanup: FileCleanup) -> io::Result<Self> {
         if size == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -74,12 +85,21 @@ impl MmapRegion {
             return Err(io::Error::last_os_error());
         }
 
+        let path_buf = path.to_path_buf();
+
+        // Immediately unlink the file if auto cleanup is requested.
+        // The file stays alive while mapped and is cleaned up by the OS when all
+        // processes die (even from SIGKILL/crash/power loss).
+        if cleanup == FileCleanup::Auto {
+            std::fs::remove_file(&path_buf)?;
+        }
+
         Ok(Self {
             ptr: ptr as *mut u8,
             len: size,
             file,
-            path: path.to_path_buf(),
-            owns_file: true,
+            path: path_buf,
+            owns_file: cleanup == FileCleanup::Manual,
         })
     }
 
@@ -269,7 +289,7 @@ mod tests {
         let path = dir.path().join("test.shm");
 
         // Create region
-        let region1 = MmapRegion::create(&path, 4096).unwrap();
+        let region1 = MmapRegion::create(&path, 4096, FileCleanup::Manual).unwrap();
         assert_eq!(region1.len(), 4096);
         assert!(path.exists());
 
@@ -298,7 +318,7 @@ mod tests {
         let path = dir.path().join("cleanup.shm");
 
         {
-            let _region = MmapRegion::create(&path, 1024).unwrap();
+            let _region = MmapRegion::create(&path, 1024, FileCleanup::Manual).unwrap();
             assert!(path.exists());
         }
 
@@ -311,7 +331,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("attached.shm");
 
-        let owner = MmapRegion::create(&path, 1024).unwrap();
+        let owner = MmapRegion::create(&path, 1024, FileCleanup::Manual).unwrap();
 
         {
             let _attached = MmapRegion::attach(&path).unwrap();
@@ -331,7 +351,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shared.shm");
 
-        let region1 = MmapRegion::create(&path, 4096).unwrap();
+        let region1 = MmapRegion::create(&path, 4096, FileCleanup::Manual).unwrap();
         let region2 = MmapRegion::attach(&path).unwrap();
 
         // Write from region2
@@ -352,7 +372,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("perms.shm");
 
-        let _region = MmapRegion::create(&path, 1024).unwrap();
+        let _region = MmapRegion::create(&path, 1024, FileCleanup::Manual).unwrap();
 
         let metadata = std::fs::metadata(&path).unwrap();
         let mode = metadata.permissions().mode() & 0o777;
@@ -364,7 +384,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("zero.shm");
 
-        let result = MmapRegion::create(&path, 0);
+        let result = MmapRegion::create(&path, 0, FileCleanup::Manual);
         assert!(result.is_err());
     }
 
@@ -373,7 +393,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("resize.shm");
 
-        let mut region = MmapRegion::create(&path, 4096).unwrap();
+        let mut region = MmapRegion::create(&path, 4096, FileCleanup::Manual).unwrap();
         assert_eq!(region.len(), 4096);
 
         // Write data at the start
@@ -402,7 +422,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shrink.shm");
 
-        let mut region = MmapRegion::create(&path, 8192).unwrap();
+        let mut region = MmapRegion::create(&path, 8192, FileCleanup::Manual).unwrap();
         let result = region.resize(4096);
         assert!(result.is_err());
     }
@@ -413,7 +433,7 @@ mod tests {
         let path = dir.path().join("remap.shm");
 
         // Create owner region
-        let mut owner = MmapRegion::create(&path, 4096).unwrap();
+        let mut owner = MmapRegion::create(&path, 4096, FileCleanup::Manual).unwrap();
 
         // Attach guest
         let mut guest = MmapRegion::attach(&path).unwrap();
@@ -437,7 +457,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shared_resize.shm");
 
-        let mut owner = MmapRegion::create(&path, 4096).unwrap();
+        let mut owner = MmapRegion::create(&path, 4096, FileCleanup::Manual).unwrap();
         let mut guest = MmapRegion::attach(&path).unwrap();
 
         // Write from owner
