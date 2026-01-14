@@ -13,6 +13,7 @@ macro_rules! trace {
 }
 
 #[cfg(not(feature = "tracing"))]
+#[allow(unused_macros)]
 macro_rules! trace {
     ($($arg:tt)*) => {};
 }
@@ -41,6 +42,7 @@ macro_rules! info {
 }
 
 #[cfg(not(feature = "tracing"))]
+#[allow(unused_macros)]
 macro_rules! info {
     ($($arg:tt)*) => {};
 }
@@ -55,6 +57,7 @@ macro_rules! warn {
 }
 
 #[cfg(not(feature = "tracing"))]
+#[allow(unused_macros)]
 macro_rules! warn {
     ($($arg:tt)*) => {};
 }
@@ -69,6 +72,7 @@ macro_rules! error {
 }
 
 #[cfg(not(feature = "tracing"))]
+#[allow(unused_macros)]
 macro_rules! error {
     ($($arg:tt)*) => {};
 }

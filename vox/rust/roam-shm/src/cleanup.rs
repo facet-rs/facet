@@ -115,9 +115,9 @@ fn get_process_exe(pid: u32) -> Option<PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn get_process_exe(pid: u32) -> Option<PathBuf> {
-    // TODO: Use libproc crate for macOS
-    // For now, return None to skip the check
-    None
+    use libproc::libproc::proc_pid::pidpath;
+
+    pidpath(pid as i32).ok().map(PathBuf::from)
 }
 
 #[cfg(target_os = "windows")]

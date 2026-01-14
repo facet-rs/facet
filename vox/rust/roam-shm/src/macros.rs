@@ -69,6 +69,7 @@ macro_rules! error {
 }
 
 #[cfg(not(feature = "tracing"))]
+#[allow(unused_macros)]
 macro_rules! error {
     ($($arg:tt)*) => {};
 }

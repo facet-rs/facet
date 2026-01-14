@@ -549,10 +549,6 @@ struct PeerConnectionState {
     /// Boxed to allow different dispatcher types per peer.
     dispatcher: Box<dyn ServiceDispatcher>,
 
-    /// Unified channel for all messages (Call/Data/Close/Response).
-    /// Single channel ensures FIFO ordering.
-    driver_rx: mpsc::Receiver<DriverMessage>,
-
     /// Server-side stream registry for this peer.
     server_channel_registry: ChannelRegistry,
 
@@ -725,7 +721,6 @@ impl MultiPeerHostDriverBuilder {
                 peer_id,
                 PeerConnectionState {
                     dispatcher,
-                    driver_rx: mpsc::channel(1).1, // Dummy receiver, we'll forward from the real one
                     server_channel_registry: ChannelRegistry::new(driver_tx),
                     pending_responses: HashMap::new(),
                     in_flight_server_requests: std::collections::HashSet::new(),
@@ -883,7 +878,6 @@ impl MultiPeerHostDriver {
                     peer_id,
                     PeerConnectionState {
                         dispatcher,
-                        driver_rx: mpsc::channel(1).1, // Dummy receiver, we forward from the real one
                         server_channel_registry: ChannelRegistry::new(driver_tx),
                         pending_responses: HashMap::new(),
                         in_flight_server_requests: std::collections::HashSet::new(),
