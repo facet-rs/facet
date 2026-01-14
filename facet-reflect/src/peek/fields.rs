@@ -229,6 +229,11 @@ enum FieldsForSerializeIterState<'mem, 'facet> {
     FlattenedMap {
         map_iter: super::PeekMapIter<'mem, 'facet>,
     },
+    /// Iterating over a flattened list of enums (Vec<Enum>)
+    FlattenedEnumList {
+        field: Field,
+        list_iter: super::PeekListIter<'mem, 'facet>,
+    },
 }
 
 impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
@@ -265,6 +270,57 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                         continue;
                     }
                     // Map exhausted, continue to next state
+                    continue;
+                }
+                FieldsForSerializeIterState::FlattenedEnumList {
+                    field,
+                    mut list_iter,
+                } => {
+                    // Iterate over list items, yielding each enum as a flattened field
+                    if let Some(item_peek) = list_iter.next() {
+                        // Push iterator back for more items
+                        self.stack
+                            .push(FieldsForSerializeIterState::FlattenedEnumList {
+                                field,
+                                list_iter,
+                            });
+
+                        // Each item should be an enum - get its variant
+                        if let Ok(enum_peek) = item_peek.into_enum() {
+                            let variant = enum_peek
+                                .active_variant()
+                                .expect("Failed to get active variant");
+                            let field_item = FieldItem::flattened_enum(field, variant);
+
+                            // Get the inner value based on variant kind
+                            use facet_core::StructKind;
+                            match variant.data.kind {
+                                StructKind::Unit => {
+                                    // Unit variants - yield field with unit value
+                                    return Some((field_item, item_peek));
+                                }
+                                StructKind::TupleStruct | StructKind::Tuple
+                                    if variant.data.fields.len() == 1 =>
+                                {
+                                    // Newtype variant - yield the inner value directly
+                                    let inner_value = enum_peek
+                                        .field(0)
+                                        .expect("Failed to get variant field")
+                                        .expect("Newtype variant should have field 0");
+                                    return Some((field_item, inner_value));
+                                }
+                                StructKind::TupleStruct
+                                | StructKind::Tuple
+                                | StructKind::Struct => {
+                                    // Multi-field tuple or struct variant - yield the enum itself
+                                    return Some((field_item, item_peek));
+                                }
+                            }
+                        }
+                        // Skip non-enum items
+                        continue;
+                    }
+                    // List exhausted, continue to next state
                     continue;
                 }
                 FieldsForSerializeIterState::Fields(mut fields) => {
@@ -406,6 +462,13 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                                 }
                             }
                             // If None, we just skip - don't emit any fields
+                        } else if let Ok(list_peek) = peek.into_list() {
+                            // Vec<Enum> - emit each enum item as a flattened field
+                            self.stack
+                                .push(FieldsForSerializeIterState::FlattenedEnumList {
+                                    field,
+                                    list_iter: list_peek.iter(),
+                                });
                         } else {
                             // TODO: fail more gracefully
                             panic!("cannot flatten a {}", field.shape())

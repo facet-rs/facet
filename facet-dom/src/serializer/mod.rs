@@ -432,10 +432,18 @@ where
             let is_elements = serializer.is_elements_field();
             let explicit_rename = field_item.field.and_then(|f| f.rename);
 
+            // For flattened fields (flatten on Vec<Enum>), the FieldsForSerializeIter
+            // already yields each enum item as a separate field with the variant name.
+            // We should use that name directly (set in field_item.name/rename).
+            let is_flattened = field_item.flattened;
+
             // Compute field element name: rename > lowerCamelCase(field.name)
             let field_element_name: Option<Cow<'_, str>> =
                 if is_elements && explicit_rename.is_none() {
                     None // Items determine their own element names
+                } else if is_flattened {
+                    // Flattened field - use the variant's effective name
+                    Some(to_element_name(field_item.effective_name()))
                 } else if let Some(rename) = explicit_rename {
                     // Use the explicit rename value as-is
                     Some(Cow::Borrowed(rename))
