@@ -216,11 +216,11 @@ where
                         .variants
                         .iter()
                         .position(|v| {
-                            let effective_name: Cow<'_, str> = v
-                                .get_builtin_attr("rename")
-                                .and_then(|a| a.get_as::<&str>().copied())
-                                .map(Cow::Borrowed)
-                                .unwrap_or_else(|| to_element_name(v.name));
+                            let effective_name: Cow<'_, str> = if v.rename.is_some() {
+                                Cow::Borrowed(v.effective_name())
+                            } else {
+                                to_element_name(v.name)
+                            };
                             effective_name == tag
                         })
                         .or_else(|| enum_def.variants.iter().position(|v| v.is_custom_element()))
@@ -258,16 +258,18 @@ where
                             // For struct newtypes, use the variant's element name and deserialize
                             // the struct's fields directly from this element
                             let expected_name: Cow<'_, str> = if is_untagged {
-                                wip.shape()
-                                    .get_builtin_attr_value::<&str>("rename")
-                                    .map(Cow::Borrowed)
-                                    .unwrap_or_else(|| to_element_name(wip.shape().type_identifier))
+                                let shape = wip.shape();
+                                if let Some(renamed) =
+                                    shape.get_builtin_attr_value::<&str>("rename")
+                                {
+                                    Cow::Borrowed(renamed)
+                                } else {
+                                    to_element_name(shape.type_identifier)
+                                }
+                            } else if variant.rename.is_some() {
+                                Cow::Borrowed(variant.effective_name())
                             } else {
-                                variant
-                                    .get_builtin_attr("rename")
-                                    .and_then(|a| a.get_as::<&str>().copied())
-                                    .map(Cow::Borrowed)
-                                    .unwrap_or_else(|| to_element_name(variant.name))
+                                to_element_name(variant.name)
                             };
 
                             // Get ns_all from the inner struct's shape
@@ -300,16 +302,16 @@ where
                         // For tagged enums, use variant rename if present, else lowerCamelCase(variant.name)
                         let expected_name: Cow<'_, str> = if is_untagged {
                             // For untagged, the element name is the enum's name/rename
-                            wip.shape()
-                                .get_builtin_attr_value::<&str>("rename")
-                                .map(Cow::Borrowed)
-                                .unwrap_or_else(|| to_element_name(wip.shape().type_identifier))
+                            let shape = wip.shape();
+                            if let Some(renamed) = shape.get_builtin_attr_value::<&str>("rename") {
+                                Cow::Borrowed(renamed)
+                            } else {
+                                to_element_name(shape.type_identifier)
+                            }
+                        } else if variant.rename.is_some() {
+                            Cow::Borrowed(variant.effective_name())
                         } else {
-                            variant
-                                .get_builtin_attr("rename")
-                                .and_then(|a| a.get_as::<&str>().copied())
-                                .map(Cow::Borrowed)
-                                .unwrap_or_else(|| to_element_name(variant.name))
+                            to_element_name(variant.name)
                         };
                         wip = self.deserialize_struct_innards(wip, &variant.data, expected_name)?;
                     }
