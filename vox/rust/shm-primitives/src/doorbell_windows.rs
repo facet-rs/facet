@@ -29,6 +29,41 @@ pub enum SignalResult {
     PeerDead,
 }
 
+/// Opaque handle for passing doorbell endpoints between processes.
+///
+/// On Windows, this wraps a named pipe path.
+/// On Unix, this wraps a raw file descriptor (see doorbell.rs).
+///
+/// Use [`Doorbell::create_pair`] to create a pair, then pass this handle
+/// to the child process and call [`Doorbell::from_handle`] to reconstruct.
+#[derive(Debug, Clone)]
+pub struct DoorbellHandle(String);
+
+impl DoorbellHandle {
+    /// Get the pipe name (for passing to child processes).
+    pub fn as_pipe_name(&self) -> &str {
+        &self.0
+    }
+
+    /// Create from a pipe name (in child process after spawn).
+    pub fn from_pipe_name(name: String) -> Self {
+        Self(name)
+    }
+
+    /// Format as a command-line argument value.
+    pub fn to_arg(&self) -> String {
+        self.0.clone()
+    }
+
+    /// Parse from a command-line argument value.
+    pub fn from_arg(s: &str) -> Result<Self, std::convert::Infallible> {
+        Ok(Self(s.to_string()))
+    }
+
+    /// The CLI argument name for this platform.
+    pub const ARG_NAME: &'static str = "--doorbell-pipe";
+}
+
 /// A doorbell for cross-process wakeup.
 ///
 /// On Windows, uses named pipes for bidirectional signaling.
@@ -48,11 +83,11 @@ enum DoorbellPipe {
 }
 
 impl Doorbell {
-    /// Create a named pipe server and return (host_doorbell, pipe_name).
+    /// Create a named pipe server and return (host_doorbell, guest_handle).
     ///
-    /// The pipe_name should be passed to the plugin (e.g., via --doorbell-pipe=NAME).
+    /// The guest_handle should be passed to the plugin (e.g., via command line).
     /// The host keeps the Doorbell.
-    pub fn create_pair() -> io::Result<(Self, String)> {
+    pub fn create_pair() -> io::Result<(Self, DoorbellHandle)> {
         // Generate unique pipe name
         let uuid = generate_uuid();
         let pipe_name = format!(r"\\.\pipe\roam-shm-{}", uuid);
@@ -68,11 +103,20 @@ impl Doorbell {
                 pipe_name: pipe_name.clone(),
                 peer_dead_logged: AtomicBool::new(false),
             },
-            pipe_name,
+            DoorbellHandle(pipe_name),
         ))
     }
 
+    /// Create a Doorbell from an opaque handle (guest/plugin side).
+    ///
+    /// This is the cross-platform way to reconstruct a Doorbell in a spawned process.
+    pub fn from_handle(handle: DoorbellHandle) -> io::Result<Self> {
+        Self::connect(&handle.0)
+    }
+
     /// Connect to an existing named pipe as a client.
+    ///
+    /// Prefer [`from_handle`] for cross-platform code.
     ///
     /// This is for spawned guest processes that receive the pipe name.
     pub fn connect(pipe_name: &str) -> io::Result<Self> {
@@ -269,13 +313,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_and_connect() {
-        let (host_doorbell, pipe_name) = Doorbell::create_pair().unwrap();
+        let (host_doorbell, guest_handle) = Doorbell::create_pair().unwrap();
 
         // Connect in a separate task since server needs to accept
         let connect_handle = tokio::spawn(async move {
             // Small delay to ensure server is ready
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            Doorbell::connect(&pipe_name)
+            Doorbell::from_handle(guest_handle)
         });
 
         // Server needs to wait for connection

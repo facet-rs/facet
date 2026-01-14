@@ -444,11 +444,10 @@ impl ShmGuestTransport {
     ///
     /// This is a convenience constructor that creates both the guest and doorbell
     /// from spawn args, which is the typical usage pattern.
-    #[cfg(unix)]
     pub fn from_spawn_args(args: &crate::spawn::SpawnArgs) -> io::Result<Self> {
         let guest =
             ShmGuest::attach_with_ticket(args).map_err(|e| io::Error::other(e.to_string()))?;
-        let doorbell = shm_primitives::Doorbell::from_raw_fd(args.doorbell_fd)?;
+        let doorbell = shm_primitives::Doorbell::from_handle(args.doorbell_handle.clone())?;
         Ok(Self::new_with_doorbell(guest, doorbell))
     }
 

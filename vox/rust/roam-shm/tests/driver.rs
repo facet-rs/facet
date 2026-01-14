@@ -88,8 +88,8 @@ async fn guest_calls_host_echo() {
     let dispatcher = TestbedDispatcher::new(TestbedImpl);
 
     // Set up guest-side driver (client)
-    let (_host_doorbell, guest_doorbell_fd) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd).unwrap();
+    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
     let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
     let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
 
@@ -130,8 +130,8 @@ async fn guest_calls_host_add() {
 
     let dispatcher = TestbedDispatcher::new(TestbedImpl);
 
-    let (_host_doorbell, guest_doorbell_fd) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd).unwrap();
+    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
     let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
     let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
 
@@ -157,8 +157,8 @@ async fn host_calls_guest() {
 
     let dispatcher = TestbedDispatcher::new(TestbedImpl);
 
-    let (_host_doorbell, guest_doorbell_fd) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd).unwrap();
+    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
     let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
     let (_guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
 
@@ -185,8 +185,8 @@ async fn unknown_method_returns_error() {
 
     let dispatcher = TestbedDispatcher::new(TestbedImpl);
 
-    let (_host_doorbell, guest_doorbell_fd) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd).unwrap();
+    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
     let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
     let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
 
@@ -214,8 +214,8 @@ async fn multiple_sequential_calls() {
 
     let dispatcher = TestbedDispatcher::new(TestbedImpl);
 
-    let (_host_doorbell, guest_doorbell_fd) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd).unwrap();
+    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
     let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
     let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
 
@@ -261,8 +261,8 @@ async fn client_streaming_sum() {
     // Create server with generated dispatcher
     let dispatcher = TestbedDispatcher::new(TestbedImpl);
 
-    let (_host_doorbell, guest_doorbell_fd) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd).unwrap();
+    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
     let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
     let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
 
@@ -317,8 +317,8 @@ async fn server_streaming_generate() {
 
     let dispatcher = TestbedDispatcher::new(TestbedImpl);
 
-    let (_host_doorbell, guest_doorbell_fd) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd).unwrap();
+    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
     let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
     let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
 
@@ -377,14 +377,14 @@ async fn multi_peer_host_two_guests() {
     let peer_id2 = guest2.peer_id();
 
     // Set up guest drivers
-    let (_host_doorbell1, guest_doorbell_fd1) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell1 = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd1).unwrap();
+    let (_host_doorbell1, guest_handle1) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell1 = shm_primitives::Doorbell::from_handle(guest_handle1).unwrap();
     let guest1_transport = ShmGuestTransport::new_with_doorbell(guest1, guest_doorbell1);
     let (guest1_handle, guest1_driver) =
         establish_guest(guest1_transport, TestbedDispatcher::new(TestbedImpl));
 
-    let (_host_doorbell2, guest_doorbell_fd2) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell2 = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd2).unwrap();
+    let (_host_doorbell2, guest_handle2) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell2 = shm_primitives::Doorbell::from_handle(guest_handle2).unwrap();
     let guest2_transport = ShmGuestTransport::new_with_doorbell(guest2, guest_doorbell2);
     let (guest2_handle, guest2_driver) =
         establish_guest(guest2_transport, TestbedDispatcher::new(TestbedImpl));
@@ -433,14 +433,14 @@ async fn multi_peer_concurrent_calls() {
     let peer_id1 = guest1.peer_id();
     let peer_id2 = guest2.peer_id();
 
-    let (_host_doorbell1, guest_doorbell_fd1) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell1 = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd1).unwrap();
+    let (_host_doorbell1, guest_handle1) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell1 = shm_primitives::Doorbell::from_handle(guest_handle1).unwrap();
     let guest1_transport = ShmGuestTransport::new_with_doorbell(guest1, guest_doorbell1);
     let (guest1_handle, guest1_driver) =
         establish_guest(guest1_transport, TestbedDispatcher::new(TestbedImpl));
 
-    let (_host_doorbell2, guest_doorbell_fd2) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell2 = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd2).unwrap();
+    let (_host_doorbell2, guest_handle2) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell2 = shm_primitives::Doorbell::from_handle(guest_handle2).unwrap();
     let guest2_transport = ShmGuestTransport::new_with_doorbell(guest2, guest_doorbell2);
     let (guest2_handle, guest2_driver) =
         establish_guest(guest2_transport, TestbedDispatcher::new(TestbedImpl));

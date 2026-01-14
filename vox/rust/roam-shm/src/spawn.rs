@@ -9,16 +9,17 @@
 //! # Ensuring child processes die with parent
 //!
 //! Use [`SpawnTicket::spawn`] to spawn a child that will automatically be
-//! terminated when the parent dies (even via SIGKILL). The child should call
-//! [`die_with_parent`] early in its main function.
+//! terminated when the parent dies (even via SIGKILL/TerminateProcess).
+//! The child should call [`die_with_parent`] early in its main function.
 //!
 //! shm[impl shm.spawn.ticket]
 
 use std::io;
-use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::Arc;
+
+use shm_primitives::DoorbellHandle;
 
 use crate::peer::PeerId;
 
@@ -44,9 +45,8 @@ pub struct AddPeerOptions {
 
 /// Information needed by a spawned guest to attach.
 ///
-/// The ticket holds the guest's doorbell fd and keeps it alive until
-/// the child process is spawned. After spawn, drop the ticket to close
-/// the parent's copy of the fd.
+/// The ticket holds the guest's doorbell handle and keeps it alive until
+/// the child process is spawned.
 ///
 /// shm[impl shm.spawn.ticket]
 pub struct SpawnTicket {
@@ -54,30 +54,23 @@ pub struct SpawnTicket {
     pub hub_path: PathBuf,
     /// Assigned peer ID
     pub peer_id: PeerId,
-    /// Guest's doorbell fd (inheritable, CLOEXEC cleared)
-    ///
-    /// This fd is owned by the ticket. When the ticket is dropped,
-    /// the fd is closed. The child process inherits it via fork/exec.
-    doorbell_fd: RawFd,
+    /// Guest's doorbell handle (platform-specific)
+    doorbell_handle: DoorbellHandle,
 }
 
 impl SpawnTicket {
     /// Create a new spawn ticket.
-    ///
-    /// The doorbell_fd should already have CLOEXEC cleared.
-    pub(crate) fn new(hub_path: PathBuf, peer_id: PeerId, doorbell_fd: RawFd) -> Self {
+    pub(crate) fn new(hub_path: PathBuf, peer_id: PeerId, doorbell_handle: DoorbellHandle) -> Self {
         Self {
             hub_path,
             peer_id,
-            doorbell_fd,
+            doorbell_handle,
         }
     }
 
-    /// Get the doorbell file descriptor.
-    ///
-    /// This fd will be inherited by the child process.
-    pub fn doorbell_fd(&self) -> RawFd {
-        self.doorbell_fd
+    /// Get the doorbell handle.
+    pub fn doorbell_handle(&self) -> &DoorbellHandle {
+        &self.doorbell_handle
     }
 
     /// Convert to command-line arguments.
@@ -85,14 +78,14 @@ impl SpawnTicket {
     /// Returns arguments in the format:
     /// - `--hub-path=<path>`
     /// - `--peer-id=<id>`
-    /// - `--doorbell-fd=<fd>`
+    /// - `--doorbell-fd=<fd>` (Unix) or `--doorbell-pipe=<name>` (Windows)
     ///
     /// shm[impl shm.spawn.args]
     pub fn to_args(&self) -> Vec<String> {
         vec![
             format!("--hub-path={}", self.hub_path.display()),
             format!("--peer-id={}", self.peer_id.get()),
-            format!("--doorbell-fd={}", self.doorbell_fd),
+            format!("{}={}", DoorbellHandle::ARG_NAME, self.doorbell_handle.to_arg()),
         ]
     }
 
@@ -103,7 +96,7 @@ impl SpawnTicket {
     /// 2. Spawns the child with die-with-parent behavior
     ///
     /// The spawned child will automatically be terminated when the parent dies,
-    /// even if the parent is killed with SIGKILL. The child should call
+    /// even if the parent is killed with SIGKILL/TerminateProcess. The child should call
     /// [`die_with_parent`] early in its main function.
     ///
     /// # Example
@@ -121,15 +114,18 @@ impl SpawnTicket {
     }
 }
 
+#[cfg(unix)]
 impl Drop for SpawnTicket {
     fn drop(&mut self) {
         // Close our copy of the guest's doorbell fd.
         // The child process has inherited it and will use it.
         unsafe {
-            libc::close(self.doorbell_fd);
+            libc::close(self.doorbell_handle.as_raw_fd());
         }
     }
 }
+
+// On Windows, the pipe name is just a string - no resource to close
 
 /// Parsed spawn arguments for guest initialization.
 ///
@@ -142,14 +138,14 @@ pub struct SpawnArgs {
     pub hub_path: PathBuf,
     /// Assigned peer ID
     pub peer_id: PeerId,
-    /// Doorbell file descriptor
-    pub doorbell_fd: RawFd,
+    /// Doorbell handle (platform-specific)
+    pub doorbell_handle: DoorbellHandle,
 }
 
 impl SpawnArgs {
     /// Parse from command-line arguments.
     ///
-    /// Looks for `--hub-path=`, `--peer-id=`, and `--doorbell-fd=` arguments.
+    /// Looks for `--hub-path=`, `--peer-id=`, and the platform-specific doorbell argument.
     ///
     /// shm[impl shm.spawn.args]
     pub fn from_args<I, S>(args: I) -> Result<Self, SpawnArgsError>
@@ -159,7 +155,10 @@ impl SpawnArgs {
     {
         let mut hub_path = None;
         let mut peer_id = None;
-        let mut doorbell_fd = None;
+        let mut doorbell_handle = None;
+
+        // Build the expected prefix from the platform-specific arg name
+        let doorbell_prefix = format!("{}=", DoorbellHandle::ARG_NAME);
 
         for arg in args {
             let arg = arg.as_ref();
@@ -168,15 +167,17 @@ impl SpawnArgs {
             } else if let Some(value) = arg.strip_prefix("--peer-id=") {
                 let id: u8 = value.parse().map_err(|_| SpawnArgsError::InvalidPeerId)?;
                 peer_id = Some(PeerId::new(id).ok_or(SpawnArgsError::InvalidPeerId)?);
-            } else if let Some(value) = arg.strip_prefix("--doorbell-fd=") {
-                doorbell_fd = Some(value.parse().map_err(|_| SpawnArgsError::InvalidFd)?);
+            } else if let Some(value) = arg.strip_prefix(&doorbell_prefix) {
+                doorbell_handle = Some(
+                    DoorbellHandle::from_arg(value).map_err(|_| SpawnArgsError::InvalidHandle)?,
+                );
             }
         }
 
         Ok(Self {
             hub_path: hub_path.ok_or(SpawnArgsError::MissingHubPath)?,
             peer_id: peer_id.ok_or(SpawnArgsError::MissingPeerId)?,
-            doorbell_fd: doorbell_fd.ok_or(SpawnArgsError::MissingDoorbellFd)?,
+            doorbell_handle: doorbell_handle.ok_or(SpawnArgsError::MissingDoorbellHandle)?,
         })
     }
 
@@ -195,12 +196,12 @@ pub enum SpawnArgsError {
     MissingHubPath,
     /// Missing --peer-id argument
     MissingPeerId,
-    /// Missing --doorbell-fd argument
-    MissingDoorbellFd,
+    /// Missing doorbell handle argument
+    MissingDoorbellHandle,
     /// Invalid peer ID value
     InvalidPeerId,
-    /// Invalid file descriptor value
-    InvalidFd,
+    /// Invalid doorbell handle value
+    InvalidHandle,
 }
 
 impl std::fmt::Display for SpawnArgsError {
@@ -208,9 +209,11 @@ impl std::fmt::Display for SpawnArgsError {
         match self {
             SpawnArgsError::MissingHubPath => write!(f, "missing --hub-path argument"),
             SpawnArgsError::MissingPeerId => write!(f, "missing --peer-id argument"),
-            SpawnArgsError::MissingDoorbellFd => write!(f, "missing --doorbell-fd argument"),
+            SpawnArgsError::MissingDoorbellHandle => {
+                write!(f, "missing {} argument", DoorbellHandle::ARG_NAME)
+            }
             SpawnArgsError::InvalidPeerId => write!(f, "invalid peer ID"),
-            SpawnArgsError::InvalidFd => write!(f, "invalid file descriptor"),
+            SpawnArgsError::InvalidHandle => write!(f, "invalid doorbell handle"),
         }
     }
 }
@@ -222,6 +225,7 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    #[cfg(unix)]
     #[test]
     fn test_spawn_args_parsing() {
         let args = vec!["--hub-path=/tmp/test.shm", "--peer-id=1", "--doorbell-fd=5"];
@@ -229,9 +233,28 @@ mod tests {
         let parsed = SpawnArgs::from_args(args).unwrap();
         assert_eq!(parsed.hub_path, Path::new("/tmp/test.shm"));
         assert_eq!(parsed.peer_id.get(), 1);
-        assert_eq!(parsed.doorbell_fd, 5);
+        assert_eq!(parsed.doorbell_handle.as_raw_fd(), 5);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn test_spawn_args_parsing() {
+        let args = vec![
+            "--hub-path=C:\\temp\\test.shm",
+            "--peer-id=1",
+            "--doorbell-pipe=\\\\.\\pipe\\roam-shm-test",
+        ];
+
+        let parsed = SpawnArgs::from_args(args).unwrap();
+        assert_eq!(parsed.hub_path, Path::new("C:\\temp\\test.shm"));
+        assert_eq!(parsed.peer_id.get(), 1);
+        assert_eq!(
+            parsed.doorbell_handle.as_pipe_name(),
+            "\\\\.\\pipe\\roam-shm-test"
+        );
+    }
+
+    #[cfg(unix)]
     #[test]
     fn test_spawn_args_missing_hub_path() {
         let args = vec!["--peer-id=1", "--doorbell-fd=5"];
@@ -239,6 +262,15 @@ mod tests {
         assert_eq!(result.unwrap_err(), SpawnArgsError::MissingHubPath);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn test_spawn_args_missing_hub_path() {
+        let args = vec!["--peer-id=1", "--doorbell-pipe=\\\\.\\pipe\\test"];
+        let result = SpawnArgs::from_args(args);
+        assert_eq!(result.unwrap_err(), SpawnArgsError::MissingHubPath);
+    }
+
+    #[cfg(unix)]
     #[test]
     fn test_spawn_args_invalid_peer_id() {
         let args = vec![
@@ -250,13 +282,25 @@ mod tests {
         assert_eq!(result.unwrap_err(), SpawnArgsError::InvalidPeerId);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn test_spawn_args_invalid_peer_id() {
+        let args = vec![
+            "--hub-path=C:\\temp\\test.shm",
+            "--peer-id=0", // 0 is invalid
+            "--doorbell-pipe=\\\\.\\pipe\\test",
+        ];
+        let result = SpawnArgs::from_args(args);
+        assert_eq!(result.unwrap_err(), SpawnArgsError::InvalidPeerId);
+    }
+
+    #[cfg(unix)]
     #[test]
     fn test_spawn_ticket_to_args() {
-        // Create a dummy fd for testing (we won't actually use it)
         let ticket = SpawnTicket {
             hub_path: PathBuf::from("/tmp/test.shm"),
             peer_id: PeerId::new(1).unwrap(),
-            doorbell_fd: 42,
+            doorbell_handle: DoorbellHandle::from_raw_fd(42),
         };
 
         let args = ticket.to_args();
@@ -267,5 +311,23 @@ mod tests {
 
         // Prevent the destructor from closing fd 42
         std::mem::forget(ticket);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_spawn_ticket_to_args() {
+        let ticket = SpawnTicket {
+            hub_path: PathBuf::from("C:\\temp\\test.shm"),
+            peer_id: PeerId::new(1).unwrap(),
+            doorbell_handle: DoorbellHandle::from_pipe_name(
+                "\\\\.\\pipe\\roam-shm-test".to_string(),
+            ),
+        };
+
+        let args = ticket.to_args();
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0], "--hub-path=C:\\temp\\test.shm");
+        assert_eq!(args[1], "--peer-id=1");
+        assert_eq!(args[2], "--doorbell-pipe=\\\\.\\pipe\\roam-shm-test");
     }
 }

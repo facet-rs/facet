@@ -21,6 +21,41 @@ pub enum SignalResult {
     PeerDead,
 }
 
+/// Opaque handle for passing doorbell endpoints between processes.
+///
+/// On Unix, this wraps a raw file descriptor.
+/// On Windows, this wraps a named pipe path (see doorbell_windows.rs).
+///
+/// Use [`Doorbell::create_pair`] to create a pair, then pass this handle
+/// to the child process and call [`Doorbell::from_handle`] to reconstruct.
+#[derive(Debug, Clone)]
+pub struct DoorbellHandle(RawFd);
+
+impl DoorbellHandle {
+    /// Get the raw file descriptor (for passing to child processes).
+    pub fn as_raw_fd(&self) -> RawFd {
+        self.0
+    }
+
+    /// Create from a raw file descriptor (in child process after spawn).
+    pub fn from_raw_fd(fd: RawFd) -> Self {
+        Self(fd)
+    }
+
+    /// Format as a command-line argument value.
+    pub fn to_arg(&self) -> String {
+        self.0.to_string()
+    }
+
+    /// Parse from a command-line argument value.
+    pub fn from_arg(s: &str) -> Result<Self, std::num::ParseIntError> {
+        Ok(Self(s.parse()?))
+    }
+
+    /// The CLI argument name for this platform.
+    pub const ARG_NAME: &'static str = "--doorbell-fd";
+}
+
 /// A doorbell for cross-process wakeup.
 ///
 /// Uses a Unix domain socketpair (SOCK_DGRAM) for bidirectional signaling.
@@ -64,11 +99,11 @@ fn drain_fd(fd: RawFd, would_block_is_error: bool) -> io::Result<bool> {
 }
 
 impl Doorbell {
-    /// Create a socketpair and return (host_doorbell, peer_raw_fd).
+    /// Create a socketpair and return (host_doorbell, guest_handle).
     ///
-    /// The peer_raw_fd should be passed to the plugin (e.g., via --doorbell-fd=N).
+    /// The guest_handle should be passed to the plugin (e.g., via command line).
     /// The host keeps the Doorbell.
-    pub fn create_pair() -> io::Result<(Self, RawFd)> {
+    pub fn create_pair() -> io::Result<(Self, DoorbellHandle)> {
         let (host_fd, peer_fd) = create_socketpair()?;
 
         set_nonblocking(host_fd.as_raw_fd())?;
@@ -81,11 +116,20 @@ impl Doorbell {
                 async_fd,
                 peer_dead_logged: AtomicBool::new(false),
             },
-            peer_raw,
+            DoorbellHandle(peer_raw),
         ))
     }
 
+    /// Create a Doorbell from an opaque handle (guest/plugin side).
+    ///
+    /// This is the cross-platform way to reconstruct a Doorbell in a spawned process.
+    pub fn from_handle(handle: DoorbellHandle) -> io::Result<Self> {
+        Self::from_raw_fd(handle.0)
+    }
+
     /// Create a Doorbell from a raw file descriptor (plugin side).
+    ///
+    /// Prefer [`from_handle`] for cross-platform code.
     ///
     /// # Safety
     ///

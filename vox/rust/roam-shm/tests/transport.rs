@@ -22,8 +22,8 @@ fn create_host_and_guest() -> (ShmHost, ShmGuest) {
 }
 
 fn create_guest_transport(guest: ShmGuest) -> ShmGuestTransport {
-    let (_host_doorbell, guest_doorbell_fd) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_raw_fd(guest_doorbell_fd).unwrap();
+    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
     ShmGuestTransport::new_with_doorbell(guest, guest_doorbell)
 }
 

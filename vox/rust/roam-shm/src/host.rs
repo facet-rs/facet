@@ -19,10 +19,7 @@ use crate::layout::{
 };
 use crate::peer::{PeerEntry, PeerId, PeerState};
 use crate::slot_pool::SlotPool;
-#[cfg(unix)]
 use crate::spawn::{AddPeerOptions, DeathCallback, SpawnTicket};
-#[cfg(windows)]
-use crate::spawn_windows::{AddPeerOptions, DeathCallback, SpawnTicket};
 use crate::var_slot_pool::{SizeClassHeader, VarSlotPool};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,7 +194,6 @@ impl ShmHost {
     ///
     /// shm[impl shm.spawn.ticket]
     /// shm[impl shm.doorbell.socketpair]
-    #[cfg(unix)]
     pub fn add_peer(&mut self, options: AddPeerOptions) -> io::Result<SpawnTicket> {
         // Must have a path for file-backed segments
         let hub_path = self
@@ -209,11 +205,12 @@ impl ShmHost {
         let peer_id = self.reserve_peer_slot()?;
 
         // Create doorbell pair
-        let (host_doorbell, guest_fd) = Doorbell::create_pair()?;
+        let (host_doorbell, guest_handle) = Doorbell::create_pair()?;
 
-        // Clear CLOEXEC on guest's doorbell so it's inherited by children
+        // On Unix, clear CLOEXEC on guest's doorbell so it's inherited by children
         // shm[impl shm.spawn.fd-inheritance]
-        shm_primitives::clear_cloexec(guest_fd)?;
+        #[cfg(unix)]
+        shm_primitives::clear_cloexec(guest_handle.as_raw_fd())?;
 
         // Track this peer
         self.guests.insert(
@@ -228,46 +225,7 @@ impl ShmHost {
             },
         );
 
-        Ok(SpawnTicket::new(hub_path, peer_id, guest_fd))
-    }
-
-    /// Add a new peer, returning the spawn ticket.
-    ///
-    /// This reserves a peer slot and creates a doorbell pair.
-    /// The returned ticket should be passed to the spawned process
-    /// via command-line arguments.
-    ///
-    /// On Windows, uses named pipes instead of socketpairs.
-    ///
-    /// shm[impl shm.spawn.ticket]
-    #[cfg(windows)]
-    pub fn add_peer(&mut self, options: AddPeerOptions) -> io::Result<SpawnTicket> {
-        // Must have a path for file-backed segments
-        let hub_path = self
-            .path
-            .clone()
-            .ok_or_else(|| io::Error::other("add_peer requires a file-backed segment"))?;
-
-        // Find and reserve an empty slot
-        let peer_id = self.reserve_peer_slot()?;
-
-        // Create doorbell pair (returns pipe name on Windows)
-        let (host_doorbell, pipe_name) = Doorbell::create_pair()?;
-
-        // Track this peer
-        self.guests.insert(
-            peer_id,
-            GuestState {
-                name: options.peer_name.clone(),
-                last_epoch: self.peer_entry(peer_id).epoch(),
-                pending_slots: Vec::new(),
-                doorbell: Some(host_doorbell),
-                on_death: options.on_death,
-                death_notified: false,
-            },
-        );
-
-        Ok(SpawnTicket::new(hub_path, peer_id, pipe_name))
+        Ok(SpawnTicket::new(hub_path, peer_id, guest_handle))
     }
 
     /// Reserve a peer slot, returning its ID.

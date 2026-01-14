@@ -37,11 +37,12 @@ pub mod mmap_windows;
 
 #[cfg(all(feature = "std", unix))]
 pub use doorbell::{
-    Doorbell, SignalResult, clear_cloexec, close_peer_fd, set_nonblocking, validate_fd,
+    Doorbell, DoorbellHandle, SignalResult, clear_cloexec, close_peer_fd, set_nonblocking,
+    validate_fd,
 };
 #[cfg(all(feature = "std", windows))]
 pub use doorbell_windows::{
-    Doorbell, SignalResult, close_handle, set_handle_inheritable, validate_handle,
+    Doorbell, DoorbellHandle, SignalResult, close_handle, set_handle_inheritable, validate_handle,
 };
 #[cfg(feature = "std")]
 pub use futex::{futex_signal, futex_wait, futex_wait_async, futex_wait_async_ptr, futex_wake};

@@ -488,7 +488,7 @@ fn test_attach_error_slot_not_reserved() {
     let fake_args = roam_shm::SpawnArgs {
         hub_path: path.clone(),
         peer_id: roam_shm::peer::PeerId::from_index(1).unwrap(), // Slot 2, not reserved
-        doorbell_pipe: ticket.doorbell_pipe().to_string(), // Reuse the pipe (doesn't matter for this test)
+        doorbell_handle: ticket.doorbell_handle().clone(), // Reuse the handle (doesn't matter for this test)
     };
 
     let result = ShmGuest::attach_with_ticket(&fake_args);
@@ -497,7 +497,6 @@ fn test_attach_error_slot_not_reserved() {
 
 /// Test AttachError::InvalidPeerId when peer_id is out of range.
 #[test]
-#[cfg(unix)]
 fn test_attach_error_invalid_peer_id() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -512,43 +511,21 @@ fn test_attach_error_invalid_peer_id() {
         max_guests: 2, // Only 2 guests allowed
         ..SegmentConfig::default()
     };
-    let _host = ShmHost::create(&path, config).unwrap();
+    let mut host = ShmHost::create(&path, config).unwrap();
 
-    // Create spawn args with peer_id = 5, but max_guests = 2
-    let fake_args = roam_shm::spawn::SpawnArgs {
-        hub_path: path.clone(),
-        peer_id: roam_shm::peer::PeerId::from_index(4).unwrap(), // Slot 5, out of range
-        doorbell_fd: -1,                                         // Doesn't matter
-    };
-
-    let result = ShmGuest::attach_with_ticket(&fake_args);
-    assert!(matches!(result, Err(AttachError::InvalidPeerId)));
-}
-
-/// Test AttachError::InvalidPeerId when peer_id is out of range (Windows).
-#[test]
-#[cfg(windows)]
-fn test_attach_error_invalid_peer_id() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
+    // Get a real doorbell handle from add_peer
+    let ticket = host
+        .add_peer(AddPeerOptions {
+            peer_name: Some("real-guest".to_string()),
+            on_death: None,
+        })
         .unwrap();
-    let _guard = rt.enter();
-
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("invalid_peer.shm");
-
-    let config = SegmentConfig {
-        max_guests: 2, // Only 2 guests allowed
-        ..SegmentConfig::default()
-    };
-    let _host = ShmHost::create(&path, config).unwrap();
 
     // Create spawn args with peer_id = 5, but max_guests = 2
     let fake_args = roam_shm::SpawnArgs {
         hub_path: path.clone(),
         peer_id: roam_shm::peer::PeerId::from_index(4).unwrap(), // Slot 5, out of range
-        doorbell_pipe: String::new(),                            // Doesn't matter
+        doorbell_handle: ticket.doorbell_handle().clone(),       // Reuse handle (doesn't matter)
     };
 
     let result = ShmGuest::attach_with_ticket(&fake_args);

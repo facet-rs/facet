@@ -86,10 +86,8 @@ pub mod transport;
 #[cfg(feature = "tokio")]
 pub mod driver;
 
-#[cfg(all(feature = "std", unix))]
+#[cfg(feature = "std")]
 pub mod spawn;
-#[cfg(all(feature = "std", windows))]
-pub mod spawn_windows;
 
 #[cfg(feature = "std")]
 pub mod wait;
@@ -127,12 +125,8 @@ pub use transport::{
     ConvertError, ShmGuestTransport, ShmHostGuestTransport, frame_to_message, message_to_frame,
 };
 
-#[cfg(all(feature = "std", unix))]
+#[cfg(feature = "std")]
 pub use spawn::{
-    AddPeerOptions, DeathCallback, SpawnArgs, SpawnArgsError, SpawnTicket, die_with_parent,
-};
-#[cfg(all(feature = "std", windows))]
-pub use spawn_windows::{
     AddPeerOptions, DeathCallback, SpawnArgs, SpawnArgsError, SpawnTicket, die_with_parent,
 };
 
