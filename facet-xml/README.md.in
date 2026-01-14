@@ -1,3 +1,53 @@
 # facet-xml
 
-XML parser prototype for the shared format abstraction experiments.
+XML serialization and deserialization for Rust using the facet reflection framework.
+
+## A Simple Example
+
+Given this XML:
+
+```xml
+<name>Ella</name>
+```
+
+You can deserialize it into a struct:
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug)]
+#[facet(rename = "name")]
+struct Name {
+    #[facet(xml::text)]
+    value: String,
+}
+# let xml_str = "<name>Ella</name>";
+# let name: Name = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(name.value, "Ella");
+```
+
+The `#[facet(rename = "name")]` makes the struct match the `<name>` element, and `#[facet(xml::text)]` captures the text content inside.
+
+## Attributes
+
+```xml
+<link href="/home">Home</link>
+```
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug)]
+#[facet(rename = "link")]
+struct Link {
+    #[facet(xml::attribute)]
+    href: String,
+    
+    #[facet(xml::text)]
+    text: String,
+}
+# let xml_str = r#"<link href="/home">Home</link>"#;
+# let link: Link = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(link.href, "/home");
+# assert_eq!(link.text, "Home");
+```

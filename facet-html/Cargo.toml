@@ -36,6 +36,7 @@ facet-showcase = { path = "../facet-showcase" }
 datatest-stable = "0.3"
 indoc.workspace = true
 test-log = { version = "0.2.19", features = ["trace"] }
+tracing = { workspace = true }
 
 [[test]]
 name = "roundtrip"

@@ -1855,6 +1855,7 @@ dependencies = [
  "indoc",
  "itoa",
  "test-log",
+ "tracing",
  "zmij",
 ]
 
