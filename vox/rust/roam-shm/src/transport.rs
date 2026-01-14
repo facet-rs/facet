@@ -479,11 +479,11 @@ impl ShmGuestTransport {
             SendError::HostGoodbye => {
                 io::Error::new(io::ErrorKind::ConnectionReset, "host goodbye")
             }
-            SendError::RingFull => io::Error::new(io::ErrorKind::WouldBlock, "ring full"),
+            SendError::RingFull => io::Error::new(io::ErrorKind::Other, "ring full"),
             SendError::PayloadTooLarge => {
                 io::Error::new(io::ErrorKind::InvalidData, "payload too large")
             }
-            SendError::SlotExhausted => io::Error::new(io::ErrorKind::WouldBlock, "slot exhausted"),
+            SendError::SlotExhausted => io::Error::new(io::ErrorKind::Other, "slot exhausted"),
         })?;
 
         // Ring doorbell to notify host of new message
@@ -590,12 +590,12 @@ impl<'a> ShmHostGuestTransport<'a> {
                 SendError::PeerNotAttached => {
                     io::Error::new(io::ErrorKind::NotConnected, "peer not attached")
                 }
-                SendError::RingFull => io::Error::new(io::ErrorKind::WouldBlock, "ring full"),
+                SendError::RingFull => io::Error::new(io::ErrorKind::Other, "ring full"),
                 SendError::PayloadTooLarge => {
                     io::Error::new(io::ErrorKind::InvalidData, "payload too large")
                 }
                 SendError::SlotExhausted => {
-                    io::Error::new(io::ErrorKind::WouldBlock, "slot exhausted")
+                    io::Error::new(io::ErrorKind::Other, "slot exhausted")
                 }
             }
         })
