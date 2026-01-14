@@ -666,8 +666,7 @@ impl<'a> ShmHostGuestTransport<'a> {
     }
 }
 
-// Implement MessageTransport for ShmGuestTransport when tokio feature is enabled
-#[cfg(feature = "tokio")]
+// Implement MessageTransport for ShmGuestTransport
 mod async_transport {
     use super::*;
     use roam_stream::MessageTransport;
