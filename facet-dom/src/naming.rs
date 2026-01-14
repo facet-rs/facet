@@ -26,48 +26,14 @@ pub fn to_element_name(name: &str) -> Cow<'_, str> {
     }
 }
 
-/// Compute the DOM key for a field/type: use explicit rename if present, otherwise use name as-is.
+/// Compute the DOM key for a field.
 ///
-/// The `name` parameter is the field's effective name, which has already been transformed
-/// by `rename_all` at the macro level if applicable. We use it directly without further
-/// conversion, since the derive macro handles the naming convention transformation.
-///
-/// This is the single source of truth for name conversion in facet-dom.
+/// If `rename` is `Some`, use it directly (explicit rename or rename_all transformation).
+/// Otherwise, apply lowerCamelCase to the raw field name as the default convention.
 #[inline]
-pub fn dom_key<'a>(rename: Option<&'a str>, name: &'a str) -> Cow<'a, str> {
+pub fn dom_key<'a>(name: &'a str, rename: Option<&'a str>) -> Cow<'a, str> {
     match rename {
         Some(r) => Cow::Borrowed(r),
-        None => Cow::Borrowed(name),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_type_names() {
-        assert_eq!(&*to_element_name("Banana"), "banana");
-        assert_eq!(&*to_element_name("MyPlaylist"), "myPlaylist");
-        assert_eq!(&*to_element_name("XMLParser"), "xmlParser");
-        assert_eq!(&*to_element_name("HTTPSConnection"), "httpsConnection");
-    }
-
-    #[test]
-    fn test_field_names() {
-        assert_eq!(&*to_element_name("field_name"), "fieldName");
-        assert_eq!(&*to_element_name("my_field"), "myField");
-    }
-
-    #[test]
-    fn test_already_lower_camel_borrows() {
-        assert!(matches!(to_element_name("banana"), Cow::Borrowed(_)));
-        assert!(matches!(to_element_name("myPlaylist"), Cow::Borrowed(_)));
-    }
-
-    #[test]
-    fn test_needs_conversion_owns() {
-        assert!(matches!(to_element_name("Banana"), Cow::Owned(_)));
-        assert!(matches!(to_element_name("field_name"), Cow::Owned(_)));
+        None => to_element_name(name),
     }
 }

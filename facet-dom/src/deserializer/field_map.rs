@@ -151,7 +151,7 @@ impl StructFieldMap {
                             .get_attr(Some("xml"), "ns")
                             .and_then(|attr| attr.get_as::<&str>().copied());
                         // Compute child key: rename (as-is) or lowerCamelCase(name)
-                        let child_key = dom_key(child_field.rename, child_field.name);
+                        let child_key = dom_key(child_field.name, child_field.rename);
 
                         let child_info = FieldInfo {
                             idx: child_idx,
@@ -251,7 +251,7 @@ impl StructFieldMap {
             // For all fields (list or not):
             //   - element name uses rename if present, else lowerCamelCase(field.name)
             // For list fields, this is the repeated item element name (flat, no wrapper)
-            let element_key = dom_key(field.rename, field.name);
+            let element_key = dom_key(field.name, field.rename);
 
             if field.is_attribute() {
                 let info = FieldInfo {
@@ -268,7 +268,7 @@ impl StructFieldMap {
                     attributes_field = Some(info);
                 } else {
                     // Named attribute: uses rename or lowerCamelCase(field.name)
-                    let attr_key = dom_key(field.rename, field.name);
+                    let attr_key = dom_key(field.name, field.rename);
                     attribute_fields
                         .entry(attr_key.into_owned())
                         .or_default()

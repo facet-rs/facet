@@ -11,7 +11,7 @@
 mod deserializer;
 mod error;
 mod event;
-mod naming;
+pub mod naming;
 mod parser;
 mod parser_ext;
 mod serializer;
