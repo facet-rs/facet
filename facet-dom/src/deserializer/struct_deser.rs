@@ -379,11 +379,8 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         let text = self.parser().expect_text()?;
 
         if self.elements_list_started {
-            wip = wip.begin_list_item()?;
-            wip = self
-                .dom_deser
-                .deserialize_text_into_enum(wip, text)?
-                .end()?;
+            // html::elements / xml::elements collects child *elements*, not text nodes.
+            // Skip text nodes silently (they're typically whitespace between elements).
         } else if self.flattened_enum_list_active {
             // Text inside an active flattened enum list - add as Text variant
             wip = wip.begin_list_item()?;
@@ -406,16 +403,8 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 self.text_content.push_str(&text);
             }
         } else if self.field_map.elements_field.is_some() {
-            // Mixed content: text before any elements - start the list and add text
-            let info = self.field_map.elements_field.as_ref().unwrap();
-            trace!("→ .{}[]", info.field.name);
-            wip = wip.begin_nth_field(info.idx)?.init_list()?;
-            self.elements_list_started = true;
-            wip = wip.begin_list_item()?;
-            wip = self
-                .dom_deser
-                .deserialize_text_into_enum(wip, text)?
-                .end()?;
+            // html::elements / xml::elements collects child *elements*, not text nodes.
+            // Skip text nodes silently (they're typically whitespace between elements).
         } else if let Some(enum_info) = &self.field_map.flattened_enum {
             // Flattened enum list with Text variant - start or continue the list
             let field_idx = enum_info.field_idx;

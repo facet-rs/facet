@@ -270,3 +270,102 @@ let doc = Doc { content: "Hello".to_string() };
 let pretty = facet_html::to_string_pretty(&doc).unwrap();
 // Pretty-printed output with indentation
 ```
+
+## Whitespace Handling in Element Lists
+
+When deserializing a `Vec<T>` with `html::elements`, text nodes (including whitespace)
+are handled based on what `T` can accept:
+
+### Case 1: Vec of structs - text is ignored
+
+When `T` is a struct, text nodes cannot be deserialized into it, so they are skipped:
+
+```rust
+# use facet::Facet;
+# use facet_html as html;
+#[derive(Facet, Debug)]
+#[facet(rename = "li")]
+struct Li {
+    #[facet(html::text, default)]
+    text: String,
+}
+
+#[derive(Facet, Debug)]
+#[facet(rename = "ul")]
+struct Ul {
+    #[facet(html::elements, default)]
+    li: Vec<Li>,
+}
+
+// Whitespace between elements is ignored - only <li> elements are collected
+let html = "<ul>
+    <li>One</li>
+    <li>Two</li>
+</ul>";
+let ul: Ul = facet_html::from_str(html).unwrap();
+assert_eq!(ul.li.len(), 2);
+assert_eq!(ul.li[0].text, "One");
+assert_eq!(ul.li[1].text, "Two");
+```
+
+### Case 2: Vec of String - element text content is collected
+
+When `T` is `String`, the text content of each matched element is collected:
+
+```rust
+# use facet::Facet;
+# use facet_html as html;
+#[derive(Facet, Debug)]
+#[facet(rename = "container")]
+struct Container {
+    #[facet(html::elements, default)]
+    item: Vec<String>,
+}
+
+// Each <item> element's text content becomes a list item
+// Whitespace between elements is ignored
+let html = "<container>
+    <item>First</item>
+    <item>Second</item>
+</container>";
+let c: Container = facet_html::from_str(html).unwrap();
+assert_eq!(c.item.len(), 2);
+assert_eq!(c.item[0], "First");
+assert_eq!(c.item[1], "Second");
+```
+
+### Case 3: Vec of enum with text variant - text is wrapped
+
+When `T` is an enum that has a variant capable of holding text, text nodes are
+wrapped in that variant:
+
+```rust
+# use facet::Facet;
+# use facet_html as html;
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum Content {
+    #[facet(rename = "_text", html::text)]
+    Text(String),
+    #[facet(rename = "em")]
+    Em {
+        #[facet(html::text)]
+        text: String,
+    },
+}
+
+#[derive(Facet, Debug)]
+#[facet(rename = "p")]
+struct P {
+    #[facet(flatten, default)]
+    children: Vec<Content>,
+}
+
+// Mixed text and elements - text becomes Content::Text variant
+let html = "<p>Hello <em>world</em>!</p>";
+let p: P = facet_html::from_str(html).unwrap();
+assert_eq!(p.children.len(), 3);
+assert_eq!(p.children[0], Content::Text("Hello ".to_string()));
+assert!(matches!(p.children[1], Content::Em { .. }));
+assert_eq!(p.children[2], Content::Text("!".to_string()));
+```
