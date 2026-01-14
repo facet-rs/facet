@@ -64,6 +64,7 @@ macro_rules! warn {
 // -----------------------------------------------------------------------------
 
 #[cfg(feature = "tracing")]
+#[allow(unused_macros)]
 macro_rules! error {
     ($($arg:tt)*) => { ::tracing::error!($($arg)*) }
 }

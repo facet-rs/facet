@@ -431,16 +431,6 @@ pub struct ShmGuestTransport {
 }
 
 impl ShmGuestTransport {
-    /// Create a new transport wrapper around an ShmGuest.
-    #[deprecated(note = "Use new_with_doorbell instead - doorbell signaling is required")]
-    pub fn new(guest: ShmGuest) -> Self {
-        Self {
-            guest,
-            last_decoded: Vec::new(),
-            doorbell: None,
-        }
-    }
-
     /// Create a new transport with doorbell signaling.
     pub fn new_with_doorbell(guest: ShmGuest, doorbell: shm_primitives::Doorbell) -> Self {
         Self {
