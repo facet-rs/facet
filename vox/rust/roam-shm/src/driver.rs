@@ -830,19 +830,31 @@ impl MultiPeerHostDriver {
                     for (pid, frame) in messages {
                         self.last_decoded = frame.payload_bytes().to_vec();
 
-                        let msg = frame_to_message(frame).map_err(|e| {
+                        let msg = match frame_to_message(frame).map_err(|e| {
                             ShmConnectionError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-                        })?;
+                        }) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                warn!("MultiPeerHostDriver: failed to decode message from peer {:?}: {:?}", pid, e);
+                                continue;
+                            }
+                        };
 
                         trace!("MultiPeerHostDriver: handling SHM message from peer {:?}", pid);
-                        self.handle_message(pid, msg).await?;
+                        if let Err(e) = self.handle_message(pid, msg).await {
+                            warn!("MultiPeerHostDriver: error handling message from peer {:?}: {:?}", pid, e);
+                            // Continue processing other peers - don't let one peer's error crash the driver
+                        }
                     }
                 }
 
                 // Driver message (outgoing call from ConnectionHandle)
                 Some((peer_id, msg)) = self.driver_msg_rx.recv() => {
                     trace!("MultiPeerHostDriver: received driver message for peer {:?}", peer_id);
-                    self.handle_driver_message(peer_id, msg).await?;
+                    if let Err(e) = self.handle_driver_message(peer_id, msg).await {
+                        warn!("MultiPeerHostDriver: error sending to peer {:?}: {:?}", peer_id, e);
+                        // Continue processing other peers - don't let one peer's error crash the driver
+                    }
                 }
 
                 // All channels closed - shut down
