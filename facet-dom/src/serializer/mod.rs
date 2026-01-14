@@ -116,6 +116,11 @@ pub trait DomSerializer {
         false
     }
 
+    /// Check if the current field is a "tag" field (stores the element's tag name).
+    fn is_tag_field(&self) -> bool {
+        false
+    }
+
     /// Clear field-related state after a field is serialized.
     fn clear_field_state(&mut self) {}
 
@@ -320,23 +325,49 @@ where
             .struct_metadata(value.shape())
             .map_err(DomSerializeError::Backend)?;
 
-        // Determine element name from shape or provided name
-        let tag = element_name.map(Cow::Borrowed).unwrap_or_else(|| {
-            Cow::Borrowed(
-                value
-                    .shape()
-                    .get_builtin_attr_value::<&str>("rename")
-                    .unwrap_or(value.shape().type_identifier),
-            )
-        });
+        // Collect fields first to check for tag field
+        let fields: Vec<_> = struct_.fields_for_serialize().collect();
+
+        // Find the tag field if present (html::tag or xml::tag)
+        let tag_field_value: Option<String> = {
+            let mut result = None;
+            for (field_item, field_value) in &fields {
+                serializer
+                    .field_metadata(field_item)
+                    .map_err(DomSerializeError::Backend)?;
+                if serializer.is_tag_field() {
+                    // Extract the string value from the tag field
+                    if let Some(s) = field_value.as_str() {
+                        result = Some(s.to_string());
+                    } else if let Some(s) = value_to_string(*field_value, serializer) {
+                        result = Some(s);
+                    }
+                }
+                serializer.clear_field_state();
+            }
+            result
+        };
+
+        // Determine element name: tag field value > provided name > shape rename > type identifier
+        let tag = if let Some(ref tag_value) = tag_field_value {
+            Cow::Owned(tag_value.clone())
+        } else {
+            element_name.map(Cow::Borrowed).unwrap_or_else(|| {
+                Cow::Borrowed(
+                    value
+                        .shape()
+                        .get_builtin_attr_value::<&str>("rename")
+                        .unwrap_or(value.shape().type_identifier),
+                )
+            })
+        };
         trace!(tag = %tag, "element_start");
 
         serializer
             .element_start(&tag, None)
             .map_err(DomSerializeError::Backend)?;
 
-        // Collect fields, separate attributes from children
-        let fields: Vec<_> = struct_.fields_for_serialize().collect();
+        // Fields were already collected above when checking for tag field
         trace!(field_count = fields.len(), "collected fields for serialize");
 
         // First pass: emit attributes
@@ -390,6 +421,12 @@ where
                 .map_err(DomSerializeError::Backend)?;
 
             if serializer.is_attribute_field() {
+                serializer.clear_field_state();
+                continue;
+            }
+
+            // Skip tag fields - the value was already used as the element name
+            if serializer.is_tag_field() {
                 serializer.clear_field_state();
                 continue;
             }

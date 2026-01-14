@@ -590,6 +590,10 @@ impl DomSerializer for HtmlSerializer {
         self.pending_is_elements
     }
 
+    fn is_tag_field(&self) -> bool {
+        self.pending_is_tag
+    }
+
     fn clear_field_state(&mut self) {
         self.clear_field_state_impl();
     }
