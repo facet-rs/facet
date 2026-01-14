@@ -2291,6 +2291,9 @@ pub struct CustomPhrasingElement {
 #[derive(Facet)]
 #[repr(u8)]
 pub enum MetadataContent {
+    /// Text node (for whitespace between elements).
+    #[facet(rename = "_text", html::text)]
+    Text(String),
     /// Document title.
     #[facet(rename = "title")]
     Title(Title),
