@@ -4,11 +4,11 @@
 //! deserialized and (where applicable) serialized back correctly.
 
 use facet::Facet;
+use facet_testhelpers::test;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
-use test_log::test;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Basic struct tests
@@ -32,7 +32,7 @@ fn struct_single_field() {
     );
 }
 
-#[test_log::test]
+#[test]
 fn sequence_numbers() {
     tracing::trace!("BOOH");
 
@@ -53,7 +53,7 @@ fn sequence_numbers() {
     );
 }
 
-#[test_log::test]
+#[test]
 fn struct_nested() {
     #[derive(Facet, Debug, PartialEq)]
     struct Child {

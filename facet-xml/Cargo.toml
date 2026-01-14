@@ -38,6 +38,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 [dev-dependencies]
 divan = { workspace = true }
 facet = { path = "../facet", features = ["doc", "net"] }
+facet-testhelpers = { path = "../facet-testhelpers", version = "0.42.0" }
 indoc = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde-xml-rs = "0.8.2"

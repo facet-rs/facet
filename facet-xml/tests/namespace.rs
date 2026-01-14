@@ -5,8 +5,8 @@
 //! declarations and namespace prefixes.
 
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_xml::{self as xml, to_vec};
-use test_log::test;
 
 /// Helper to deserialize XML using facet-xml
 fn from_str<T: Facet<'static>>(xml_str: &str) -> Result<T, Box<dyn std::error::Error>> {

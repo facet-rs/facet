@@ -1,8 +1,8 @@
 //! Basic tests for facet-xml behavior that needs to be implemented.
 
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_xml as xml;
-use test_log::test;
 
 // ============================================================================
 // xml::element - explicit single child element

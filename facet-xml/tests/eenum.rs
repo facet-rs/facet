@@ -3,8 +3,8 @@
 //! In XML, the element name determines which variant is selected.
 
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_xml as xml;
-use test_log::test;
 
 // ============================================================================
 // Basic enum variants

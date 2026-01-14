@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_xml::{self as xml, from_str, to_string};
-use test_log::test;
 
 #[test]
 fn test_deserialize_attribute_when_element_with_the_same_name_is_present() {

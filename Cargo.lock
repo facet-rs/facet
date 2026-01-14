@@ -2253,6 +2253,7 @@ dependencies = [
  "facet-core",
  "facet-dom",
  "facet-reflect",
+ "facet-testhelpers",
  "http",
  "http-body-util",
  "indoc",
