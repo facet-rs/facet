@@ -2171,8 +2171,10 @@ dependencies = [
  "indoc",
  "itoa",
  "libtest-mimic",
+ "test-log",
  "toml_parser",
  "toml_writer",
+ "tracing",
  "zmij",
 ]
 

@@ -3,7 +3,7 @@ extern crate alloc;
 use facet_core::Def;
 use facet_reflect::{FieldCategory, Partial};
 
-use crate::{DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue};
+use crate::{DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue, trace};
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
@@ -23,6 +23,11 @@ where
         use alloc::collections::BTreeSet;
         use facet_core::Characteristic;
         use facet_solver::{PathSegment, Schema, Solver};
+
+        trace!(
+            "deserialize_struct_with_flatten: starting shape={}",
+            wip.shape().type_identifier
+        );
 
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
         let struct_type_has_default = wip.shape().is(Characteristic::Default);
@@ -193,6 +198,7 @@ where
                             catch_all_info,
                             Cow::Borrowed(key.name.as_ref()),
                             &mut fields_set,
+                            &mut open_segments,
                         )?;
                         continue;
                     }
@@ -226,6 +232,14 @@ where
             wip = wip.end().map_err(DeserializeError::reflect)?;
         }
 
+        // Initialize catch-all map/value if it was never touched (no unknown fields)
+        // This ensures the field is initialized even when empty
+        if let Some(catch_all_info) = resolution.catch_all_map(FieldCategory::Flat) {
+            if !fields_set.contains(catch_all_info.serialized_name) {
+                wip = self.initialize_empty_catch_all(wip, catch_all_info)?;
+            }
+        }
+
         // Defaults for missing fields are applied automatically by facet-reflect's
         // fill_defaults() when finish_deferred() or build()/end() is called.
 
@@ -241,12 +255,103 @@ where
     ///
     /// This navigates to the catch-all map field (handling Option wrappers),
     /// initializes it if needed, and inserts the key-value pair.
-    fn insert_into_catch_all_map(
+    ///
+    /// Uses the shared `open_segments` state to avoid reopening/closing the path
+    /// for consecutive unknown fields going to the same catch-all map.
+    fn insert_into_catch_all_map<'a>(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         catch_all_info: &facet_reflect::FieldInfo,
         key: alloc::borrow::Cow<'_, str>,
         fields_set: &mut alloc::collections::BTreeSet<&'static str>,
+        open_segments: &mut alloc::vec::Vec<(&'a str, bool, bool)>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>>
+    where
+        'input: 'a,
+    {
+        use facet_solver::PathSegment;
+
+        let segments = catch_all_info.path.segments();
+
+        // Extract field names from the path (these are 'static str from the schema)
+        let field_segments: alloc::vec::Vec<&'static str> = segments
+            .iter()
+            .filter_map(|s| match s {
+                PathSegment::Field(name) => Some(*name),
+                PathSegment::Variant(_, _) => None,
+            })
+            .collect();
+
+        // Find common prefix with currently open segments
+        let common_len = open_segments
+            .iter()
+            .zip(field_segments.iter())
+            .take_while(|((name, _, _), b)| *name == **b)
+            .count();
+
+        // Close segments that are no longer needed (in reverse order)
+        while open_segments.len() > common_len {
+            let (_, is_option, _) = open_segments.pop().unwrap();
+            if is_option {
+                wip = wip.end().map_err(DeserializeError::reflect)?;
+            }
+            wip = wip.end().map_err(DeserializeError::reflect)?;
+        }
+
+        // Open new segments needed for the catch-all map path
+        for &segment in &field_segments[common_len..] {
+            wip = wip
+                .begin_field(segment)
+                .map_err(DeserializeError::reflect)?;
+            let is_option = matches!(wip.shape().def, Def::Option(_));
+            if is_option {
+                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+            }
+            open_segments.push((segment, is_option, false));
+        }
+
+        // Initialize the map if this is our first time
+        let map_field_name = catch_all_info.serialized_name;
+        let is_dynamic_value = matches!(wip.shape().def, Def::DynamicValue(_));
+        if !fields_set.contains(map_field_name) {
+            wip = wip.init_map().map_err(DeserializeError::reflect)?;
+            fields_set.insert(map_field_name);
+        }
+
+        // Insert the key-value pair - use different API for DynamicValue vs Map
+        if is_dynamic_value {
+            // DynamicValue uses begin_object_entry(key) which combines key setting
+            let key_owned = key.into_owned();
+            wip = wip
+                .begin_object_entry(&key_owned)
+                .map_err(DeserializeError::reflect)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
+        } else {
+            // Map uses begin_key() + set value + end() + begin_value() + deserialize + end()
+            wip = wip.begin_key().map_err(DeserializeError::reflect)?;
+            wip = self.set_string_value(wip, alloc::borrow::Cow::Owned(key.into_owned()))?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
+
+            wip = wip.begin_value().map_err(DeserializeError::reflect)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
+        }
+
+        // Don't close segments here - leave them open for consecutive catch-all insertions.
+        // The main loop will close them when switching to a different path or at the end.
+
+        Ok(wip)
+    }
+
+    /// Initialize an empty catch-all field when no unknown fields were encountered.
+    ///
+    /// This handles both HashMap catch-alls (init as empty map) and DynamicValue
+    /// catch-alls (init as empty object).
+    fn initialize_empty_catch_all(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        catch_all_info: &facet_reflect::FieldInfo,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         use facet_solver::PathSegment;
 
@@ -261,10 +366,10 @@ where
             })
             .collect();
 
-        // Track how many segments we opened so we can close them
-        let mut opened_segments: alloc::vec::Vec<bool> = alloc::vec::Vec::new(); // true = is_option
+        // Track opened segments so we can close them
+        let mut opened_segments: alloc::vec::Vec<bool> = alloc::vec::Vec::new();
 
-        // Navigate to the map field
+        // Navigate to the catch-all field
         for &segment in &field_segments {
             wip = wip
                 .begin_field(segment)
@@ -276,21 +381,25 @@ where
             opened_segments.push(is_option);
         }
 
-        // Initialize the map if this is our first time
-        let map_field_name = catch_all_info.serialized_name;
-        if !fields_set.contains(map_field_name) {
-            wip = wip.init_map().map_err(DeserializeError::reflect)?;
-            fields_set.insert(map_field_name);
+        // Initialize as empty based on the field's type
+        match &wip.shape().def {
+            Def::Map(_) => {
+                // HashMap catch-all: init as empty map
+                wip = wip.init_map().map_err(DeserializeError::reflect)?;
+            }
+            Def::DynamicValue(_) => {
+                // DynamicValue catch-all: init as empty object
+                wip = wip.init_map().map_err(DeserializeError::reflect)?;
+            }
+            _ => {
+                // Other types: try to set default if available
+                use facet_core::Characteristic;
+                if wip.shape().is(Characteristic::Default) {
+                    wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                }
+                // If no default, let the deferred mode handle the error
+            }
         }
-
-        // Insert the key-value pair
-        wip = wip.begin_key().map_err(DeserializeError::reflect)?;
-        wip = self.set_string_value(wip, alloc::borrow::Cow::Owned(key.into_owned()))?;
-        wip = wip.end().map_err(DeserializeError::reflect)?;
-
-        wip = wip.begin_value().map_err(DeserializeError::reflect)?;
-        wip = self.deserialize_into(wip)?;
-        wip = wip.end().map_err(DeserializeError::reflect)?;
 
         // Close segments in reverse order
         for is_option in opened_segments.into_iter().rev() {

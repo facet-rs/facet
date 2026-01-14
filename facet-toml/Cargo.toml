@@ -40,6 +40,8 @@ facet-value = { path = "../facet-value" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 libtest-mimic = "0.8.1"
 indoc = { workspace = true }
+test-log = { version = "0.2", features = ["trace"] }
+tracing = { workspace = true }
 
 [features]
 default = []
@@ -48,6 +50,7 @@ serialize = ["dep:toml_writer"]
 jit = ["facet-format/jit"]
 fast = ["dep:zmij", "dep:itoa"]
 net = ["facet-format/net", "facet-core/net"]
+tracing = ["facet-reflect/tracing", "facet-format/tracing"]
 
 # Axum HTTP integration
 axum = ["std", "serialize", "dep:axum-core", "dep:http", "dep:http-body-util"]
