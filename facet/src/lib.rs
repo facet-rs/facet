@@ -283,6 +283,7 @@ pub mod builtin {
             flags: crate::ShapeFlags::empty(),
             tag: None,
             content: None,
+            rename: None,
         };
     }
 }

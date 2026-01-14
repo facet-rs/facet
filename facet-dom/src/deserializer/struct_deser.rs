@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use facet_core::{Def, StructKind, StructType, Type, UserType};
+use facet_core::{Def, Shape, StructKind, StructType, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::error::DomDeserializeError;
@@ -587,9 +587,12 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         let field = &self.struct_def.fields[idx];
         let field_shape = field.shape();
 
-        // Check if the field type is a struct - if so, we need to deserialize it
+        // Find the innermost struct type, looking through Option/Pointer wrappers
+        let inner_struct_info = self.find_inner_struct(field_shape);
+
+        // Check if the field type (or its inner type) is a struct - if so, we need to deserialize it
         // using the field's element name, not the type's name
-        if let Type::User(UserType::Struct(inner_struct_def)) = &field_shape.ty {
+        if let Some((inner_struct_def, inner_shape)) = inner_struct_info {
             // Compute expected element name from field: rename > lowerCamelCase(field.name)
             // Note: effective_name() returns rename if set, else field.name
             // We still need to convert to lowerCamelCase if not renamed
@@ -600,15 +603,21 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             };
 
             // Get ns_all from the inner struct's shape
-            let ns_all = field_shape
+            let ns_all = inner_shape
                 .attributes
                 .iter()
                 .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
                 .and_then(|attr| attr.get_as::<&str>().copied());
 
-            let deny_unknown_fields = field_shape.has_deny_unknown_fields_attr();
+            let deny_unknown_fields = inner_shape.has_deny_unknown_fields_attr();
 
             wip = wip.begin_nth_field(idx)?;
+
+            // Handle Option wrapper if present
+            if matches!(&field_shape.def, Def::Option(_)) {
+                wip = wip.begin_some()?;
+            }
+
             wip = StructDeserializer::new(
                 self.dom_deser,
                 inner_struct_def,
@@ -617,6 +626,12 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 deny_unknown_fields,
             )
             .deserialize(wip)?;
+
+            // Close Option wrapper if present
+            if matches!(&field_shape.def, Def::Option(_)) {
+                wip = wip.end()?;
+            }
+
             wip = wip.end()?;
         } else {
             wip = wip
@@ -625,6 +640,28 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 .end()?;
         }
         Ok(wip)
+    }
+
+    /// Find the innermost struct type, looking through Option wrappers.
+    /// Returns the struct definition and its shape if found.
+    fn find_inner_struct(
+        &self,
+        shape: &'static Shape,
+    ) -> Option<(&'static StructType, &'static Shape)> {
+        // Direct struct type
+        if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+            return Some((struct_def, shape));
+        }
+
+        // Option<T> - check inner type
+        if let Def::Option(option_def) = &shape.def {
+            let inner_shape = option_def.t;
+            if let Type::User(UserType::Struct(struct_def)) = &inner_shape.ty {
+                return Some((struct_def, inner_shape));
+            }
+        }
+
+        None
     }
 
     fn handle_tuple_item(
