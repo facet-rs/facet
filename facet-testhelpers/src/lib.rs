@@ -6,7 +6,6 @@
 
 pub use facet_testhelpers_macros::test;
 
-use std::io::Write;
 use std::sync::LazyLock;
 use std::time::Instant;
 use tracing_subscriber::filter::Targets;
@@ -36,10 +35,45 @@ static SUBSCRIBER_INIT: LazyLock<()> = LazyLock::new(|| {
     // Force start time initialization
     let _ = *START_TIME;
 
-    // Install color-backtrace for better panic output
-    color_backtrace::install();
+    // Install color-backtrace for better panic output (with forced backtraces and colors)
+    color_backtrace::BacktracePrinter::new()
+        .verbosity(color_backtrace::Verbosity::Full)
+        .add_frame_filter(Box::new(|frames| {
+            frames.retain(|frame| {
+                let dominated_by_noise = |name: &str| {
+                    // Test harness internals
+                    name.starts_with("test::run_test")
+                        || name.starts_with("test::__rust_begin_short_backtrace")
+                        // Panic/unwind machinery
+                        || name.starts_with("std::panicking::")
+                        || name.starts_with("std::panic::")
+                        || name.starts_with("core::panicking::")
+                        // Thread spawning
+                        || name.starts_with("std::thread::Builder::spawn_unchecked_")
+                        || name.starts_with("std::sys::thread::")
+                        || name.starts_with("std::sys::backtrace::")
+                        // FnOnce::call_once trampolines in std/core/alloc
+                        || name.starts_with("core::ops::function::FnOnce::call_once")
+                        || name.starts_with("<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once")
+                        // AssertUnwindSafe wrapper
+                        || name.starts_with("<core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once")
+                        // Low-level threading primitives
+                        || name.starts_with("__pthread")
+                };
+                match &frame.name {
+                    Some(name) => !dominated_by_noise(name),
+                    None => true,
+                }
+            })
+        }))
+        .install(Box::new(termcolor::StandardStream::stderr(
+            termcolor::ColorChoice::AlwaysAnsi,
+        )));
 
-    let filter = Targets::new().with_default(tracing::Level::TRACE);
+    let filter = std::env::var("FACET_LOG")
+        .ok()
+        .and_then(|s| s.parse::<Targets>().ok())
+        .unwrap_or_else(|| Targets::new().with_default(tracing::Level::TRACE));
 
     tracing_subscriber::registry()
         .with(
