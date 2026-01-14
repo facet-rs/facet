@@ -381,13 +381,20 @@ where
 
             if is_attr {
                 trace!(field_name = %field_item.name, "attribute field");
+                // Compute attribute name: rename > lowerCamelCase(field.name)
+                let attr_name = field_item
+                    .field
+                    .and_then(|f| f.rename)
+                    .map(Cow::Borrowed)
+                    .unwrap_or_else(|| to_element_name(&field_item.name));
+
                 // Check for field-level proxy
                 if let Some(field) = field_item.field {
                     if field.proxy().is_some() {
                         match field_value.custom_serialization(field) {
                             Ok(proxy_peek) => {
                                 serializer
-                                    .attribute(&field_item.name, proxy_peek.as_peek(), None)
+                                    .attribute(&attr_name, proxy_peek.as_peek(), None)
                                     .map_err(DomSerializeError::Backend)?;
                             }
                             Err(e) => {
@@ -396,12 +403,12 @@ where
                         }
                     } else {
                         serializer
-                            .attribute(&field_item.name, *field_value, None)
+                            .attribute(&attr_name, *field_value, None)
                             .map_err(DomSerializeError::Backend)?;
                     }
                 } else {
                     serializer
-                        .attribute(&field_item.name, *field_value, None)
+                        .attribute(&attr_name, *field_value, None)
                         .map_err(DomSerializeError::Backend)?;
                 }
                 serializer.clear_field_state();
@@ -441,15 +448,19 @@ where
             // For xml::elements, serialize items directly (they determine their own element names)
             // Exception: if the field has an explicit rename, use that name for each item
             let is_elements = serializer.is_elements_field();
-            let has_explicit_rename = field_item
-                .field
-                .map(|f| f.rename.is_some())
-                .unwrap_or(false);
-            let field_element_name = if is_elements && !has_explicit_rename {
-                None // Items determine their own element names
-            } else {
-                Some(&*field_item.name)
-            };
+            let explicit_rename = field_item.field.and_then(|f| f.rename);
+
+            // Compute field element name: rename > lowerCamelCase(field.name)
+            let field_element_name: Option<Cow<'_, str>> =
+                if is_elements && explicit_rename.is_none() {
+                    None // Items determine their own element names
+                } else if let Some(rename) = explicit_rename {
+                    // Use the explicit rename value as-is
+                    Some(Cow::Borrowed(rename))
+                } else {
+                    // Apply lowerCamelCase to field name
+                    Some(to_element_name(&field_item.name))
+                };
 
             // Check for field-level proxy
             if let Some(field) = field_item.field {
@@ -457,17 +468,21 @@ where
                     // Use custom_serialization for field-level proxy
                     match field_value.custom_serialization(field) {
                         Ok(proxy_peek) => {
-                            serialize_value(serializer, proxy_peek.as_peek(), field_element_name)?;
+                            serialize_value(
+                                serializer,
+                                proxy_peek.as_peek(),
+                                field_element_name.as_deref(),
+                            )?;
                         }
                         Err(e) => {
                             return Err(DomSerializeError::Reflect(e));
                         }
                     }
                 } else {
-                    serialize_value(serializer, *field_value, field_element_name)?;
+                    serialize_value(serializer, *field_value, field_element_name.as_deref())?;
                 }
             } else {
-                serialize_value(serializer, *field_value, field_element_name)?;
+                serialize_value(serializer, *field_value, field_element_name.as_deref())?;
             }
 
             serializer.clear_field_state();
@@ -499,14 +514,15 @@ where
 
         // Unit variant
         if variant.data.kind == StructKind::Unit {
-            let variant_name = variant
+            let variant_name: Cow<'_, str> = variant
                 .get_builtin_attr("rename")
                 .and_then(|a| a.get_as::<&str>().copied())
-                .unwrap_or(variant.name);
+                .map(Cow::Borrowed)
+                .unwrap_or_else(|| to_element_name(variant.name));
 
             if untagged {
                 serializer
-                    .text(variant_name)
+                    .text(&variant_name)
                     .map_err(DomSerializeError::Backend)?;
             } else if let Some(tag) = element_name {
                 serializer
@@ -516,7 +532,7 @@ where
                     .children_start()
                     .map_err(DomSerializeError::Backend)?;
                 serializer
-                    .text(variant_name)
+                    .text(&variant_name)
                     .map_err(DomSerializeError::Backend)?;
                 serializer
                     .children_end()
@@ -526,7 +542,7 @@ where
                     .map_err(DomSerializeError::Backend)?;
             } else {
                 serializer
-                    .text(variant_name)
+                    .text(&variant_name)
                     .map_err(DomSerializeError::Backend)?;
             }
             return Ok(());
@@ -554,10 +570,11 @@ where
                 return serialize_value(serializer, inner, element_name);
             }
 
-            let variant_name = variant
+            let variant_name: Cow<'_, str> = variant
                 .get_builtin_attr("rename")
                 .and_then(|a| a.get_as::<&str>().copied())
-                .unwrap_or(variant.name);
+                .map(Cow::Borrowed)
+                .unwrap_or_else(|| to_element_name(variant.name));
 
             // Externally tagged: <Variant>inner</Variant>
             if let Some(outer_tag) = element_name {
@@ -569,7 +586,7 @@ where
                     .map_err(DomSerializeError::Backend)?;
             }
 
-            serialize_value(serializer, inner, Some(variant_name))?;
+            serialize_value(serializer, inner, Some(&variant_name))?;
 
             if let Some(outer_tag) = element_name {
                 serializer
@@ -584,10 +601,11 @@ where
         }
 
         // Struct variant
-        let variant_name = variant
+        let variant_name: Cow<'_, str> = variant
             .get_builtin_attr("rename")
             .and_then(|a| a.get_as::<&str>().copied())
-            .unwrap_or(variant.name);
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|| to_element_name(variant.name));
 
         match (tag_attr, content_attr) {
             // Internally tagged
@@ -608,7 +626,7 @@ where
                     .children_start()
                     .map_err(DomSerializeError::Backend)?;
                 serializer
-                    .text(variant_name)
+                    .text(&variant_name)
                     .map_err(DomSerializeError::Backend)?;
                 serializer
                     .children_end()
@@ -648,7 +666,7 @@ where
                     .children_start()
                     .map_err(DomSerializeError::Backend)?;
                 serializer
-                    .text(variant_name)
+                    .text(&variant_name)
                     .map_err(DomSerializeError::Backend)?;
                 serializer
                     .children_end()
@@ -714,7 +732,7 @@ where
                     }
 
                     serializer
-                        .element_start(variant_name, None)
+                        .element_start(&variant_name, None)
                         .map_err(DomSerializeError::Backend)?;
                     serializer
                         .children_start()
@@ -726,7 +744,7 @@ where
                         .children_end()
                         .map_err(DomSerializeError::Backend)?;
                     serializer
-                        .element_end(variant_name)
+                        .element_end(&variant_name)
                         .map_err(DomSerializeError::Backend)?;
 
                     if let Some(outer_tag) = element_name {
