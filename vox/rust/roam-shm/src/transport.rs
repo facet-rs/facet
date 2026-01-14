@@ -490,9 +490,9 @@ impl ShmGuestTransport {
                 Err(SendError::SlotExhausted) => {
                     // Wait for host to free slots (it rings our doorbell when it does)
                     if let Some(doorbell) = &self.doorbell {
-                        tracing::debug!("slot exhaustion: waiting for doorbell");
+                        debug!("slot exhaustion: waiting for doorbell");
                         doorbell.wait().await?;
-                        tracing::debug!("slot exhaustion: doorbell rang, retrying send");
+                        debug!("slot exhaustion: doorbell rang, retrying send");
                         // Retry after wakeup
                         continue;
                     } else {
@@ -503,9 +503,9 @@ impl ShmGuestTransport {
                 Err(SendError::RingFull) => {
                     // Ring full - also wait for doorbell and retry
                     if let Some(doorbell) = &self.doorbell {
-                        tracing::debug!("ring full: waiting for doorbell");
+                        debug!("ring full: waiting for doorbell");
                         doorbell.wait().await?;
-                        tracing::debug!("ring full: doorbell rang, retrying send");
+                        debug!("ring full: doorbell rang, retrying send");
                         continue;
                     } else {
                         return Err(io::Error::new(io::ErrorKind::Other, "ring full"));

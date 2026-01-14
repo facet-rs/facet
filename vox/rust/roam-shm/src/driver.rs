@@ -14,6 +14,7 @@
 //! shm[impl shm.flow.no-credit-message]
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use roam_session::{
     ChannelError, ChannelRegistry, ConnectionHandle, DriverMessage, Role, ServiceDispatcher,
@@ -638,6 +639,10 @@ pub struct MultiPeerHostDriver {
     /// Per-peer connection state.
     peers: HashMap<PeerId, PeerConnectionState>,
 
+    /// Doorbells for each peer (shared with waiter tasks via Arc).
+    /// Used to signal guests when we send them messages.
+    doorbells: HashMap<PeerId, Arc<shm_primitives::Doorbell>>,
+
     /// Buffer for last decoded bytes (for error detection).
     last_decoded: Vec<u8>,
 
@@ -701,6 +706,7 @@ impl MultiPeerHostDriverBuilder {
 
         let mut peers = HashMap::new();
         let mut handles = HashMap::new();
+        let mut doorbells = HashMap::new();
 
         // Create ring channel for doorbell notifications
         let (ring_tx, ring_rx) = mpsc::unbounded_channel();
@@ -741,8 +747,12 @@ impl MultiPeerHostDriverBuilder {
                 }
             });
 
-            // Spawn doorbell task for this peer
+            // Set up doorbell for this peer (shared via Arc)
             if let Some(doorbell) = self.host.take_doorbell(peer_id) {
+                let doorbell = Arc::new(doorbell);
+                doorbells.insert(peer_id, doorbell.clone());
+
+                // Spawn doorbell waiter task with cloned Arc
                 let ring_tx_clone = ring_tx.clone();
                 tokio::spawn(async move {
                     trace!("Doorbell waiter task started for peer {:?}", peer_id);
@@ -784,6 +794,7 @@ impl MultiPeerHostDriverBuilder {
             host: self.host,
             negotiated,
             peers,
+            doorbells,
             last_decoded: Vec::new(),
             control_rx,
             ring_rx,
@@ -951,8 +962,12 @@ impl MultiPeerHostDriver {
                     }
                 });
 
-                // Spawn doorbell task for this peer
+                // Set up doorbell for this peer (shared via Arc)
                 if let Some(doorbell) = self.host.take_doorbell(peer_id) {
+                    let doorbell = Arc::new(doorbell);
+                    self.doorbells.insert(peer_id, doorbell.clone());
+
+                    // Spawn doorbell waiter task with cloned Arc
                     let ring_tx = self.ring_tx.clone();
                     tokio::spawn(async move {
                         trace!("Doorbell waiter task started for peer {:?}", peer_id);
@@ -1273,7 +1288,14 @@ impl MultiPeerHostDriver {
 
         self.host.send(peer_id, frame).map_err(|e| {
             ShmConnectionError::Io(std::io::Error::other(format!("send error: {:?}", e)))
-        })
+        })?;
+
+        // Ring doorbell to wake up guest waiting for messages
+        if let Some(doorbell) = self.doorbells.get(&peer_id) {
+            doorbell.signal();
+        }
+
+        Ok(())
     }
 
     /// Send Goodbye to a peer and return error.
