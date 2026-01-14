@@ -73,11 +73,16 @@ where
         trace!(into = %format_args!("{module}::{name}"));
 
         // Handle transparent wrappers (like NonZero, newtype structs with #[facet(transparent)])
-        // Collections (List/Map/Set/Array) have .inner for variance but shouldn't use this path
+        // Collections (List/Map/Set/Array), Option, and Pointer have .inner for variance but shouldn't use this path
         if shape.inner.is_some()
             && !matches!(
                 &shape.def,
-                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+                Def::List(_)
+                    | Def::Map(_)
+                    | Def::Set(_)
+                    | Def::Array(_)
+                    | Def::Option(_)
+                    | Def::Pointer(_)
             )
         {
             wip = wip.begin_inner().map_err(DomDeserializeError::Reflect)?;
