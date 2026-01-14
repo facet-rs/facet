@@ -411,8 +411,13 @@ impl ShmHost {
     ///
     /// shm[impl shm.host.poll-peers]
     ///
-    /// Returns an iterator over (peer_id, frame) pairs.
-    pub fn poll(&mut self) -> Vec<(PeerId, Frame)> {
+    /// Returns (messages, slots_freed_for) where:
+    /// - messages: Vec of (peer_id, frame) pairs
+    /// - slots_freed_for: Vec of peer IDs whose slots were freed (for backpressure wakeup)
+    ///
+    /// The caller should ring the doorbell for each peer in slots_freed_for to wake up
+    /// guests that may be waiting for slots to become available.
+    pub fn poll(&mut self) -> (Vec<(PeerId, Frame)>, Vec<PeerId>) {
         let mut messages = Vec::new();
         let mut crashed_guests = Vec::new();
         let mut goodbye_guests = Vec::new();
@@ -514,13 +519,9 @@ impl ShmHost {
             self.handle_guest_crash(peer_id);
         }
 
-        // Ring doorbell for any guests whose slots were freed (for backpressure wakeup)
-        // shm[impl shm.backpressure.slot-freed-notify]
-        for peer_id in slots_freed_for {
-            self.ring_doorbell(peer_id);
-        }
-
-        messages
+        // Note: caller is responsible for ringing doorbells for peers in slots_freed_for
+        // (the driver owns the doorbells, not the host)
+        (messages, slots_freed_for)
     }
 
     /// Get payload from a descriptor and free the slot.
