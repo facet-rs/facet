@@ -347,7 +347,7 @@ async fn server_streaming_generate() {
     });
 
     // Call and await the result
-    let _result = client.generate(5u32, tx).await.unwrap();
+    client.generate(5u32, tx).await.unwrap();
 
     // Wait for all streamed values
     let values = collector.await.unwrap();

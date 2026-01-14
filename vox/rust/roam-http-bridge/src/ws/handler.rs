@@ -341,10 +341,10 @@ async fn setup_streaming_call(
             if let Some(elem_shape) = get_channel_element_type(arg.ty) {
                 rx_channels.push((i, elem_shape));
             }
-        } else if is_tx(arg.ty) {
-            if let Some(elem_shape) = get_channel_element_type(arg.ty) {
-                tx_channels.push((i, elem_shape));
-            }
+        } else if is_tx(arg.ty)
+            && let Some(elem_shape) = get_channel_element_type(arg.ty)
+        {
+            tx_channels.push((i, elem_shape));
         }
     }
 
@@ -380,13 +380,11 @@ async fn setup_streaming_call(
     let mut modified_args = args_array.clone();
     let mut roam_channel_idx = 0;
     for (i, arg) in method.args.iter().enumerate() {
-        if is_rx(arg.ty) || is_tx(arg.ty) {
-            if roam_channel_idx < roam_channel_ids.len() {
-                modified_args[i] = serde_json::Value::Number(serde_json::Number::from(
-                    roam_channel_ids[roam_channel_idx],
-                ));
-                roam_channel_idx += 1;
-            }
+        if (is_rx(arg.ty) || is_tx(arg.ty)) && roam_channel_idx < roam_channel_ids.len() {
+            modified_args[i] = serde_json::Value::Number(serde_json::Number::from(
+                roam_channel_ids[roam_channel_idx],
+            ));
+            roam_channel_idx += 1;
         }
     }
 
@@ -398,7 +396,7 @@ async fn setup_streaming_call(
 
     // Set up channels for receiving data from roam (Tx channels)
     let mut roam_receivers: Vec<(u64, mpsc::Receiver<Vec<u8>>)> = Vec::new();
-    for (&roam_channel_id, _) in &roam_to_ws_tx_map {
+    for &roam_channel_id in roam_to_ws_tx_map.keys() {
         let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
         handle.register_incoming(roam_channel_id, tx);
         roam_receivers.push((roam_channel_id, rx));
@@ -426,7 +424,7 @@ async fn setup_streaming_call(
             );
             session_guard.set_roam_channel_id(ws_channel_id, roam_channel_id);
         }
-        for (_, (ws_channel_id, elem_shape)) in &roam_to_ws_tx_map {
+        for (ws_channel_id, elem_shape) in roam_to_ws_tx_map.values() {
             session_guard.register_channel(
                 *ws_channel_id,
                 request_id,
@@ -525,7 +523,7 @@ async fn run_streaming_call(
         for &ws_channel_id in ws_to_roam_rx_map.keys() {
             session_guard.remove_channel(ws_channel_id);
         }
-        for (_, (ws_channel_id, _)) in &roam_to_ws_tx_map {
+        for (ws_channel_id, _) in roam_to_ws_tx_map.values() {
             session_guard.remove_channel(*ws_channel_id);
         }
     }

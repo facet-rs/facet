@@ -60,7 +60,7 @@ pub fn spawn_watchdog(shm_path: PathBuf) -> std::io::Result<()> {
     let parent_pid = std::process::id();
 
     match unsafe { libc::fork() } {
-        -1 => return Err(std::io::Error::last_os_error()),
+        -1 => Err(std::io::Error::last_os_error()),
         0 => {
             // Child: watchdog process
             drop(writer); // Close write end
