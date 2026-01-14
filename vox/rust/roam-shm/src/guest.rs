@@ -177,6 +177,7 @@ impl ShmGuest {
             max_channels: header.max_channels,
             heartbeat_interval: header.heartbeat_interval,
             var_slot_classes: None,
+            file_cleanup: shm_primitives::FileCleanup::Auto,
         };
         let layout = config
             .layout()
@@ -268,6 +269,7 @@ impl ShmGuest {
             max_channels: header.max_channels,
             heartbeat_interval: header.heartbeat_interval,
             var_slot_classes: None,
+            file_cleanup: shm_primitives::FileCleanup::Auto,
         };
         let layout = config
             .layout()
