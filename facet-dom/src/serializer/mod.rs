@@ -26,6 +26,7 @@ use core::fmt::Debug;
 use facet_core::{Def, StructKind};
 use facet_reflect::{HasFields as _, Peek, ReflectError};
 
+use crate::naming::to_element_name;
 use crate::tracing_macros::trace;
 
 /// Low-level serializer interface for DOM-based formats (XML, HTML).
@@ -348,18 +349,16 @@ where
             result
         };
 
-        // Determine element name: tag field value > provided name > shape rename > type identifier
-        let tag = if let Some(ref tag_value) = tag_field_value {
+        // Determine element name: tag field value > provided name > shape rename > type identifier (lowerCamelCase)
+        let tag: Cow<'_, str> = if let Some(ref tag_value) = tag_field_value {
             Cow::Owned(tag_value.clone())
+        } else if let Some(name) = element_name {
+            Cow::Borrowed(name)
+        } else if let Some(rename) = value.shape().get_builtin_attr_value::<&str>("rename") {
+            Cow::Borrowed(rename)
         } else {
-            element_name.map(Cow::Borrowed).unwrap_or_else(|| {
-                Cow::Borrowed(
-                    value
-                        .shape()
-                        .get_builtin_attr_value::<&str>("rename")
-                        .unwrap_or(value.shape().type_identifier),
-                )
-            })
+            // No explicit name - apply lowerCamelCase to type identifier
+            to_element_name(value.shape().type_identifier)
         };
         trace!(tag = %tag, "element_start");
 
