@@ -6,6 +6,16 @@
 //! shm[verify shm.handshake]
 //! shm[verify shm.flow.no-credit-message]
 
+fn init_tracing() {
+    #[cfg(feature = "tracing")]
+    {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_test_writer()
+            .try_init();
+    }
+}
+
 use roam_session::{Rx, Tx};
 use roam_shm::driver::{establish_guest, establish_multi_peer_host};
 use roam_shm::guest::ShmGuest;
@@ -69,108 +79,68 @@ impl Testbed for TestbedImpl {
     }
 }
 
-fn create_host_and_guest() -> (ShmHost, ShmGuest) {
+struct TestFixture {
+    guest_handle: roam_session::ConnectionHandle,
+    host_handle: roam_session::ConnectionHandle,
+}
+
+fn setup_test() -> TestFixture {
     let config = SegmentConfig::default();
     let host = ShmHost::create_heap(config).unwrap();
     let region = host.region();
-    let guest = ShmGuest::attach(region).unwrap();
-    (host, guest)
-}
 
-#[tokio::test]
-async fn guest_calls_host_echo() {
-    let (host, guest) = create_host_and_guest();
+    let guest = ShmGuest::attach(region).unwrap();
     let peer_id = guest.peer_id();
 
-    // Create dispatcher with generated code
     let dispatcher = TestbedDispatcher::new(TestbedImpl);
 
-    // Set up guest-side driver (client)
-    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
+    let (_host_doorbell, guest_doorbell_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_doorbell_handle).unwrap();
     let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
     let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
 
-    // Set up host-side driver (server) - use multi-peer architecture
     let (host_driver, mut handles, _host_driver_handle) = establish_multi_peer_host::<
         TestbedDispatcher<TestbedImpl>,
         _,
     >(host, vec![(peer_id, dispatcher)]);
     let host_handle = handles.remove(&peer_id).unwrap();
 
-    // Spawn both drivers
-    let guest_driver_handle = tokio::spawn(guest_driver.run());
-    let host_driver_handle = tokio::spawn(host_driver.run());
+    tokio::spawn(guest_driver.run());
+    tokio::spawn(host_driver.run());
 
-    // Create generated client and make an echo call
-    let client = TestbedClient::new(guest_handle.clone());
+    TestFixture {
+        guest_handle,
+        host_handle,
+    }
+}
+
+#[tokio::test]
+async fn guest_calls_host_echo() {
+    init_tracing();
+    let fixture = setup_test();
+
+    let client = TestbedClient::new(fixture.guest_handle);
     let input = "Hello, SHM!".to_string();
     let result = client.echo(input.clone()).await.unwrap();
     assert_eq!(result, input);
-
-    // Clean shutdown - drop handles to close channels
-    drop(guest_handle);
-    drop(host_handle);
-
-    // Wait for drivers to finish (they should exit when channels close)
-    // Use a timeout to avoid hanging
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(1), async {
-        let _ = guest_driver_handle.await;
-        let _ = host_driver_handle.await;
-    })
-    .await;
 }
 
 #[tokio::test]
 async fn guest_calls_host_add() {
-    let (host, guest) = create_host_and_guest();
-    let peer_id = guest.peer_id();
+    init_tracing();
+    let fixture = setup_test();
 
-    let dispatcher = TestbedDispatcher::new(TestbedImpl);
-
-    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
-    let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
-    let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
-
-    let (host_driver, mut handles, _host_driver_handle) = establish_multi_peer_host::<
-        TestbedDispatcher<TestbedImpl>,
-        _,
-    >(host, vec![(peer_id, dispatcher)]);
-    let _host_handle = handles.remove(&peer_id).unwrap();
-
-    tokio::spawn(guest_driver.run());
-    tokio::spawn(host_driver.run());
-
-    // Create generated client and make an add call
-    let client = TestbedClient::new(guest_handle);
+    let client = TestbedClient::new(fixture.guest_handle);
     let result = client.add((17i32, 25i32)).await.unwrap();
     assert_eq!(result, 42);
 }
 
 #[tokio::test]
 async fn host_calls_guest() {
-    let (host, guest) = create_host_and_guest();
-    let peer_id = guest.peer_id();
+    init_tracing();
+    let fixture = setup_test();
 
-    let dispatcher = TestbedDispatcher::new(TestbedImpl);
-
-    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
-    let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
-    let (_guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
-
-    let (host_driver, mut handles, _host_driver_handle) = establish_multi_peer_host::<
-        TestbedDispatcher<TestbedImpl>,
-        _,
-    >(host, vec![(peer_id, dispatcher)]);
-    let host_handle = handles.remove(&peer_id).unwrap();
-
-    tokio::spawn(guest_driver.run());
-    tokio::spawn(host_driver.run());
-
-    // Create generated client and make an echo call from host to guest
-    let client = TestbedClient::new(host_handle);
+    let client = TestbedClient::new(fixture.host_handle);
     let input = "Hello from host!".to_string();
     let result = client.echo(input.clone()).await.unwrap();
     assert_eq!(result, input);
@@ -178,58 +148,21 @@ async fn host_calls_guest() {
 
 #[tokio::test]
 async fn unknown_method_returns_error() {
-    let (host, guest) = create_host_and_guest();
-    let peer_id = guest.peer_id();
+    init_tracing();
+    let fixture = setup_test();
 
-    let dispatcher = TestbedDispatcher::new(TestbedImpl);
-
-    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
-    let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
-    let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
-
-    let (host_driver, mut handles, _host_driver_handle) = establish_multi_peer_host::<
-        TestbedDispatcher<TestbedImpl>,
-        _,
-    >(host, vec![(peer_id, dispatcher)]);
-    let _host_handle = handles.remove(&peer_id).unwrap();
-
-    tokio::spawn(guest_driver.run());
-    tokio::spawn(host_driver.run());
-
-    // Call unknown method
     let payload = facet_postcard::to_vec(&"test").unwrap();
-    let response = guest_handle.call_raw(999, payload).await.unwrap();
+    let response = fixture.guest_handle.call_raw(999, payload).await.unwrap();
 
-    // Response format: [1] = error marker
     assert_eq!(response[0], 1, "Expected error marker");
 }
 
 #[tokio::test]
 async fn multiple_sequential_calls() {
-    let (host, guest) = create_host_and_guest();
-    let peer_id = guest.peer_id();
+    init_tracing();
+    let fixture = setup_test();
 
-    let dispatcher = TestbedDispatcher::new(TestbedImpl);
-
-    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
-    let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
-    let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
-
-    let (host_driver, mut handles, _host_driver_handle) = establish_multi_peer_host::<
-        TestbedDispatcher<TestbedImpl>,
-        _,
-    >(host, vec![(peer_id, dispatcher)]);
-    let _host_handle = handles.remove(&peer_id).unwrap();
-
-    tokio::spawn(guest_driver.run());
-    tokio::spawn(host_driver.run());
-
-    // Create generated client
-    let client = TestbedClient::new(guest_handle);
-
-    // Make multiple calls sequentially
+    let client = TestbedClient::new(fixture.guest_handle);
     for i in 0i32..10 {
         let result = client.add((i, i * 2)).await.unwrap();
         assert_eq!(result, i + i * 2);
@@ -245,37 +178,10 @@ async fn multiple_sequential_calls() {
 /// shm[verify shm.handshake]
 #[tokio::test]
 async fn client_streaming_sum() {
-    #[cfg(feature = "tracing")]
-    {
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .with_test_writer()
-            .try_init();
-    }
+    init_tracing();
+    let fixture = setup_test();
 
-    let (host, guest) = create_host_and_guest();
-    let peer_id = guest.peer_id();
-
-    // Create server with generated dispatcher
-    let dispatcher = TestbedDispatcher::new(TestbedImpl);
-
-    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
-    let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
-    let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
-
-    // Use multi-peer host driver (correct architecture for host side)
-    let (host_driver, mut handles, _host_driver_handle) = establish_multi_peer_host::<
-        TestbedDispatcher<TestbedImpl>,
-        _,
-    >(host, vec![(peer_id, dispatcher)]);
-    let _host_handle = handles.remove(&peer_id).unwrap();
-
-    tokio::spawn(guest_driver.run());
-    tokio::spawn(host_driver.run());
-
-    // Create generated client
-    let client = TestbedClient::new(guest_handle);
+    let client = TestbedClient::new(fixture.guest_handle);
 
     // Test streaming - correct order: channel, spawn sender, call+await
     let (tx, rx) = roam::channel::<i32>();
@@ -310,27 +216,10 @@ async fn client_streaming_sum() {
 /// shm[verify shm.flow.no-credit-message]
 #[tokio::test]
 async fn server_streaming_generate() {
-    let (host, guest) = create_host_and_guest();
-    let peer_id = guest.peer_id();
+    init_tracing();
+    let fixture = setup_test();
 
-    let dispatcher = TestbedDispatcher::new(TestbedImpl);
-
-    let (_host_doorbell, guest_handle) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_handle).unwrap();
-    let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
-    let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
-
-    let (host_driver, mut handles, _host_driver_handle) = establish_multi_peer_host::<
-        TestbedDispatcher<TestbedImpl>,
-        _,
-    >(host, vec![(peer_id, dispatcher)]);
-    let _host_handle = handles.remove(&peer_id).unwrap();
-
-    tokio::spawn(guest_driver.run());
-    tokio::spawn(host_driver.run());
-
-    // Create generated client
-    let client = TestbedClient::new(guest_handle);
+    let client = TestbedClient::new(fixture.guest_handle);
 
     // Create channel for server-to-client streaming
     let (tx, mut rx) = roam::channel::<i32>();
@@ -370,6 +259,7 @@ fn create_host_and_two_guests() -> (ShmHost, ShmGuest, ShmGuest) {
 /// Test that multi-peer host driver can handle multiple guests.
 #[tokio::test]
 async fn multi_peer_host_two_guests() {
+    init_tracing();
     let (host, guest1, guest2) = create_host_and_two_guests();
     let peer_id1 = guest1.peer_id();
     let peer_id2 = guest2.peer_id();
@@ -427,6 +317,7 @@ async fn multi_peer_host_two_guests() {
 /// Test concurrent calls from multiple guests.
 #[tokio::test]
 async fn multi_peer_concurrent_calls() {
+    init_tracing();
     let (host, guest1, guest2) = create_host_and_two_guests();
     let peer_id1 = guest1.peer_id();
     let peer_id2 = guest2.peer_id();
@@ -484,6 +375,7 @@ async fn multi_peer_concurrent_calls() {
 /// created on-demand rather than all at initialization.
 #[tokio::test]
 async fn test_dynamic_peer_creation_no_preregistration() {
+    init_tracing();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("dynamic_peers.shm");
 
@@ -568,6 +460,7 @@ async fn test_dynamic_peer_creation_no_preregistration() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore] // Requires more debugging
 async fn test_lazy_spawn_real_processes() {
+    init_tracing();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("lazy_spawn.shm");
 
