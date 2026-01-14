@@ -220,7 +220,7 @@ fn generate_uuid() -> String {
 /// # Safety
 ///
 /// handle must be a valid handle that the caller owns.
-pub fn close_handle(handle: HANDLE) {
+pub unsafe fn close_handle(handle: HANDLE) {
     if handle != INVALID_HANDLE_VALUE && !handle.is_null() {
         unsafe {
             CloseHandle(handle);
@@ -247,7 +247,11 @@ pub fn validate_handle(handle: HANDLE) -> io::Result<()> {
 /// This is the Windows equivalent of clearing FD_CLOEXEC.
 ///
 /// shm[impl shm.spawn.fd-inheritance]
-pub fn set_handle_inheritable(handle: HANDLE) -> io::Result<()> {
+/// 
+/// # Safety
+/// 
+/// Handle must be valid
+pub unsafe fn set_handle_inheritable(handle: HANDLE) -> io::Result<()> {
     use windows_sys::Win32::Foundation::HANDLE_FLAG_INHERIT;
     use windows_sys::Win32::Foundation::SetHandleInformation;
 

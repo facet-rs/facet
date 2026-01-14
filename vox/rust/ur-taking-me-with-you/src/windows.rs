@@ -11,7 +11,7 @@ use windows_sys::Win32::System::JobObjects::{
 fn create_job_object() -> io::Result<HANDLE> {
     unsafe {
         let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-        if job == std::ptr::null_mut() {
+        if job.is_null() {
             return Err(io::Error::last_os_error());
         }
 

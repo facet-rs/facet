@@ -16,7 +16,7 @@ macro_rules! trace {
 
 #[cfg(not(feature = "tracing"))]
 macro_rules! trace {
-    ($($arg:tt)*) => {};
+    ($($arg:tt)*) => { swallow!($($arg)*) };
 }
 
 // -----------------------------------------------------------------------------
@@ -30,7 +30,7 @@ macro_rules! debug {
 
 #[cfg(not(feature = "tracing"))]
 macro_rules! debug {
-    ($($arg:tt)*) => {};
+    ($($arg:tt)*) => { swallow!($($arg)*) };
 }
 
 // -----------------------------------------------------------------------------
@@ -44,7 +44,7 @@ macro_rules! info {
 
 #[cfg(not(feature = "tracing"))]
 macro_rules! info {
-    ($($arg:tt)*) => {};
+    ($($arg:tt)*) => { swallow!($($arg)*) };
 }
 
 // -----------------------------------------------------------------------------
@@ -58,7 +58,7 @@ macro_rules! warn {
 
 #[cfg(not(feature = "tracing"))]
 macro_rules! warn {
-    ($($arg:tt)*) => {};
+    ($($arg:tt)*) => { swallow!($($arg)*) };
 }
 
 // -----------------------------------------------------------------------------
@@ -72,7 +72,11 @@ macro_rules! error {
 
 #[cfg(not(feature = "tracing"))]
 macro_rules! error {
-    ($($arg:tt)*) => {};
+    ($($arg:tt)*) => { swallow!($($arg)*) };
+}
+
+macro_rules! swallow {
+    ($($arg:tt)*) => { format_args!($($arg)*) };
 }
 
 // Macros are made available via #[macro_use] on the module in lib.rs

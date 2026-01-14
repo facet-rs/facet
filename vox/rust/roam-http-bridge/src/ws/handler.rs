@@ -70,7 +70,7 @@ pub async fn handle_websocket(
         let msg = match msg_result {
             Ok(m) => m,
             Err(e) => {
-                debug!("WebSocket receive error: {}", e);
+                debug!("WebSocket receive error: {e}");
                 break;
             }
         };
