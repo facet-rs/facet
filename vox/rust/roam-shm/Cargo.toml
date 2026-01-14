@@ -12,7 +12,8 @@ description = "Shared-memory transport binding implementation"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-default = []
+default = ["tracing"]
+tracing = ["dep:tracing"]
 
 [dependencies]
 shm-primitives = { path = "../shm-primitives", default-features = false }
@@ -23,7 +24,7 @@ roam-session = { path = "../roam-session"}
 roam-stream = { path = "../roam-stream"}
 facet-postcard = { workspace = true }
 tokio = { workspace = true, features = ["time", "sync"]}
-tracing = { workspace = true }
+tracing = { workspace = true, optional = true }
 libc = { workspace = true }
 futures-util.workspace = true
 
