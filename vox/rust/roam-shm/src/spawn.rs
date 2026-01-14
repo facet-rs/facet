@@ -54,7 +54,8 @@ pub struct SpawnTicket {
     pub hub_path: PathBuf,
     /// Assigned peer ID
     pub peer_id: PeerId,
-    /// Guest's doorbell handle (platform-specific)
+    /// Guest's doorbell handle (platform-specific).
+    /// Owns the underlying resource (FD on Unix, nothing on Windows).
     doorbell_handle: DoorbellHandle,
 }
 
@@ -73,6 +74,20 @@ impl SpawnTicket {
         &self.doorbell_handle
     }
 
+    /// Convert this ticket into a SpawnArgs, consuming the ticket.
+    ///
+    /// This is useful for in-process guest creation (e.g., in tests)
+    /// where you want to attach a guest using the ticket's peer ID and doorbell.
+    ///
+    /// The doorbell handle ownership is transferred to SpawnArgs.
+    pub fn into_spawn_args(self) -> SpawnArgs {
+        SpawnArgs {
+            hub_path: self.hub_path,
+            peer_id: self.peer_id,
+            doorbell_handle: self.doorbell_handle,
+        }
+    }
+
     /// Convert to command-line arguments.
     ///
     /// Returns arguments in the format:
@@ -85,7 +100,11 @@ impl SpawnTicket {
         vec![
             format!("--hub-path={}", self.hub_path.display()),
             format!("--peer-id={}", self.peer_id.get()),
-            format!("{}={}", DoorbellHandle::ARG_NAME, self.doorbell_handle.to_arg()),
+            format!(
+                "{}={}",
+                DoorbellHandle::ARG_NAME,
+                self.doorbell_handle.to_arg()
+            ),
         ]
     }
 
@@ -114,25 +133,14 @@ impl SpawnTicket {
     }
 }
 
-#[cfg(unix)]
-impl Drop for SpawnTicket {
-    fn drop(&mut self) {
-        // Close our copy of the guest's doorbell fd.
-        // The child process has inherited it and will use it.
-        unsafe {
-            libc::close(self.doorbell_handle.as_raw_fd());
-        }
-    }
-}
-
-// On Windows, the pipe name is just a string - no resource to close
+// DoorbellHandle now owns its resources (OwnedFd on Unix), so no Drop impl needed
 
 /// Parsed spawn arguments for guest initialization.
 ///
 /// Use this to parse the command-line arguments passed to a spawned guest.
 ///
 /// shm[impl shm.spawn.guest-init]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SpawnArgs {
     /// Path to the SHM segment file
     pub hub_path: PathBuf,
@@ -155,7 +163,7 @@ impl SpawnArgs {
     {
         let mut hub_path = None;
         let mut peer_id = None;
-        let mut doorbell_handle = None;
+        let mut doorbell_arg = None;
 
         // Build the expected prefix from the platform-specific arg name
         let doorbell_prefix = format!("{}=", DoorbellHandle::ARG_NAME);
@@ -168,16 +176,24 @@ impl SpawnArgs {
                 let id: u8 = value.parse().map_err(|_| SpawnArgsError::InvalidPeerId)?;
                 peer_id = Some(PeerId::new(id).ok_or(SpawnArgsError::InvalidPeerId)?);
             } else if let Some(value) = arg.strip_prefix(&doorbell_prefix) {
-                doorbell_handle = Some(
-                    DoorbellHandle::from_arg(value).map_err(|_| SpawnArgsError::InvalidHandle)?,
-                );
+                doorbell_arg = Some(value.to_string());
             }
         }
 
+        // Check all required fields before creating DoorbellHandle
+        // (creating the handle takes ownership of the FD, so we must not fail after)
+        let hub_path = hub_path.ok_or(SpawnArgsError::MissingHubPath)?;
+        let peer_id = peer_id.ok_or(SpawnArgsError::MissingPeerId)?;
+        let doorbell_arg = doorbell_arg.ok_or(SpawnArgsError::MissingDoorbellHandle)?;
+
+        // SAFETY: We're in a spawned child process that inherited the FD
+        let doorbell_handle = unsafe { DoorbellHandle::from_arg(&doorbell_arg) }
+            .map_err(|_| SpawnArgsError::InvalidHandle)?;
+
         Ok(Self {
-            hub_path: hub_path.ok_or(SpawnArgsError::MissingHubPath)?,
-            peer_id: peer_id.ok_or(SpawnArgsError::MissingPeerId)?,
-            doorbell_handle: doorbell_handle.ok_or(SpawnArgsError::MissingDoorbellHandle)?,
+            hub_path,
+            peer_id,
+            doorbell_handle,
         })
     }
 
@@ -234,6 +250,9 @@ mod tests {
         assert_eq!(parsed.hub_path, Path::new("/tmp/test.shm"));
         assert_eq!(parsed.peer_id.get(), 1);
         assert_eq!(parsed.doorbell_handle.as_raw_fd(), 5);
+
+        // Don't drop - the FD 5 is fake and closing it would SIGABRT
+        std::mem::forget(parsed);
     }
 
     #[cfg(windows)]
@@ -260,6 +279,7 @@ mod tests {
         let args = vec!["--peer-id=1", "--doorbell-fd=5"];
         let result = SpawnArgs::from_args(args);
         assert_eq!(result.unwrap_err(), SpawnArgsError::MissingHubPath);
+        // Note: on error path, no SpawnArgs is created so no fake FD to worry about
     }
 
     #[cfg(windows)]
@@ -295,22 +315,27 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn test_spawn_ticket_to_args() {
+    #[tokio::test]
+    async fn test_spawn_ticket_to_args() {
+        use shm_primitives::Doorbell;
+
+        // Create a real doorbell pair for testing
+        let (_host, guest_handle) = Doorbell::create_pair().unwrap();
+
+        // Capture the FD before moving the handle
+        let expected_fd = guest_handle.as_raw_fd();
+
         let ticket = SpawnTicket {
             hub_path: PathBuf::from("/tmp/test.shm"),
             peer_id: PeerId::new(1).unwrap(),
-            doorbell_handle: DoorbellHandle::from_raw_fd(42),
+            doorbell_handle: guest_handle,
         };
 
         let args = ticket.to_args();
         assert_eq!(args.len(), 3);
         assert_eq!(args[0], "--hub-path=/tmp/test.shm");
         assert_eq!(args[1], "--peer-id=1");
-        assert_eq!(args[2], "--doorbell-fd=42");
-
-        // Prevent the destructor from closing fd 42
-        std::mem::forget(ticket);
+        assert_eq!(args[2], format!("--doorbell-fd={}", expected_fd));
     }
 
     #[cfg(windows)]

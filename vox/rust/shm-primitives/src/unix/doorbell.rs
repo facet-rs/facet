@@ -4,7 +4,7 @@
 //! for efficient async notification between processes sharing memory.
 
 use std::io::{self, ErrorKind};
-use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::io::Interest;
@@ -28,28 +28,39 @@ pub enum SignalResult {
 ///
 /// Use [`Doorbell::create_pair`] to create a pair, then pass this handle
 /// to the child process and call [`Doorbell::from_handle`] to reconstruct.
-#[derive(Debug, Clone)]
-pub struct DoorbellHandle(RawFd);
+#[derive(Debug)]
+pub struct DoorbellHandle(OwnedFd);
 
 impl DoorbellHandle {
     /// Get the raw file descriptor (for passing to child processes).
     pub fn as_raw_fd(&self) -> RawFd {
-        self.0
+        self.0.as_raw_fd()
     }
 
     /// Create from a raw file descriptor (in child process after spawn).
-    pub fn from_raw_fd(fd: RawFd) -> Self {
+    ///
+    /// # Safety
+    /// The caller must ensure the FD is valid and not owned by anything else.
+    pub unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        // SAFETY: Caller ensures FD is valid and not owned
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
         Self(fd)
     }
 
     /// Format as a command-line argument value.
     pub fn to_arg(&self) -> String {
-        self.0.to_string()
+        self.0.as_raw_fd().to_string()
     }
 
     /// Parse from a command-line argument value.
-    pub fn from_arg(s: &str) -> Result<Self, std::num::ParseIntError> {
-        Ok(Self(s.parse()?))
+    ///
+    /// # Safety
+    /// The FD must be valid and not owned by anything else.
+    /// This is typically only safe to call in a child process that inherited the FD.
+    pub unsafe fn from_arg(s: &str) -> Result<Self, std::num::ParseIntError> {
+        let fd: RawFd = s.parse()?;
+        let handle = unsafe { Self::from_raw_fd(fd) };
+        Ok(handle)
     }
 
     /// The CLI argument name for this platform.
@@ -109,22 +120,23 @@ impl Doorbell {
         set_nonblocking(host_fd.as_raw_fd())?;
 
         let async_fd = AsyncFd::new(host_fd)?;
-        let peer_raw = peer_fd.into_raw_fd();
 
         Ok((
             Self {
                 async_fd,
                 peer_dead_logged: AtomicBool::new(false),
             },
-            DoorbellHandle(peer_raw),
+            DoorbellHandle(peer_fd),
         ))
     }
 
     /// Create a Doorbell from an opaque handle (guest/plugin side).
     ///
     /// This is the cross-platform way to reconstruct a Doorbell in a spawned process.
+    /// Consumes the handle, taking ownership of the underlying file descriptor.
     pub fn from_handle(handle: DoorbellHandle) -> io::Result<Self> {
-        Self::from_raw_fd(handle.0)
+        use std::os::unix::io::IntoRawFd;
+        Self::from_raw_fd(handle.0.into_raw_fd())
     }
 
     /// Create a Doorbell from a raw file descriptor (plugin side).

@@ -91,7 +91,7 @@ async fn main() {
 
     // Create guest transport from spawn args (includes doorbell setup)
     let transport =
-        ShmGuestTransport::from_spawn_args(&args).expect("failed to create guest transport");
+        ShmGuestTransport::from_spawn_args(args).expect("failed to create guest transport");
     let (_handle, driver) = establish_guest(transport, TestService);
 
     // Run the driver until the host disconnects

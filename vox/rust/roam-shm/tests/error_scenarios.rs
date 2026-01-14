@@ -439,18 +439,21 @@ fn test_attach_error_slot_not_reserved() {
     let mut host = ShmHost::create(&path, config).unwrap();
 
     // Reserve slot 1
-    let ticket = host
+    let _ticket = host
         .add_peer(AddPeerOptions {
             peer_name: Some("real-guest".to_string()),
             on_death: None,
         })
         .unwrap();
 
+    // Create a separate doorbell for the fake args (the handle doesn't matter for this test)
+    let (_host_doorbell, fake_doorbell_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+
     // Create fake spawn args pointing to a different (unreserved) peer ID
     let fake_args = roam_shm::spawn::SpawnArgs {
         hub_path: path.clone(),
         peer_id: roam_shm::peer::PeerId::from_index(1).unwrap(), // Slot 2, not reserved
-        doorbell_handle: ticket.doorbell_handle().clone(), // Reuse the handle (doesn't matter for this test)
+        doorbell_handle: fake_doorbell_handle,
     };
 
     let result = ShmGuest::attach_with_ticket(&fake_args);
@@ -477,18 +480,21 @@ fn test_attach_error_slot_not_reserved() {
     let mut host = ShmHost::create(&path, config).unwrap();
 
     // Reserve slot 1
-    let ticket = host
+    let _ticket = host
         .add_peer(AddPeerOptions {
             peer_name: Some("real-guest".to_string()),
             on_death: None,
         })
         .unwrap();
 
+    // Create a separate doorbell for the fake args (the handle doesn't matter for this test)
+    let (_host_doorbell, fake_doorbell_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+
     // Create fake spawn args pointing to a different (unreserved) peer ID
     let fake_args = roam_shm::SpawnArgs {
         hub_path: path.clone(),
         peer_id: roam_shm::peer::PeerId::from_index(1).unwrap(), // Slot 2, not reserved
-        doorbell_handle: ticket.doorbell_handle().clone(), // Reuse the handle (doesn't matter for this test)
+        doorbell_handle: fake_doorbell_handle,
     };
 
     let result = ShmGuest::attach_with_ticket(&fake_args);
@@ -513,19 +519,22 @@ fn test_attach_error_invalid_peer_id() {
     };
     let mut host = ShmHost::create(&path, config).unwrap();
 
-    // Get a real doorbell handle from add_peer
-    let ticket = host
+    // Reserve a slot (we won't use it, just to have something reserved)
+    let _ticket = host
         .add_peer(AddPeerOptions {
             peer_name: Some("real-guest".to_string()),
             on_death: None,
         })
         .unwrap();
 
+    // Create a separate doorbell for the fake args (the handle doesn't matter for this test)
+    let (_host_doorbell, fake_doorbell_handle) = shm_primitives::Doorbell::create_pair().unwrap();
+
     // Create spawn args with peer_id = 5, but max_guests = 2
     let fake_args = roam_shm::SpawnArgs {
         hub_path: path.clone(),
         peer_id: roam_shm::peer::PeerId::from_index(4).unwrap(), // Slot 5, out of range
-        doorbell_handle: ticket.doorbell_handle().clone(),       // Reuse handle (doesn't matter)
+        doorbell_handle: fake_doorbell_handle,
     };
 
     let result = ShmGuest::attach_with_ticket(&fake_args);

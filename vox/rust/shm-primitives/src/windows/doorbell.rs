@@ -36,7 +36,7 @@ pub enum SignalResult {
 ///
 /// Use [`Doorbell::create_pair`] to create a pair, then pass this handle
 /// to the child process and call [`Doorbell::from_handle`] to reconstruct.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DoorbellHandle(String);
 
 impl DoorbellHandle {
@@ -291,9 +291,9 @@ pub fn validate_handle(handle: HANDLE) -> io::Result<()> {
 /// This is the Windows equivalent of clearing FD_CLOEXEC.
 ///
 /// shm[impl shm.spawn.fd-inheritance]
-/// 
+///
 /// # Safety
-/// 
+///
 /// Handle must be valid
 pub unsafe fn set_handle_inheritable(handle: HANDLE) -> io::Result<()> {
     use windows_sys::Win32::Foundation::HANDLE_FLAG_INHERIT;
