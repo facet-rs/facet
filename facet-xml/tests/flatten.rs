@@ -176,3 +176,188 @@ fn flatten_option_struct_absent() {
     assert_eq!(result.title, "Doc");
     assert!(result.metadata.is_none());
 }
+
+// ============================================================================
+// flatten with Vec<Enum> - heterogeneous children
+// ============================================================================
+
+#[test]
+fn flatten_vec_enum_basic() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Shape {
+        Circle { radius: f64 },
+        Rect { width: f64, height: f64 },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Canvas {
+        #[facet(flatten)]
+        shapes: Vec<Shape>,
+    }
+
+    let result: Canvas = facet_xml::from_str(
+        "<canvas><circle><radius>5.0</radius></circle><rect><width>10</width><height>20</height></rect></canvas>",
+    )
+    .unwrap();
+    assert_eq!(result.shapes.len(), 2);
+    assert_eq!(result.shapes[0], Shape::Circle { radius: 5.0 });
+    assert_eq!(
+        result.shapes[1],
+        Shape::Rect {
+            width: 10.0,
+            height: 20.0
+        }
+    );
+}
+
+#[test]
+fn flatten_vec_enum_with_attributes() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Shape {
+        Circle {
+            #[facet(xml::attribute)]
+            r: f64,
+        },
+        Rect {
+            #[facet(xml::attribute)]
+            width: f64,
+            #[facet(xml::attribute)]
+            height: f64,
+        },
+        Path {
+            #[facet(xml::attribute)]
+            d: String,
+        },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Canvas {
+        #[facet(flatten)]
+        shapes: Vec<Shape>,
+    }
+
+    let result: Canvas = facet_xml::from_str(
+        r#"<canvas><circle r="5"/><rect width="10" height="20"/><path d="M0 0 L10 10"/></canvas>"#,
+    )
+    .unwrap();
+    assert_eq!(result.shapes.len(), 3);
+    assert_eq!(result.shapes[0], Shape::Circle { r: 5.0 });
+    assert_eq!(
+        result.shapes[1],
+        Shape::Rect {
+            width: 10.0,
+            height: 20.0
+        }
+    );
+    assert_eq!(
+        result.shapes[2],
+        Shape::Path {
+            d: "M0 0 L10 10".to_string()
+        }
+    );
+}
+
+#[test]
+fn flatten_vec_enum_interleaved_with_regular_elements() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Shape {
+        Circle { radius: f64 },
+        Rect { width: f64, height: f64 },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Canvas {
+        name: String,
+        #[facet(flatten)]
+        shapes: Vec<Shape>,
+        description: Option<String>,
+    }
+
+    // Regular elements interleaved with enum variants
+    let result: Canvas = facet_xml::from_str(
+        "<canvas><name>MyCanvas</name><circle><radius>5.0</radius></circle><description>A canvas</description><rect><width>10</width><height>20</height></rect></canvas>",
+    )
+    .unwrap();
+    assert_eq!(result.name, "MyCanvas");
+    assert_eq!(result.description, Some("A canvas".to_string()));
+    assert_eq!(result.shapes.len(), 2);
+    assert_eq!(result.shapes[0], Shape::Circle { radius: 5.0 });
+    assert_eq!(
+        result.shapes[1],
+        Shape::Rect {
+            width: 10.0,
+            height: 20.0
+        }
+    );
+}
+
+#[test]
+fn flatten_vec_enum_empty() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Shape {
+        Circle { radius: f64 },
+        Rect { width: f64, height: f64 },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Canvas {
+        name: String,
+        #[facet(flatten)]
+        shapes: Vec<Shape>,
+    }
+
+    let result: Canvas = facet_xml::from_str("<canvas><name>Empty</name></canvas>").unwrap();
+    assert_eq!(result.name, "Empty");
+    assert!(result.shapes.is_empty());
+}
+
+#[test]
+fn flatten_vec_enum_unit_variants() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Command {
+        Start,
+        Stop,
+        Pause,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Script {
+        #[facet(flatten)]
+        commands: Vec<Command>,
+    }
+
+    let result: Script = facet_xml::from_str("<script><start/><pause/><stop/></script>").unwrap();
+    assert_eq!(result.commands.len(), 3);
+    assert_eq!(result.commands[0], Command::Start);
+    assert_eq!(result.commands[1], Command::Pause);
+    assert_eq!(result.commands[2], Command::Stop);
+}
+
+#[test]
+fn flatten_vec_enum_newtype_variants() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Value {
+        Text(String),
+        Number(i32),
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Data {
+        #[facet(flatten)]
+        values: Vec<Value>,
+    }
+
+    let result: Data =
+        facet_xml::from_str("<data><text>hello</text><number>42</number><text>world</text></data>")
+            .unwrap();
+    assert_eq!(result.values.len(), 3);
+    assert_eq!(result.values[0], Value::Text("hello".to_string()));
+    assert_eq!(result.values[1], Value::Number(42));
+    assert_eq!(result.values[2], Value::Text("world".to_string()));
+}

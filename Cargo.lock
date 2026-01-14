@@ -2140,7 +2140,9 @@ dependencies = [
  "facet",
  "facet-assert",
  "facet-format",
+ "facet-testhelpers",
  "facet-xml",
+ "tracing",
 ]
 
 [[package]]

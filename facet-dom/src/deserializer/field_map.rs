@@ -566,6 +566,14 @@ fn is_flattened_enum(field: &'static Field) -> bool {
         }
     }
 
+    // Check for Vec<Enum> (List containing enum)
+    if let Def::List(list_def) = &shape.def {
+        let item_shape = list_def.t();
+        if matches!(&item_shape.ty, Type::User(UserType::Enum(_))) {
+            return true;
+        }
+    }
+
     false
 }
 

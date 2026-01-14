@@ -15,6 +15,8 @@
 //! let svg: Svg = facet_svg::from_str(svg_str).unwrap();
 //! ```
 
+mod tracing_macros;
+
 use facet::Facet;
 use facet_xml as xml;
 use facet_xml::to_vec;
@@ -68,13 +70,13 @@ pub struct Svg {
     pub height: Option<String>,
     #[facet(xml::attribute)]
     pub view_box: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(flatten)]
     pub children: Vec<SvgNode>,
 }
 
 /// Any SVG node we care about
 #[derive(Facet, Debug, Clone)]
-#[facet(xml::ns_all = "http://www.w3.org/2000/svg", rename_all = "lowercase")]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 #[repr(u8)]
 pub enum SvgNode {
     G(Group),
@@ -95,7 +97,6 @@ pub enum SvgNode {
     Symbol(Symbol),
     Filter(Filter),
     Marker(Marker),
-    #[facet(rename = "linearGradient")]
     LinearGradient(LinearGradient),
 }
 
@@ -109,7 +110,7 @@ pub struct Group {
     pub class: Option<String>,
     #[facet(xml::attribute)]
     pub transform: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(flatten)]
     pub children: Vec<SvgNode>,
 }
 
@@ -117,7 +118,7 @@ pub struct Group {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 pub struct Defs {
-    #[facet(xml::elements)]
+    #[facet(flatten)]
     pub children: Vec<SvgNode>,
 }
 
@@ -415,7 +416,7 @@ pub struct Symbol {
     pub width: Option<String>,
     #[facet(xml::attribute)]
     pub height: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(flatten)]
     pub children: Vec<SvgNode>,
 }
 
@@ -425,7 +426,7 @@ pub struct Symbol {
 pub struct Filter {
     #[facet(xml::attribute)]
     pub id: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(flatten)]
     pub children: Vec<FilterPrimitive>,
 }
 
@@ -468,7 +469,7 @@ pub struct Marker {
     pub ref_y: Option<String>,
     #[facet(xml::attribute)]
     pub orient: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(flatten)]
     pub children: Vec<SvgNode>,
 }
 

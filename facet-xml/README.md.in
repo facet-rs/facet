@@ -196,6 +196,64 @@ struct Element {
 # assert_eq!(elem.values, vec!["1", "2", "3"]);
 ```
 
+## Flattened Lists (Heterogeneous Children)
+
+When you have a `Vec<SomeEnum>` and want each enum variant to appear directly as a child element
+(without a wrapper), use `#[facet(flatten)]`:
+
+```xml
+<canvas>
+    <circle r="5"/>
+    <rect width="10" height="20"/>
+    <path d="M0 0 L10 10"/>
+</canvas>
+```
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum Shape {
+    Circle {
+        #[facet(xml::attribute)]
+        r: f64
+    },
+    Rect {
+        #[facet(xml::attribute)]
+        width: f64,
+        #[facet(xml::attribute)]
+        height: f64
+    },
+    Path {
+        #[facet(xml::attribute)]
+        d: String
+    },
+}
+
+#[derive(Facet, Debug)]
+struct Canvas {
+    #[facet(flatten)]
+    children: Vec<Shape>, // collects <circle>, <rect>, <path> directly
+}
+# let xml_str = r#"<canvas><circle r="5"/><rect width="10" height="20"/><path d="M0 0 L10 10"/></canvas>"#;
+# let canvas: Canvas = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(canvas.children.len(), 3);
+```
+
+Without `#[facet(flatten)]`, the field would expect wrapper elements:
+
+```xml
+<!-- Without flatten: expects <child> wrappers -->
+<canvas>
+    <child><circle r="5"/></child>
+    <child><rect width="10" height="20"/></child>
+</canvas>
+```
+
+This pattern is essential for XML formats like SVG, HTML, or any schema where parent elements
+contain heterogeneous children identified by their element names.
+
 ## Tuples
 
 Tuples are treated like lists: each element becomes a child element with the field's name (or singularized name for plural field names). Elements are matched by position.

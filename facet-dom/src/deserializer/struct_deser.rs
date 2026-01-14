@@ -59,6 +59,12 @@ pub(crate) struct StructDeserializer<'de, 'p, const BORROW: bool, P: DomParser<'
     /// Which nested flattened attribute maps have been initialized (parent_idx, child_idx)
     started_nested_flattened_attr_maps: HashSet<(usize, usize)>,
 
+    /// Whether we've ever started the flattened enum list (for Vec<Enum> with flatten)
+    flattened_enum_list_started: bool,
+
+    /// Whether the flattened enum list is currently active (we're inside it)
+    flattened_enum_list_active: bool,
+
     /// Whether unknown fields should cause an error
     deny_unknown_fields: bool,
 
@@ -95,6 +101,8 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             started_flattened_maps: HashSet::new(),
             started_flattened_attr_maps: HashSet::new(),
             started_nested_flattened_attr_maps: HashSet::new(),
+            flattened_enum_list_started: false,
+            flattened_enum_list_active: false,
             deny_unknown_fields,
             tuple_position: 0,
             tag: Cow::Borrowed(""),
@@ -452,6 +460,11 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             wip = wip.end()?;
             self.elements_list_started = false;
         }
+        if self.flattened_enum_list_active {
+            trace!("leaving flattened enum list (staying started)");
+            wip = wip.end()?;
+            self.flattened_enum_list_active = false;
+        }
         Ok(wip)
     }
 
@@ -778,12 +791,43 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         mut wip: Partial<'de, BORROW>,
         field_idx: usize,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        trace!(field_idx, "matched flattened enum field");
-        wip = self.leave_active_sequence(wip)?;
-        wip = wip
-            .begin_nth_field(field_idx)?
-            .deserialize_with(self.dom_deser)?
-            .end()?;
+        let is_list = self
+            .field_map
+            .flattened_enum
+            .as_ref()
+            .map(|e| e.field_info.is_list)
+            .unwrap_or(false);
+
+        if is_list {
+            // Vec<Enum> case: initialize list on first item, then push each item
+            trace!(field_idx, "matched flattened enum list field");
+
+            if !self.flattened_enum_list_started {
+                // First time: start the list
+                trace!(field_idx, "starting flattened enum list");
+                wip = wip.begin_nth_field(field_idx)?.init_list()?;
+                self.flattened_enum_list_started = true;
+                self.flattened_enum_list_active = true;
+            } else if !self.flattened_enum_list_active {
+                // Re-entering the list after leaving for a regular element
+                trace!(field_idx, "re-entering flattened enum list");
+                wip = wip.begin_nth_field(field_idx)?.init_list()?;
+                self.flattened_enum_list_active = true;
+            }
+
+            wip = wip
+                .begin_list_item()?
+                .deserialize_with(self.dom_deser)?
+                .end()?;
+        } else {
+            // Single enum case: deserialize directly into the field
+            trace!(field_idx, "matched flattened enum field");
+            wip = self.leave_active_sequence(wip)?;
+            wip = wip
+                .begin_nth_field(field_idx)?
+                .deserialize_with(self.dom_deser)?
+                .end()?;
+        }
         Ok(wip)
     }
 
@@ -975,6 +1019,26 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                     .end()?;
             }
         }
+
+        // Handle flattened enum list finalization
+        if let Some(enum_info) = &self.field_map.flattened_enum {
+            if enum_info.field_info.is_list {
+                if self.flattened_enum_list_active {
+                    // Currently inside the list - close it
+                    trace!(path = %wip.path(), "ending flattened enum list (active)");
+                    wip = wip.end()?;
+                } else if self.flattened_enum_list_started {
+                    // List was started but we left it - it's already closed, nothing to do
+                    trace!(path = %wip.path(), "flattened enum list already closed");
+                } else {
+                    // Empty list - initialize empty
+                    let idx = enum_info.field_idx;
+                    trace!(idx, "initializing empty flattened enum list");
+                    wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
+                }
+            }
+        }
+
         Ok(wip)
     }
 }
