@@ -507,9 +507,9 @@ fn enum_rename_all_snake_case() {
     if let Type::User(UserType::Enum(enum_kind)) = shape.ty {
         assert_eq!(enum_kind.variants.len(), 3);
 
-        assert_eq!(enum_kind.variants[0].name, "regular");
-        assert_eq!(enum_kind.variants[1].name, "italic");
-        assert_eq!(enum_kind.variants[2].name, "bold");
+        assert_eq!(enum_kind.variants[0].effective_name(), "regular");
+        assert_eq!(enum_kind.variants[1].effective_name(), "italic");
+        assert_eq!(enum_kind.variants[2].effective_name(), "bold");
 
         for variant in enum_kind.variants {
             assert_eq!(variant.data.fields.len(), 0);

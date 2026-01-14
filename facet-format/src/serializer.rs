@@ -605,7 +605,6 @@ where
 
             // Collect fields and sort according to format preference
             let mut fields: alloc::vec::Vec<_> = struct_.fields_for_serialize().collect();
-            tracing::trace!(?fields, "Got fields_for_serialize");
 
             sort_fields_if_needed(serializer, &mut fields);
             let field_mode = serializer.struct_field_mode();
@@ -684,7 +683,7 @@ where
                     .field_key(tag_key)
                     .map_err(SerializeError::Backend)?;
                 serializer
-                    .scalar(ScalarValue::Str(Cow::Borrowed(variant.name)))
+                    .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
                     .map_err(SerializeError::Backend)?;
 
                 match variant.data.kind {
@@ -727,7 +726,7 @@ where
                     .field_key(tag_key)
                     .map_err(SerializeError::Backend)?;
                 serializer
-                    .scalar(ScalarValue::Str(Cow::Borrowed(variant.name)))
+                    .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
                     .map_err(SerializeError::Backend)?;
 
                 match variant.data.kind {
@@ -813,14 +812,14 @@ where
         return match variant.data.kind {
             StructKind::Unit => {
                 serializer
-                    .scalar(ScalarValue::Str(Cow::Borrowed(variant.name)))
+                    .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
                     .map_err(SerializeError::Backend)?;
                 Ok(())
             }
             StructKind::TupleStruct | StructKind::Tuple => {
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
                 serializer
-                    .field_key(variant.name)
+                    .field_key(variant.effective_name())
                     .map_err(SerializeError::Backend)?;
 
                 let field_count = variant.data.fields.len();
@@ -858,7 +857,7 @@ where
             StructKind::Struct => {
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
                 serializer
-                    .field_key(variant.name)
+                    .field_key(variant.effective_name())
                     .map_err(SerializeError::Backend)?;
 
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
@@ -1142,19 +1141,9 @@ where
     S: FormatSerializer,
 {
     match variant.data.kind {
-        StructKind::Unit => {
-            // The codex test suite uses `null` for unit variants like `Null`.
-            // To preserve round-trippability for those fixtures, treat a `Null`
-            // variant name specially; other unit variants fall back to a string.
-            if variant.name.eq_ignore_ascii_case("null") {
-                return serializer
-                    .scalar(ScalarValue::Null)
-                    .map_err(SerializeError::Backend);
-            }
-            serializer
-                .scalar(ScalarValue::Str(Cow::Borrowed(variant.name)))
-                .map_err(SerializeError::Backend)
-        }
+        StructKind::Unit => serializer
+            .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
+            .map_err(SerializeError::Backend),
         StructKind::TupleStruct | StructKind::Tuple => {
             let field_count = variant.data.fields.len();
             if field_count == 1 {

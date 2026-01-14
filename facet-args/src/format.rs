@@ -706,7 +706,7 @@ impl<'input> Context<'input> {
         }
 
         // Select the variant
-        p = p.select_variant_named(variant.name)?;
+        p = p.select_variant_named(variant.effective_name())?;
 
         // Parse the variant's fields
         p = self.parse_variant_fields(p, variant)?;

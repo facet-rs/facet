@@ -60,7 +60,8 @@ fn field_no_rename_effective_equals_name() {
 
 #[test]
 fn rename_all_sets_effective_name() {
-    // Verify assumption: rename_all transforms are stored in effective_name
+    // Verify assumption: rename_all transforms are stored in field.rename
+    // and effective_name() returns the renamed version
     #[derive(Facet)]
     #[facet(rename_all = "kebab-case")]
     struct TestStruct {
@@ -70,8 +71,10 @@ fn rename_all_sets_effective_name() {
     let fields = get_struct_fields::<TestStruct>();
     let field = &fields[0];
 
-    panic!(
-        "rename_all: field.name={:?}, field.rename={:?}",
-        field.name, field.rename
-    );
+    // name is the original Rust identifier
+    assert_eq!(field.name, "my_field");
+    // rename contains the kebab-case transformation
+    assert_eq!(field.rename, Some("my-field"));
+    // effective_name() returns rename if present, else name
+    assert_eq!(field.effective_name(), "my-field");
 }

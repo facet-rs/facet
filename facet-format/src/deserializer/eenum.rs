@@ -1089,7 +1089,7 @@ where
                     && let Some(variant) = variants_by_format.unit_variants.first()
                 {
                     wip = wip
-                        .select_variant_named(variant.name)
+                        .select_variant_named(variant.effective_name())
                         .map_err(DeserializeError::reflect)?;
                     // Consume the null
                     self.expect_event("value")?;
@@ -1123,7 +1123,7 @@ where
 
                         if matches {
                             wip = wip
-                                .select_variant_named(variant.name)
+                                .select_variant_named(variant.effective_name())
                                 .map_err(DeserializeError::reflect)?;
                             // Consume the string
                             self.expect_event("value")?;
@@ -1202,7 +1202,7 @@ where
 
                     if self.scalar_matches_shape(scalar, inner_shape) {
                         wip = wip
-                            .select_variant_named(variant.name)
+                            .select_variant_named(variant.effective_name())
                             .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_enum_variant_content(wip)?;
                         return Ok(wip);
@@ -1222,7 +1222,7 @@ where
                             && self.scalar_matches_shape(scalar, inner_shape)
                         {
                             wip = wip
-                                .select_variant_named(variant.name)
+                                .select_variant_named(variant.effective_name())
                                 .map_err(DeserializeError::reflect)?;
                             wip = self.deserialize_enum_variant_content(wip)?;
                             return Ok(wip);
@@ -1242,7 +1242,7 @@ where
                 for (variant, inner_shape) in &variants_by_format.scalar_variants {
                     if !self.scalar_matches_shape(scalar, inner_shape) {
                         wip = wip
-                            .select_variant_named(variant.name)
+                            .select_variant_named(variant.effective_name())
                             .map_err(DeserializeError::reflect)?;
                         // Try to deserialize - if this fails, it will bubble up as an error.
                         // TODO: Implement proper variant trying with backtracking for better error messages
@@ -1285,7 +1285,7 @@ where
                         // (we can't backtrack parser state to try multiple variants)
                         if let Some(variant) = variants_by_format.struct_variants.first() {
                             wip = wip
-                                .select_variant_named(variant.name)
+                                .select_variant_named(variant.effective_name())
                                 .map_err(DeserializeError::reflect)?;
                             wip = self.deserialize_enum_variant_content(wip)?;
                             Ok(wip)
@@ -1305,7 +1305,7 @@ where
                 // For sequence input, use first tuple variant
                 if let Some((variant, _arity)) = variants_by_format.tuple_variants.first() {
                     wip = wip
-                        .select_variant_named(variant.name)
+                        .select_variant_named(variant.effective_name())
                         .map_err(DeserializeError::reflect)?;
                     wip = self.deserialize_enum_variant_content(wip)?;
                     return Ok(wip);

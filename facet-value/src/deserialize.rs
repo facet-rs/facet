@@ -1023,7 +1023,7 @@ fn deserialize_untagged_enum<'p>(value: &Value, partial: Partial<'p>) -> Result<
 
     for variant in enum_type.variants.iter() {
         if value_matches_variant(value, variant) {
-            partial = partial.select_variant_named(variant.name)?;
+            partial = partial.select_variant_named(variant.effective_name())?;
             return populate_variant_from_value(value, partial, variant);
         }
     }
