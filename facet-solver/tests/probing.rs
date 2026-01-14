@@ -2,6 +2,7 @@
 
 use facet::Facet;
 use facet_solver::Schema;
+use facet_testhelpers::test;
 
 #[derive(Facet, Debug)]
 struct SimpleStruct {

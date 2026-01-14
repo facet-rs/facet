@@ -5,6 +5,7 @@
 
 use facet::Facet;
 use facet_solver::{FieldCategory, FieldKey, Format, KeyResult, Schema, Solver};
+use facet_testhelpers::test;
 
 // Import xml namespace for attributes
 use facet_xml as xml;
@@ -187,6 +188,7 @@ struct InputCheckbox {
 
 #[derive(Facet, Debug)]
 #[repr(u8)]
+#[allow(unused)]
 enum InputKind {
     Text(InputText),
     Checkbox(InputCheckbox),

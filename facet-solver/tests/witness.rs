@@ -5,6 +5,7 @@
 
 use facet::Facet;
 use facet_solver::{KeyResult, SatisfyResult, Schema, Solver, SolverError};
+use facet_testhelpers::test;
 
 // ============================================================================
 // Test 1: Integer range disambiguation (u8 vs u16)

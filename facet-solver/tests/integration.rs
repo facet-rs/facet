@@ -12,13 +12,12 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use std::io::Cursor;
-use std::sync::Once;
 
 use facet::Facet;
 use facet_core::Shape;
 use facet_solver::{KeyResult, Resolution, SatisfyResult, Schema, Solver};
+use facet_testhelpers::test;
 use json_event_parser::{JsonEvent, ReaderJsonParser};
-
 use tracing::{debug, info, info_span, trace, warn};
 
 /// Compute a specificity score for a shape. Lower score = more specific.
@@ -32,20 +31,6 @@ fn specificity_score(shape: &'static Shape) -> u64 {
         "usize" | "isize" => 64,
         _ => 1000,
     }
-}
-
-static INIT: Once = Once::new();
-
-/// Initialize the tracing subscriber for tests.
-/// Only initializes once, even if called multiple times.
-fn init_tracing() {
-    INIT.call_once(|| {
-        tracing_subscriber::fmt()
-            .with_test_writer()
-            .with_max_level(tracing::Level::TRACE)
-            .with_target(false)
-            .init();
-    });
 }
 
 // ============================================================================
@@ -472,7 +457,6 @@ impl<'a> JsonDeserializer<'a> {
 
 #[test]
 fn test_deserialize_text_message() {
-    init_tracing();
     let _span = info_span!("test_deserialize_text_message").entered();
 
     let json = br#"{"id": "msg-001", "timestamp": 1699900000, "content": "Hello, world!"}"#;
@@ -509,7 +493,6 @@ fn test_deserialize_text_message() {
 
 #[test]
 fn test_deserialize_binary_message() {
-    init_tracing();
     let _span = info_span!("test_deserialize_binary_message").entered();
 
     let json =
@@ -548,7 +531,6 @@ fn test_deserialize_binary_message() {
 
 #[test]
 fn test_deserialize_fields_in_any_order() {
-    init_tracing();
     let _span = info_span!("test_deserialize_fields_in_any_order").entered();
 
     // JSON with fields in different order - should still work
@@ -610,7 +592,6 @@ struct AppConfig {
 
 #[test]
 fn test_nested_disambiguation_database() {
-    init_tracing();
     let _span = info_span!("test_nested_disambiguation_database").entered();
 
     // Both variants would have fields at the top level after flattening
@@ -637,7 +618,6 @@ fn test_nested_disambiguation_database() {
 
 #[test]
 fn test_nested_disambiguation_file() {
-    init_tracing();
     let _span = info_span!("test_nested_disambiguation_file").entered();
 
     let json = br#"{"name": "myapp", "path": "/var/data/app.db", "readonly": true}"#;
@@ -698,7 +678,6 @@ struct ServiceConfig {
 
 #[test]
 fn test_connection_pool_schema() {
-    init_tracing();
     let _span = info_span!("test_connection_pool_schema").entered();
 
     // ConnectionPool HAS a flattened enum, so it has 2 configurations
@@ -731,7 +710,6 @@ fn test_connection_pool_schema() {
 
 #[test]
 fn test_probe_connection_pool_postgres() {
-    init_tracing();
     let _span = info_span!("test_probe_connection_pool_postgres").entered();
 
     let json = br#"{"max_connections": 10, "schema_name": "public"}"#;
@@ -749,7 +727,6 @@ fn test_probe_connection_pool_postgres() {
 
 #[test]
 fn test_probe_connection_pool_mysql() {
-    init_tracing();
     let _span = info_span!("test_probe_connection_pool_mysql").entered();
 
     let json = br#"{"max_connections": 20, "charset": "utf8mb4"}"#;
@@ -796,7 +773,6 @@ struct AnnoyingWrapper {
 
 #[test]
 fn test_truly_annoying_case() {
-    init_tracing();
     let _span = info_span!("test_truly_annoying_case").entered();
 
     // Both variants have "payload" field, but contents differ!
@@ -904,7 +880,6 @@ struct SuperAnnoyingWrapper {
 
 #[test]
 fn test_super_annoying_same_path_different_types() {
-    init_tracing();
     let _span = info_span!("test_super_annoying_same_path_different_types").entered();
 
     // Both variants have "payload.value" but:
@@ -1115,7 +1090,6 @@ fn probe_int_json(json: &[u8]) -> Result<String, String> {
 
 #[test]
 fn test_int_range_small_value() {
-    init_tracing();
     let _span = info_span!("test_int_range_small_value").entered();
 
     // 42 fits in both u8 and u16 - should be ambiguous
@@ -1139,7 +1113,6 @@ fn test_int_range_small_value() {
 
 #[test]
 fn test_int_range_large_value() {
-    init_tracing();
     let _span = info_span!("test_int_range_large_value").entered();
 
     // 1000 doesn't fit in u8 (max 255), only u16 works
@@ -1157,7 +1130,6 @@ fn test_int_range_large_value() {
 
 #[test]
 fn test_int_range_boundary_255() {
-    init_tracing();
     let _span = info_span!("test_int_range_boundary_255").entered();
 
     // 255 is u8::MAX - fits in both, so ambiguous
@@ -1177,7 +1149,6 @@ fn test_int_range_boundary_255() {
 
 #[test]
 fn test_int_range_boundary_256() {
-    init_tracing();
     let _span = info_span!("test_int_range_boundary_256").entered();
 
     // 256 exceeds u8::MAX - only u16 works
@@ -1289,7 +1260,6 @@ fn probe_signed_json(json: &[u8]) -> Result<String, String> {
 
 #[test]
 fn test_signed_negative_value() {
-    init_tracing();
     let _span = info_span!("test_signed_negative_value").entered();
 
     // -10 only fits in i8, not u8
@@ -1307,7 +1277,6 @@ fn test_signed_negative_value() {
 
 #[test]
 fn test_unsigned_large_positive() {
-    init_tracing();
     let _span = info_span!("test_unsigned_large_positive").entered();
 
     // 200 fits in u8 (0-255) but not i8 (-128 to 127)
@@ -1325,7 +1294,6 @@ fn test_unsigned_large_positive() {
 
 #[test]
 fn test_signed_unsigned_overlap() {
-    init_tracing();
     let _span = info_span!("test_signed_unsigned_overlap").entered();
 
     // 50 fits in both i8 and u8 - should be ambiguous
@@ -1457,7 +1425,6 @@ fn probe_multitype_json(json: &[u8]) -> Result<String, String> {
 
 #[test]
 fn test_multitype_integer_value() {
-    init_tracing();
     let _span = info_span!("test_multitype_integer_value").entered();
 
     // JSON integer - both i64 and f64 can accept, should be ambiguous
@@ -1477,7 +1444,6 @@ fn test_multitype_integer_value() {
 
 #[test]
 fn test_multitype_float_value() {
-    init_tracing();
     let _span = info_span!("test_multitype_float_value").entered();
 
     // JSON float - only f64 can accept (strict integer parsing for i64)
@@ -1495,7 +1461,6 @@ fn test_multitype_float_value() {
 
 #[test]
 fn test_multitype_string_value() {
-    init_tracing();
     let _span = info_span!("test_multitype_string_value").entered();
 
     // JSON string - only String can accept
@@ -1640,7 +1605,6 @@ fn probe_string_format_json(json: &[u8]) -> Result<String, String> {
 
 #[test]
 fn test_string_format_datetime() {
-    init_tracing();
     let _span = info_span!("test_string_format_datetime").entered();
 
     // ISO 8601 datetime string
@@ -1658,7 +1622,6 @@ fn test_string_format_datetime() {
 
 #[test]
 fn test_string_format_uuid() {
-    init_tracing();
     let _span = info_span!("test_string_format_uuid").entered();
 
     // UUID v4 format
@@ -1676,7 +1639,6 @@ fn test_string_format_uuid() {
 
 #[test]
 fn test_string_format_plain() {
-    init_tracing();
     let _span = info_span!("test_string_format_plain").entered();
 
     // Plain string - doesn't match DateTime or UUID patterns
@@ -1694,7 +1656,6 @@ fn test_string_format_plain() {
 
 #[test]
 fn test_string_format_ambiguous_datelike() {
-    init_tracing();
     let _span = info_span!("test_string_format_ambiguous_datelike").entered();
 
     // This looks datetime-ish but is a valid UUID-ish thing...
@@ -1746,7 +1707,6 @@ struct EndpointConfig {
 
 #[test]
 fn test_nested_key_disambiguation_http() {
-    init_tracing();
     let _span = info_span!("test_nested_key_disambiguation_http").entered();
 
     // "method" only in Http variant
@@ -1768,7 +1728,6 @@ fn test_nested_key_disambiguation_http() {
 
 #[test]
 fn test_nested_key_disambiguation_grpc() {
-    init_tracing();
     let _span = info_span!("test_nested_key_disambiguation_grpc").entered();
 
     // "service" only in Grpc variant
@@ -1867,8 +1826,6 @@ fn test_enum_repr_detection_default() {
 /// Test that `Schema::build_auto` works with internally-tagged enums.
 #[test]
 fn test_schema_build_auto_internally_tagged() {
-    init_tracing();
-
     #[derive(Facet)]
     #[repr(u8)]
     #[facet(tag = "type")]
@@ -1908,8 +1865,6 @@ fn test_schema_build_auto_internally_tagged() {
 /// Test that `Schema::build_auto` works with adjacently-tagged enums.
 #[test]
 fn test_schema_build_auto_adjacently_tagged() {
-    init_tracing();
-
     #[derive(Facet)]
     #[repr(u8)]
     #[facet(tag = "kind", content = "data")]

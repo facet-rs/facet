@@ -2124,6 +2124,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
+ "facet-testhelpers",
  "facet-xml",
  "json-event-parser",
  "strsim",

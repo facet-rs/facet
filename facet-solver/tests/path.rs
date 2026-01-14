@@ -1,6 +1,7 @@
 //! FieldPath operations tests.
 
 use facet_solver::{FieldPath, PathSegment};
+use facet_testhelpers::test;
 
 #[test]
 fn test_field_path_operations() {
