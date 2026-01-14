@@ -134,7 +134,11 @@ where
             .map(Cow::Borrowed)
             .unwrap_or_else(|| to_element_name(wip.shape().type_identifier));
 
-        StructDeserializer::new(self, struct_def, ns_all, expected_name).deserialize(wip)
+        // Check if deny_unknown_fields is set
+        let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
+
+        StructDeserializer::new(self, struct_def, ns_all, expected_name, deny_unknown_fields)
+            .deserialize(wip)
     }
 
     /// Deserialize an enum type.

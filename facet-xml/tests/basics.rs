@@ -101,7 +101,7 @@ fn default_with_custom_value() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Item {
-        #[facet(default = "default_name")]
+        #[facet(default = default_name())]
         name: String,
     }
 
@@ -335,6 +335,7 @@ fn field_name_snake_case_becomes_lower_camel() {
 #[test]
 fn field_name_already_lower_camel_unchanged() {
     #[derive(Facet, Debug, PartialEq)]
+    #[allow(non_snake_case)]
     struct Config {
         userName: String, // already lowerCamelCase
     }

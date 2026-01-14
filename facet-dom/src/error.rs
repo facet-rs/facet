@@ -31,6 +31,12 @@ pub enum DomDeserializeError<E> {
         tag: String,
     },
 
+    /// Unknown attribute (when deny_unknown_fields is set).
+    UnknownAttribute {
+        /// The attribute name.
+        name: String,
+    },
+
     /// Missing required attribute.
     MissingAttribute {
         /// The attribute name.
@@ -68,6 +74,7 @@ impl<E: std::error::Error> fmt::Display for DomDeserializeError<E> {
                 write!(f, "type mismatch: expected {expected}, got {got}")
             }
             Self::UnknownElement { tag } => write!(f, "unknown element: <{tag}>"),
+            Self::UnknownAttribute { name } => write!(f, "unknown attribute: {name}"),
             Self::MissingAttribute { name } => write!(f, "missing required attribute: {name}"),
             Self::Unsupported(msg) => write!(f, "unsupported: {msg}"),
         }

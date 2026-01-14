@@ -74,9 +74,9 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         struct_def: &'static StructType,
         ns_all: Option<&'static str>,
         expected_name: Cow<'static, str>,
+        deny_unknown_fields: bool,
     ) -> Self {
         let field_map = StructFieldMap::new(struct_def, ns_all);
-        let deny_unknown_fields = struct_def.shape.has_deny_unknown_fields_attr();
         Self {
             dom_deser,
             field_map,
@@ -240,9 +240,17 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                                 .set::<String>(value.to_string())?
                                 .end()?
                                 .end()?;
+                        } else if self.deny_unknown_fields {
+                            return Err(DomDeserializeError::UnknownAttribute {
+                                name: name.to_string(),
+                            });
                         } else {
                             trace!(name = %name, "ignoring unknown attribute (no matching flattened map)");
                         }
+                    } else if self.deny_unknown_fields {
+                        return Err(DomDeserializeError::UnknownAttribute {
+                            name: name.to_string(),
+                        });
                     } else {
                         trace!(name = %name, "ignoring unknown attribute");
                     }
