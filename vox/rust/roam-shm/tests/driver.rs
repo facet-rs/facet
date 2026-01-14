@@ -82,20 +82,39 @@ impl Testbed for TestbedImpl {
 struct TestFixture {
     guest_handle: roam_session::ConnectionHandle,
     host_handle: roam_session::ConnectionHandle,
+    _dir: tempfile::TempDir, // Keep temp dir alive
 }
 
 fn setup_test() -> TestFixture {
-    let config = SegmentConfig::default();
-    let host = ShmHost::create_heap(config).unwrap();
-    let region = host.region();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.shm");
 
-    let guest = ShmGuest::attach(region).unwrap();
-    let peer_id = guest.peer_id();
+    let config = SegmentConfig::default();
+    let mut host = ShmHost::create(&path, config).unwrap();
+
+    // Add peer to get spawn ticket with doorbell handle that host monitors
+    let ticket = host
+        .add_peer(roam_shm::spawn::AddPeerOptions {
+            peer_name: Some("test-guest".to_string()),
+            on_death: None,
+        })
+        .unwrap();
+
+    let peer_id = ticket.peer_id;
+    let guest_doorbell_handle = ticket.doorbell_handle().clone();
+
+    // Create SpawnArgs from ticket to attach guest with correct peer ID
+    let spawn_args = roam_shm::spawn::SpawnArgs {
+        hub_path: ticket.hub_path.clone(),
+        peer_id: ticket.peer_id,
+        doorbell_handle: guest_doorbell_handle.clone(),
+    };
+
+    let guest = ShmGuest::attach_with_ticket(&spawn_args).unwrap();
+    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_doorbell_handle).unwrap();
 
     let dispatcher = TestbedDispatcher::new(TestbedImpl);
 
-    let (_host_doorbell, guest_doorbell_handle) = shm_primitives::Doorbell::create_pair().unwrap();
-    let guest_doorbell = shm_primitives::Doorbell::from_handle(guest_doorbell_handle).unwrap();
     let guest_transport = ShmGuestTransport::new_with_doorbell(guest, guest_doorbell);
     let (guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
 
@@ -108,9 +127,14 @@ fn setup_test() -> TestFixture {
     tokio::spawn(guest_driver.run());
     tokio::spawn(host_driver.run());
 
+    // Forget the ticket to prevent it from closing the doorbell FD
+    // The doorbell now owns the FD exclusively
+    std::mem::forget(ticket);
+
     TestFixture {
         guest_handle,
         host_handle,
+        _dir: dir,
     }
 }
 
@@ -119,10 +143,13 @@ async fn guest_calls_host_echo() {
     init_tracing();
     let fixture = setup_test();
 
-    let client = TestbedClient::new(fixture.guest_handle);
+    let client = TestbedClient::new(fixture.guest_handle.clone());
     let input = "Hello, SHM!".to_string();
     let result = client.echo(input.clone()).await.unwrap();
     assert_eq!(result, input);
+
+    // Give drivers time to process before dropping everything
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 }
 
 #[tokio::test]
