@@ -2107,7 +2107,6 @@ dependencies = [
  "json-event-parser",
  "strsim",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2261,9 +2260,7 @@ dependencies = [
  "quick-xml",
  "serde",
  "serde-xml-rs",
- "test-log",
  "tracing",
- "tracing-subscriber",
  "zmij",
 ]
 
@@ -2276,8 +2273,6 @@ dependencies = [
  "facet-diff",
  "facet-diff-core",
  "facet-reflect",
- "test-log",
- "tracing-subscriber",
 ]
 
 [[package]]

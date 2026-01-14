@@ -30,7 +30,6 @@ facet = { path = "../facet", features = ["all-impls", "doc"] }
 facet-xml = { path = "../facet-xml" }
 json-event-parser = "0.2"
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter", "ansi"] }
 
 [[bench]]
 name = "solver"
