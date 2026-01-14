@@ -249,7 +249,50 @@ where
                     StructKind::TupleStruct => {
                         // Newtype variant: deserialize the inner type
                         // The variant data has one field (index 0)
-                        wip = wip.begin_nth_field(0)?.deserialize_with(self)?.end()?;
+                        let inner_field = &variant.data.fields[0];
+                        let inner_shape = inner_field.shape();
+
+                        // Check if the inner type is a struct - if so, we need to deserialize
+                        // its fields from the same element that identified the variant
+                        if let Type::User(UserType::Struct(inner_struct_def)) = &inner_shape.ty {
+                            // For struct newtypes, use the variant's element name and deserialize
+                            // the struct's fields directly from this element
+                            let expected_name: Cow<'_, str> = if is_untagged {
+                                wip.shape()
+                                    .get_builtin_attr_value::<&str>("rename")
+                                    .map(Cow::Borrowed)
+                                    .unwrap_or_else(|| to_element_name(wip.shape().type_identifier))
+                            } else {
+                                variant
+                                    .get_builtin_attr("rename")
+                                    .and_then(|a| a.get_as::<&str>().copied())
+                                    .map(Cow::Borrowed)
+                                    .unwrap_or_else(|| to_element_name(variant.name))
+                            };
+
+                            // Get ns_all from the inner struct's shape
+                            let ns_all = inner_shape
+                                .attributes
+                                .iter()
+                                .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+                                .and_then(|attr| attr.get_as::<&str>().copied());
+
+                            let deny_unknown_fields = inner_shape.has_deny_unknown_fields_attr();
+
+                            wip = wip.begin_nth_field(0)?;
+                            wip = StructDeserializer::new(
+                                self,
+                                inner_struct_def,
+                                ns_all,
+                                expected_name,
+                                deny_unknown_fields,
+                            )
+                            .deserialize(wip)?;
+                            wip = wip.end()?;
+                        } else {
+                            // For non-struct newtypes (e.g., Text(String)), deserialize normally
+                            wip = wip.begin_nth_field(0)?.deserialize_with(self)?.end()?;
+                        }
                     }
                     StructKind::Struct | StructKind::Tuple => {
                         // Struct/tuple variant: deserialize using the variant's data as a StructType
