@@ -49,12 +49,14 @@ pub enum DomDeserializeError<E> {
 
 impl<E> From<facet_reflect::ReflectError> for DomDeserializeError<E> {
     fn from(e: facet_reflect::ReflectError) -> Self {
+        crate::trace!("🚨 ReflectError -> DomDeserializeError: {e}");
         Self::Reflect(e)
     }
 }
 
 impl<E> From<facet_dessert::DessertError> for DomDeserializeError<E> {
     fn from(e: facet_dessert::DessertError) -> Self {
+        crate::trace!("🚨 DessertError -> DomDeserializeError: {e}");
         match e {
             facet_dessert::DessertError::Reflect { error, .. } => Self::Reflect(error),
             facet_dessert::DessertError::CannotBorrow { message } => {
