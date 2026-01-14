@@ -4,6 +4,193 @@ use facet::Facet;
 use facet_xml as xml;
 
 // ============================================================================
+// xml::element - explicit single child element
+// ============================================================================
+
+#[test]
+fn xml_element_single_child() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        value: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Outer {
+        #[facet(xml::element)]
+        inner: Inner,
+    }
+
+    let result: Outer =
+        facet_xml::from_str("<outer><inner><value>hello</value></inner></outer>").unwrap();
+    assert_eq!(result.inner.value, "hello");
+}
+
+// ============================================================================
+// xml::tag - capture element tag name
+// ============================================================================
+
+#[test]
+fn xml_tag_captures_element_name() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct AnyElement {
+        #[facet(xml::tag)]
+        tag: String,
+        #[facet(xml::text)]
+        content: String,
+    }
+
+    let result: AnyElement = facet_xml::from_str("<foo>hello</foo>").unwrap();
+    assert_eq!(result.tag, "foo");
+    assert_eq!(result.content, "hello");
+}
+
+#[test]
+fn xml_tag_captures_different_tags() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct AnyElement {
+        #[facet(xml::tag)]
+        tag: String,
+        #[facet(xml::text)]
+        content: String,
+    }
+
+    let result: AnyElement = facet_xml::from_str("<bar>world</bar>").unwrap();
+    assert_eq!(result.tag, "bar");
+    assert_eq!(result.content, "world");
+}
+
+// ============================================================================
+// default - missing elements get default values
+// ============================================================================
+
+#[test]
+fn default_for_missing_element() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Config {
+        #[facet(default)]
+        name: String,
+        #[facet(default)]
+        count: u32,
+    }
+
+    let result: Config = facet_xml::from_str("<config></config>").unwrap();
+    assert_eq!(result.name, "");
+    assert_eq!(result.count, 0);
+}
+
+#[test]
+fn default_for_missing_attribute() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Element {
+        #[facet(xml::attribute, default)]
+        id: String,
+        #[facet(xml::attribute, default)]
+        count: u32,
+    }
+
+    let result: Element = facet_xml::from_str("<element/>").unwrap();
+    assert_eq!(result.id, "");
+    assert_eq!(result.count, 0);
+}
+
+#[test]
+fn default_with_custom_value() {
+    fn default_name() -> String {
+        "unnamed".to_string()
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Item {
+        #[facet(default = "default_name")]
+        name: String,
+    }
+
+    let result: Item = facet_xml::from_str("<item></item>").unwrap();
+    assert_eq!(result.name, "unnamed");
+}
+
+// ============================================================================
+// alias - alternative names for fields
+// ============================================================================
+
+#[test]
+fn alias_matches_alternative_name() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Person {
+        #[facet(alias = "fullName")]
+        name: String,
+    }
+
+    // Primary name works
+    let result: Person = facet_xml::from_str("<person><name>Alice</name></person>").unwrap();
+    assert_eq!(result.name, "Alice");
+
+    // Alias also works
+    let result: Person = facet_xml::from_str("<person><fullName>Bob</fullName></person>").unwrap();
+    assert_eq!(result.name, "Bob");
+}
+
+#[test]
+fn alias_for_attribute() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Element {
+        #[facet(xml::attribute, alias = "identifier")]
+        id: String,
+    }
+
+    // Primary name works
+    let result: Element = facet_xml::from_str(r#"<element id="123"/>"#).unwrap();
+    assert_eq!(result.id, "123");
+
+    // Alias also works
+    let result: Element = facet_xml::from_str(r#"<element identifier="456"/>"#).unwrap();
+    assert_eq!(result.id, "456");
+}
+
+// ============================================================================
+// deny_unknown_fields - reject unexpected elements/attributes
+// ============================================================================
+
+#[test]
+fn deny_unknown_fields_rejects_unknown_element() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(deny_unknown_fields)]
+    struct Strict {
+        name: String,
+    }
+
+    let result =
+        facet_xml::from_str::<Strict>("<strict><name>ok</name><extra>bad</extra></strict>");
+    assert!(result.is_err(), "Should reject unknown element <extra>");
+}
+
+#[test]
+fn deny_unknown_fields_rejects_unknown_attribute() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(deny_unknown_fields)]
+    struct Strict {
+        #[facet(xml::attribute)]
+        id: String,
+    }
+
+    let result = facet_xml::from_str::<Strict>(r#"<strict id="1" extra="bad"/>"#);
+    assert!(result.is_err(), "Should reject unknown attribute extra=");
+}
+
+#[test]
+fn without_deny_unknown_fields_ignores_extra() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Lenient {
+        name: String,
+    }
+
+    // Should succeed, ignoring the extra element
+    let result: Lenient =
+        facet_xml::from_str("<lenient><name>ok</name><extra>ignored</extra></lenient>").unwrap();
+    assert_eq!(result.name, "ok");
+}
+
+// ============================================================================
 // lowerCamelCase default
 // ============================================================================
 
