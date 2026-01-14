@@ -34,8 +34,6 @@ fn struct_single_field() {
 
 #[test]
 fn sequence_numbers() {
-    tracing::trace!("BOOH");
-
     #[derive(Facet, Debug, PartialEq)]
     #[facet(rename = "numbers")]
     struct Numbers {

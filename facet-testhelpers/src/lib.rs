@@ -36,6 +36,9 @@ static SUBSCRIBER_INIT: LazyLock<()> = LazyLock::new(|| {
     // Force start time initialization
     let _ = *START_TIME;
 
+    // Install color-backtrace for better panic output
+    color_backtrace::install();
+
     let filter = Targets::new().with_default(tracing::Level::TRACE);
 
     tracing_subscriber::registry()

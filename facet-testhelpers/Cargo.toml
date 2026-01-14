@@ -14,8 +14,9 @@ description = "A collection of testing helpers and utilities for facet"
 
 [dependencies]
 facet-testhelpers-macros = { version = "0.42.0", path = "../facet-testhelpers-macros" }
+color-backtrace = { version = "0.7.2", features = ["use-btparse-crate"] }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["ansi"] }
 
 [lints]
 workspace = true
