@@ -181,7 +181,8 @@ impl<'de> XmlParser<'de> {
                                     continue;
                                 }
 
-                                let (attr_resolve, _) = self.reader.resolve_attribute(key);
+                                let (attr_resolve, _) =
+                                    self.reader.resolver().resolve_attribute(key);
                                 let attr_ns = resolve_namespace(attr_resolve)?;
                                 let attr_local_name = key.local_name();
                                 let attr_local = core::str::from_utf8(attr_local_name.as_ref())

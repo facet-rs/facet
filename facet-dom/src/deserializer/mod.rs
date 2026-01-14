@@ -481,8 +481,8 @@ where
         // Consume the wrapper element's NodeStart
         let event = self.parser.peek_event_or_eof("NodeStart for map wrapper")?;
         match event {
-            DomEvent::NodeStart { tag, .. } => {
-                trace!(wrapper_tag = %tag, "map wrapper element");
+            DomEvent::NodeStart { .. } => {
+                trace!("map wrapper element");
                 let _ = self.parser.expect_node_start()?;
             }
             other => {
