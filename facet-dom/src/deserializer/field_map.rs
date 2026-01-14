@@ -176,7 +176,7 @@ impl StructFieldMap {
                         if is_attribute {
                             // Register as flattened attribute
                             flattened_attributes
-                                .entry(child_key.clone())
+                                .entry(child_key.clone().into_owned())
                                 .or_default()
                                 .push(flattened_child.clone());
 
@@ -190,7 +190,7 @@ impl StructFieldMap {
                         } else {
                             // Register as flattened element
                             flattened_children
-                                .entry(child_key.clone())
+                                .entry(child_key.clone().into_owned())
                                 .or_default()
                                 .push(flattened_child.clone());
 
@@ -198,7 +198,7 @@ impl StructFieldMap {
                             // (but not for tuples - they use the field name directly)
                             if (is_list || is_set) && !is_tuple && child_field.rename.is_none() {
                                 let singular_key = singularize(&child_key);
-                                if singular_key != child_key {
+                                if singular_key != *child_key {
                                     flattened_children
                                         .entry(singular_key)
                                         .or_default()
@@ -270,7 +270,7 @@ impl StructFieldMap {
                     // Named attribute: uses rename or lowerCamelCase(field.name)
                     let attr_key = dom_key(field.rename, field.name);
                     attribute_fields
-                        .entry(attr_key)
+                        .entry(attr_key.into_owned())
                         .or_default()
                         .push(info.clone());
 
@@ -330,7 +330,7 @@ impl StructFieldMap {
                     namespace: effective_namespace,
                 };
                 element_fields
-                    .entry(element_key.clone())
+                    .entry(element_key.clone().into_owned())
                     .or_default()
                     .push(info.clone());
 

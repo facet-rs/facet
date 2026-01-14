@@ -26,14 +26,18 @@ pub fn to_element_name(name: &str) -> Cow<'_, str> {
     }
 }
 
-/// Compute the DOM key for a field/type: use explicit rename if present, otherwise lowerCamelCase.
+/// Compute the DOM key for a field/type: use explicit rename if present, otherwise use name as-is.
+///
+/// The `name` parameter is the field's effective name, which has already been transformed
+/// by `rename_all` at the macro level if applicable. We use it directly without further
+/// conversion, since the derive macro handles the naming convention transformation.
 ///
 /// This is the single source of truth for name conversion in facet-dom.
 #[inline]
-pub fn dom_key(rename: Option<&str>, name: &str) -> String {
+pub fn dom_key<'a>(rename: Option<&'a str>, name: &'a str) -> Cow<'a, str> {
     match rename {
-        Some(r) => r.to_string(),
-        None => format!("{}", AsLowerCamelCase(name)),
+        Some(r) => Cow::Borrowed(r),
+        None => Cow::Borrowed(name),
     }
 }
 
