@@ -6,57 +6,55 @@
 
 pub use facet_testhelpers_macros::test;
 
-use log::{Level, LevelFilter, Log, Metadata, Record};
-use owo_colors::{OwoColorize, Style};
 use std::io::Write;
 use std::sync::LazyLock;
+use std::time::Instant;
+use tracing_subscriber::filter::Targets;
+use tracing_subscriber::fmt::format::Writer;
+use tracing_subscriber::fmt::time::FormatTime;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
-struct SimpleLogger;
+static START_TIME: LazyLock<Instant> = LazyLock::new(Instant::now);
 
-impl Log for SimpleLogger {
-    fn enabled(&self, _metadata: &Metadata) -> bool {
-        true
-    }
+struct Uptime;
 
-    fn log(&self, record: &Record) {
-        // Create style based on log level
-        let level_style = match record.level() {
-            Level::Error => Style::new().fg_rgb::<243, 139, 168>(), // Catppuccin red (Maroon)
-            Level::Warn => Style::new().fg_rgb::<249, 226, 175>(),  // Catppuccin yellow (Peach)
-            Level::Info => Style::new().fg_rgb::<166, 227, 161>(),  // Catppuccin green (Green)
-            Level::Debug => Style::new().fg_rgb::<137, 180, 250>(), // Catppuccin blue (Blue)
-            Level::Trace => Style::new().fg_rgb::<148, 226, 213>(), // Catppuccin teal (Teal)
-        };
-
-        // Convert level to styled display
-        eprintln!(
-            "{} - {}: {}",
-            record.level().style(level_style),
-            record
-                .target()
-                .style(Style::new().fg_rgb::<137, 180, 250>()), // Blue for the target
-            record.args()
-        );
-    }
-
-    fn flush(&self) {
-        let _ = std::io::stderr().flush();
+impl FormatTime for Uptime {
+    fn format_time(&self, w: &mut Writer<'_>) -> core::fmt::Result {
+        let elapsed = START_TIME.elapsed();
+        let secs = elapsed.as_secs();
+        let millis = elapsed.subsec_millis();
+        write!(w, "{:4}.{:03}s", secs, millis)
     }
 }
 
-/// Lazy initialization of the global logger.
+/// Lazy initialization of the global tracing subscriber.
 ///
-/// This ensures the logger is set up exactly once, regardless of how many
+/// This ensures the subscriber is set up exactly once, regardless of how many
 /// tests run in the same process.
-static LOGGER_INIT: LazyLock<()> = LazyLock::new(|| {
-    let logger = Box::new(SimpleLogger);
-    let _ = log::set_boxed_logger(logger);
-    log::set_max_level(LevelFilter::Trace);
+static SUBSCRIBER_INIT: LazyLock<()> = LazyLock::new(|| {
+    // Force start time initialization
+    let _ = *START_TIME;
+
+    let filter = Targets::new().with_default(tracing::Level::TRACE);
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(true)
+                .with_timer(Uptime)
+                .with_target(true)
+                .with_level(true)
+                .compact(),
+        )
+        .with(filter)
+        .try_init()
+        .ok();
 });
 
-/// Set up a simple logger for tests.
+/// Set up a tracing subscriber for tests.
 ///
-/// This function ensures the logger is initialized exactly once using
+/// This function ensures the subscriber is initialized exactly once using
 /// [`LazyLock`], making it safe to use with both `cargo test` and
 /// `cargo nextest run`.
 ///
@@ -83,11 +81,11 @@ pub fn setup() {
             eprintln!("   More info: https://nexte.st");
             eprintln!();
         });
-        *NEXTEST_WARNING;
+        let _ = *NEXTEST_WARNING;
     }
 
-    // Ensure the logger is initialized
-    *LOGGER_INIT;
+    // Ensure the subscriber is initialized
+    let _ = *SUBSCRIBER_INIT;
 }
 
 /// An error type that panics when it's built (such as when you use `?`

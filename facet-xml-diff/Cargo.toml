@@ -19,7 +19,7 @@ facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
 facet = { path = "../facet" }
 facet-diff = { path = "../facet-diff" }
 test-log = { version = "0.2", features = ["trace"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [lints]
 workspace = true

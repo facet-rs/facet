@@ -43,7 +43,7 @@ serde = { workspace = true, features = ["derive"] }
 serde-xml-rs = "0.8.2"
 test-log = { version = "0.2", features = ["trace"] }
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 facet-dom = { path = "../facet-dom", features = ["tracing"] }
 facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 

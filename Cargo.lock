@@ -2126,8 +2126,8 @@ name = "facet-testhelpers"
 version = "0.42.0"
 dependencies = [
  "facet-testhelpers-macros",
- "log",
- "owo-colors",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -5548,7 +5548,6 @@ dependencies = [
  "once_cell",
  "regex-automata",
  "sharded-slab",
- "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
