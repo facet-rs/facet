@@ -54,6 +54,9 @@ pub(crate) struct StructDeserializer<'de, 'p, const BORROW: bool, P: DomParser<'
 
     /// Tag from NodeStart (for tracing and xml::tag field)
     tag: Cow<'de, str>,
+
+    /// Expected element name for root element validation
+    expected_name: Cow<'static, str>,
 }
 
 impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p, BORROW, P> {
@@ -61,6 +64,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         dom_deser: &'p mut super::DomDeserializer<'de, BORROW, P>,
         struct_def: &'static StructType,
         ns_all: Option<&'static str>,
+        expected_name: Cow<'static, str>,
     ) -> Self {
         let field_map = StructFieldMap::new(struct_def, ns_all);
         Self {
@@ -76,6 +80,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             started_flattened_attr_maps: HashSet::new(),
             tuple_position: 0,
             tag: Cow::Borrowed(""),
+            expected_name,
         }
     }
 
@@ -95,7 +100,15 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         }
 
         self.tag = self.parser().expect_node_start()?;
-        trace!(tag = %self.tag, "got NodeStart");
+        trace!(tag = %self.tag, expected = %self.expected_name, "got NodeStart");
+
+        // Validate root element name matches expected, unless struct has a tag field
+        // (which means it accepts any element name)
+        if self.field_map.tag_field.is_none() && self.tag != self.expected_name {
+            return Err(DomDeserializeError::UnknownElement {
+                tag: self.tag.to_string(),
+            });
+        }
 
         // Set the tag field if present (xml::tag or html::tag)
         if let Some(info) = &self.field_map.tag_field {

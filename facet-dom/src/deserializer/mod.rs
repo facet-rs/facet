@@ -6,6 +6,7 @@ use facet_core::{Def, StructKind, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::error::DomDeserializeError;
+use crate::naming::to_element_name;
 use crate::tracing_macros::{trace, trace_span};
 use crate::{AttributeRecord, DomEvent, DomParser, DomParserExt};
 
@@ -126,7 +127,14 @@ where
             .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
             .and_then(|attr| attr.get_as::<&str>().copied());
 
-        StructDeserializer::new(self, struct_def, ns_all).deserialize(wip)
+        // Compute expected element name: rename > lowerCamelCase(type_identifier)
+        let expected_name = wip
+            .shape()
+            .get_builtin_attr_value::<&str>("rename")
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|| to_element_name(wip.shape().type_identifier));
+
+        StructDeserializer::new(self, struct_def, ns_all, expected_name).deserialize(wip)
     }
 
     /// Deserialize an enum type.
