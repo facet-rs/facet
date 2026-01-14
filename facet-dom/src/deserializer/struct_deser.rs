@@ -128,11 +128,31 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         self.tag = self.parser().expect_node_start()?;
 
         // Validate root element name matches expected, unless struct has a tag field
-        // (which means it accepts any element name)
-        if self.field_map.tag_field.is_none() && self.tag != self.expected_name {
-            return Err(DomDeserializeError::UnknownElement {
-                tag: self.tag.to_string(),
-            });
+        // (which means it accepts any element name) or an other field (fallback for mismatches)
+        let tag_mismatch = self.field_map.tag_field.is_none() && self.tag != self.expected_name;
+
+        if tag_mismatch {
+            if let Some(info) = &self.field_map.other_field {
+                // Deserialize the entire element into the `other` field
+                trace!(tag = %self.tag, "tag mismatch, deserializing into 'other' field .{}", info.field.name);
+                let idx = info.idx;
+                wip = wip.begin_nth_field(idx)?;
+                // Put the tag back by using deserialize_with - it will see the NodeStart we already consumed
+                // Actually we need to deserialize from here with the element already started
+                // So we call deserialize_into on the field type directly
+                wip = self.deserialize_other_field_content(wip)?;
+                wip = wip.end()?;
+
+                if self.using_deferred {
+                    wip = wip.finish_deferred()?;
+                }
+
+                return Ok(wip);
+            } else {
+                return Err(DomDeserializeError::UnknownElement {
+                    tag: self.tag.to_string(),
+                });
+            }
         }
 
         // Set the tag field if present (xml::tag or html::tag)
@@ -364,6 +384,13 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 .dom_deser
                 .deserialize_text_into_enum(wip, text)?
                 .end()?;
+        } else if self.flattened_enum_list_active {
+            // Text inside an active flattened enum list - add as Text variant
+            wip = wip.begin_list_item()?;
+            wip = self
+                .dom_deser
+                .deserialize_text_into_enum(wip, text)?
+                .end()?;
         } else if let Some(info) = &self.field_map.text_field {
             if info.is_list || info.is_set {
                 // Vec<String> or HashSet<String> with xml::text - each text node is a list item
@@ -389,6 +416,36 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 .dom_deser
                 .deserialize_text_into_enum(wip, text)?
                 .end()?;
+        } else if let Some(enum_info) = &self.field_map.flattened_enum {
+            // Flattened enum list with Text variant - start or continue the list
+            let field_idx = enum_info.field_idx;
+            let is_list = enum_info.field_info.is_list;
+
+            if is_list {
+                if !self.flattened_enum_list_started {
+                    // First text/element: start the list
+                    trace!(field_idx, "starting flattened enum list for text");
+                    wip = wip.begin_nth_field(field_idx)?.init_list()?;
+                    self.flattened_enum_list_started = true;
+                    self.flattened_enum_list_active = true;
+                } else if !self.flattened_enum_list_active {
+                    // Re-entering the list
+                    trace!(field_idx, "re-entering flattened enum list for text");
+                    wip = wip.begin_nth_field(field_idx)?.init_list()?;
+                    self.flattened_enum_list_active = true;
+                }
+
+                wip = wip.begin_list_item()?;
+                wip = self
+                    .dom_deser
+                    .deserialize_text_into_enum(wip, text)?
+                    .end()?;
+            } else {
+                // Single enum field with text
+                wip = wip.begin_nth_field(field_idx)?;
+                wip = self.dom_deser.deserialize_text_into_enum(wip, text)?;
+                wip = wip.end()?;
+            }
         } else if self.struct_def.kind == StructKind::TupleStruct
             && self.struct_def.fields.len() == 1
         {
@@ -942,6 +999,112 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             .skip_node()
             .map_err(DomDeserializeError::Parser)?;
         Ok(wip)
+    }
+
+    /// Deserialize content into the `other` field after we've already consumed NodeStart.
+    ///
+    /// This is called when the root element tag doesn't match the expected name, but
+    /// the struct has a field marked `#[facet(other)]`. We deserialize the entire
+    /// element (attributes + children) into that field.
+    ///
+    /// The challenge is that `NodeStart` has already been consumed, so we need to
+    /// handle the rest of the element (attributes, children, NodeEnd) manually and
+    /// feed it to the field's type.
+    fn deserialize_other_field_content(
+        &mut self,
+        mut wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        let field_shape = wip.shape();
+
+        // The `other` field should typically be a type that can accept the element content.
+        // For HTML, this is usually `Body` which has children: Vec<FlowContent>.
+        // We need to deserialize from the current state (just after NodeStart).
+
+        // Handle Option<T> wrapper - unwrap to get the inner type
+        let (inner_shape, is_option) = if let Def::Option(option_def) = &field_shape.def {
+            (option_def.t, true)
+        } else {
+            (field_shape, false)
+        };
+
+        // Check if we're deserializing into a struct (possibly wrapped in Option)
+        if let Type::User(UserType::Struct(inner_struct_def)) = &inner_shape.ty {
+            // Use the actual tag name (not expected) since we're doing fallback
+            let expected_name: Cow<'static, str> = Cow::Owned(self.tag.to_string());
+
+            // Get ns_all from the inner struct's shape
+            let ns_all = inner_shape
+                .attributes
+                .iter()
+                .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+                .and_then(|attr| attr.get_as::<&str>().copied());
+
+            let deny_unknown_fields = inner_shape.has_deny_unknown_fields_attr();
+
+            // If wrapped in Option, begin_some first
+            if is_option {
+                wip = wip.begin_some()?;
+            }
+
+            // Create a new StructDeserializer for the inner type, but we've already
+            // consumed the NodeStart, so we need to call its internal methods directly.
+            let mut inner_deser = StructDeserializer::new(
+                self.dom_deser,
+                inner_struct_def,
+                ns_all,
+                expected_name,
+                deny_unknown_fields,
+            );
+
+            // The tag is already consumed, copy it to the inner deserializer
+            inner_deser.tag = self.tag.clone();
+
+            // Enable deferred mode if the inner struct has flatten
+            if inner_deser.field_map.has_flatten && !wip.is_deferred() {
+                trace!("enabling deferred mode for other field struct with flatten");
+                wip = wip.begin_deferred()?;
+                inner_deser.using_deferred = true;
+            }
+
+            // Set tag field if the inner type has one
+            if let Some(info) = &inner_deser.field_map.tag_field {
+                let idx = info.idx;
+                trace!("→ .{}", info.field.name);
+                let tag = inner_deser.tag.clone();
+                wip = inner_deser
+                    .dom_deser
+                    .set_string_value(wip.begin_nth_field(idx)?, tag)?
+                    .end()?;
+            }
+
+            // Process attributes
+            wip = inner_deser.process_attributes(wip)?;
+
+            // Process children
+            inner_deser.parser().expect_children_start()?;
+            wip = inner_deser.process_children(wip)?;
+            wip = inner_deser.cleanup(wip)?;
+            inner_deser.parser().expect_children_end()?;
+            inner_deser.parser().expect_node_end()?;
+
+            if inner_deser.using_deferred {
+                wip = wip.finish_deferred()?;
+            }
+
+            // Close the Option wrapper if present
+            if is_option {
+                wip = wip.end()?;
+            }
+
+            Ok(wip)
+        } else {
+            // For non-struct types, we can't really handle the already-consumed NodeStart.
+            // This is an edge case - typically `other` is a struct type.
+            Err(DomDeserializeError::Unsupported(format!(
+                "other field must be a struct type, got {:?}",
+                field_shape.ty
+            )))
+        }
     }
 
     fn cleanup(

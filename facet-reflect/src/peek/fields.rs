@@ -27,6 +27,10 @@ pub struct FieldItem {
 
     /// Whether this field was flattened from an enum (variant name used as key)
     pub flattened: bool,
+
+    /// Whether this is a text variant (html::text or xml::text) from a flattened enum.
+    /// When true, the value should be serialized as raw text without an element wrapper.
+    pub is_text_variant: bool,
 }
 
 impl FieldItem {
@@ -41,12 +45,13 @@ impl FieldItem {
             },
             field: Some(field),
             flattened: false,
+            is_text_variant: false,
         }
     }
 
     /// Create a flattened enum field item with a custom name (the variant name)
     #[inline]
-    pub const fn flattened_enum(field: Field, variant: &Variant) -> Self {
+    pub fn flattened_enum(field: Field, variant: &Variant) -> Self {
         Self {
             name: Cow::Borrowed(variant.name),
             rename: match variant.rename {
@@ -55,6 +60,7 @@ impl FieldItem {
             },
             field: Some(field),
             flattened: true,
+            is_text_variant: variant.is_text(),
         }
     }
 
@@ -66,6 +72,7 @@ impl FieldItem {
             rename: None,
             field: None,
             flattened: true,
+            is_text_variant: false,
         }
     }
 

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md.in")]
 #![deny(unsafe_code)]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 

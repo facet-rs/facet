@@ -222,7 +222,11 @@ pub struct Html {
     #[facet(default)]
     pub head: Option<Head>,
     /// Document body.
-    #[facet(default)]
+    ///
+    /// When marked with `other`, this field acts as a fallback: if the root element
+    /// is not `<html>`, the content is deserialized into this Body field instead.
+    /// This enables parsing HTML fragments (like `<div>...</div>`) into the `Html` type.
+    #[facet(other, default)]
     pub body: Option<Body>,
 }
 

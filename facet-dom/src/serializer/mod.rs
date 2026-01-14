@@ -437,6 +437,16 @@ where
             // We should use that name directly (set in field_item.name/rename).
             let is_flattened = field_item.flattened;
 
+            // Check if this is a text variant from a flattened enum (html::text or xml::text)
+            // Text variants should be serialized as raw text without element wrapping
+            if field_item.is_text_variant {
+                if let Some(s) = value_to_string(*field_value, serializer) {
+                    serializer.text(&s).map_err(DomSerializeError::Backend)?;
+                }
+                serializer.clear_field_state();
+                continue;
+            }
+
             // Compute field element name: rename > lowerCamelCase(field.name)
             let field_element_name: Option<Cow<'_, str>> =
                 if is_elements && explicit_rename.is_none() {

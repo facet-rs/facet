@@ -258,6 +258,17 @@ impl Field {
         self.flags.contains(FieldFlags::RECURSIVE_TYPE)
     }
 
+    /// Returns true if this field is marked with `#[facet(other)]`.
+    ///
+    /// When deserializing, a field marked as `other` acts as a fallback: if the root
+    /// element doesn't match the struct's expected name, the content is deserialized
+    /// into this field instead. This is useful for lenient parsing (e.g., HTML fragments
+    /// into a document type).
+    #[inline]
+    pub fn is_other(&self) -> bool {
+        self.has_builtin_attr("other")
+    }
+
     /// Returns the metadata kind if this field stores metadata.
     ///
     /// Common values: `"span"`, `"line"`, `"column"`
