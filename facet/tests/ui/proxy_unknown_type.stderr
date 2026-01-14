@@ -1,0 +1,5 @@
+error[E0412]: cannot find type `NonExistentProxyType` in this scope
+ --> tests/ui/proxy_unknown_type.rs:9:21
+  |
+9 |     #[facet(proxy = NonExistentProxyType)]
+  |                     ^^^^^^^^^^^^^^^^^^^^ not found in this scope

@@ -118,10 +118,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             if args.is_empty() {
                 return None;
             }
-            let args_str = args.to_string();
-            let fn_name_str = args_str.trim_start_matches('=').trim();
-            let fn_name: TokenStream = fn_name_str.parse().unwrap_or_else(|_| args.clone());
-            Some(fn_name)
+            // Use args directly to preserve spans for IDE hover/navigation
+            Some(args.clone())
         } else {
             None
         }

@@ -135,6 +135,7 @@ facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 num-complex = "0.4.6"
 owo-colors = "4.2.2"
+trybuild = "1.0.114"
 
 [lints]
 workspace = true
