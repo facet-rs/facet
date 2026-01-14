@@ -1899,6 +1899,7 @@ dependencies = [
  "facet-format",
  "facet-format-suite",
  "facet-reflect",
+ "facet-testhelpers",
  "futures-io",
  "http",
  "http-body-util",
@@ -1912,6 +1913,7 @@ dependencies = [
  "serde_json",
  "smol_str",
  "tokio",
+ "tracing",
  "zmij",
 ]
 

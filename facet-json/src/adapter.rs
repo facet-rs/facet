@@ -603,6 +603,7 @@ impl<'input, const BORROW: bool> TokenSource<'input> for SliceAdapter<'input, BO
 #[cfg(test)]
 mod tests {
     use super::*;
+    use facet_testhelpers::test;
 
     #[test]
     fn test_next_simple() {

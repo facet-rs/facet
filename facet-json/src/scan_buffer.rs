@@ -201,6 +201,7 @@ impl Default for ScanBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use facet_testhelpers::test;
 
     #[test]
     fn test_from_slice() {

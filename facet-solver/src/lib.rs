@@ -1068,7 +1068,7 @@ impl<'a> Solver<'a> {
         match shape.ty {
             Type::User(UserType::Struct(StructType { fields, .. })) => {
                 for field in fields {
-                    if field.name == field_name {
+                    if field.effective_name() == field_name {
                         return Some(field.shape());
                     }
                 }
@@ -2171,12 +2171,12 @@ impl SchemaBuilder {
             let field_path = parent_path.push_field(field.name);
             let required = !field.has_default() && !is_option_type(field.shape());
 
-            // Build the key path for this field
+            // Build the key path for this field (uses effective_name for wire format)
             let mut field_key_path = key_prefix.clone();
-            field_key_path.push(field.name);
+            field_key_path.push(field.effective_name());
 
             let field_info = FieldInfo {
-                serialized_name: field.name,
+                serialized_name: field.effective_name(),
                 path: field_path,
                 required,
                 value_shape: field.shape(),
@@ -2238,7 +2238,7 @@ impl SchemaBuilder {
                     self.collect_nested_key_paths_for_flattened(field, key_prefix, configs)?;
             } else {
                 // Regular field: add key path and recurse
-                field_key_path.push(field.name);
+                field_key_path.push(field.effective_name());
 
                 for config in &mut configs {
                     config.add_key_path(field_key_path.clone());
@@ -2347,7 +2347,7 @@ impl SchemaBuilder {
                 config = configs.into_iter().next().unwrap_or_else(Resolution::new);
             } else {
                 let mut field_key_path = key_prefix.clone();
-                field_key_path.push(variant_field.name);
+                field_key_path.push(variant_field.effective_name());
                 config.add_key_path(field_key_path.clone());
 
                 let configs = self.collect_nested_key_paths_for_shape(
@@ -2385,7 +2385,7 @@ impl SchemaBuilder {
         // Named fields - add key paths for each
         for variant_field in variant.data.fields {
             let mut field_key_path = key_prefix.clone();
-            field_key_path.push(variant_field.name);
+            field_key_path.push(variant_field.effective_name());
             config.add_key_path(field_key_path.clone());
 
             // Recurse into nested structs
@@ -2413,7 +2413,7 @@ impl SchemaBuilder {
             } else {
                 // Regular field: add its key path
                 let mut field_key_path = key_prefix.clone();
-                field_key_path.push(field.name);
+                field_key_path.push(field.effective_name());
                 config.add_key_path(field_key_path.clone());
 
                 // Recurse into nested structs
@@ -2646,7 +2646,7 @@ impl SchemaBuilder {
                     if map_def.k.scalar_type() == Some(facet_core::ScalarType::String) {
                         // This is a valid catch-all map
                         let field_info = FieldInfo {
-                            serialized_name: field.name,
+                            serialized_name: field.effective_name(),
                             path: field_path,
                             required: false, // Catch-all maps are never required
                             value_shape: shape,
@@ -2675,7 +2675,7 @@ impl SchemaBuilder {
                 // Check if this is a DynamicValue type (like facet_value::Value) - also a catch-all
                 if matches!(&shape.def, Def::DynamicValue(_)) {
                     let field_info = FieldInfo {
-                        serialized_name: field.name,
+                        serialized_name: field.effective_name(),
                         path: field_path,
                         required: false, // Catch-all dynamic values are never required
                         value_shape: shape,
@@ -2705,10 +2705,10 @@ impl SchemaBuilder {
 
                 // For non-flattenable types, add the field with its key path
                 let mut field_key_path = key_prefix.clone();
-                field_key_path.push(field.name);
+                field_key_path.push(field.effective_name());
 
                 let field_info = FieldInfo {
-                    serialized_name: field.name,
+                    serialized_name: field.effective_name(),
                     path: field_path,
                     required,
                     value_shape: shape,

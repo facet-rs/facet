@@ -104,6 +104,14 @@ impl Variant {
     pub fn is_other(&self) -> bool {
         self.has_builtin_attr("other")
     }
+
+    /// Returns the effective name for serialization/deserialization.
+    ///
+    /// Returns `rename` if set, otherwise returns the variant's actual name.
+    #[inline]
+    pub fn effective_name(&self) -> &'static str {
+        self.rename.unwrap_or(self.name)
+    }
 }
 
 /// An attribute that can be set on an enum variant.

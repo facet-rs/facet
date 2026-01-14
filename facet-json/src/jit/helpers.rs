@@ -2054,6 +2054,7 @@ fn skip_object(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use facet_testhelpers::test;
 
     #[test]
     fn test_json_jit_parse_bool() {

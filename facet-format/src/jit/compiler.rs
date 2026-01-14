@@ -848,7 +848,7 @@ fn compile_deserializer(
                 None
             };
             Some(FieldCodegenInfo {
-                name: f.name,
+                name: f.effective_name(),
                 offset: f.offset,
                 write_kind,
                 required_bit_index,
@@ -1463,6 +1463,7 @@ fn compile_deserializer(
             };
 
             // Embed field name pointer as a constant (the string is 'static)
+            // Note: field.name is already the effective name (set from Field::effective_name() during FieldCodegenInfo creation)
             let expected_ptr = builder
                 .ins()
                 .iconst(pointer_type, field.name.as_ptr() as i64);

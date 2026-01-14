@@ -79,11 +79,14 @@ fn my_test() {
 }
 ```
 
-The test helper:
-- Initializes a tracing subscriber with nice formatting
-- Shows elapsed time since test start
-- Installs color-backtrace for better panic output
-- Respects the `FACET_LOG` environment variable for filtering
+For tests using `libtest-mimic` or `datatest`, call `facet_testhelpers::setup()` directly:
+
+```rust
+fn main() {
+    facet_testhelpers::setup();
+    // ... run your custom test harness
+}
+```
 
 ### Using Tracing in Code
 

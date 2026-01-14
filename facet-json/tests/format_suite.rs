@@ -828,6 +828,7 @@ impl FormatSuite for JsonSlice {
 fn main() {
     use std::sync::Arc;
 
+    facet_testhelpers::setup();
     let args = Arguments::from_args();
     let cases: Vec<Arc<_>> = all_cases::<JsonSlice>().into_iter().map(Arc::new).collect();
 

@@ -591,7 +591,8 @@ where
         }
 
         // === Check name/alias ===
-        let name_matches = field.name == name || field.alias.iter().any(|alias| *alias == name);
+        let name_matches =
+            field.effective_name() == name || field.alias.iter().any(|alias| *alias == name);
 
         if !name_matches {
             return false;
