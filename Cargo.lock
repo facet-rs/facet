@@ -1746,7 +1746,7 @@ dependencies = [
  "facet-showcase",
  "facet-testhelpers",
  "facet-value",
- "facet-xml",
+ "facet-xml-diff",
  "insta",
  "log",
  "owo-colors",
@@ -2250,8 +2250,6 @@ dependencies = [
  "divan",
  "facet",
  "facet-core",
- "facet-diff",
- "facet-diff-core",
  "facet-dom",
  "facet-reflect",
  "http",
@@ -2264,6 +2262,19 @@ dependencies = [
  "test-log",
  "tracing-subscriber",
  "zmij",
+]
+
+[[package]]
+name = "facet-xml-diff"
+version = "0.42.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-diff",
+ "facet-diff-core",
+ "facet-reflect",
+ "test-log",
+ "tracing-subscriber",
 ]
 
 [[package]]

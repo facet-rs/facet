@@ -8,19 +8,11 @@ mod serializer;
 #[cfg(feature = "axum")]
 mod axum;
 
-#[cfg(feature = "diff")]
-mod diff_serialize;
-
 pub use dom_parser::{XmlError, XmlParser};
 
 #[cfg(feature = "axum")]
 pub use axum::{Xml, XmlRejection};
 
-#[cfg(feature = "diff")]
-pub use diff_serialize::{
-    DiffSerializeOptions, DiffSymbols, DiffTheme, diff_to_string, diff_to_string_with_options,
-    diff_to_writer, diff_to_writer_with_options,
-};
 pub use serializer::{
     FloatFormatter, SerializeOptions, XmlSerializeError, XmlSerializer, to_string,
     to_string_pretty, to_string_with_options, to_vec, to_vec_with_options,

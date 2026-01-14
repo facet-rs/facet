@@ -70,6 +70,7 @@ members = [
     "facet-postcard",
     "facet-msgpack",
     "facet-xml",
+    "facet-xml-diff",
     "facet-svg",
     "facet-toml",
     "facet-yaml",
