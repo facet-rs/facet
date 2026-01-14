@@ -191,6 +191,9 @@ struct ElementState {
     has_content: bool,
     /// True if we've written block content (child elements)
     has_block_content: bool,
+    /// True if we need to write a newline before the next block child
+    /// (deferred from children_start to avoid newlines when content is only text)
+    needs_newline_before_block: bool,
 }
 
 /// HTML serializer with configurable output options.
@@ -386,11 +389,28 @@ impl DomSerializer for HtmlSerializer {
 
         // Mark parent as having content
         let is_inline = is_inline_element(tag);
-        if let Some(parent) = self.element_stack.last_mut() {
+        let needs_deferred_newline = if let Some(parent) = self.element_stack.last_mut() {
             parent.has_content = true;
-            if !is_inline {
+            let needs_newline = if !is_inline {
                 parent.has_block_content = true;
-            }
+                // Check if we need to write the deferred newline now
+                if parent.needs_newline_before_block {
+                    parent.needs_newline_before_block = false;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            needs_newline
+        } else {
+            false
+        };
+
+        // Write the deferred newline (after releasing the borrow)
+        if needs_deferred_newline {
+            self.write_newline();
         }
 
         // Write indentation for block elements
@@ -414,6 +434,7 @@ impl DomSerializer for HtmlSerializer {
             is_inline,
             has_content: false,
             has_block_content: false,
+            needs_newline_before_block: false,
         });
 
         self.collecting_attributes = true;
@@ -473,7 +494,7 @@ impl DomSerializer for HtmlSerializer {
     fn children_start(&mut self) -> Result<(), Self::Error> {
         self.collecting_attributes = false;
 
-        let Some(state) = self.element_stack.last() else {
+        let Some(state) = self.element_stack.last_mut() else {
             return Ok(());
         };
 
@@ -488,9 +509,10 @@ impl DomSerializer for HtmlSerializer {
             self.out.push(b'>');
         }
 
-        // Only add newline and depth for non-void, non-inline elements
+        // For non-void, non-inline elements, defer the newline until we see block content.
+        // This avoids `<p>\ntext</p>` when content is only text.
         if !state.is_void && !state.is_inline {
-            self.write_newline();
+            state.needs_newline_before_block = true;
             self.depth += 1;
         }
 
@@ -509,7 +531,8 @@ impl DomSerializer for HtmlSerializer {
 
         if state.is_void {
             // Void elements have no closing tag (already closed in children_start)
-            if !state.is_inline {
+            // Only add newline if there's a parent (no trailing newline at root)
+            if !state.is_inline && !self.element_stack.is_empty() {
                 self.write_newline();
             }
             return Ok(());
@@ -528,8 +551,9 @@ impl DomSerializer for HtmlSerializer {
         self.out.extend_from_slice(state.tag.as_bytes());
         self.out.push(b'>');
 
-        // Newline after block elements
-        if !state.is_inline {
+        // Newline after block elements, but only if there's a parent element
+        // (no trailing newline at the root level)
+        if !state.is_inline && !self.element_stack.is_empty() {
             self.write_newline();
         }
 

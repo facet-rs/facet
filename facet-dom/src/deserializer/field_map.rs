@@ -74,8 +74,9 @@ pub(crate) struct StructFieldMap {
     /// Fields that are child elements, keyed by lowerCamelCase name or rename.
     /// Multiple fields can have the same name if they have different namespace constraints.
     element_fields: HashMap<String, Vec<FieldInfo>>,
-    /// The field marked with `xml::elements` (collects all unmatched children)
-    pub elements_field: Option<FieldInfo>,
+    /// Fields marked with `xml::elements` or `html::elements`, keyed by expected element name.
+    /// Each field collects child elements matching its singularized name (or rename).
+    pub elements_fields: HashMap<String, FieldInfo>,
     /// The field marked with `xml::attribute` as a catch-all (collects all unmatched attribute values)
     pub attributes_field: Option<FieldInfo>,
     /// The field marked with `xml::text` (collects text content)
@@ -117,7 +118,7 @@ impl StructFieldMap {
     pub fn new(struct_def: &'static StructType, ns_all: Option<&'static str>) -> Self {
         let mut attribute_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
         let mut element_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
-        let mut elements_field = None;
+        let mut elements_fields: HashMap<String, FieldInfo> = HashMap::new();
         let mut attributes_field = None;
         let mut text_field = None;
         let mut tag_field = None;
@@ -330,8 +331,8 @@ impl StructFieldMap {
                             .push(info);
                     }
                 }
-            } else if field.is_elements() && field.rename.is_none() {
-                // xml::elements without rename = catch-all for unmatched children
+            } else if field.is_elements() {
+                // xml::elements or html::elements - collect child elements by name
                 let info = FieldInfo {
                     idx,
                     field,
@@ -341,7 +342,13 @@ impl StructFieldMap {
                     is_tuple,
                     namespace,
                 };
-                elements_field = Some(info);
+                // Key is the singularized field name (or rename if present)
+                let element_key = if let Some(rename) = field.rename {
+                    rename.to_string()
+                } else {
+                    singularize(&dom_key(field.name, None))
+                };
+                elements_fields.insert(element_key, info);
             } else if field.is_text() {
                 let info = FieldInfo {
                     idx,
@@ -451,7 +458,7 @@ impl StructFieldMap {
         Self {
             attribute_fields,
             element_fields,
-            elements_field,
+            elements_fields,
             attributes_field,
             text_field,
             tag_field,

@@ -11,7 +11,7 @@ use crate::trace;
 use crate::{AttributeRecord, DomEvent, DomParser, DomParserExt};
 
 use super::PartialDeserializeExt;
-use super::field_map::{FlattenedChildInfo, StructFieldMap};
+use super::field_map::{FieldInfo, FlattenedChildInfo, StructFieldMap};
 
 /// State for a flat sequence field being deserialized.
 pub(crate) enum SeqState {
@@ -41,8 +41,8 @@ pub(crate) struct StructDeserializer<'de, 'p, const BORROW: bool, P: DomParser<'
     /// Currently active flat sequence
     active_seq_idx: Option<usize>,
 
-    /// Whether we've started the xml::elements collection
-    elements_list_started: bool,
+    /// Which elements lists have been started (keyed by field index)
+    started_elements_lists: HashSet<usize>,
 
     /// Whether we've started the xml::text list (for Vec<String> text fields)
     text_list_started: bool,
@@ -55,9 +55,6 @@ pub(crate) struct StructDeserializer<'de, 'p, const BORROW: bool, P: DomParser<'
 
     /// Which flattened attribute maps have been initialized
     started_flattened_attr_maps: HashSet<usize>,
-
-    /// Which nested flattened attribute maps have been initialized (parent_idx, child_idx)
-    started_nested_flattened_attr_maps: HashSet<(usize, usize)>,
 
     /// Whether we've ever started the flattened enum list (for Vec<Enum> with flatten)
     flattened_enum_list_started: bool,
@@ -95,12 +92,11 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             text_content: String::new(),
             started_seqs: HashMap::new(),
             active_seq_idx: None,
-            elements_list_started: false,
+            started_elements_lists: HashSet::new(),
             text_list_started: false,
             attributes_list_started: false,
             started_flattened_maps: HashSet::new(),
             started_flattened_attr_maps: HashSet::new(),
-            started_nested_flattened_attr_maps: HashSet::new(),
             flattened_enum_list_started: false,
             flattened_enum_list_active: false,
             deny_unknown_fields,
@@ -285,21 +281,16 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
 
                             if let Some(info) = nested_info {
                                 trace!("→ (flatten).{}[{}]", info.child_info.field.name, name);
-                                let key = (info.parent_idx, info.child_idx);
-                                let is_first =
-                                    !self.started_nested_flattened_attr_maps.contains(&key);
-                                self.started_nested_flattened_attr_maps.insert(key);
 
                                 // Navigate to parent field, then child field
                                 wip = wip.begin_nth_field(info.parent_idx)?;
                                 if info.parent_is_option {
                                     wip = wip.begin_some()?;
                                 }
-                                wip = wip.begin_nth_field(info.child_idx)?;
-                                if is_first {
-                                    wip = wip.init_map()?;
-                                }
+                                // Always call init_map() - in deferred mode it's idempotent
                                 wip = wip
+                                    .begin_nth_field(info.child_idx)?
+                                    .init_map()?
                                     .begin_key()?
                                     .set::<String>(name.to_string())?
                                     .end()?
@@ -378,7 +369,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let text = self.parser().expect_text()?;
 
-        if self.elements_list_started {
+        if !self.started_elements_lists.is_empty() {
             // html::elements / xml::elements collects child *elements*, not text nodes.
             // Skip text nodes silently (they're typically whitespace between elements).
         } else if self.flattened_enum_list_active {
@@ -402,7 +393,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 // Single String with xml::text - accumulate text
                 self.text_content.push_str(&text);
             }
-        } else if self.field_map.elements_field.is_some() {
+        } else if !self.field_map.elements_fields.is_empty() {
             // html::elements / xml::elements collects child *elements*, not text nodes.
             // Skip text nodes silently (they're typically whitespace between elements).
         } else if let Some(enum_info) = &self.field_map.flattened_enum {
@@ -477,8 +468,8 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         } else if let Some(field_idx) = self.field_map.flattened_enum.as_ref().map(|e| e.field_idx)
         {
             self.handle_flattened_enum(wip, field_idx)
-        } else if self.field_map.elements_field.is_some() {
-            self.handle_elements_collection(wip)
+        } else if let Some(info) = self.field_map.elements_fields.get(tag).cloned() {
+            self.handle_elements_collection(wip, &info)
         } else if !self.field_map.flattened_maps.is_empty() {
             self.handle_flattened_map(wip, tag, namespace)
         } else {
@@ -501,10 +492,12 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                 wip = wip.end()?;
             }
         }
-        if self.elements_list_started {
-            trace!("leaving elements list");
-            wip = wip.end()?;
-            self.elements_list_started = false;
+        if !self.started_elements_lists.is_empty() {
+            trace!("leaving elements lists");
+            for _ in 0..self.started_elements_lists.len() {
+                wip = wip.end()?;
+            }
+            self.started_elements_lists.clear();
         }
         if self.flattened_enum_list_active {
             trace!("leaving flattened enum list (staying started)");
@@ -523,10 +516,12 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         is_tuple: bool,
         field: &'static facet_core::Field,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        if self.elements_list_started {
-            trace!("leaving elements list for flat sequence field");
-            wip = wip.end()?;
-            self.elements_list_started = false;
+        if !self.started_elements_lists.is_empty() {
+            trace!("leaving elements lists for flat sequence field");
+            for _ in 0..self.started_elements_lists.len() {
+                wip = wip.end()?;
+            }
+            self.started_elements_lists.clear();
         }
 
         // Switch sequences if needed
@@ -880,13 +875,21 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
     fn handle_elements_collection(
         &mut self,
         mut wip: Partial<'de, BORROW>,
+        info: &FieldInfo,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        if !self.elements_list_started {
-            let info = self.field_map.elements_field.as_ref().unwrap();
-            let idx = info.idx;
+        let idx = info.idx;
+        if !self.started_elements_lists.contains(&idx) {
+            // Close any other open elements lists before starting this one
+            // (we can only be "inside" one list at a time for begin_nth_field to work)
+            for &other_idx in self.started_elements_lists.iter().collect::<Vec<_>>() {
+                trace!(other_idx, "closing elements list to switch to new one");
+                wip = wip.end()?;
+            }
+            self.started_elements_lists.clear();
+
             trace!(idx, field_name = %info.field.name, "starting elements list (lazy)");
             wip = wip.begin_nth_field(idx)?.init_list()?;
-            self.elements_list_started = true;
+            self.started_elements_lists.insert(idx);
         }
         trace!("adding element to elements collection");
         wip = wip
@@ -1126,13 +1129,26 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             }
         }
 
-        if self.elements_list_started {
-            trace!(path = %wip.path(), "ending elements list");
+        // Finalize all elements fields
+        // First, close all open elements lists
+        for &idx in self.started_elements_lists.iter().collect::<Vec<_>>() {
+            if let Some((element_name, _)) = self
+                .field_map
+                .elements_fields
+                .iter()
+                .find(|(_, info)| info.idx == idx)
+            {
+                trace!(path = %wip.path(), element_name, "ending elements list");
+            }
             wip = wip.end()?;
-        } else if let Some(info) = &self.field_map.elements_field {
+        }
+        // Then initialize any elements fields that were never started as empty lists
+        for (_element_name, info) in &self.field_map.elements_fields {
             let idx = info.idx;
-            trace!(idx, field_name = %info.field.name, "initializing empty elements list");
-            wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
+            if !self.started_elements_lists.contains(&idx) {
+                trace!(idx, field_name = %info.field.name, "initializing empty elements list");
+                wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
+            }
         }
 
         // Handle attributes catch-all field finalization

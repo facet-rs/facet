@@ -1383,3 +1383,48 @@ fn issue_1744_pretty_does_add_newlines_between_blocks() {
         serialized
     );
 }
+
+/// Roundtrip test for G115 fixture - catches issues like aria-label becoming ariaLabel
+#[test]
+fn g115_roundtrip() {
+    use std::path::Path;
+    let path = Path::new("tests/fixtures/https_w3.org_WAI_WCAG21_Techniques_general_G115.html");
+    let html_str = std::fs::read_to_string(path).unwrap();
+
+    let parsed: facet_html_dom::Html = facet_html::from_str(&html_str).expect("parse 1");
+    let serialized = facet_html::to_string(&parsed).expect("serialize 1");
+
+    let reparsed: facet_html_dom::Html = facet_html::from_str(&serialized).expect("parse 2");
+    let reserialized = facet_html::to_string(&reparsed).expect("serialize 2");
+
+    assert_eq!(serialized, reserialized, "Roundtrip should be idempotent");
+}
+
+/// Issue: aria-label and other hyphenated attributes should roundtrip exactly.
+/// The `extra` HashMap in GlobalAttrs captures unknown attributes with their
+/// original keys - we must NOT apply lowerCamelCase transformation to string keys.
+#[test]
+fn issue_aria_label_roundtrip() {
+    let input = r#"<div aria-label="Close" data-foo="bar">Content</div>"#;
+
+    let parsed: facet_html_dom::Div = facet_html::from_str(input).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+
+    // The hyphenated attribute names must be preserved exactly
+    assert!(
+        serialized.contains(r#"aria-label="Close""#),
+        "aria-label should be preserved exactly, got: {}",
+        serialized
+    );
+    assert!(
+        serialized.contains(r#"data-foo="bar""#),
+        "data-foo should be preserved exactly, got: {}",
+        serialized
+    );
+
+    // Roundtrip should be stable
+    let reparsed: facet_html_dom::Div = facet_html::from_str(&serialized).expect("reparse");
+    let reserialized = facet_html::to_string(&reparsed).expect("reserialize");
+
+    assert_eq!(serialized, reserialized, "Roundtrip should be idempotent");
+}

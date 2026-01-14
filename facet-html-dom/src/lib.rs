@@ -721,12 +721,21 @@ pub struct Dl {
     /// Global attributes.
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
-    /// Terms and descriptions (mixed dt/dd).
-    #[facet(html::elements, default)]
-    pub dt: Vec<Dt>,
-    /// Descriptions.
-    #[facet(html::elements, default)]
-    pub dd: Vec<Dd>,
+    /// Terms and descriptions (mixed dt/dd in order).
+    #[facet(flatten, default)]
+    pub children: Vec<DlContent>,
+}
+
+/// Content types that can appear inside a description list.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum DlContent {
+    /// Description term.
+    #[facet(rename = "dt")]
+    Dt(Dt),
+    /// Description details.
+    #[facet(rename = "dd")]
+    Dd(Dd),
 }
 
 /// Description term.

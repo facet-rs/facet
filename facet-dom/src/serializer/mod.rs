@@ -364,11 +364,16 @@ where
             if is_attr {
                 trace!(field_name = %field_item.name, "attribute field");
                 // Compute attribute name: rename > lowerCamelCase(field.name)
-                let attr_name = field_item
-                    .field
-                    .and_then(|f| f.rename)
-                    .map(Cow::Borrowed)
-                    .unwrap_or_else(|| to_element_name(&field_item.name));
+                // BUT for flattened map entries (field is None), use the key as-is
+                let attr_name = if let Some(field) = field_item.field {
+                    field
+                        .rename
+                        .map(Cow::Borrowed)
+                        .unwrap_or_else(|| to_element_name(&field_item.name))
+                } else {
+                    // Flattened map entry - preserve the key exactly as stored
+                    field_item.name.clone()
+                };
 
                 // Check for field-level proxy
                 if let Some(field) = field_item.field {
