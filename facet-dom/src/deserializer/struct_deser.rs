@@ -489,16 +489,14 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         // Add item
         if is_list {
             trace!(idx, field_name = %field.name, "adding item to flat list");
-            wip = wip
-                .begin_list_item()?
-                .deserialize_with(self.dom_deser)?
-                .end()?;
+            wip = wip.begin_list_item()?;
+            wip = self.deserialize_sequence_item(wip, field)?;
+            wip = wip.end()?;
         } else if is_set {
             trace!(idx, field_name = %field.name, "adding item to flat set");
-            wip = wip
-                .begin_set_item()?
-                .deserialize_with(self.dom_deser)?
-                .end()?;
+            wip = wip.begin_set_item()?;
+            wip = self.deserialize_sequence_item(wip, field)?;
+            wip = wip.end()?;
         } else if is_tuple {
             // Tuples: access by position using begin_nth_field
             let item_idx = match self.started_seqs.get(&idx) {
@@ -529,6 +527,51 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             if let Some(SeqState::Array { next_idx }) = self.started_seqs.get_mut(&idx) {
                 *next_idx += 1;
             }
+        }
+        Ok(wip)
+    }
+
+    /// Deserialize a sequence item (list/set element), handling struct items specially.
+    ///
+    /// For struct items, we use the field's effective name as the element name
+    /// (from rename attribute or singularized field name) rather than the type's name.
+    fn deserialize_sequence_item(
+        &mut self,
+        mut wip: Partial<'de, BORROW>,
+        field: &'static facet_core::Field,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        let item_shape = wip.shape();
+
+        // Check if the item type is a struct
+        if let Type::User(UserType::Struct(inner_struct_def)) = &item_shape.ty {
+            // Compute expected element name from field: rename > singularized(lowerCamelCase(field.name))
+            let expected_name: Cow<'static, str> = if field.rename.is_some() {
+                Cow::Borrowed(field.effective_name())
+            } else {
+                // For list fields without rename, use singularized lowerCamelCase
+                let camel = crate::naming::to_element_name(field.name);
+                Cow::Owned(facet_singularize::singularize(&camel))
+            };
+
+            // Get ns_all from the item struct's shape
+            let ns_all = item_shape
+                .attributes
+                .iter()
+                .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+                .and_then(|attr| attr.get_as::<&str>().copied());
+
+            let deny_unknown_fields = item_shape.has_deny_unknown_fields_attr();
+
+            wip = StructDeserializer::new(
+                self.dom_deser,
+                inner_struct_def,
+                ns_all,
+                expected_name,
+                deny_unknown_fields,
+            )
+            .deserialize(wip)?;
+        } else {
+            wip = wip.deserialize_with(self.dom_deser)?;
         }
         Ok(wip)
     }
