@@ -94,6 +94,9 @@ pub mod spawn_windows;
 #[cfg(feature = "std")]
 pub mod wait;
 
+#[cfg(all(feature = "std", unix))]
+pub mod cleanup;
+
 // Re-export key types
 pub use channel::{
     ChannelEntry, ChannelId, ChannelIdAllocator, ChannelState, FlowControl, RequestId,
