@@ -8,6 +8,7 @@ extern crate alloc;
 
 /// Trace-level logging macro that forwards to `tracing::trace!` when the `tracing` feature is enabled.
 #[cfg(feature = "tracing")]
+#[allow(unused_macros)]
 macro_rules! trace {
     ($($arg:tt)*) => {
         ::tracing::trace!($($arg)*)
@@ -16,6 +17,7 @@ macro_rules! trace {
 
 /// Trace-level logging macro (no-op when `tracing` feature is disabled).
 #[cfg(not(feature = "tracing"))]
+#[allow(unused_macros)]
 macro_rules! trace {
     ($($arg:tt)*) => {};
 }
