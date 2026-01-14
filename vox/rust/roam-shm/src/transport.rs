@@ -627,9 +627,7 @@ impl<'a> ShmHostGuestTransport<'a> {
                 SendError::PayloadTooLarge => {
                     io::Error::new(io::ErrorKind::InvalidData, "payload too large")
                 }
-                SendError::SlotExhausted => {
-                    io::Error::new(io::ErrorKind::Other, "slot exhausted")
-                }
+                SendError::SlotExhausted => io::Error::new(io::ErrorKind::Other, "slot exhausted"),
             }
         })
     }
@@ -647,8 +645,8 @@ impl<'a> ShmHostGuestTransport<'a> {
         // Poll for new messages from all guests
         // Note: slots_freed_for is ignored here - this transport doesn't have doorbell access
         // (the MultiPeerHostDriver handles backpressure signaling properly)
-        let (messages, _slots_freed_for) = self.host.poll();
-        for (peer_id, frame) in messages {
+        let result = self.host.poll();
+        for (peer_id, frame) in result.messages {
             if peer_id == self.peer_id {
                 self.last_decoded = frame.payload_bytes().to_vec();
                 let msg = frame_to_message(frame)

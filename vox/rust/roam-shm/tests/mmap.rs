@@ -6,7 +6,7 @@
 //! shm[verify shm.file.attach]
 
 use roam_frame::{Frame, MsgDesc, Payload};
-use roam_shm::{AddPeerOptions, SegmentConfig, ShmGuest, ShmHost, SpawnArgs, msg_type};
+use roam_shm::{AddPeerOptions, PollResult, SegmentConfig, ShmGuest, ShmHost, SpawnArgs, msg_type};
 
 /// Test basic file-backed segment creation and attachment.
 #[test]
@@ -68,7 +68,7 @@ fn test_file_backed_bidirectional() {
     };
     guest.send(frame).unwrap();
 
-    let messages = host.poll();
+    let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].1.payload_bytes(), b"pong");
 }
@@ -205,7 +205,7 @@ fn test_cross_process_ipc() {
             // Parent process: wait for message and respond
             std::thread::sleep(Duration::from_millis(100));
 
-            let messages = host.poll();
+            let PollResult { messages, .. } = host.poll();
             assert_eq!(messages.len(), 1);
             assert_eq!(messages[0].1.payload_bytes(), b"hello from child");
 
@@ -321,18 +321,21 @@ fn test_spawn_ticket_workflow() {
             drop(ticket);
 
             // Wait for message from child with retry
-            let mut messages = Vec::new();
+            let mut result = PollResult::default();
             for _ in 0..20 {
                 std::thread::sleep(Duration::from_millis(50));
-                messages = host.poll();
-                if !messages.is_empty() {
+                result = host.poll();
+                if !result.messages.is_empty() {
                     break;
                 }
             }
-            assert_eq!(messages.len(), 1, "expected 1 message from child");
-            assert_eq!(messages[0].1.payload_bytes(), b"spawned guest says hi");
+            assert_eq!(result.messages.len(), 1, "expected 1 message from child");
+            assert_eq!(
+                result.messages[0].1.payload_bytes(),
+                b"spawned guest says hi"
+            );
 
-            let peer_id = messages[0].0;
+            let peer_id = result.messages[0].0;
             assert_eq!(peer_id.get(), 1);
 
             // Send response

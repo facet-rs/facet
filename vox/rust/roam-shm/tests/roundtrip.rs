@@ -5,7 +5,7 @@
 
 use roam_frame::{Frame, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT, MsgDesc, Payload};
 use roam_shm::guest::ShmGuest;
-use roam_shm::host::ShmHost;
+use roam_shm::host::{PollResult, ShmHost};
 use roam_shm::layout::SegmentConfig;
 use roam_shm::msg_type;
 
@@ -54,7 +54,7 @@ fn guest_to_host_inline_message() {
     guest.send(request).unwrap();
 
     // Host polls and receives the message
-    let messages = host.poll();
+    let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
 
     let (recv_peer_id, frame) = &messages[0];
@@ -100,7 +100,7 @@ fn bidirectional_roundtrip() {
     guest.send(request).unwrap();
 
     // Host receives and responds
-    let messages = host.poll();
+    let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].1.desc.id, 100);
 
@@ -134,7 +134,7 @@ fn multiple_guests_isolated() {
     guest2.send(make_request(2, b"from guest2")).unwrap();
 
     // Host receives both
-    let messages = host.poll();
+    let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), 2);
 
     // Verify messages came from correct guests
@@ -184,7 +184,7 @@ fn large_payload_via_slot() {
     guest.send(frame).unwrap();
 
     // Host receives it
-    let messages = host.poll();
+    let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
 
     let (recv_peer_id, frame) = &messages[0];
@@ -240,7 +240,7 @@ fn many_messages_in_sequence() {
     }
 
     // Receive all
-    let messages = host.poll();
+    let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), NUM_MESSAGES as usize);
 
     for (i, (recv_peer_id, frame)) in messages.iter().enumerate() {
@@ -272,7 +272,7 @@ fn ring_backpressure() {
     assert!(matches!(result, Err(roam_shm::guest::SendError::RingFull)));
 
     // After host polls, ring has space again
-    let messages = host.poll();
+    let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), 3);
 
     // Now guest can send again
@@ -306,7 +306,7 @@ fn slot_reclamation_guest_to_host() {
         guest.send(frame).unwrap();
 
         // Host consumes (and frees slot)
-        let messages = host.poll();
+        let PollResult { messages, .. } = host.poll();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].1.desc.id, i);
     }

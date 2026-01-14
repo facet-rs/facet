@@ -8,7 +8,7 @@
 //! shm[verify shm.scope]
 
 use roam_shm::guest::ShmGuest;
-use roam_shm::host::ShmHost;
+use roam_shm::host::{PollResult, ShmHost};
 use roam_shm::layout::SegmentConfig;
 use roam_shm::transport::{ShmGuestTransport, frame_to_message, message_to_frame};
 use roam_wire::{Message, MetadataValue};
@@ -27,8 +27,8 @@ fn create_guest_transport(guest: ShmGuest) -> ShmGuestTransport {
     ShmGuestTransport::new_with_doorbell(guest, guest_doorbell)
 }
 
-#[test]
-fn guest_transport_send_request() {
+#[tokio::test]
+async fn guest_transport_send_request() {
     let (mut host, guest) = create_host_and_guest();
     let peer_id = guest.peer_id();
     let mut transport = create_guest_transport(guest);
@@ -45,10 +45,10 @@ fn guest_transport_send_request() {
         payload: b"request body".to_vec(),
     };
 
-    transport.send(&msg).unwrap();
+    transport.send(&msg).await.unwrap();
 
     // Host should receive it
-    let mut messages = host.poll();
+    let PollResult { mut messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
 
     let (recv_peer_id, frame) = messages.pop().unwrap();
@@ -59,8 +59,8 @@ fn guest_transport_send_request() {
     assert_eq!(decoded, msg);
 }
 
-#[test]
-fn guest_transport_recv_response() {
+#[tokio::test]
+async fn guest_transport_recv_response() {
     let (mut host, guest) = create_host_and_guest();
     let peer_id = guest.peer_id();
     let mut transport = create_guest_transport(guest);
@@ -80,8 +80,8 @@ fn guest_transport_recv_response() {
     assert_eq!(received, msg);
 }
 
-#[test]
-fn host_guest_transport_roundtrip() {
+#[tokio::test]
+async fn host_guest_transport_roundtrip() {
     let (mut host, guest) = create_host_and_guest();
     let peer_id = guest.peer_id();
     let mut guest_transport = create_guest_transport(guest);
@@ -100,10 +100,10 @@ fn host_guest_transport_roundtrip() {
         channels: vec![],
         payload: b"hello server".to_vec(),
     };
-    guest_transport.send(&request).unwrap();
+    guest_transport.send(&request).await.unwrap();
 
     // Host receives and processes
-    let mut messages = host.poll();
+    let PollResult { mut messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
     let (_, frame) = messages.pop().unwrap();
     let decoded_request = frame_to_message(frame).unwrap();
@@ -123,8 +123,8 @@ fn host_guest_transport_roundtrip() {
     assert_eq!(decoded_response, response);
 }
 
-#[test]
-fn streaming_data_messages() {
+#[tokio::test]
+async fn streaming_data_messages() {
     let (mut host, guest) = create_host_and_guest();
     let _peer_id = guest.peer_id();
     let mut guest_transport = create_guest_transport(guest);
@@ -135,15 +135,15 @@ fn streaming_data_messages() {
             channel_id: 7,
             payload: format!("chunk {}", i).into_bytes(),
         };
-        guest_transport.send(&data).unwrap();
+        guest_transport.send(&data).await.unwrap();
     }
 
     // Send Close
     let close = Message::Close { channel_id: 7 };
-    guest_transport.send(&close).unwrap();
+    guest_transport.send(&close).await.unwrap();
 
     // Host receives all
-    let mut messages = host.poll();
+    let PollResult { mut messages, .. } = host.poll();
     assert_eq!(messages.len(), 6);
 
     // Reverse to pop in order
@@ -162,8 +162,8 @@ fn streaming_data_messages() {
     assert!(matches!(last_msg, Message::Close { channel_id: 7 }));
 }
 
-#[test]
-fn cancel_message() {
+#[tokio::test]
+async fn cancel_message() {
     let (mut host, guest) = create_host_and_guest();
     let mut guest_transport = create_guest_transport(guest);
 
@@ -175,13 +175,13 @@ fn cancel_message() {
         channels: vec![],
         payload: vec![],
     };
-    guest_transport.send(&request).unwrap();
+    guest_transport.send(&request).await.unwrap();
 
     let cancel = Message::Cancel { request_id: 99 };
-    guest_transport.send(&cancel).unwrap();
+    guest_transport.send(&cancel).await.unwrap();
 
     // Host receives both
-    let mut messages = host.poll();
+    let PollResult { mut messages, .. } = host.poll();
     assert_eq!(messages.len(), 2);
 
     messages.reverse();
@@ -194,8 +194,8 @@ fn cancel_message() {
     assert!(matches!(msg2, Message::Cancel { request_id: 99 }));
 }
 
-#[test]
-fn reset_message() {
+#[tokio::test]
+async fn reset_message() {
     let (mut host, guest) = create_host_and_guest();
     let peer_id = guest.peer_id();
     let mut guest_transport = create_guest_transport(guest);
@@ -210,8 +210,8 @@ fn reset_message() {
     assert_eq!(received, reset);
 }
 
-#[test]
-fn goodbye_message() {
+#[tokio::test]
+async fn goodbye_message() {
     let (mut host, guest) = create_host_and_guest();
     let mut guest_transport = create_guest_transport(guest);
 
@@ -219,10 +219,10 @@ fn goodbye_message() {
     let goodbye = Message::Goodbye {
         reason: "shutting down".to_string(),
     };
-    guest_transport.send(&goodbye).unwrap();
+    guest_transport.send(&goodbye).await.unwrap();
 
     // Host receives it
-    let mut messages = host.poll();
+    let PollResult { mut messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
 
     let (_, frame) = messages.pop().unwrap();
@@ -230,8 +230,8 @@ fn goodbye_message() {
     assert_eq!(msg, goodbye);
 }
 
-#[test]
-fn large_metadata() {
+#[tokio::test]
+async fn large_metadata() {
     let (mut host, guest) = create_host_and_guest();
     let mut guest_transport = create_guest_transport(guest);
 
@@ -252,9 +252,9 @@ fn large_metadata() {
         payload: b"small payload".to_vec(),
     };
 
-    guest_transport.send(&request).unwrap();
+    guest_transport.send(&request).await.unwrap();
 
-    let mut messages = host.poll();
+    let PollResult { mut messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
 
     let (_, frame) = messages.pop().unwrap();
@@ -262,8 +262,8 @@ fn large_metadata() {
     assert_eq!(decoded, request);
 }
 
-#[test]
-fn empty_metadata_and_payload() {
+#[tokio::test]
+async fn empty_metadata_and_payload() {
     let (mut host, guest) = create_host_and_guest();
     let mut guest_transport = create_guest_transport(guest);
 
@@ -275,16 +275,16 @@ fn empty_metadata_and_payload() {
         payload: vec![],
     };
 
-    guest_transport.send(&request).unwrap();
+    guest_transport.send(&request).await.unwrap();
 
-    let mut messages = host.poll();
+    let PollResult { mut messages, .. } = host.poll();
     let (_, frame) = messages.pop().unwrap();
     let decoded = frame_to_message(frame).unwrap();
     assert_eq!(decoded, request);
 }
 
-#[test]
-fn recv_timeout_no_message() {
+#[tokio::test]
+async fn recv_timeout_no_message() {
     let (_host, guest) = create_host_and_guest();
     let mut transport = create_guest_transport(guest);
 

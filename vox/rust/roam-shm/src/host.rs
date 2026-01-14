@@ -36,6 +36,19 @@ enum RecvError {
     FreeFailed,
 }
 
+/// Result of polling the host for incoming messages.
+#[derive(Debug, Default)]
+pub struct PollResult {
+    /// Messages received from guests, as (peer_id, frame) pairs.
+    pub messages: Vec<(PeerId, Frame)>,
+
+    /// Peers whose slots were freed during this poll.
+    ///
+    /// The caller should ring the doorbell for each peer in this list to wake up
+    /// guests that may be waiting for slots to become available (backpressure).
+    pub slots_freed_for: Vec<PeerId>,
+}
+
 /// Backing memory for a SHM segment.
 ///
 /// The backing is kept alive for the lifetime of the host, ensuring
@@ -410,19 +423,11 @@ impl ShmHost {
     /// Poll all guest rings for incoming messages.
     ///
     /// shm[impl shm.host.poll-peers]
-    ///
-    /// Returns (messages, slots_freed_for) where:
-    /// - messages: Vec of (peer_id, frame) pairs
-    /// - slots_freed_for: Vec of peer IDs whose slots were freed (for backpressure wakeup)
-    ///
-    /// The caller should ring the doorbell for each peer in slots_freed_for to wake up
-    /// guests that may be waiting for slots to become available.
-    pub fn poll(&mut self) -> (Vec<(PeerId, Frame)>, Vec<PeerId>) {
-        let mut messages = Vec::new();
+    pub fn poll(&mut self) -> PollResult {
+        let mut result = PollResult::default();
         let mut crashed_guests = Vec::new();
         let mut goodbye_guests = Vec::new();
         let mut bad_guests = Vec::new();
-        let mut slots_freed_for: Vec<PeerId> = Vec::new();
 
         for i in 0..self.layout.config.max_guests {
             let Some(peer_id) = PeerId::from_index(i as u8) else {
@@ -475,11 +480,11 @@ impl ShmHost {
                 match self.get_payload(&desc, peer_id) {
                     Ok(payload) => {
                         // Track if we freed a slot (non-inline payload)
-                        if !payload.is_inline() && !slots_freed_for.contains(&peer_id) {
-                            slots_freed_for.push(peer_id);
+                        if !payload.is_inline() && !result.slots_freed_for.contains(&peer_id) {
+                            result.slots_freed_for.push(peer_id);
                         }
                         let frame = Frame { desc, payload };
-                        messages.push((peer_id, frame));
+                        result.messages.push((peer_id, frame));
                     }
                     Err(_e) => {
                         // Protocol violation / corrupted descriptor: treat as guest crash.
@@ -519,9 +524,7 @@ impl ShmHost {
             self.handle_guest_crash(peer_id);
         }
 
-        // Note: caller is responsible for ringing doorbells for peers in slots_freed_for
-        // (the driver owns the doorbells, not the host)
-        (messages, slots_freed_for)
+        result
     }
 
     /// Get payload from a descriptor and free the slot.
@@ -1135,8 +1138,8 @@ mod tests {
         let config = SegmentConfig::default();
         let mut host = ShmHost::create_heap(config).unwrap();
 
-        let messages = host.poll();
-        assert!(messages.is_empty());
+        let result = host.poll();
+        assert!(result.messages.is_empty());
     }
 
     #[test]
@@ -1162,10 +1165,10 @@ mod tests {
             };
 
             guest.send(frame).unwrap();
-            let messages = host.poll();
-            assert_eq!(messages.len(), 1);
-            assert_eq!(messages[0].0, guest.peer_id());
-            assert_eq!(messages[0].1.payload_bytes(), payload.as_slice());
+            let result = host.poll();
+            assert_eq!(result.messages.len(), 1);
+            assert_eq!(result.messages[0].0, guest.peer_id());
+            assert_eq!(result.messages[0].1.payload_bytes(), payload.as_slice());
         }
     }
 
@@ -1231,8 +1234,8 @@ mod tests {
         }
 
         // Host should treat this as a crash and reset the peer.
-        let msgs = host.poll();
-        assert!(msgs.is_empty());
+        let result = host.poll();
+        assert!(result.messages.is_empty());
 
         let peer_entry_offset = host.layout().peer_entry_offset(peer_id.get()) as usize;
         let entry = unsafe { &*(region.offset(peer_entry_offset) as *const PeerEntry) };

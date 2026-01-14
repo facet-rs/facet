@@ -8,7 +8,7 @@
 
 use roam_frame::{Frame, MsgDesc, Payload};
 use roam_shm::guest::ShmGuest;
-use roam_shm::host::ShmHost;
+use roam_shm::host::{PollResult, ShmHost};
 use roam_shm::layout::SegmentConfig;
 use roam_shm::msg_type;
 
@@ -50,7 +50,7 @@ fn stress_single_guest_high_throughput() {
         }
 
         // Receive what's available
-        let messages = host.poll();
+        let PollResult { messages, .. } = host.poll();
         for (_, frame) in messages {
             assert_eq!(frame.desc.id, received);
             received += 1;
@@ -100,7 +100,7 @@ fn stress_multiple_guests_interleaved() {
         }
 
         // Host receives from all
-        let messages = host.poll();
+        let PollResult { messages, .. } = host.poll();
         for (peer_id, frame) in messages {
             let guest_idx = peer_id.index() as usize;
             assert_eq!(frame.desc.id, received_per_guest[guest_idx]);
@@ -133,7 +133,7 @@ fn stress_bidirectional_ping_pong() {
         guest.send(ping).unwrap();
 
         // Host receives and sends pong
-        let messages = host.poll();
+        let PollResult { messages, .. } = host.poll();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].1.desc.id, i);
 
@@ -168,7 +168,7 @@ fn stress_varying_payload_sizes() {
         let frame = make_data_frame(i as u32, payload.clone());
         guest.send(frame).unwrap();
 
-        let messages = host.poll();
+        let PollResult { messages, .. } = host.poll();
         assert_eq!(messages.len(), 1, "Failed at size {}", size);
 
         let (_, recv_frame) = &messages[0];
@@ -224,7 +224,7 @@ fn stress_slot_exhaustion_recovery() {
         }
 
         // Receive to free up slots
-        let messages = host.poll();
+        let PollResult { messages, .. } = host.poll();
         received += messages.len() as u32;
     }
 
@@ -255,7 +255,7 @@ fn stress_guest_attach_detach_cycle() {
         }
 
         // Host receives all
-        let messages = host.poll();
+        let PollResult { messages, .. } = host.poll();
         assert_eq!(messages.len(), 4, "Cycle {} failed", cycle);
 
         // Guests detach (drop)
@@ -305,7 +305,7 @@ fn stress_concurrent_send_recv() {
         }
 
         // Host polls and responds
-        let messages = host.poll();
+        let PollResult { messages, .. } = host.poll();
         for (pid, frame) in messages {
             assert_eq!(pid, peer_id);
             host_received += 1;
@@ -360,7 +360,7 @@ fn stress_max_guests() {
     }
 
     // Host receives all
-    let messages = host.poll();
+    let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), 255);
 
     // Trying to attach one more should fail

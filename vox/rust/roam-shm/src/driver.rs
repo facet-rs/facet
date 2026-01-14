@@ -877,16 +877,16 @@ impl MultiPeerHostDriver {
                 Some(peer_id) = self.ring_rx.recv() => {
                     trace!("MultiPeerHostDriver: doorbell rang for peer {:?}", peer_id);
                     // Poll SHM host for ALL ready messages (not just from the peer that rang)
-                    let (messages, slots_freed_for) = self.host.poll();
+                    let result = self.host.poll();
 
                     // Ring doorbells for guests whose slots were freed (backpressure wakeup)
-                    for freed_peer_id in slots_freed_for {
+                    for freed_peer_id in result.slots_freed_for {
                         if let Some(doorbell) = self.doorbells.get(&freed_peer_id) {
                             doorbell.signal();
                         }
                     }
 
-                    for (pid, frame) in messages {
+                    for (pid, frame) in result.messages {
                         self.last_decoded = frame.payload_bytes().to_vec();
 
                         let msg = match frame_to_message(frame).map_err(|e| {

@@ -117,7 +117,7 @@ pub use roam_frame::{Frame, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT, MsgDesc, Pa
 pub use shm_primitives::FileCleanup;
 
 #[cfg(feature = "std")]
-pub use host::ShmHost;
+pub use host::{PollResult, ShmHost};
 
 #[cfg(feature = "std")]
 pub use guest::ShmGuest;

@@ -15,7 +15,7 @@ use std::time::Duration;
 use roam_frame::{Frame, MsgDesc, Payload};
 use roam_shm::AddPeerOptions;
 use roam_shm::guest::{AttachError, SendError, ShmGuest};
-use roam_shm::host::ShmHost;
+use roam_shm::host::{PollResult, ShmHost};
 use roam_shm::layout::{SegmentConfig, SegmentHeader};
 use roam_shm::msg_type;
 
@@ -221,7 +221,7 @@ fn test_guest_crash_triggers_death_callback() {
             std::thread::sleep(Duration::from_millis(100));
 
             // Receive the message to confirm connection
-            let messages = host.poll();
+            let PollResult { messages, .. } = host.poll();
             assert!(!messages.is_empty(), "guest should have sent a message");
 
             // Wait for child to crash
@@ -313,7 +313,7 @@ fn test_sigkill_triggers_death_detection() {
             std::thread::sleep(Duration::from_millis(100));
 
             // Verify connection
-            let messages = host.poll();
+            let PollResult { messages, .. } = host.poll();
             assert!(!messages.is_empty());
 
             // Kill the child with SIGKILL
