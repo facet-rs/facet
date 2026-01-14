@@ -12,8 +12,7 @@ description = "Shared-memory transport binding implementation"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-default = ["std"]
-std = ["shm-primitives/std"]
+default = []
 tokio = ["dep:tokio", "dep:roam-session", "dep:roam-stream"]
 tracing = ["dep:tracing"]
 
@@ -34,7 +33,7 @@ futures-util.workspace = true
 libproc = "0.14"
 
 [dev-dependencies]
-shm-primitives = { path = "../shm-primitives", features = ["alloc", "std"] }
+shm-primitives = { path = "../shm-primitives" }
 tempfile = "3"
 libc = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }

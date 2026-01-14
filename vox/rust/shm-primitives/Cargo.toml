@@ -1,8 +1,8 @@
 [package]
 name = "shm-primitives"
 description = "Lock-free primitives for shared memory IPC: SPSC ring buffers and Treiber stack slab allocators"
-keywords = ["lock-free", "shared-memory", "ipc", "no_std", "ring-buffer"]
-categories = ["concurrency", "no-std", "memory-management"]
+keywords = ["lock-free", "shared-memory", "ipc", "ring-buffer"]
+categories = ["concurrency", "memory-management"]
 readme = "README.md"
 version.workspace = true
 edition.workspace = true
@@ -20,19 +20,17 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [features]
 default = []
-alloc = []
-std = ["alloc", "dep:libc", "dep:tokio", "dep:tracing", "dep:windows-sys"]
 
 [dependencies]
-libc = { workspace = true, optional = true }
-tracing = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true, features = ["rt"] }
+libc = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
 
 [target.'cfg(unix)'.dependencies]
-tokio = { workspace = true, optional = true, features = ["net", "rt"] }
+tokio = { workspace = true, features = ["net", "rt"] }
 
 [target.'cfg(windows)'.dependencies]
-tokio = { workspace = true, optional = true, features = ["net", "rt"] }
+tokio = { workspace = true, features = ["net", "rt"] }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Memory",
@@ -41,7 +39,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_IO",
     "Win32_System_Pipes",
     "Win32_System_Threading",
-], optional = true }
+]}
 
 [target.'cfg(loom)'.dependencies]
 loom = { version = "0.7" }

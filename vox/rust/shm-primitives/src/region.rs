@@ -85,11 +85,10 @@ impl Region {
 unsafe impl Send for Region {}
 unsafe impl Sync for Region {}
 
-#[cfg(any(test, feature = "alloc"))]
 mod heap {
     use super::Region;
-    use alloc::alloc::{Layout, alloc_zeroed, dealloc};
     use core::ptr::NonNull;
+    use std::alloc::{Layout, alloc_zeroed, dealloc};
 
     /// Heap-backed region for tests or heap-based usage.
     pub struct HeapRegion {
@@ -141,5 +140,4 @@ mod heap {
     unsafe impl Sync for HeapRegion {}
 }
 
-#[cfg(any(test, feature = "alloc"))]
 pub use heap::HeapRegion;

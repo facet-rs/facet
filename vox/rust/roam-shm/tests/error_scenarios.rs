@@ -450,7 +450,7 @@ fn test_attach_error_slot_not_reserved() {
     let fake_args = roam_shm::spawn::SpawnArgs {
         hub_path: path.clone(),
         peer_id: roam_shm::peer::PeerId::from_index(1).unwrap(), // Slot 2, not reserved
-        doorbell_fd: ticket.doorbell_fd(), // Reuse the fd (doesn't matter for this test)
+        doorbell_handle: ticket.doorbell_handle().clone(), // Reuse the handle (doesn't matter for this test)
     };
 
     let result = ShmGuest::attach_with_ticket(&fake_args);

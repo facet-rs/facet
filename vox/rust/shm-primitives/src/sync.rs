@@ -10,5 +10,5 @@ pub use loom::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 #[cfg(loom)]
 pub use loom::thread;
-#[cfg(all(not(loom), any(test, feature = "std")))]
+#[cfg(not(loom))]
 pub use std::thread;

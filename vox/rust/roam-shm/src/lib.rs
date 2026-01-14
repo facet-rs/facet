@@ -62,8 +62,6 @@
 //! shm[impl shm.scope]
 //! shm[impl shm.architecture]
 
-#![cfg_attr(not(feature = "std"), no_std)]
-
 #[macro_use]
 mod macros;
 
@@ -74,26 +72,13 @@ pub mod peer;
 mod slot_pool;
 pub mod var_slot_pool;
 
-#[cfg(feature = "std")]
-pub mod host;
-
-#[cfg(feature = "std")]
-pub mod guest;
-
-#[cfg(feature = "std")]
-pub mod transport;
-
-#[cfg(feature = "tokio")]
-pub mod driver;
-
-#[cfg(feature = "std")]
-pub mod spawn;
-
-#[cfg(feature = "std")]
-pub mod wait;
-
-#[cfg(all(feature = "std", unix))]
 pub mod cleanup;
+pub mod driver;
+pub mod guest;
+pub mod host;
+pub mod spawn;
+pub mod transport;
+pub mod wait;
 
 // Re-export key types
 pub use channel::{
@@ -111,26 +96,20 @@ pub use var_slot_pool::{SizeClassHeader, VarFreeError, VarSlotHandle, VarSlotPoo
 pub use roam_frame::{Frame, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT, MsgDesc, Payload};
 
 // Re-export FileCleanup from shm-primitives
-#[cfg(feature = "std")]
 pub use shm_primitives::FileCleanup;
 
-#[cfg(feature = "std")]
 pub use host::{PollResult, ShmHost};
 
-#[cfg(feature = "std")]
 pub use guest::ShmGuest;
 
-#[cfg(feature = "std")]
 pub use transport::{
     ConvertError, ShmGuestTransport, ShmHostGuestTransport, frame_to_message, message_to_frame,
 };
 
-#[cfg(feature = "std")]
 pub use spawn::{
     AddPeerOptions, DeathCallback, SpawnArgs, SpawnArgsError, SpawnTicket, die_with_parent,
 };
 
-#[cfg(feature = "std")]
 pub use wait::{
     WaitError, wait_for_credit, wait_for_ring_data, wait_for_ring_space, wait_for_slot,
     wake_credit_waiters, wake_ring_consumers, wake_ring_producers, wake_slot_waiters,

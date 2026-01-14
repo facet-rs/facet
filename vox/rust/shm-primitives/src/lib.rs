@@ -1,10 +1,4 @@
 #![doc = include_str!("../README.md")]
-#![no_std]
-
-#[cfg(any(test, feature = "alloc"))]
-extern crate alloc;
-#[cfg(any(test, feature = "std"))]
-extern crate std;
 
 pub mod region;
 pub mod slot;
@@ -12,7 +6,6 @@ pub mod spsc;
 pub mod sync;
 pub mod treiber;
 
-#[cfg(any(test, feature = "alloc"))]
 pub use region::HeapRegion;
 pub use region::Region;
 pub use slot::{SlotMeta, SlotState, VarSlotMeta};
@@ -23,32 +16,30 @@ pub use treiber::{
     AllocResult, FreeError, SlotError, SlotHandle, TreiberSlab, TreiberSlabHeader, TreiberSlabRaw,
 };
 
-// OS-level primitives for SHM (requires std)
-#[cfg(all(feature = "std", unix))]
+// OS-level primitives for SHM
+#[cfg(unix)]
 pub mod doorbell;
-#[cfg(all(feature = "std", windows))]
+#[cfg(windows)]
 pub mod doorbell_windows;
-#[cfg(feature = "std")]
 pub mod futex;
-#[cfg(all(feature = "std", unix))]
+#[cfg(unix)]
 pub mod mmap;
-#[cfg(all(feature = "std", windows))]
+#[cfg(windows)]
 pub mod mmap_windows;
 
-#[cfg(all(feature = "std", unix))]
+#[cfg(unix)]
 pub use doorbell::{
     Doorbell, DoorbellHandle, SignalResult, clear_cloexec, close_peer_fd, set_nonblocking,
     validate_fd,
 };
-#[cfg(all(feature = "std", windows))]
+#[cfg(windows)]
 pub use doorbell_windows::{
     Doorbell, DoorbellHandle, SignalResult, close_handle, set_handle_inheritable, validate_handle,
 };
-#[cfg(feature = "std")]
 pub use futex::{futex_signal, futex_wait, futex_wait_async, futex_wait_async_ptr, futex_wake};
-#[cfg(all(feature = "std", unix))]
+#[cfg(unix)]
 pub use mmap::{FileCleanup, MmapRegion};
-#[cfg(all(feature = "std", windows))]
+#[cfg(windows)]
 pub use mmap_windows::{FileCleanup, MmapRegion};
 
 #[cfg(all(test, loom))]

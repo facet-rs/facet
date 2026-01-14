@@ -6,7 +6,7 @@
 
 Lock-free primitives for shared memory IPC.
 
-This crate provides `no_std`-compatible, lock-free data structures designed for use in shared memory contexts where you work with raw pointers to memory-mapped regions.
+This crate provides lock-free data structures designed for use in shared memory contexts where you work with raw pointers to memory-mapped regions.
 
 ## Primitives
 
@@ -23,9 +23,6 @@ Each primitive has two variants:
 
 ## Features
 
-- `no_std` by default
-- `alloc` - Enables `HeapRegion` for heap-backed testing
-- `std` - Enables std (implies `alloc`)
 - `loom` - Enables loom-based concurrency testing
 
 ## Loom Testing
