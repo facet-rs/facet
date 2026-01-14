@@ -1,0 +1,5 @@
+error[E0425]: cannot find value `missing_validator` in this scope
+ --> tests/ui/invariants_unknown_fn.rs:9:26
+  |
+9 |     #[facet(invariants = missing_validator)]
+  |                          ^^^^^^^^^^^^^^^^^ not found in this scope

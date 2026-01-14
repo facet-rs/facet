@@ -1,0 +1,5 @@
+error[E0433]: failed to resolve: use of undeclared type `MissingDefault`
+ --> tests/ui/default_unknown_expr.rs:9:23
+  |
+9 |     #[facet(default = MissingDefault::create())]
+  |                       ^^^^^^^^^^^^^^ use of undeclared type `MissingDefault`
