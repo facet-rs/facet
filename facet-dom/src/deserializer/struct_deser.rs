@@ -892,10 +892,9 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             self.started_elements_lists.insert(idx);
         }
         trace!("adding element to elements collection");
-        wip = wip
-            .begin_list_item()?
-            .deserialize_with(self.dom_deser)?
-            .end()?;
+        wip = wip.begin_list_item()?;
+        wip = self.deserialize_sequence_item(wip, info.field)?;
+        wip = wip.end()?;
         Ok(wip)
     }
 

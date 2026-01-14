@@ -157,6 +157,32 @@ struct Playlist {
 # assert_eq!(playlist.tracks, vec!["Song A", "Song B"]);
 ```
 
+### Lists of structs with `rename`
+
+When collecting struct items, use `rename` to specify the element name. The rename overrides
+the default singularized field name:
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug, PartialEq)]
+struct Person {
+    #[facet(xml::attribute)]
+    name: String,
+}
+
+#[derive(Facet, Debug)]
+struct Team {
+    // "individual" instead of default "member" (singularized from "members")
+    #[facet(xml::elements, rename = "individual")]
+    members: Vec<Person>,
+}
+# let xml_str = r#"<team><individual name="Alice"/><individual name="Bob"/></team>"#;
+# let team: Team = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(team.members.len(), 2);
+# assert_eq!(team.members[0].name, "Alice");
+```
+
 ### Collect text nodes with `xml::text`
 
 ```xml

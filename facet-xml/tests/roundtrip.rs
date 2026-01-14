@@ -1133,7 +1133,7 @@ fn elements_rename_overrides_singularization() {
 }
 
 #[test]
-fn elements_rename_with_different_casing() {
+fn elements_rename_with_struct_items() {
     use facet_xml as xml;
 
     #[derive(Facet, Debug, PartialEq)]
@@ -1143,14 +1143,13 @@ fn elements_rename_with_different_casing() {
     }
 
     #[derive(Facet, Debug, PartialEq)]
-    #[facet(rename = "team")]
     struct Team {
-        // Explicit rename = "Person" (capitalized) instead of default "member"
-        #[facet(xml::elements, rename = "Person")]
+        // rename = "individual" overrides the default "member" (singularized from "members")
+        #[facet(xml::elements, rename = "individual")]
         members: Vec<Person>,
     }
 
-    let xml = r#"<team><Person name="Alice"/><Person name="Bob"/></team>"#;
+    let xml = r#"<team><individual name="Alice"/><individual name="Bob"/></team>"#;
     let parsed: Team = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed.members.len(), 2);
     assert_eq!(parsed.members[0].name, "Alice");

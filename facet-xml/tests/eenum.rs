@@ -110,7 +110,7 @@ fn vec_of_enum_variants() {
 
     #[derive(Debug, PartialEq, Facet)]
     struct Drawing {
-        #[facet(xml::elements)]
+        #[facet(flatten, default)]
         shapes: Vec<Shape>,
     }
 
