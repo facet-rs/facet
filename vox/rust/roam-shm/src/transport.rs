@@ -685,35 +685,56 @@ mod async_transport {
 
         /// Receive a message with timeout.
         ///
-        /// Uses tokio's timeout and yields between poll attempts.
+        /// Waits on doorbell for host notifications, with a timeout.
         async fn recv_timeout(&mut self, timeout: Duration) -> io::Result<Option<Message>> {
-            let deadline = tokio::time::Instant::now() + timeout;
+            // First check if there's already a message waiting
+            match self.try_recv() {
+                Ok(msg) => return Ok(msg),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(e) => return Err(e),
+            }
 
-            loop {
-                match self.try_recv() {
-                    Ok(msg) => return Ok(msg),
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        if tokio::time::Instant::now() >= deadline {
-                            return Ok(None);
+            // Wait on doorbell with timeout
+            if let Some(doorbell) = &self.doorbell {
+                match tokio::time::timeout(timeout, doorbell.wait()).await {
+                    Ok(Ok(())) => {
+                        // Doorbell rang, try to receive
+                        match self.try_recv() {
+                            Ok(msg) => Ok(msg),
+                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
+                            Err(e) => Err(e),
                         }
-                        // Yield to the async runtime
-                        tokio::task::yield_now().await;
                     }
-                    Err(e) => return Err(e),
+                    Ok(Err(e)) => Err(e),
+                    Err(_timeout) => Ok(None),
+                }
+            } else {
+                // No doorbell - fall back to yielding (shouldn't happen in practice)
+                tokio::task::yield_now().await;
+                match self.try_recv() {
+                    Ok(msg) => Ok(msg),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
+                    Err(e) => Err(e),
                 }
             }
         }
 
-        /// Receive a message (async, yields between poll attempts).
+        /// Receive a message (waits on doorbell until one arrives or connection closes).
         async fn recv(&mut self) -> io::Result<Option<Message>> {
             loop {
+                // First check if there's already a message waiting
                 match self.try_recv() {
                     Ok(msg) => return Ok(msg),
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        // Yield to the async runtime to avoid blocking
-                        tokio::task::yield_now().await;
-                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
                     Err(e) => return Err(e),
+                }
+
+                // Wait on doorbell for host notification
+                if let Some(doorbell) = &self.doorbell {
+                    doorbell.wait().await?;
+                } else {
+                    // No doorbell - yield and retry (shouldn't happen in practice)
+                    tokio::task::yield_now().await;
                 }
             }
         }

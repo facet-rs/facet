@@ -852,7 +852,7 @@ where
                     self.handle_driver_message(msg).await?;
                 }
 
-                result = self.io.recv_timeout(Duration::from_secs(30)) => {
+                result = self.io.recv() => {
                     match self.handle_recv(result).await {
                         Ok(true) => continue,
                         Ok(false) => return Ok(()),

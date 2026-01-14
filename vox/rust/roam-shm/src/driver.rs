@@ -14,7 +14,6 @@
 //! shm[impl shm.flow.no-credit-message]
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use roam_session::{
     ChannelError, ChannelRegistry, ConnectionHandle, DriverMessage, Role, ServiceDispatcher,
@@ -161,8 +160,8 @@ where
                     self.handle_driver_message(msg).await?;
                 }
 
-                // Handle incoming messages from peer
-                result = MessageTransport::recv_timeout(&mut self.io, Duration::from_secs(30)) => {
+                // Handle incoming messages from peer (waits on doorbell, no timeout)
+                result = MessageTransport::recv(&mut self.io) => {
                     debug!("driver: received message from peer");
                     match self.handle_recv(result).await {
                         Ok(true) => {
