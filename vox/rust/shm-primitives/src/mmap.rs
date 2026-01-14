@@ -61,7 +61,11 @@ impl MmapRegion {
             .write(true)
             .create(true)
             .truncate(true)
-            .open(path)?;
+            .open(path)
+            .map_err(|e| {
+                let msg = std::format!("Failed to create SHM file at {}: {}", path.display(), e);
+                io::Error::new(e.kind(), msg)
+            })?;
 
         // 2. Set permissions to 0600 (owner read/write only)
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
@@ -111,7 +115,11 @@ impl MmapRegion {
     /// shm[impl shm.file.attach]
     pub fn attach(path: &Path) -> io::Result<Self> {
         // Open existing file for read/write
-        let file = OpenOptions::new().read(true).write(true).open(path)?;
+        let file = OpenOptions::new().read(true).write(true).open(path)
+            .map_err(|e| {
+                let msg = std::format!("Failed to open SHM file at {}: {}", path.display(), e);
+                io::Error::new(e.kind(), msg)
+            })?;
 
         // Get file size
         let metadata = file.metadata()?;

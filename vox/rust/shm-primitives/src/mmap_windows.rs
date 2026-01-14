@@ -88,7 +88,9 @@ impl MmapRegion {
             };
 
             if handle == INVALID_HANDLE_VALUE {
-                return Err(io::Error::last_os_error());
+                let err = io::Error::last_os_error();
+                let msg = std::format!("Failed to create SHM file at {}: {}", path.display(), err);
+                return Err(io::Error::new(err.kind(), msg));
             }
 
             // SAFETY: We just created this handle
@@ -99,7 +101,11 @@ impl MmapRegion {
                 .write(true)
                 .create(true)
                 .truncate(true)
-                .open(path)?
+                .open(path)
+                .map_err(|e| {
+                    let msg = std::format!("Failed to create SHM file at {}: {}", path.display(), e);
+                    io::Error::new(e.kind(), msg)
+                })?
         };
 
         // 2. Truncate to desired size
@@ -156,7 +162,11 @@ impl MmapRegion {
     /// shm[impl shm.file.attach]
     pub fn attach(path: &Path) -> io::Result<Self> {
         // Open existing file for read/write
-        let file = OpenOptions::new().read(true).write(true).open(path)?;
+        let file = OpenOptions::new().read(true).write(true).open(path)
+            .map_err(|e| {
+                let msg = std::format!("Failed to open SHM file at {}: {}", path.display(), e);
+                io::Error::new(e.kind(), msg)
+            })?;
 
         // Get file size
         let metadata = file.metadata()?;

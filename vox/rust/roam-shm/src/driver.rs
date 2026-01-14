@@ -464,13 +464,15 @@ where
             let _ = tx.send(Err(TransportError::ConnectionClosed));
         }
 
-        let _ = MessageTransport::send(
+        if let Err(_e) = MessageTransport::send(
             &mut self.io,
             &Message::Goodbye {
                 reason: rule_id.into(),
             },
         )
-        .await;
+        .await {
+            // Goodbye message failed - peer likely already disconnected
+        }
 
         ShmConnectionError::ProtocolViolation {
             rule_id,
