@@ -191,6 +191,69 @@ fn without_deny_unknown_fields_ignores_extra() {
 }
 
 // ============================================================================
+// Option<T> - optional fields
+// ============================================================================
+
+#[test]
+fn optional_attribute_present() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Element {
+        #[facet(xml::attribute)]
+        id: Option<String>,
+    }
+
+    let result: Element = facet_xml::from_str(r#"<element id="123"/>"#).unwrap();
+    assert_eq!(result.id, Some("123".to_string()));
+}
+
+#[test]
+fn optional_attribute_absent() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Element {
+        #[facet(xml::attribute)]
+        id: Option<String>,
+    }
+
+    let result: Element = facet_xml::from_str(r#"<element/>"#).unwrap();
+    assert_eq!(result.id, None);
+}
+
+#[test]
+fn optional_child_element_present() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        child: Option<String>,
+    }
+
+    let result: Container =
+        facet_xml::from_str("<container><child>value</child></container>").unwrap();
+    assert_eq!(result.child, Some("value".to_string()));
+}
+
+#[test]
+fn optional_child_element_absent() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        child: Option<String>,
+    }
+
+    let result: Container = facet_xml::from_str("<container></container>").unwrap();
+    assert_eq!(result.child, None);
+}
+
+#[test]
+fn empty_self_closing_element() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Empty {
+        #[facet(xml::attribute)]
+        flag: Option<String>,
+    }
+
+    let result: Empty = facet_xml::from_str("<empty/>").unwrap();
+    assert_eq!(result.flag, None);
+}
+
+// ============================================================================
 // lowerCamelCase default
 // ============================================================================
 
