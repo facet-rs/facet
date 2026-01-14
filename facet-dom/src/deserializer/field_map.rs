@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use facet_core::{Def, Field, StructKind, StructType, Type, UserType};
 
+use crate::naming::dom_key;
 use crate::tracing_macros::{trace, trace_span};
 
 /// Info about a field in a struct for deserialization purposes.
@@ -51,12 +52,12 @@ pub(crate) struct FlattenedEnumInfo {
 /// This separates "what fields does this struct have" from the parsing loop,
 /// making the code cleaner and avoiding repeated linear scans.
 pub(crate) struct StructFieldMap {
-    /// Fields marked with `xml::attribute`, keyed by name/rename.
+    /// Fields marked with `xml::attribute`, keyed by lowerCamelCase name or rename.
     /// Multiple fields can have the same name if they have different namespace constraints.
-    attribute_fields: HashMap<&'static str, Vec<FieldInfo>>,
-    /// Fields that are child elements, keyed by name/rename.
+    attribute_fields: HashMap<String, Vec<FieldInfo>>,
+    /// Fields that are child elements, keyed by lowerCamelCase name or rename.
     /// Multiple fields can have the same name if they have different namespace constraints.
-    element_fields: HashMap<&'static str, Vec<FieldInfo>>,
+    element_fields: HashMap<String, Vec<FieldInfo>>,
     /// The field marked with `xml::elements` (collects all unmatched children)
     pub elements_field: Option<FieldInfo>,
     /// The field marked with `xml::text` (collects text content)
@@ -67,11 +68,11 @@ pub(crate) struct StructFieldMap {
     /// Uses `<item>` elements matched by position.
     pub tuple_fields: Option<Vec<FieldInfo>>,
     /// Flattened child fields - child fields from flattened structs that appear as siblings.
-    /// Keyed by the child's element name (rename or field name).
-    flattened_children: HashMap<&'static str, Vec<FlattenedChildInfo>>,
+    /// Keyed by the child's lowerCamelCase element name or rename.
+    flattened_children: HashMap<String, Vec<FlattenedChildInfo>>,
     /// Flattened attribute fields - attribute fields from flattened structs.
-    /// Keyed by the attribute name (rename or field name).
-    flattened_attributes: HashMap<&'static str, Vec<FlattenedChildInfo>>,
+    /// Keyed by the lowerCamelCase attribute name or rename.
+    flattened_attributes: HashMap<String, Vec<FlattenedChildInfo>>,
     /// Flattened enum field - enum variants match against child elements directly.
     /// Only one flattened enum is supported per struct.
     pub flattened_enum: Option<FlattenedEnumInfo>,
@@ -94,14 +95,13 @@ impl StructFieldMap {
     pub fn new(struct_def: &'static StructType, ns_all: Option<&'static str>) -> Self {
         trace_span!("StructFieldMap::new");
 
-        let mut attribute_fields: HashMap<&'static str, Vec<FieldInfo>> = HashMap::new();
-        let mut element_fields: HashMap<&'static str, Vec<FieldInfo>> = HashMap::new();
+        let mut attribute_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
+        let mut element_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
         let mut elements_field = None;
         let mut text_field = None;
         let mut tag_field = None;
-        let mut flattened_children: HashMap<&'static str, Vec<FlattenedChildInfo>> = HashMap::new();
-        let mut flattened_attributes: HashMap<&'static str, Vec<FlattenedChildInfo>> =
-            HashMap::new();
+        let mut flattened_children: HashMap<String, Vec<FlattenedChildInfo>> = HashMap::new();
+        let mut flattened_attributes: HashMap<String, Vec<FlattenedChildInfo>> = HashMap::new();
         let mut flattened_enum: Option<FlattenedEnumInfo> = None;
         let mut flattened_maps: Vec<FieldInfo> = Vec::new();
         let mut flattened_attr_maps: Vec<FieldInfo> = Vec::new();
@@ -147,7 +147,8 @@ impl StructFieldMap {
                         let namespace: Option<&'static str> = child_field
                             .get_attr(Some("xml"), "ns")
                             .and_then(|attr| attr.get_as::<&str>().copied());
-                        let child_key = child_field.rename.unwrap_or(child_field.name);
+                        // Compute child key: rename (as-is) or lowerCamelCase(name)
+                        let child_key = dom_key(child_field.rename, child_field.name);
 
                         let child_info = FieldInfo {
                             idx: child_idx,
@@ -182,7 +183,7 @@ impl StructFieldMap {
                         if is_attribute {
                             // Register as flattened attribute
                             flattened_attributes
-                                .entry(child_key)
+                                .entry(child_key.clone())
                                 .or_default()
                                 .push(flattened_child.clone());
 
@@ -195,14 +196,14 @@ impl StructFieldMap {
                                     "registering flattened attribute alias"
                                 );
                                 flattened_attributes
-                                    .entry(alias)
+                                    .entry(alias.to_string())
                                     .or_default()
                                     .push(flattened_child);
                             }
                         } else {
                             // Register as flattened element
                             flattened_children
-                                .entry(child_key)
+                                .entry(child_key.clone())
                                 .or_default()
                                 .push(flattened_child.clone());
 
@@ -215,7 +216,7 @@ impl StructFieldMap {
                                     "registering flattened child alias"
                                 );
                                 flattened_children
-                                    .entry(alias)
+                                    .entry(alias.to_string())
                                     .or_default()
                                     .push(flattened_child);
                             }
@@ -255,13 +256,13 @@ impl StructFieldMap {
                 .and_then(|attr| attr.get_as::<&str>().copied());
 
             // For all fields (list or not):
-            //   - element name uses rename if present, else field name
+            //   - element name uses rename if present, else lowerCamelCase(field.name)
             // For list fields, this is the repeated item element name (flat, no wrapper)
-            let element_key = field.rename.unwrap_or(field.name);
+            let element_key = dom_key(field.rename, field.name);
 
             if field.is_attribute() {
-                // Attributes always use rename or field name directly
-                let attr_key = field.rename.unwrap_or(field.name);
+                // Attributes use rename or lowerCamelCase(field.name)
+                let attr_key = dom_key(field.rename, field.name);
                 trace!(idx, field_name = %field.name, key = %attr_key, namespace = ?namespace, "found attribute field");
                 let info = FieldInfo {
                     idx,
@@ -324,10 +325,13 @@ impl StructFieldMap {
                     .or_default()
                     .push(info.clone());
 
-                // Also register alias if present
+                // Also register alias if present (aliases are used as-is, no conversion)
                 if let Some(alias) = field.alias {
                     trace!(idx, field_name = %field.name, alias = %alias, "registering alias for element field");
-                    element_fields.entry(alias).or_default().push(info);
+                    element_fields
+                        .entry(alias.to_string())
+                        .or_default()
+                        .push(info);
                 }
             }
         }

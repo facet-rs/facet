@@ -26,6 +26,17 @@ pub fn to_element_name(name: &str) -> Cow<'_, str> {
     }
 }
 
+/// Compute the DOM key for a field/type: use explicit rename if present, otherwise lowerCamelCase.
+///
+/// This is the single source of truth for name conversion in facet-dom.
+#[inline]
+pub fn dom_key(rename: Option<&str>, name: &str) -> String {
+    match rename {
+        Some(r) => r.to_string(),
+        None => format!("{}", AsLowerCamelCase(name)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

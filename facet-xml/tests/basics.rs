@@ -313,6 +313,97 @@ fn rename_overrides_default() {
 }
 
 // ============================================================================
+// Field name lowerCamelCase conversion
+// ============================================================================
+
+#[test]
+fn field_name_snake_case_becomes_lower_camel() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Config {
+        user_name: String, // expects <userName>
+        max_retries: u32,  // expects <maxRetries>
+    }
+
+    let result: Config = facet_xml::from_str(
+        "<config><userName>alice</userName><maxRetries>3</maxRetries></config>",
+    )
+    .unwrap();
+    assert_eq!(result.user_name, "alice");
+    assert_eq!(result.max_retries, 3);
+}
+
+#[test]
+fn field_name_already_lower_camel_unchanged() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Config {
+        userName: String, // already lowerCamelCase
+    }
+
+    let result: Config = facet_xml::from_str("<config><userName>bob</userName></config>").unwrap();
+    assert_eq!(result.userName, "bob");
+}
+
+#[test]
+fn field_rename_overrides_conversion() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Config {
+        #[facet(rename = "USER_NAME")]
+        user_name: String, // expects <USER_NAME> not <userName>
+    }
+
+    let result: Config =
+        facet_xml::from_str("<config><USER_NAME>charlie</USER_NAME></config>").unwrap();
+    assert_eq!(result.user_name, "charlie");
+}
+
+#[test]
+fn attribute_name_snake_case_becomes_lower_camel() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Element {
+        #[facet(xml::attribute)]
+        data_id: String, // expects data-id? or dataId?
+        #[facet(xml::attribute)]
+        max_size: u32, // expects maxSize
+    }
+
+    let result: Element = facet_xml::from_str(r#"<element dataId="abc" maxSize="100"/>"#).unwrap();
+    assert_eq!(result.data_id, "abc");
+    assert_eq!(result.max_size, 100);
+}
+
+#[test]
+fn multi_word_struct_name_becomes_lower_camel() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct MyPlaylist {
+        name: String,
+    }
+
+    // MyPlaylist → <myPlaylist>
+    let result: MyPlaylist =
+        facet_xml::from_str("<myPlaylist><name>Favorites</name></myPlaylist>").unwrap();
+    assert_eq!(result.name, "Favorites");
+}
+
+#[test]
+fn serialization_uses_lower_camel_case() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Config {
+        user_name: String,
+        max_retries: u32,
+    }
+
+    let config = Config {
+        user_name: "alice".to_string(),
+        max_retries: 3,
+    };
+
+    let xml = facet_xml::to_string(&config).unwrap();
+    assert!(xml.contains("<config>"), "root should be <config>");
+    assert!(xml.contains("<userName>"), "field should be <userName>");
+    assert!(xml.contains("<maxRetries>"), "field should be <maxRetries>");
+}
+
+// ============================================================================
 // Vec default singularization
 // ============================================================================
 
