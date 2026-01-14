@@ -12,7 +12,7 @@ use facet_html::HtmlParser;
 use std::fs;
 use std::path::Path;
 
-use test_log::test;
+use facet_testhelpers::test;
 
 /// A minimal HTML document structure for parsing tests.
 #[derive(Debug, Facet)]

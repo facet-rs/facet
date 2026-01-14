@@ -33,9 +33,11 @@ facet-diff = { path = "../facet-diff" }
 facet-assert = { path = "../facet-assert" }
 facet-html-dom = { path = "../facet-html-dom" }
 facet-showcase = { path = "../facet-showcase" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+facet-dom = { path = "../facet-dom", features = ["tracing"] }
+facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 datatest-stable = "0.3"
 indoc.workspace = true
-test-log = { version = "0.2.19", features = ["trace"] }
 tracing = { workspace = true }
 
 [[test]]

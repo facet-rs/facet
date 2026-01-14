@@ -3,7 +3,7 @@
 //! Table with flatten nested in an array fails to deserialize.
 //! The error was: "must call begin_map() before begin_key()"
 
-use test_log::test;
+use facet_testhelpers::test;
 
 use std::collections::HashMap;
 

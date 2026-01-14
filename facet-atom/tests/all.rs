@@ -1,6 +1,6 @@
 use facet_atom::*;
+use facet_testhelpers::test;
 use indoc::indoc;
-use test_log::test;
 
 #[test]
 fn test_parse_basic_feed() {

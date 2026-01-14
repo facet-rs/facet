@@ -1,7 +1,7 @@
 // Test for issue #1445: facet-toml #[facet(flatten)] Value field fails when table has only known fields
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_value::Value;
-use test_log::test;
 
 #[derive(Facet, Debug, Clone)]
 pub struct Badge {

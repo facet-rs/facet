@@ -2,7 +2,7 @@
 // Run with: cargo +nightly miri test -p facet-html --test minimal_repro
 
 use facet_html_dom::Html;
-use test_log::test;
+use facet_testhelpers::test;
 
 // Issue #1568: Crash during error cleanup
 #[test]
