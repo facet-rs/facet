@@ -2065,6 +2065,7 @@ name = "roam-shm"
 version = "0.5.0"
 dependencies = [
  "facet-postcard",
+ "futures-util",
  "libc",
  "libproc",
  "roam",

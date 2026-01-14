@@ -470,7 +470,8 @@ where
                 reason: rule_id.into(),
             },
         )
-        .await {
+        .await
+        {
             // Goodbye message failed - peer likely already disconnected
         }
 
@@ -808,13 +809,52 @@ impl MultiPeerHostDriver {
     }
 
     /// Run the driver until all peers disconnect or an error occurs.
-    pub async fn run(mut self) -> Result<(), ShmConnectionError> {
+    pub async fn run(self) -> Result<(), ShmConnectionError> {
+        let result: Result<Result<(), ShmConnectionError>, Box<dyn std::any::Any + Send>> =
+            futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(self.run_inner()))
+                .await;
+
+        match result {
+            Ok(res) => {
+                if res.is_ok() {
+                    warn!("MultiPeerHostDriver returned normally without error");
+                } else {
+                    warn!(
+                        "MultiPeerHostDriver returned normally with error: {:?}",
+                        res
+                    );
+                }
+                res
+            }
+            Err(panic) => {
+                if let Some(s) = panic.downcast_ref::<String>() {
+                    error!("MultiPeerHostDriver panicked: {}", s);
+                } else if let Some(s) = panic.downcast_ref::<&str>() {
+                    error!("MultiPeerHostDriver panicked: {}", s);
+                } else {
+                    error!("MultiPeerHostDriver panicked with unknown payload");
+                }
+                std::panic::resume_unwind(panic);
+            }
+        }
+    }
+
+    async fn run_inner(mut self) -> Result<(), ShmConnectionError> {
         info!(
             "MultiPeerHostDriver::run() entered, peers={}",
             self.peers.len()
         );
 
+        struct NoisyGuard;
+        impl Drop for NoisyGuard {
+            fn drop(&mut self) {
+                tracing::warn!("the driver is dropping now children!");
+            }
+        }
+        let _guard = NoisyGuard;
+
         loop {
+            trace!("top of loop, peers={}", self.peers.len());
             tokio::select! {
                 // Control commands (add peers dynamically)
                 Some(cmd) = self.control_rx.recv() => {
