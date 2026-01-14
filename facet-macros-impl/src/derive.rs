@@ -49,8 +49,7 @@ pub fn facet_macros(input: TokenStream) -> TokenStream {
             if !plugins.is_empty() {
                 // Get the facet crate path from attributes
                 let facet_crate = {
-                    let mut display_name = String::new();
-                    let parsed_attrs = PAttrs::parse(attrs, &mut display_name);
+                    let parsed_attrs = PAttrs::parse(attrs);
                     parsed_attrs.facet_crate()
                 };
 

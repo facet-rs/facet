@@ -32,15 +32,15 @@ fn test_needs_conversion_owns() {
 
 #[test]
 fn test_dom_key_with_rename() {
-    // When name != effective_name, use effective_name as-is
-    let result = dom_key("my_field", "customName");
+    // When rename is Some, use it as-is
+    let result = dom_key("my_field", Some("customName"));
     assert_eq!(&*result, "customName");
     assert!(matches!(result, Cow::Borrowed(_)));
 }
 
 #[test]
 fn test_dom_key_without_rename() {
-    // When name == effective_name, apply lowerCamelCase
-    let result = dom_key("my_field", "my_field");
+    // When rename is None, apply lowerCamelCase to name
+    let result = dom_key("my_field", None);
     assert_eq!(&*result, "myField");
 }

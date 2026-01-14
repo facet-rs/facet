@@ -21,6 +21,12 @@ pub struct Variant {
     /// Name of the variant, e.g. `Foo` for `enum FooBar { Foo, Bar }`
     pub name: &'static str,
 
+    /// Renamed variant name for serialization/deserialization.
+    ///
+    /// Set by `#[facet(rename = "name")]` or container-level `#[facet(rename_all = "...")]`.
+    /// When present, serializers/deserializers should use this name instead of the variant's actual name.
+    pub rename: Option<&'static str>,
+
     /// Discriminant value (if available). Might fit in a u8, etc.
     pub discriminant: Option<i64>,
 
@@ -173,6 +179,7 @@ impl EnumRepr {
 #[derive(Clone, Copy, Debug)]
 pub struct VariantBuilder {
     name: &'static str,
+    rename: Option<&'static str>,
     discriminant: Option<i64>,
     attributes: &'static [VariantAttribute],
     data: StructType,
@@ -190,6 +197,7 @@ impl VariantBuilder {
     pub const fn new(name: &'static str, data: StructType) -> Self {
         Self {
             name,
+            rename: None,
             discriminant: None,
             attributes: &[],
             data,
@@ -226,6 +234,15 @@ impl VariantBuilder {
         )
     }
 
+    /// Sets the renamed name for this variant.
+    ///
+    /// Defaults to `None` if not called.
+    #[inline]
+    pub const fn rename(mut self, rename: &'static str) -> Self {
+        self.rename = Some(rename);
+        self
+    }
+
     /// Sets the discriminant value for this variant.
     ///
     /// Defaults to `None` if not called.
@@ -258,6 +275,7 @@ impl VariantBuilder {
     pub const fn build(self) -> Variant {
         Variant {
             name: self.name,
+            rename: self.rename,
             discriminant: self.discriminant,
             attributes: self.attributes,
             data: self.data,

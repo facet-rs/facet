@@ -801,7 +801,7 @@ pub(crate) fn gen_field_from_pfield(
     facet_crate: &TokenStream,
     skip_all_unless_truthy: bool,
 ) -> TokenStream {
-    let field_name_effective = &field.name.effective;
+    let field_name = &field.name.original;
     let field_name_raw = &field.name.raw;
     let field_type = &field.ty;
 
@@ -843,7 +843,6 @@ pub(crate) fn gen_field_from_pfield(
     }
 
     let mut flags: Vec<TokenStream> = Vec::new();
-    let mut rename_value: Option<TokenStream> = None;
     let mut alias_value: Option<TokenStream> = None;
     let mut default_value: Option<DefaultKind> = None;
     let mut skip_serializing_if_value: Option<TokenStream> = None;
@@ -904,12 +903,7 @@ pub(crate) fn gen_field_from_pfield(
                     let kind_str = args_str.trim_start_matches('=').trim();
                     metadata_value = Some(kind_str.to_string());
                 }
-                // Field attrs - store in dedicated field, don't add to attribute_list
-                "rename" => {
-                    // Extract the string literal from args
-                    let args = &attr.args;
-                    rename_value = Some(quote! { #args });
-                }
+                // Note: "rename" is handled via field.name.rename (set by PName::new)
                 "alias" => {
                     // Extract the string literal from args
                     let args = &attr.args;
@@ -1103,8 +1097,8 @@ pub(crate) fn gen_field_from_pfield(
         quote! { #first #(.union(#rest))* }
     };
 
-    // Rename: Option
-    let rename_expr = match &rename_value {
+    // Rename: Option - from field.name.rename (set by PName::new from rename attr or rename_all rule)
+    let rename_expr = match &field.name.rename {
         Some(rename) => quote! { ::core::option::Option::Some(#rename) },
         None => quote! { ::core::option::Option::None },
     };
@@ -1235,7 +1229,7 @@ pub(crate) fn gen_field_from_pfield(
     // Direct Field struct literal
     quote! {
         𝟋Fld {
-            name: #field_name_effective,
+            name: #field_name,
             shape: #shape_ref_expr,
             offset: #final_offset,
             flags: #flags_expr,

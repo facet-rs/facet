@@ -409,7 +409,7 @@ impl StructFieldMap {
     ///
     /// When multiple fields have the same name, prefers exact namespace match over wildcard.
     pub fn find_attribute(&self, name: &str, namespace: Option<&str>) -> Option<&FieldInfo> {
-        let result = self.attribute_fields.get(name).and_then(|fields| {
+        self.attribute_fields.get(name).and_then(|fields| {
             // First try to find an exact namespace match
             let exact_match = fields
                 .iter()
@@ -419,8 +419,7 @@ impl StructFieldMap {
             }
             // Fall back to a field with no namespace constraint
             fields.iter().find(|info| info.namespace.is_none())
-        });
-        result
+        })
     }
 
     /// Find an element field by tag name and namespace.
@@ -431,7 +430,7 @@ impl StructFieldMap {
     ///
     /// When multiple fields have the same name, prefers exact namespace match over wildcard.
     pub fn find_element(&self, tag: &str, namespace: Option<&str>) -> Option<&FieldInfo> {
-        let result = self.element_fields.get(tag).and_then(|fields| {
+        self.element_fields.get(tag).and_then(|fields| {
             // First try to find an exact namespace match
             let exact_match = fields
                 .iter()
@@ -441,8 +440,7 @@ impl StructFieldMap {
             }
             // Fall back to a field with no namespace constraint
             fields.iter().find(|info| info.namespace.is_none())
-        });
-        result
+        })
     }
 
     /// Find a flattened child field by tag name and namespace.
@@ -453,7 +451,7 @@ impl StructFieldMap {
         tag: &str,
         namespace: Option<&str>,
     ) -> Option<&FlattenedChildInfo> {
-        let result = self.flattened_children.get(tag).and_then(|children| {
+        self.flattened_children.get(tag).and_then(|children| {
             // First try to find an exact namespace match
             let exact_match = children.iter().find(|info| {
                 info.child_info.namespace.is_some() && info.child_info.namespace == namespace
@@ -465,8 +463,7 @@ impl StructFieldMap {
             children
                 .iter()
                 .find(|info| info.child_info.namespace.is_none())
-        });
-        result
+        })
     }
 
     /// Find a flattened attribute field by name and namespace.
@@ -477,7 +474,7 @@ impl StructFieldMap {
         name: &str,
         namespace: Option<&str>,
     ) -> Option<&FlattenedChildInfo> {
-        let result = self.flattened_attributes.get(name).and_then(|children| {
+        self.flattened_attributes.get(name).and_then(|children| {
             // First try to find an exact namespace match
             let exact_match = children.iter().find(|info| {
                 info.child_info.namespace.is_some() && info.child_info.namespace == namespace
@@ -489,8 +486,7 @@ impl StructFieldMap {
             children
                 .iter()
                 .find(|info| info.child_info.namespace.is_none())
-        });
-        result
+        })
     }
 
     /// Get a tuple field by position index.

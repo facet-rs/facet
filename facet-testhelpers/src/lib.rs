@@ -120,10 +120,12 @@ pub fn setup() {
             eprintln!("   More info: https://nexte.st");
             eprintln!();
         });
+        #[allow(clippy::let_unit_value)]
         let _ = *NEXTEST_WARNING;
     }
 
     // Ensure the subscriber is initialized
+    #[allow(clippy::let_unit_value)]
     let _ = *SUBSCRIBER_INIT;
 }
 
