@@ -2,9 +2,38 @@
 
 XML serialization and deserialization for Rust using the facet reflection framework.
 
+The XML serializer and deserializer assumes every node is `lowerCamelCase`, unless explicitly renamed.
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug)]
+struct Banana {
+    taste: String,
+}
+# let xml_str = "<banana><taste>sweet</taste></banana>";
+# let b: Banana = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(b.taste, "sweet");
+```
+
+Use `rename` to override:
+
+```rust
+# use facet::Facet;
+# use facet_xml as xml;
+#[derive(Facet, Debug)]
+#[facet(rename = "Banana")]
+struct Banana {
+    taste: String,
+}
+# let xml_str = "<Banana><taste>sweet</taste></Banana>";
+# let b: Banana = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(b.taste, "sweet");
+```
+
 ## Child Elements
 
-By default, struct and field names are converted to `lowerCamelCase` and matched against child elements.
+By default, fields are matched against child elements with the same name (in `lowerCamelCase`).
 
 ```xml
 <person>
