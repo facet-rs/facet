@@ -4,7 +4,7 @@ XML serialization and deserialization for Rust using the facet reflection framew
 
 ## Child Elements
 
-By default, fields are matched against child elements with the same name.
+By default, struct and field names are converted to `lowerCamelCase` and matched against child elements.
 
 ```xml
 <person>
@@ -17,7 +17,6 @@ By default, fields are matched against child elements with the same name.
 # use facet::Facet;
 # use facet_xml as xml;
 #[derive(Facet, Debug)]
-#[facet(rename = "person")]
 struct Person {
     name: String, // captures "Ella"
     age: u32,     // captures 42
@@ -30,7 +29,7 @@ struct Person {
 
 ## Attributes
 
-But you can also tag them as attributes:
+Use `xml::attribute` to capture XML attributes:
 
 ```xml
 <link href="/home">Home</link>
@@ -40,7 +39,6 @@ But you can also tag them as attributes:
 # use facet::Facet;
 # use facet_xml as xml;
 #[derive(Facet, Debug)]
-#[facet(rename = "link")]
 struct Link {
     #[facet(xml::attribute)]
     href: String,      // captures "/home"
@@ -56,7 +54,7 @@ struct Link {
 
 ## Text
 
-Or as text:
+Use `xml::text` to capture text content:
 
 ```xml
 <name>Ella</name>
@@ -66,7 +64,6 @@ Or as text:
 # use facet::Facet;
 # use facet_xml as xml;
 #[derive(Facet, Debug)]
-#[facet(rename = "name")]
 struct Name {
     #[facet(xml::text)]
     value: String, // captures "Ella"
@@ -75,8 +72,6 @@ struct Name {
 # let name: Name = facet_xml::from_str(xml_str).unwrap();
 # assert_eq!(name.value, "Ella");
 ```
-
-The `#[facet(rename = "name")]` makes the struct match the `<name>` element, and `#[facet(xml::text)]` captures the text content inside.
 
 ## Lists
 
@@ -95,7 +90,6 @@ For list types (`Vec`, etc.), facet-xml collects items. By default, items are ch
 # use facet::Facet;
 # use facet_xml as xml;
 #[derive(Facet, Debug)]
-#[facet(rename = "playlist")]
 struct Playlist {
     tracks: Vec<String>, // "tracks" → expects <track> elements
 }
@@ -110,7 +104,6 @@ struct Playlist {
 # use facet::Facet;
 # use facet_xml as xml;
 #[derive(Facet, Debug)]
-#[facet(rename = "playlist")]
 struct Playlist {
     #[facet(rename = "song")]
     tracks: Vec<String>, // expects <song> instead of <track>
@@ -126,7 +119,6 @@ struct Playlist {
 # use facet::Facet;
 # use facet_xml as xml;
 #[derive(Facet, Debug)]
-#[facet(rename = "playlist")]
 struct Playlist {
     #[facet(xml::elements)]
     tracks: Vec<String>,
@@ -146,7 +138,6 @@ struct Playlist {
 # use facet::Facet;
 # use facet_xml as xml;
 #[derive(Facet, Debug)]
-#[facet(rename = "message")]
 struct Message {
     #[facet(xml::text)]
     parts: Vec<String>, // collects text nodes: ["Hello ", "!"]
