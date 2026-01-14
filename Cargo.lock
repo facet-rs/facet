@@ -1763,6 +1763,7 @@ dependencies = [
  "facet-showcase",
  "facet-testhelpers",
  "facet-value",
+ "facet-xml",
  "facet-xml-diff",
  "insta",
  "log",

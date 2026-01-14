@@ -334,10 +334,11 @@ impl<'input> Context<'input> {
                             };
 
                             let flag = key.s;
-                            let snek = key.s.to_snake_case();
-                            tracing::trace!("Looking up long flag {flag} (field name: {snek})");
+                            tracing::trace!("Looking up long flag {flag}");
                             let fields = self.fields(&p)?;
-                            let Some(field_index) = p.field_index(&snek) else {
+                            let Some(field_index) =
+                                find_field_index_by_effective_name(fields, flag)
+                            else {
                                 return Err(ArgsErrorKind::UnknownLongFlag {
                                     flag: flag.to_string(),
                                     fields,
@@ -346,10 +347,11 @@ impl<'input> Context<'input> {
                             p = self.handle_field(p, field_index, Some(value))?;
                         }
                         None => {
-                            let snek = flag.to_snake_case();
-                            tracing::trace!("Looking up long flag {flag} (field name: {snek})");
+                            tracing::trace!("Looking up long flag {flag}");
                             let fields = self.fields(&p)?;
-                            let Some(field_index) = p.field_index(&snek) else {
+                            let Some(field_index) =
+                                find_field_index_by_effective_name(fields, flag)
+                            else {
                                 return Err(ArgsErrorKind::UnknownLongFlag {
                                     flag: flag.to_string(),
                                     fields,
@@ -516,11 +518,10 @@ impl<'input> Context<'input> {
                             let key = tokens.next().unwrap();
                             let value = tokens.next().unwrap();
 
-                            let snek = key.s.to_snake_case();
-                            tracing::trace!(
-                                "Looking up long flag {flag} in variant (field name: {snek})"
-                            );
-                            let Some(field_index) = fields.iter().position(|f| f.name == snek)
+                            let flag = key.s;
+                            tracing::trace!("Looking up long flag {flag} in variant");
+                            let Some(field_index) =
+                                find_field_index_by_effective_name(fields, flag)
                             else {
                                 return Err(ArgsErrorKind::UnknownLongFlag {
                                     flag: flag.to_string(),
@@ -530,11 +531,9 @@ impl<'input> Context<'input> {
                             p = self.handle_field(p, field_index, Some(value))?;
                         }
                         None => {
-                            let snek = flag.to_snake_case();
-                            tracing::trace!(
-                                "Looking up long flag {flag} in variant (field name: {snek})"
-                            );
-                            let Some(field_index) = fields.iter().position(|f| f.name == snek)
+                            tracing::trace!("Looking up long flag {flag} in variant");
+                            let Some(field_index) =
+                                find_field_index_by_effective_name(fields, flag)
                             else {
                                 return Err(ArgsErrorKind::UnknownLongFlag {
                                     flag: flag.to_string(),
@@ -759,8 +758,9 @@ impl<'input> Context<'input> {
                             let key = tokens.next().unwrap();
                             let value = tokens.next().unwrap();
 
-                            let snek = key.s.to_snake_case();
-                            let Some(field_index) = fields.iter().position(|f| f.name == snek)
+                            let flag = key.s;
+                            let Some(field_index) =
+                                find_field_index_by_effective_name(fields, flag)
                             else {
                                 return Err(ArgsErrorKind::UnknownLongFlag {
                                     flag: flag.to_string(),
@@ -770,8 +770,8 @@ impl<'input> Context<'input> {
                             p = self.handle_field(p, field_index, Some(value))?;
                         }
                         None => {
-                            let snek = flag.to_snake_case();
-                            let Some(field_index) = fields.iter().position(|f| f.name == snek)
+                            let Some(field_index) =
+                                find_field_index_by_effective_name(fields, flag)
                             else {
                                 return Err(ArgsErrorKind::UnknownLongFlag {
                                     flag: flag.to_string(),
@@ -1198,8 +1198,9 @@ fn find_field_index_with_short_char(fields: &'static [Field], short: &str) -> Op
                 match opt_char {
                     Some(c) => *c == short_char,
                     None => {
-                        // No explicit short specified, use first char of field name
-                        f.name.starts_with(short_char)
+                        // No explicit short specified, use first char of effective name
+                        // (effective_name returns rename if set, otherwise the field name)
+                        f.effective_name().starts_with(short_char)
                     }
                 }
             } else {
@@ -1209,4 +1210,13 @@ fn find_field_index_with_short_char(fields: &'static [Field], short: &str) -> Op
             false
         }
     })
+}
+
+/// Find the field index by matching against the effective name (respects rename attribute).
+/// The `flag` parameter should be a kebab-case CLI flag name.
+fn find_field_index_by_effective_name(fields: &'static [Field], flag: &str) -> Option<usize> {
+    let snek = flag.to_snake_case();
+    fields
+        .iter()
+        .position(|f| f.effective_name().to_snake_case() == snek)
 }
