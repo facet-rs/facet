@@ -76,6 +76,24 @@ impl SlotPool {
         (ptr.load(Ordering::Acquire) & mask) != 0
     }
 
+    /// Count how many slots are currently allocated (not free).
+    pub(crate) fn allocated_count(&self) -> u32 {
+        let mut free_count = 0u32;
+        for word_index in 0..self.bitmap_words {
+            let word_ptr = unsafe { &*self.bitmap_ptr().add(word_index) };
+            let word = word_ptr.load(Ordering::Acquire);
+            free_count += word.count_ones();
+        }
+        // Excess bits in the last word are cleared to 0 during init,
+        // so count_ones already excludes them. No adjustment needed.
+        self.slots_per_guest.saturating_sub(free_count)
+    }
+
+    /// Get total number of slots in this pool.
+    pub(crate) fn total_slots(&self) -> u32 {
+        self.slots_per_guest
+    }
+
     pub(crate) fn is_reclaimed(&self, handle: SlotHandle) -> bool {
         let Some(gen_ptr) = self.generation_ptr(handle.index) else {
             return true;

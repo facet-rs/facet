@@ -635,6 +635,13 @@ impl ShmHost {
                     // shm[impl shm.payload.slot]
                     let Some(handle) = self.host_slots.try_alloc() else {
                         // shm[impl shm.slot.exhaustion]
+                        warn!(
+                            allocated = self.host_slots.allocated_count(),
+                            total = self.host_slots.total_slots(),
+                            payload_len = data.len(),
+                            ?peer_id,
+                            "slot exhaustion: all host slots are in use"
+                        );
                         return Err(SendError::SlotExhausted);
                     };
 
@@ -682,6 +689,13 @@ impl ShmHost {
                     // shm[impl shm.payload.slot]
                     let Some(handle) = self.host_slots.try_alloc() else {
                         // shm[impl shm.slot.exhaustion]
+                        warn!(
+                            allocated = self.host_slots.allocated_count(),
+                            total = self.host_slots.total_slots(),
+                            payload_len = data.len(),
+                            ?peer_id,
+                            "slot exhaustion: all host slots are in use"
+                        );
                         return Err(SendError::SlotExhausted);
                     };
 
