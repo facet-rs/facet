@@ -189,12 +189,19 @@ where
                     0
                 } else {
                     // For tagged enums, match the element tag against variant names.
-                    // The variant name already has renaming applied (via #[facet(rename = "...")]
-                    // or #[facet(rename_all = "...")]), so we compare directly.
+                    // Compute effective element name: use rename attribute if present,
+                    // otherwise convert to lowerCamelCase.
                     enum_def
                         .variants
                         .iter()
-                        .position(|v| v.name == tag)
+                        .position(|v| {
+                            let effective_name: Cow<'_, str> = v
+                                .get_builtin_attr("rename")
+                                .and_then(|a| a.get_as::<&str>().copied())
+                                .map(Cow::Borrowed)
+                                .unwrap_or_else(|| to_element_name(v.name));
+                            effective_name == tag
+                        })
                         .or_else(|| enum_def.variants.iter().position(|v| v.is_custom_element()))
                         .ok_or_else(|| DomDeserializeError::UnknownElement {
                             tag: tag.to_string(),

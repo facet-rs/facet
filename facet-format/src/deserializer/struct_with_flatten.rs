@@ -234,10 +234,10 @@ where
 
         // Initialize catch-all map/value if it was never touched (no unknown fields)
         // This ensures the field is initialized even when empty
-        if let Some(catch_all_info) = resolution.catch_all_map(FieldCategory::Flat) {
-            if !fields_set.contains(catch_all_info.serialized_name) {
-                wip = self.initialize_empty_catch_all(wip, catch_all_info)?;
-            }
+        if let Some(catch_all_info) = resolution.catch_all_map(FieldCategory::Flat)
+            && !fields_set.contains(catch_all_info.serialized_name)
+        {
+            wip = self.initialize_empty_catch_all(wip, catch_all_info)?;
         }
 
         // Defaults for missing fields are applied automatically by facet-reflect's
