@@ -110,7 +110,7 @@ fn enum_complex() {
 #[test]
 fn enum_unit_variant() {
     // In XML, unit variants are represented as empty elements
-    // The element name IS the variant discriminant
+    // The element name is the variant name converted to lowerCamelCase
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
     enum Status {
@@ -118,7 +118,8 @@ fn enum_unit_variant() {
         Inactive,
     }
 
-    let xml = r#"<Active/>"#;
+    // Variant "Active" becomes element <active> (lowerCamelCase convention)
+    let xml = r#"<active/>"#;
     let parsed: Status = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed, Status::Active);
 }
@@ -126,7 +127,7 @@ fn enum_unit_variant() {
 #[test]
 fn enum_internally_tagged() {
     // In XML, internally-tagged enums are serialized the same as externally-tagged:
-    // the element name IS the variant discriminant. The tag attribute is ignored.
+    // the element name is the variant name in lowerCamelCase. The tag attribute is ignored.
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
     #[facet(tag = "type")]
@@ -135,7 +136,8 @@ fn enum_internally_tagged() {
         Rectangle { width: f64, height: f64 },
     }
 
-    let xml = r#"<Circle><radius>5.0</radius></Circle>"#;
+    // "Circle" becomes <circle> (lowerCamelCase)
+    let xml = r#"<circle><radius>5.0</radius></circle>"#;
     let parsed: Shape = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed, Shape::Circle { radius: 5.0 });
 }
@@ -143,7 +145,7 @@ fn enum_internally_tagged() {
 #[test]
 fn enum_adjacently_tagged() {
     // In XML, adjacently-tagged enums are serialized the same as externally-tagged:
-    // the element name IS the variant discriminant. The tag/content attributes are ignored.
+    // the element name is the variant name in lowerCamelCase. The tag/content attributes are ignored.
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
     #[facet(tag = "t", content = "c")]
@@ -152,7 +154,8 @@ fn enum_adjacently_tagged() {
         Count(u32),
     }
 
-    let xml = r#"<Message>hello</Message>"#;
+    // "Message" becomes <message> (lowerCamelCase)
+    let xml = r#"<message>hello</message>"#;
     let parsed: Message = facet_xml::from_str(xml).unwrap();
     assert_eq!(parsed, Message::Message("hello".into()));
 }

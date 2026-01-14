@@ -43,7 +43,8 @@ pub use facet_dom::DomSerializeError as SerializeError;
 ///     age: u32,
 /// }
 ///
-/// let xml = r#"<Person><name>Alice</name><age>30</age></Person>"#;
+/// // "Person" becomes <person> (lowerCamelCase convention)
+/// let xml = r#"<person><name>Alice</name><age>30</age></person>"#;
 /// let person: Person = from_str(xml).unwrap();
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
@@ -73,7 +74,8 @@ where
 ///     age: u32,
 /// }
 ///
-/// let xml = b"<Person><name>Alice</name><age>30</age></Person>";
+/// // "Person" becomes <person> (lowerCamelCase convention)
+/// let xml = b"<person><name>Alice</name><age>30</age></person>";
 /// let person: Person = from_slice(xml).unwrap();
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);

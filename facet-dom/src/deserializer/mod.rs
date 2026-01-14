@@ -63,7 +63,7 @@ where
     /// including the closing `NodeEnd` for struct types.
     pub fn deserialize_into(
         &mut self,
-        wip: Partial<'de, BORROW>,
+        mut wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let shape = wip.shape();
         use owo_colors::OwoColorize;
@@ -71,6 +71,20 @@ where
         let module = module_path.dimmed();
         let name = shape.cyan();
         trace!(into = %format_args!("{module}::{name}"));
+
+        // Handle transparent wrappers (like NonZero, newtype structs with #[facet(transparent)])
+        // Collections (List/Map/Set/Array) have .inner for variance but shouldn't use this path
+        if shape.inner.is_some()
+            && !matches!(
+                &shape.def,
+                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+            )
+        {
+            wip = wip.begin_inner().map_err(DomDeserializeError::Reflect)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end().map_err(DomDeserializeError::Reflect)?;
+            return Ok(wip);
+        }
 
         match &shape.ty {
             Type::User(UserType::Struct(_)) => self.deserialize_struct(wip),
@@ -234,12 +248,21 @@ where
                     }
                     StructKind::Struct | StructKind::Tuple => {
                         // Struct/tuple variant: deserialize using the variant's data as a StructType
-                        // Compute effective element name: use rename if present, else lowerCamelCase
-                        let expected_name: Cow<'_, str> = variant
-                            .get_builtin_attr("rename")
-                            .and_then(|a| a.get_as::<&str>().copied())
-                            .map(Cow::Borrowed)
-                            .unwrap_or_else(|| to_element_name(variant.name));
+                        // For untagged enums, use the enum's rename as element name (already matched above)
+                        // For tagged enums, use variant rename if present, else lowerCamelCase(variant.name)
+                        let expected_name: Cow<'_, str> = if is_untagged {
+                            // For untagged, the element name is the enum's name/rename
+                            wip.shape()
+                                .get_builtin_attr_value::<&str>("rename")
+                                .map(Cow::Borrowed)
+                                .unwrap_or_else(|| to_element_name(wip.shape().type_identifier))
+                        } else {
+                            variant
+                                .get_builtin_attr("rename")
+                                .and_then(|a| a.get_as::<&str>().copied())
+                                .map(Cow::Borrowed)
+                                .unwrap_or_else(|| to_element_name(variant.name))
+                        };
                         wip = self.deserialize_struct_innards(wip, &variant.data, expected_name)?;
                     }
                 }

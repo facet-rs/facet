@@ -192,7 +192,8 @@ impl SerializeOptions {
     /// let point = Point { x: 1.5, y: 2.0 };
     /// let options = SerializeOptions::new().float_formatter(fmt_g);
     /// let xml = to_string_with_options(&point, &options).unwrap();
-    /// assert_eq!(xml, r#"<Point x="1.5" y="2"></Point>"#);
+    /// // "Point" becomes <point> (lowerCamelCase convention)
+    /// assert_eq!(xml, r#"<point x="1.5" y="2"></point>"#);
     /// ```
     pub fn float_formatter(mut self, formatter: FloatFormatter) -> Self {
         self.float_formatter = Some(formatter);

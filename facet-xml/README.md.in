@@ -236,3 +236,122 @@ struct Record {
 # let record: Record = facet_xml::from_str(xml_str).unwrap();
 # assert_eq!(record.data, (42, "hello".to_string(), true));
 ```
+
+## Enums
+
+In XML, enums are always treated as **externally tagged** - the element name *is* the variant
+discriminator. This is natural for XML because the element structure already provides tagging.
+
+Any `#[facet(tag = "...")]` or `#[facet(content = "...")]` attributes are ignored for XML
+serialization. These attributes are useful for JSON (which needs explicit tag fields), but
+XML doesn't need them since element names serve this purpose.
+
+### Unit variants
+
+Unit variants become empty elements:
+
+```rust
+# use facet::Facet;
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum Status {
+    Active,
+    Inactive,
+}
+// "Active" becomes <active> (lowerCamelCase)
+# let xml_str = "<active/>";
+# let status: Status = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(status, Status::Active);
+```
+
+### Newtype variants
+
+Newtype variants (single unnamed field) wrap their content:
+
+```rust
+# use facet::Facet;
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum Value {
+    Text(String),
+    Number(i32),
+}
+// <text>hello</text> deserializes to Value::Text("hello")
+# let xml_str = "<text>hello</text>";
+# let value: Value = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(value, Value::Text("hello".into()));
+```
+
+### Struct variants
+
+Struct variants have child elements for their fields:
+
+```rust
+# use facet::Facet;
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum Shape {
+    Circle { radius: f64 },
+    Rectangle { width: f64, height: f64 },
+}
+// <circle><radius>5.0</radius></circle>
+# let xml_str = "<circle><radius>5.0</radius></circle>";
+# let shape: Shape = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(shape, Shape::Circle { radius: 5.0 });
+```
+
+### Variant renaming
+
+Use `#[facet(rename = "...")]` on variants to override the element name:
+
+```rust
+# use facet::Facet;
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum Status {
+    #[facet(rename = "on")]
+    Active,
+    #[facet(rename = "off")]
+    Inactive,
+}
+# let xml_str = "<on/>";
+# let status: Status = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(status, Status::Active);
+```
+
+### Internally/adjacently tagged enums
+
+Attributes like `#[facet(tag = "type")]` or `#[facet(tag = "t", content = "c")]` are
+**ignored** for XML. They exist for JSON compatibility but don't affect XML serialization:
+
+```rust
+# use facet::Facet;
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+#[facet(tag = "type")] // ignored for XML!
+enum Shape {
+    Circle { radius: f64 },
+}
+// Still uses element name as discriminator
+# let xml_str = "<circle><radius>3.0</radius></circle>";
+# let shape: Shape = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(shape, Shape::Circle { radius: 3.0 });
+```
+
+### Untagged enums
+
+Untagged enums (`#[facet(untagged)]`) use the enum's own name as the element, not a variant name.
+The content determines which variant is selected:
+
+```rust
+# use facet::Facet;
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+#[facet(untagged, rename = "point")]
+enum Point {
+    Coords { x: i32, y: i32 },
+}
+# let xml_str = "<point><x>10</x><y>20</y></point>";
+# let point: Point = facet_xml::from_str(xml_str).unwrap();
+# assert_eq!(point, Point::Coords { x: 10, y: 20 });
+```
