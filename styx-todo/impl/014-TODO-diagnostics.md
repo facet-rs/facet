@@ -159,13 +159,11 @@ impl From<&BuildError> for Diagnostic {
 
 ### 2. Deserializer errors (facet-styx)
 
-This is harder - facet-format errors don't carry spans. Options:
+Good news: `StyxError` already has `span: Option<Span>` and `StyxParser` tracks
+`current_span`. The infrastructure is there, we just need to:
 
-1. **Wrap facet-format**: Add span tracking to our FormatParser impl
-2. **Post-hoc span lookup**: Match error path back to CST/tree nodes
-3. **Fork facet-format**: Add span support upstream
-
-Recommended: Option 1 - track current span in `StyxParser` and attach to errors.
+1. Add a method to `StyxError` that renders with ariadne given source text
+2. Wire that up in the CLI
 
 ### 3. Schema validation errors (styx-schema)
 
