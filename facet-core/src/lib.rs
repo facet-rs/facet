@@ -102,6 +102,8 @@ pub mod 𝟋 {
     pub use crate::VarianceDesc as 𝟋VncD;
     pub use crate::Variant as 𝟋Var;
     pub use crate::VariantBuilder as 𝟋VarB;
+    pub use ::core::option::Option::None as 𝟋None;
+    pub use ::core::option::Option::Some as 𝟋Some;
 
     /// Helper to get shape of a type as a function - monomorphized per type
     pub use crate::shape_of as 𝟋shp;

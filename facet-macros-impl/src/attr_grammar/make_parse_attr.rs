@@ -1019,9 +1019,9 @@ impl ParsedGrammar {
         let ns_str = self.ns.as_deref().unwrap_or("");
         // Generate the namespace expression: None for builtins, Some("ns") for namespaced
         let ns_expr = if ns_str.is_empty() {
-            quote! { ::core::option::Option::None }
+            quote! { 𝟋None }
         } else {
-            quote! { ::core::option::Option::Some(#ns_str) }
+            quote! { 𝟋Some(#ns_str) }
         };
 
         // Build a map from struct name to struct definition for O(1) lookup
@@ -1338,7 +1338,7 @@ impl ParsedGrammar {
                                         // SAFETY: Static const block pointer is valid for 'static
                                         data: unsafe { ::facet::OxRef::new(
                                             ::facet::PtrConst::new_sized(&const {
-                                                ::core::option::Option::Some(
+                                                𝟋Some(
                                                     (|__ptr: ::facet::PtrUninit| unsafe {
                                                         __ptr.put(<$ty as ::core::default::Default>::default())
                                                     }) as ::facet::DefaultInPlaceFn
@@ -1378,7 +1378,7 @@ impl ParsedGrammar {
                                         // SAFETY: Static const block pointer is valid for 'static
                                         data: unsafe { ::facet::OxRef::new(
                                             ::facet::PtrConst::new_sized(&const {
-                                                ::core::option::Option::Some(
+                                                𝟋Some(
                                                     (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
                                                         as ::facet::DefaultInPlaceFn
                                                 )
@@ -1395,7 +1395,7 @@ impl ParsedGrammar {
                                         // SAFETY: Static const block pointer is valid for 'static
                                         data: unsafe { ::facet::OxRef::new(
                                             ::facet::PtrConst::new_sized(&const {
-                                                ::core::option::Option::Some(
+                                                𝟋Some(
                                                     (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
                                                         as ::facet::DefaultInPlaceFn
                                                 )
@@ -1533,32 +1533,32 @@ impl ParsedGrammar {
                         quote! {
                             // Field-level: no args → None
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::None);
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋None);
                                 ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Field-level with `= "value"` → Some(value)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
                                 ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Field-level with just expr → Some(value)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
                                 ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Container-level: no args → None
                             (@ns { $ns:path } #key_ident { }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::None);
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋None);
                                 ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Container-level with `= "value"` → Some(value)
                             (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
                                 ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Container-level with just expr → Some(value)
                             (@ns { $ns:path } #key_ident { | $val:expr }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
                                 ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                         }
