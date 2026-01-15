@@ -1451,24 +1451,9 @@ impl KeyValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Once;
-
-    static INIT: Once = Once::new();
-
-    fn init_tracing() {
-        INIT.call_once(|| {
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::from_default_env()
-                        .add_directive(tracing::Level::DEBUG.into()),
-                )
-                .with_test_writer()
-                .init();
-        });
-    }
+    use facet_testhelpers::test;
 
     fn parse(source: &str) -> Vec<Event<'_>> {
-        init_tracing();
         tracing::debug!(source, "parsing");
         let events = Parser::new(source).parse_to_vec();
         tracing::debug!(?events, "parsed");
@@ -1478,7 +1463,6 @@ mod tests {
     /// Parse and log events for debugging
     #[allow(dead_code)]
     fn parse_debug(source: &str) -> Vec<Event<'_>> {
-        init_tracing();
         tracing::info!(source, "parsing (debug mode)");
         let events = Parser::new(source).parse_to_vec();
         tracing::info!(?events, "parsed events");
