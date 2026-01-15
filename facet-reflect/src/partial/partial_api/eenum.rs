@@ -14,7 +14,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
     }
 
-    /// Find a variant by name in the current enum
+    /// Find a variant by name in the current enum.
+    ///
+    /// This searches by effective name (respecting `#[facet(rename = "...")]` attributes).
     pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'static Variant)> {
         let frame = self.frames().last()?;
 
@@ -23,7 +25,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 .variants
                 .iter()
                 .enumerate()
-                .find(|(_, v)| v.name == variant_name)
+                .find(|(_, v)| v.effective_name() == variant_name)
         } else {
             None
         }
@@ -60,14 +62,19 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         Ok(self)
     }
 
-    /// Pushes a variant for enum initialization by name
+    /// Pushes a variant for enum initialization by name.
+    ///
+    /// This searches by effective name (respecting `#[facet(rename = "...")]` attributes).
     ///
     /// See [Self::select_nth_variant] for more notes.
     pub fn select_variant_named(mut self, variant_name: &str) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
         let enum_type = frame.get_enum_type()?;
-
-        let Some(variant) = enum_type.variants.iter().find(|v| v.name == variant_name) else {
+        let Some(variant) = enum_type
+            .variants
+            .iter()
+            .find(|v| v.effective_name() == variant_name)
+        else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.allocated.shape(),
                 operation: "No variant found with the given name",

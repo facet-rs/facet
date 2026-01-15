@@ -1,96 +1,29 @@
+#![doc = include_str!("../README.md.in")]
 #![deny(unsafe_code)]
-// Note: streaming.rs uses limited unsafe for lifetime extension in YieldingReader
 
-//! XML parser and serializer implementing the facet format architecture.
-//!
-//! This crate provides XML parsing and serialization using quick-xml under the hood,
-//! translating to/from the format-agnostic ParseEvent stream.
-//!
-//! # Data Model: XML vs HTML
-//!
-//! `facet-xml` and `facet-html` use different data models that reflect the semantic
-//! differences between the two formats:
-//!
-//! **XML is data-centric**: Elements with only text content are treated as scalar values.
-//! This enables natural mappings like `<age>25</age>` → `age: u32`.
-//!
-//! ```rust
-//! use facet::Facet;
-//!
-//! #[derive(Debug, Facet, PartialEq)]
-//! struct Person {
-//!     name: String,
-//!     age: u32,
-//! }
-//!
-//! let xml = "<Person><name>Alice</name><age>30</age></Person>";
-//! let person: Person = facet_xml::from_str(xml).unwrap();
-//! assert_eq!(person, Person { name: "Alice".into(), age: 30 });
-//! ```
-//!
-//! **HTML is structure-centric**: Every element is a structural node with a tag name,
-//! attributes, and children. Text is always a child node, never the element itself.
-//! This preserves the DOM structure and enables tag name capture via `#[facet(html::tag)]`.
-//!
-//! This difference affects how unknown/dynamic children are captured:
-//!
-//! ```rust
-//! use facet::Facet;
-//! use std::collections::HashMap;
-//!
-//! #[derive(Debug, Facet)]
-//! #[facet(rename = "config")]
-//! struct Config {
-//!     #[facet(flatten, default)]
-//!     settings: HashMap<String, String>,
-//! }
-//!
-//! // In XML, text-only child elements can be captured in a HashMap
-//! let xml = r#"<config><timeout>30</timeout><host>localhost</host></config>"#;
-//! let config: Config = facet_xml::from_str(xml).unwrap();
-//! assert_eq!(config.settings.get("timeout"), Some(&"30".to_string()));
-//! assert_eq!(config.settings.get("host"), Some(&"localhost".to_string()));
-//! ```
-//!
-//! The same pattern would not work with `facet-html` because HTML elements are always
-//! structures (with `_tag` and `_text` fields), not scalars. For HTML, use typed
-//! element structs or `Vec<FlowContent>` with custom elements instead.
+#[macro_use]
+mod tracing_macros;
 
-mod parser;
+mod dom_parser;
+mod escaping;
 mod serializer;
-
-#[cfg(feature = "streaming")]
-mod streaming;
 
 #[cfg(feature = "axum")]
 mod axum;
 
-#[cfg(feature = "diff")]
-mod diff_serialize;
-
-pub use parser::{XmlError, XmlParser};
+pub use dom_parser::{XmlError, XmlParser};
 
 #[cfg(feature = "axum")]
 pub use axum::{Xml, XmlRejection};
 
-#[cfg(feature = "diff")]
-pub use diff_serialize::{
-    DiffSerializeOptions, DiffSymbols, DiffTheme, diff_to_string, diff_to_string_with_options,
-    diff_to_writer, diff_to_writer_with_options,
-};
 pub use serializer::{
     FloatFormatter, SerializeOptions, XmlSerializeError, XmlSerializer, to_string,
     to_string_pretty, to_string_with_options, to_vec, to_vec_with_options,
 };
 
-// Re-export DeserializeError for convenience
-pub use facet_format::DeserializeError;
-
-#[cfg(all(feature = "streaming", feature = "std"))]
-pub use streaming::from_reader;
-
-#[cfg(feature = "tokio")]
-pub use streaming::from_async_reader_tokio;
+// Re-export error types for convenience
+pub use facet_dom::DomDeserializeError as DeserializeError;
+pub use facet_dom::DomSerializeError as SerializeError;
 
 /// Deserialize a value from an XML string into an owned type.
 ///
@@ -110,7 +43,8 @@ pub use streaming::from_async_reader_tokio;
 ///     age: u32,
 /// }
 ///
-/// let xml = r#"<Person><name>Alice</name><age>30</age></Person>"#;
+/// // "Person" becomes <person> (lowerCamelCase convention)
+/// let xml = r#"<person><name>Alice</name><age>30</age></person>"#;
 /// let person: Person = from_str(xml).unwrap();
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
@@ -140,7 +74,8 @@ where
 ///     age: u32,
 /// }
 ///
-/// let xml = b"<Person><name>Alice</name><age>30</age></Person>";
+/// // "Person" becomes <person> (lowerCamelCase convention)
+/// let xml = b"<person><name>Alice</name><age>30</age></person>";
 /// let person: Person = from_slice(xml).unwrap();
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
@@ -149,84 +84,36 @@ pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<XmlError>>
 where
     T: facet_core::Facet<'static>,
 {
-    use facet_format::FormatDeserializer;
     let parser = XmlParser::new(input);
-    let mut de = FormatDeserializer::new_owned(parser);
+    let mut de = facet_dom::DomDeserializer::new_owned(parser);
     de.deserialize()
 }
 
-/// Deserialize a value from an XML string, allowing zero-copy borrowing.
+/// Deserialize a value from an XML string, allowing borrowing from the input.
 ///
-/// This variant requires the input to outlive the result (`'input: 'facet`),
-/// enabling zero-copy deserialization of string fields as `&str` or `Cow<str>`.
+/// Use this when the deserialized type can borrow from the input string
+/// (e.g., contains `&'a str` fields). The input must outlive the result.
 ///
-/// Use this when you need maximum performance and can guarantee the input
-/// buffer outlives the deserialized value. For most use cases, prefer
-/// [`from_str`] which doesn't have lifetime requirements.
-///
-/// # Example
-///
-/// ```
-/// use facet::Facet;
-/// use facet_xml::from_str_borrowed;
-///
-/// #[derive(Facet, Debug, PartialEq)]
-/// struct Person {
-///     name: String,
-///     age: u32,
-/// }
-///
-/// let xml = r#"<Person><name>Alice</name><age>30</age></Person>"#;
-/// let person: Person = from_str_borrowed(xml).unwrap();
-/// assert_eq!(person.name, "Alice");
-/// assert_eq!(person.age, 30);
-/// ```
-pub fn from_str_borrowed<'input, 'facet, T>(
-    input: &'input str,
-) -> Result<T, DeserializeError<XmlError>>
+/// For most use cases, prefer [`from_str`] which produces owned types.
+pub fn from_str_borrowed<'input, T>(input: &'input str) -> Result<T, DeserializeError<XmlError>>
 where
-    T: facet_core::Facet<'facet>,
-    'input: 'facet,
+    T: facet_core::Facet<'input>,
 {
     from_slice_borrowed(input.as_bytes())
 }
 
-/// Deserialize a value from XML bytes, allowing zero-copy borrowing.
+/// Deserialize a value from XML bytes, allowing borrowing from the input.
 ///
-/// This variant requires the input to outlive the result (`'input: 'facet`),
-/// enabling zero-copy deserialization of string fields as `&str` or `Cow<str>`.
+/// Use this when the deserialized type can borrow from the input bytes
+/// (e.g., contains `&'a str` fields). The input must outlive the result.
 ///
-/// Use this when you need maximum performance and can guarantee the input
-/// buffer outlives the deserialized value. For most use cases, prefer
-/// [`from_slice`] which doesn't have lifetime requirements.
-///
-/// # Example
-///
-/// ```
-/// use facet::Facet;
-/// use facet_xml::from_slice_borrowed;
-///
-/// #[derive(Facet, Debug, PartialEq)]
-/// struct Person {
-///     name: String,
-///     age: u32,
-/// }
-///
-/// let xml = b"<Person><name>Alice</name><age>30</age></Person>";
-/// let person: Person = from_slice_borrowed(xml).unwrap();
-/// assert_eq!(person.name, "Alice");
-/// assert_eq!(person.age, 30);
-/// ```
-pub fn from_slice_borrowed<'input, 'facet, T>(
-    input: &'input [u8],
-) -> Result<T, DeserializeError<XmlError>>
+/// For most use cases, prefer [`from_slice`] which produces owned types.
+pub fn from_slice_borrowed<'input, T>(input: &'input [u8]) -> Result<T, DeserializeError<XmlError>>
 where
-    T: facet_core::Facet<'facet>,
-    'input: 'facet,
+    T: facet_core::Facet<'input>,
 {
-    use facet_format::FormatDeserializer;
     let parser = XmlParser::new(input);
-    let mut de = FormatDeserializer::new(parser);
+    let mut de = facet_dom::DomDeserializer::new(parser);
     de.deserialize()
 }
 
@@ -237,7 +124,7 @@ where
 //   #[facet(xml::elements)]
 //   #[facet(xml::attribute)]
 //   #[facet(xml::text)]
-//   #[facet(xml::element_name)]
+//   #[facet(xml::tag)]
 
 // Generate XML attribute grammar using the grammar DSL.
 // This generates:
@@ -258,8 +145,11 @@ facet::define_attr_grammar! {
         Attribute,
         /// Marks a field as the text content of the element
         Text,
-        /// Marks a field as storing the XML element name dynamically
-        ElementName,
+        /// Marks a field as storing the XML element tag name dynamically.
+        ///
+        /// Used on a `String` field to capture the tag name of an element
+        /// during deserialization. When serializing, this value becomes the element's tag.
+        Tag,
         /// Specifies the XML namespace URI for this field.
         ///
         /// Usage: `#[facet(xml::ns = "http://example.com/ns")]`

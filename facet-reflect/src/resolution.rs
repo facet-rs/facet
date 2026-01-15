@@ -17,10 +17,164 @@ use core::fmt;
 
 use facet_core::{Field, Shape};
 
-/// A path of serialized key names for probing.
+/// Category of a field for format-aware field lookup.
+///
+/// For flat formats (JSON, TOML, YAML), all fields are `Flat`.
+/// For DOM formats (XML, HTML), fields are categorized by their role
+/// in the tree structure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
+pub enum FieldCategory {
+    /// Regular field in flat formats (JSON, TOML, YAML, etc.)
+    /// All fields are treated as simple key-value pairs.
+    #[default]
+    Flat,
+    /// Field is an attribute (`#[facet(attribute)]`, `xml::attribute`, `html::attribute`)
+    Attribute,
+    /// Field is a child element (default for DOM structs, or explicit `xml::element`)
+    Element,
+    /// Field captures text content (`xml::text`, `html::text`)
+    Text,
+    /// Field captures the tag name (`xml::tag`, `html::tag`)
+    Tag,
+    /// Field captures all unmatched children (`xml::elements`)
+    Elements,
+}
+
+impl FieldCategory {
+    /// Determine the DOM category of a field based on its attributes.
+    ///
+    /// Returns `None` for flattened fields (they don't have a single category).
+    /// For non-DOM contexts, use `FieldCategory::Flat` directly.
+    pub fn from_field_dom(field: &Field) -> Option<Self> {
+        if field.is_flattened() {
+            // Flattened fields don't have a category - their children do
+            return None;
+        }
+        if field.is_attribute() {
+            Some(FieldCategory::Attribute)
+        } else if field.is_text() {
+            Some(FieldCategory::Text)
+        } else if field.is_tag() {
+            Some(FieldCategory::Tag)
+        } else if field.is_elements() {
+            Some(FieldCategory::Elements)
+        } else {
+            // Default: child element
+            Some(FieldCategory::Element)
+        }
+    }
+}
+
+/// A key for field lookup in schemas and solvers.
+///
+/// For flat formats (JSON, TOML), keys are just field names.
+/// For DOM formats (XML, HTML), keys include a category (attribute, element, text).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FieldKey<'a> {
+    /// Flat format key - just a name (for JSON, TOML, YAML, etc.)
+    Flat(Cow<'a, str>),
+    /// DOM format key - category + name (for XML, HTML)
+    Dom(FieldCategory, Cow<'a, str>),
+}
+
+impl<'a> FieldKey<'a> {
+    /// Create a flat key from a string.
+    pub fn flat(name: impl Into<Cow<'a, str>>) -> Self {
+        FieldKey::Flat(name.into())
+    }
+
+    /// Create a DOM attribute key.
+    pub fn attribute(name: impl Into<Cow<'a, str>>) -> Self {
+        FieldKey::Dom(FieldCategory::Attribute, name.into())
+    }
+
+    /// Create a DOM element key.
+    pub fn element(name: impl Into<Cow<'a, str>>) -> Self {
+        FieldKey::Dom(FieldCategory::Element, name.into())
+    }
+
+    /// Create a DOM text key.
+    pub fn text() -> Self {
+        FieldKey::Dom(FieldCategory::Text, Cow::Borrowed(""))
+    }
+
+    /// Create a DOM tag key.
+    pub fn tag() -> Self {
+        FieldKey::Dom(FieldCategory::Tag, Cow::Borrowed(""))
+    }
+
+    /// Create a DOM elements key (catch-all for unmatched children).
+    pub fn elements() -> Self {
+        FieldKey::Dom(FieldCategory::Elements, Cow::Borrowed(""))
+    }
+
+    /// Get the name portion of the key.
+    pub fn name(&self) -> &str {
+        match self {
+            FieldKey::Flat(name) => name.as_ref(),
+            FieldKey::Dom(_, name) => name.as_ref(),
+        }
+    }
+
+    /// Get the category if this is a DOM key.
+    pub fn category(&self) -> Option<FieldCategory> {
+        match self {
+            FieldKey::Flat(_) => None,
+            FieldKey::Dom(cat, _) => Some(*cat),
+        }
+    }
+
+    /// Convert to an owned version with 'static lifetime.
+    pub fn into_owned(self) -> FieldKey<'static> {
+        match self {
+            FieldKey::Flat(name) => FieldKey::Flat(Cow::Owned(name.into_owned())),
+            FieldKey::Dom(cat, name) => FieldKey::Dom(cat, Cow::Owned(name.into_owned())),
+        }
+    }
+}
+
+// Allow &str to convert to flat key
+impl<'a> From<&'a str> for FieldKey<'a> {
+    fn from(s: &'a str) -> Self {
+        FieldKey::Flat(Cow::Borrowed(s))
+    }
+}
+
+impl From<String> for FieldKey<'static> {
+    fn from(s: String) -> Self {
+        FieldKey::Flat(Cow::Owned(s))
+    }
+}
+
+impl<'a> From<&'a String> for FieldKey<'a> {
+    fn from(s: &'a String) -> Self {
+        FieldKey::Flat(Cow::Borrowed(s.as_str()))
+    }
+}
+
+impl<'a> From<Cow<'a, str>> for FieldKey<'a> {
+    fn from(s: Cow<'a, str>) -> Self {
+        FieldKey::Flat(s)
+    }
+}
+
+impl fmt::Display for FieldKey<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FieldKey::Flat(name) => write!(f, "{}", name),
+            FieldKey::Dom(cat, name) => write!(f, "{:?}:{}", cat, name),
+        }
+    }
+}
+
+/// A path of serialized key names for probing (flat formats).
 /// Unlike FieldPath which tracks the internal type structure (including variant selections),
 /// KeyPath only tracks the keys as they appear in the serialized format.
 pub type KeyPath = Vec<&'static str>;
+
+/// A path of serialized keys for probing (DOM-aware).
+/// Each key includes the category (attribute vs element) for DOM formats.
+pub type DomKeyPath = Vec<FieldKey<'static>>;
 
 /// A segment in a field path.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -148,6 +302,9 @@ pub struct FieldInfo {
 
     /// The original field definition (for accessing flags, attributes, etc.)
     pub field: &'static Field,
+
+    /// Category of this field (Flat for JSON/TOML/YAML, or Attribute/Element/etc. for DOM).
+    pub category: FieldCategory,
 }
 
 impl PartialEq for FieldInfo {
@@ -157,6 +314,17 @@ impl PartialEq for FieldInfo {
             && self.required == other.required
             && core::ptr::eq(self.value_shape, other.value_shape)
             && core::ptr::eq(self.field, other.field)
+            && self.category == other.category
+    }
+}
+
+impl FieldInfo {
+    /// Get the key for this field, used for map lookups.
+    pub fn key(&self) -> FieldKey<'static> {
+        match self.category {
+            FieldCategory::Flat => FieldKey::Flat(Cow::Borrowed(self.serialized_name)),
+            cat => FieldKey::Dom(cat, Cow::Borrowed(self.serialized_name)),
+        }
     }
 }
 
@@ -189,16 +357,27 @@ pub struct Resolution {
     /// The key is the path to the enum field, value is the variant.
     variant_selections: Vec<VariantSelection>,
 
-    /// All fields in this configuration, keyed by serialized name.
-    fields: BTreeMap<&'static str, FieldInfo>,
+    /// All fields in this configuration, keyed by (category, name).
+    /// For flat formats, category is None. For DOM formats, category distinguishes
+    /// attributes from elements with the same name.
+    fields: BTreeMap<FieldKey<'static>, FieldInfo>,
 
     /// Set of required field names (for quick matching)
     required_field_names: BTreeSet<&'static str>,
 
-    /// All known key paths at all depths (for depth-aware probing).
+    /// All known key paths at all depths (for depth-aware probing, flat format).
     /// Each path is a sequence of serialized key names from root.
     /// E.g., for `{payload: {content: "hi"}}`, contains `["payload"]` and `["payload", "content"]`.
     known_paths: BTreeSet<KeyPath>,
+
+    /// All known key paths at all depths (for depth-aware probing, DOM format).
+    /// Each path includes category information for each key.
+    dom_known_paths: BTreeSet<DomKeyPath>,
+
+    /// Catch-all map fields for capturing unknown keys, keyed by category.
+    /// For flat formats, `FieldCategory::Flat` captures all unknown keys.
+    /// For DOM formats, can have separate catch-alls for `Attribute` vs `Element`.
+    catch_all_maps: BTreeMap<FieldCategory, FieldInfo>,
 }
 
 /// Error when building a resolution.
@@ -230,21 +409,44 @@ impl Resolution {
             fields: BTreeMap::new(),
             required_field_names: BTreeSet::new(),
             known_paths: BTreeSet::new(),
+            dom_known_paths: BTreeSet::new(),
+            catch_all_maps: BTreeMap::new(),
         }
     }
 
-    /// Add a key path (for depth-aware probing).
+    /// Set a catch-all map field for capturing unknown keys of a given category.
+    pub fn set_catch_all_map(&mut self, category: FieldCategory, info: FieldInfo) {
+        self.catch_all_maps.insert(category, info);
+    }
+
+    /// Get the catch-all map field for a given category, if any.
+    pub fn catch_all_map(&self, category: FieldCategory) -> Option<&FieldInfo> {
+        self.catch_all_maps.get(&category)
+    }
+
+    /// Get all catch-all maps.
+    pub fn catch_all_maps(&self) -> &BTreeMap<FieldCategory, FieldInfo> {
+        &self.catch_all_maps
+    }
+
+    /// Add a key path (for depth-aware probing, flat format).
     pub fn add_key_path(&mut self, path: KeyPath) {
         self.known_paths.insert(path);
     }
 
+    /// Add a DOM key path (for depth-aware probing, DOM format).
+    pub fn add_dom_key_path(&mut self, path: DomKeyPath) {
+        self.dom_known_paths.insert(path);
+    }
+
     /// Add a field to this resolution.
     ///
-    /// Returns an error if a field with the same serialized name already exists
+    /// Returns an error if a field with the same key already exists
     /// but comes from a different source (different path). This catches duplicate
     /// field name conflicts between parent structs and flattened fields.
     pub fn add_field(&mut self, info: FieldInfo) -> Result<(), DuplicateFieldError> {
-        if let Some(existing) = self.fields.get(info.serialized_name)
+        let key = info.key();
+        if let Some(existing) = self.fields.get(&key)
             && existing.path != info.path
         {
             return Err(DuplicateFieldError {
@@ -256,7 +458,7 @@ impl Resolution {
         if info.required {
             self.required_field_names.insert(info.serialized_name);
         }
-        self.fields.insert(info.serialized_name, info);
+        self.fields.insert(key, info);
         Ok(())
     }
 
@@ -280,19 +482,19 @@ impl Resolution {
     /// but comes from a different source (different path). This catches duplicate
     /// field name conflicts between parent structs and flattened fields.
     pub fn merge(&mut self, other: &Resolution) -> Result<(), DuplicateFieldError> {
-        for (name, info) in &other.fields {
-            if let Some(existing) = self.fields.get(*name)
+        for (key, info) in &other.fields {
+            if let Some(existing) = self.fields.get(key)
                 && existing.path != info.path
             {
                 return Err(DuplicateFieldError {
-                    field_name: name,
+                    field_name: info.serialized_name,
                     first_path: existing.path.clone(),
                     second_path: info.path.clone(),
                 });
             }
-            self.fields.insert(*name, info.clone());
+            self.fields.insert(key.clone(), info.clone());
             if info.required {
-                self.required_field_names.insert(*name);
+                self.required_field_names.insert(info.serialized_name);
             }
         }
         for vs in &other.variant_selections {
@@ -300,6 +502,13 @@ impl Resolution {
         }
         for path in &other.known_paths {
             self.known_paths.insert(path.clone());
+        }
+        for path in &other.dom_known_paths {
+            self.dom_known_paths.insert(path.clone());
+        }
+        // Merge catch-all maps (other's take precedence for same category)
+        for (cat, info) in &other.catch_all_maps {
+            self.catch_all_maps.insert(*cat, info.clone());
         }
         Ok(())
     }
@@ -318,12 +527,15 @@ impl Resolution {
         let mut missing_required = Vec::new();
         let mut missing_optional = Vec::new();
 
-        for (name, info) in &self.fields {
-            if !input_fields.iter().any(|k| k.as_ref() == *name) {
+        for info in self.fields.values() {
+            if !input_fields
+                .iter()
+                .any(|k| k.as_ref() == info.serialized_name)
+            {
                 if info.required {
-                    missing_required.push(*name);
+                    missing_required.push(info.serialized_name);
                 } else {
-                    missing_optional.push(*name);
+                    missing_optional.push(info.serialized_name);
                 }
             }
         }
@@ -331,7 +543,12 @@ impl Resolution {
         // Check for unknown fields
         let unknown: Vec<String> = input_fields
             .iter()
-            .filter(|f| !self.fields.contains_key(f.as_ref()))
+            .filter(|f| {
+                !self
+                    .fields
+                    .values()
+                    .any(|info| info.serialized_name == f.as_ref())
+            })
             .map(|s| s.to_string())
             .collect();
 
@@ -378,13 +595,40 @@ impl Resolution {
         fields
     }
 
-    /// Get a field by name.
-    pub fn field(&self, name: &str) -> Option<&FieldInfo> {
-        self.fields.get(name)
+    /// Get a field by key.
+    ///
+    /// For runtime keys, use `field_by_key()` which accepts any lifetime.
+    pub fn field(&self, key: &FieldKey<'static>) -> Option<&FieldInfo> {
+        self.fields.get(key)
+    }
+
+    /// Get a field by key with any lifetime.
+    ///
+    /// This is less efficient than `field()` because it searches linearly,
+    /// but works with runtime-constructed keys.
+    pub fn field_by_key(&self, key: &FieldKey<'_>) -> Option<&FieldInfo> {
+        self.fields.iter().find_map(|(k, v)| {
+            // Compare structurally regardless of lifetime
+            let matches = match (k, key) {
+                (FieldKey::Flat(a), FieldKey::Flat(b)) => a.as_ref() == b.as_ref(),
+                (FieldKey::Dom(cat_a, a), FieldKey::Dom(cat_b, b)) => {
+                    cat_a == cat_b && a.as_ref() == b.as_ref()
+                }
+                _ => false,
+            };
+            if matches { Some(v) } else { None }
+        })
+    }
+
+    /// Get a field by name (flat format lookup).
+    /// For DOM format, use `field()` with a `FieldKey` instead.
+    pub fn field_by_name(&self, name: &str) -> Option<&FieldInfo> {
+        // Search by serialized name - works for both flat and DOM keys
+        self.fields.values().find(|f| f.serialized_name == name)
     }
 
     /// Get all fields.
-    pub const fn fields(&self) -> &BTreeMap<&'static str, FieldInfo> {
+    pub const fn fields(&self) -> &BTreeMap<FieldKey<'static>, FieldInfo> {
         &self.fields
     }
 
@@ -432,12 +676,33 @@ impl Resolution {
         &self.known_paths
     }
 
-    /// Check if this resolution has a specific key path.
-    /// Compares runtime strings against static schema paths.
+    /// Check if this resolution has a specific key path (flat format).
     pub fn has_key_path(&self, path: &[&str]) -> bool {
         self.known_paths.iter().any(|known| {
             known.len() == path.len() && known.iter().zip(path.iter()).all(|(a, b)| *a == *b)
         })
+    }
+
+    /// Check if this resolution has a specific DOM key path.
+    pub fn has_dom_key_path(&self, path: &[FieldKey<'_>]) -> bool {
+        self.dom_known_paths.iter().any(|known| {
+            known.len() == path.len()
+                && known.iter().zip(path.iter()).all(|(a, b)| {
+                    // Compare structurally regardless of lifetime
+                    match (a, b) {
+                        (FieldKey::Flat(sa), FieldKey::Flat(sb)) => sa.as_ref() == sb.as_ref(),
+                        (FieldKey::Dom(ca, sa), FieldKey::Dom(cb, sb)) => {
+                            ca == cb && sa.as_ref() == sb.as_ref()
+                        }
+                        _ => false,
+                    }
+                })
+        })
+    }
+
+    /// Get all known DOM key paths (for depth-aware probing).
+    pub const fn dom_known_paths(&self) -> &BTreeSet<DomKeyPath> {
+        &self.dom_known_paths
     }
 }
 

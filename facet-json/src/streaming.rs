@@ -814,6 +814,7 @@ impl ProbeStream<'static> for StreamingProbe {
 mod tests {
     use super::*;
     use facet::Facet;
+    use facet_testhelpers::test;
     use std::io::Cursor;
 
     #[test]

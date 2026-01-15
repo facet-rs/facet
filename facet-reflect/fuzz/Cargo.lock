@@ -77,13 +77,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-dessert"
+version = "0.42.0"
+dependencies = [
+ "facet-core",
+ "facet-reflect",
+]
+
+[[package]]
+name = "facet-dom"
+version = "0.42.0"
+dependencies = [
+ "facet-core",
+ "facet-dessert",
+ "facet-reflect",
+]
+
+[[package]]
 name = "facet-format"
 version = "0.42.0"
 dependencies = [
  "facet-core",
+ "facet-dessert",
  "facet-path",
  "facet-reflect",
- "facet-singularize",
  "facet-solver",
 ]
 
@@ -172,10 +189,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-singularize"
-version = "0.42.0"
-
-[[package]]
 name = "facet-solver"
 version = "0.42.0"
 dependencies = [
@@ -198,7 +211,7 @@ version = "0.42.0"
 dependencies = [
  "facet",
  "facet-core",
- "facet-format",
+ "facet-dom",
  "facet-reflect",
  "quick-xml",
 ]

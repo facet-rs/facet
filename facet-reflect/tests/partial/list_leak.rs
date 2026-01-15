@@ -5,7 +5,7 @@ use facet_testhelpers::test;
 fn wip_list_leaktest1() {
     let _ = Partial::alloc::<Vec<i32>>()
         .unwrap()
-        .begin_list()
+        .init_list()
         .unwrap()
         .begin_list_item()
         .unwrap()
@@ -33,7 +33,7 @@ fn wip_list_leaktest1() {
 fn wip_list_leaktest2() {
     let _ = Partial::alloc::<Vec<i32>>()
         .unwrap()
-        .begin_list()
+        .init_list()
         .unwrap()
         .begin_list_item()
         .unwrap()
@@ -59,7 +59,7 @@ fn wip_list_leaktest2() {
 fn wip_list_leaktest3() {
     let _ = Partial::alloc::<Vec<i32>>()
         .unwrap()
-        .begin_list()
+        .init_list()
         .unwrap()
         .begin_list_item()
         .unwrap()
@@ -83,7 +83,7 @@ fn wip_list_leaktest3() {
 fn wip_list_leaktest4() {
     let _ = Partial::alloc::<Vec<i32>>()
         .unwrap()
-        .begin_list()
+        .init_list()
         .unwrap()
         .begin_list_item()
         .unwrap()
@@ -105,7 +105,7 @@ fn wip_list_leaktest4() {
 fn wip_list_leaktest5() {
     let _ = Partial::alloc::<Vec<i32>>()
         .unwrap()
-        .begin_list()
+        .init_list()
         .unwrap()
         .begin_list_item()
         .unwrap()
@@ -125,7 +125,7 @@ fn wip_list_leaktest5() {
 fn wip_list_leaktest6() {
     let _ = Partial::alloc::<Vec<i32>>()
         .unwrap()
-        .begin_list()
+        .init_list()
         .unwrap()
         .begin_list_item()
         .unwrap()
@@ -143,7 +143,7 @@ fn wip_list_leaktest6() {
 fn wip_list_leaktest7() {
     let _ = Partial::alloc::<Vec<i32>>()
         .unwrap()
-        .begin_list()
+        .init_list()
         .unwrap()
         .begin_list_item()
         .unwrap()
@@ -159,7 +159,7 @@ fn wip_list_leaktest7() {
 fn wip_list_leaktest8() {
     let _ = Partial::alloc::<Vec<i32>>()
         .unwrap()
-        .begin_list()
+        .init_list()
         .unwrap()
         .begin_list_item()
         .unwrap()
@@ -173,7 +173,7 @@ fn wip_list_leaktest8() {
 fn wip_list_leaktest9() {
     let _ = Partial::alloc::<Vec<i32>>()
         .unwrap()
-        .begin_list()
+        .init_list()
         .unwrap()
         .begin_list_item()
         .unwrap()
@@ -185,7 +185,7 @@ fn wip_list_leaktest9() {
 fn wip_list_leaktest10() {
     let _ = Partial::alloc::<Vec<i32>>()
         .unwrap()
-        .begin_list()
+        .init_list()
         .unwrap()
         .begin_list_item()
         .unwrap();
@@ -193,7 +193,7 @@ fn wip_list_leaktest10() {
 
 #[test]
 fn wip_list_leaktest11() {
-    let _ = Partial::alloc::<Vec<i32>>().unwrap().begin_list().unwrap();
+    let _ = Partial::alloc::<Vec<i32>>().unwrap().init_list().unwrap();
 }
 
 #[test]

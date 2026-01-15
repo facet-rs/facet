@@ -15,7 +15,6 @@ use facet::Facet;
 use facet_diff::{EditOp, tree_diff};
 use facet_html as html;
 use facet_reflect::{Peek, Poke};
-use facet_xml as xml;
 
 // ============================================================================
 // Document Model
@@ -25,9 +24,9 @@ use facet_xml as xml;
 #[derive(Debug, Clone, Facet, PartialEq)]
 #[facet(rename = "html", pod)]
 struct HtmlDocument {
-    #[facet(xml::element)]
+    #[facet(html::element)]
     head: Head,
-    #[facet(xml::element)]
+    #[facet(html::element)]
     body: Body,
 }
 
@@ -35,7 +34,7 @@ struct HtmlDocument {
 #[derive(Debug, Clone, Facet, PartialEq)]
 #[facet(rename = "head", pod)]
 struct Head {
-    #[facet(xml::element)]
+    #[facet(html::element)]
     title: Title,
 }
 
@@ -43,7 +42,7 @@ struct Head {
 #[derive(Debug, Clone, Facet, PartialEq)]
 #[facet(rename = "title", pod)]
 struct Title {
-    #[facet(xml::text, default)]
+    #[facet(html::text, default)]
     text: String,
 }
 
@@ -51,9 +50,9 @@ struct Title {
 #[derive(Debug, Clone, Facet, PartialEq)]
 #[facet(rename = "body", pod)]
 struct Body {
-    #[facet(xml::attribute, default)]
+    #[facet(html::attribute, default)]
     class: Option<String>,
-    #[facet(xml::elements, default)]
+    #[facet(html::elements, default)]
     children: Vec<BodyElement>,
 }
 
@@ -76,9 +75,9 @@ enum BodyElement {
 #[derive(Debug, Clone, Facet, PartialEq)]
 #[facet(pod)]
 struct Heading {
-    #[facet(xml::attribute, default)]
+    #[facet(html::attribute, default)]
     id: Option<String>,
-    #[facet(xml::text, default)]
+    #[facet(html::text, default)]
     text: String,
 }
 
@@ -86,9 +85,9 @@ struct Heading {
 #[derive(Debug, Clone, Facet, PartialEq)]
 #[facet(pod)]
 struct Paragraph {
-    #[facet(xml::attribute, default)]
+    #[facet(html::attribute, default)]
     class: Option<String>,
-    #[facet(xml::text, default)]
+    #[facet(html::text, default)]
     text: String,
 }
 
@@ -96,11 +95,11 @@ struct Paragraph {
 #[derive(Debug, Clone, Facet, PartialEq)]
 #[facet(pod)]
 struct Div {
-    #[facet(xml::attribute, default)]
+    #[facet(html::attribute, default)]
     id: Option<String>,
-    #[facet(xml::attribute, default)]
+    #[facet(html::attribute, default)]
     class: Option<String>,
-    #[facet(xml::elements, default)]
+    #[facet(html::elements, default)]
     children: Vec<BodyElement>,
 }
 
@@ -108,7 +107,7 @@ struct Div {
 #[derive(Debug, Clone, Facet, PartialEq)]
 #[facet(rename = "ul", pod)]
 struct UnorderedList {
-    #[facet(xml::elements, default)]
+    #[facet(html::elements, default)]
     items: Vec<ListItem>,
 }
 
@@ -116,7 +115,7 @@ struct UnorderedList {
 #[derive(Debug, Clone, Facet, PartialEq)]
 #[facet(rename = "li", pod)]
 struct ListItem {
-    #[facet(xml::text, default)]
+    #[facet(html::text, default)]
     text: String,
 }
 

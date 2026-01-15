@@ -261,25 +261,33 @@ pub enum PAttr {
 #[derive(Clone)]
 pub struct PName {
     /// The raw identifier, as we found it in the source code. It might
-    /// be _actually_ raw, as in "r#keyword".
+    /// be _actually_ raw, as in `r#keyword`.
     pub raw: IdentOrLiteral,
 
-    /// The name after applying rename rules, which might not be a valid identifier in Rust.
-    /// It could be a number. It could be a kebab-case thing.
-    pub effective: String,
+    /// If raw was `r#keyword`, then this one is, naturally, just `keyword`.
+    pub original: String,
+
+    /// This is `original` after applying rename rules, which might not be a valid identifier in
+    /// Rust. It could be a number. It could be a kebab-case thing. It could be anything!
+    ///
+    /// If it's `None`, there was no `#[facet(rename)]` attr on the field, or `#[facet(rename_all)]`
+    /// on the parent container, and it would've been the same as `original` anyway.
+    pub rename: Option<String>,
 }
 
 impl PName {
-    /// Constructs a new `PName` with the given raw name, an optional container-level rename rule,
-    /// an optional field-level rename rule, and a raw identifier.
+    /// Constructs a new `PName`.
     ///
-    /// Precedence:
-    ///   - If field_rename_rule is Some, use it on raw for effective name
-    ///   - Else if container_rename_rule is Some, use it on raw for effective name
-    ///   - Else, strip raw ("r#" if present) for effective name
-    pub fn new(container_rename_rule: Option<RenameRule>, raw: IdentOrLiteral) -> Self {
-        // Remove Rust's raw identifier prefix, e.g. r#type -> type
-        let norm_raw_str = match &raw {
+    /// Precedence for `rename`:
+    ///   1. Field-level `rename` if provided
+    ///   2. Container-level `rename_rule` applied to `original`
+    ///   3. None
+    pub fn new(
+        raw: IdentOrLiteral,
+        container_rename_rule: Option<RenameRule>,
+        rename: Option<String>,
+    ) -> Self {
+        let original = match &raw {
             IdentOrLiteral::Ident(ident) => ident
                 .tokens_to_string()
                 .trim_start_matches("r#")
@@ -287,15 +295,12 @@ impl PName {
             IdentOrLiteral::Literal(l) => l.to_string(),
         };
 
-        let effective = if let Some(container_rule) = container_rename_rule {
-            container_rule.apply(&norm_raw_str)
-        } else {
-            norm_raw_str // Use the normalized string (without r#)
-        };
+        let rename = rename.or_else(|| container_rename_rule.map(|rule| rule.apply(&original)));
 
         Self {
-            raw: raw.clone(), // Keep the original raw identifier
-            effective,
+            raw,
+            original,
+            rename,
         }
     }
 }
@@ -603,6 +608,9 @@ pub struct PAttrs {
     /// rename_all rule (if any)
     pub rename_all: Option<RenameRule>,
 
+    /// Field/variant-level rename (if any)
+    pub rename: Option<String>,
+
     /// Custom crate path (if any), e.g., `::my_crate::facet`
     pub crate_path: Option<TokenStream>,
 
@@ -626,11 +634,12 @@ pub struct PAttrs {
 
 impl PAttrs {
     /// Parse attributes from a list of `Attribute`s
-    pub fn parse(attrs: &[crate::Attribute], display_name: &mut String) -> Self {
+    pub fn parse(attrs: &[crate::Attribute]) -> Self {
         let mut doc_lines: Vec<String> = Vec::new();
         let mut facet_attrs: Vec<PFacetAttr> = Vec::new();
         let mut repr: Option<PRepr> = None;
         let mut rename_all: Option<RenameRule> = None;
+        let mut rename: Option<String> = None;
         let mut crate_path: Option<TokenStream> = None;
         let mut errors: Vec<CompileError> = Vec::new();
 
@@ -715,7 +724,7 @@ impl PAttrs {
                     "rename" => {
                         let s = attr.args.to_string();
                         let trimmed = s.trim().trim_matches('"');
-                        *display_name = trimmed.to_string();
+                        rename = Some(trimmed.to_string());
                     }
                     "rename_all" => {
                         let s = attr.args.to_string();
@@ -788,6 +797,7 @@ impl PAttrs {
             facet: facet_attrs,
             repr: repr.unwrap_or(PRepr::Rust(None)),
             rename_all,
+            rename,
             crate_path,
             errors,
             declared_traits,
@@ -842,8 +852,11 @@ impl PAttrs {
 
 /// Parsed container
 pub struct PContainer {
-    /// Name of the container (could be a struct, an enum variant, etc.)
+    /// Original name of the container (could be a struct, an enum variant, etc.)
     pub name: Ident,
+
+    /// If true, a `rename` attribute was applied and this is the result.
+    pub rename: Option<String>,
 
     /// Attributes of the container
     pub attrs: PAttrs,
@@ -874,10 +887,8 @@ pub struct PEnum {
 impl PEnum {
     /// Parse a `crate::Enum` into a `PEnum`.
     pub fn parse(e: &crate::Enum) -> Self {
-        let mut container_display_name = e.name.to_string();
-
         // Parse container-level attributes (including repr and any errors)
-        let attrs = PAttrs::parse(&e.attributes, &mut container_display_name);
+        let attrs = PAttrs::parse(&e.attributes);
 
         // Get the container-level rename_all rule
         let container_rename_all_rule = attrs.rename_all;
@@ -888,6 +899,7 @@ impl PEnum {
         // Build PContainer
         let container = PContainer {
             name: e.name.clone(),
+            rename: attrs.rename.clone(),
             attrs,
             bgp: BoundedGenericParams::parse(e.generics.as_ref()),
         };
@@ -957,31 +969,10 @@ impl PStructField {
         ty: TokenStream,
         rename_all_rule: Option<RenameRule>,
     ) -> Self {
-        let initial_display_name = quote::ToTokens::to_token_stream(&name).tokens_to_string();
-        let mut display_name = initial_display_name.clone();
-
         // Parse attributes for the field
-        let attrs = PAttrs::parse(attrs, &mut display_name);
+        let attrs = PAttrs::parse(attrs);
 
-        // Name resolution:
-        // Precedence:
-        //   1. Field-level #[facet(rename = "...")]
-        //   2. rename_all_rule argument (container-level rename_all, passed in)
-        //   3. Raw field name (after stripping "r#")
-        let raw = name.clone();
-
-        let p_name = if display_name != initial_display_name {
-            // If #[facet(rename = "...")] is present, use it directly as the effective name.
-            // Preserve the span of the original identifier.
-            PName {
-                raw: raw.clone(),
-                effective: display_name,
-            }
-        } else {
-            // Use PName::new logic with container_rename_rule as the rename_all_rule argument.
-            // PName::new handles the case where rename_all_rule is None.
-            PName::new(rename_all_rule, raw)
-        };
+        let p_name = PName::new(name, rename_all_rule, attrs.rename.clone());
 
         // Field type as TokenStream (already provided as argument)
         let ty = ty.clone();
@@ -1061,11 +1052,8 @@ impl PStructKind {
 impl PStruct {
     /// Parse a struct into its parsed representation
     pub fn parse(s: &crate::Struct) -> Self {
-        let original_name = s.name.to_string();
-        let mut container_display_name = original_name.clone();
-
         // Parse top-level (container) attributes for the struct.
-        let attrs = PAttrs::parse(&s.attributes, &mut container_display_name);
+        let attrs = PAttrs::parse(&s.attributes);
 
         // Note: #[facet(rename = "...")] on structs is allowed. While for formats like JSON
         // the container name is determined by the parent field, formats like XML
@@ -1078,7 +1066,8 @@ impl PStruct {
         // Build PContainer from struct's name and attributes.
         let container = PContainer {
             name: s.name.clone(),
-            attrs, // Use the parsed attributes (which includes rename_all implicitly)
+            rename: attrs.rename.clone(),
+            attrs,
             bgp: BoundedGenericParams::parse(s.generics.as_ref()),
         };
 
@@ -1140,26 +1129,14 @@ impl PVariant {
             }) => (name, attributes),
         };
 
-        let initial_display_name = raw_name_ident.to_string();
-        let mut display_name = initial_display_name.clone();
+        // Parse variant attributes
+        let attrs = PAttrs::parse(attributes.as_slice());
 
-        // Parse variant attributes, potentially modifying display_name if #[facet(rename=...)] is found
-        let attrs = PAttrs::parse(attributes.as_slice(), &mut display_name); // Fix: Pass attributes as a slice
-
-        // Determine the variant's effective name
-        let name = if display_name != initial_display_name {
-            // #[facet(rename=...)] was present on the variant
-            PName {
-                raw: IdentOrLiteral::Ident(raw_name_ident.clone()),
-                effective: display_name,
-            }
-        } else {
-            // Use container's rename_all rule if no variant-specific rename found
-            PName::new(
-                container_rename_all_rule,
-                IdentOrLiteral::Ident(raw_name_ident.clone()),
-            )
-        };
+        let name = PName::new(
+            IdentOrLiteral::Ident(raw_name_ident.clone()),
+            container_rename_all_rule,
+            attrs.rename.clone(),
+        );
 
         // Extract the variant's own rename_all rule to apply to its fields
         let variant_field_rename_rule = attrs.rename_all;

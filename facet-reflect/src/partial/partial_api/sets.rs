@@ -8,11 +8,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Initializes a set (HashSet, BTreeSet, etc.) if it hasn't been initialized before.
     /// This is a prerequisite to `begin_set_item`/`set`/`end` or the shorthand `insert`.
     ///
-    /// `begin_set` does not clear the set if it was previously initialized.
-    /// `begin_set` does not push a new frame to the stack, and thus does not
+    /// `init_set` does not clear the set if it was previously initialized.
+    /// `init_set` does not push a new frame to the stack, and thus does not
     /// require `end` to be called afterwards.
-    pub fn begin_set(mut self) -> Result<Self, ReflectError> {
-        crate::trace!("begin_set()");
+    pub fn init_set(mut self) -> Result<Self, ReflectError> {
+        crate::trace!("init_set()");
         let frame = self.frames_mut().last_mut().unwrap();
 
         match &frame.tracker {
@@ -34,7 +34,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             _ => {
                 return Err(ReflectError::UnexpectedTracker {
-                    message: "begin_set called but tracker isn't something set-like",
+                    message: "init_set called but tracker isn't something set-like",
                     current_tracker: frame.tracker.kind(),
                 });
             }
@@ -46,7 +46,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_set can only be called on Set types",
+                    operation: "init_set can only be called on Set types",
                 });
             }
         };
@@ -79,7 +79,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_set_item can only be called on Set types",
+                    operation: "init_set_item can only be called on Set types",
                 });
             }
         };
@@ -98,7 +98,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "must call begin_set() before begin_set_item()",
+                    operation: "must call init_set() before begin_set_item()",
                 });
             }
         }

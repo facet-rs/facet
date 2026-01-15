@@ -238,6 +238,12 @@ pub struct Shape {
     /// Content field name for adjacently tagged enums.
     /// Set by `#[facet(content = "...")]`.
     pub content: Option<&'static str>,
+
+    /// Renamed type name for serialization/deserialization.
+    ///
+    /// Set by `#[facet(rename = "name")]`. When present, serializers/deserializers
+    /// should use this name instead of the type's actual name.
+    pub rename: Option<&'static str>,
 }
 
 impl PartialOrd for Shape {
@@ -271,6 +277,17 @@ impl core::hash::Hash for Shape {
 }
 
 impl Shape {
+    /// Returns the effective name for serialization/deserialization.
+    ///
+    /// Returns `rename` if set, otherwise returns the type's identifier.
+    #[inline]
+    pub const fn effective_name(&self) -> &'static str {
+        match self.rename {
+            Some(name) => name,
+            None => self.type_identifier,
+        }
+    }
+
     /// Check if this shape is of the given type
     #[inline]
     pub fn is_shape(&self, other: &Shape) -> bool {

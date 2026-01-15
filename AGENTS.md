@@ -75,3 +75,12 @@ Please review https://github.com/facet-rs/facet/blob/main/AGENTS.md#for-humans. 
 - Prefer `DEVELOP.md` + the `Justfile` as the source of truth for commands.
 - Run targeted tests first (crate/package you changed), then widen to workspace checks when appropriate.
 - For anything subtle (parsing, formatting, layout, invariants, performance-sensitive code), add regression tests and try to break your own change.
+
+## Debugging test failures
+
+When debugging Rust test failures:
+- **ALWAYS** use `RUST_LOG=trace` environment variable
+- **ALWAYS** pass `--features tracing` to cargo commands
+- Example: `RUST_LOG=trace cargo nextest run --profile fast --features tracing -p facet-xml test_name 2>&1`
+
+Never run tests without tracing when debugging failures.

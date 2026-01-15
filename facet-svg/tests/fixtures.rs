@@ -1,4 +1,5 @@
 use facet_svg::Svg;
+use facet_testhelpers::test;
 
 // Basic SVG Element Tests
 

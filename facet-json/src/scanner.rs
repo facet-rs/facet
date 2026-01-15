@@ -984,6 +984,7 @@ pub fn parse_number(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use facet_testhelpers::test;
 
     #[test]
     fn test_simple_tokens() {

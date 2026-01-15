@@ -11,13 +11,15 @@ use quote::{format_ident, quote, quote_spanned};
 /// It MUST be called within a context where `use #facet_crate::𝟋::*` has been emitted.
 fn gen_variant(
     name: impl quote::ToTokens,
+    rename: Option<impl quote::ToTokens>,
     discriminant: impl quote::ToTokens,
     attributes: Option<impl quote::ToTokens>,
     struct_kind: impl quote::ToTokens,
     fields: impl quote::ToTokens,
     doc: Option<impl quote::ToTokens>,
 ) -> TokenStream {
-    // Only emit .attributes() and .doc() calls when there's actual content
+    // Only emit builder calls when there's actual content
+    let rename_call = rename.map(|r| quote! { .rename(#r) });
     let attributes_call = attributes.map(|a| quote! { .attributes(#a) });
     let doc_call = doc.map(|d| quote! { .doc(#d) });
 
@@ -26,6 +28,7 @@ fn gen_variant(
             #name,
             𝟋STyB::new(#struct_kind, #fields).build()
         )
+        #rename_call
         .discriminant(#discriminant)
         #attributes_call
         #doc_call
@@ -38,16 +41,19 @@ fn gen_variant(
 /// It MUST be called within a context where `use #facet_crate::𝟋::*` has been emitted.
 fn gen_unit_variant(
     name: impl quote::ToTokens,
+    rename: Option<impl quote::ToTokens>,
     discriminant: impl quote::ToTokens,
     attributes: Option<impl quote::ToTokens>,
     doc: Option<impl quote::ToTokens>,
 ) -> TokenStream {
-    // Only emit .attributes() and .doc() calls when there's actual content
+    // Only emit builder calls when there's actual content
+    let rename_call = rename.map(|r| quote! { .rename(#r) });
     let attributes_call = attributes.map(|a| quote! { .attributes(#a) });
     let doc_call = doc.map(|d| quote! { .doc(#d) });
 
     quote! {
         𝟋VarB::new(#name, 𝟋STy::UNIT)
+            #rename_call
             .discriminant(#discriminant)
             #attributes_call
             #doc_call
@@ -458,8 +464,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     quote! { #lit }
                 };
 
-                let display_name = pv.name.effective.clone();
-                let name_token = TokenTree::Literal(Literal::string(&display_name));
+                let variant_name = &pv.name.original;
+                let name_token = TokenTree::Literal(Literal::string(variant_name));
+                let rename_token: Option<TokenStream> =
+                    pv.name.rename.as_ref().map(|r| quote! { #r });
                 let variant_attributes: Option<TokenStream> = if pv.attrs.facet.is_empty() {
                     None
                 } else {
@@ -506,6 +514,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         });
                         let variant = gen_unit_variant(
                             &name_token,
+                            rename_token.as_ref(),
                             &discriminant_ts,
                             variant_attributes.as_ref(),
                             variant_doc.as_ref(),
@@ -551,6 +560,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         let kind = quote! { 𝟋Sk::TupleStruct };
                         let variant = gen_variant(
                             &name_token,
+                            rename_token.as_ref(),
                             &discriminant_ts,
                             variant_attributes.as_ref(),
                             &kind,
@@ -613,6 +623,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         let kind = quote! { 𝟋Sk::Struct };
                         let variant = gen_variant(
                             &name_token,
+                            rename_token.as_ref(),
                             &discriminant_ts,
                             variant_attributes.as_ref(),
                             &kind,
@@ -676,8 +687,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     quote! { #lit }
                 };
 
-                let display_name = pv.name.effective.clone();
-                let name_token = TokenTree::Literal(Literal::string(&display_name));
+                let variant_name = &pv.name.original;
+                let name_token = TokenTree::Literal(Literal::string(variant_name));
+                let rename_token: Option<TokenStream> =
+                    pv.name.rename.as_ref().map(|r| quote! { #r });
                 let variant_attributes: Option<TokenStream> = if pv.attrs.facet.is_empty() {
                     None
                 } else {
@@ -708,6 +721,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     PVariantKind::Unit => {
                         let variant = gen_unit_variant(
                             &name_token,
+                            rename_token.as_ref(),
                             &discriminant_ts,
                             variant_attributes.as_ref(),
                             variant_doc.as_ref(),
@@ -763,6 +777,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         let kind = quote! { 𝟋Sk::TupleStruct };
                         let variant = gen_variant(
                             &name_token,
+                            rename_token.as_ref(),
                             &discriminant_ts,
                             variant_attributes.as_ref(),
                             &kind,
@@ -825,6 +840,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         let kind = quote! { 𝟋Sk::Struct };
                         let variant = gen_variant(
                             &name_token,
+                            rename_token.as_ref(),
                             &discriminant_ts,
                             variant_attributes.as_ref(),
                             &kind,

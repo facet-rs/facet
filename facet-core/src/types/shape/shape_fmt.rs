@@ -50,6 +50,7 @@ impl fmt::Debug for Shape {
             flags: _,
             tag: _,
             content: _,
+            rename: _,
         } = self;
 
         if f.alternate() {

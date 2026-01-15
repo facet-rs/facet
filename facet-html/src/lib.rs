@@ -1,7 +1,8 @@
+#![doc = include_str!("../README.md.in")]
 #![deny(unsafe_code)]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
-//! HTML parser and serializer implementing the facet format architecture.
+//! HTML parser and serializer using the facet-dom architecture.
 //!
 //! This crate provides:
 //! - **Parsing**: WHATWG-compliant HTML tokenization via html5gum
@@ -52,7 +53,7 @@
 //! After importing `use facet_html as html;`, you can use these attributes:
 //!
 //! - `#[facet(html::element)]` - Marks a field as a single HTML child element
-//! - `#[facet(html::elements)]` - Marks a field as collecting multiple HTML child elements  
+//! - `#[facet(html::elements)]` - Marks a field as collecting multiple HTML child elements
 //! - `#[facet(html::attribute)]` - Marks a field as an HTML attribute (on the element tag)
 //! - `#[facet(html::text)]` - Marks a field as the text content of the element
 //!
@@ -208,7 +209,15 @@ facet::define_attr_grammar! {
     }
 }
 
-/// Deserialize an HTML document from a string.
+// Re-export error types for convenience
+pub use facet_dom::DomDeserializeError as DeserializeError;
+pub use facet_dom::DomSerializeError as SerializeError;
+
+/// Deserialize an HTML document from a string into an owned type.
+///
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies).
 ///
 /// # Example
 ///
@@ -225,19 +234,51 @@ facet::define_attr_grammar! {
 /// let doc: Div = facet_html::from_str("<div>hello</div>").unwrap();
 /// assert_eq!(doc.text, "hello");
 /// ```
-pub fn from_str<'de, T: facet_core::Facet<'de>>(
-    s: &'de str,
-) -> Result<T, facet_format::DeserializeError<HtmlError>> {
-    let parser = HtmlParser::new(s.as_bytes());
-    let mut deserializer = facet_format::FormatDeserializer::new(parser);
+pub fn from_str<T>(s: &str) -> Result<T, DeserializeError<HtmlError>>
+where
+    T: facet_core::Facet<'static>,
+{
+    from_slice(s.as_bytes())
+}
+
+/// Deserialize an HTML document from bytes into an owned type.
+///
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies).
+pub fn from_slice<T>(bytes: &[u8]) -> Result<T, DeserializeError<HtmlError>>
+where
+    T: facet_core::Facet<'static>,
+{
+    let parser = HtmlParser::new(bytes);
+    let mut deserializer = facet_dom::DomDeserializer::new_owned(parser);
     deserializer.deserialize()
 }
 
-/// Deserialize an HTML document from bytes.
-pub fn from_slice<'de, T: facet_core::Facet<'de>>(
-    bytes: &'de [u8],
-) -> Result<T, facet_format::DeserializeError<HtmlError>> {
-    let parser = HtmlParser::new(bytes);
-    let mut deserializer = facet_format::FormatDeserializer::new(parser);
+/// Deserialize an HTML document from a string, allowing borrowing from the input.
+///
+/// Use this when the deserialized type can borrow from the input string
+/// (e.g., contains `&'a str` fields). The input must outlive the result.
+///
+/// For most use cases, prefer [`from_str`] which produces owned types.
+pub fn from_str_borrowed<'input, T>(input: &'input str) -> Result<T, DeserializeError<HtmlError>>
+where
+    T: facet_core::Facet<'input>,
+{
+    from_slice_borrowed(input.as_bytes())
+}
+
+/// Deserialize an HTML document from bytes, allowing borrowing from the input.
+///
+/// Use this when the deserialized type can borrow from the input bytes
+/// (e.g., contains `&'a str` fields). The input must outlive the result.
+///
+/// For most use cases, prefer [`from_slice`] which produces owned types.
+pub fn from_slice_borrowed<'input, T>(input: &'input [u8]) -> Result<T, DeserializeError<HtmlError>>
+where
+    T: facet_core::Facet<'input>,
+{
+    let parser = HtmlParser::new(input);
+    let mut deserializer = facet_dom::DomDeserializer::new(parser);
     deserializer.deserialize()
 }

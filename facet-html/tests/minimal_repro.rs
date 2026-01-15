@@ -2,6 +2,7 @@
 // Run with: cargo +nightly miri test -p facet-html --test minimal_repro
 
 use facet_html_dom::Html;
+use facet_testhelpers::test;
 
 // Issue #1568: Crash during error cleanup
 #[test]
@@ -864,11 +865,12 @@ var x = '<dt>Term</dt>';
 
     // Check the script content is preserved
     let head = doc.head.as_ref().expect("Should have head");
-    assert!(!head.script.is_empty(), "Should have script element");
+    let scripts: Vec<_> = head.scripts().collect();
+    assert!(!scripts.is_empty(), "Should have script element");
     assert!(
-        head.script[0].text.contains("'<dt>Term</dt>'"),
+        scripts[0].text.contains("'<dt>Term</dt>'"),
         "Script text should contain the HTML string literal, got: {:?}",
-        head.script[0].text
+        scripts[0].text
     );
 
     // Verify document structure wasn't corrupted
@@ -913,7 +915,7 @@ fn custom_elements_in_full_html_document() {
             eprintln!("Parse failed: {}", e);
         }
     }
-    
+
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
     let doc = result.unwrap();
     assert!(doc.head.is_some(), "head should be present");
@@ -945,7 +947,7 @@ more outer code
             eprintln!("Parse failed: {}", e);
         }
     }
-    
+
     // Even if the HTML is malformed, we should get a valid document structure
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
     let doc = result.unwrap();
@@ -969,8 +971,14 @@ fn stray_end_tag_does_not_corrupt_document() {
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result.err());
 
     let doc = result.unwrap();
-    assert!(doc.head.is_some(), "head should be present despite stray end tag");
-    assert!(doc.body.is_some(), "body should be present despite stray end tag");
+    assert!(
+        doc.head.is_some(),
+        "head should be present despite stray end tag"
+    );
+    assert!(
+        doc.body.is_some(),
+        "body should be present despite stray end tag"
+    );
 }
 
 // =============================================================================
@@ -1255,7 +1263,10 @@ fn issue_1744_no_stray_spaces_in_h2_pretty() {
         serialized
     );
     // The output should match the input exactly (no extra whitespace)
-    assert_eq!(html, serialized, "Pretty print of text-only element should match input");
+    assert_eq!(
+        html, serialized,
+        "Pretty print of text-only element should match input"
+    );
 }
 
 #[test]
@@ -1371,4 +1382,49 @@ fn issue_1744_pretty_does_add_newlines_between_blocks() {
         "Should NOT have newline inside p elements, got: {}",
         serialized
     );
+}
+
+/// Roundtrip test for G115 fixture - catches issues like aria-label becoming ariaLabel
+#[test]
+fn g115_roundtrip() {
+    use std::path::Path;
+    let path = Path::new("tests/fixtures/https_w3.org_WAI_WCAG21_Techniques_general_G115.html");
+    let html_str = std::fs::read_to_string(path).unwrap();
+
+    let parsed: facet_html_dom::Html = facet_html::from_str(&html_str).expect("parse 1");
+    let serialized = facet_html::to_string(&parsed).expect("serialize 1");
+
+    let reparsed: facet_html_dom::Html = facet_html::from_str(&serialized).expect("parse 2");
+    let reserialized = facet_html::to_string(&reparsed).expect("serialize 2");
+
+    assert_eq!(serialized, reserialized, "Roundtrip should be idempotent");
+}
+
+/// Issue: aria-label and other hyphenated attributes should roundtrip exactly.
+/// The `extra` HashMap in GlobalAttrs captures unknown attributes with their
+/// original keys - we must NOT apply lowerCamelCase transformation to string keys.
+#[test]
+fn issue_aria_label_roundtrip() {
+    let input = r#"<div aria-label="Close" data-foo="bar">Content</div>"#;
+
+    let parsed: facet_html_dom::Div = facet_html::from_str(input).expect("parse");
+    let serialized = facet_html::to_string(&parsed).expect("serialize");
+
+    // The hyphenated attribute names must be preserved exactly
+    assert!(
+        serialized.contains(r#"aria-label="Close""#),
+        "aria-label should be preserved exactly, got: {}",
+        serialized
+    );
+    assert!(
+        serialized.contains(r#"data-foo="bar""#),
+        "data-foo should be preserved exactly, got: {}",
+        serialized
+    );
+
+    // Roundtrip should be stable
+    let reparsed: facet_html_dom::Div = facet_html::from_str(&serialized).expect("reparse");
+    let reserialized = facet_html::to_string(&reparsed).expect("reserialize");
+
+    assert_eq!(serialized, reserialized, "Roundtrip should be idempotent");
 }

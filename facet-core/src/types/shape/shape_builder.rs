@@ -49,6 +49,7 @@ const EMPTY_VESSEL: Shape = Shape {
     flags: ShapeFlags::empty(),
     tag: None,
     content: None,
+    rename: None,
 };
 
 impl Shape {
@@ -380,6 +381,14 @@ impl ShapeBuilder {
         self.shape.content = Some(content);
         self
     }
+
+    /// Set the rename for this shape.
+    #[inline]
+    pub const fn rename(mut self, rename: &'static str) -> Self {
+        self.shape.rename = Some(rename);
+        self
+    }
+
     /// Mark this enum as numeric.
     ///
     /// Numeric enums serialize to the underlying discriminant

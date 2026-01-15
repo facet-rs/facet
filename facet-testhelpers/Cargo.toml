@@ -14,8 +14,10 @@ description = "A collection of testing helpers and utilities for facet"
 
 [dependencies]
 facet-testhelpers-macros = { version = "0.42.0", path = "../facet-testhelpers-macros" }
-log = { workspace = true }
-owo-colors = "4.2.2"
+color-backtrace = { version = "0.7.2", features = ["use-btparse-crate"] }
+termcolor = "1.4"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["ansi"] }
 
 [lints]
 workspace = true

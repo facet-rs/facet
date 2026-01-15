@@ -6,7 +6,7 @@ use std::collections::HashMap;
 #[test]
 fn wip_map_trivial() {
     let mut partial = Partial::alloc::<HashMap<String, String>>().unwrap();
-    partial = partial.begin_map().unwrap();
+    partial = partial.init_map().unwrap();
 
     partial = partial.begin_key().unwrap();
     partial = partial.set::<String>("key".into()).unwrap();
@@ -33,7 +33,7 @@ fn wip_map_trivial() {
 #[test]
 fn list_vec_basic() -> Result<(), IPanic> {
     let vec = Partial::alloc::<Vec<i32>>()?
-        .begin_list()?
+        .init_list()?
         .push(42)?
         .push(84)?
         .push(126)?
@@ -52,7 +52,7 @@ fn list_vec_complex() -> Result<(), IPanic> {
     }
 
     let vec = Partial::alloc::<Vec<Person>>()?
-        .begin_list()?
+        .init_list()?
         .begin_list_item()?
         .set_field("name", "Alice".to_string())?
         .set_field("age", 30u32)?
@@ -82,7 +82,7 @@ fn list_vec_complex() -> Result<(), IPanic> {
 #[test]
 fn list_vec_empty() -> Result<(), IPanic> {
     let vec = Partial::alloc::<Vec<String>>()?
-        .begin_list()?
+        .init_list()?
         .build()?
         .materialize::<Vec<String>>()?;
     assert_eq!(vec, Vec::<String>::new());
@@ -92,14 +92,14 @@ fn list_vec_empty() -> Result<(), IPanic> {
 #[test]
 fn list_vec_nested() -> Result<(), IPanic> {
     let vec = Partial::alloc::<Vec<Vec<i32>>>()?
-        .begin_list()?
+        .init_list()?
         .begin_list_item()?
-        .begin_list()?
+        .init_list()?
         .push(1)?
         .push(2)?
         .end()?
         .begin_list_item()?
-        .begin_list()?
+        .init_list()?
         .push(3)?
         .push(4)?
         .push(5)?
@@ -113,10 +113,10 @@ fn list_vec_nested() -> Result<(), IPanic> {
 #[test]
 fn list_vec_reinit() -> Result<(), IPanic> {
     let mut p = Partial::alloc::<Vec<i32>>()?;
-    p = p.begin_list()?;
+    p = p.init_list()?;
     p = p.push(1)?;
     p = p.push(2)?;
-    p = p.begin_list()?;
+    p = p.init_list()?;
     p = p.push(3)?;
     p = p.push(4)?;
     let vec = p.build()?.materialize::<Vec<i32>>()?;
@@ -133,12 +133,12 @@ fn list_vec_field_reinit() -> Result<(), IPanic> {
 
     let mut p = Partial::alloc::<S>()?;
     p = p.begin_field("s")?;
-    p = p.begin_list()?;
+    p = p.init_list()?;
     p = p.push(1)?;
     p = p.push(2)?;
     p = p.end()?;
     p = p.begin_field("s")?;
-    p = p.begin_list()?;
+    p = p.init_list()?;
     p = p.push(3)?;
     p = p.push(4)?;
     p = p.end()?;
@@ -155,18 +155,18 @@ fn list_vec_field_reinit() -> Result<(), IPanic> {
 #[test]
 fn list_wrong_begin_list() -> Result<(), IPanic> {
     let hv = Partial::alloc::<HashMap<String, i32>>()?;
-    let err_str = match hv.begin_list() {
+    let err_str = match hv.init_list() {
         Ok(_) => panic!("expected error"),
         Err(e) => e.to_string(),
     };
-    assert!(err_str.contains("begin_list can only be called on List or DynamicValue types"));
+    assert!(err_str.contains("init_list can only be called on List or DynamicValue types"));
     Ok(())
 }
 
 #[test]
 fn map_hashmap_simple() -> Result<(), IPanic> {
     let map = Partial::alloc::<HashMap<String, i32>>()?
-        .begin_map()?
+        .init_map()?
         .begin_key()?
         .set("foo".to_string())?
         .end()?
@@ -190,7 +190,7 @@ fn map_hashmap_simple() -> Result<(), IPanic> {
 #[test]
 fn map_hashmap_empty() -> Result<(), IPanic> {
     let map = Partial::alloc::<HashMap<String, String>>()?
-        .begin_map()?
+        .init_map()?
         .build()?
         .materialize::<HashMap<String, String>>()?;
     assert_eq!(map.len(), 0);
@@ -206,7 +206,7 @@ fn map_hashmap_complex_values() -> Result<(), IPanic> {
     }
 
     let map = Partial::alloc::<HashMap<String, Person>>()?
-        .begin_map()?
+        .init_map()?
         .set_key("alice".to_string())?
         .begin_value()?
         .set_field("name", "Alice".to_string())?
@@ -258,7 +258,7 @@ fn map_partial_initialization_drop() -> Result<(), IPanic> {
     {
         let partial = Partial::alloc::<HashMap<String, DropTracker>>()?;
         let _partial = partial
-            .begin_map()?
+            .init_map()?
             .begin_key()?
             .set("first".to_string())?
             .end()?

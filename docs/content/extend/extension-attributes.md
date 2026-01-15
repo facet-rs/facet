@@ -49,8 +49,8 @@ facet::define_attr_grammar! {
         Attribute,
         /// Marks a field as the text content of the element
         Text,
-        /// Marks a field as storing the XML element name dynamically
-        ElementName,
+        /// Marks a field as storing the XML element tag name dynamically
+        Tag,
         /// Specifies the XML namespace URI for this field.
         Ns(&'static str),
         /// Specifies the default XML namespace URI for all fields in this container.
@@ -163,7 +163,7 @@ struct Parent {
 
 ```
 error: unknown attribute `elemnt`, did you mean `element`?
-       available attributes: element, elements, attribute, text, element_name, ns, ns_all
+       available attributes: element, elements, attribute, text, tag, ns, ns_all
  --> src/lib.rs:4:12
   |
 4 |     #[facet(xml::elemnt)]
@@ -282,7 +282,7 @@ facet::define_attr_grammar! {
         Elements,
         Attribute,
         Text,
-        ElementName,
+        Tag,
         Ns(&'static str),
         NsAll(&'static str),
     }

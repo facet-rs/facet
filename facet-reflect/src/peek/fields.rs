@@ -1,7 +1,7 @@
 use core::ops::Range;
 
 use alloc::borrow::Cow;
-use facet_core::Field;
+use facet_core::{Field, Variant};
 
 use crate::Peek;
 use alloc::{string::String, vec, vec::Vec};
@@ -17,10 +17,20 @@ use super::{PeekEnum, PeekStruct, PeekTuple};
 pub struct FieldItem {
     /// The underlying static field definition (None for flattened map entries)
     pub field: Option<Field>,
+
     /// Runtime-determined name (may differ from field.name for flattened enums/maps)
     pub name: Cow<'static, str>,
+
+    /// Result of applying any field-level `#[facet(rename = ...)]` or container-level
+    /// `#[facet(rename_all = ...)]` attributes. If `None`, no such attribute was encountered.
+    pub rename: Option<Cow<'static, str>>,
+
     /// Whether this field was flattened from an enum (variant name used as key)
     pub flattened: bool,
+
+    /// Whether this is a text variant (html::text or xml::text) from a flattened enum.
+    /// When true, the value should be serialized as raw text without an element wrapper.
+    pub is_text_variant: bool,
 }
 
 impl FieldItem {
@@ -29,18 +39,28 @@ impl FieldItem {
     pub const fn new(field: Field) -> Self {
         Self {
             name: Cow::Borrowed(field.name),
+            rename: match field.rename {
+                Some(r) => Some(Cow::Borrowed(r)),
+                None => None,
+            },
             field: Some(field),
             flattened: false,
+            is_text_variant: false,
         }
     }
 
     /// Create a flattened enum field item with a custom name (the variant name)
     #[inline]
-    pub const fn flattened_enum(field: Field, variant_name: &'static str) -> Self {
+    pub fn flattened_enum(field: Field, variant: &Variant) -> Self {
         Self {
-            name: Cow::Borrowed(variant_name),
+            name: Cow::Borrowed(variant.name),
+            rename: match variant.rename {
+                Some(r) => Some(Cow::Borrowed(r)),
+                None => None,
+            },
             field: Some(field),
             flattened: true,
+            is_text_variant: variant.is_text(),
         }
     }
 
@@ -49,8 +69,19 @@ impl FieldItem {
     pub const fn flattened_map_entry(key: String) -> Self {
         Self {
             name: Cow::Owned(key),
+            rename: None,
             field: None,
             flattened: true,
+            is_text_variant: false,
+        }
+    }
+
+    /// Returns the effective name for this field item, preferring the rename over the original name
+    #[inline]
+    pub fn effective_name(&self) -> &str {
+        match &self.rename {
+            Some(r) => r.as_ref(),
+            None => self.name.as_ref(),
         }
     }
 }
@@ -205,6 +236,11 @@ enum FieldsForSerializeIterState<'mem, 'facet> {
     FlattenedMap {
         map_iter: super::PeekMapIter<'mem, 'facet>,
     },
+    /// Iterating over a flattened list of enums (`Vec<Enum>`)
+    FlattenedEnumList {
+        field: Field,
+        list_iter: super::PeekListIter<'mem, 'facet>,
+    },
 }
 
 impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
@@ -241,6 +277,57 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                         continue;
                     }
                     // Map exhausted, continue to next state
+                    continue;
+                }
+                FieldsForSerializeIterState::FlattenedEnumList {
+                    field,
+                    mut list_iter,
+                } => {
+                    // Iterate over list items, yielding each enum as a flattened field
+                    if let Some(item_peek) = list_iter.next() {
+                        // Push iterator back for more items
+                        self.stack
+                            .push(FieldsForSerializeIterState::FlattenedEnumList {
+                                field,
+                                list_iter,
+                            });
+
+                        // Each item should be an enum - get its variant
+                        if let Ok(enum_peek) = item_peek.into_enum() {
+                            let variant = enum_peek
+                                .active_variant()
+                                .expect("Failed to get active variant");
+                            let field_item = FieldItem::flattened_enum(field, variant);
+
+                            // Get the inner value based on variant kind
+                            use facet_core::StructKind;
+                            match variant.data.kind {
+                                StructKind::Unit => {
+                                    // Unit variants - yield field with unit value
+                                    return Some((field_item, item_peek));
+                                }
+                                StructKind::TupleStruct | StructKind::Tuple
+                                    if variant.data.fields.len() == 1 =>
+                                {
+                                    // Newtype variant - yield the inner value directly
+                                    let inner_value = enum_peek
+                                        .field(0)
+                                        .expect("Failed to get variant field")
+                                        .expect("Newtype variant should have field 0");
+                                    return Some((field_item, inner_value));
+                                }
+                                StructKind::TupleStruct
+                                | StructKind::Tuple
+                                | StructKind::Struct => {
+                                    // Multi-field tuple or struct variant - yield the enum itself
+                                    return Some((field_item, item_peek));
+                                }
+                            }
+                        }
+                        // Skip non-enum items
+                        continue;
+                    }
+                    // List exhausted, continue to next state
                     continue;
                 }
                 FieldsForSerializeIterState::Fields(mut fields) => {
@@ -281,7 +368,7 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                             let variant = enum_peek
                                 .active_variant()
                                 .expect("Failed to get active variant");
-                            let field_item = FieldItem::flattened_enum(field, variant.name);
+                            let field_item = FieldItem::flattened_enum(field, variant);
 
                             // Get the inner value based on variant kind
                             use facet_core::StructKind;
@@ -334,7 +421,7 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                                     let variant = enum_peek
                                         .active_variant()
                                         .expect("Failed to get active variant");
-                                    let field_item = FieldItem::flattened_enum(field, variant.name);
+                                    let field_item = FieldItem::flattened_enum(field, variant);
 
                                     // Get the inner value based on variant kind
                                     use facet_core::StructKind;
@@ -382,6 +469,13 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                                 }
                             }
                             // If None, we just skip - don't emit any fields
+                        } else if let Ok(list_peek) = peek.into_list() {
+                            // Vec<Enum> - emit each enum item as a flattened field
+                            self.stack
+                                .push(FieldsForSerializeIterState::FlattenedEnumList {
+                                    field,
+                                    list_iter: list_peek.iter(),
+                                });
                         } else {
                             // TODO: fail more gracefully
                             panic!("cannot flatten a {}", field.shape())

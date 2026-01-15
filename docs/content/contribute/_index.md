@@ -17,6 +17,7 @@ Help improve facet! This section covers development setup, architecture, and con
 - [Architecture](@/contribute/architecture.md) — Crate graph and key components
 - [Core Concepts](@/contribute/core-concepts.md) — Shape, Type, Def, VTables
 - [The Derive Macro](@/contribute/derive-macro.md) — How `#[derive(Facet)]` works
+- [Tracing](@/contribute/tracing.md) — Zero-cost debug instrumentation
 
 ## Adding new features
 

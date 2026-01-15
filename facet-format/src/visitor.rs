@@ -38,7 +38,7 @@ impl<'a> StructFieldTracker<'a> {
 
     /// Record an incoming serialized field and classify it.
     pub fn record(&mut self, name: &str) -> FieldMatch<'a> {
-        match self.resolution.field(name) {
+        match self.resolution.field_by_name(name) {
             Some(info) => {
                 if self.seen.insert(info.serialized_name) {
                     FieldMatch::KnownFirst(info)

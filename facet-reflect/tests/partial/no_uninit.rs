@@ -21,7 +21,7 @@ fn struct_uninit() {
     let partial: Partial<'_> = Partial::alloc::<FooBar>().unwrap();
     assert!(matches!(
         partial.build(),
-        Err(ReflectError::UninitializedValue { .. })
+        Err(ReflectError::UninitializedField { .. })
     ));
 }
 

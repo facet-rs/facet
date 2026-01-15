@@ -15,10 +15,11 @@
 //! let svg: Svg = facet_svg::from_str(svg_str).unwrap();
 //! ```
 
+mod tracing_macros;
+
 use facet::Facet;
-use facet_format::FormatDeserializer;
 use facet_xml as xml;
-use facet_xml::{XmlParser, to_vec};
+use facet_xml::to_vec;
 
 mod path;
 mod points;
@@ -30,19 +31,17 @@ pub use points::{Point, Points, PointsProxy};
 pub const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
 /// Error type for SVG parsing
-pub type Error = facet_format::DeserializeError<facet_xml::XmlError>;
+pub type Error = facet_xml::DeserializeError<facet_xml::XmlError>;
 
 /// Error type for SVG serialization
-pub type SerializeError = facet_format::SerializeError<facet_xml::XmlSerializeError>;
+pub type SerializeError = facet_xml::SerializeError<facet_xml::XmlSerializeError>;
 
 /// Deserialize an SVG from a string.
-pub fn from_str<'input, T>(xml: &'input str) -> Result<T, Error>
+pub fn from_str<T>(s: &str) -> Result<T, Error>
 where
-    T: Facet<'input>,
+    T: for<'a> Facet<'a>,
 {
-    let parser = XmlParser::new(xml.as_bytes());
-    let mut de = FormatDeserializer::new(parser);
-    de.deserialize()
+    facet_xml::from_str(s)
 }
 
 /// Serialize an SVG value to a string.
@@ -71,13 +70,13 @@ pub struct Svg {
     pub height: Option<String>,
     #[facet(xml::attribute)]
     pub view_box: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(flatten)]
     pub children: Vec<SvgNode>,
 }
 
 /// Any SVG node we care about
 #[derive(Facet, Debug, Clone)]
-#[facet(xml::ns_all = "http://www.w3.org/2000/svg", rename_all = "lowercase")]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 #[repr(u8)]
 pub enum SvgNode {
     G(Group),
@@ -96,6 +95,9 @@ pub enum SvgNode {
     Title(Title),
     Desc(Desc),
     Symbol(Symbol),
+    Filter(Filter),
+    Marker(Marker),
+    LinearGradient(LinearGradient),
 }
 
 /// SVG group element (`<g>`)
@@ -108,7 +110,7 @@ pub struct Group {
     pub class: Option<String>,
     #[facet(xml::attribute)]
     pub transform: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(flatten)]
     pub children: Vec<SvgNode>,
 }
 
@@ -116,7 +118,7 @@ pub struct Group {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 pub struct Defs {
-    #[facet(xml::elements)]
+    #[facet(flatten)]
     pub children: Vec<SvgNode>,
 }
 
@@ -414,8 +416,93 @@ pub struct Symbol {
     pub width: Option<String>,
     #[facet(xml::attribute)]
     pub height: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(flatten)]
     pub children: Vec<SvgNode>,
+}
+
+/// SVG filter element (`<filter>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg", skip_all_unless_truthy)]
+pub struct Filter {
+    #[facet(xml::attribute)]
+    pub id: Option<String>,
+    #[facet(flatten)]
+    pub children: Vec<FilterPrimitive>,
+}
+
+/// Filter primitive elements
+#[derive(Facet, Debug, Clone)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+#[repr(u8)]
+pub enum FilterPrimitive {
+    #[facet(rename = "feGaussianBlur")]
+    FeGaussianBlur(FeGaussianBlur),
+}
+
+/// feGaussianBlur filter primitive
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg", skip_all_unless_truthy)]
+pub struct FeGaussianBlur {
+    #[facet(xml::attribute)]
+    pub r#in: Option<String>,
+    #[facet(xml::attribute, rename = "stdDeviation")]
+    pub std_deviation: Option<String>,
+}
+
+/// SVG marker element (`<marker>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(
+    xml::ns_all = "http://www.w3.org/2000/svg",
+    rename_all = "camelCase",
+    skip_all_unless_truthy
+)]
+pub struct Marker {
+    #[facet(xml::attribute)]
+    pub id: Option<String>,
+    #[facet(xml::attribute)]
+    pub marker_width: Option<String>,
+    #[facet(xml::attribute)]
+    pub marker_height: Option<String>,
+    #[facet(xml::attribute, rename = "refX")]
+    pub ref_x: Option<String>,
+    #[facet(xml::attribute, rename = "refY")]
+    pub ref_y: Option<String>,
+    #[facet(xml::attribute)]
+    pub orient: Option<String>,
+    #[facet(flatten)]
+    pub children: Vec<SvgNode>,
+}
+
+/// SVG linearGradient element (`<linearGradient>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg", skip_all_unless_truthy)]
+pub struct LinearGradient {
+    #[facet(xml::attribute)]
+    pub id: Option<String>,
+    #[facet(xml::attribute)]
+    pub x1: Option<String>,
+    #[facet(xml::attribute)]
+    pub y1: Option<String>,
+    #[facet(xml::attribute)]
+    pub x2: Option<String>,
+    #[facet(xml::attribute)]
+    pub y2: Option<String>,
+    #[facet(xml::elements, rename = "stop")]
+    pub stops: Vec<GradientStop>,
+}
+
+/// Gradient stop element (`<stop>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg", skip_all_unless_truthy)]
+pub struct GradientStop {
+    #[facet(xml::attribute)]
+    pub offset: Option<String>,
+    #[facet(xml::attribute)]
+    pub style: Option<String>,
+    #[facet(xml::attribute, rename = "stop-color")]
+    pub stop_color: Option<String>,
+    #[facet(xml::attribute, rename = "stop-opacity")]
+    pub stop_opacity: Option<String>,
 }
 
 // Re-export XML utilities for convenience
@@ -487,6 +574,33 @@ mod tests {
         assert!(
             matches!(result, SameReport::Same),
             "SVG values within float tolerance should be considered Same"
+        );
+    }
+
+    #[test]
+    fn test_polygon_points_serialization() {
+        let polygon = Polygon {
+            points: crate::points::Points::parse("50,10 90,90 10,90").unwrap(),
+            fill: Some("lime".to_string()),
+            stroke: None,
+            stroke_width: None,
+            stroke_dasharray: None,
+            style: None,
+        };
+
+        let xml = to_string(&polygon).unwrap();
+
+        // The points attribute should be present
+        assert!(
+            xml.contains("points="),
+            "Serialized polygon should contain points attribute, got: {}",
+            xml
+        );
+        // Check the actual value
+        assert!(
+            xml.contains(r#"points="50,10 90,90 10,90""#),
+            "Points attribute should have correct value, got: {}",
+            xml
         );
     }
 }

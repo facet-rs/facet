@@ -11,7 +11,7 @@ use ::alloc::{
 use core::{marker::PhantomData, mem::ManuallyDrop, ptr::NonNull};
 
 use crate::{
-    Guard, HeapValue, Partial, Peek, ReflectError, Resolution,
+    Guard, HeapValue, Partial, Peek, ReflectError,
     partial::{
         DynamicObjectInsertState, DynamicValueState, Frame, FrameMode, FrameOwnership,
         MapInsertState, PartialState, Tracker, iset::ISet,

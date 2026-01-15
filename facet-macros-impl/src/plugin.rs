@@ -1395,7 +1395,7 @@ fn emit_format_doc_comment(ctx: &EvalContext<'_>, output: &mut TokenStream) {
 
     let doc = variant.attrs.doc.join(" ").trim().to_string();
     let format_str = if doc.is_empty() {
-        variant.name.effective.clone()
+        variant.name.original.clone()
     } else {
         doc
     };

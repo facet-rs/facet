@@ -6,6 +6,43 @@
 
 extern crate alloc;
 
+/// Trace-level logging macro that forwards to `tracing::trace!` when the `tracing` feature is enabled.
+#[cfg(feature = "tracing")]
+#[allow(unused_macros)]
+macro_rules! trace {
+    ($($arg:tt)*) => {
+        ::tracing::trace!($($arg)*)
+    };
+}
+
+/// Trace-level logging macro (no-op when `tracing` feature is disabled).
+#[cfg(not(feature = "tracing"))]
+#[allow(unused_macros)]
+macro_rules! trace {
+    ($($arg:tt)*) => {};
+}
+
+/// Debug-level logging macro that forwards to `tracing::debug!` when the `tracing` feature is enabled.
+#[cfg(feature = "tracing")]
+#[allow(unused_macros)]
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        ::tracing::debug!($($arg)*)
+    };
+}
+
+/// Debug-level logging macro (no-op when `tracing` feature is disabled).
+#[cfg(not(feature = "tracing"))]
+#[allow(unused_macros)]
+macro_rules! debug {
+    ($($arg:tt)*) => {};
+}
+
+#[allow(unused_imports)]
+pub(crate) use debug;
+#[allow(unused_imports)]
+pub(crate) use trace;
+
 mod adapter;
 mod error;
 mod parser;
@@ -29,6 +66,7 @@ pub use jit::JsonJitFormat;
 
 #[cfg(feature = "axum")]
 pub use axum::{Json, JsonRejection};
+
 pub use parser::{JsonError, JsonParser};
 pub use raw_json::RawJson;
 pub use serializer::{

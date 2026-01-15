@@ -306,7 +306,7 @@ impl FormatSuite for JsonSlice {
 
     fn error_missing_required_field() -> CaseSpec {
         // Missing required field "email"
-        CaseSpec::expect_error(r#"{"name":"Alice","age":30}"#, "missing field")
+        CaseSpec::expect_error(r#"{"name":"Alice","age":30}"#, "was not initialized")
     }
 
     // ── Alias cases ──
@@ -405,7 +405,7 @@ impl FormatSuite for JsonSlice {
         // Two flattened structs both have a "shared" field - should error
         CaseSpec::expect_error(
             r#"{"field_a":"a","field_b":"b","shared":1}"#,
-            "duplicate field",
+            "Duplicate field",
         )
     }
 
@@ -828,6 +828,7 @@ impl FormatSuite for JsonSlice {
 fn main() {
     use std::sync::Arc;
 
+    facet_testhelpers::setup();
     let args = Arguments::from_args();
     let cases: Vec<Arc<_>> = all_cases::<JsonSlice>().into_iter().map(Arc::new).collect();
 

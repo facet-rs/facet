@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_xml::{self as xml, from_str, to_string};
 
 #[test]

@@ -9,11 +9,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// This is a prerequisite to `begin_push_item`/`set`/`end` or the shorthand
     /// `push`.
     ///
-    /// `begin_list` does not clear the list if it was previously initialized.
-    /// `begin_list` does not push a new frame to the stack, and thus does not
+    /// `init_list` does not clear the list if it was previously initialized.
+    /// `init_list` does not push a new frame to the stack, and thus does not
     /// require `end` to be called afterwards.
-    pub fn begin_list(mut self) -> Result<Self, ReflectError> {
-        crate::trace!("begin_list()");
+    pub fn init_list(mut self) -> Result<Self, ReflectError> {
+        crate::trace!("init_list()");
         let frame = self.frames_mut().last_mut().unwrap();
 
         match &frame.tracker {
@@ -44,7 +44,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     _ => {
                         return Err(ReflectError::OperationFailed {
                             shape: frame.allocated.shape(),
-                            operation: "begin_list can only be called on List types or DynamicValue",
+                            operation: "init_list can only be called on List types or DynamicValue",
                         });
                     }
                 }
@@ -67,12 +67,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 frame.deinit_for_replace();
             }
             Tracker::SmartPointerSlice { .. } => {
-                // begin_list is kinda superfluous when we're in a SmartPointerSlice state
+                // init_list is kinda superfluous when we're in a SmartPointerSlice state
                 return Ok(self);
             }
             _ => {
                 return Err(ReflectError::UnexpectedTracker {
-                    message: "begin_list called but tracker isn't something list-like",
+                    message: "init_list called but tracker isn't something list-like",
                     current_tracker: frame.tracker.kind(),
                 });
             }
@@ -120,7 +120,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_list can only be called on List or DynamicValue types",
+                    operation: "init_list can only be called on List or DynamicValue types",
                 });
             }
         }
@@ -131,16 +131,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Transitions the frame to Array tracker state.
     ///
     /// This is used to prepare a fixed-size array for element initialization.
-    /// Unlike `begin_list`, this does not initialize any runtime data - arrays
+    /// Unlike `init_list`, this does not initialize any runtime data - arrays
     /// are stored inline and don't need a vtable call.
     ///
     /// This method is particularly important for zero-length arrays like `[u8; 0]`,
     /// which have no elements to initialize but still need their tracker state
     /// to be set correctly for `require_full_initialization` to pass.
     ///
-    /// `begin_array` does not push a new frame to the stack.
-    pub fn begin_array(mut self) -> Result<Self, ReflectError> {
-        crate::trace!("begin_array()");
+    /// `init_array` does not push a new frame to the stack.
+    pub fn init_array(mut self) -> Result<Self, ReflectError> {
+        crate::trace!("init_array()");
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Verify this is an array type
@@ -149,7 +149,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_array can only be called on Array types",
+                    operation: "init_array can only be called on Array types",
                 });
             }
         };
@@ -176,7 +176,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_array: unexpected tracker state",
+                    operation: "init_array: unexpected tracker state",
                 });
             }
         }
@@ -361,7 +361,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "must call begin_list() before push()",
+                    operation: "must call init_list() before push()",
                 });
             }
         }

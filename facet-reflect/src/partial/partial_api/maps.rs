@@ -11,7 +11,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// It does _not_ push a new frame onto the stack.
     ///
     /// For `Def::DynamicValue` types, this initializes as an object instead of a map.
-    pub fn begin_map(mut self) -> Result<Self, ReflectError> {
+    pub fn init_map(mut self) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check tracker state before initializing
@@ -59,7 +59,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     _ => {
                         return Err(ReflectError::OperationFailed {
                             shape: frame.allocated.shape(),
-                            operation: "begin_map can only be called on Map or DynamicValue types",
+                            operation: "init_map can only be called on Map or DynamicValue types",
                         });
                     }
                 }
@@ -83,7 +83,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             _ => {
                 return Err(ReflectError::UnexpectedTracker {
-                    message: "begin_map called but tracker isn't Scalar, Map, or DynamicValue",
+                    message: "init_map called but tracker isn't Scalar, Map, or DynamicValue",
                     current_tracker: frame.tracker.kind(),
                 });
             }
@@ -122,7 +122,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "begin_map can only be called on Map or DynamicValue types",
+                    operation: "init_map can only be called on Map or DynamicValue types",
                 });
             }
         }
@@ -169,7 +169,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "must call begin_map() before begin_key()",
+                    operation: "must call init_map() before begin_key()",
                 });
             }
         };
@@ -352,7 +352,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             (Def::DynamicValue(_), _) => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.allocated.shape(),
-                    operation: "must call begin_map() before begin_object_entry()",
+                    operation: "must call init_map() before begin_object_entry()",
                 });
             }
             _ => {
@@ -387,9 +387,9 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 new_frame.is_init = true;
                 // Set tracker to reflect it's an initialized DynamicValue
                 // For DynamicValue, we need to peek at the value to determine the state.
-                // However, we don't know yet what operations will be called (begin_map, begin_list, etc.)
-                // So we set Scalar tracker and let begin_map/begin_list handle the conversion.
-                // begin_list will convert Scalar->List if shape is Def::List, or handle DynamicValue directly.
+                // However, we don't know yet what operations will be called (init_map, init_list, etc.)
+                // So we set Scalar tracker and let init_map/init_list handle the conversion.
+                // init_list will convert Scalar->List if shape is Def::List, or handle DynamicValue directly.
                 new_frame.tracker = Tracker::Scalar;
                 self.frames_mut().push(new_frame);
                 return Ok(self);

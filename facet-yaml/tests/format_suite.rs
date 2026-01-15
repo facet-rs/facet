@@ -264,7 +264,7 @@ impl FormatSuite for YamlSlice {
 
     fn error_missing_required_field() -> CaseSpec {
         // Missing required field "email"
-        CaseSpec::expect_error("name: Alice\nage: 30", "missing field")
+        CaseSpec::expect_error("name: Alice\nage: 30", "was not initialized")
     }
 
     // -- Alias cases --
@@ -361,7 +361,7 @@ impl FormatSuite for YamlSlice {
 
     fn flatten_overlapping_fields_error() -> CaseSpec {
         // Two flattened structs both have a "shared" field - should error
-        CaseSpec::expect_error("field_a: a\nfield_b: b\nshared: 1", "duplicate field")
+        CaseSpec::expect_error("field_a: a\nfield_b: b\nshared: 1", "Duplicate field")
     }
 
     fn flatten_multilevel() -> CaseSpec {

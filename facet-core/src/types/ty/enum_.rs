@@ -21,6 +21,12 @@ pub struct Variant {
     /// Name of the variant, e.g. `Foo` for `enum FooBar { Foo, Bar }`
     pub name: &'static str,
 
+    /// Renamed variant name for serialization/deserialization.
+    ///
+    /// Set by `#[facet(rename = "name")]` or container-level `#[facet(rename_all = "...")]`.
+    /// When present, serializers/deserializers should use this name instead of the variant's actual name.
+    pub rename: Option<&'static str>,
+
     /// Discriminant value (if available). Might fit in a u8, etc.
     pub discriminant: Option<i64>,
 
@@ -87,6 +93,24 @@ impl Variant {
     pub fn is_custom_element(&self) -> bool {
         self.has_attr(Some("html"), "custom_element")
             || self.has_attr(Some("xml"), "custom_element")
+    }
+
+    /// Returns true if this variant has the `#[facet(other)]` attribute.
+    ///
+    /// When deserializing, variants marked as `other` act as a catch-all
+    /// for unknown variant names. This is useful for extensible enums where
+    /// unknown tags should be captured rather than rejected.
+    #[inline]
+    pub fn is_other(&self) -> bool {
+        self.has_builtin_attr("other")
+    }
+
+    /// Returns the effective name for serialization/deserialization.
+    ///
+    /// Returns `rename` if set, otherwise returns the variant's actual name.
+    #[inline]
+    pub fn effective_name(&self) -> &'static str {
+        self.rename.unwrap_or(self.name)
     }
 }
 
@@ -163,6 +187,7 @@ impl EnumRepr {
 #[derive(Clone, Copy, Debug)]
 pub struct VariantBuilder {
     name: &'static str,
+    rename: Option<&'static str>,
     discriminant: Option<i64>,
     attributes: &'static [VariantAttribute],
     data: StructType,
@@ -180,6 +205,7 @@ impl VariantBuilder {
     pub const fn new(name: &'static str, data: StructType) -> Self {
         Self {
             name,
+            rename: None,
             discriminant: None,
             attributes: &[],
             data,
@@ -216,6 +242,15 @@ impl VariantBuilder {
         )
     }
 
+    /// Sets the renamed name for this variant.
+    ///
+    /// Defaults to `None` if not called.
+    #[inline]
+    pub const fn rename(mut self, rename: &'static str) -> Self {
+        self.rename = Some(rename);
+        self
+    }
+
     /// Sets the discriminant value for this variant.
     ///
     /// Defaults to `None` if not called.
@@ -248,6 +283,7 @@ impl VariantBuilder {
     pub const fn build(self) -> Variant {
         Variant {
             name: self.name,
+            rename: self.rename,
             discriminant: self.discriminant,
             attributes: self.attributes,
             data: self.data,

@@ -167,7 +167,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             },
         );
 
-        // CRITICAL: For re-entry, mark the frame as already initialized so that begin_list()
+        // CRITICAL: For re-entry, mark the frame as already initialized so that init_list()
         // doesn't reinitialize the Vec (which would clear it)
         if is_reentry {
             inner_frame.is_init = true;

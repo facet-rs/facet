@@ -34,12 +34,14 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet", features = ["doc", "net"] }
-facet-format = { path = "../facet-format", features = ["jit", "net"] }
+facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net"] }
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 libtest-mimic = "0.8.1"
 indoc = { workspace = true }
+tracing = { workspace = true }
 
 [features]
 default = []
@@ -48,6 +50,7 @@ serialize = ["dep:toml_writer"]
 jit = ["facet-format/jit"]
 fast = ["dep:zmij", "dep:itoa"]
 net = ["facet-format/net", "facet-core/net"]
+tracing = ["facet-reflect/tracing", "facet-format/tracing"]
 
 # Axum HTTP integration
 axum = ["std", "serialize", "dep:axum-core", "dep:http", "dep:http-body-util"]

@@ -115,7 +115,7 @@ mod iset;
 
 mod partial_api;
 
-use crate::{KeyPath, ReflectError, Resolution, TrackerKind, trace};
+use crate::{KeyPath, ReflectError, TrackerKind, trace};
 
 use core::marker::PhantomData;
 
@@ -153,9 +153,6 @@ enum FrameMode {
     Deferred {
         /// Stack of frames for nested initialization.
         stack: Vec<Frame>,
-
-        /// The resolution from facet-solver describing the field structure.
-        resolution: Resolution,
 
         /// The frame depth when deferred mode was started.
         /// Path calculations are relative to this depth.
@@ -205,14 +202,6 @@ impl FrameMode {
     const fn current_path(&self) -> Option<&KeyPath> {
         match self {
             FrameMode::Deferred { current_path, .. } => Some(current_path),
-            FrameMode::Strict { .. } => None,
-        }
-    }
-
-    /// Get the resolution if in deferred mode.
-    const fn resolution(&self) -> Option<&Resolution> {
-        match self {
-            FrameMode::Deferred { resolution, .. } => Some(resolution),
             FrameMode::Strict { .. } => None,
         }
     }
@@ -605,7 +594,7 @@ impl Frame {
             Tracker::Struct { iset, .. } => {
                 // Drop initialized struct fields
                 if let Type::User(UserType::Struct(struct_type)) = self.allocated.shape().ty {
-                    if iset.all_set() {
+                    if iset.all_set(struct_type.fields.len()) {
                         unsafe {
                             self.allocated
                                 .shape()
@@ -939,6 +928,9 @@ impl Frame {
                         }
                     }
 
+                    // Check if the container has #[facet(default)] attribute
+                    let container_has_default = self.allocated.shape().has_default_attr();
+
                     // Fill defaults for individual fields
                     for (idx, field) in struct_type.fields.iter().enumerate() {
                         // Skip already-initialized fields
@@ -950,7 +942,9 @@ impl Frame {
                         let field_ptr = unsafe { self.data.field_uninit(field.offset) };
 
                         // Try to initialize with default
-                        if unsafe { Self::try_init_field_default(field, field_ptr) } {
+                        if unsafe {
+                            Self::try_init_field_default(field, field_ptr, container_has_default)
+                        } {
                             // Mark field as initialized
                             iset.set(idx);
                         } else if field.has_default() {
@@ -964,6 +958,9 @@ impl Frame {
                 }
             }
             Tracker::Enum { variant, data, .. } => {
+                // Check if the container has #[facet(default)] attribute
+                let container_has_default = self.allocated.shape().has_default_attr();
+
                 // Handle enum variant fields
                 for (idx, field) in variant.data.fields.iter().enumerate() {
                     // Skip already-initialized fields
@@ -975,7 +972,9 @@ impl Frame {
                     let field_ptr = unsafe { self.data.field_uninit(field.offset) };
 
                     // Try to initialize with default
-                    if unsafe { Self::try_init_field_default(field, field_ptr) } {
+                    if unsafe {
+                        Self::try_init_field_default(field, field_ptr, container_has_default)
+                    } {
                         // Mark field as initialized
                         data.set(idx);
                     } else if field.has_default() {
@@ -998,14 +997,20 @@ impl Frame {
     /// 1. Explicit field-level default_fn (from `#[facet(default = ...)]`)
     /// 2. Type-level default_in_place (from Default impl, including `Option<T>`)
     ///    but only if the field has the DEFAULT flag
-    /// 3. Special cases: `Option<T>` (defaults to None), () (unit type)
+    /// 3. Container-level default: if the container has `#[facet(default)]` and
+    ///    the field's type implements Default, use that
+    /// 4. Special cases: `Option<T>` (defaults to None), () (unit type)
     ///
     /// Returns true if a default was applied, false otherwise.
     ///
     /// # Safety
     ///
     /// `field_ptr` must point to uninitialized memory of the appropriate type.
-    unsafe fn try_init_field_default(field: &Field, field_ptr: PtrUninit) -> bool {
+    unsafe fn try_init_field_default(
+        field: &Field,
+        field_ptr: PtrUninit,
+        container_has_default: bool,
+    ) -> bool {
         use facet_core::DefaultSource;
 
         // First check for explicit field-level default
@@ -1026,6 +1031,16 @@ impl Frame {
             }
         }
 
+        // If container has #[facet(default)] and the field's type implements Default,
+        // use the type's Default impl. This allows `#[facet(default)]` on a struct to
+        // mean "use Default for any missing fields whose types implement Default".
+        if container_has_default {
+            let field_ptr_mut = unsafe { field_ptr.assume_init() };
+            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+                return true;
+            }
+        }
+
         // Special case: Option<T> always defaults to None, even without explicit #[facet(default)]
         // This is because Option is fundamentally "optional" - if not set, it should be None
         if matches!(field.shape().def, Def::Option(_)) {
@@ -1037,6 +1052,16 @@ impl Frame {
 
         // Special case: () unit type always defaults to ()
         if field.shape().is_type::<()>() {
+            let field_ptr_mut = unsafe { field_ptr.assume_init() };
+            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+                return true;
+            }
+        }
+
+        // Special case: Collection types (Vec, HashMap, HashSet, etc.) default to empty
+        // These types have obvious "zero values" and it's almost always what you want
+        // when deserializing data where the collection is simply absent.
+        if matches!(field.shape().def, Def::List(_) | Def::Map(_) | Def::Set(_)) {
             let field_ptr_mut = unsafe { field_ptr.assume_init() };
             if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
                 return true;
@@ -1076,12 +1101,11 @@ impl Frame {
                 }
             }
             Tracker::Struct { iset, .. } => {
-                if iset.all_set() {
-                    Ok(())
-                } else {
-                    // Attempt to find the first uninitialized field, if possible
-                    match self.allocated.shape().ty {
-                        Type::User(UserType::Struct(struct_type)) => {
+                match self.allocated.shape().ty {
+                    Type::User(UserType::Struct(struct_type)) => {
+                        if iset.all_set(struct_type.fields.len()) {
+                            Ok(())
+                        } else {
                             // Find index of the first bit not set
                             let first_missing_idx =
                                 (0..struct_type.fields.len()).find(|&idx| !iset.get(idx));
@@ -1098,10 +1122,10 @@ impl Frame {
                                 })
                             }
                         }
-                        _ => Err(ReflectError::UninitializedValue {
-                            shape: self.allocated.shape(),
-                        }),
                     }
+                    _ => Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    }),
                 }
             }
             Tracker::Enum { variant, data, .. } => {
@@ -1280,12 +1304,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     #[inline]
     pub(crate) const fn current_path(&self) -> Option<&KeyPath> {
         self.mode.current_path()
-    }
-
-    /// Get the resolution if in deferred mode.
-    #[inline]
-    pub(crate) const fn resolution(&self) -> Option<&Resolution> {
-        self.mode.resolution()
     }
 }
 

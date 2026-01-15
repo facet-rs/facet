@@ -1,0 +1,21 @@
+[package]
+name = "facet-dessert"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Sweet helpers for facet deserialization - shared between facet-format and facet-dom"
+keywords = ["serialization", "deserialization", "facet", "reflection"]
+categories = ["encoding", "parsing"]
+homepage = "https://facet.rs"
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "0.42.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
+
+[features]
+default = []
+
+[lints]
+workspace = true

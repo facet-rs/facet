@@ -5,14 +5,12 @@
 //! declarations and namespace prefixes.
 
 use facet::Facet;
-use facet_format::FormatDeserializer;
-use facet_xml::{self as xml, XmlParser, to_vec};
+use facet_testhelpers::test;
+use facet_xml::{self as xml, to_vec};
 
 /// Helper to deserialize XML using facet-xml
 fn from_str<T: Facet<'static>>(xml_str: &str) -> Result<T, Box<dyn std::error::Error>> {
-    let parser = XmlParser::new(xml_str.as_bytes());
-    let mut deserializer = FormatDeserializer::new_owned(parser);
-    Ok(deserializer.deserialize()?)
+    Ok(facet_xml::from_str(xml_str)?)
 }
 
 /// Helper to serialize to XML using facet-xml
@@ -1241,7 +1239,7 @@ struct LineData {
 struct Drawing {
     #[facet(xml::attribute)]
     name: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(flatten, default)]
     shapes: Vec<Shape>,
 }
 
@@ -1324,13 +1322,13 @@ fn test_elements_enum_roundtrip() {
     assert_eq!(parsed, drawing);
 }
 
-/// Test xml::elements with namespace support
+/// Test flatten with Vec<Enum> for heterogeneous child elements with namespace
 #[derive(Facet, Debug, PartialEq, Clone)]
 #[facet(rename = "svg", xml::ns_all = "http://www.w3.org/2000/svg")]
 struct SimpleSvgWithElements {
     #[facet(xml::attribute, rename = "viewBox")]
     view_box: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(flatten, default)]
     shapes: Vec<SvgShape>,
 }
 
@@ -1427,7 +1425,7 @@ fn test_elements_empty_list() {
 struct DocumentWithMixedChildren {
     #[facet(xml::element)]
     title: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(xml::elements, rename = "p")]
     paragraphs: Vec<Paragraph>,
     #[facet(xml::element)]
     footer: Option<String>,

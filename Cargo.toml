@@ -64,11 +64,13 @@ members = [
     "facet-shapelike",
 
     # format crates
+    "facet-dessert",
     "facet-format",
     "facet-json",
     "facet-postcard",
     "facet-msgpack",
     "facet-xml",
+    "facet-xml-diff",
     "facet-svg",
     "facet-toml",
     "facet-yaml",
@@ -77,8 +79,10 @@ members = [
     "facet-csv",
     "facet-xdr",
     "facet-html",
+    "facet-dom",
     "facet-html-dom",
     "facet-atom",
+    "facet-singularize",
     "facet-json-schema",
     "facet-typescript",
     "facet-tokio-postgres",
@@ -115,6 +119,7 @@ indoc = "^2.0.7"
 insta = "^1.44.3"
 jiff = "^0.2.16"
 log = { version = "^0.4.29", features = ["std"] }
+owo-colors = "^4.2.3"
 proc-macro2 = "1"
 quote = "1"
 serde = { version = "^1.0.228", default-features = false, features = ["alloc", "derive"] }
@@ -127,10 +132,13 @@ tempfile = "^3.23.0"
 time = { version = "^0.3.44", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "^1.48.0", default-features = false, features = ["macros"] }
 tracing = { version = "^0.1.43", default-features = false, features = ["std"] }
+tracing-log = { version = "^0.2.0" }
+tracing-subscriber = { version = "^0.3.22", default-features = false, features = ["fmt", "std"] }
 ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
 rust_decimal = "^1.38.0"
+libtest-mimic = "^0.8.1"
 
 # Allow the facet_no_doc cfg in generated code
 # See: https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html
