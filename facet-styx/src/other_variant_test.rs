@@ -23,9 +23,9 @@ enum Schema {
     #[facet(other)]
     Type {
         /// Captures the variant tag name (e.g., "string", "unit")
-        #[facet(is_tag)]
+        #[facet(tag)]
         name: String,
-        // Note: no #[facet(is_content)] field means payload must be unit
+        // Note: no #[facet(content)] field means payload must be unit
     },
 }
 
@@ -109,10 +109,10 @@ enum Value {
     #[facet(other)]
     Tagged {
         /// The tag name
-        #[facet(is_tag)]
+        #[facet(tag)]
         tag: String,
         /// The payload (could be any value)
-        #[facet(is_content)]
+        #[facet(content)]
         payload: Box<Value>,
     },
 }
@@ -131,13 +131,20 @@ fn test_known_variant_bool() {
     assert_eq!(result, Value::Bool(true));
 }
 
+/// Wrapper struct to test Value deserialization within a document context.
+/// Styx documents are implicitly objects, so we need a struct field to hold the value.
+#[derive(Facet, Debug, PartialEq)]
+struct Doc {
+    v: Value,
+}
+
 #[test]
 fn test_other_variant_with_content() {
-    // @custom(@null) should be Tagged { tag: "custom", payload: Null }
-    let input = r#"@custom(@null)"#;
-    let result: Value = from_str(input).unwrap();
+    // v @custom(@null) should deserialize v as Tagged { tag: "custom", payload: Null }
+    let input = r#"v @custom(@null)"#;
+    let result: Doc = from_str(input).unwrap();
     assert_eq!(
-        result,
+        result.v,
         Value::Tagged {
             tag: "custom".into(),
             payload: Box::new(Value::Null),
@@ -147,11 +154,11 @@ fn test_other_variant_with_content() {
 
 #[test]
 fn test_other_variant_nested() {
-    // @wrapper(@inner(@null)) should nest correctly
-    let input = r#"@wrapper(@inner(@null))"#;
-    let result: Value = from_str(input).unwrap();
+    // v @wrapper(@inner(@null)) should nest correctly
+    let input = r#"v @wrapper(@inner(@null))"#;
+    let result: Doc = from_str(input).unwrap();
     assert_eq!(
-        result,
+        result.v,
         Value::Tagged {
             tag: "wrapper".into(),
             payload: Box::new(Value::Tagged {
