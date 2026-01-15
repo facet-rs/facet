@@ -56,6 +56,84 @@ WHERE users.active = true
 ORDER BY users.name ASC
 SQL
 
+/// Rust code in heredoc
+rust_example <<CODE,rust
+fn main() {
+    let greeting = "Hello, Styx!";
+    println!("{}", greeting);
+
+    let numbers: Vec<i32> = (1..=10).collect();
+    for n in numbers.iter().filter(|x| *x % 2 == 0) {
+        println!("Even: {}", n);
+    }
+}
+CODE
+
+/// Bash script in heredoc
+build_script <<SCRIPT,bash
+#!/bin/bash
+set -euo pipefail
+
+echo "Building project..."
+cargo build --release
+
+if [ -f target/release/myapp ]; then
+    echo "Build successful!"
+    ./target/release/myapp --version
+else
+    echo "Build failed!" >&2
+    exit 1
+fi
+SCRIPT
+
+/// JSON configuration in heredoc
+json_config <<JSON,json
+{
+  "name": "example",
+  "version": "1.0.0",
+  "dependencies": {
+    "serde": "1.0",
+    "tokio": { "version": "1.0", "features": ["full"] }
+  }
+}
+JSON
+
+/// HTML template in heredoc
+html_template <<HTML,html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Welcome</title>
+    <style>
+        body { font-family: sans-serif; }
+        .container { max-width: 800px; margin: 0 auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Hello, World!</h1>
+        <p>Welcome to our site.</p>
+    </div>
+</body>
+</html>
+HTML
+
+/// TOML in heredoc
+cargo_toml <<TOML,toml
+[package]
+name = "myapp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+insta = "1.34"
+TOML
+
 /// Heredoc without language hint
 welcome_message <<TEXT
 Welcome to Styx!
