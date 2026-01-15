@@ -645,13 +645,11 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                             FieldLocationHint::KeyValue,
                             None,
                             sv,
-                            None,
                         ));
                     } else {
                         evidence.push(FieldEvidence::new(
                             field_name,
                             FieldLocationHint::KeyValue,
-                            None,
                             None,
                         ));
                     }

@@ -757,12 +757,7 @@ impl<'de> MsgPackParser<'de> {
 
             // Try to read scalar value for evidence
             if probe_pos >= self.input.len() {
-                evidence.push(FieldEvidence::new(
-                    key,
-                    FieldLocationHint::KeyValue,
-                    None,
-                    None,
-                ));
+                evidence.push(FieldEvidence::new(key, FieldLocationHint::KeyValue, None));
                 break;
             }
 
@@ -820,15 +815,9 @@ impl<'de> MsgPackParser<'de> {
                     FieldLocationHint::KeyValue,
                     None,
                     sv,
-                    None,
                 ));
             } else {
-                evidence.push(FieldEvidence::new(
-                    key,
-                    FieldLocationHint::KeyValue,
-                    None,
-                    None,
-                ));
+                evidence.push(FieldEvidence::new(key, FieldLocationHint::KeyValue, None));
             }
         }
 
