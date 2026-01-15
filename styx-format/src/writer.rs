@@ -314,6 +314,58 @@ impl StyxWriter {
         self.out.extend_from_slice(name.as_bytes());
     }
 
+    /// Write a scalar value with appropriate quoting.
+    /// Alias for write_string, for when you have a pre-existing scalar.
+    pub fn write_scalar(&mut self, s: &str) {
+        self.write_string(s);
+    }
+
+    /// Write a tag (e.g., `@string`). Same as write_variant_tag.
+    pub fn write_tag(&mut self, name: &str) {
+        self.write_variant_tag(name);
+    }
+
+    /// Begin a sequence directly after a tag (no space before the paren).
+    pub fn begin_seq_after_tag(&mut self) {
+        self.out.push(b'(');
+        self.stack.push(Context::Seq { first: true });
+    }
+
+    /// Write a doc comment followed by a field key.
+    /// Multiple lines are supported (each line gets `/// ` prefix).
+    pub fn write_doc_comment_and_key(&mut self, doc: &str, key: &str) {
+        // Check if first field and root
+        let (is_first, is_root) = match self.stack.last() {
+            Some(Context::Struct { first, is_root }) => (*first, *is_root),
+            _ => (true, false),
+        };
+
+        // Mark that we're no longer on first field
+        if let Some(Context::Struct { first, .. }) = self.stack.last_mut() {
+            *first = false;
+        }
+
+        // For non-first fields, or non-root structs, add newline before doc
+        let need_leading_newline = !is_first || !is_root;
+
+        for (i, line) in doc.lines().enumerate() {
+            if i > 0 || need_leading_newline {
+                self.write_newline_indent();
+            }
+            self.out.extend_from_slice(b"/// ");
+            self.out.extend_from_slice(line.as_bytes());
+        }
+        self.write_newline_indent();
+
+        // Write the key
+        if can_be_bare(key) {
+            self.out.extend_from_slice(key.as_bytes());
+        } else {
+            self.write_quoted_string(key);
+        }
+        self.out.push(b' ');
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Internal helpers
     // ─────────────────────────────────────────────────────────────────────────

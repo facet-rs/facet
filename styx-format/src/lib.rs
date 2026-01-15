@@ -5,8 +5,10 @@
 
 mod options;
 mod scalar;
+mod value_format;
 mod writer;
 
 pub use options::FormatOptions;
 pub use scalar::{can_be_bare, count_escapes, count_newlines, escape_quoted, unescape_quoted};
+pub use value_format::{format_value, format_value_default};
 pub use writer::StyxWriter;

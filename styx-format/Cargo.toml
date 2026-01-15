@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 styx-parse.workspace = true
+styx-tree.workspace = true
 
 # Tracing (optional - compiles to nothing when disabled)
 tracing = { workspace = true, optional = true }
@@ -14,6 +15,7 @@ tracing = { workspace = true, optional = true }
 [dev-dependencies]
 tracing.workspace = true
 facet-testhelpers.workspace = true
+insta = "1"
 
 [features]
 tracing = ["dep:tracing", "styx-parse/tracing"]
