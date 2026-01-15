@@ -495,15 +495,9 @@ impl<'de> JsonParser<'de> {
                             FieldLocationHint::KeyValue,
                             None,
                             sv,
-                            None, // No namespace for JSON
                         ));
                     } else {
-                        evidence.push(FieldEvidence::new(
-                            name,
-                            FieldLocationHint::KeyValue,
-                            None,
-                            None, // No namespace for JSON
-                        ));
+                        evidence.push(FieldEvidence::new(name, FieldLocationHint::KeyValue, None));
                     }
 
                     let sep = adapter.next_token().map_err(JsonError::from)?;

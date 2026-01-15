@@ -374,7 +374,7 @@ where
                 ScalarValue::F64(f) => {
                     wip = wip.set(f).map_err(DeserializeError::reflect)?;
                 }
-                ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => {
+                ScalarValue::Str(s) => {
                     wip = self.set_string_value(wip, s)?;
                 }
                 ScalarValue::Bytes(b) => {

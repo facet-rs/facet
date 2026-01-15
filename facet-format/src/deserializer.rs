@@ -7,9 +7,7 @@ use facet_core::{Def, Facet, NumericType, PrimitiveType, Shape, StructKind, Type
 pub use facet_path::{Path, PathStep};
 use facet_reflect::{HeapValue, Partial, is_spanned_shape};
 
-use crate::{
-    ContainerKind, FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue, trace,
-};
+use crate::{ContainerKind, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue, trace};
 
 mod error;
 pub use error::*;
@@ -22,14 +20,6 @@ mod setters;
 mod struct_simple;
 mod struct_with_flatten;
 mod validate;
-
-/// Result of variant lookup for HTML/XML elements.
-enum VariantMatch {
-    /// Direct match: a variant with matching rename attribute.
-    Direct(usize),
-    /// Custom element fallback: a variant with `html::custom_element` or `xml::custom_element`.
-    CustomElement(usize),
-}
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
@@ -548,76 +538,29 @@ where
         Ok(wip)
     }
 
-    /// **XML matching:**
-    /// - Text: Match fields with xml::text attribute (name is ignored - text content goes to the field)
-    /// - Attributes: Only match if explicit xml::ns matches (no ns_all inheritance per XML spec)
-    /// - Elements: Match if explicit xml::ns OR ns_all matches
-    ///
-    /// **Default (KeyValue):** Match by name/alias only (backwards compatible)
-    ///
-    /// TODO: This function hardcodes knowledge of XML attributes.
-    /// See <https://github.com/facet-rs/facet/issues/1506> for discussion on
-    /// making this more extensible.
-    fn field_matches_with_namespace(
-        field: &facet_core::Field,
-        name: &str,
-        namespace: Option<&str>,
-        location: FieldLocationHint,
-        ns_all: Option<&str>,
-    ) -> bool {
-        // === XML/HTML: Fields with xml::attribute match only attributes
-        if field.is_attribute() && !matches!(location, FieldLocationHint::Attribute) {
-            return false;
-        }
+    /// Check if a field matches a given name by effective name or alias.
+    fn field_matches(field: &facet_core::Field, name: &str) -> bool {
+        field.effective_name() == name || field.alias.iter().any(|alias| *alias == name)
+    }
 
-        // === XML/HTML: Fields with xml::element/elements match only child elements
-        if (field.is_element() || field.is_elements())
-            && !matches!(location, FieldLocationHint::Child)
-        {
-            return false;
-        }
+    /// Get the display name for a variant (respecting rename attribute).
+    fn get_variant_display_name(variant: &facet_core::Variant) -> &'static str {
+        variant.effective_name()
+    }
 
-        // === XML/HTML: Text location matches fields with text attribute ===
-        // The name "_text" from the parser is ignored - we match by attribute presence
-        if matches!(location, FieldLocationHint::Text) {
-            return field.is_text();
-        }
-
-        // === XML/HTML: Tag location matches fields with html::tag or xml::tag attribute ===
-        // The name "_tag" from the parser is ignored - we match by attribute presence
-        // This allows custom elements to capture the element's tag name
-        if matches!(location, FieldLocationHint::Tag) {
-            return field.is_tag();
-        }
-
-        // === Check name/alias ===
-        let name_matches =
-            field.effective_name() == name || field.alias.iter().any(|alias| *alias == name);
-
-        if !name_matches {
-            return false;
-        }
-
-        // === XML: Namespace matching ===
-        // Get the expected namespace for this field
-        let field_xml_ns = field
-            .get_attr(Some("xml"), "ns")
-            .and_then(|attr| attr.get_as::<&str>().copied());
-
-        // CRITICAL: Attributes don't inherit ns_all (per XML spec)
-        let expected_ns = if matches!(location, FieldLocationHint::Attribute) {
-            field_xml_ns // Attributes: only explicit xml::ns
-        } else {
-            field_xml_ns.or(ns_all) // Elements: xml::ns OR ns_all
-        };
-
-        // Check if namespaces match
-        match (namespace, expected_ns) {
-            (Some(input_ns), Some(expected)) => input_ns == expected,
-            (Some(_input_ns), None) => true, // Input has namespace, field doesn't require one - match
-            (None, Some(_expected)) => false, // Input has no namespace, field requires one - NO match
-            (None, None) => true,             // Neither has namespace - match
-        }
+    /// Find a variant by its display name (checking rename attributes).
+    /// Returns the actual variant name to use with `select_variant_named`.
+    fn find_variant_by_display_name<'a>(
+        enum_def: &'a facet_core::EnumType,
+        display_name: &str,
+    ) -> Option<&'a str> {
+        enum_def.variants.iter().find_map(|v| {
+            if v.effective_name() == display_name {
+                Some(v.name)
+            } else {
+                None
+            }
+        })
     }
 
     fn deserialize_struct(
@@ -643,153 +586,6 @@ where
         } else {
             self.deserialize_struct_simple(wip)
         }
-    }
-
-    /// Find an elements field that can accept a child element with the given name.
-    fn find_elements_field_for_element<'a>(
-        &self,
-        fields: &'a [facet_core::Field],
-        element_name: &str,
-        element_ns: Option<&str>,
-        ns_all: Option<&str>,
-    ) -> Option<(usize, &'a facet_core::Field)> {
-        for (idx, field) in fields.iter().enumerate() {
-            if !field.is_elements() {
-                continue;
-            }
-
-            // First check if element name matches the field's rename attribute
-            // This handles cases like: `#[facet(xml::elements, rename = "author")] authors: Vec<Person>`
-            // where XML element <author> should match the `authors` field
-            if let Some(renamed) = field.rename
-                && renamed.eq_ignore_ascii_case(element_name)
-            {
-                return Some((idx, field));
-            }
-
-            // Also check field aliases
-            if field
-                .alias
-                .iter()
-                .any(|a| a.eq_ignore_ascii_case(element_name))
-            {
-                return Some((idx, field));
-            }
-
-            // Get the list item shape
-            let item_shape = Self::get_list_item_shape(field.shape())?;
-
-            // Check if the item type can accept this element
-            if Self::shape_accepts_element(item_shape, element_name, element_ns, ns_all) {
-                return Some((idx, field));
-            }
-        }
-        None
-    }
-
-    /// Get the item shape from a list-like field shape.
-    const fn get_list_item_shape(shape: &facet_core::Shape) -> Option<&'static facet_core::Shape> {
-        match &shape.def {
-            Def::List(list_def) => Some(list_def.t()),
-            _ => None,
-        }
-    }
-
-    /// Check if a shape can accept an element with the given name.
-    fn shape_accepts_element(
-        shape: &facet_core::Shape,
-        element_name: &str,
-        _element_ns: Option<&str>,
-        _ns_all: Option<&str>,
-    ) -> bool {
-        match &shape.ty {
-            Type::User(UserType::Enum(enum_def)) => {
-                // For enums, check if element name matches any variant
-                let matches_variant = enum_def.variants.iter().any(|v| {
-                    let display_name = Self::get_variant_display_name(v);
-                    display_name.eq_ignore_ascii_case(element_name)
-                });
-                if matches_variant {
-                    return true;
-                }
-                // Also check if enum has a custom_element fallback variant that can accept any element
-                enum_def.variants.iter().any(|v| v.is_custom_element())
-            }
-            Type::User(UserType::Struct(struct_def)) => {
-                // Similarly, if the struct has a tag field (for HTML/XML custom elements),
-                // it can accept any element name
-                if struct_def.fields.iter().any(|f| f.is_tag()) {
-                    return true;
-                }
-                // Otherwise, check if element name matches struct's name
-                // Use case-insensitive comparison since serializers may normalize case
-                let display_name = Self::get_shape_display_name(shape);
-                display_name.eq_ignore_ascii_case(element_name)
-            }
-            _ => {
-                // For other types, use type identifier with case-insensitive comparison
-                shape.type_identifier.eq_ignore_ascii_case(element_name)
-            }
-        }
-    }
-
-    /// Get the display name for a variant (respecting rename attribute).
-    fn get_variant_display_name(variant: &facet_core::Variant) -> &'static str {
-        if let Some(attr) = variant.get_builtin_attr("rename")
-            && let Some(&renamed) = attr.get_as::<&str>()
-        {
-            return renamed;
-        }
-        variant.name
-    }
-
-    /// Get the display name for a shape (respecting rename attribute).
-    fn get_shape_display_name(shape: &facet_core::Shape) -> &'static str {
-        if let Some(renamed) = shape.get_builtin_attr_value::<&str>("rename") {
-            return renamed;
-        }
-        shape.type_identifier
-    }
-
-    /// Find a variant by its display name (checking rename attributes).
-    /// Returns the actual variant name to use with `select_variant_named`.
-    fn find_variant_by_display_name<'a>(
-        enum_def: &'a facet_core::EnumType,
-        display_name: &str,
-    ) -> Option<&'a str> {
-        enum_def.variants.iter().find_map(|v| {
-            let v_display_name = Self::get_variant_display_name(v);
-            if v_display_name == display_name {
-                Some(v.name)
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Find the variant index for an enum that matches the given element name.
-    ///
-    /// First tries to find an exact match by name/rename. If no match is found,
-    /// falls back to the `#[facet(html::custom_element)]` or `#[facet(xml::custom_element)]`
-    /// variant if present.
-    fn find_variant_for_element(
-        enum_def: &facet_core::EnumType,
-        element_name: &str,
-    ) -> Option<VariantMatch> {
-        // First try direct name match
-        if let Some(idx) = enum_def.variants.iter().position(|v| {
-            let display_name = Self::get_variant_display_name(v);
-            display_name == element_name
-        }) {
-            return Some(VariantMatch::Direct(idx));
-        }
-
-        // Fall back to custom_element variant if present
-        if let Some(idx) = enum_def.variants.iter().position(|v| v.is_custom_element()) {
-            return Some(VariantMatch::CustomElement(idx));
-        }
-
-        None
     }
 
     /// Deserialize into a type with span metadata (like `Spanned<T>`).
@@ -882,12 +678,10 @@ where
 
         let event = self.expect_event("value")?;
 
-        // Accept either SequenceStart (JSON arrays) or StructStart (for XML elements or
+        // Accept either SequenceStart (JSON arrays) or StructStart (for
         // non-self-describing formats like postcard where tuples are positional structs)
         let struct_mode = match event {
             ParseEvent::SequenceStart(_) => false,
-            // Ambiguous containers (XML elements) always use struct mode
-            ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
             // For non-self-describing formats, StructStart(Object) is valid for tuples
             // because hint_struct_fields was called and tuples are positional structs
             ParseEvent::StructStart(_) if !self.parser.is_self_describing() => true,
@@ -950,7 +744,7 @@ where
             .iter()
             .find(|e| e.name == tag_key)
             .and_then(|e| match &e.scalar_value {
-                Some(ScalarValue::Str(s) | ScalarValue::StringlyTyped(s)) => Some(s.as_ref()),
+                Some(ScalarValue::Str(s)) => Some(s.as_ref()),
                 _ => None,
             })
     }
@@ -977,17 +771,10 @@ where
         let event = self.expect_event("value")?;
         trace!(?event, "deserialize_list: got container start event");
 
-        // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
-        // In struct mode, we skip FieldKey events and treat values as sequence items
-        // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
-        let struct_mode = match event {
+        // Expect SequenceStart for lists
+        match event {
             ParseEvent::SequenceStart(_) => {
-                trace!("deserialize_list: using sequence mode");
-                false
-            }
-            ParseEvent::StructStart(kind) if kind.is_ambiguous() => {
-                trace!("deserialize_list: using struct mode (ambiguous container)");
-                true
+                trace!("deserialize_list: got sequence start");
             }
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError::TypeMismatch {
@@ -1011,33 +798,24 @@ where
         wip = wip.init_list().map_err(DeserializeError::reflect)?;
         trace!("deserialize_list: initialized list, starting loop");
 
-        let mut item_count = 0;
         loop {
             let event = self.expect_peek("value")?;
-            trace!(?event, item_count, "deserialize_list: loop iteration");
+            trace!(?event, "deserialize_list: loop iteration");
 
-            // Check for end of container
-            if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
+            // Check for end of sequence
+            if matches!(event, ParseEvent::SequenceEnd) {
                 self.expect_event("value")?;
-                trace!(item_count, "deserialize_list: reached end of container");
+                trace!("deserialize_list: reached end of sequence");
                 break;
             }
 
-            // In struct mode, skip FieldKey events (they're just labels for items)
-            if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
-                trace!("deserialize_list: skipping FieldKey in struct mode");
-                self.expect_event("value")?;
-                continue;
-            }
-
-            trace!(item_count, "deserialize_list: deserializing list item");
+            trace!("deserialize_list: deserializing list item");
             wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
             wip = wip.end().map_err(DeserializeError::reflect)?;
-            item_count += 1;
         }
 
-        trace!(item_count, "deserialize_list: completed with items");
+        trace!("deserialize_list: completed");
         Ok(wip)
     }
 
@@ -1061,11 +839,9 @@ where
 
         let event = self.expect_event("value")?;
 
-        // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
-        // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
-        let struct_mode = match event {
-            ParseEvent::SequenceStart(_) => false,
-            ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+        // Expect SequenceStart for arrays
+        match event {
+            ParseEvent::SequenceStart(_) => {}
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "array",
@@ -1093,16 +869,10 @@ where
         loop {
             let event = self.expect_peek("value")?;
 
-            // Check for end of container
-            if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
+            // Check for end of sequence
+            if matches!(event, ParseEvent::SequenceEnd) {
                 self.expect_event("value")?;
                 break;
-            }
-
-            // In struct mode, skip FieldKey events
-            if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
-                self.expect_event("value")?;
-                continue;
             }
 
             wip = wip
@@ -1125,14 +895,12 @@ where
 
         let event = self.expect_event("value")?;
 
-        // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
-        // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
-        let struct_mode = match event {
-            ParseEvent::SequenceStart(_) => false,
-            ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+        // Expect SequenceStart for sets
+        match event {
+            ParseEvent::SequenceStart(_) => {}
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError::TypeMismatch {
-                    expected: "array",
+                    expected: "set",
                     got: kind.name().into(),
                     span: self.last_span,
                     path: None,
@@ -1154,16 +922,10 @@ where
         loop {
             let event = self.expect_peek("value")?;
 
-            // Check for end of container
-            if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
+            // Check for end of sequence
+            if matches!(event, ParseEvent::SequenceEnd) {
                 self.expect_event("value")?;
                 break;
-            }
-
-            // In struct mode, skip FieldKey events
-            if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
-                self.expect_event("value")?;
-                continue;
             }
 
             wip = wip.begin_set_item().map_err(DeserializeError::reflect)?;
