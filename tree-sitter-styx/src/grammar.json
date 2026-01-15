@@ -212,8 +212,13 @@
           "type": "CHOICE",
           "members": [
             {
-              "type": "SYMBOL",
-              "name": "_heredoc_content"
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_heredoc_content"
+              },
+              "named": true,
+              "value": "heredoc_content"
             },
             {
               "type": "BLANK"

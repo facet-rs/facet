@@ -1,0 +1,11 @@
+id = "styx"
+name = "Styx"
+description = "Styx configuration language support with syntax highlighting"
+version = "0.1.0"
+schema_version = 1
+authors = ["bearcove <hello@bearcove.net>"]
+repository = "https://github.com/bearcove/styx"
+
+[grammars.styx]
+repository = "https://github.com/bearcove/styx"
+path = "crates/tree-sitter-styx"

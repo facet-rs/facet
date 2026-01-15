@@ -132,9 +132,13 @@
     "named": true,
     "fields": {},
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": false,
       "types": [
+        {
+          "type": "heredoc_content",
+          "named": true
+        },
         {
           "type": "heredoc_lang",
           "named": true
@@ -308,6 +312,10 @@
   },
   {
     "type": "escape_sequence",
+    "named": true
+  },
+  {
+    "type": "heredoc_content",
     "named": true
   },
   {

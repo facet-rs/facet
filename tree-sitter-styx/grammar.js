@@ -68,7 +68,7 @@ module.exports = grammar({
       seq(
         $._heredoc_start,
         optional(alias($._heredoc_lang, $.heredoc_lang)),
-        optional($._heredoc_content),
+        optional(alias($._heredoc_content, $.heredoc_content)),
         $._heredoc_end,
       ),
 

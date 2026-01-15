@@ -93,7 +93,7 @@ static const char * const ts_symbol_names[] = {
   [sym__newline] = "_newline",
   [sym__heredoc_start] = "_heredoc_start",
   [sym__heredoc_lang] = "heredoc_lang",
-  [sym__heredoc_content] = "_heredoc_content",
+  [sym__heredoc_content] = "heredoc_content",
   [sym__heredoc_end] = "_heredoc_end",
   [sym__raw_string_start] = "_raw_string_start",
   [sym__raw_string_content] = "_raw_string_content",
@@ -260,7 +260,7 @@ static const TSSymbolMetadata ts_symbol_metadata[] = {
     .named = true,
   },
   [sym__heredoc_content] = {
-    .visible = false,
+    .visible = true,
     .named = true,
   },
   [sym__heredoc_end] = {

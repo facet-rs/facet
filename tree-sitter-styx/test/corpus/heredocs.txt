@@ -12,7 +12,8 @@ TEXT
   (entry
     (atom
       (scalar
-        (heredoc)))))
+        (heredoc
+          (heredoc_content))))))
 
 ================================================================================
 Multi-line heredoc
@@ -30,7 +31,8 @@ SCRIPT
   (entry
     (atom
       (scalar
-        (heredoc)))))
+        (heredoc
+          (heredoc_content))))))
 
 ================================================================================
 Heredoc with delimiter in content
@@ -47,7 +49,8 @@ EOF
   (entry
     (atom
       (scalar
-        (heredoc)))))
+        (heredoc
+          (heredoc_content))))))
 
 ================================================================================
 Heredoc with language hint
@@ -66,7 +69,8 @@ CODE
     (atom
       (scalar
         (heredoc
-          (heredoc_lang))))))
+          (heredoc_lang)
+          (heredoc_content))))))
 
 ================================================================================
 Heredoc with language hint containing dots
@@ -83,4 +87,5 @@ QUERY
     (atom
       (scalar
         (heredoc
-          (heredoc_lang))))))
+          (heredoc_lang)
+          (heredoc_content))))))
