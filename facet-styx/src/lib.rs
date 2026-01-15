@@ -44,6 +44,7 @@ mod parser;
 mod serializer;
 #[cfg(test)]
 mod tag_events_test;
+mod tracing_macros;
 
 pub use error::{StyxError, StyxErrorKind};
 pub use facet_format::DeserializeError;
@@ -124,6 +125,7 @@ where
 mod tests {
     use super::*;
     use facet::Facet;
+    use facet_testhelpers::test;
 
     #[derive(Facet, Debug, PartialEq)]
     struct Simple {

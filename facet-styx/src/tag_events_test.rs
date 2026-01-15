@@ -1,6 +1,7 @@
 //! Tests for tag event sequences as defined in docs/007-tag-events.md
 
 use facet_format::{ContainerKind, FormatParser, ParseEvent, ScalarValue};
+use facet_testhelpers::test;
 
 use crate::StyxParser;
 

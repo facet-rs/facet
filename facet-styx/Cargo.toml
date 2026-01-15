@@ -10,5 +10,13 @@ facet-reflect = "0.42"
 styx-format = { path = "../styx-format" }
 styx-parse = { path = "../styx-parse" }
 
+# Tracing (optional - compiles to nothing when disabled)
+tracing = { version = "0.1", optional = true }
+
 [dev-dependencies]
 facet = "0.42"
+tracing = "0.1"
+facet-testhelpers = { path = "../../../facet/facet-testhelpers" }
+
+[features]
+tracing = ["dep:tracing", "facet-format/tracing", "facet-reflect/tracing"]

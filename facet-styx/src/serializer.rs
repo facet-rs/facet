@@ -277,6 +277,7 @@ impl FormatSerializer for CompactStyxSerializer {
 mod tests {
     use super::*;
     use facet::Facet;
+    use facet_testhelpers::test;
 
     #[derive(Facet, Debug)]
     struct Simple {
