@@ -2,8 +2,8 @@ use alloc::vec::Vec;
 
 /// Keeps track of which fields were initialized.
 ///
-/// For counts up to 64, uses a single u64 bitmap.
-/// For larger counts, uses a Vec<u64> dynamically.
+/// For counts up to 64, uses a single `u64` bitmap.
+/// For larger counts, uses a `Vec<u64>` dynamically.
 #[derive(Clone, Default, Debug)]
 pub struct ISet {
     inner: ISetInner,
