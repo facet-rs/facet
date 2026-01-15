@@ -314,7 +314,6 @@ impl<'de> XdrParser<'de> {
                     }
                     Ok(ParseEvent::FieldKey(facet_format::FieldKey {
                         name: Cow::Owned(variant_name),
-                        namespace: None,
                         location: facet_format::FieldLocationHint::KeyValue,
                     }))
                 } else if !wrapper_start_emitted {

@@ -321,7 +321,7 @@ impl FormatSerializer for Asn1Serializer {
                 }
             }
             ScalarValue::F64(n) => self.write_f64(n),
-            ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => self.write_str(&s),
+            ScalarValue::Str(s) => self.write_str(&s),
             ScalarValue::Bytes(bytes) => self.write_bytes(&bytes),
         }
         Ok(())

@@ -168,7 +168,7 @@ impl FormatSerializer for CsvSerializer {
                 #[cfg(not(feature = "fast"))]
                 self.out.extend_from_slice(v.to_string().as_bytes());
             }
-            ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => {
+            ScalarValue::Str(s) => {
                 self.write_csv_escaped(&s);
             }
             ScalarValue::Bytes(_) => {
