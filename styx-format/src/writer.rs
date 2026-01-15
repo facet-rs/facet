@@ -234,6 +234,10 @@ impl StyxWriter {
                         self.write_indent();
                     }
                     self.out.push(b'}');
+                    // Add blank line after closing brace for breathing room
+                    if !should_inline {
+                        self.out.push(b'\n');
+                    }
                 }
                 Ok(())
             }
