@@ -10,7 +10,11 @@ use crate::scalar::{can_be_bare, count_escapes, count_newlines, escape_quoted};
 #[derive(Debug, Clone, Copy)]
 pub enum Context {
     /// Inside a struct/object - tracks if we've written any fields
-    Struct { first: bool, is_root: bool },
+    Struct {
+        first: bool,
+        is_root: bool,
+        force_multiline: bool,
+    },
     /// Inside a sequence - tracks if we've written any items
     Seq { first: bool },
 }
@@ -60,6 +64,16 @@ impl StyxWriter {
         self.stack.len()
     }
 
+    /// Effective indentation depth (accounts for root struct not adding indent).
+    fn indent_depth(&self) -> usize {
+        // If root struct is on the stack, it doesn't count for indentation
+        if let Some(Context::Struct { is_root: true, .. }) = self.stack.first() {
+            self.stack.len().saturating_sub(1)
+        } else {
+            self.stack.len()
+        }
+    }
+
     /// Calculate available width at current depth.
     pub fn available_width(&self) -> usize {
         let used = self.depth() * self.options.indent.len();
@@ -84,13 +98,21 @@ impl StyxWriter {
         {
             return false;
         }
+        // Check if current struct is forced multiline
+        if let Some(Context::Struct {
+            force_multiline: true,
+            ..
+        }) = self.stack.last()
+        {
+            return false;
+        }
         // If available width is too small, force multiline
         self.available_width() >= self.options.min_inline_width
     }
 
     /// Write indentation for the current depth.
     pub fn write_indent(&mut self) {
-        for _ in 0..self.depth() {
+        for _ in 0..self.indent_depth() {
             self.out.extend_from_slice(self.options.indent.as_bytes());
         }
     }
@@ -120,18 +142,28 @@ impl StyxWriter {
     ///
     /// If `is_root` is true, no braces are written (implicit root object).
     pub fn begin_struct(&mut self, is_root: bool) {
+        self.begin_struct_with_options(is_root, false);
+    }
+
+    /// Begin a struct/object with explicit multiline control.
+    ///
+    /// If `is_root` is true, no braces are written (implicit root object).
+    /// If `force_multiline` is true, the struct will never be inlined.
+    pub fn begin_struct_with_options(&mut self, is_root: bool, force_multiline: bool) {
         self.before_value();
 
         if is_root {
             self.stack.push(Context::Struct {
                 first: true,
                 is_root: true,
+                force_multiline,
             });
         } else {
             self.out.push(b'{');
             self.stack.push(Context::Struct {
                 first: true,
                 is_root: false,
+                force_multiline,
             });
         }
     }
@@ -142,7 +174,7 @@ impl StyxWriter {
     pub fn field_key(&mut self, key: &str) -> Result<(), &'static str> {
         // Extract state first to avoid borrow conflicts
         let (is_struct, is_first, is_root) = match self.stack.last() {
-            Some(Context::Struct { first, is_root }) => (true, *first, *is_root),
+            Some(Context::Struct { first, is_root, .. }) => (true, *first, *is_root),
             _ => (false, true, false),
         };
 
@@ -188,7 +220,7 @@ impl StyxWriter {
         let should_inline = self.should_inline();
 
         match self.stack.pop() {
-            Some(Context::Struct { first, is_root }) => {
+            Some(Context::Struct { first, is_root, .. }) => {
                 if is_root {
                     // Root struct: add trailing newline if we wrote anything
                     if !first {
@@ -196,8 +228,10 @@ impl StyxWriter {
                     }
                 } else {
                     if !first && !should_inline {
-                        // Dedent before closing brace
-                        self.write_newline_indent();
+                        // Newline before closing brace
+                        self.out.push(b'\n');
+                        // Indent at the PARENT level (we already popped)
+                        self.write_indent();
                     }
                     self.out.push(b'}');
                 }
@@ -336,13 +370,19 @@ impl StyxWriter {
     pub fn write_doc_comment_and_key(&mut self, doc: &str, key: &str) {
         // Check if first field and root
         let (is_first, is_root) = match self.stack.last() {
-            Some(Context::Struct { first, is_root }) => (*first, *is_root),
+            Some(Context::Struct { first, is_root, .. }) => (*first, *is_root),
             _ => (true, false),
         };
 
-        // Mark that we're no longer on first field
-        if let Some(Context::Struct { first, .. }) = self.stack.last_mut() {
+        // Mark that we're no longer on first field, and force multiline since we have doc comments
+        if let Some(Context::Struct {
+            first,
+            force_multiline,
+            ..
+        }) = self.stack.last_mut()
+        {
             *first = false;
+            *force_multiline = true;
         }
 
         // For non-first fields, or non-root structs, add newline before doc
@@ -355,7 +395,13 @@ impl StyxWriter {
             self.out.extend_from_slice(b"/// ");
             self.out.extend_from_slice(line.as_bytes());
         }
-        self.write_newline_indent();
+
+        // Newline before the key (but no indent for root first field)
+        if is_first && is_root {
+            self.out.push(b'\n');
+        } else {
+            self.write_newline_indent();
+        }
 
         // Write the key
         if can_be_bare(key) {

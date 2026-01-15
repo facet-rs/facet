@@ -3,4 +3,4 @@ source: crates/styx-format/src/value_format.rs
 expression: result
 ---
 name Alice
-    age 30
+age 30
