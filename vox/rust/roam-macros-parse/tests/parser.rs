@@ -7,6 +7,8 @@ use std::path::Path;
 
 fn test_parse_fixture(path: &Path) -> datatest_stable::Result<()> {
     let content = std::fs::read_to_string(path)?;
+    // Normalize CRLF to LF for consistent byte spans across platforms
+    let content = content.replace("\r\n", "\n");
     let tokens: proc_macro2::TokenStream = content
         .parse()
         .map_err(|e| format!("failed to tokenize {}: {}", path.display(), e))?;

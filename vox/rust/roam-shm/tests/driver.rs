@@ -419,7 +419,7 @@ async fn test_dynamic_peer_creation_no_preregistration() {
     assert_eq!(args1.len(), 3);
     assert!(args1[0].contains(&path.to_string_lossy().to_string()));
     assert_eq!(args1[1], "--peer-id=1");
-    assert!(args1[2].starts_with("--doorbell-fd="));
+    assert!(args1[2].starts_with(&format!("{}=", shm_primitives::DoorbellHandle::ARG_NAME)));
 
     // Verify we can parse the args back (but forget parsed to avoid double-close)
     let parsed1 = roam_shm::spawn::SpawnArgs::from_args(&args1).unwrap();
