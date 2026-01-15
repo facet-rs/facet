@@ -236,7 +236,7 @@ enum FieldsForSerializeIterState<'mem, 'facet> {
     FlattenedMap {
         map_iter: super::PeekMapIter<'mem, 'facet>,
     },
-    /// Iterating over a flattened list of enums (Vec<Enum>)
+    /// Iterating over a flattened list of enums (`Vec<Enum>`)
     FlattenedEnumList {
         field: Field,
         list_iter: super::PeekListIter<'mem, 'facet>,

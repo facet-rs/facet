@@ -5,7 +5,7 @@ use core::fmt;
 use facet_path::Path;
 use facet_reflect::ReflectError;
 
-/// Error produced by [`FormatDeserializer`].
+/// Error produced by the format deserializer.
 #[derive(Debug)]
 pub enum DeserializeError<E> {
     /// Error emitted by the format-specific parser.

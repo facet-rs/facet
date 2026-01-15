@@ -12,19 +12,19 @@ use facet_reflect::{Partial, ReflectError, Span};
 
 /// Result of checking if a pointer type needs special handling.
 pub enum PointerAction {
-    /// Pointer to str (Cow<str>, &str, Arc<str>, Box<str>, Rc<str>) - should be handled as a scalar/string.
+    /// Pointer to str (`Cow<str>`, `&str`, `Arc<str>`, `Box<str>`, `Rc<str>`) - should be handled as a scalar/string.
     /// `set_string_value` already handles these via `begin_smart_ptr` internally.
     HandleAsScalar,
-    /// Smart pointer with slice builder (Arc<[T]>, Box<[T]>) - deserialize as list, then end().
+    /// Smart pointer with slice builder (`Arc<[T]>`, `Box<[T]>`) - deserialize as list, then end().
     SliceBuilder,
-    /// Smart pointer with sized pointee (Arc<T>, Box<T>) - deserialize inner, then end().
+    /// Smart pointer with sized pointee (`Arc<T>`, `Box<T>`) - deserialize inner, then end().
     SizedPointee,
 }
 
 /// Prepare a smart pointer for deserialization.
 ///
 /// This handles the common logic of:
-/// 1. Detecting string pointers (Cow<str>, &str, Arc<str>, Box<str>, Rc<str>) which should be handled as scalars
+/// 1. Detecting string pointers (`Cow<str>`, `&str`, `Arc<str>`, `Box<str>`, `Rc<str>`) which should be handled as scalars
 /// 2. Calling `begin_smart_ptr()` for other pointer types
 /// 3. Detecting whether it's a slice builder or sized pointee
 ///
