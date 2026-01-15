@@ -4,10 +4,12 @@
 //! including parsing, accessing values by path, and serialization.
 
 mod builder;
+mod diagnostic;
 mod value;
 
 pub use builder::{BuildError, TreeBuilder};
-pub use styx_parse::{ScalarKind, Separator, Span};
+pub use diagnostic::ParseError;
+pub use styx_parse::{ParseErrorKind, ScalarKind, Separator, Span};
 pub use value::{Entry, Object, Payload, Scalar, Sequence, Tag, Value};
 
 /// Parse a Styx document into a tree.
