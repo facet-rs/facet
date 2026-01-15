@@ -509,6 +509,7 @@ mod tests {
         #[derive(Facet)]
         #[facet(rename_all = "snake_case")]
         #[repr(C)]
+        #[allow(dead_code)]
         enum Message {
             TextMessage { content: String },
             ImageUpload { url: String, width: u32 },
