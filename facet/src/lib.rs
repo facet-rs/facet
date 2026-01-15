@@ -139,6 +139,20 @@ pub mod builtin {
             /// Usage: `#[facet(other)]`
             Other,
 
+            /// Marks a field within an `#[facet(other)]` variant as capturing the variant tag name.
+            /// For self-describing formats that emit VariantTag events (like Styx or XML),
+            /// this field receives the unknown tag name as a String.
+            ///
+            /// Usage: `#[facet(is_tag)]` on a String field within an `#[facet(other)]` variant.
+            IsTag,
+
+            /// Marks a field within an `#[facet(other)]` variant as capturing the variant payload.
+            /// For self-describing formats that emit VariantTag events, this field receives
+            /// the deserialized content that follows the tag.
+            ///
+            /// Usage: `#[facet(is_content)]` on a field within an `#[facet(other)]` variant.
+            IsContent,
+
             /// Serializes/Deserializers enum to/from integer based on variant discriminant.
             ///
             /// Usage: `#[facet(is_numeric)]`

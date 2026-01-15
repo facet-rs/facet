@@ -269,6 +269,24 @@ impl Field {
         self.has_builtin_attr("other")
     }
 
+    /// Returns true if this field is marked with `#[facet(is_tag)]`.
+    ///
+    /// Within an `#[facet(other)]` variant, this field captures the variant tag name
+    /// when deserializing self-describing formats that emit VariantTag events.
+    #[inline]
+    pub fn is_variant_tag(&self) -> bool {
+        self.has_builtin_attr("is_tag")
+    }
+
+    /// Returns true if this field is marked with `#[facet(is_content)]`.
+    ///
+    /// Within an `#[facet(other)]` variant, this field captures the variant payload
+    /// when deserializing self-describing formats that emit VariantTag events.
+    #[inline]
+    pub fn is_variant_content(&self) -> bool {
+        self.has_builtin_attr("is_content")
+    }
+
     /// Returns the metadata kind if this field stores metadata.
     ///
     /// Common values: `"span"`, `"line"`, `"column"`
