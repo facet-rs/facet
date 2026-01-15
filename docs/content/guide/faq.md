@@ -193,6 +193,38 @@ enum AnyValue {
 // Just the value: 42 or 3.14 or "hello"
 ```
 
+### Can I use flatten inside enum variants?
+
+Yes! You can combine `#[facet(flatten)]` with internally-tagged enums to share common fields across variants:
+
+```rust,noexec
+#[derive(Facet)]
+struct CommonFields {
+    id: u64,
+    timestamp: String,
+}
+
+#[derive(Facet)]
+#[facet(tag = "type")]
+#[repr(C)]
+enum Event {
+    UserLogin {
+        #[facet(flatten)]
+        common: CommonFields,
+        username: String,
+    },
+    PageView {
+        #[facet(flatten)]
+        common: CommonFields,
+        url: String,
+    },
+}
+// UserLogin: {"type": "UserLogin", "id": 1, "timestamp": "...", "username": "alice"}
+// PageView: {"type": "PageView", "id": 2, "timestamp": "...", "url": "/home"}
+```
+
+See [Attributes Reference](@/guide/attributes.md#flatten) for more details.
+
 ## Error handling
 
 ### Why do I get "unknown field" errors?

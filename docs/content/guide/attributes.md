@@ -559,6 +559,43 @@ struct Query {
 // Serializes as: {"search": "...", "page": 1, "per_page": 10}
 ```
 
+**Flatten with internally-tagged enums:**
+
+You can use `#[facet(flatten)]` inside variants of internally-tagged enums. The flattened fields are merged with the variant's own fields:
+
+```rust,noexec
+#[derive(Facet)]
+struct Base {
+    name: String,
+    value: i32,
+}
+
+#[derive(Facet)]
+#[facet(tag = "type")]
+#[repr(C)]
+enum Message {
+    #[facet(rename = "request")]
+    Request {
+        #[facet(flatten)]
+        base: Base,
+        method: String,
+    },
+    #[facet(rename = "response")]
+    Response {
+        #[facet(flatten)]
+        base: Base,
+    },
+}
+
+// Request serializes as:
+// {"type": "request", "name": "...", "value": 42, "method": "GET"}
+//
+// Response serializes as:
+// {"type": "response", "name": "...", "value": 42}
+```
+
+This pattern is useful for sharing common fields across enum variants while keeping the JSON structure flat.
+
 ### `child`
 
 Mark a field as a child node for hierarchical formats like  XML.

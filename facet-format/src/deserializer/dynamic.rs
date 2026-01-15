@@ -560,7 +560,7 @@ where
                 ParseEvent::Scalar(ScalarValue::Str(s)) => s,
                 ParseEvent::Scalar(ScalarValue::I64(i)) => Cow::Owned(i.to_string()),
                 ParseEvent::Scalar(ScalarValue::U64(u)) => Cow::Owned(u.to_string()),
-                ParseEvent::FieldKey(k) => k.name.unwrap_or_else(|| Cow::Borrowed("@")),
+                ParseEvent::FieldKey(k) => k.name.unwrap_or(Cow::Borrowed("@")),
                 _ => {
                     return Err(DeserializeError::TypeMismatch {
                         expected: "map key",

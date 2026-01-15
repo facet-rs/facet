@@ -615,7 +615,10 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                 }
                 Some(ParseEvent::FieldKey(ref key)) if depth == 1 => {
                     // Top-level field in the object we're probing
-                    let field_name = key.name.clone();
+                    // JSON always has field names, but FieldKey.name is Option for formats like Styx
+                    let Some(field_name) = key.name.clone() else {
+                        continue;
+                    };
 
                     // Get the value
                     let value_event = self.produce_event()?;
