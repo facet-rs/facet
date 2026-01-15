@@ -130,7 +130,17 @@
   {
     "type": "heredoc",
     "named": true,
-    "fields": {}
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "heredoc_lang",
+          "named": true
+        }
+      ]
+    }
   },
   {
     "type": "object",
@@ -298,6 +308,10 @@
   },
   {
     "type": "escape_sequence",
+    "named": true
+  },
+  {
+    "type": "heredoc_lang",
     "named": true
   },
   {

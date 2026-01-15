@@ -11,6 +11,7 @@ module.exports = grammar({
   // External scanner handles context-sensitive constructs
   externals: ($) => [
     $._heredoc_start, // <<DELIM including the delimiter
+    $._heredoc_lang, // optional ,lang after delimiter
     $._heredoc_content, // lines until closing delimiter
     $._heredoc_end, // closing delimiter
     $._raw_string_start, // r#*" opening
@@ -62,8 +63,14 @@ module.exports = grammar({
     // Raw scalar: r#"..."# - handled by external scanner
     raw_scalar: ($) => seq($._raw_string_start, optional($._raw_string_content), $._raw_string_end),
 
-    // Heredoc: <<DELIM\n...\nDELIM - handled by external scanner
-    heredoc: ($) => seq($._heredoc_start, optional($._heredoc_content), $._heredoc_end),
+    // Heredoc: <<DELIM[,lang]\n...\nDELIM - handled by external scanner
+    heredoc: ($) =>
+      seq(
+        $._heredoc_start,
+        optional(alias($._heredoc_lang, $.heredoc_lang)),
+        optional($._heredoc_content),
+        $._heredoc_end,
+      ),
 
     // Unit: bare @ (not followed by a tag name character)
     // Handled by external scanner

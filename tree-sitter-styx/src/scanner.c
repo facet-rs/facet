@@ -13,6 +13,7 @@
 
 enum TokenType {
   HEREDOC_START,
+  HEREDOC_LANG,
   HEREDOC_CONTENT,
   HEREDOC_END,
   RAW_STRING_START,
@@ -32,6 +33,7 @@ typedef struct {
   char heredoc_delimiter[MAX_DELIMITER_LEN + 1];
   uint8_t heredoc_delimiter_len;
   bool in_heredoc;
+  bool heredoc_needs_lang_check; // true after HEREDOC_START, before newline
 
   // For raw strings: count of # marks
   uint8_t raw_string_hash_count;
@@ -57,6 +59,17 @@ static inline bool is_tag_name_start(int32_t c) {
   return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
 }
 
+// Check if character is valid for heredoc lang hint start: [a-z]
+static inline bool is_lang_hint_start(int32_t c) {
+  return c >= 'a' && c <= 'z';
+}
+
+// Check if character is valid for heredoc lang hint continuation: [a-z0-9_.-]
+static inline bool is_lang_hint_char(int32_t c) {
+  return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' ||
+         c == '.' || c == '-';
+}
+
 // Check if character is valid for tag name continuation: [A-Za-z0-9_.-]
 static inline bool is_tag_name_char(int32_t c) {
   return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
@@ -70,6 +83,7 @@ unsigned tree_sitter_styx_external_scanner_serialize(void *payload,
   unsigned i = 0;
 
   buffer[i++] = scanner->in_heredoc;
+  buffer[i++] = scanner->heredoc_needs_lang_check;
   buffer[i++] = scanner->heredoc_delimiter_len;
   for (uint8_t j = 0; j < scanner->heredoc_delimiter_len; j++) {
     buffer[i++] = scanner->heredoc_delimiter[j];
@@ -86,6 +100,7 @@ void tree_sitter_styx_external_scanner_deserialize(void *payload,
                                                     unsigned length) {
   Scanner *scanner = (Scanner *)payload;
   scanner->in_heredoc = false;
+  scanner->heredoc_needs_lang_check = false;
   scanner->heredoc_delimiter_len = 0;
   scanner->heredoc_delimiter[0] = '\0';
   scanner->in_raw_string = false;
@@ -94,6 +109,9 @@ void tree_sitter_styx_external_scanner_deserialize(void *payload,
   if (length > 0) {
     unsigned i = 0;
     scanner->in_heredoc = buffer[i++];
+    if (i < length) {
+      scanner->heredoc_needs_lang_check = buffer[i++];
+    }
     if (i < length) {
       scanner->heredoc_delimiter_len = buffer[i++];
       for (uint8_t j = 0; j < scanner->heredoc_delimiter_len && i < length;
@@ -122,7 +140,7 @@ void tree_sitter_styx_external_scanner_destroy(void *payload) {
   free(payload);
 }
 
-// Try to scan heredoc start: <<DELIM
+// Try to scan heredoc start: <<DELIM (not including ,lang or newline)
 static bool scan_heredoc_start(Scanner *scanner, TSLexer *lexer) {
   // We expect to be positioned at '<'
   if (lexer->lookahead != '<')
@@ -146,6 +164,38 @@ static bool scan_heredoc_start(Scanner *scanner, TSLexer *lexer) {
   }
   scanner->heredoc_delimiter[scanner->heredoc_delimiter_len] = '\0';
 
+  // Must be followed by comma (lang hint) or newline
+  if (lexer->lookahead != ',' && lexer->lookahead != '\n' &&
+      lexer->lookahead != '\r')
+    return false;
+
+  scanner->in_heredoc = true;
+  scanner->heredoc_needs_lang_check = true;
+  lexer->result_symbol = HEREDOC_START;
+  return true;
+}
+
+// Try to scan heredoc lang hint: ,lang followed by newline
+// Only returns true if there IS a lang hint (comma present)
+static bool scan_heredoc_lang(Scanner *scanner, TSLexer *lexer) {
+  if (!scanner->heredoc_needs_lang_check)
+    return false;
+
+  // Only match if we see a comma (lang hint present)
+  if (lexer->lookahead != ',')
+    return false;
+
+  advance(lexer);
+
+  // Must start with lowercase letter
+  if (!is_lang_hint_start(lexer->lookahead))
+    return false;
+
+  // Consume the lang hint
+  while (is_lang_hint_char(lexer->lookahead)) {
+    advance(lexer);
+  }
+
   // Must be followed by newline
   if (lexer->lookahead != '\n' && lexer->lookahead != '\r')
     return false;
@@ -156,8 +206,8 @@ static bool scan_heredoc_start(Scanner *scanner, TSLexer *lexer) {
   if (lexer->lookahead == '\n')
     advance(lexer);
 
-  scanner->in_heredoc = true;
-  lexer->result_symbol = HEREDOC_START;
+  scanner->heredoc_needs_lang_check = false;
+  lexer->result_symbol = HEREDOC_LANG;
   return true;
 }
 
@@ -165,6 +215,16 @@ static bool scan_heredoc_start(Scanner *scanner, TSLexer *lexer) {
 static bool scan_heredoc_content_or_end(Scanner *scanner, TSLexer *lexer) {
   if (!scanner->in_heredoc)
     return false;
+
+  // If we still need to check for lang, it means there was no lang hint
+  // and we need to consume the newline that follows <<DELIM
+  if (scanner->heredoc_needs_lang_check) {
+    if (lexer->lookahead == '\r')
+      advance(lexer);
+    if (lexer->lookahead == '\n')
+      advance(lexer);
+    scanner->heredoc_needs_lang_check = false;
+  }
 
   bool has_content = false;
   lexer->result_symbol = HEREDOC_CONTENT;
@@ -342,6 +402,14 @@ bool tree_sitter_styx_external_scanner_scan(void *payload, TSLexer *lexer,
     while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
       skip(lexer);
     }
+  }
+
+  // Handle heredoc lang hint if we just saw <<DELIM
+  if (scanner->heredoc_needs_lang_check && valid_symbols[HEREDOC_LANG]) {
+    if (scan_heredoc_lang(scanner, lexer)) {
+      return true;
+    }
+    // If no lang hint, fall through to content/end scanning
   }
 
   // Handle heredoc content/end first if we're in one

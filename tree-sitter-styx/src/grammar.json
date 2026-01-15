@@ -195,6 +195,23 @@
           "type": "CHOICE",
           "members": [
             {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_heredoc_lang"
+              },
+              "named": true,
+              "value": "heredoc_lang"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
               "type": "SYMBOL",
               "name": "_heredoc_content"
             },
@@ -582,6 +599,10 @@
     {
       "type": "SYMBOL",
       "name": "_heredoc_start"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_heredoc_lang"
     },
     {
       "type": "SYMBOL",

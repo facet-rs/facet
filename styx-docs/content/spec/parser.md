@@ -97,6 +97,23 @@ Scalars are opaque text. The parser assigns no type information.
 >   BASH
 > ```
 
+> r[scalar.heredoc.lang]
+> A heredoc MAY include a language hint after the delimiter, separated by a comma.
+> The language hint MUST match `[a-z][a-z0-9_.-]*` (lowercase identifiers).
+> The language hint is metadata and does not affect the scalar content.
+>
+> ```styx
+> code <<EOF,rust
+>   fn main() {
+>     println!("Hello");
+>   }
+>   EOF
+>
+> query <<SQL,sql
+>   SELECT * FROM users
+>   SQL
+> ```
+
 ## Unit
 
 > r[value.unit]
