@@ -16,11 +16,12 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [features]
 default = ["std"]
 std = ["alloc", "dep:indexmap"]
-alloc = ["facet-core/alloc", "facet-reflect/alloc", "dep:facet-reflect"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc", "dep:facet-reflect", "dep:facet-format"]
 bolero-inline-tests = ["alloc"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.42.0", default-features = false }
+facet-format = { path = "../facet-format", version = "0.42.0", optional = true }
 facet-reflect = { path = "../facet-reflect", version = "0.42.0", default-features = false, optional = true }
 indexmap = { version = "2", optional = true }
 

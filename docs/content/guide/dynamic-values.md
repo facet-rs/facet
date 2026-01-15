@@ -40,6 +40,35 @@ let config: Config = from_value(&value)?;
 println!("{:?}", config);
 ```
 
+### Serialize a type to Value
+
+The inverse operation — converting a typed value to a `Value` — is done with `to_value`. This is useful when you want to manipulate data dynamically or serialize through a common format:
+
+```rust,noexec
+use facet::Facet;
+use facet_value::{to_value, from_value, Value};
+
+#[derive(Facet, Debug, PartialEq)]
+struct Config {
+    host: String,
+    port: u16,
+}
+
+let config = Config { host: "localhost".into(), port: 8080 };
+
+// Convert to a dynamic Value
+let value: Value = to_value(&config)?;
+
+// Now you can inspect or modify it
+let obj = value.as_object().unwrap();
+assert_eq!(obj.get("host").unwrap().as_string().unwrap().as_str(), "localhost");
+assert_eq!(obj.get("port").unwrap().as_number().unwrap().to_u64(), Some(8080));
+
+// And convert back if needed
+let config2: Config = from_value(value)?;
+assert_eq!(config, config2);
+```
+
 ### Partial tree extraction
 
 You can also extract just part of a `Value` tree into a typed struct:
@@ -239,6 +268,5 @@ assert_same!(payload, expected);
 
 ## Next steps
 
-- See the [From Value showcase](@/guide/showcases/from_value.md) for more `Value` → typed examples
 - See the [Assertions showcase](@/guide/showcases/assert.md) for `assert_same!` examples
 - Check out [facet-value on docs.rs](https://docs.rs/facet-value) for the full API
