@@ -1,5 +1,0 @@
-error[E0425]: cannot find function `missing_truthy_fn` in this scope
- --> tests/ui/truthy_unknown_fn.rs:8:18
-  |
-8 | #[facet(truthy = missing_truthy_fn)]
-  |                  ^^^^^^^^^^^^^^^^^ not found in this scope

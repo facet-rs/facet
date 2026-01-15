@@ -1,5 +1,0 @@
-error[E0425]: cannot find function `nonexistent_predicate` in this scope
- --> tests/ui/skip_serializing_if_unknown_fn.rs:9:35
-  |
-9 |     #[facet(skip_serializing_if = nonexistent_predicate)]
-  |                                   ^^^^^^^^^^^^^^^^^^^^^ not found in this scope
