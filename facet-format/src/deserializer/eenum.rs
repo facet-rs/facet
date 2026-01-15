@@ -158,7 +158,14 @@ where
         // Get the variant name from the field key
         let event = self.expect_event("value")?;
         let field_key_name = match event {
-            ParseEvent::FieldKey(key) => key.name,
+            ParseEvent::FieldKey(key) => {
+                key.name.ok_or_else(|| DeserializeError::TypeMismatch {
+                    expected: "variant name",
+                    got: "unit key".to_string(),
+                    span: self.last_span,
+                    path: None,
+                })?
+            }
             other => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "variant name",
@@ -310,15 +317,25 @@ where
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
+                    // Unit keys don't make sense for struct fields
+                    let key_name = match &key.name {
+                        Some(name) => name.as_ref(),
+                        None => {
+                            // Skip unit keys in struct context
+                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                            continue;
+                        }
+                    };
+
                     // Skip the tag field - already used
-                    if key.name.as_ref() == tag_key {
+                    if key_name == tag_key {
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                         continue;
                     }
 
                     if has_flatten {
                         // Use path-based lookup for variants with flattened fields
-                        if let Some(path) = find_field_path(variant_fields, key.name.as_ref()) {
+                        if let Some(path) = find_field_path(variant_fields, key_name) {
                             // Find common prefix with currently open segments
                             let common_len = open_segments
                                 .iter()
@@ -367,7 +384,7 @@ where
                         let field_info = variant_fields
                             .iter()
                             .enumerate()
-                            .find(|(_, f)| Self::field_matches(f, key.name.as_ref()));
+                            .find(|(_, f)| Self::field_matches(f, key_name));
 
                         if let Some((idx, _field)) = field_info {
                             wip = wip
@@ -419,7 +436,14 @@ where
         // Get the variant name from FieldKey
         let field_event = self.expect_event("enum field key")?;
         let variant_name = match field_event {
-            ParseEvent::FieldKey(key) => key.name,
+            ParseEvent::FieldKey(key) => {
+                key.name.ok_or_else(|| DeserializeError::TypeMismatch {
+                    expected: "variant name",
+                    got: "unit key".to_string(),
+                    span: self.last_span,
+                    path: Some(self.path_clone()),
+                })?
+            }
             ParseEvent::StructEnd => {
                 // Empty struct - this shouldn't happen for valid enums
                 return Err(DeserializeError::Unsupported(
@@ -608,7 +632,14 @@ where
         // Read the FieldKey with the variant name ("Ok" or "Err")
         let key_event = self.expect_event("variant key for Result")?;
         let variant_name = match key_event {
-            ParseEvent::FieldKey(key) => key.name,
+            ParseEvent::FieldKey(key) => {
+                key.name.ok_or_else(|| DeserializeError::TypeMismatch {
+                    expected: "variant name",
+                    got: "unit key".to_string(),
+                    span: self.last_span,
+                    path: None,
+                })?
+            }
             other => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "field key with variant name",
@@ -620,9 +651,9 @@ where
         };
 
         // Select the appropriate variant and deserialize its content
-        if variant_name == "Ok" {
+        if variant_name.as_ref() == "Ok" {
             wip = wip.begin_ok().map_err(DeserializeError::reflect)?;
-        } else if variant_name == "Err" {
+        } else if variant_name.as_ref() == "Err" {
             wip = wip.begin_err().map_err(DeserializeError::reflect)?;
         } else {
             return Err(DeserializeError::TypeMismatch {
@@ -717,11 +748,21 @@ where
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
+                    // Unit keys don't make sense for struct fields
+                    let key_name = match &key.name {
+                        Some(name) => name.as_ref(),
+                        None => {
+                            // Skip unit keys in struct context
+                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                            continue;
+                        }
+                    };
+
                     // Look up field in variant's fields by name/alias
                     let field_info = variant_fields
                         .iter()
                         .enumerate()
-                        .find(|(_, f)| Self::field_matches(f, key.name.as_ref()));
+                        .find(|(_, f)| Self::field_matches(f, key_name));
 
                     if let Some((idx, _field)) = field_info {
                         wip = wip
@@ -828,10 +869,20 @@ where
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
-                    if key.name.as_ref() == tag_key {
+                    // Unit keys don't make sense for adjacently tagged enums
+                    let key_name = match &key.name {
+                        Some(name) => name.as_ref(),
+                        None => {
+                            // Skip unit keys
+                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                            continue;
+                        }
+                    };
+
+                    if key_name == tag_key {
                         // Skip the tag field - already used
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                    } else if key.name.as_ref() == content_key {
+                    } else if key_name == content_key {
                         // Deserialize the content
                         wip = self.deserialize_enum_variant_content(wip)?;
                         content_seen = true;
@@ -1012,11 +1063,21 @@ where
                             }
                         }
                         ParseEvent::FieldKey(key) => {
+                            // Unit keys don't make sense for struct fields
+                            let key_name = match &key.name {
+                                Some(name) => name.as_ref(),
+                                None => {
+                                    // Skip unit keys in struct context
+                                    self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                                    continue;
+                                }
+                            };
+
                             // Look up field in variant's fields by name/alias
                             let field_info = variant_fields
                                 .iter()
                                 .enumerate()
-                                .find(|(_, f)| Self::field_matches(f, key.name.as_ref()));
+                                .find(|(_, f)| Self::field_matches(f, key_name));
 
                             if let Some((idx, _field)) = field_info {
                                 wip = wip

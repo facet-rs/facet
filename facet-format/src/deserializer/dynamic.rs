@@ -66,7 +66,13 @@ where
                     // Parse the key
                     let key_event = self.expect_event("field key")?;
                     let key = match key_event {
-                        ParseEvent::FieldKey(field_key) => field_key.name.into_owned(),
+                        ParseEvent::FieldKey(field_key) => {
+                            // For dynamic values, unit keys become "@"
+                            field_key
+                                .name
+                                .map(|n| n.into_owned())
+                                .unwrap_or_else(|| "@".to_owned())
+                        }
                         _ => {
                             return Err(DeserializeError::TypeMismatch {
                                 expected: "field key",
@@ -554,7 +560,7 @@ where
                 ParseEvent::Scalar(ScalarValue::Str(s)) => s,
                 ParseEvent::Scalar(ScalarValue::I64(i)) => Cow::Owned(i.to_string()),
                 ParseEvent::Scalar(ScalarValue::U64(u)) => Cow::Owned(u.to_string()),
-                ParseEvent::FieldKey(k) => k.name,
+                ParseEvent::FieldKey(k) => k.name.unwrap_or_else(|| Cow::Borrowed("@")),
                 _ => {
                     return Err(DeserializeError::TypeMismatch {
                         expected: "map key",

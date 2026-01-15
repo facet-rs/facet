@@ -12,19 +12,37 @@ pub enum FieldLocationHint {
 }
 
 /// Field key for a serialized field.
+///
+/// For self-describing formats, this represents either:
+/// - A named key (struct field or map key with string name)
+/// - A unit key (map key with no name, e.g., `@` in Styx representing `None` in `Option<String>` keys)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldKey<'de> {
     /// Field name.
-    pub name: Cow<'de, str>,
+    ///
+    /// `None` represents a unit key (e.g., `@` in Styx) which can be deserialized as
+    /// `None` for `Option<String>` map keys. For struct field deserialization, `None`
+    /// is an error since struct fields always have names.
+    pub name: Option<Cow<'de, str>>,
     /// Location hint.
     pub location: FieldLocationHint,
 }
 
 impl<'de> FieldKey<'de> {
-    /// Create a new field key.
+    /// Create a new field key with a name.
     pub fn new(name: impl Into<Cow<'de, str>>, location: FieldLocationHint) -> Self {
         Self {
-            name: name.into(),
+            name: Some(name.into()),
+            location,
+        }
+    }
+
+    /// Create a unit field key (no name).
+    ///
+    /// Used for formats like Styx where `@` represents a unit key in maps.
+    pub fn unit(location: FieldLocationHint) -> Self {
+        Self {
+            name: None,
             location,
         }
     }

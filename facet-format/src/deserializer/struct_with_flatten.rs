@@ -115,8 +115,18 @@ where
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
+                    // Unit keys don't make sense for struct fields
+                    let key_name = match &key.name {
+                        Some(name) => name.as_ref(),
+                        None => {
+                            // Skip unit keys in struct context
+                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                            continue;
+                        }
+                    };
+
                     // Look up field in the resolution
-                    if let Some(field_info) = resolution.field_by_name(key.name.as_ref()) {
+                    if let Some(field_info) = resolution.field_by_name(key_name) {
                         let segments = field_info.path.segments();
 
                         // Check if this path ends with a Variant segment (externally-tagged enum)
@@ -196,7 +206,7 @@ where
                         wip = self.insert_into_catch_all_map(
                             wip,
                             catch_all_info,
-                            Cow::Borrowed(key.name.as_ref()),
+                            Cow::Borrowed(key_name),
                             &mut fields_set,
                             &mut open_segments,
                         )?;
@@ -205,7 +215,7 @@ where
 
                     if deny_unknown_fields {
                         return Err(DeserializeError::UnknownField {
-                            field: key.name.into_owned(),
+                            field: key_name.to_owned(),
                             span: self.last_span,
                             path: None,
                         });

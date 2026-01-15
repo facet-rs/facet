@@ -434,10 +434,10 @@ fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
             payload: EventPayload { error_code: -2 },
         },
         ParseEvent::FieldKey(key) => {
-            let name = key.name;
-            let (ptr, len) = match name {
-                Cow::Borrowed(s) => (s.as_ptr(), s.len()),
-                Cow::Owned(s) => {
+            // For JIT, unit keys become empty strings (we don't have a way to represent None)
+            let (ptr, len) = match key.name {
+                Some(Cow::Borrowed(s)) => (s.as_ptr(), s.len()),
+                Some(Cow::Owned(s)) => {
                     // Use into_raw_parts to prevent the string from being dropped.
                     // We store the raw parts in thread-local storage and free them
                     // on the next call to next_event_wrapper.
@@ -446,6 +446,11 @@ fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
                         *cell.borrow_mut() = Some((ptr, len, cap));
                     });
                     (ptr as *const u8, len)
+                }
+                None => {
+                    // Unit key - represent as empty string for now
+                    // JIT doesn't support Option<String> map keys yet
+                    ("".as_ptr(), 0)
                 }
             };
             RawEvent {

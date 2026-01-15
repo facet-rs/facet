@@ -1122,7 +1122,7 @@ value = 42
         // FieldKey("name")
         assert!(matches!(
             parser.next_event().unwrap(),
-            Some(ParseEvent::FieldKey(key)) if key.name == "name"
+            Some(ParseEvent::FieldKey(key)) if key.name.as_deref() == Some("name")
         ));
 
         // Scalar("test")
@@ -1134,7 +1134,7 @@ value = 42
         // FieldKey("value")
         assert!(matches!(
             parser.next_event().unwrap(),
-            Some(ParseEvent::FieldKey(key)) if key.name == "value"
+            Some(ParseEvent::FieldKey(key)) if key.name.as_deref() == Some("value")
         ));
 
         // Scalar(42)
@@ -1166,11 +1166,13 @@ port = 8080
         // Expected: StructStart, FieldKey(server), StructStart, FieldKey(host), Scalar,
         //           FieldKey(port), Scalar, StructEnd, StructEnd
         assert!(matches!(&events[0], ParseEvent::StructStart(_)));
-        assert!(matches!(&events[1], ParseEvent::FieldKey(k) if k.name == "server"));
+        assert!(
+            matches!(&events[1], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("server"))
+        );
         assert!(matches!(&events[2], ParseEvent::StructStart(_)));
-        assert!(matches!(&events[3], ParseEvent::FieldKey(k) if k.name == "host"));
+        assert!(matches!(&events[3], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("host")));
         assert!(matches!(&events[4], ParseEvent::Scalar(ScalarValue::Str(s)) if s == "localhost"));
-        assert!(matches!(&events[5], ParseEvent::FieldKey(k) if k.name == "port"));
+        assert!(matches!(&events[5], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("port")));
         assert!(matches!(
             &events[6],
             ParseEvent::Scalar(ScalarValue::I64(8080))
@@ -1205,19 +1207,25 @@ name = "beta"
         eprintln!("Events:\n{}", event_str);
 
         assert!(matches!(&events[0], ParseEvent::StructStart(_))); // root
-        assert!(matches!(&events[1], ParseEvent::FieldKey(k) if k.name == "servers"));
+        assert!(
+            matches!(&events[1], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("servers"))
+        );
         assert!(matches!(&events[2], ParseEvent::SequenceStart(_)));
         assert!(matches!(&events[3], ParseEvent::StructStart(_))); // element 0
-        assert!(matches!(&events[4], ParseEvent::FieldKey(k) if k.name == "name"));
+        assert!(matches!(&events[4], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("name")));
         assert!(matches!(&events[5], ParseEvent::Scalar(ScalarValue::Str(s)) if s == "alpha"));
         assert!(matches!(&events[6], ParseEvent::StructEnd)); // element 0
         assert!(matches!(&events[7], ParseEvent::SequenceEnd)); // servers array (navigate up)
 
         // Reopen servers array
-        assert!(matches!(&events[8], ParseEvent::FieldKey(k) if k.name == "servers"));
+        assert!(
+            matches!(&events[8], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("servers"))
+        );
         assert!(matches!(&events[9], ParseEvent::SequenceStart(_)));
         assert!(matches!(&events[10], ParseEvent::StructStart(_))); // element 1
-        assert!(matches!(&events[11], ParseEvent::FieldKey(k) if k.name == "name"));
+        assert!(
+            matches!(&events[11], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("name"))
+        );
         assert!(matches!(&events[12], ParseEvent::Scalar(ScalarValue::Str(s)) if s == "beta"));
     }
 
@@ -1249,14 +1257,14 @@ name = "beta"
 
         for event in events.iter() {
             if let ParseEvent::FieldKey(k) = event {
-                if k.name == "servers" {
+                if k.name.as_deref() == Some("servers") {
                     servers_count += 1;
                     if !saw_database {
                         saw_servers_first = true;
                     } else {
                         saw_servers_second = true;
                     }
-                } else if k.name == "database" {
+                } else if k.name.as_deref() == Some("database") {
                     saw_database = true;
                 }
             }
@@ -1293,7 +1301,7 @@ y = 2
         // Count how many times we see FieldKey("bar")
         let bar_count = events
             .iter()
-            .filter(|e| matches!(e, ParseEvent::FieldKey(k) if k.name == "bar"))
+            .filter(|e| matches!(e, ParseEvent::FieldKey(k) if k.name.as_deref() == Some("bar")))
             .count();
 
         assert_eq!(bar_count, 2, "Should see bar twice (reopened)");
@@ -1313,11 +1321,11 @@ foo.bar.baz = 1
         // Expected: StructStart, FieldKey(foo), StructStart, FieldKey(bar), StructStart,
         //           FieldKey(baz), Scalar(1), StructEnd, StructEnd, StructEnd
         assert!(matches!(&events[0], ParseEvent::StructStart(_))); // root
-        assert!(matches!(&events[1], ParseEvent::FieldKey(k) if k.name == "foo"));
+        assert!(matches!(&events[1], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("foo")));
         assert!(matches!(&events[2], ParseEvent::StructStart(_)));
-        assert!(matches!(&events[3], ParseEvent::FieldKey(k) if k.name == "bar"));
+        assert!(matches!(&events[3], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("bar")));
         assert!(matches!(&events[4], ParseEvent::StructStart(_)));
-        assert!(matches!(&events[5], ParseEvent::FieldKey(k) if k.name == "baz"));
+        assert!(matches!(&events[5], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("baz")));
         assert!(matches!(
             &events[6],
             ParseEvent::Scalar(ScalarValue::I64(1))
@@ -1340,11 +1348,13 @@ server = { host = "localhost", port = 8080 }
         eprintln!("Inline table events:\n{}", event_str);
 
         assert!(matches!(&events[0], ParseEvent::StructStart(_))); // root
-        assert!(matches!(&events[1], ParseEvent::FieldKey(k) if k.name == "server"));
+        assert!(
+            matches!(&events[1], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("server"))
+        );
         assert!(matches!(&events[2], ParseEvent::StructStart(_))); // inline table
-        assert!(matches!(&events[3], ParseEvent::FieldKey(k) if k.name == "host"));
+        assert!(matches!(&events[3], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("host")));
         assert!(matches!(&events[4], ParseEvent::Scalar(ScalarValue::Str(s)) if s == "localhost"));
-        assert!(matches!(&events[5], ParseEvent::FieldKey(k) if k.name == "port"));
+        assert!(matches!(&events[5], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("port")));
         assert!(matches!(
             &events[6],
             ParseEvent::Scalar(ScalarValue::I64(8080))
@@ -1365,7 +1375,9 @@ numbers = [1, 2, 3]
         eprintln!("Inline array events:\n{}", event_str);
 
         assert!(matches!(&events[0], ParseEvent::StructStart(_))); // root
-        assert!(matches!(&events[1], ParseEvent::FieldKey(k) if k.name == "numbers"));
+        assert!(
+            matches!(&events[1], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("numbers"))
+        );
         assert!(matches!(&events[2], ParseEvent::SequenceStart(_)));
         assert!(matches!(
             &events[3],

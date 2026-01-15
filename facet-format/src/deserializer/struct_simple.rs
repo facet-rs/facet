@@ -116,12 +116,23 @@ where
                 }
                 ParseEvent::FieldKey(key) => {
                     trace!(?key, "deserialize_struct_simple: got FieldKey");
+
+                    // Unit keys don't make sense for struct fields
+                    let key_name = match &key.name {
+                        Some(name) => name.as_ref(),
+                        None => {
+                            // Skip unit keys in struct context
+                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                            continue;
+                        }
+                    };
+
                     // Look up field in struct fields by name/alias
                     let field_info = struct_def
                         .fields
                         .iter()
                         .enumerate()
-                        .find(|(_, f)| Self::field_matches(f, key.name.as_ref()));
+                        .find(|(_, f)| Self::field_matches(f, key_name));
 
                     if let Some((idx, field)) = field_info {
                         trace!(
@@ -170,13 +181,13 @@ where
 
                     if deny_unknown_fields {
                         return Err(DeserializeError::UnknownField {
-                            field: key.name.into_owned(),
+                            field: key_name.to_owned(),
                             span: self.last_span,
                             path: None,
                         });
                     } else {
                         // Unknown field - skip it
-                        trace!(field_name = ?key.name, "deserialize_struct_simple: skipping unknown field");
+                        trace!(field_name = ?key_name, "deserialize_struct_simple: skipping unknown field");
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                     }
                 }
