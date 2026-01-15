@@ -524,9 +524,14 @@ where
 
         let event = self.expect_peek("value for option")?;
 
-        if matches!(event, ParseEvent::Scalar(ScalarValue::Null)) {
-            // Consume the null
-            let _ = self.expect_event("null")?;
+        // Treat both Null and Unit as None
+        // Unit is used by Styx for tags without payload (e.g., @string vs @string{...})
+        if matches!(
+            event,
+            ParseEvent::Scalar(ScalarValue::Null | ScalarValue::Unit)
+        ) {
+            // Consume the null/unit
+            let _ = self.expect_event("null or unit")?;
             // Set to None (default)
             wip = wip.set_default().map_err(DeserializeError::reflect)?;
         } else {
