@@ -12,9 +12,11 @@ styx-tree.workspace = true
 styx-parse.workspace = true
 styx-format.workspace = true
 styx-schema.workspace = true
+styx-lsp.workspace = true
 facet-styx.workspace = true
 facet.workspace = true
 facet-args.workspace = true
 serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [dev-dependencies]

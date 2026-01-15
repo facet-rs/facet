@@ -82,7 +82,7 @@ FILE MODE OPTIONS:
 SUBCOMMANDS:
     @tree <file>                    Show debug parse tree
     @diff <old> <new>               Structural diff (not yet implemented)
-    @lsp                            Start language server (not yet implemented)
+    @lsp                            Start language server (stdio)
 
 EXAMPLES:
     styx config.styx                Format and print to stdout
@@ -465,9 +465,18 @@ fn run_subcommand(cmd: &str, args: &[String]) -> Result<(), CliError> {
     match cmd {
         "tree" => run_tree(args),
         "diff" => Err(CliError::Usage("@diff is not yet implemented".into())),
-        "lsp" => Err(CliError::Usage("@lsp is not yet implemented".into())),
+        "lsp" => run_lsp(args),
         _ => Err(CliError::Usage(format!("unknown subcommand: @{cmd}"))),
     }
+}
+
+fn run_lsp(_args: &[String]) -> Result<(), CliError> {
+    let rt = tokio::runtime::Runtime::new().map_err(|e| CliError::Io(e.into()))?;
+    rt.block_on(async {
+        styx_lsp::run()
+            .await
+            .map_err(|e| CliError::Io(io::Error::other(e)))
+    })
 }
 
 fn run_tree(args: &[String]) -> Result<(), CliError> {
