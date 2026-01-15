@@ -27,10 +27,7 @@ const EXIT_IO_ERROR: i32 = 3;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    let result = if args.is_empty() {
-        print_usage();
-        Ok(())
-    } else if args[0] == "--help" || args[0] == "-h" {
+    let result = if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
         print_usage();
         Ok(())
     } else if args[0].starts_with('@') {
@@ -232,13 +229,14 @@ fn parse_file_options(args: &[String]) -> Result<FileOptions, CliError> {
     }
 
     // Safety check: prevent -o pointing to same file as input
-    if let (Some(input), Some(output)) = (&opts.input, &opts.output) {
-        if input != "-" && output != "-" && is_same_file(input, output) {
-            return Err(CliError::Usage(
-                "input and output are the same file\nhint: use --in-place to modify in place"
-                    .into(),
-            ));
-        }
+    if let (Some(input), Some(output)) = (&opts.input, &opts.output)
+        && input != "-"
+        && output != "-"
+        && is_same_file(input, output)
+    {
+        return Err(CliError::Usage(
+            "input and output are the same file\nhint: use --in-place to modify in place".into(),
+        ));
     }
 
     Ok(opts)
@@ -280,8 +278,8 @@ fn run_file_first(args: &[String]) -> Result<(), CliError> {
     if let Some(json_path) = &opts.json_out {
         // JSON output
         let json = value_to_json(&value);
-        let output = serde_json::to_string_pretty(&json)
-            .map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+        let output =
+            serde_json::to_string_pretty(&json).map_err(|e| CliError::Io(io::Error::other(e)))?;
         write_output(json_path, &output)?;
     } else {
         // Styx output
@@ -427,12 +425,11 @@ fn resolve_schema_path(schema_path: &str, input_path: Option<&str>) -> Result<St
     }
 
     // Resolve relative to input file's directory
-    if let Some(input) = input_path {
-        if input != "-" {
-            if let Some(parent) = Path::new(input).parent() {
-                return Ok(parent.join(schema_path).to_string_lossy().to_string());
-            }
-        }
+    if let Some(input) = input_path
+        && input != "-"
+        && let Some(parent) = Path::new(input).parent()
+    {
+        return Ok(parent.join(schema_path).to_string_lossy().to_string());
     }
 
     // Fall back to current directory

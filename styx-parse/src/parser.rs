@@ -1123,14 +1123,13 @@ impl<'src> Parser<'src> {
                 }
 
                 // Emit error for unclosed object
-                if *unclosed {
-                    if !callback.event(Event::Error {
+                if *unclosed
+                    && !callback.event(Event::Error {
                         span: atom.span,
                         kind: ParseErrorKind::UnclosedObject,
                     }) {
                         return false;
                     }
-                }
 
                 // parser[impl entry.key-equality]
                 // Emit errors for duplicate keys
@@ -1191,14 +1190,13 @@ impl<'src> Parser<'src> {
                 }
 
                 // Emit error for unclosed sequence
-                if *unclosed {
-                    if !callback.event(Event::Error {
+                if *unclosed
+                    && !callback.event(Event::Error {
                         span: atom.span,
                         kind: ParseErrorKind::UnclosedSequence,
                     }) {
                         return false;
                     }
-                }
 
                 for elem in elements {
                     if !self.emit_atom_as_value(elem, callback) {
