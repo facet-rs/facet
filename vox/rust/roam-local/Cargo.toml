@@ -1,0 +1,17 @@
+[package]
+name = "roam-local"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cross-platform local IPC for roam - Unix sockets on Unix, named pipes on Windows"
+
+[dependencies]
+tokio = { workspace = true, features = ["net", "io-util", "sync"] }
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+tokio = { workspace = true, features = ["net", "io-util", "sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

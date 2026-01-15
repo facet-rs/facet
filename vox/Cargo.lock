@@ -2019,6 +2019,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "roam-local"
+version = "0.6.0"
+dependencies = [
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "roam-macros-parse"
 version = "0.6.0"
 dependencies = [
