@@ -472,52 +472,75 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         ))));
                     }
                     TokenKind::At => {
-                        // @ can be used as a key (represents unit/default/additional-fields)
-                        // Check if it's followed by whitespace (indicating it's a key)
-                        // vs immediately followed by an identifier (tag like @foo)
+                        // In object context, @ starts a key.
+                        // The key is the full tagged value representation:
+                        // - `@` alone = key "@"
+                        // - `@foo` = key "@foo" (with implicit unit value for the entry)
+                        // - `@foo{...}` = key "@foo{...}" (the whole thing is the key!)
+                        //
+                        // This is because Styx documents are implicitly objects, so
+                        // `@object{fields (a b c)}` becomes `{ @object{fields (a b c)} @ }`
+                        // where the entire tagged value is a key with unit value.
+                        //
+                        // For now, we only handle simple cases: `@` and `@name` as keys.
+                        // Complex tagged values as keys would need the parser to serialize
+                        // the tagged value back to a string representation.
                         let at_token = self.next_token();
 
-                        // Peek at next token to see if this is @key or @tag
+                        // Check if followed immediately by identifier
                         if let Some(next) = self.peek_token() {
-                            // If next token is NOT immediately adjacent and is a value starter,
-                            // then @ is a key
-                            if next.span.start != at_token.span.end
-                                || matches!(
-                                    next.kind,
-                                    TokenKind::LBrace
-                                        | TokenKind::LParen
-                                        | TokenKind::At
-                                        | TokenKind::Newline
-                                )
+                            if next.kind == TokenKind::BareScalar
+                                && next.span.start == at_token.span.end
                             {
-                                // @ is a key
-                                self.pending_key = Some(Cow::Borrowed("@"));
-                                self.expecting_value = true;
-                                return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
-                                    Cow::Borrowed("@"),
-                                    FieldLocationHint::KeyValue,
-                                ))));
-                            }
-
-                            // Otherwise it's a tag like @foo - handle as tag key
-                            if next.kind == TokenKind::BareScalar {
                                 let name_token = self.next_token();
-                                let tag_name = name_token.text;
+                                let tag_name = name_token.text.to_string();
+                                let name_end = name_token.span.end;
 
-                                // This is a tag being used as a key (like `@Meta { ... }`)
-                                // The tag name becomes the key
-                                self.pending_key = Some(Cow::Borrowed(tag_name));
+                                // Check what follows the tag name
+                                let after_info = self.peek_token().map(|t| (t.span.start, t.kind));
+                                if let Some((after_start, after_kind)) = after_info {
+                                    if after_start == name_end {
+                                        match after_kind {
+                                            TokenKind::LBrace
+                                            | TokenKind::LParen
+                                            | TokenKind::At => {
+                                                // @foo{...} or @foo(...) or @foo@ as a key
+                                                // This is complex - for now, error
+                                                return Err(self.error(StyxErrorKind::UnexpectedToken {
+                                                    expected: "simple key",
+                                                    got: format!(
+                                                        "complex tagged value @{}{} cannot be used as object key",
+                                                        tag_name,
+                                                        match after_kind {
+                                                            TokenKind::LBrace => "{...}",
+                                                            TokenKind::LParen => "(...)",
+                                                            TokenKind::At => "@",
+                                                            _ => "",
+                                                        }
+                                                    ),
+                                                }));
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+
+                                // @name with space after = "@name" is the key
+                                let key = format!("@{}", name_token.text);
+                                self.pending_key = Some(Cow::Owned(key.clone()));
                                 self.expecting_value = true;
+                                trace!(?key, "next_event: FieldKey (tagged)");
                                 return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
-                                    Cow::Borrowed(tag_name),
+                                    Cow::Owned(key),
                                     FieldLocationHint::KeyValue,
                                 ))));
                             }
                         }
 
-                        // Fallback: @ alone at end is a key
+                        // @ alone or @ followed by space/newline = key "@"
                         self.pending_key = Some(Cow::Borrowed("@"));
                         self.expecting_value = true;
+                        trace!("next_event: FieldKey (@)");
                         return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
                             Cow::Borrowed("@"),
                             FieldLocationHint::KeyValue,

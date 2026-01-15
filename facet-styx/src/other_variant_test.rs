@@ -3,6 +3,10 @@
 //! These tests verify that when deserializing self-describing formats (like Styx)
 //! that emit VariantTag events, the #[facet(other)] catch-all variant can capture
 //! both the tag name and its payload using field-level attributes.
+//!
+//! Note: Styx documents are implicitly objects, so to deserialize a single tagged value
+//! we need a wrapper struct with a field. E.g., `@string` must be parsed as `v @string`
+//! with a `struct SchemaDoc { v: Schema }`.
 
 use facet::Facet;
 use facet_testhelpers::test;
@@ -29,13 +33,20 @@ enum Schema {
     },
 }
 
+/// Wrapper struct to test Schema deserialization within a document context.
+/// Styx documents are implicitly objects, so we need a struct field to hold the value.
+#[derive(Facet, Debug, PartialEq)]
+struct SchemaDoc {
+    v: Schema,
+}
+
 #[test]
 fn test_known_variant_object() {
-    // @object should match the Object variant
-    let input = r#"@object{fields (a b c)}"#;
-    let result: Schema = from_str(input).unwrap();
+    // v @object{...} - field v has value of Object variant
+    let input = r#"v @object{fields (a b c)}"#;
+    let result: SchemaDoc = from_str(input).unwrap();
     assert_eq!(
-        result,
+        result.v,
         Schema::Object {
             fields: vec!["a".into(), "b".into(), "c".into()]
         }
@@ -44,11 +55,11 @@ fn test_known_variant_object() {
 
 #[test]
 fn test_known_variant_seq() {
-    // @seq should match the Seq variant
-    let input = r#"@seq{item @string}"#;
-    let result: Schema = from_str(input).unwrap();
+    // v @seq{...} - field v has value of Seq variant
+    let input = r#"v @seq{item @string}"#;
+    let result: SchemaDoc = from_str(input).unwrap();
     assert_eq!(
-        result,
+        result.v,
         Schema::Seq {
             item: Box::new(Schema::Type {
                 name: "string".into()
@@ -59,11 +70,11 @@ fn test_known_variant_seq() {
 
 #[test]
 fn test_other_variant_captures_tag_name() {
-    // @string should be caught by Type { name: "string" }
-    let input = r#"@string"#;
-    let result: Schema = from_str(input).unwrap();
+    // v @string - @string should be caught by Type { name: "string" }
+    let input = r#"v @string"#;
+    let result: SchemaDoc = from_str(input).unwrap();
     assert_eq!(
-        result,
+        result.v,
         Schema::Type {
             name: "string".into()
         }
@@ -72,11 +83,11 @@ fn test_other_variant_captures_tag_name() {
 
 #[test]
 fn test_other_variant_unit_tag() {
-    // @unit should be caught by Type { name: "unit" }
-    let input = r#"@unit"#;
-    let result: Schema = from_str(input).unwrap();
+    // v @unit - @unit should be caught by Type { name: "unit" }
+    let input = r#"v @unit"#;
+    let result: SchemaDoc = from_str(input).unwrap();
     assert_eq!(
-        result,
+        result.v,
         Schema::Type {
             name: "unit".into()
         }
@@ -85,11 +96,11 @@ fn test_other_variant_unit_tag() {
 
 #[test]
 fn test_other_variant_custom_type() {
-    // @MyCustomType should be caught by Type { name: "MyCustomType" }
-    let input = r#"@MyCustomType"#;
-    let result: Schema = from_str(input).unwrap();
+    // v @MyCustomType - should be caught by Type { name: "MyCustomType" }
+    let input = r#"v @MyCustomType"#;
+    let result: SchemaDoc = from_str(input).unwrap();
     assert_eq!(
-        result,
+        result.v,
         Schema::Type {
             name: "MyCustomType".into()
         }
@@ -106,29 +117,16 @@ enum Value {
     /// Boolean value
     Bool(bool),
     /// Catch-all for other tagged values
+    /// Note: payload is Vec because in Styx, @tag(...) creates a sequence payload
     #[facet(other)]
     Tagged {
         /// The tag name
         #[facet(tag)]
         tag: String,
-        /// The payload (could be any value)
+        /// The payload - a sequence because @tag(...) syntax creates a sequence
         #[facet(content)]
-        payload: Box<Value>,
+        payload: Vec<Value>,
     },
-}
-
-#[test]
-fn test_known_variant_null() {
-    let input = r#"@null"#;
-    let result: Value = from_str(input).unwrap();
-    assert_eq!(result, Value::Null);
-}
-
-#[test]
-fn test_known_variant_bool() {
-    let input = r#"@bool(true)"#;
-    let result: Value = from_str(input).unwrap();
-    assert_eq!(result, Value::Bool(true));
 }
 
 /// Wrapper struct to test Value deserialization within a document context.
@@ -139,32 +137,69 @@ struct Doc {
 }
 
 #[test]
+fn test_known_variant_null() {
+    // v @null - should match the Null variant
+    let input = r#"v @null"#;
+    let result: Doc = from_str(input).unwrap();
+    assert_eq!(result.v, Value::Null);
+}
+
+#[test]
+fn test_known_variant_bool_not_representable() {
+    // Bool(bool) is a newtype variant, but Styx can't naturally represent this:
+    // - @bool true - can't tag bare scalars
+    // - @bool(true) - parens create a sequence, not a scalar
+    // - @bool{@ true} - creates a struct, not a newtype
+    //
+    // This test verifies that the struct syntax doesn't accidentally work.
+    let input = r#"v @bool{@ true}"#;
+    let result: Result<Doc, _> = from_str(input);
+    assert!(
+        result.is_err(),
+        "newtype variants can't be represented with struct payload syntax"
+    );
+}
+
+#[test]
+fn test_known_variant_bool_unhappy() {
+    // v @bool(true) is WRONG - parens = sequence, not grouping
+    // Bool(bool) expects a scalar payload, not a sequence
+    let input = r#"v @bool(true)"#;
+    let result: Result<Doc, _> = from_str(input);
+    assert!(
+        result.is_err(),
+        "parens create a sequence, not a scalar payload"
+    );
+}
+
+#[test]
 fn test_other_variant_with_content() {
-    // v @custom(@null) should deserialize v as Tagged { tag: "custom", payload: Null }
+    // v @custom(@null) - parens create a sequence, so payload is Vec containing Null
     let input = r#"v @custom(@null)"#;
     let result: Doc = from_str(input).unwrap();
     assert_eq!(
         result.v,
         Value::Tagged {
             tag: "custom".into(),
-            payload: Box::new(Value::Null),
+            payload: vec![Value::Null],
         }
     );
 }
 
 #[test]
 fn test_other_variant_nested() {
-    // v @wrapper(@inner(@null)) should nest correctly
+    // v @wrapper(@inner(@null)) - outer parens create sequence containing Tagged
+    // inner parens create sequence containing Null
     let input = r#"v @wrapper(@inner(@null))"#;
     let result: Doc = from_str(input).unwrap();
     assert_eq!(
         result.v,
         Value::Tagged {
             tag: "wrapper".into(),
-            payload: Box::new(Value::Tagged {
+            payload: vec![Value::Tagged {
                 tag: "inner".into(),
-                payload: Box::new(Value::Null),
-            }),
+                payload: vec![Value::Null],
+            }],
         }
     );
 }
