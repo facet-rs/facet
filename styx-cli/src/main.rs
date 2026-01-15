@@ -44,7 +44,23 @@ fn main() {
     match result {
         Ok(()) => std::process::exit(EXIT_SUCCESS),
         Err(e) => {
-            eprintln!("error: {e}");
+            match &e {
+                CliError::ParseDiagnostic {
+                    error,
+                    source,
+                    filename,
+                } => {
+                    // Render pretty diagnostic
+                    if let Some(parse_error) = error.as_parse_error() {
+                        parse_error.write_report(filename, source, std::io::stderr());
+                    } else {
+                        eprintln!("error: {e}");
+                    }
+                }
+                _ => {
+                    eprintln!("error: {e}");
+                }
+            }
             std::process::exit(e.exit_code());
         }
     }
@@ -90,6 +106,12 @@ EXAMPLES:
 enum CliError {
     Io(io::Error),
     Parse(String),
+    /// Parse error with source and filename for pretty diagnostics
+    ParseDiagnostic {
+        error: styx_tree::BuildError,
+        source: String,
+        filename: String,
+    },
     Validation(String),
     Usage(String),
 }
@@ -99,6 +121,7 @@ impl CliError {
         match self {
             CliError::Io(_) => EXIT_IO_ERROR,
             CliError::Parse(_) => EXIT_SYNTAX_ERROR,
+            CliError::ParseDiagnostic { .. } => EXIT_SYNTAX_ERROR,
             CliError::Validation(_) => EXIT_VALIDATION_ERROR,
             CliError::Usage(_) => EXIT_SYNTAX_ERROR,
         }
@@ -110,6 +133,7 @@ impl std::fmt::Display for CliError {
         match self {
             CliError::Io(e) => write!(f, "{e}"),
             CliError::Parse(e) => write!(f, "{e}"),
+            CliError::ParseDiagnostic { error, .. } => write!(f, "{error}"),
             CliError::Validation(e) => write!(f, "{e}"),
             CliError::Usage(e) => write!(f, "{e}"),
         }
@@ -234,9 +258,14 @@ fn run_file_first(args: &[String]) -> Result<(), CliError> {
 
     // Read input
     let source = read_input(opts.input.as_deref())?;
+    let filename = opts.input.as_deref().unwrap_or("<stdin>").to_string();
 
     // Parse
-    let value = styx_tree::parse(&source)?;
+    let value = styx_tree::parse(&source).map_err(|e| CliError::ParseDiagnostic {
+        error: e,
+        source: source.clone(),
+        filename: filename.clone(),
+    })?;
 
     // Validate if requested
     if opts.validate {

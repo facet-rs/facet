@@ -34,6 +34,18 @@ impl std::fmt::Display for BuildError {
 
 impl std::error::Error for BuildError {}
 
+impl BuildError {
+    /// If this is a parse error, return it as a `ParseError` for diagnostic rendering.
+    pub fn as_parse_error(&self) -> Option<crate::diagnostic::ParseError> {
+        match self {
+            BuildError::Parse(kind, span) => {
+                Some(crate::diagnostic::ParseError::new(kind.clone(), *span))
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Builder that constructs a tree from parse events.
 pub struct TreeBuilder {
     stack: Vec<BuilderFrame>,
