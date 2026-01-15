@@ -36,15 +36,14 @@ impl ValueFormatter {
 
     fn format_root(&mut self, value: &Value) {
         // Root is typically an untagged object
-        if value.tag.is_none() {
-            if let Some(Payload::Object(obj)) = &value.payload {
+        if value.tag.is_none()
+            && let Some(Payload::Object(obj)) = &value.payload {
                 // Root object - no braces
                 self.writer.begin_struct(true);
                 self.format_object_entries(obj);
                 self.writer.end_struct().ok();
                 return;
             }
-        }
         // Non-object root or tagged root - just format the value
         self.format_value(value);
     }

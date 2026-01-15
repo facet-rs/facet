@@ -488,8 +488,8 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         let at_token = self.next_token();
 
                         // Check if followed immediately by identifier
-                        if let Some(next) = self.peek_token() {
-                            if next.kind == TokenKind::BareScalar
+                        if let Some(next) = self.peek_token()
+                            && next.kind == TokenKind::BareScalar
                                 && next.span.start == at_token.span.end
                             {
                                 let name_token = self.next_token();
@@ -498,8 +498,8 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
 
                                 // Check what follows the tag name
                                 let after_info = self.peek_token().map(|t| (t.span.start, t.kind));
-                                if let Some((after_start, after_kind)) = after_info {
-                                    if after_start == name_end {
+                                if let Some((after_start, after_kind)) = after_info
+                                    && after_start == name_end {
                                         match after_kind {
                                             TokenKind::LBrace
                                             | TokenKind::LParen
@@ -523,7 +523,6 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                                             _ => {}
                                         }
                                     }
-                                }
 
                                 // @name with space after = "@name" is the key
                                 let key = format!("@{}", name_token.text);
@@ -535,7 +534,6 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                                     FieldLocationHint::KeyValue,
                                 ))));
                             }
-                        }
 
                         // @ alone or @ followed by space/newline = unit key (None)
                         self.pending_key = Some(Cow::Borrowed("@"));

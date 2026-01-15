@@ -18,21 +18,6 @@ macro_rules! trace {
 #[allow(unused_imports)]
 pub(crate) use trace;
 
-#[cfg(feature = "tracing")]
-macro_rules! debug {
-    ($($arg:tt)*) => { ::tracing::debug!($($arg)*) };
-}
-
-#[cfg(not(feature = "tracing"))]
-#[allow(unused_macros)]
-macro_rules! debug {
-    ($($arg:tt)*) => {};
-}
-
-#[allow(unused_imports)]
-#[allow(unused_macros)]
-pub(crate) use debug;
-
 pub mod callback;
 pub mod event;
 mod lexer;

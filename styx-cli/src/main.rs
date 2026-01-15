@@ -214,7 +214,7 @@ fn print_tree_inline(value: &Value) {
 
 /// Print canonical styx representation
 fn print_canonical(value: &Value, indent: usize, is_root: bool) {
-    let pad = "  ".repeat(indent);
+    let _pad = "  ".repeat(indent);
 
     // Print tag if present
     if let Some(tag) = &value.tag {
