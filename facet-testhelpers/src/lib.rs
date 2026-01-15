@@ -35,9 +35,15 @@ static SUBSCRIBER_INIT: LazyLock<()> = LazyLock::new(|| {
     // Force start time initialization
     let _ = *START_TIME;
 
+    #[cfg(miri)]
+    let verbosity = color_backtrace::Verbosity::Medium;
+
+    #[cfg(not(miri))]
+    let verbosity = color_backtrace::Verbosity::Full;
+
     // Install color-backtrace for better panic output (with forced backtraces and colors)
     color_backtrace::BacktracePrinter::new()
-        .verbosity(color_backtrace::Verbosity::Full)
+        .verbosity(verbosity)
         .add_frame_filter(Box::new(|frames| {
             frames.retain(|frame| {
                 let dominated_by_noise = |name: &str| {
