@@ -303,8 +303,11 @@ fn run_validation(
         }
     };
 
+    // Strip the @ key (schema declaration) from the value before validation
+    let value_for_validation = strip_schema_declaration(value);
+
     // Run validation
-    let result = validate(value, &schema_file);
+    let result = validate(&value_for_validation, &schema_file);
 
     if !result.is_valid() {
         for error in &result.errors {
@@ -327,6 +330,30 @@ fn run_validation(
 enum SchemaRef {
     External(String),
     Inline(Value),
+}
+
+/// Strip the @ key (schema declaration) from a document before validation.
+/// The @ key is metadata that references the schema, not actual data.
+fn strip_schema_declaration(value: &Value) -> Value {
+    if let Some(obj) = value.as_object() {
+        let filtered_entries: Vec<_> = obj
+            .entries
+            .iter()
+            .filter(|e| !e.key.is_unit())
+            .cloned()
+            .collect();
+        Value {
+            tag: value.tag.clone(),
+            payload: Some(Payload::Object(styx_tree::Object {
+                entries: filtered_entries,
+                separator: obj.separator,
+                span: obj.span,
+            })),
+            span: value.span,
+        }
+    } else {
+        value.clone()
+    }
 }
 
 fn find_schema_declaration(value: &Value) -> Result<SchemaRef, CliError> {
