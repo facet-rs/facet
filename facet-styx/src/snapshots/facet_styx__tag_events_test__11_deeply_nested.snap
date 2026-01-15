@@ -2,12 +2,12 @@
 source: crates/facet-styx/src/tag_events_test.rs
 expression: "collect_events(\"y @Foo(@Bar{x 1})\")"
 ---
-FieldKey("y")
+FieldKey(Some("y"))
 VariantTag("Foo")
 SequenceStart
   VariantTag("Bar")
   StructStart
-    FieldKey("x")
+    FieldKey(Some("x"))
     Scalar(1)
   StructEnd
 SequenceEnd

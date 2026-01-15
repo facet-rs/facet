@@ -2,8 +2,8 @@
 source: crates/facet-styx/src/tag_events_test.rs
 expression: "collect_events(\"@ {x 1}\")"
 ---
-FieldKey("@")
+FieldKey(None)
 StructStart
-  FieldKey("x")
+  FieldKey(Some("x"))
   Scalar(1)
 StructEnd

@@ -8,7 +8,7 @@ mod value;
 
 pub use builder::{BuildError, TreeBuilder};
 pub use styx_parse::{ScalarKind, Separator, Span};
-pub use value::{Entry, Object, Scalar, Sequence, Tagged, Value};
+pub use value::{Entry, Object, Payload, Scalar, Sequence, Tag, Value};
 
 /// Parse a Styx document into a tree.
 pub fn parse(source: &str) -> Result<Value, BuildError> {
@@ -31,8 +31,8 @@ impl Document {
     /// Parse a Styx document.
     pub fn parse(source: &str) -> Result<Self, BuildError> {
         let value = parse(source)?;
-        match value {
-            Value::Object(root) => Ok(Document {
+        match value.payload {
+            Some(Payload::Object(root)) => Ok(Document {
                 root,
                 leading_comments: Vec::new(),
             }),
@@ -127,7 +127,7 @@ mod tests {
         assert_eq!(schema_obj.len(), 1);
         let entry = &schema_obj.entries[0];
 
-        // Key is "@" as a bare scalar (not Unit - Unit is only for @tag values)
+        // Key is "@" as a bare scalar (not Unit - Unit is only for the value `@` with no tag)
         assert_eq!(
             entry.key.as_str(),
             Some("@"),
@@ -153,14 +153,14 @@ mod tests {
         let name_entry = &payload_obj.entries[0];
         assert_eq!(name_entry.key.as_str(), Some("name"));
 
-        // Value is Tagged with tag "string", no payload
-        let name_tagged = match &name_entry.value {
-            Value::Tagged(t) => t,
-            other => panic!("expected Tagged for @string, got {:?}", other),
-        };
-        assert_eq!(name_tagged.tag, "string");
+        // Value is tagged with "string", no payload
+        assert_eq!(
+            name_entry.value.tag_name(),
+            Some("string"),
+            "@string should have tag 'string'"
+        );
         assert!(
-            name_tagged.payload.is_none(),
+            name_entry.value.payload.is_none(),
             "@string should have no payload"
         );
     }

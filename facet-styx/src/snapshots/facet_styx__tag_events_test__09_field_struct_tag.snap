@@ -2,9 +2,9 @@
 source: crates/facet-styx/src/tag_events_test.rs
 expression: "collect_events(\"x @Foo{y 1}\")"
 ---
-FieldKey("x")
+FieldKey(Some("x"))
 VariantTag("Foo")
 StructStart
-  FieldKey("y")
+  FieldKey(Some("y"))
   Scalar(1)
 StructEnd

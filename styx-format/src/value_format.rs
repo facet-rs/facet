@@ -1,6 +1,6 @@
 //! Format `styx_tree::Value` to Styx text.
 
-use styx_tree::{Entry, Object, Sequence, Tagged, Value};
+use styx_tree::{Entry, Object, Payload, Sequence, Value};
 
 use crate::{FormatOptions, StyxWriter};
 
@@ -35,56 +35,50 @@ impl ValueFormatter {
     }
 
     fn format_root(&mut self, value: &Value) {
-        match value {
-            Value::Object(obj) => {
+        // Root is typically an untagged object
+        if value.tag.is_none() {
+            if let Some(Payload::Object(obj)) = &value.payload {
                 // Root object - no braces
                 self.writer.begin_struct(true);
                 self.format_object_entries(obj);
                 self.writer.end_struct().ok();
-            }
-            _ => {
-                // Non-object root - just format the value
-                self.format_value(value);
+                return;
             }
         }
+        // Non-object root or tagged root - just format the value
+        self.format_value(value);
     }
 
     fn format_value(&mut self, value: &Value) {
-        match value {
-            Value::Scalar(s) => {
-                self.writer.write_scalar(&s.text);
+        // Write tag if present
+        if let Some(tag) = &value.tag {
+            self.writer.write_tag(&tag.name);
+        }
+
+        // Write payload if present
+        match &value.payload {
+            None => {
+                // No payload - if no tag either, this is unit (@)
+                if value.tag.is_none() {
+                    self.writer.write_str("@");
+                }
+                // If there's a tag but no payload, tag was already written
             }
-            Value::Unit => {
-                self.writer.write_str("@");
+            Some(Payload::Scalar(s)) => {
+                // If tagged, wrap scalar in parens: @tag(scalar)
+                if value.tag.is_some() {
+                    self.writer.begin_seq_after_tag();
+                    self.writer.write_scalar(&s.text);
+                    self.writer.end_seq().ok();
+                } else {
+                    self.writer.write_scalar(&s.text);
+                }
             }
-            Value::Tagged(tagged) => {
-                self.format_tagged(tagged);
-            }
-            Value::Sequence(seq) => {
+            Some(Payload::Sequence(seq)) => {
                 self.format_sequence(seq);
             }
-            Value::Object(obj) => {
+            Some(Payload::Object(obj)) => {
                 self.format_object(obj);
-            }
-        }
-    }
-
-    fn format_tagged(&mut self, tagged: &Tagged) {
-        self.writer.write_tag(&tagged.tag);
-        if let Some(payload) = &tagged.payload {
-            // If payload is a tagged value (or scalar), wrap in parens for clarity
-            // e.g., @optional(@string) not @optional@string
-            match payload.as_ref() {
-                Value::Tagged(_) | Value::Scalar(_) | Value::Unit => {
-                    // Use begin_seq_after_tag to avoid spurious space
-                    self.writer.begin_seq_after_tag();
-                    self.format_value(payload);
-                    self.writer.end_seq().ok();
-                }
-                _ => {
-                    // Sequences and objects are already delimited
-                    self.format_value(payload);
-                }
             }
         }
     }
@@ -110,11 +104,23 @@ impl ValueFormatter {
     }
 
     fn format_entry(&mut self, entry: &Entry) {
-        // Get key as string
-        let key = match &entry.key {
-            Value::Scalar(s) => s.text.as_str(),
-            Value::Unit => "@",
-            _ => "?", // shouldn't happen for well-formed objects
+        // Handle unit key specially - write @ directly (no quoting)
+        if entry.key.is_unit() {
+            if let Some(doc) = &entry.doc_comment {
+                self.writer.write_doc_comment_and_key_raw(doc, "@");
+            } else {
+                self.writer.field_key_raw("@").ok();
+            }
+            self.format_value(&entry.value);
+            return;
+        }
+
+        // Get key as string - must be an untagged scalar
+        let Some(key) = entry.key.as_str() else {
+            panic!(
+                "object key must be untagged Scalar or Unit, got {:?}",
+                entry.key
+            );
         };
 
         // Write doc comment + key together, or just key
@@ -132,14 +138,29 @@ impl ValueFormatter {
 mod tests {
     use super::*;
     use styx_parse::{ScalarKind, Separator};
-    use styx_tree::{Object, Scalar, Sequence, Tagged};
+    use styx_tree::{Object, Payload, Scalar, Sequence, Tag};
 
     fn scalar(text: &str) -> Value {
-        Value::Scalar(Scalar {
-            text: text.to_string(),
-            kind: ScalarKind::Bare,
+        Value {
+            tag: None,
+            payload: Some(Payload::Scalar(Scalar {
+                text: text.to_string(),
+                kind: ScalarKind::Bare,
+                span: None,
+            })),
             span: None,
-        })
+        }
+    }
+
+    fn tagged(name: &str) -> Value {
+        Value {
+            tag: Some(Tag {
+                name: name.to_string(),
+                span: None,
+            }),
+            payload: None,
+            span: None,
+        }
     }
 
     fn entry(key: &str, value: Value) -> Entry {
@@ -158,13 +179,32 @@ mod tests {
         }
     }
 
+    fn obj_value(entries: Vec<Entry>) -> Value {
+        Value {
+            tag: None,
+            payload: Some(Payload::Object(Object {
+                entries,
+                separator: Separator::Newline,
+                span: None,
+            })),
+            span: None,
+        }
+    }
+
+    fn seq_value(items: Vec<Value>) -> Value {
+        Value {
+            tag: None,
+            payload: Some(Payload::Sequence(Sequence { items, span: None })),
+            span: None,
+        }
+    }
+
     #[test]
     fn test_format_simple_object() {
-        let obj = Value::Object(Object {
-            entries: vec![entry("name", scalar("Alice")), entry("age", scalar("30"))],
-            separator: Separator::Newline,
-            span: None,
-        });
+        let obj = obj_value(vec![
+            entry("name", scalar("Alice")),
+            entry("age", scalar("30")),
+        ]);
 
         let result = format_value_default(&obj);
         insta::assert_snapshot!(result);
@@ -172,18 +212,17 @@ mod tests {
 
     #[test]
     fn test_format_nested_object() {
-        let obj = Value::Object(Object {
-            entries: vec![entry(
-                "user",
-                Value::Object(Object {
-                    entries: vec![entry("name", scalar("Alice")), entry("age", scalar("30"))],
-                    separator: Separator::Comma,
-                    span: None,
-                }),
-            )],
-            separator: Separator::Newline,
+        let inner = Value {
+            tag: None,
+            payload: Some(Payload::Object(Object {
+                entries: vec![entry("name", scalar("Alice")), entry("age", scalar("30"))],
+                separator: Separator::Comma,
+                span: None,
+            })),
             span: None,
-        });
+        };
+
+        let obj = obj_value(vec![entry("user", inner)]);
 
         let result = format_value_default(&obj);
         insta::assert_snapshot!(result);
@@ -191,17 +230,7 @@ mod tests {
 
     #[test]
     fn test_format_tagged() {
-        let tagged = Value::Tagged(Tagged {
-            tag: "string".to_string(),
-            payload: None,
-            span: None,
-        });
-
-        let obj = Value::Object(Object {
-            entries: vec![entry("type", tagged)],
-            separator: Separator::Newline,
-            span: None,
-        });
+        let obj = obj_value(vec![entry("type", tagged("string"))]);
 
         let result = format_value_default(&obj);
         insta::assert_snapshot!(result);
@@ -209,16 +238,9 @@ mod tests {
 
     #[test]
     fn test_format_sequence() {
-        let seq = Value::Sequence(Sequence {
-            items: vec![scalar("a"), scalar("b"), scalar("c")],
-            span: None,
-        });
+        let seq = seq_value(vec![scalar("a"), scalar("b"), scalar("c")]);
 
-        let obj = Value::Object(Object {
-            entries: vec![entry("items", seq)],
-            separator: Separator::Newline,
-            span: None,
-        });
+        let obj = obj_value(vec![entry("items", seq)]);
 
         let result = format_value_default(&obj);
         insta::assert_snapshot!(result);
@@ -226,14 +248,10 @@ mod tests {
 
     #[test]
     fn test_format_with_doc_comments() {
-        let obj = Value::Object(Object {
-            entries: vec![
-                entry_with_doc("name", scalar("Alice"), "The user's name"),
-                entry_with_doc("age", scalar("30"), "Age in years"),
-            ],
-            separator: Separator::Newline,
-            span: None,
-        });
+        let obj = obj_value(vec![
+            entry_with_doc("name", scalar("Alice"), "The user's name"),
+            entry_with_doc("age", scalar("30"), "Age in years"),
+        ]);
 
         let result = format_value_default(&obj);
         insta::assert_snapshot!(result);
@@ -241,11 +259,7 @@ mod tests {
 
     #[test]
     fn test_format_unit() {
-        let obj = Value::Object(Object {
-            entries: vec![entry("flag", Value::Unit)],
-            separator: Separator::Newline,
-            span: None,
-        });
+        let obj = obj_value(vec![entry("flag", Value::unit())]);
 
         let result = format_value_default(&obj);
         insta::assert_snapshot!(result);

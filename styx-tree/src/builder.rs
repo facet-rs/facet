@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use styx_parse::{Event, ParseCallback, Separator, Span};
 
-use crate::value::{Entry, Object, Scalar, Sequence, Tagged, Value};
+use crate::value::{Entry, Object, Payload, Scalar, Sequence, Tag, Value};
 
 /// Error during tree building.
 #[derive(Debug, Clone, PartialEq)]
@@ -50,7 +50,6 @@ enum BuilderFrame {
     Tag {
         name: String,
         span: Span,
-        payload: Option<Value>,
     },
     Entry {
         key: Option<Value>,
@@ -74,26 +73,40 @@ impl TreeBuilder {
             return Err(BuildError::UnclosedStructure);
         }
 
-        // If we have root entries, wrap them in an implicit object
-        if self.root_entries.is_empty() {
-            // Empty document - return empty object
-            Ok(Value::Object(Object {
-                entries: Vec::new(),
-                separator: Separator::Newline,
-                span: None,
-            }))
-        } else {
-            Ok(Value::Object(Object {
+        // Root is always an implicit object (no tag)
+        Ok(Value {
+            tag: None,
+            payload: Some(Payload::Object(Object {
                 entries: self.root_entries,
                 separator: Separator::Newline,
                 span: None,
-            }))
-        }
+            })),
+            span: None,
+        })
     }
 
     /// Push a value to the current context.
     fn push_value(&mut self, value: Value) {
-        // First, check if we're in an Entry frame with a key - if so, this value completes the entry
+        // First, check if we're in a Tag frame - if so, the value becomes the tag's payload
+        if let Some(BuilderFrame::Tag { .. }) = self.stack.last() {
+            // Pop the tag frame
+            if let Some(BuilderFrame::Tag { name, span }) = self.stack.pop() {
+                // Create tagged value: the tag wraps the value's payload
+                let tagged = Value {
+                    tag: Some(Tag {
+                        name,
+                        span: Some(span),
+                    }),
+                    payload: value.payload,
+                    span: value.span,
+                };
+                // Recursively push the tagged value
+                self.push_value(tagged);
+            }
+            return;
+        }
+
+        // Check if we're in an Entry frame with a key - if so, this value completes the entry
         if let Some(BuilderFrame::Entry { key: Some(_), .. }) = self.stack.last() {
             // Pop the entry frame and add the complete entry to parent
             if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.pop() {
@@ -129,10 +142,9 @@ impl TreeBuilder {
                 pending_doc_comment,
                 ..
             }) => {
-                // Value for an entry - but we need a key first
-                // This shouldn't happen in normal flow; entries handle this
+                // Value for an entry without explicit key - use unit key
                 entries.push(Entry {
-                    key: Value::Unit,
+                    key: Value::unit(),
                     value,
                     doc_comment: pending_doc_comment.take(),
                 });
@@ -140,21 +152,20 @@ impl TreeBuilder {
             Some(BuilderFrame::Sequence { items, .. }) => {
                 items.push(value);
             }
-            Some(BuilderFrame::Tag { payload, .. }) => {
-                // Store the value as the tag's payload
-                *payload = Some(value);
+            Some(BuilderFrame::Tag { .. }) => {
+                // Already handled above
+                unreachable!()
             }
             Some(BuilderFrame::Entry { key, .. }) => {
                 if key.is_none() {
                     // This is the key
                     *key = Some(value);
                 }
-                // If key is already set, this is the value - handled by the check above
             }
             None => {
                 // Root level - treat as entry in implicit object
                 self.root_entries.push(Entry {
-                    key: Value::Unit,
+                    key: Value::unit(),
                     value,
                     doc_comment: self.pending_doc_comment.take(),
                 });
@@ -193,14 +204,21 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                     ..
                 }) = self.stack.pop()
                 {
-                    let obj = Value::Object(Object {
-                        entries,
-                        separator,
+                    let obj = Value {
+                        tag: None,
+                        payload: Some(Payload::Object(Object {
+                            entries,
+                            separator,
+                            span: Some(Span {
+                                start: start_span.start,
+                                end: span.end,
+                            }),
+                        })),
                         span: Some(Span {
                             start: start_span.start,
                             end: span.end,
                         }),
-                    });
+                    };
                     self.push_value(obj);
                 }
             }
@@ -218,13 +236,20 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                     span: start_span,
                 }) = self.stack.pop()
                 {
-                    let seq = Value::Sequence(Sequence {
-                        items,
+                    let seq = Value {
+                        tag: None,
+                        payload: Some(Payload::Sequence(Sequence {
+                            items,
+                            span: Some(Span {
+                                start: start_span.start,
+                                end: span.end,
+                            }),
+                        })),
                         span: Some(Span {
                             start: start_span.start,
                             end: span.end,
                         }),
-                    });
+                    };
                     self.push_value(seq);
                 }
             }
@@ -248,13 +273,11 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                     && let Some(key) = key
                 {
                     // We have a key but might not have a value yet
-                    // The value should have been pushed to parent already
-                    // Just add the entry to parent
                     match self.stack.last_mut() {
                         Some(BuilderFrame::Object { entries, .. }) => {
                             // Check if last entry needs this key
                             if let Some(last) = entries.last_mut()
-                                && matches!(last.key, Value::Unit)
+                                && last.key.is_unit()
                                 && last.doc_comment.is_none()
                             {
                                 last.key = key;
@@ -264,14 +287,14 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                             // Otherwise add as unit-valued entry
                             entries.push(Entry {
                                 key,
-                                value: Value::Unit,
+                                value: Value::unit(),
                                 doc_comment,
                             });
                         }
                         _ => {
                             // Root level
                             if let Some(last) = self.root_entries.last_mut()
-                                && matches!(last.key, Value::Unit)
+                                && last.key.is_unit()
                                 && last.doc_comment.is_none()
                             {
                                 last.key = key;
@@ -280,7 +303,7 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                             }
                             self.root_entries.push(Entry {
                                 key,
-                                value: Value::Unit,
+                                value: Value::unit(),
                                 doc_comment,
                             });
                         }
@@ -289,24 +312,32 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
             }
 
             Event::Key { span, value, kind } => {
-                let scalar = Value::Scalar(Scalar {
-                    text: cow_to_string(value),
-                    kind,
+                let scalar = Value {
+                    tag: None,
+                    payload: Some(Payload::Scalar(Scalar {
+                        text: cow_to_string(value),
+                        kind,
+                        span: Some(span),
+                    })),
                     span: Some(span),
-                });
+                };
                 if let Some(BuilderFrame::Entry { key, .. }) = self.stack.last_mut() {
                     *key = Some(scalar);
                 }
             }
 
             Event::Scalar { span, value, kind } => {
-                let scalar = Value::Scalar(Scalar {
-                    text: cow_to_string(value),
-                    kind,
+                let scalar = Value {
+                    tag: None,
+                    payload: Some(Payload::Scalar(Scalar {
+                        text: cow_to_string(value),
+                        kind,
+                        span: Some(span),
+                    })),
                     span: Some(span),
-                });
+                };
 
-                // Check if we're in an entry context
+                // Check if we're in an entry context with a key already set
                 if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut()
                     && key.is_some()
                 {
@@ -346,7 +377,7 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
             }
 
             Event::Unit { span } => {
-                let unit = Value::Unit;
+                let unit = Value::unit();
 
                 // Similar logic to Scalar for entry handling
                 if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut()
@@ -387,22 +418,20 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                 self.stack.push(BuilderFrame::Tag {
                     name: name.to_string(),
                     span,
-                    payload: None,
                 });
             }
 
             Event::TagEnd => {
-                if let Some(BuilderFrame::Tag {
-                    name,
-                    span,
-                    payload,
-                }) = self.stack.pop()
-                {
-                    let tagged = Value::Tagged(Tagged {
-                        tag: name,
-                        payload: payload.map(Box::new),
+                if let Some(BuilderFrame::Tag { name, span }) = self.stack.pop() {
+                    // Tag with no payload - just the tag itself
+                    let tagged = Value {
+                        tag: Some(Tag {
+                            name,
+                            span: Some(span),
+                        }),
+                        payload: None,
                         span: Some(span),
-                    });
+                    };
 
                     // Similar to scalar handling
                     if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut()
@@ -531,7 +560,7 @@ mod tests {
     fn test_tag() {
         let value = parse("type @user");
         let obj = value.as_object().unwrap();
-        assert_eq!(obj.get("type").and_then(|v| v.tag()), Some("user"));
+        assert_eq!(obj.get("type").and_then(|v| v.tag_name()), Some("user"));
     }
 
     #[test]
@@ -539,18 +568,13 @@ mod tests {
         let value = parse("result @err{message \"failed\"}");
         let obj = value.as_object().unwrap();
         let result = obj.get("result").unwrap();
-        assert_eq!(result.tag(), Some("err"));
+        assert_eq!(result.tag_name(), Some("err"));
         // Check payload is an object with message field
-        if let Value::Tagged(tagged) = result {
-            let payload = tagged.payload.as_ref().expect("should have payload");
-            let payload_obj = payload.as_object().expect("payload should be object");
-            assert_eq!(
-                payload_obj.get("message").and_then(|v| v.as_str()),
-                Some("failed")
-            );
-        } else {
-            panic!("expected tagged value");
-        }
+        let payload_obj = result.as_object().expect("payload should be object");
+        assert_eq!(
+            payload_obj.get("message").and_then(|v| v.as_str()),
+            Some("failed")
+        );
     }
 
     #[test]
@@ -558,17 +582,12 @@ mod tests {
         let value = parse("color @rgb(255 128 0)");
         let obj = value.as_object().unwrap();
         let color = obj.get("color").unwrap();
-        assert_eq!(color.tag(), Some("rgb"));
+        assert_eq!(color.tag_name(), Some("rgb"));
         // Check payload is a sequence
-        if let Value::Tagged(tagged) = color {
-            let payload = tagged.payload.as_ref().expect("should have payload");
-            let payload_seq = payload.as_sequence().expect("payload should be sequence");
-            assert_eq!(payload_seq.len(), 3);
-            assert_eq!(payload_seq.get(0).and_then(|v| v.as_str()), Some("255"));
-            assert_eq!(payload_seq.get(1).and_then(|v| v.as_str()), Some("128"));
-            assert_eq!(payload_seq.get(2).and_then(|v| v.as_str()), Some("0"));
-        } else {
-            panic!("expected tagged value");
-        }
+        let payload_seq = color.as_sequence().expect("payload should be sequence");
+        assert_eq!(payload_seq.len(), 3);
+        assert_eq!(payload_seq.get(0).and_then(|v| v.as_str()), Some("255"));
+        assert_eq!(payload_seq.get(1).and_then(|v| v.as_str()), Some("128"));
+        assert_eq!(payload_seq.get(2).and_then(|v| v.as_str()), Some("0"));
     }
 }

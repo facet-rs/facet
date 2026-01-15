@@ -537,12 +537,11 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                             }
                         }
 
-                        // @ alone or @ followed by space/newline = key "@"
+                        // @ alone or @ followed by space/newline = unit key (None)
                         self.pending_key = Some(Cow::Borrowed("@"));
                         self.expecting_value = true;
-                        trace!("next_event: FieldKey (@)");
-                        return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
-                            Cow::Borrowed("@"),
+                        trace!("next_event: FieldKey (unit)");
+                        return Ok(Some(ParseEvent::FieldKey(FieldKey::unit(
                             FieldLocationHint::KeyValue,
                         ))));
                     }
@@ -656,7 +655,8 @@ impl<'a, 'de> ProbeStream<'de> for StyxProbe<'a, 'de> {
         let event = self.parser.peek_event()?;
         match event {
             Some(ParseEvent::FieldKey(key)) => Ok(Some(FieldEvidence::new(
-                key.name,
+                // For evidence, unit keys become empty strings (evidence is for enum disambiguation)
+                key.name.unwrap_or(Cow::Borrowed("")),
                 FieldLocationHint::KeyValue,
                 Some(ValueTypeHint::Map),
             ))),

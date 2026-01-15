@@ -2,6 +2,6 @@
 source: crates/facet-styx/src/tag_events_test.rs
 expression: "collect_events(\"x @Foo\")"
 ---
-FieldKey("x")
+FieldKey(Some("x"))
 VariantTag("Foo")
 Scalar(Unit)

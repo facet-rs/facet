@@ -1,22 +1,45 @@
 //! Value types for Styx documents.
+//!
+//! In Styx, every value has the same structure:
+//! - An optional tag (`@name`)
+//! - An optional payload (scalar, sequence, or object)
+//!
+//! This means:
+//! - `@` is `Value { tag: None, payload: None }` (unit)
+//! - `foo` is `Value { tag: None, payload: Some(Payload::Scalar(...)) }`
+//! - `@string` is `Value { tag: Some("string"), payload: None }`
+//! - `@seq(a b)` is `Value { tag: Some("seq"), payload: Some(Payload::Sequence(...)) }`
+//! - `@object{...}` is `Value { tag: Some("object"), payload: Some(Payload::Object(...)) }`
 
 use styx_parse::{ScalarKind, Separator, Span};
 
-/// A Styx value.
+/// A Styx value: optional tag + optional payload.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    /// Scalar text (from any scalar syntax).
+pub struct Value {
+    /// Optional tag (e.g., `string` for `@string`).
+    pub tag: Option<Tag>,
+    /// Optional payload.
+    pub payload: Option<Payload>,
+    /// Source span (None if programmatically constructed).
+    pub span: Option<Span>,
+}
+
+/// A tag on a value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tag {
+    /// Tag name (without `@`).
+    pub name: String,
+    /// Source span.
+    pub span: Option<Span>,
+}
+
+/// The payload of a value.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Payload {
+    /// Scalar text.
     Scalar(Scalar),
-
-    /// Unit value (`@`).
-    Unit,
-
-    /// Tagged value (`@name` or `@name payload`).
-    Tagged(Tagged),
-
     /// Sequence `(a b c)`.
     Sequence(Sequence),
-
     /// Object `{key value, ...}`.
     Object(Object),
 }
@@ -29,17 +52,6 @@ pub struct Scalar {
     /// What kind of scalar syntax was used.
     pub kind: ScalarKind,
     /// Source span (None if programmatically constructed).
-    pub span: Option<Span>,
-}
-
-/// A tagged value.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Tagged {
-    /// Tag name (without `@`).
-    pub tag: String,
-    /// Optional payload value.
-    pub payload: Option<Box<Value>>,
-    /// Source span.
     pub span: Option<Span>,
 }
 
@@ -66,7 +78,7 @@ pub struct Object {
 /// An entry in an object.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
-    /// The key (usually a Scalar, but can be Unit or Tagged).
+    /// The key.
     pub key: Value,
     /// The value.
     pub value: Value,
@@ -75,88 +87,154 @@ pub struct Entry {
 }
 
 impl Value {
-    /// Create a scalar value.
-    pub fn scalar(text: impl Into<String>) -> Self {
-        Value::Scalar(Scalar {
-            text: text.into(),
-            kind: ScalarKind::Bare,
-            span: None,
-        })
-    }
-
-    /// Create a unit value.
+    /// Create a unit value (`@`).
     pub fn unit() -> Self {
-        Value::Unit
-    }
-
-    /// Create an empty object.
-    pub fn object() -> Self {
-        Value::Object(Object {
-            entries: Vec::new(),
-            separator: Separator::Newline,
+        Value {
+            tag: None,
+            payload: None,
             span: None,
-        })
+        }
     }
 
-    /// Create an empty sequence.
+    /// Create a scalar value (no tag).
+    pub fn scalar(text: impl Into<String>) -> Self {
+        Value {
+            tag: None,
+            payload: Some(Payload::Scalar(Scalar {
+                text: text.into(),
+                kind: ScalarKind::Bare,
+                span: None,
+            })),
+            span: None,
+        }
+    }
+
+    /// Create a tagged value with no payload (e.g., `@string`).
+    pub fn tag(name: impl Into<String>) -> Self {
+        Value {
+            tag: Some(Tag {
+                name: name.into(),
+                span: None,
+            }),
+            payload: None,
+            span: None,
+        }
+    }
+
+    /// Create a tagged value with a payload.
+    pub fn tagged(name: impl Into<String>, payload: Value) -> Self {
+        Value {
+            tag: Some(Tag {
+                name: name.into(),
+                span: None,
+            }),
+            payload: payload.payload,
+            span: None,
+        }
+    }
+
+    /// Create an empty sequence (no tag).
     pub fn sequence() -> Self {
-        Value::Sequence(Sequence {
-            items: Vec::new(),
+        Value {
+            tag: None,
+            payload: Some(Payload::Sequence(Sequence {
+                items: Vec::new(),
+                span: None,
+            })),
             span: None,
-        })
-    }
-
-    /// Get as string (for scalars).
-    pub fn as_str(&self) -> Option<&str> {
-        match self {
-            Value::Scalar(s) => Some(&s.text),
-            _ => None,
         }
     }
 
-    /// Get as object.
-    pub fn as_object(&self) -> Option<&Object> {
-        match self {
-            Value::Object(o) => Some(o),
-            _ => None,
+    /// Create a sequence with items (no tag).
+    pub fn seq(items: Vec<Value>) -> Self {
+        Value {
+            tag: None,
+            payload: Some(Payload::Sequence(Sequence { items, span: None })),
+            span: None,
         }
     }
 
-    /// Get as mutable object.
-    pub fn as_object_mut(&mut self) -> Option<&mut Object> {
-        match self {
-            Value::Object(o) => Some(o),
-            _ => None,
+    /// Create an empty object (no tag).
+    pub fn object() -> Self {
+        Value {
+            tag: None,
+            payload: Some(Payload::Object(Object {
+                entries: Vec::new(),
+                separator: Separator::Newline,
+                span: None,
+            })),
+            span: None,
         }
     }
 
-    /// Get as sequence.
-    pub fn as_sequence(&self) -> Option<&Sequence> {
-        match self {
-            Value::Sequence(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Get as mutable sequence.
-    pub fn as_sequence_mut(&mut self) -> Option<&mut Sequence> {
-        match self {
-            Value::Sequence(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Check if unit.
+    /// Check if this is unit (`@` - no tag, no payload).
     pub fn is_unit(&self) -> bool {
-        matches!(self, Value::Unit)
+        self.tag.is_none() && self.payload.is_none()
     }
 
-    /// Get tag name if tagged.
-    pub fn tag(&self) -> Option<&str> {
-        match self {
-            Value::Tagged(t) => Some(&t.tag),
+    /// Get the tag name if present.
+    pub fn tag_name(&self) -> Option<&str> {
+        self.tag.as_ref().map(|t| t.name.as_str())
+    }
+
+    /// Get as string (for untagged scalars).
+    pub fn as_str(&self) -> Option<&str> {
+        if self.tag.is_some() {
+            return None;
+        }
+        match &self.payload {
+            Some(Payload::Scalar(s)) => Some(&s.text),
             _ => None,
         }
+    }
+
+    /// Get the scalar text regardless of tag.
+    pub fn scalar_text(&self) -> Option<&str> {
+        match &self.payload {
+            Some(Payload::Scalar(s)) => Some(&s.text),
+            _ => None,
+        }
+    }
+
+    /// Get as object (payload only).
+    pub fn as_object(&self) -> Option<&Object> {
+        match &self.payload {
+            Some(Payload::Object(o)) => Some(o),
+            _ => None,
+        }
+    }
+
+    /// Get as mutable object (payload only).
+    pub fn as_object_mut(&mut self) -> Option<&mut Object> {
+        match &mut self.payload {
+            Some(Payload::Object(o)) => Some(o),
+            _ => None,
+        }
+    }
+
+    /// Get as sequence (payload only).
+    pub fn as_sequence(&self) -> Option<&Sequence> {
+        match &self.payload {
+            Some(Payload::Sequence(s)) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Get as mutable sequence (payload only).
+    pub fn as_sequence_mut(&mut self) -> Option<&mut Sequence> {
+        match &mut self.payload {
+            Some(Payload::Sequence(s)) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Add a tag to this value.
+    pub fn with_tag(mut self, name: impl Into<String>) -> Self {
+        self.tag = Some(Tag {
+            name: name.into(),
+            span: None,
+        });
+        self
     }
 
     /// Get a value by path.
@@ -170,8 +248,8 @@ impl Value {
 
         let (segment, rest) = split_path(path);
 
-        match self {
-            Value::Object(obj) => {
+        match &self.payload {
+            Some(Payload::Object(obj)) => {
                 let value = obj.get(segment)?;
                 if rest.is_empty() {
                     Some(value)
@@ -179,7 +257,7 @@ impl Value {
                     value.get(rest)
                 }
             }
-            Value::Sequence(seq) => {
+            Some(Payload::Sequence(seq)) => {
                 // Handle [n] indexing
                 if segment.starts_with('[') && segment.ends_with(']') {
                     let idx: usize = segment[1..segment.len() - 1].parse().ok()?;
@@ -189,13 +267,6 @@ impl Value {
                     } else {
                         value.get(rest)
                     }
-                } else {
-                    None
-                }
-            }
-            Value::Tagged(t) => {
-                if let Some(payload) = &t.payload {
-                    payload.get(path)
                 } else {
                     None
                 }
@@ -212,8 +283,8 @@ impl Value {
 
         let (segment, rest) = split_path(path);
 
-        match self {
-            Value::Object(obj) => {
+        match &mut self.payload {
+            Some(Payload::Object(obj)) => {
                 let value = obj.get_mut(segment)?;
                 if rest.is_empty() {
                     Some(value)
@@ -221,7 +292,7 @@ impl Value {
                     value.get_mut(rest)
                 }
             }
-            Value::Sequence(seq) => {
+            Some(Payload::Sequence(seq)) => {
                 if segment.starts_with('[') && segment.ends_with(']') {
                     let idx: usize = segment[1..segment.len() - 1].parse().ok()?;
                     let value = seq.get_mut(idx)?;
@@ -234,20 +305,13 @@ impl Value {
                     None
                 }
             }
-            Value::Tagged(t) => {
-                if let Some(payload) = &mut t.payload {
-                    payload.get_mut(path)
-                } else {
-                    None
-                }
-            }
             _ => None,
         }
     }
 }
 
 impl Object {
-    /// Get entry value by key.
+    /// Get entry value by key (for untagged scalar keys).
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.entries
             .iter()
@@ -263,6 +327,22 @@ impl Object {
             .map(|e| &mut e.value)
     }
 
+    /// Get entry by unit key (`@`).
+    pub fn get_unit(&self) -> Option<&Value> {
+        self.entries
+            .iter()
+            .find(|e| e.key.is_unit())
+            .map(|e| &e.value)
+    }
+
+    /// Get mutable entry by unit key.
+    pub fn get_unit_mut(&mut self) -> Option<&mut Value> {
+        self.entries
+            .iter_mut()
+            .find(|e| e.key.is_unit())
+            .map(|e| &mut e.value)
+    }
+
     /// Iterate over entries as (key, value) pairs.
     pub fn iter(&self) -> impl Iterator<Item = (&Value, &Value)> {
         self.entries.iter().map(|e| (&e.key, &e.value))
@@ -271,6 +351,11 @@ impl Object {
     /// Check if key exists.
     pub fn contains_key(&self, key: &str) -> bool {
         self.entries.iter().any(|e| e.key.as_str() == Some(key))
+    }
+
+    /// Check if unit key exists.
+    pub fn contains_unit_key(&self) -> bool {
+        self.entries.iter().any(|e| e.key.is_unit())
     }
 
     /// Number of entries.
@@ -283,7 +368,7 @@ impl Object {
         self.entries.is_empty()
     }
 
-    /// Insert or update an entry.
+    /// Insert or update an entry with a string key.
     pub fn insert(&mut self, key: impl Into<String>, value: Value) {
         let key_str = key.into();
         if let Some(entry) = self
@@ -295,6 +380,19 @@ impl Object {
         } else {
             self.entries.push(Entry {
                 key: Value::scalar(key_str),
+                value,
+                doc_comment: None,
+            });
+        }
+    }
+
+    /// Insert or update an entry with a unit key.
+    pub fn insert_unit(&mut self, value: Value) {
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.key.is_unit()) {
+            entry.value = value;
+        } else {
+            self.entries.push(Entry {
+                key: Value::unit(),
                 value,
                 doc_comment: None,
             });
@@ -338,13 +436,14 @@ impl Sequence {
 fn split_path(path: &str) -> (&str, &str) {
     // Handle [n] at start
     if path.starts_with('[')
-        && let Some(end) = path.find(']') {
-            let segment = &path[..=end];
-            let rest = &path[end + 1..];
-            // Skip leading `.` in rest
-            let rest = rest.strip_prefix('.').unwrap_or(rest);
-            return (segment, rest);
-        }
+        && let Some(end) = path.find(']')
+    {
+        let segment = &path[..=end];
+        let rest = &path[end + 1..];
+        // Skip leading `.` in rest
+        let rest = rest.strip_prefix('.').unwrap_or(rest);
+        return (segment, rest);
+    }
 
     // Find first `.` or `[`
     let dot_pos = path.find('.');
@@ -374,6 +473,30 @@ mod tests {
     }
 
     #[test]
+    fn test_unit_value() {
+        let v = Value::unit();
+        assert!(v.is_unit());
+        assert!(v.tag.is_none());
+        assert!(v.payload.is_none());
+    }
+
+    #[test]
+    fn test_scalar_value() {
+        let v = Value::scalar("hello");
+        assert!(!v.is_unit());
+        assert!(v.tag.is_none());
+        assert_eq!(v.as_str(), Some("hello"));
+    }
+
+    #[test]
+    fn test_tagged_value() {
+        let v = Value::tag("string");
+        assert!(!v.is_unit());
+        assert_eq!(v.tag_name(), Some("string"));
+        assert!(v.payload.is_none());
+    }
+
+    #[test]
     fn test_object_get() {
         let mut obj = Object {
             entries: vec![Entry {
@@ -393,34 +516,63 @@ mod tests {
     }
 
     #[test]
-    fn test_value_path_access() {
-        let value = Value::Object(Object {
-            entries: vec![
-                Entry {
-                    key: Value::scalar("user"),
-                    value: Value::Object(Object {
-                        entries: vec![Entry {
-                            key: Value::scalar("name"),
-                            value: Value::scalar("Alice"),
-                            doc_comment: None,
-                        }],
-                        separator: Separator::Newline,
-                        span: None,
-                    }),
-                    doc_comment: None,
-                },
-                Entry {
-                    key: Value::scalar("items"),
-                    value: Value::Sequence(Sequence {
-                        items: vec![Value::scalar("a"), Value::scalar("b"), Value::scalar("c")],
-                        span: None,
-                    }),
-                    doc_comment: None,
-                },
-            ],
+    fn test_object_unit_key() {
+        let mut obj = Object {
+            entries: vec![],
             separator: Separator::Newline,
             span: None,
-        });
+        };
+
+        obj.insert_unit(Value::scalar("root"));
+        assert!(obj.contains_unit_key());
+        assert_eq!(obj.get_unit().and_then(|v| v.as_str()), Some("root"));
+    }
+
+    #[test]
+    fn test_value_path_access() {
+        let value = Value {
+            tag: None,
+            payload: Some(Payload::Object(Object {
+                entries: vec![
+                    Entry {
+                        key: Value::scalar("user"),
+                        value: Value {
+                            tag: None,
+                            payload: Some(Payload::Object(Object {
+                                entries: vec![Entry {
+                                    key: Value::scalar("name"),
+                                    value: Value::scalar("Alice"),
+                                    doc_comment: None,
+                                }],
+                                separator: Separator::Newline,
+                                span: None,
+                            })),
+                            span: None,
+                        },
+                        doc_comment: None,
+                    },
+                    Entry {
+                        key: Value::scalar("items"),
+                        value: Value {
+                            tag: None,
+                            payload: Some(Payload::Sequence(Sequence {
+                                items: vec![
+                                    Value::scalar("a"),
+                                    Value::scalar("b"),
+                                    Value::scalar("c"),
+                                ],
+                                span: None,
+                            })),
+                            span: None,
+                        },
+                        doc_comment: None,
+                    },
+                ],
+                separator: Separator::Newline,
+                span: None,
+            })),
+            span: None,
+        };
 
         assert_eq!(
             value.get("user.name").and_then(|v| v.as_str()),

@@ -168,6 +168,46 @@ impl StyxWriter {
         }
     }
 
+    /// Write a field key without quoting (raw).
+    ///
+    /// Use this for keys that should be written exactly as-is, like `@` for unit keys.
+    pub fn field_key_raw(&mut self, key: &str) -> Result<(), &'static str> {
+        // Extract state first to avoid borrow conflicts
+        let (is_struct, is_first, is_root) = match self.stack.last() {
+            Some(Context::Struct { first, is_root, .. }) => (true, *first, *is_root),
+            _ => (false, true, false),
+        };
+
+        if !is_struct {
+            return Err("field_key_raw called outside of struct");
+        }
+
+        let should_inline = self.should_inline();
+
+        if !is_first {
+            if should_inline && !is_root {
+                self.out.extend_from_slice(b", ");
+            } else {
+                self.write_newline_indent();
+            }
+        } else {
+            // First field
+            if !is_root && !should_inline {
+                self.write_newline_indent();
+            }
+        }
+
+        // Update the first flag
+        if let Some(Context::Struct { first, .. }) = self.stack.last_mut() {
+            *first = false;
+        }
+
+        // Write key as-is (no quoting)
+        self.out.extend_from_slice(key.as_bytes());
+        self.out.push(b' ');
+        Ok(())
+    }
+
     /// Write a field key.
     ///
     /// Returns an error message if called outside of a struct context.
@@ -413,6 +453,49 @@ impl StyxWriter {
         } else {
             self.write_quoted_string(key);
         }
+        self.out.push(b' ');
+    }
+
+    /// Write a doc comment followed by a raw field key (no quoting).
+    /// Use this for keys like `@` that should be written literally.
+    pub fn write_doc_comment_and_key_raw(&mut self, doc: &str, key: &str) {
+        // Check if first field and root
+        let (is_first, is_root) = match self.stack.last() {
+            Some(Context::Struct { first, is_root, .. }) => (*first, *is_root),
+            _ => (true, false),
+        };
+
+        // Mark that we're no longer on first field, and force multiline since we have doc comments
+        if let Some(Context::Struct {
+            first,
+            force_multiline,
+            ..
+        }) = self.stack.last_mut()
+        {
+            *first = false;
+            *force_multiline = true;
+        }
+
+        // For non-first fields, or non-root structs, add newline before doc
+        let need_leading_newline = !is_first || !is_root;
+
+        for (i, line) in doc.lines().enumerate() {
+            if i > 0 || need_leading_newline {
+                self.write_newline_indent();
+            }
+            self.out.extend_from_slice(b"/// ");
+            self.out.extend_from_slice(line.as_bytes());
+        }
+
+        // Newline before the key (but no indent for root first field)
+        if is_first && is_root {
+            self.out.push(b'\n');
+        } else {
+            self.write_newline_indent();
+        }
+
+        // Write the key as-is (no quoting)
+        self.out.extend_from_slice(key.as_bytes());
         self.out.push(b' ');
     }
 
