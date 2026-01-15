@@ -9,6 +9,7 @@ facet-format.workspace = true
 facet-reflect.workspace = true
 styx-format.workspace = true
 styx-parse.workspace = true
+ariadne = "0.4"
 
 # Tracing (optional - compiles to nothing when disabled)
 tracing = { workspace = true, optional = true }

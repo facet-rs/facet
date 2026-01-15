@@ -1,0 +1,11 @@
+---
+source: crates/facet-styx/src/error.rs
+expression: rendered
+---
+Error: unknown field 'unknown_field'
+   ╭─[test.styx:2:1]
+   │
+ 2 │ unknown_field value
+   │ ──────┬──────  
+   │       ╰──────── unknown field
+───╯

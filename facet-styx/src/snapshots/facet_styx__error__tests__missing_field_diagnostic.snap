@@ -1,0 +1,11 @@
+---
+source: crates/facet-styx/src/error.rs
+expression: rendered
+---
+Error: Field 'Person::age' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)
+   ╭─[test.styx:1:1]
+   │
+ 1 │ name Alice
+   │ ┬  
+   │ ╰── error here
+───╯
