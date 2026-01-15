@@ -262,15 +262,15 @@ where
                             // so that "SomethingUnknown" round-trips correctly
                             wip = self.set_string_value(wip, Cow::Borrowed(input_tag))?;
                         } else {
-                            // Direct match: use the Rust variant name
-                            wip = self.set_string_value(wip, Cow::Borrowed(variant.name))?;
+                            // Direct match: use effective_name (wire format name)
+                            wip = self.set_string_value(wip, Cow::Borrowed(variant.effective_name()))?;
                         }
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {
                         if variant.data.fields.len() == 1 {
                             wip = wip.init_map().map_err(DeserializeError::reflect)?;
                             wip = wip
-                                .begin_object_entry(variant.name)
+                                .begin_object_entry(variant.effective_name())
                                 .map_err(DeserializeError::reflect)?;
                             wip = self.deserialize_value_recursive(
                                 wip,
@@ -280,7 +280,7 @@ where
                         } else {
                             wip = wip.init_map().map_err(DeserializeError::reflect)?;
                             wip = wip
-                                .begin_object_entry(variant.name)
+                                .begin_object_entry(variant.effective_name())
                                 .map_err(DeserializeError::reflect)?;
                             wip = self.deserialize_tuple_dynamic(wip, variant.data.fields)?;
                             wip = wip.end().map_err(DeserializeError::reflect)?;
@@ -289,7 +289,7 @@ where
                     StructKind::Struct => {
                         wip = wip.init_map().map_err(DeserializeError::reflect)?;
                         wip = wip
-                            .begin_object_entry(variant.name)
+                            .begin_object_entry(variant.effective_name())
                             .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_struct_dynamic(wip, variant.data.fields)?;
                         wip = wip.end().map_err(DeserializeError::reflect)?;

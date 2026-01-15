@@ -549,14 +549,14 @@ where
     }
 
     /// Find a variant by its display name (checking rename attributes).
-    /// Returns the actual variant name to use with `select_variant_named`.
+    /// Returns the effective name to use with `select_variant_named`.
     fn find_variant_by_display_name<'a>(
         enum_def: &'a facet_core::EnumType,
         display_name: &str,
     ) -> Option<&'a str> {
         enum_def.variants.iter().find_map(|v| {
             if v.effective_name() == display_name {
-                Some(v.name)
+                Some(v.effective_name())
             } else {
                 None
             }

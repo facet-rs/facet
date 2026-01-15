@@ -425,7 +425,7 @@ impl SchemaContext {
                         continue;
                     }
 
-                    let field_name = field.rename.unwrap_or(field.name);
+                    let field_name = field.effective_name();
                     let field_schema = self.schema_for_shape(field.shape.get());
 
                     // Check if field is required (not Option and no default)
@@ -475,7 +475,7 @@ impl SchemaContext {
             let values: Vec<String> = enum_type
                 .variants
                 .iter()
-                .map(|v| v.name.to_string())
+                .map(|v| v.effective_name().to_string())
                 .collect();
 
             JsonSchema {
@@ -492,11 +492,12 @@ impl SchemaContext {
                 .variants
                 .iter()
                 .map(|v| {
+                    let variant_name = v.effective_name().to_string();
                     match v.data.kind {
                         StructKind::Unit => {
                             // Unit variant: { "type": "VariantName" } or just "VariantName"
                             JsonSchema {
-                                const_: Some(v.name.to_string()),
+                                const_: Some(variant_name),
                                 ..JsonSchema::new()
                             }
                         }
@@ -504,13 +505,13 @@ impl SchemaContext {
                             // Newtype variant: { "VariantName": <inner> }
                             let mut props = BTreeMap::new();
                             props.insert(
-                                v.name.to_string(),
+                                variant_name.clone(),
                                 self.schema_for_shape(v.data.fields[0].shape.get()),
                             );
                             JsonSchema {
                                 type_: Some(SchemaType::Object),
                                 properties: Some(props),
-                                required: Some(vec![v.name.to_string()]),
+                                required: Some(vec![variant_name]),
                                 additional_properties: Some(AdditionalProperties::Bool(false)),
                                 ..JsonSchema::new()
                             }
@@ -520,11 +521,11 @@ impl SchemaContext {
                             let inner =
                                 self.schema_for_struct(shape, v.data.fields, v.data.kind, None);
                             let mut props = BTreeMap::new();
-                            props.insert(v.name.to_string(), inner);
+                            props.insert(variant_name.clone(), inner);
                             JsonSchema {
                                 type_: Some(SchemaType::Object),
                                 properties: Some(props),
-                                required: Some(vec![v.name.to_string()]),
+                                required: Some(vec![variant_name]),
                                 additional_properties: Some(AdditionalProperties::Bool(false)),
                                 ..JsonSchema::new()
                             }
@@ -593,6 +594,50 @@ mod tests {
         }
 
         let schema = to_schema::<Data>();
+        insta::assert_snapshot!(schema);
+    }
+
+    #[test]
+    fn test_enum_rename_all_snake_case() {
+        #[derive(Facet)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum ValidationErrorCode {
+            CircularDependency,
+            InvalidNaming,
+            UnknownRequirement,
+        }
+
+        let schema = to_schema::<ValidationErrorCode>();
+        insta::assert_snapshot!(schema);
+    }
+
+    #[test]
+    fn test_struct_rename_all_camel_case() {
+        #[derive(Facet)]
+        #[facet(rename_all = "camelCase")]
+        struct ApiResponse {
+            user_name: String,
+            created_at: String,
+            is_active: bool,
+        }
+
+        let schema = to_schema::<ApiResponse>();
+        insta::assert_snapshot!(schema);
+    }
+
+    #[test]
+    fn test_enum_with_data_rename_all() {
+        #[allow(dead_code)]
+        #[derive(Facet)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(C)]
+        enum Message {
+            TextMessage { content: String },
+            ImageUpload { url: String, width: u32 },
+        }
+
+        let schema = to_schema::<Message>();
         insta::assert_snapshot!(schema);
     }
 }

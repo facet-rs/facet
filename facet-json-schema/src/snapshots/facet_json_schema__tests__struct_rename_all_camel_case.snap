@@ -1,0 +1,85 @@
+---
+source: facet-json-schema/src/lib.rs
+expression: schema
+---
+{
+  "$schema": null,
+  "$ref": null,
+  "$defs": null,
+  "type": "object",
+  "properties": {
+    "createdAt": {
+      "$schema": null,
+      "$ref": null,
+      "$defs": null,
+      "type": "string",
+      "properties": null,
+      "required": null,
+      "additionalProperties": null,
+      "items": null,
+      "enum": null,
+      "minimum": null,
+      "maximum": null,
+      "oneOf": null,
+      "anyOf": null,
+      "allOf": null,
+      "description": null,
+      "title": null,
+      "const": null
+    },
+    "isActive": {
+      "$schema": null,
+      "$ref": null,
+      "$defs": null,
+      "type": "boolean",
+      "properties": null,
+      "required": null,
+      "additionalProperties": null,
+      "items": null,
+      "enum": null,
+      "minimum": null,
+      "maximum": null,
+      "oneOf": null,
+      "anyOf": null,
+      "allOf": null,
+      "description": null,
+      "title": null,
+      "const": null
+    },
+    "userName": {
+      "$schema": null,
+      "$ref": null,
+      "$defs": null,
+      "type": "string",
+      "properties": null,
+      "required": null,
+      "additionalProperties": null,
+      "items": null,
+      "enum": null,
+      "minimum": null,
+      "maximum": null,
+      "oneOf": null,
+      "anyOf": null,
+      "allOf": null,
+      "description": null,
+      "title": null,
+      "const": null
+    }
+  },
+  "required": [
+    "userName",
+    "createdAt",
+    "isActive"
+  ],
+  "additionalProperties": false,
+  "items": null,
+  "enum": null,
+  "minimum": null,
+  "maximum": null,
+  "oneOf": null,
+  "anyOf": null,
+  "allOf": null,
+  "description": null,
+  "title": "ApiResponse",
+  "const": null
+}

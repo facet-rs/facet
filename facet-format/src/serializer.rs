@@ -1690,7 +1690,7 @@ where
                 .variants
                 .iter()
                 .enumerate()
-                .find(|(_, v)| v.name == variant_name)
+                .find(|(_, v)| v.effective_name() == variant_name)
                 .ok_or_else(|| {
                     SerializeError::Unsupported(Cow::Owned(alloc::format!(
                         "unknown variant '{}'",
@@ -1700,13 +1700,13 @@ where
 
             if use_index {
                 serializer
-                    .begin_enum_variant(variant_index, variant.name)
+                    .begin_enum_variant(variant_index, variant.effective_name())
                     .map_err(SerializeError::Backend)?;
                 // Unit variant has no payload
                 Ok(())
             } else {
                 serializer
-                    .scalar(ScalarValue::Str(Cow::Borrowed(variant.name)))
+                    .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
                     .map_err(SerializeError::Backend)
             }
         }
@@ -1730,7 +1730,7 @@ where
                 .variants
                 .iter()
                 .enumerate()
-                .find(|(_, v)| v.name == variant_name)
+                .find(|(_, v)| v.effective_name() == variant_name)
                 .ok_or_else(|| {
                     SerializeError::Unsupported(Cow::Owned(alloc::format!(
                         "unknown variant '{}'",
@@ -1744,7 +1744,7 @@ where
 
             if use_index {
                 serializer
-                    .begin_enum_variant(variant_index, variant.name)
+                    .begin_enum_variant(variant_index, variant.effective_name())
                     .map_err(SerializeError::Backend)?;
 
                 // Serialize payload based on variant kind
@@ -1814,7 +1814,7 @@ where
                 // Externally tagged representation
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
                 serializer
-                    .field_key(variant.name)
+                    .field_key(variant.effective_name())
                     .map_err(SerializeError::Backend)?;
 
                 match variant.data.kind {
@@ -1890,6 +1890,7 @@ where
         // Null could be a unit variant named "Null" (untagged representation)
         DynValueKind::Null => {
             // Check if there's a Null variant or fallback for Option-like enums
+            // Note: we match against the Rust name (v.name) since these are well-known Rust identifiers
             if let Some((variant_index, variant)) = enum_def
                 .variants
                 .iter()
@@ -1898,12 +1899,12 @@ where
             {
                 if use_index {
                     serializer
-                        .begin_enum_variant(variant_index, variant.name)
+                        .begin_enum_variant(variant_index, variant.effective_name())
                         .map_err(SerializeError::Backend)?;
                     Ok(())
                 } else {
                     serializer
-                        .scalar(ScalarValue::Str(Cow::Borrowed(variant.name)))
+                        .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
                         .map_err(SerializeError::Backend)
                 }
             } else {
