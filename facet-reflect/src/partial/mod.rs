@@ -1073,7 +1073,7 @@ impl Frame {
 
     /// Returns an error if the value is not fully initialized
     fn require_full_initialization(&self) -> Result<(), ReflectError> {
-        match self.tracker {
+        match &self.tracker {
             Tracker::Scalar => {
                 if self.is_init {
                     Ok(())
@@ -1163,7 +1163,7 @@ impl Frame {
                 }
             }
             Tracker::SmartPointerSlice { building_item, .. } => {
-                if building_item {
+                if *building_item {
                     Err(ReflectError::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
@@ -1199,7 +1199,7 @@ impl Frame {
                 }
             }
             Tracker::Option { building_inner } => {
-                if building_inner {
+                if *building_inner {
                     Err(ReflectError::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
@@ -1208,7 +1208,7 @@ impl Frame {
                 }
             }
             Tracker::Result { building_inner, .. } => {
-                if building_inner {
+                if *building_inner {
                     Err(ReflectError::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
@@ -1216,7 +1216,7 @@ impl Frame {
                     Ok(())
                 }
             }
-            Tracker::DynamicValue { ref state } => {
+            Tracker::DynamicValue { state } => {
                 if matches!(state, DynamicValueState::Uninit) {
                     Err(ReflectError::UninitializedValue {
                         shape: self.allocated.shape(),
