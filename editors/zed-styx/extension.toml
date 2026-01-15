@@ -1,6 +1,6 @@
 id = "styx"
 name = "Styx"
-description = "Styx configuration language support with syntax highlighting"
+description = "Styx configuration language support with syntax highlighting and LSP"
 version = "0.1.0"
 schema_version = 1
 authors = ["Amos Wenger <amos@bearcove.eu>"]
@@ -10,3 +10,7 @@ repository = "https://github.com/bearcove/styx"
 repository = "https://github.com/bearcove/styx"
 path = "crates/tree-sitter-styx"
 rev = "9e0eddd5ecfcf63b70d1de1de957bfd14a965639"
+
+[language_servers.styx-lsp]
+name = "Styx LSP"
+languages = ["Styx"]
