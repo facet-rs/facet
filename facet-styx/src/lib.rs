@@ -40,6 +40,8 @@
 //! ```
 
 mod error;
+#[cfg(test)]
+mod other_variant_test;
 mod parser;
 mod serializer;
 #[cfg(test)]
