@@ -79,7 +79,7 @@ where
             return Ok(wip);
         }
 
-        // Check for VariantTag (self-describing formats like STYX)
+        // Check for VariantTag (self-describing formats like Styx)
         if let ParseEvent::VariantTag(tag_name) = &event {
             let tag_name = *tag_name;
             self.expect_event("value")?; // consume VariantTag
@@ -89,23 +89,45 @@ where
                 Type::User(UserType::Enum(e)) => e,
                 _ => return Err(DeserializeError::Unsupported("expected enum".into())),
             };
-            // First try exact match, then fall back to #[facet(other)] variant
-            let by_display = Self::find_variant_by_display_name(enum_def, tag_name);
-            let is_using_other_fallback = by_display.is_none();
-            let variant_name = by_display
-                .or_else(|| {
-                    enum_def
+
+            // For unit tags (None), go straight to #[facet(other)] fallback
+            // For named tags, try exact match first, then fall back to #[facet(other)]
+            let (variant_name, is_using_other_fallback) = match tag_name {
+                Some(name) => {
+                    let by_display = Self::find_variant_by_display_name(enum_def, name);
+                    let is_fallback = by_display.is_none();
+                    let variant = by_display
+                        .or_else(|| {
+                            enum_def
+                                .variants
+                                .iter()
+                                .find(|v| v.is_other())
+                                .map(|v| v.effective_name())
+                        })
+                        .ok_or_else(|| DeserializeError::TypeMismatch {
+                            expected: "known enum variant",
+                            got: format!("@{}", name),
+                            span: self.last_span,
+                            path: None,
+                        })?;
+                    (variant, is_fallback)
+                }
+                None => {
+                    // Unit tag - must use #[facet(other)] fallback
+                    let variant = enum_def
                         .variants
                         .iter()
                         .find(|v| v.is_other())
                         .map(|v| v.effective_name())
-                })
-                .ok_or_else(|| DeserializeError::TypeMismatch {
-                    expected: "known enum variant",
-                    got: format!("@{}", tag_name),
-                    span: self.last_span,
-                    path: None,
-                })?;
+                        .ok_or_else(|| DeserializeError::TypeMismatch {
+                            expected: "#[facet(other)] fallback variant for unit tag",
+                            got: "@".to_string(),
+                            span: self.last_span,
+                            path: None,
+                        })?;
+                    (variant, true)
+                }
+            };
 
             wip = wip
                 .select_variant_named(variant_name)
@@ -1211,10 +1233,12 @@ where
     /// This is called when a VariantTag event didn't match any known variant and we're falling
     /// back to an `#[facet(other)]` variant. The tag name is captured and stored in the
     /// `#[facet(tag)]` field, while the payload is deserialized into the `#[facet(content)]` field.
+    ///
+    /// `captured_tag` is `None` for unit tags (bare `@` in Styx).
     fn deserialize_other_variant_with_captured_tag(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-        captured_tag: &'input str,
+        captured_tag: Option<&'input str>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let variant = wip
             .selected_variant()
@@ -1236,12 +1260,20 @@ where
             return self.deserialize_enum_variant_content(wip);
         }
 
-        // Set the tag field to the captured tag name
+        // Set the tag field to the captured tag name (or None for unit tags)
         if let Some(idx) = tag_field_idx {
             wip = wip
                 .begin_nth_field(idx)
                 .map_err(DeserializeError::reflect)?;
-            wip = self.set_string_value(wip, Cow::Borrowed(captured_tag))?;
+            match captured_tag {
+                Some(tag) => {
+                    wip = self.set_string_value(wip, Cow::Borrowed(tag))?;
+                }
+                None => {
+                    // Unit tag - set the field to its default (None for Option<String>)
+                    wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                }
+            }
             wip = wip.end().map_err(DeserializeError::reflect)?;
         }
 

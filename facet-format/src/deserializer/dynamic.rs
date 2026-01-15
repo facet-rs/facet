@@ -236,34 +236,59 @@ where
                 wip = wip.set(u).map_err(DeserializeError::reflect)?;
             }
             ParseEvent::VariantTag(input_tag) => {
-                // `input_tag`: the variant name as it appeared in the input (e.g. "SomethingUnknown")
+                // `input_tag`: the variant name as it appeared in the input (e.g. Some("SomethingUnknown"))
+                //              or None for unit tags (bare `@` in Styx)
                 // `variant.name`: the Rust identifier of the matched variant (e.g. "Other")
                 //
                 // These differ when using #[facet(other)] to catch unknown variants.
 
                 // Find variant by display name (respecting rename) or fall back to #[facet(other)]
-                let is_using_other_fallback = !enum_def
-                    .variants
-                    .iter()
-                    .any(|v| Self::get_variant_display_name(v) == input_tag);
-                let variant = enum_def
-                    .variants
-                    .iter()
-                    .find(|v| Self::get_variant_display_name(v) == input_tag)
-                    .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
-                    .ok_or_else(|| {
-                        DeserializeError::Unsupported(format!("unknown variant: {input_tag}"))
-                    })?;
+                let (variant, is_using_other_fallback) =
+                    match input_tag {
+                        Some(tag) => {
+                            let is_fallback = !enum_def
+                                .variants
+                                .iter()
+                                .any(|v| Self::get_variant_display_name(v) == tag);
+                            let variant = enum_def
+                                .variants
+                                .iter()
+                                .find(|v| Self::get_variant_display_name(v) == tag)
+                                .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
+                                .ok_or_else(|| {
+                                    DeserializeError::Unsupported(format!("unknown variant: {tag}"))
+                                })?;
+                            (variant, is_fallback)
+                        }
+                        None => {
+                            // Unit tag - must use #[facet(other)] fallback
+                            let variant =
+                                enum_def.variants.iter().find(|v| v.is_other()).ok_or_else(
+                                    || {
+                                        DeserializeError::Unsupported(
+                                            "unit tag requires #[facet(other)] fallback".into(),
+                                        )
+                                    },
+                                )?;
+                            (variant, true)
+                        }
+                    };
 
                 match variant.data.kind {
                     StructKind::Unit => {
                         if is_using_other_fallback {
                             // #[facet(other)] fallback: preserve the original input tag
                             // so that "SomethingUnknown" round-trips correctly
-                            wip = self.set_string_value(wip, Cow::Borrowed(input_tag))?;
+                            if let Some(tag) = input_tag {
+                                wip = self.set_string_value(wip, Cow::Borrowed(tag))?;
+                            } else {
+                                // Unit tag - set to default (None for Option<String>)
+                                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                            }
                         } else {
                             // Direct match: use effective_name (wire format name)
-                            wip = self.set_string_value(wip, Cow::Borrowed(variant.effective_name()))?;
+                            wip = self
+                                .set_string_value(wip, Cow::Borrowed(variant.effective_name()))?;
                         }
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {
