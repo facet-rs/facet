@@ -8,8 +8,8 @@ Empty sequence
 
 (document
   (entry
-    (atom
-      (sequence))))
+    (value
+      payload: (sequence))))
 
 ================================================================================
 Sequence with scalars
@@ -21,16 +21,16 @@ Sequence with scalars
 
 (document
   (entry
-    (atom
-      (sequence
-        (atom
-          (scalar
+    (value
+      payload: (sequence
+        (value
+          payload: (scalar
             (bare_scalar)))
-        (atom
-          (scalar
+        (value
+          payload: (scalar
             (bare_scalar)))
-        (atom
-          (scalar
+        (value
+          payload: (scalar
             (bare_scalar)))))))
 
 ================================================================================
@@ -43,16 +43,16 @@ Sequence with mixed content
 
 (document
   (entry
-    (atom
-      (sequence
-        (atom
-          (scalar
+    (value
+      payload: (sequence
+        (value
+          payload: (scalar
             (bare_scalar)))
-        (atom
-          (scalar
+        (value
+          payload: (scalar
             (quoted_scalar)))
-        (atom
-          (scalar
+        (value
+          payload: (scalar
             (bare_scalar)))))))
 
 ================================================================================
@@ -65,23 +65,23 @@ Nested sequences
 
 (document
   (entry
-    (atom
-      (sequence
-        (atom
-          (sequence
-            (atom
-              (scalar
+    (value
+      payload: (sequence
+        (value
+          payload: (sequence
+            (value
+              payload: (scalar
                 (bare_scalar)))
-            (atom
-              (scalar
+            (value
+              payload: (scalar
                 (bare_scalar)))))
-        (atom
-          (sequence
-            (atom
-              (scalar
+        (value
+          payload: (sequence
+            (value
+              payload: (scalar
                 (bare_scalar)))
-            (atom
-              (scalar
+            (value
+              payload: (scalar
                 (bare_scalar)))))))))
 
 ================================================================================
@@ -94,23 +94,23 @@ Sequence with objects
 
 (document
   (entry
-    (atom
-      (sequence
-        (atom
-          (object
+    (value
+      payload: (sequence
+        (value
+          payload: (object
             (entry
-              (atom
-                (scalar
+              (value
+                payload: (scalar
                   (bare_scalar)))
-              (atom
-                (scalar
+              (value
+                payload: (scalar
                   (bare_scalar))))))
-        (atom
-          (object
+        (value
+          payload: (object
             (entry
-              (atom
-                (scalar
+              (value
+                payload: (scalar
                   (bare_scalar)))
-              (atom
-                (scalar
+              (value
+                payload: (scalar
                   (bare_scalar))))))))))

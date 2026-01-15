@@ -8,8 +8,8 @@ Empty object
 
 (document
   (entry
-    (atom
-      (object))))
+    (value
+      payload: (object))))
 
 ================================================================================
 Object with single entry
@@ -23,14 +23,14 @@ Object with single entry
 
 (document
   (entry
-    (atom
-      (object
+    (value
+      payload: (object
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar)))
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar))))))))
 
 ================================================================================
@@ -46,21 +46,21 @@ Object with multiple entries newline separated
 
 (document
   (entry
-    (atom
-      (object
+    (value
+      payload: (object
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar)))
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar))))
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar)))
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar))))))))
 
 ================================================================================
@@ -73,21 +73,21 @@ Object with comma separated entries
 
 (document
   (entry
-    (atom
-      (object
+    (value
+      payload: (object
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar)))
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar))))
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar)))
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar))))))))
 
 ================================================================================
@@ -105,27 +105,27 @@ Nested objects
 
 (document
   (entry
-    (atom
-      (object
+    (value
+      payload: (object
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar)))
-          (atom
-            (object
+          (value
+            payload: (object
               (entry
-                (atom
-                  (scalar
+                (value
+                  payload: (scalar
                     (bare_scalar)))
-                (atom
-                  (scalar
+                (value
+                  payload: (scalar
                     (bare_scalar))))
               (entry
-                (atom
-                  (scalar
+                (value
+                  payload: (scalar
                     (bare_scalar)))
-                (atom
-                  (scalar
+                (value
+                  payload: (scalar
                     (bare_scalar)))))))))))
 
 ================================================================================
@@ -141,13 +141,13 @@ Object with implicit unit value
 
 (document
   (entry
-    (atom
-      (object
+    (value
+      payload: (object
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar))))
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar))))))))

@@ -10,8 +10,8 @@ TEXT
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (heredoc
           (heredoc_content))))))
 
@@ -29,8 +29,8 @@ SCRIPT
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (heredoc
           (heredoc_content))))))
 
@@ -47,8 +47,8 @@ EOF
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (heredoc
           (heredoc_content))))))
 
@@ -66,8 +66,8 @@ CODE
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (heredoc
           (heredoc_lang)
           (heredoc_content))))))
@@ -84,8 +84,8 @@ QUERY
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (heredoc
           (heredoc_lang)
           (heredoc_content))))))

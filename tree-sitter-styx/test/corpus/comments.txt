@@ -10,8 +10,8 @@ hello
 (document
   (line_comment)
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (bare_scalar)))))
 
 ================================================================================
@@ -24,8 +24,8 @@ hello // inline comment
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (bare_scalar))))
   (line_comment))
 
@@ -41,8 +41,8 @@ hello
 (document
   (doc_comment)
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (bare_scalar)))))
 
 ================================================================================
@@ -59,6 +59,6 @@ value
 (document
   (doc_comment)
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (bare_scalar)))))

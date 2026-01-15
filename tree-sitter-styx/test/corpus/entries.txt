@@ -10,11 +10,11 @@ Single atom entry (implicit unit value)
 
 (document
   (entry
-    (atom
-      (object
+    (value
+      payload: (object
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar))))))))
 
 ================================================================================
@@ -29,14 +29,14 @@ Two atom entry (key value)
 
 (document
   (entry
-    (atom
-      (object
+    (value
+      payload: (object
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar)))
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar))))))))
 
 ================================================================================
@@ -51,17 +51,17 @@ Three atom entry (nested key path)
 
 (document
   (entry
-    (atom
-      (object
+    (value
+      payload: (object
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar)))
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar)))
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar))))))))
 
 ================================================================================
@@ -76,14 +76,14 @@ Entry with tag as value
 
 (document
   (entry
-    (atom
-      (object
+    (value
+      payload: (object
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar)))
-          (atom
-            (tag)))))))
+          (value
+            tag: (tag)))))))
 
 ================================================================================
 Entry with unit as explicit value
@@ -97,14 +97,14 @@ Entry with unit as explicit value
 
 (document
   (entry
-    (atom
-      (object
+    (value
+      payload: (object
         (entry
-          (atom
-            (scalar
+          (value
+            payload: (scalar
               (bare_scalar)))
-          (atom
-            (unit)))))))
+          (value
+            payload: (unit)))))))
 
 ================================================================================
 Top-level entries (implicit root object)
@@ -117,16 +117,16 @@ port 8080
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (bare_scalar)))
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (bare_scalar))))
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (bare_scalar)))
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (bare_scalar)))))

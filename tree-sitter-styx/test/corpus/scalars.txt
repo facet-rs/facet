@@ -8,8 +8,8 @@ hello
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (bare_scalar)))))
 
 ================================================================================
@@ -22,8 +22,8 @@ https://example.com/path
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (bare_scalar)))))
 
 ================================================================================
@@ -36,8 +36,8 @@ Quoted scalar simple
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (quoted_scalar)))))
 
 ================================================================================
@@ -50,8 +50,8 @@ Quoted scalar with escapes
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (quoted_scalar
           (escape_sequence)
           (escape_sequence)
@@ -68,8 +68,8 @@ Quoted scalar with unicode escapes
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (quoted_scalar
           (escape_sequence)
           (escape_sequence))))))
@@ -84,8 +84,8 @@ r"hello world"
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (raw_scalar)))))
 
 ================================================================================
@@ -98,8 +98,8 @@ r#"hello "world""#
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (raw_scalar)))))
 
 ================================================================================
@@ -112,6 +112,6 @@ r##"contains "# but not ##"##
 
 (document
   (entry
-    (atom
-      (scalar
+    (value
+      payload: (scalar
         (raw_scalar)))))

@@ -1,40 +1,5 @@
 [
   {
-    "type": "atom",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "attributes",
-          "named": true
-        },
-        {
-          "type": "object",
-          "named": true
-        },
-        {
-          "type": "scalar",
-          "named": true
-        },
-        {
-          "type": "sequence",
-          "named": true
-        },
-        {
-          "type": "tag",
-          "named": true
-        },
-        {
-          "type": "unit",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "attribute",
     "named": true,
     "fields": {
@@ -121,7 +86,7 @@
       "required": true,
       "types": [
         {
-          "type": "atom",
+          "type": "value",
           "named": true
         }
       ]
@@ -221,7 +186,7 @@
       "required": false,
       "types": [
         {
-          "type": "atom",
+          "type": "value",
           "named": true
         }
       ]
@@ -230,57 +195,60 @@
   {
     "type": "tag",
     "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": false,
-      "types": [
-        {
-          "type": "tag_payload",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "tag_payload",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "heredoc",
-          "named": true
-        },
-        {
-          "type": "object",
-          "named": true
-        },
-        {
-          "type": "quoted_scalar",
-          "named": true
-        },
-        {
-          "type": "raw_scalar",
-          "named": true
-        },
-        {
-          "type": "sequence",
-          "named": true
-        },
-        {
-          "type": "unit",
-          "named": true
-        }
-      ]
-    }
+    "fields": {}
   },
   {
     "type": "unit",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "value",
+    "named": true,
+    "fields": {
+      "payload": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "object",
+            "named": true
+          },
+          {
+            "type": "scalar",
+            "named": true
+          },
+          {
+            "type": "sequence",
+            "named": true
+          },
+          {
+            "type": "unit",
+            "named": true
+          }
+        ]
+      },
+      "tag": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "tag",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "attributes",
+          "named": true
+        }
+      ]
+    }
   },
   {
     "type": "\"",

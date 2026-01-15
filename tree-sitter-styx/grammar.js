@@ -3,6 +3,9 @@
  *
  * Styx is a structured document format using explicit braces/parens
  * with opaque scalars and a two-layer processing model.
+ *
+ * Key concept: A "value" is an optional tag plus a payload.
+ * The tag annotates the payload - they are siblings, not nested.
  */
 
 module.exports = grammar({
@@ -39,12 +42,31 @@ module.exports = grammar({
     document: ($) =>
       seq(repeat($._newline), repeat(seq(optional($.doc_comment), $.entry, repeat($._newline)))),
 
-    // Entry: one or more atoms
-    // In objects: 1 atom = key with implicit unit, 2+ atoms = key + value(s)
-    entry: ($) => prec.right(repeat1($.atom)),
+    // Entry: one or more values (atoms)
+    // In objects: 1 value = key with implicit unit, 2+ values = key + value(s)
+    entry: ($) => prec.right(repeat1($.value)),
 
-    // Atoms are the fundamental parsing units
-    atom: ($) => choice($.scalar, $.sequence, $.object, $.unit, $.tag, $.attributes),
+    // A value is an optional tag followed by a payload
+    // Examples:
+    //   @object{...}  -> tag=@object, payload=object
+    //   @string       -> tag=@string, payload=none (unit)
+    //   "hello"       -> tag=none, payload=scalar
+    //   {a 1}         -> tag=none, payload=object
+    value: ($) =>
+      choice(
+        // Tagged value: @name followed by payload
+        prec.right(seq(field("tag", $.tag), optional(field("payload", $._payload)))),
+        // Untagged value: just a payload
+        field("payload", $._payload),
+        // Attributes are a special case
+        $.attributes,
+      ),
+
+    // Tag: @name (just the tag itself, not including payload)
+    tag: ($) => $._tag_start,
+
+    // Payload: the actual content (without tag)
+    _payload: ($) => choice($.scalar, $.sequence, $.object, $.unit),
 
     // Scalars: four types
     scalar: ($) => choice($.bare_scalar, $.quoted_scalar, $.raw_scalar, $.heredoc),
@@ -76,19 +98,8 @@ module.exports = grammar({
     // Handled by external scanner
     unit: ($) => $._unit_at,
 
-    // Tag: @name with optional payload
-    // The external scanner returns @tagname as a single token
-    tag: ($) => prec.right(seq($._tag_start, optional($.tag_payload))),
-
-    // Tag name is captured by the external scanner as part of _tag_start
-    // We alias it for highlighting
-    tag_name: ($) => $._tag_start,
-
-    tag_payload: ($) =>
-      choice($.object, $.sequence, $.quoted_scalar, $.raw_scalar, $.heredoc, $.unit),
-
-    // Sequence: (atom atom ...)
-    sequence: ($) => seq("(", repeat(seq($.atom, optional($._ws))), ")"),
+    // Sequence: (value value ...)
+    sequence: ($) => seq("(", repeat(seq($.value, optional($._ws))), ")"),
 
     // Object: { entries }
     object: ($) => seq("{", optional($._object_body), "}"),
@@ -111,7 +122,7 @@ module.exports = grammar({
         optional(","), // trailing comma allowed
       ),
 
-    // Attributes: key=value pairs that form an object atom
+    // Attributes: key=value pairs that form an object value
     attributes: ($) => repeat1($.attribute),
 
     attribute: ($) => seq(field("key", $.bare_scalar), "=", field("value", $._attribute_value)),
@@ -124,7 +135,6 @@ module.exports = grammar({
     line_comment: ($) => token(seq("//", /[^\/]/, /[^\n\r]*/)),
 
     // Doc comment: /// lines (use prec to prefer over line_comment)
-
     doc_comment: ($) => repeat1(seq("///", /[^\n\r]*/, $._newline)),
 
     // Whitespace helpers

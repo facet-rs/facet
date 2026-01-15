@@ -8,8 +8,8 @@ Unit value
 
 (document
   (entry
-    (atom
-      (unit))))
+    (value
+      payload: (unit))))
 
 ================================================================================
 Simple tag (unit variant)
@@ -21,8 +21,8 @@ Simple tag (unit variant)
 
 (document
   (entry
-    (atom
-      (tag))))
+    (value
+      tag: (tag))))
 
 ================================================================================
 Tag with explicit unit payload
@@ -34,10 +34,9 @@ Tag with explicit unit payload
 
 (document
   (entry
-    (atom
-      (tag
-        (tag_payload
-          (unit))))))
+    (value
+      tag: (tag)
+      payload: (unit))))
 
 ================================================================================
 Tag with quoted scalar payload
@@ -49,10 +48,10 @@ Tag with quoted scalar payload
 
 (document
   (entry
-    (atom
-      (tag
-        (tag_payload
-          (quoted_scalar))))))
+    (value
+      tag: (tag)
+      payload: (scalar
+        (quoted_scalar)))))
 
 ================================================================================
 Tag with object payload
@@ -64,24 +63,23 @@ Tag with object payload
 
 (document
   (entry
-    (atom
-      (tag
-        (tag_payload
-          (object
-            (entry
-              (atom
-                (scalar
-                  (bare_scalar)))
-              (atom
-                (scalar
-                  (bare_scalar))))
-            (entry
-              (atom
-                (scalar
-                  (bare_scalar)))
-              (atom
-                (scalar
-                  (quoted_scalar))))))))))
+    (value
+      tag: (tag)
+      payload: (object
+        (entry
+          (value
+            payload: (scalar
+              (bare_scalar)))
+          (value
+            payload: (scalar
+              (bare_scalar))))
+        (entry
+          (value
+            payload: (scalar
+              (bare_scalar)))
+          (value
+            payload: (scalar
+              (quoted_scalar))))))))
 
 ================================================================================
 Tag with sequence payload
@@ -93,19 +91,18 @@ Tag with sequence payload
 
 (document
   (entry
-    (atom
-      (tag
-        (tag_payload
-          (sequence
-            (atom
-              (scalar
-                (bare_scalar)))
-            (atom
-              (scalar
-                (bare_scalar)))
-            (atom
-              (scalar
-                (bare_scalar)))))))))
+    (value
+      tag: (tag)
+      payload: (sequence
+        (value
+          payload: (scalar
+            (bare_scalar)))
+        (value
+          payload: (scalar
+            (bare_scalar)))
+        (value
+          payload: (scalar
+            (bare_scalar)))))))
 
 ================================================================================
 Tag with dots and dashes in name
@@ -117,5 +114,5 @@ Tag with dots and dashes in name
 
 (document
   (entry
-    (atom
-      (tag))))
+    (value
+      tag: (tag))))
