@@ -13,8 +13,8 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 # Core roam types
-roam = { path = "../roam" }
-roam-session = { path = "../roam-session" }
+roam.workspace = true
+roam-session.workspace = true
 
 # Serialization (facet, not serde)
 facet.workspace = true

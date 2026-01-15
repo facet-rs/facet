@@ -15,7 +15,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 tokio = { workspace = true, features = ["net", "io-util", "rt", "time", "sync"] }
 tokio-tungstenite.workspace = true
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
-roam-stream = { path = "../roam-stream", version = "0.5.0" }
+roam-stream.workspace = true
 facet-postcard.workspace = true
 
 [dev-dependencies]

@@ -1377,9 +1377,9 @@ checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
 name = "js-sys"
-version = "0.3.83"
+version = "0.3.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "464a3709c7f55f1f721e5389aa6ea4e3bc6aba669353300af094b29ffbdde1d8"
+checksum = "8c942ebf8e95485ca0d52d97da7c5a2c387d0e7f0ba4c35e93bfcaee045955b3"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
@@ -1670,7 +1670,7 @@ dependencies = [
 
 [[package]]
 name = "peer-server"
-version = "0.1.0"
+version = "0.6.0"
 dependencies = [
  "roam",
  "roam-stream",
@@ -1948,7 +1948,7 @@ dependencies = [
 
 [[package]]
 name = "roam"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "facet",
  "facet-postcard",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "roam-codegen"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -1972,7 +1972,7 @@ dependencies = [
 
 [[package]]
 name = "roam-frame"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "facet",
@@ -1982,7 +1982,7 @@ dependencies = [
 
 [[package]]
 name = "roam-hash"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "blake3",
  "facet",
@@ -1993,7 +1993,7 @@ dependencies = [
 
 [[package]]
 name = "roam-http-bridge"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "base64",
@@ -2020,7 +2020,7 @@ dependencies = [
 
 [[package]]
 name = "roam-macros-parse"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "datatest-stable",
  "insta",
@@ -2030,7 +2030,7 @@ dependencies = [
 
 [[package]]
 name = "roam-schema"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -2038,7 +2038,7 @@ dependencies = [
 
 [[package]]
 name = "roam-service-macros"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "facet-cargo-toml",
  "heck",
@@ -2050,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "roam-session"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "facet",
  "facet-postcard",
@@ -2062,7 +2062,7 @@ dependencies = [
 
 [[package]]
 name = "roam-shm"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "facet-postcard",
  "futures-util",
@@ -2083,7 +2083,7 @@ dependencies = [
 
 [[package]]
 name = "roam-stream"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cobs 0.5.0",
  "ctor",
@@ -2096,7 +2096,7 @@ dependencies = [
 
 [[package]]
 name = "roam-tracing"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "facet",
  "roam",
@@ -2108,7 +2108,7 @@ dependencies = [
 
 [[package]]
 name = "roam-websocket"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "facet-postcard",
  "futures-util",
@@ -2119,7 +2119,7 @@ dependencies = [
 
 [[package]]
 name = "roam-wire"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cobs 0.3.0",
  "facet",
@@ -2339,7 +2339,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shm-primitives"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "libc",
  "loom",
@@ -2389,7 +2389,7 @@ dependencies = [
 
 [[package]]
 name = "spec-proto"
-version = "0.1.0"
+version = "0.6.0"
 dependencies = [
  "facet",
  "roam",
@@ -2397,7 +2397,7 @@ dependencies = [
 
 [[package]]
 name = "spec-tests"
-version = "0.1.0"
+version = "0.6.0"
 dependencies = [
  "cobs 0.5.0",
  "ctor",
@@ -2430,7 +2430,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "subject-rust"
-version = "0.1.0"
+version = "0.6.0"
 dependencies = [
  "roam",
  "roam-stream",
@@ -2812,7 +2812,7 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "ur-taking-me-with-you"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "libc",
  "tokio",
@@ -2903,9 +2903,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.106"
+version = "0.2.108"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d759f433fa64a2d763d1340820e46e111a7a5ab75f993d1852d70b03dbb80fd"
+checksum = "64024a30ec1e37399cf85a7ffefebdb72205ca1c972291c51512360d90bd8566"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -2916,11 +2916,12 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.56"
+version = "0.4.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "836d9622d604feee9e5de25ac10e3ea5f2d65b41eac0d9ce72eb5deae707ce7c"
+checksum = "70a6e77fd0ae8029c9ea0063f87c46fde723e7d887703d74ad2616d792e51e6f"
 dependencies = [
  "cfg-if",
+ "futures-util",
  "js-sys",
  "once_cell",
  "wasm-bindgen",
@@ -2929,9 +2930,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.106"
+version = "0.2.108"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48cb0d2638f8baedbc542ed444afc0644a29166f1595371af4fecf8ce1e7eeb3"
+checksum = "008b239d9c740232e71bd39e8ef6429d27097518b6b30bdf9086833bd5b6d608"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -2939,9 +2940,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.106"
+version = "0.2.108"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cefb59d5cd5f92d9dcf80e4683949f15ca4b511f4ac0a6e14d4e1ac60c6ecd40"
+checksum = "5256bae2d58f54820e6490f9839c49780dff84c65aeab9e772f15d5f0e913a55"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -2952,9 +2953,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.106"
+version = "0.2.108"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbc538057e648b67f72a982e708d485b2efa771e1ac05fec311f9f63e5800db4"
+checksum = "1f01b580c9ac74c8d8f0c0e4afb04eeef2acf145458e52c03845ee9cd23e3d12"
 dependencies = [
  "unicode-ident",
 ]
@@ -2982,9 +2983,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.83"
+version = "0.3.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b32828d774c412041098d182a8b38b16ea816958e07cf40eec2bc080ae137ac"
+checksum = "312e32e551d92129218ea9a2452120f4aabc03529ef03e4d0d82fb2780608598"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -3233,7 +3234,7 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 
 [[package]]
 name = "xtask"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "facet",
  "facet-args",

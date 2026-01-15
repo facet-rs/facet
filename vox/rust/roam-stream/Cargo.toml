@@ -16,6 +16,6 @@ cobs.workspace = true
 ctor.workspace = true
 facet.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "rt", "time", "sync"] }
-roam-wire = { path = "../roam-wire", version = "0.5.0" }
-roam-session = { path = "../roam-session", version = "0.5.0" }
+roam-wire.workspace = true
+roam-session.workspace = true
 facet-postcard.workspace = true

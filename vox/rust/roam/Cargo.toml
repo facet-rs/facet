@@ -19,12 +19,12 @@ jit = ["facet-postcard/jit"]
 
 [dependencies]
 # Re-exported crates for macro-generated code
-roam-session = { path = "../roam-session" }
-roam-schema = { path = "../roam-schema" }
-roam-hash = { path = "../roam-hash" }
+roam-session.workspace = true
+roam-schema.workspace = true
+roam-hash.workspace = true
 
 # Proc macros (re-exported as #[roam::service])
-roam-service-macros = { path = "../roam-macros" }
+roam-service-macros.workspace = true
 
 # Serialization
 facet.workspace = true

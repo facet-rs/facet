@@ -29,7 +29,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
@@ -37,7 +37,24 @@ repository = "https://github.com/bearcove/roam"
 
 [workspace.dependencies]
 # Internal crates
-roam = { path = "rust/roam", version = "0.5.0" }
+roam = { path = "rust/roam", version = "0.6.0" }
+roam-frame = { path = "rust/roam-frame", version = "0.6.0" }
+roam-hash = { path = "rust/roam-hash", version = "0.6.0" }
+roam-macros-parse = { path = "rust/roam-macros-parse", version = "0.6.0" }
+roam-service-macros = { path = "rust/roam-macros", version = "0.6.0" }
+roam-schema = { path = "rust/roam-schema", version = "0.6.0" }
+roam-wire = { path = "rust/roam-wire", version = "0.6.0" }
+roam-session = { path = "rust/roam-session", version = "0.6.0" }
+roam-stream = { path = "rust/roam-stream", version = "0.6.0" }
+roam-shm = { path = "rust/roam-shm", version = "0.6.0" }
+roam-tracing = { path = "rust/roam-tracing", version = "0.6.0" }
+roam-codegen = { path = "rust/roam-codegen", version = "0.6.0" }
+roam-websocket = { path = "rust/roam-websocket", version = "0.6.0" }
+roam-http-bridge = { path = "rust/roam-http-bridge", version = "0.6.0" }
+shm-primitives = { path = "rust/shm-primitives", version = "0.6.0", default-features = false }
+ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "0.6.0" }
+
+# External dependencies
 bytes = "1"
 blake3 = "1.8"
 cobs = "0.5.0"
@@ -46,12 +63,12 @@ tokio-tungstenite = "0.26"
 libc = "0.2.180"
 
 # facet ecosystem
-facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino", "reflect"] }
-facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
-facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-value = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-cargo-toml = { git = "https://github.com/bearcove/facet-cargo-toml", branch = "main" }
+facet = { version = "0.42.0", git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino", "reflect"] }
+facet-core = { version = "0.42.0", git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-postcard = { version = "0.42.0", git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
+facet-json = { version = "0.42.0", git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-value = { version = "0.42.0", git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-cargo-toml = { version = "0.1.0", git = "https://github.com/bearcove/facet-cargo-toml", branch = "main" }
 
 # Futures utilities
 futures-util = "0.3"

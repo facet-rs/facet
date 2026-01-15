@@ -16,11 +16,11 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 proc-macro = true
 
 [dependencies]
-roam-macros-parse = { path = "../roam-macros-parse" }
+roam-macros-parse.workspace = true
 proc-macro2 = "1"
 quote = "1"
 heck = "0.5"
 facet-cargo-toml.workspace = true
 
 [dev-dependencies]
-roam = { path = "../roam" }
+roam.workspace = true

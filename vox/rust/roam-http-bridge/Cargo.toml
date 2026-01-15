@@ -17,10 +17,10 @@ default = []
 tracing = ["dep:tracing"]
 
 [dependencies]
-roam-schema = { path = "../roam-schema" }
-roam-hash = { path = "../roam-hash" }
-roam-session = { path = "../roam-session" }
-roam-wire = { path = "../roam-wire" }
+roam-schema.workspace = true
+roam-hash.workspace = true
+roam-session.workspace = true
+roam-wire.workspace = true
 
 facet.workspace = true
 facet-core.workspace = true
@@ -40,7 +40,7 @@ futures-util = "0.3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
-roam-stream = { path = "../roam-stream" }
+roam-stream.workspace = true
 spec-proto = { path = "../../spec/spec-proto" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio-tungstenite = { version = "0.28", features = ["native-tls"] }
