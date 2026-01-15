@@ -129,8 +129,8 @@ impl<'de> StyxParser<'de> {
                 } else if let Ok(n) = text.parse::<f64>() {
                     ScalarValue::F64(n)
                 } else {
-                    // Treat as stringly-typed (like XML)
-                    ScalarValue::StringlyTyped(Cow::Borrowed(text))
+                    // Bare identifier - treat as string
+                    ScalarValue::Str(Cow::Borrowed(text))
                 }
             }
             ScalarKind::Quoted => {
@@ -618,13 +618,11 @@ impl<'a, 'de> ProbeStream<'de> for StyxProbe<'a, 'de> {
                 key.name,
                 FieldLocationHint::KeyValue,
                 Some(ValueTypeHint::Map),
-                None,
             ))),
             Some(ParseEvent::Scalar(ScalarValue::Bool(_))) => Ok(Some(FieldEvidence::new(
                 "",
                 FieldLocationHint::KeyValue,
                 Some(ValueTypeHint::Bool),
-                None,
             ))),
             Some(ParseEvent::Scalar(
                 ScalarValue::I64(_) | ScalarValue::U64(_) | ScalarValue::F64(_),
@@ -632,35 +630,24 @@ impl<'a, 'de> ProbeStream<'de> for StyxProbe<'a, 'de> {
                 "",
                 FieldLocationHint::KeyValue,
                 Some(ValueTypeHint::Number),
-                None,
             ))),
-            Some(ParseEvent::Scalar(ScalarValue::Str(_) | ScalarValue::StringlyTyped(_))) => {
-                Ok(Some(FieldEvidence::new(
-                    "",
-                    FieldLocationHint::KeyValue,
-                    Some(ValueTypeHint::String),
-                    None,
-                )))
-            }
-            Some(ParseEvent::Scalar(ScalarValue::Unit | ScalarValue::Null)) => {
-                Ok(Some(FieldEvidence::new(
-                    "",
-                    FieldLocationHint::KeyValue,
-                    Some(ValueTypeHint::Null),
-                    None,
-                )))
-            }
+            Some(ParseEvent::Scalar(ScalarValue::Str(_))) => Ok(Some(FieldEvidence::new(
+                "",
+                FieldLocationHint::KeyValue,
+                Some(ValueTypeHint::String),
+            ))),
+            Some(ParseEvent::Scalar(ScalarValue::Unit | ScalarValue::Null)) => Ok(Some(
+                FieldEvidence::new("", FieldLocationHint::KeyValue, Some(ValueTypeHint::Null)),
+            )),
             Some(ParseEvent::SequenceStart(_)) => Ok(Some(FieldEvidence::new(
                 "",
                 FieldLocationHint::KeyValue,
                 Some(ValueTypeHint::Sequence),
-                None,
             ))),
             Some(ParseEvent::StructStart(_)) => Ok(Some(FieldEvidence::new(
                 "",
                 FieldLocationHint::KeyValue,
                 Some(ValueTypeHint::Map),
-                None,
             ))),
             _ => Ok(None),
         }

@@ -102,7 +102,7 @@ impl FormatSerializer for StyxSerializer {
             ScalarValue::I128(v) => self.writer.write_i128(v),
             ScalarValue::U128(v) => self.writer.write_u128(v),
             ScalarValue::F64(v) => self.writer.write_f64(v),
-            ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => self.writer.write_string(&s),
+            ScalarValue::Str(s) => self.writer.write_string(&s),
             ScalarValue::Bytes(bytes) => self.writer.write_bytes(&bytes),
         }
         Ok(())
@@ -261,7 +261,7 @@ impl FormatSerializer for CompactStyxSerializer {
             ScalarValue::I128(v) => self.writer.write_i128(v),
             ScalarValue::U128(v) => self.writer.write_u128(v),
             ScalarValue::F64(v) => self.writer.write_f64(v),
-            ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => self.writer.write_string(&s),
+            ScalarValue::Str(s) => self.writer.write_string(&s),
             ScalarValue::Bytes(bytes) => self.writer.write_bytes(&bytes),
         }
         Ok(())

@@ -38,7 +38,6 @@ fn format_event(event: &ParseEvent) -> String {
         ParseEvent::Scalar(ScalarValue::Null) => "Scalar(Unit)".to_string(),
         ParseEvent::Scalar(ScalarValue::I64(n)) => format!("Scalar({})", n),
         ParseEvent::Scalar(ScalarValue::Str(s)) => format!("Scalar({:?})", s.as_ref()),
-        ParseEvent::Scalar(ScalarValue::StringlyTyped(s)) => format!("Scalar({:?})", s.as_ref()),
         ParseEvent::Scalar(s) => format!("Scalar({:?})", s),
         ParseEvent::VariantTag(name) => format!("VariantTag({:?})", name),
         ParseEvent::StructStart(ContainerKind::Object) => "StructStart".to_string(),
