@@ -214,7 +214,7 @@ where
             .variants
             .iter()
             .map(|v| EnumVariantHint {
-                name: v.name,
+                name: v.effective_name(),
                 kind: v.data.kind,
                 field_count: v.data.fields.len(),
             })
@@ -263,7 +263,8 @@ where
                             wip = self.set_string_value(wip, Cow::Borrowed(input_tag))?;
                         } else {
                             // Direct match: use effective_name (wire format name)
-                            wip = self.set_string_value(wip, Cow::Borrowed(variant.effective_name()))?;
+                            wip = self
+                                .set_string_value(wip, Cow::Borrowed(variant.effective_name()))?;
                         }
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {

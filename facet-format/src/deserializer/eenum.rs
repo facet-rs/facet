@@ -26,7 +26,7 @@ where
                 .variants
                 .iter()
                 .map(|v| crate::EnumVariantHint {
-                    name: v.name,
+                    name: v.effective_name(),
                     kind: v.data.kind,
                     field_count: v.data.fields.len(),
                 })

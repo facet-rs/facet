@@ -2424,3 +2424,156 @@ mod ordered_float_roundtrip {
         .collect()
     );
 }
+
+// =============================================================================
+// Enum Rename Tests
+// =============================================================================
+//
+// These tests verify that enums with #[facet(rename)] and #[facet(rename_all)]
+// attributes roundtrip correctly through postcard serialization.
+
+mod enum_rename {
+    use super::*;
+
+    // Test enum with rename_all = "snake_case"
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(rename_all = "snake_case")]
+    #[repr(u8)]
+    enum SnakeCaseEnum {
+        CircularDependency,
+        InvalidNaming,
+        MissingField,
+    }
+
+    test_roundtrip!(
+        enum_rename_all_snake_case_first,
+        SnakeCaseEnum,
+        SnakeCaseEnum::CircularDependency
+    );
+    test_roundtrip!(
+        enum_rename_all_snake_case_second,
+        SnakeCaseEnum,
+        SnakeCaseEnum::InvalidNaming
+    );
+    test_roundtrip!(
+        enum_rename_all_snake_case_third,
+        SnakeCaseEnum,
+        SnakeCaseEnum::MissingField
+    );
+
+    // Test enum with rename_all = "camelCase"
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(rename_all = "camelCase")]
+    #[repr(u8)]
+    enum CamelCaseEnum {
+        FirstVariant,
+        SecondVariant,
+    }
+
+    test_roundtrip!(
+        enum_rename_all_camel_case_first,
+        CamelCaseEnum,
+        CamelCaseEnum::FirstVariant
+    );
+    test_roundtrip!(
+        enum_rename_all_camel_case_second,
+        CamelCaseEnum,
+        CamelCaseEnum::SecondVariant
+    );
+
+    // Test enum with individual rename on variants
+    #[derive(Debug, PartialEq, Facet)]
+    #[repr(u8)]
+    enum IndividualRenameEnum {
+        #[facet(rename = "renamed_first")]
+        First,
+        #[facet(rename = "renamed_second")]
+        Second,
+        Third, // Not renamed
+    }
+
+    test_roundtrip!(
+        enum_individual_rename_first,
+        IndividualRenameEnum,
+        IndividualRenameEnum::First
+    );
+    test_roundtrip!(
+        enum_individual_rename_second,
+        IndividualRenameEnum,
+        IndividualRenameEnum::Second
+    );
+    test_roundtrip!(
+        enum_individual_rename_third,
+        IndividualRenameEnum,
+        IndividualRenameEnum::Third
+    );
+
+    // Test enum with rename_all and newtype variants
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(rename_all = "snake_case")]
+    #[repr(u8)]
+    enum SnakeCaseWithData {
+        SimpleValue(u32),
+        ComplexMessage(String),
+        EmptyCase,
+    }
+
+    test_roundtrip!(
+        enum_snake_case_newtype_first,
+        SnakeCaseWithData,
+        SnakeCaseWithData::SimpleValue(42)
+    );
+    test_roundtrip!(
+        enum_snake_case_newtype_second,
+        SnakeCaseWithData,
+        SnakeCaseWithData::ComplexMessage("hello".to_string())
+    );
+    test_roundtrip!(
+        enum_snake_case_unit,
+        SnakeCaseWithData,
+        SnakeCaseWithData::EmptyCase
+    );
+
+    // Test enum with rename_all and struct variants
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(rename_all = "snake_case")]
+    #[repr(u8)]
+    enum SnakeCaseStructVariants {
+        PointValue { x: i32, y: i32 },
+        NamedPerson { name: String, age: u32 },
+    }
+
+    test_roundtrip!(
+        enum_snake_case_struct_point,
+        SnakeCaseStructVariants,
+        SnakeCaseStructVariants::PointValue { x: 10, y: -20 }
+    );
+    test_roundtrip!(
+        enum_snake_case_struct_person,
+        SnakeCaseStructVariants,
+        SnakeCaseStructVariants::NamedPerson {
+            name: "Alice".to_string(),
+            age: 30
+        }
+    );
+
+    // Test enum with rename_all and tuple variants
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(rename_all = "snake_case")]
+    #[repr(u8)]
+    enum SnakeCaseTupleVariants {
+        TwoNumbers(u32, u32),
+        ThreeStrings(String, String, String),
+    }
+
+    test_roundtrip!(
+        enum_snake_case_tuple_two,
+        SnakeCaseTupleVariants,
+        SnakeCaseTupleVariants::TwoNumbers(1, 2)
+    );
+    test_roundtrip!(
+        enum_snake_case_tuple_three,
+        SnakeCaseTupleVariants,
+        SnakeCaseTupleVariants::ThreeStrings("a".to_string(), "b".to_string(), "c".to_string())
+    );
+}
