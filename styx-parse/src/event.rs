@@ -154,9 +154,9 @@ pub enum ParseErrorKind {
     ExpectedValue,
     /// Unexpected end of input.
     UnexpectedEof,
-    /// Duplicate key in object.
+    /// Duplicate key in object. Contains the span of the first occurrence.
     // parser[impl entry.key-equality]
-    DuplicateKey,
+    DuplicateKey { original: Span },
     /// Invalid tag name (must match pattern).
     InvalidTagName,
     /// Invalid key (e.g., heredoc used as key).
@@ -178,7 +178,7 @@ impl std::fmt::Display for ParseErrorKind {
             ParseErrorKind::ExpectedKey => write!(f, "expected a key"),
             ParseErrorKind::ExpectedValue => write!(f, "expected a value"),
             ParseErrorKind::UnexpectedEof => write!(f, "unexpected end of input"),
-            ParseErrorKind::DuplicateKey => write!(f, "duplicate key"),
+            ParseErrorKind::DuplicateKey { .. } => write!(f, "duplicate key"),
             ParseErrorKind::InvalidTagName => write!(f, "invalid tag name"),
             ParseErrorKind::InvalidKey => write!(f, "invalid key"),
             ParseErrorKind::DanglingDocComment => {

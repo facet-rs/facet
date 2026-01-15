@@ -43,14 +43,22 @@ impl ParseError {
 
         match &self.kind {
             // diagnostic[impl parser.duplicate-key]
-            ParseErrorKind::DuplicateKey => Report::build(ReportKind::Error, filename, range.start)
-                .with_message("duplicate key")
-                .with_label(
-                    Label::new((filename, range))
-                        .with_message("duplicate key")
-                        .with_color(Color::Red),
-                )
-                .with_help("each key must appear only once in an object"),
+            ParseErrorKind::DuplicateKey { original } => {
+                let original_range = original.start as usize..original.end as usize;
+                Report::build(ReportKind::Error, filename, range.start)
+                    .with_message("duplicate key")
+                    .with_label(
+                        Label::new((filename, original_range))
+                            .with_message("first defined here")
+                            .with_color(Color::Blue),
+                    )
+                    .with_label(
+                        Label::new((filename, range))
+                            .with_message("duplicate key")
+                            .with_color(Color::Red),
+                    )
+                    .with_help("each key must appear only once in an object")
+            }
 
             // diagnostic[impl parser.mixed-separators]
             ParseErrorKind::MixedSeparators => Report::build(ReportKind::Error, filename, range.start)
@@ -157,7 +165,7 @@ impl ParseError {
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
-            ParseErrorKind::DuplicateKey => write!(f, "duplicate key"),
+            ParseErrorKind::DuplicateKey { .. } => write!(f, "duplicate key"),
             ParseErrorKind::MixedSeparators => write!(f, "mixed separators in object"),
             ParseErrorKind::UnclosedObject => write!(f, "unclosed object"),
             ParseErrorKind::UnclosedSequence => write!(f, "unclosed sequence"),

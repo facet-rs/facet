@@ -1,7 +1,7 @@
 //! Event-based parser for Styx.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::iter::Peekable;
 
 use crate::Span;
@@ -157,7 +157,7 @@ impl<'src> Parser<'src> {
         closing: Option<TokenKind>,
     ) {
         trace!("Parsing entries, closing token: {:?}", closing);
-        let mut seen_keys: HashSet<KeyValue> = HashSet::new();
+        let mut seen_keys: HashMap<KeyValue, Span> = HashMap::new();
         // Track last doc comment span for dangling detection
         // parser[impl comment.doc]
         let mut pending_doc_comment: Option<Span> = None;
@@ -229,7 +229,7 @@ impl<'src> Parser<'src> {
     fn parse_entry_with_dup_check<C: ParseCallback<'src>>(
         &mut self,
         callback: &mut C,
-        seen_keys: &mut HashSet<KeyValue>,
+        seen_keys: &mut HashMap<KeyValue, Span>,
     ) -> bool {
         if !callback.event(Event::EntryStart) {
             return false;
@@ -258,16 +258,18 @@ impl<'src> Parser<'src> {
         }
 
         let key_value = KeyValue::from_atom(key_atom, self);
-        if seen_keys.contains(&key_value) {
-            // Emit duplicate key error
+        if let Some(&original_span) = seen_keys.get(&key_value) {
+            // Emit duplicate key error with reference to original
             if !callback.event(Event::Error {
                 span: key_atom.span,
-                kind: ParseErrorKind::DuplicateKey,
+                kind: ParseErrorKind::DuplicateKey {
+                    original: original_span,
+                },
             }) {
                 return false;
             }
         } else {
-            seen_keys.insert(key_value);
+            seen_keys.insert(key_value, key_atom.span);
         }
 
         if !self.emit_atom_as_key(key_atom, callback) {
@@ -695,8 +697,10 @@ impl<'src> Parser<'src> {
         let mut separator_mode: Option<Separator> = None;
         let mut end_span = start_span;
         // parser[impl entry.key-equality]
-        let mut seen_keys: HashSet<KeyValue> = HashSet::new();
-        let mut duplicate_key_spans: Vec<Span> = Vec::new();
+        // Maps key value to its first occurrence span
+        let mut seen_keys: HashMap<KeyValue, Span> = HashMap::new();
+        // Pairs of (original_span, duplicate_span) for duplicate keys
+        let mut duplicate_key_spans: Vec<(Span, Span)> = Vec::new();
         // parser[impl object.separators]
         let mut mixed_separator_spans: Vec<Span> = Vec::new();
         // parser[impl comment.doc]
@@ -789,10 +793,10 @@ impl<'src> Parser<'src> {
                         // parser[impl entry.key-equality]
                         // Check for duplicate key
                         let key_value = KeyValue::from_atom(&key, self);
-                        if seen_keys.contains(&key_value) {
-                            duplicate_key_spans.push(key.span);
+                        if let Some(&original_span) = seen_keys.get(&key_value) {
+                            duplicate_key_spans.push((original_span, key.span));
                         } else {
-                            seen_keys.insert(key_value);
+                            seen_keys.insert(key_value, key.span);
                         }
 
                         let value = if entry_atoms.len() == 1 {
@@ -1130,10 +1134,12 @@ impl<'src> Parser<'src> {
 
                 // parser[impl entry.key-equality]
                 // Emit errors for duplicate keys
-                for dup_span in duplicate_key_spans {
+                for (original_span, dup_span) in duplicate_key_spans {
                     if !callback.event(Event::Error {
                         span: *dup_span,
-                        kind: ParseErrorKind::DuplicateKey,
+                        kind: ParseErrorKind::DuplicateKey {
+                            original: *original_span,
+                        },
                     }) {
                         return false;
                     }
@@ -1476,8 +1482,8 @@ enum AtomContent<'src> {
     Object {
         entries: Vec<ObjectEntry<'src>>,
         separator: Separator,
-        /// Spans of duplicate keys (for error reporting).
-        duplicate_key_spans: Vec<Span>,
+        /// Pairs of (original_span, duplicate_span) for duplicate keys.
+        duplicate_key_spans: Vec<(Span, Span)>,
         /// Spans of mixed separators (for error reporting).
         // parser[impl object.separators]
         mixed_separator_spans: Vec<Span>,
@@ -2115,7 +2121,7 @@ mod tests {
             events.iter().any(|e| matches!(
                 e,
                 Event::Error {
-                    kind: ParseErrorKind::DuplicateKey,
+                    kind: ParseErrorKind::DuplicateKey { .. },
                     ..
                 }
             )),
@@ -2131,7 +2137,7 @@ mod tests {
             events.iter().any(|e| matches!(
                 e,
                 Event::Error {
-                    kind: ParseErrorKind::DuplicateKey,
+                    kind: ParseErrorKind::DuplicateKey { .. },
                     ..
                 }
             )),
@@ -2148,7 +2154,7 @@ mod tests {
             events.iter().any(|e| matches!(
                 e,
                 Event::Error {
-                    kind: ParseErrorKind::DuplicateKey,
+                    kind: ParseErrorKind::DuplicateKey { .. },
                     ..
                 }
             )),
@@ -2164,7 +2170,7 @@ mod tests {
             events.iter().any(|e| matches!(
                 e,
                 Event::Error {
-                    kind: ParseErrorKind::DuplicateKey,
+                    kind: ParseErrorKind::DuplicateKey { .. },
                     ..
                 }
             )),
@@ -2180,7 +2186,7 @@ mod tests {
             events.iter().any(|e| matches!(
                 e,
                 Event::Error {
-                    kind: ParseErrorKind::DuplicateKey,
+                    kind: ParseErrorKind::DuplicateKey { .. },
                     ..
                 }
             )),
@@ -2207,7 +2213,7 @@ mod tests {
             events.iter().any(|e| matches!(
                 e,
                 Event::Error {
-                    kind: ParseErrorKind::DuplicateKey,
+                    kind: ParseErrorKind::DuplicateKey { .. },
                     ..
                 }
             )),
