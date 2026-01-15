@@ -127,6 +127,11 @@ impl<'src> CstParser<'src> {
         self.lexer.peek().map(|t| t.kind).unwrap_or(TokenKind::Eof)
     }
 
+    /// Peek at the current token.
+    fn peek_token(&mut self) -> Option<&Token<'src>> {
+        self.lexer.peek()
+    }
+
     /// Get the current token's start position, if any.
     fn current_pos(&mut self) -> u32 {
         self.lexer.peek().map(|t| t.span.start).unwrap_or(0)
@@ -171,6 +176,30 @@ impl<'src> CstParser<'src> {
             || closing.is_some_and(|c| kind == c)
     }
 
+    /// Check if the current position starts an attribute (bare_scalar followed by =).
+    fn at_attribute(&mut self) -> bool {
+        if self.peek() != TokenKind::BareScalar {
+            return false;
+        }
+        // Check if there's an = sign after this bare scalar (possibly with whitespace)
+        let token = match self.peek_token() {
+            Some(t) => t,
+            None => return false,
+        };
+        let after_scalar = token.span.end as usize;
+
+        // Look for = in the source after the scalar, skipping whitespace
+        let rest = &self.source[after_scalar..];
+        for ch in rest.chars() {
+            match ch {
+                ' ' | '\t' => continue,
+                '=' => return true,
+                _ => return false,
+            }
+        }
+        false
+    }
+
     /// Parse entries (at document level or inside an object).
     fn parse_entries(&mut self, closing: Option<TokenKind>) {
         loop {
@@ -204,31 +233,85 @@ impl<'src> CstParser<'src> {
         }
     }
 
-    /// Parse a single entry (key + value, or just a value in sequences).
+    /// Parse a single entry.
+    ///
+    /// An entry can be:
+    /// - A sequence of attributes: `key1=value1 key2=value2`
+    /// - A key with zero or more values: `key` or `key value1 value2`
+    /// - A key followed by attributes and then more values: `div id=main { ... }`
     fn parse_entry(&mut self, closing: Option<TokenKind>) {
         self.builder.start_node(SyntaxKind::ENTRY.into());
 
-        // Collect atoms until we hit an entry boundary
-        // First atom could be a key (if followed by value) or just a value
-        let mut atom_count = 0;
+        // Check if this starts with attributes (entry is just attributes)
+        if self.at_attribute() {
+            self.parse_attributes(closing);
+        } else {
+            // Parse first atom as the key
+            if !self.at_entry_end(closing) {
+                self.builder.start_node(SyntaxKind::KEY.into());
+                self.parse_atom();
+                self.builder.finish_node();
+            }
 
-        // Parse first atom as potential key
-        if !self.at_entry_end(closing) {
-            self.builder.start_node(SyntaxKind::KEY.into());
-            self.parse_atom();
-            self.builder.finish_node();
-            atom_count += 1;
+            // Skip horizontal whitespace
+            self.skip_whitespace();
+
+            // Parse remaining atoms/attributes as values
+            while !self.at_entry_end(closing) {
+                // Check if we have attributes next
+                if self.at_attribute() {
+                    self.builder.start_node(SyntaxKind::VALUE.into());
+                    self.parse_attributes(closing);
+                    self.builder.finish_node();
+                } else {
+                    self.builder.start_node(SyntaxKind::VALUE.into());
+                    self.parse_atom();
+                    self.builder.finish_node();
+                }
+                self.skip_whitespace();
+            }
         }
 
-        // Skip horizontal whitespace
+        self.builder.finish_node();
+    }
+
+    /// Parse a sequence of attributes: `key1=value1 key2=value2 ...`
+    fn parse_attributes(&mut self, closing: Option<TokenKind>) {
+        self.builder.start_node(SyntaxKind::ATTRIBUTES.into());
+
+        while self.at_attribute() {
+            self.parse_attribute();
+            self.skip_whitespace();
+
+            // Stop if we hit entry end
+            if self.at_entry_end(closing) {
+                break;
+            }
+        }
+
+        self.builder.finish_node();
+    }
+
+    /// Parse a single attribute: `key=value`
+    fn parse_attribute(&mut self) {
+        self.builder.start_node(SyntaxKind::ATTRIBUTE.into());
+
+        // Key (bare scalar)
+        self.bump();
+
+        // Skip whitespace before =
         self.skip_whitespace();
 
-        // If there's a second atom, the first was a key and this is the value
-        if !self.at_entry_end(closing) && atom_count > 0 {
-            self.builder.start_node(SyntaxKind::VALUE.into());
-            self.parse_atom();
-            self.builder.finish_node();
+        // = sign
+        if self.peek() == TokenKind::Eq {
+            self.bump();
         }
+
+        // Skip whitespace after =
+        self.skip_whitespace();
+
+        // Value
+        self.parse_atom();
 
         self.builder.finish_node();
     }
@@ -303,8 +386,12 @@ impl<'src> CstParser<'src> {
                 break;
             }
 
-            // Parse atom directly (sequences contain values, not key-value pairs)
+            // In sequences, each element is wrapped in an ENTRY with just a KEY
+            self.builder.start_node(SyntaxKind::ENTRY.into());
+            self.builder.start_node(SyntaxKind::KEY.into());
             self.parse_atom();
+            self.builder.finish_node();
+            self.builder.finish_node();
 
             // Skip whitespace between elements
             self.skip_whitespace();
@@ -516,5 +603,45 @@ mod tests {
         let parse = parse(source);
         assert!(parse.is_ok(), "errors: {:?}", parse.errors());
         assert_eq!(source, parse.syntax().to_string());
+    }
+
+    #[test]
+    fn test_attributes() {
+        let source = "id=main class=\"container\"";
+        let parse = parse(source);
+        assert!(parse.is_ok(), "errors: {:?}", parse.errors());
+        assert_eq!(source, parse.syntax().to_string());
+
+        let entry = parse.syntax().children().next().unwrap();
+        let attrs = entry.children().next().unwrap();
+        assert_eq!(attrs.kind(), SyntaxKind::ATTRIBUTES);
+    }
+
+    #[test]
+    fn test_multiple_values() {
+        let source = "key value1 value2 value3";
+        let parse = parse(source);
+        assert!(parse.is_ok(), "errors: {:?}", parse.errors());
+
+        let entry = parse.syntax().children().next().unwrap();
+        // Should have KEY + 3 VALUEs
+        let children: Vec<_> = entry.children().collect();
+        assert_eq!(children.len(), 4);
+        assert_eq!(children[0].kind(), SyntaxKind::KEY);
+        assert_eq!(children[1].kind(), SyntaxKind::VALUE);
+        assert_eq!(children[2].kind(), SyntaxKind::VALUE);
+        assert_eq!(children[3].kind(), SyntaxKind::VALUE);
+    }
+
+    #[test]
+    fn test_showcase_file() {
+        let source = include_str!("../../../examples/showcase.styx");
+        let parse = parse(source);
+
+        // Should parse without errors
+        assert!(parse.is_ok(), "parse errors: {:?}", parse.errors());
+
+        // Should roundtrip perfectly
+        assert_eq!(source, parse.syntax().to_string(), "roundtrip failed");
     }
 }

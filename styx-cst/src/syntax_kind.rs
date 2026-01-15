@@ -93,6 +93,10 @@ pub enum SyntaxKind {
     VALUE,
     /// A heredoc (groups start, content, end)
     HEREDOC,
+    /// A group of attributes (key=value pairs)
+    ATTRIBUTES,
+    /// A single attribute (key=value)
+    ATTRIBUTE,
 }
 
 impl SyntaxKind {
@@ -197,6 +201,8 @@ impl SyntaxKind {
             29 => Some(Self::KEY),
             30 => Some(Self::VALUE),
             31 => Some(Self::HEREDOC),
+            32 => Some(Self::ATTRIBUTES),
+            33 => Some(Self::ATTRIBUTE),
             _ => None,
         }
     }

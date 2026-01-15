@@ -275,19 +275,40 @@ impl Object {
 impl Sequence {
     /// Iterate over elements in this sequence.
     ///
-    /// Note: Unlike objects, sequences contain values directly, not entries.
-    /// But our parser wraps them in ENTRY nodes for uniformity.
+    /// The parser wraps sequence elements in ENTRY/KEY nodes for uniformity.
+    /// This method extracts the actual value from each entry.
     pub fn elements(&self) -> impl Iterator<Item = SyntaxNode> {
-        self.0.children().filter(|n| {
-            matches!(
-                n.kind(),
-                SyntaxKind::SCALAR
-                    | SyntaxKind::OBJECT
-                    | SyntaxKind::SEQUENCE
-                    | SyntaxKind::UNIT
-                    | SyntaxKind::TAG
-                    | SyntaxKind::HEREDOC
-            )
+        self.0.children().filter_map(|n| {
+            if n.kind() == SyntaxKind::ENTRY {
+                // Find the KEY child, then get its first value child
+                n.children()
+                    .find(|c| c.kind() == SyntaxKind::KEY)
+                    .and_then(|key| {
+                        key.children().find(|c| {
+                            matches!(
+                                c.kind(),
+                                SyntaxKind::SCALAR
+                                    | SyntaxKind::OBJECT
+                                    | SyntaxKind::SEQUENCE
+                                    | SyntaxKind::UNIT
+                                    | SyntaxKind::TAG
+                                    | SyntaxKind::HEREDOC
+                            )
+                        })
+                    })
+            } else {
+                // Fallback: direct value children (shouldn't happen with current parser)
+                matches!(
+                    n.kind(),
+                    SyntaxKind::SCALAR
+                        | SyntaxKind::OBJECT
+                        | SyntaxKind::SEQUENCE
+                        | SyntaxKind::UNIT
+                        | SyntaxKind::TAG
+                        | SyntaxKind::HEREDOC
+                )
+                .then_some(n)
+            }
         })
     }
 

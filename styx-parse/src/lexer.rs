@@ -15,8 +15,6 @@ pub struct Lexer<'src> {
 
     /// State for heredoc parsing.
     heredoc_state: Option<HeredocState>,
-    /// State for raw string parsing.
-    raw_string_state: Option<RawStringState>,
 }
 
 /// State for tracking heredoc parsing.
@@ -24,13 +22,6 @@ pub struct Lexer<'src> {
 struct HeredocState {
     /// The delimiter to match (e.g., "EOF" for `<<EOF`)
     delimiter: String,
-}
-
-/// State for tracking raw string parsing.
-#[derive(Debug, Clone, Copy)]
-struct RawStringState {
-    /// Number of `#` marks in the opening delimiter
-    hash_count: u8,
 }
 
 impl<'src> Lexer<'src> {
@@ -41,7 +32,6 @@ impl<'src> Lexer<'src> {
             remaining: source,
             pos: 0,
             heredoc_state: None,
-            raw_string_state: None,
         }
     }
 
@@ -106,11 +96,6 @@ impl<'src> Lexer<'src> {
             return self.lex_heredoc_content(&state.delimiter);
         }
 
-        // Handle raw string content if we're inside one
-        if let Some(state) = self.raw_string_state {
-            return self.lex_raw_string_content(state.hash_count);
-        }
-
         // Check for EOF
         if self.is_eof() {
             return self.token(TokenKind::Eof, self.pos);
@@ -163,7 +148,7 @@ impl<'src> Lexer<'src> {
             '<' if self.starts_with("<<") => self.lex_heredoc_start(),
 
             // Raw string
-            'r' if matches!(self.peek_nth(1), Some('#' | '"')) => self.lex_raw_string_start(),
+            'r' if matches!(self.peek_nth(1), Some('#' | '"')) => self.lex_raw_string(),
 
             // Whitespace
             ' ' | '\t' => self.lex_whitespace(),
@@ -426,8 +411,11 @@ impl<'src> Lexer<'src> {
     }
 
     // parser[impl scalar.raw.syntax]
-    /// Lex a raw string start: `r#*"`.
-    fn lex_raw_string_start(&mut self) -> Token<'src> {
+    /// Lex a raw string: `r#*"..."#*`.
+    /// Returns the entire raw string including delimiters.
+    fn lex_raw_string(&mut self) -> Token<'src> {
+        let start = self.pos;
+
         // Consume `r`
         self.advance();
 
@@ -441,24 +429,16 @@ impl<'src> Lexer<'src> {
         // Consume opening `"`
         if self.peek() == Some('"') {
             self.advance();
+        } else {
+            // Invalid raw string - no opening quote
+            return self.token(TokenKind::Error, start);
         }
 
-        // Set state for raw string content
-        self.raw_string_state = Some(RawStringState { hash_count });
-
-        // Now immediately lex the content
-        self.lex_raw_string_content(hash_count)
-    }
-
-    /// Lex raw string content until we find the closing `"#*`.
-    fn lex_raw_string_content(&mut self, hash_count: u8) -> Token<'src> {
-        let start = self.pos;
-
+        // Consume content until we find the closing `"#*`
         loop {
             match self.peek() {
                 None => {
                     // Unterminated raw string
-                    self.raw_string_state = None;
                     break;
                 }
                 Some('"') => {
@@ -475,19 +455,13 @@ impl<'src> Lexer<'src> {
                     }
 
                     if matched_hashes == hash_count {
-                        // Found the closing delimiter - save end position before consuming
-                        let end = self.pos;
+                        // Found the closing delimiter - consume it
                         self.advance(); // consume `"`
                         for _ in 0..hash_count {
                             self.advance(); // consume `#`s
                         }
-                        self.raw_string_state = None;
-                        // Return token with content only (excluding closing delimiter)
-                        return Token {
-                            kind: TokenKind::RawScalar,
-                            text: &self.source[start as usize..end as usize],
-                            span: Span { start, end },
-                        };
+                        // Return token with full text including delimiters
+                        return self.token(TokenKind::RawScalar, start);
                     } else {
                         // Not a closing delimiter, consume the `"` as content
                         self.advance();
@@ -499,6 +473,7 @@ impl<'src> Lexer<'src> {
             }
         }
 
+        // Unterminated - return what we have
         self.token(TokenKind::RawScalar, start)
     }
 }
@@ -574,10 +549,14 @@ mod tests {
 
     #[test]
     fn test_raw_scalar() {
-        assert_eq!(lex(r#"r"hello""#), vec![(TokenKind::RawScalar, r#"hello"#)]);
+        // Raw scalars now include the full text with delimiters (for lossless CST)
+        assert_eq!(
+            lex(r#"r"hello""#),
+            vec![(TokenKind::RawScalar, r#"r"hello""#)]
+        );
         assert_eq!(
             lex(r##"r#"hello"#"##),
-            vec![(TokenKind::RawScalar, r#"hello"#)]
+            vec![(TokenKind::RawScalar, r##"r#"hello"#"##)]
         );
     }
 

@@ -1,0 +1,21 @@
+[package]
+name = "styx-lsp"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Language server for Styx configuration language"
+
+[dependencies]
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+
+# Styx crates
+styx-cst = { path = "../styx-cst" }
+styx-schema = { path = "../styx-schema" }
+
+# Error handling
+eyre = "0.6"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

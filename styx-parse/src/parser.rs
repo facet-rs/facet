@@ -1127,9 +1127,10 @@ impl<'src> Parser<'src> {
                     && !callback.event(Event::Error {
                         span: atom.span,
                         kind: ParseErrorKind::UnclosedObject,
-                    }) {
-                        return false;
-                    }
+                    })
+                {
+                    return false;
+                }
 
                 // parser[impl entry.key-equality]
                 // Emit errors for duplicate keys
@@ -1194,9 +1195,10 @@ impl<'src> Parser<'src> {
                     && !callback.event(Event::Error {
                         span: atom.span,
                         kind: ParseErrorKind::UnclosedSequence,
-                    }) {
-                        return false;
-                    }
+                    })
+                {
+                    return false;
+                }
 
                 for elem in elements {
                     if !self.emit_atom_as_value(elem, callback) {
@@ -1342,11 +1344,34 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Process a scalar, handling escapes for quoted strings.
+    /// Process a scalar, handling escapes for quoted strings and stripping delimiters for raw strings.
     fn process_scalar(&self, text: &'src str, kind: ScalarKind) -> Cow<'src, str> {
         match kind {
-            ScalarKind::Bare | ScalarKind::Raw | ScalarKind::Heredoc => Cow::Borrowed(text),
+            ScalarKind::Bare | ScalarKind::Heredoc => Cow::Borrowed(text),
+            ScalarKind::Raw => Cow::Borrowed(Self::strip_raw_delimiters(text)),
             ScalarKind::Quoted => self.unescape_quoted(text),
+        }
+    }
+
+    /// Strip the r#*"..."#* delimiters from a raw string, returning just the content.
+    fn strip_raw_delimiters(text: &str) -> &str {
+        // Raw string format: r#*"content"#*
+        // Skip the 'r'
+        let after_r = text.strip_prefix('r').unwrap_or(text);
+
+        // Count and skip opening #s
+        let hash_count = after_r.chars().take_while(|&c| c == '#').count();
+        let after_hashes = &after_r[hash_count..];
+
+        // Skip opening "
+        let after_quote = after_hashes.strip_prefix('"').unwrap_or(after_hashes);
+
+        // Remove closing "# sequence
+        let closing_len = 1 + hash_count; // " + #s
+        if after_quote.len() >= closing_len {
+            &after_quote[..after_quote.len() - closing_len]
+        } else {
+            after_quote
         }
     }
 
