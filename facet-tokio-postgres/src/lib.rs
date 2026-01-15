@@ -151,7 +151,7 @@ fn deserialize_row_into<'p>(
     let mut fields_set = alloc::vec![false; num_fields];
 
     for (idx, field) in struct_def.fields.iter().enumerate() {
-        let column_name = field.alias.unwrap_or(field.name);
+        let column_name = field.rename.unwrap_or(field.name);
 
         // Check if column exists
         let column_idx = match row.columns().iter().position(|c| c.name() == column_name) {
