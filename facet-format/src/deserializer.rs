@@ -1093,7 +1093,7 @@ where
                         ParseEvent::StructEnd => break,
                         ParseEvent::FieldKey(key) => {
                             // Look for _arg field (single argument)
-                            if key.name == "_arg" {
+                            if key.name.as_deref() == Some("_arg") {
                                 let value_event = self.expect_event("argument value")?;
                                 if let ParseEvent::Scalar(scalar) = value_event {
                                     found_scalar = Some(scalar);
@@ -1141,12 +1141,41 @@ where
     /// - Enum unit variants: use select_variant_named
     /// - Integer types: parse the string as a number
     /// - Transparent newtypes: descend into the inner type
+    /// - Option types: None key becomes None, Some(key) recurses into inner type
     fn deserialize_map_key(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-        key: Cow<'input, str>,
+        key: Option<Cow<'input, str>>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let shape = wip.shape();
+
+        trace!(shape_name = %shape, shape_def = ?shape.def, ?key, "deserialize_map_key");
+
+        // Handle Option<T> key types: None key -> None variant, Some(key) -> Some(inner)
+        if let Def::Option(_) = &shape.def {
+            match key {
+                None => {
+                    // Unit key -> None variant (use set_default to mark as initialized)
+                    wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                    return Ok(wip);
+                }
+                Some(inner_key) => {
+                    // Named key -> Some(inner)
+                    wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                    wip = self.deserialize_map_key(wip, Some(inner_key))?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                    return Ok(wip);
+                }
+            }
+        }
+
+        // From here on, we need an actual key name
+        let key = key.ok_or_else(|| DeserializeError::TypeMismatch {
+            expected: "named key",
+            got: "unit key".to_string(),
+            span: self.last_span,
+            path: None,
+        })?;
 
         // For transparent types (like UserId(String)), we need to use begin_inner
         // to set the inner value. But NOT for pointer types like &str or Cow<str>
@@ -1154,7 +1183,7 @@ where
         let is_pointer = matches!(shape.def, Def::Pointer(_));
         if shape.inner.is_some() && !is_pointer {
             wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
-            wip = self.deserialize_map_key(wip, key)?;
+            wip = self.deserialize_map_key(wip, Some(key))?;
             wip = wip.end().map_err(DeserializeError::reflect)?;
             return Ok(wip);
         }
