@@ -10,7 +10,7 @@ hello
 (document
   (line_comment)
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (bare_scalar)))))
 
@@ -24,7 +24,7 @@ hello // inline comment
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (bare_scalar))))
   (line_comment))
@@ -41,7 +41,7 @@ hello
 (document
   (doc_comment)
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (bare_scalar)))))
 
@@ -59,6 +59,6 @@ value
 (document
   (doc_comment)
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (bare_scalar)))))

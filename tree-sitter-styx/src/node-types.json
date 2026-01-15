@@ -80,13 +80,72 @@
   {
     "type": "entry",
     "named": true,
-    "fields": {},
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expr",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "expr",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "expr",
+    "named": true,
+    "fields": {
+      "payload": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "object",
+            "named": true
+          },
+          {
+            "type": "scalar",
+            "named": true
+          },
+          {
+            "type": "sequence",
+            "named": true
+          },
+          {
+            "type": "unit",
+            "named": true
+          }
+        ]
+      },
+      "tag": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "tag",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
-      "multiple": true,
-      "required": true,
+      "multiple": false,
+      "required": false,
       "types": [
         {
-          "type": "value",
+          "type": "attributes",
           "named": true
         }
       ]
@@ -186,7 +245,7 @@
       "required": false,
       "types": [
         {
-          "type": "value",
+          "type": "expr",
           "named": true
         }
       ]
@@ -201,54 +260,6 @@
     "type": "unit",
     "named": true,
     "fields": {}
-  },
-  {
-    "type": "value",
-    "named": true,
-    "fields": {
-      "payload": {
-        "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "object",
-            "named": true
-          },
-          {
-            "type": "scalar",
-            "named": true
-          },
-          {
-            "type": "sequence",
-            "named": true
-          },
-          {
-            "type": "unit",
-            "named": true
-          }
-        ]
-      },
-      "tag": {
-        "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "tag",
-            "named": true
-          }
-        ]
-      }
-    },
-    "children": {
-      "multiple": false,
-      "required": false,
-      "types": [
-        {
-          "type": "attributes",
-          "named": true
-        }
-      ]
-    }
   },
   {
     "type": "\"",

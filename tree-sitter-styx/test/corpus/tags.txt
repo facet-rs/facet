@@ -8,7 +8,7 @@ Unit value
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (unit))))
 
 ================================================================================
@@ -21,7 +21,7 @@ Simple tag (unit variant)
 
 (document
   (entry
-    (value
+    key: (expr
       tag: (tag))))
 
 ================================================================================
@@ -34,7 +34,7 @@ Tag with explicit unit payload
 
 (document
   (entry
-    (value
+    key: (expr
       tag: (tag)
       payload: (unit))))
 
@@ -48,7 +48,7 @@ Tag with quoted scalar payload
 
 (document
   (entry
-    (value
+    key: (expr
       tag: (tag)
       payload: (scalar
         (quoted_scalar)))))
@@ -63,21 +63,21 @@ Tag with object payload
 
 (document
   (entry
-    (value
+    key: (expr
       tag: (tag)
       payload: (object
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (scalar
               (bare_scalar))))
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (scalar
               (quoted_scalar))))))))
 
@@ -91,16 +91,16 @@ Tag with sequence payload
 
 (document
   (entry
-    (value
+    key: (expr
       tag: (tag)
       payload: (sequence
-        (value
+        (expr
           payload: (scalar
             (bare_scalar)))
-        (value
+        (expr
           payload: (scalar
             (bare_scalar)))
-        (value
+        (expr
           payload: (scalar
             (bare_scalar)))))))
 
@@ -114,5 +114,5 @@ Tag with dots and dashes in name
 
 (document
   (entry
-    (value
+    key: (expr
       tag: (tag))))

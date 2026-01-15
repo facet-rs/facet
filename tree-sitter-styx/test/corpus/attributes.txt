@@ -8,7 +8,7 @@ key=value
 
 (document
   (entry
-    (value
+    key: (expr
       (attributes
         (attribute
           key: (bare_scalar)
@@ -24,7 +24,7 @@ host=localhost port=8080
 
 (document
   (entry
-    (value
+    key: (expr
       (attributes
         (attribute
           key: (bare_scalar)
@@ -43,7 +43,7 @@ message="hello world"
 
 (document
   (entry
-    (value
+    key: (expr
       (attributes
         (attribute
           key: (bare_scalar)
@@ -59,23 +59,23 @@ config={host localhost, port 8080}
 
 (document
   (entry
-    (value
+    key: (expr
       (attributes
         (attribute
           key: (bare_scalar)
           value: (object
             (entry
-              (value
+              key: (expr
                 payload: (scalar
                   (bare_scalar)))
-              (value
+              value: (expr
                 payload: (scalar
                   (bare_scalar))))
             (entry
-              (value
+              key: (expr
                 payload: (scalar
                   (bare_scalar)))
-              (value
+              value: (expr
                 payload: (scalar
                   (bare_scalar))))))))))
 
@@ -89,17 +89,17 @@ ports=(80 443 8080)
 
 (document
   (entry
-    (value
+    key: (expr
       (attributes
         (attribute
           key: (bare_scalar)
           value: (sequence
-            (value
+            (expr
               payload: (scalar
                 (bare_scalar)))
-            (value
+            (expr
               payload: (scalar
                 (bare_scalar)))
-            (value
+            (expr
               payload: (scalar
                 (bare_scalar)))))))))

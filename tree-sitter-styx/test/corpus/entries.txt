@@ -10,10 +10,10 @@ Single atom entry (implicit unit value)
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (object
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar))))))))
 
@@ -29,13 +29,13 @@ Two atom entry (key value)
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (object
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (scalar
               (bare_scalar))))))))
 
@@ -51,16 +51,16 @@ Three atom entry (nested key path)
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (object
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (scalar
               (bare_scalar))))))))
 
@@ -76,13 +76,13 @@ Entry with tag as value
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (object
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             tag: (tag)))))))
 
 ================================================================================
@@ -97,13 +97,13 @@ Entry with unit as explicit value
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (object
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (unit)))))))
 
 ================================================================================
@@ -117,16 +117,16 @@ port 8080
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (bare_scalar)))
-    (value
+    value: (expr
       payload: (scalar
         (bare_scalar))))
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (bare_scalar)))
-    (value
+    value: (expr
       payload: (scalar
         (bare_scalar)))))

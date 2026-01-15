@@ -8,7 +8,7 @@ Empty sequence
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (sequence))))
 
 ================================================================================
@@ -21,15 +21,15 @@ Sequence with scalars
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (sequence
-        (value
+        (expr
           payload: (scalar
             (bare_scalar)))
-        (value
+        (expr
           payload: (scalar
             (bare_scalar)))
-        (value
+        (expr
           payload: (scalar
             (bare_scalar)))))))
 
@@ -43,15 +43,15 @@ Sequence with mixed content
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (sequence
-        (value
+        (expr
           payload: (scalar
             (bare_scalar)))
-        (value
+        (expr
           payload: (scalar
             (quoted_scalar)))
-        (value
+        (expr
           payload: (scalar
             (bare_scalar)))))))
 
@@ -65,22 +65,22 @@ Nested sequences
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (sequence
-        (value
+        (expr
           payload: (sequence
-            (value
+            (expr
               payload: (scalar
                 (bare_scalar)))
-            (value
+            (expr
               payload: (scalar
                 (bare_scalar)))))
-        (value
+        (expr
           payload: (sequence
-            (value
+            (expr
               payload: (scalar
                 (bare_scalar)))
-            (value
+            (expr
               payload: (scalar
                 (bare_scalar)))))))))
 
@@ -94,23 +94,23 @@ Sequence with objects
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (sequence
-        (value
+        (expr
           payload: (object
             (entry
-              (value
+              key: (expr
                 payload: (scalar
                   (bare_scalar)))
-              (value
+              value: (expr
                 payload: (scalar
                   (bare_scalar))))))
-        (value
+        (expr
           payload: (object
             (entry
-              (value
+              key: (expr
                 payload: (scalar
                   (bare_scalar)))
-              (value
+              value: (expr
                 payload: (scalar
                   (bare_scalar))))))))))

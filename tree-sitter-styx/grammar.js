@@ -4,8 +4,9 @@
  * Styx is a structured document format using explicit braces/parens
  * with opaque scalars and a two-layer processing model.
  *
- * Key concept: A "value" is an optional tag plus a payload.
- * The tag annotates the payload - they are siblings, not nested.
+ * Key concepts:
+ * - An "expr" is an optional tag plus a payload (tag annotates payload as siblings)
+ * - An "entry" has a key (first expr) and optional value (remaining exprs)
  */
 
 module.exports = grammar({
@@ -42,21 +43,30 @@ module.exports = grammar({
     document: ($) =>
       seq(repeat($._newline), repeat(seq(optional($.doc_comment), $.entry, repeat($._newline)))),
 
-    // Entry: one or more values (atoms)
-    // In objects: 1 value = key with implicit unit, 2+ values = key + value(s)
-    entry: ($) => prec.right(repeat1($.value)),
+    // Entry: key followed by optional value
+    // - key only = implicit unit value
+    // - key + value = explicit value
+    entry: ($) =>
+      prec.right(
+        choice(
+          // Key with value(s)
+          seq(field("key", $.expr), field("value", $.expr), repeat(field("value", $.expr))),
+          // Key only (implicit unit value)
+          field("key", $.expr),
+        ),
+      ),
 
-    // A value is an optional tag followed by a payload
+    // An expr is an optional tag followed by a payload
     // Examples:
     //   @object{...}  -> tag=@object, payload=object
     //   @string       -> tag=@string, payload=none (unit)
     //   "hello"       -> tag=none, payload=scalar
     //   {a 1}         -> tag=none, payload=object
-    value: ($) =>
+    expr: ($) =>
       choice(
-        // Tagged value: @name followed by payload
+        // Tagged expr: @name followed by optional payload
         prec.right(seq(field("tag", $.tag), optional(field("payload", $._payload)))),
-        // Untagged value: just a payload
+        // Untagged expr: just a payload
         field("payload", $._payload),
         // Attributes are a special case
         $.attributes,
@@ -98,8 +108,8 @@ module.exports = grammar({
     // Handled by external scanner
     unit: ($) => $._unit_at,
 
-    // Sequence: (value value ...)
-    sequence: ($) => seq("(", repeat(seq($.value, optional($._ws))), ")"),
+    // Sequence: (expr expr ...)
+    sequence: ($) => seq("(", repeat(seq($.expr, optional($._ws))), ")"),
 
     // Object: { entries }
     object: ($) => seq("{", optional($._object_body), "}"),
@@ -122,7 +132,7 @@ module.exports = grammar({
         optional(","), // trailing comma allowed
       ),
 
-    // Attributes: key=value pairs that form an object value
+    // Attributes: key=value pairs that form an object expr
     attributes: ($) => repeat1($.attribute),
 
     attribute: ($) => seq(field("key", $.bare_scalar), "=", field("value", $._attribute_value)),

@@ -8,7 +8,7 @@ hello
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (bare_scalar)))))
 
@@ -22,7 +22,7 @@ https://example.com/path
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (bare_scalar)))))
 
@@ -36,7 +36,7 @@ Quoted scalar simple
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (quoted_scalar)))))
 
@@ -50,7 +50,7 @@ Quoted scalar with escapes
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (quoted_scalar
           (escape_sequence)
@@ -68,7 +68,7 @@ Quoted scalar with unicode escapes
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (quoted_scalar
           (escape_sequence)
@@ -84,7 +84,7 @@ r"hello world"
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (raw_scalar)))))
 
@@ -98,7 +98,7 @@ r#"hello "world""#
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (raw_scalar)))))
 
@@ -112,6 +112,6 @@ r##"contains "# but not ##"##
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (scalar
         (raw_scalar)))))

@@ -8,7 +8,7 @@ Empty object
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (object))))
 
 ================================================================================
@@ -23,13 +23,13 @@ Object with single entry
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (object
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (scalar
               (bare_scalar))))))))
 
@@ -46,20 +46,20 @@ Object with multiple entries newline separated
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (object
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (scalar
               (bare_scalar))))
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (scalar
               (bare_scalar))))))))
 
@@ -73,20 +73,20 @@ Object with comma separated entries
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (object
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (scalar
               (bare_scalar))))
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (scalar
               (bare_scalar))))))))
 
@@ -105,26 +105,26 @@ Nested objects
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (object
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar)))
-          (value
+          value: (expr
             payload: (object
               (entry
-                (value
+                key: (expr
                   payload: (scalar
                     (bare_scalar)))
-                (value
+                value: (expr
                   payload: (scalar
                     (bare_scalar))))
               (entry
-                (value
+                key: (expr
                   payload: (scalar
                     (bare_scalar)))
-                (value
+                value: (expr
                   payload: (scalar
                     (bare_scalar)))))))))))
 
@@ -141,13 +141,13 @@ Object with implicit unit value
 
 (document
   (entry
-    (value
+    key: (expr
       payload: (object
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar))))
         (entry
-          (value
+          key: (expr
             payload: (scalar
               (bare_scalar))))))))

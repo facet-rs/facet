@@ -18,18 +18,10 @@
   key: (bare_scalar) @property
   "=" @operator)
 
-; Keys: first bare_scalar in an entry that has multiple values
+; Keys in entries - bare scalars in the key position
 (entry
-  (value
-    payload: (scalar (bare_scalar) @property))
-  (value))
-
-; Keys: first bare_scalar in single-value entry (implicit unit)
-(entry
-  .
-  (value
-    payload: (scalar (bare_scalar) @property))
-  .)
+  key: (expr
+    payload: (scalar (bare_scalar) @property)))
 
 ; Scalars (general fallback)
 (bare_scalar) @string
