@@ -10,6 +10,37 @@
 
 A memory-efficient dynamic value type for representing structured data, with support for bytes.
 
+## Features
+
+- **Pointer-sized**: `Value` is exactly one pointer in size using tagged pointers
+- **Rich type support**: Null, Bool, Number, String, Bytes, Array, Object, DateTime
+- **Bidirectional conversion**: Convert between `Value` and any type implementing `Facet`
+
+## Example
+
+```rust
+use facet::Facet;
+use facet_value::{Value, to_value, from_value};
+
+#[derive(Debug, Facet, PartialEq)]
+struct Person {
+    name: String,
+    age: u32,
+}
+
+// Convert a typed value to a dynamic Value
+let person = Person { name: "Alice".into(), age: 30 };
+let value: Value = to_value(&person).unwrap();
+
+// Inspect the value dynamically
+let obj = value.as_object().unwrap();
+assert_eq!(obj.get("name").unwrap().as_string().unwrap().as_str(), "Alice");
+
+// Convert back to a typed value
+let person2: Person = from_value(value).unwrap();
+assert_eq!(person, person2);
+```
+
 ## LLM contribution policy
 
 ## Sponsors

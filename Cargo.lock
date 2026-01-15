@@ -2230,6 +2230,7 @@ dependencies = [
  "facet-assert",
  "facet-core",
  "facet-diff",
+ "facet-format",
  "facet-pretty",
  "facet-reflect",
  "facet-testhelpers",

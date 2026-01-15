@@ -61,6 +61,11 @@ mod deserialize;
 pub use deserialize::{PathSegment, ValueError, ValueErrorKind, from_value};
 
 #[cfg(feature = "alloc")]
+mod serialize;
+#[cfg(feature = "alloc")]
+pub use serialize::{ToValueError, peek_to_value, to_value};
+
+#[cfg(feature = "alloc")]
 mod format;
 #[cfg(feature = "alloc")]
 pub use format::{FormattedValue, format_value, format_value_with_spans};
