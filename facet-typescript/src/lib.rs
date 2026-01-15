@@ -206,7 +206,7 @@ impl TypeScriptGenerator {
                         self.output.push_str(" */\n");
                     }
 
-                    let field_name = field.rename.unwrap_or(field.name);
+                    let field_name = field.effective_name();
                     let is_option = matches!(field.shape.get().def, Def::Option(_));
 
                     self.write_indent();
@@ -243,7 +243,7 @@ impl TypeScriptGenerator {
             let variants: Vec<String> = enum_type
                 .variants
                 .iter()
-                .map(|v| format!("\"{}\"", v.name))
+                .map(|v| format!("\"{}\"", v.effective_name()))
                 .collect();
             writeln!(
                 self.output,
@@ -258,27 +258,28 @@ impl TypeScriptGenerator {
             let mut variant_types = Vec::new();
 
             for variant in enum_type.variants {
+                let variant_name = variant.effective_name();
                 match variant.data.kind {
                     StructKind::Unit => {
                         // Unit variant as object with type discriminator
-                        variant_types.push(format!("{{ {}: \"{}\" }}", variant.name, variant.name));
+                        variant_types.push(format!("{{ {}: \"{}\" }}", variant_name, variant_name));
                     }
                     StructKind::TupleStruct if variant.data.fields.len() == 1 => {
                         // Newtype variant: { VariantName: InnerType }
                         let inner = self.type_for_shape(variant.data.fields[0].shape.get());
-                        variant_types.push(format!("{{ {}: {} }}", variant.name, inner));
+                        variant_types.push(format!("{{ {}: {} }}", variant_name, inner));
                     }
                     _ => {
                         // Struct variant: { VariantName: { ...fields } }
                         let mut field_types = Vec::new();
                         for field in variant.data.fields {
-                            let field_name = field.rename.unwrap_or(field.name);
+                            let field_name = field.effective_name();
                             let field_type = self.type_for_shape(field.shape.get());
                             field_types.push(format!("{}: {}", field_name, field_type));
                         }
                         variant_types.push(format!(
                             "{{ {}: {{ {} }} }}",
-                            variant.name,
+                            variant_name,
                             field_types.join("; ")
                         ));
                     }
@@ -440,6 +441,80 @@ mod tests {
         }
 
         let ts = to_typescript::<Outer>();
+        insta::assert_snapshot!(ts);
+    }
+
+    #[test]
+    fn test_enum_rename_all_snake_case() {
+        #[derive(Facet)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum ValidationErrorCode {
+            CircularDependency,
+            InvalidNaming,
+            UnknownRequirement,
+        }
+
+        let ts = to_typescript::<ValidationErrorCode>();
+        insta::assert_snapshot!(ts);
+    }
+
+    #[test]
+    fn test_enum_rename_individual() {
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum GitStatus {
+            #[facet(rename = "dirty")]
+            Dirty,
+            #[facet(rename = "staged")]
+            Staged,
+            #[facet(rename = "clean")]
+            Clean,
+        }
+
+        let ts = to_typescript::<GitStatus>();
+        insta::assert_snapshot!(ts);
+    }
+
+    #[test]
+    fn test_struct_rename_all_camel_case() {
+        #[derive(Facet)]
+        #[facet(rename_all = "camelCase")]
+        struct ApiResponse {
+            user_name: String,
+            created_at: String,
+            is_active: bool,
+        }
+
+        let ts = to_typescript::<ApiResponse>();
+        insta::assert_snapshot!(ts);
+    }
+
+    #[test]
+    fn test_struct_rename_individual() {
+        #[derive(Facet)]
+        struct UserProfile {
+            #[facet(rename = "userName")]
+            user_name: String,
+            #[facet(rename = "emailAddress")]
+            email: String,
+        }
+
+        let ts = to_typescript::<UserProfile>();
+        insta::assert_snapshot!(ts);
+    }
+
+    #[test]
+    fn test_enum_with_data_rename_all() {
+        #[derive(Facet)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(C)]
+        enum Message {
+            TextMessage { content: String },
+            ImageUpload { url: String, width: u32 },
+        }
+
+        let ts = to_typescript::<Message>();
         insta::assert_snapshot!(ts);
     }
 }
