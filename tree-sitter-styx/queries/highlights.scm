@@ -4,7 +4,14 @@
 (line_comment) @comment
 (doc_comment) @comment.documentation
 
-; Scalars
+; Keys: first value in an entry (when it's a bare scalar)
+(entry
+  .
+  (value
+    payload: (scalar
+      (bare_scalar) @property)))
+
+; Scalars (general - lower priority than keys above)
 (bare_scalar) @string
 (quoted_scalar) @string
 (raw_scalar) @string
@@ -16,7 +23,7 @@
 ; Unit value
 (unit) @constant.builtin
 
-; Tags (the whole tag including @name is captured by the external scanner)
+; Tags
 (tag) @type
 
 ; Attributes
