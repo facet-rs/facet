@@ -938,9 +938,7 @@ impl<'src> Parser<'src> {
 
     /// Parse a single atom (for sequence elements).
     fn parse_single_atom(&mut self) -> Option<Atom<'src>> {
-        let Some(token) = self.peek() else {
-            return None;
-        };
+        let token = self.peek()?;
 
         match token.kind {
             TokenKind::BareScalar
