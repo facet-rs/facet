@@ -1,0 +1,10 @@
+---
+source: crates/facet-styx/src/tag_events_test.rs
+expression: "collect_events(\"x @Foo(a b)\")"
+---
+FieldKey("x")
+VariantTag("Foo")
+SequenceStart
+  Scalar("a")
+  Scalar("b")
+SequenceEnd

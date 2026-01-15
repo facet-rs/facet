@@ -1,0 +1,7 @@
+---
+source: crates/facet-styx/src/tag_events_test.rs
+expression: "collect_events(\"x @\")"
+---
+FieldKey("x")
+VariantTag(None)
+Scalar(Unit)

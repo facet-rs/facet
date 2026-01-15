@@ -242,33 +242,34 @@ impl<'de> StyxParser<'de> {
                     self.next_token(); // consume the @
                     self.peeked_events
                         .push(ParseEvent::Scalar(ScalarValue::Unit));
-                    return ParseEvent::VariantTag(tag_name);
+                    return ParseEvent::VariantTag(Some(tag_name));
                 } else if next.kind == TokenKind::LBrace && next.span.start == name_token.span.end {
                     // @foo{...} - tag with object payload
                     self.next_token(); // consume {
                     self.stack.push(ContextState::Object { implicit: false });
                     self.peeked_events
                         .push(ParseEvent::StructStart(ContainerKind::Object));
-                    return ParseEvent::VariantTag(tag_name);
+                    return ParseEvent::VariantTag(Some(tag_name));
                 } else if next.kind == TokenKind::LParen && next.span.start == name_token.span.end {
                     // @foo(...) - tag with sequence payload
                     self.next_token(); // consume (
                     self.stack.push(ContextState::Sequence);
                     self.peeked_events
                         .push(ParseEvent::SequenceStart(ContainerKind::Array));
-                    return ParseEvent::VariantTag(tag_name);
+                    return ParseEvent::VariantTag(Some(tag_name));
                 }
             }
 
-            // @foo - unit tag (no payload)
-            // Emit VariantTag followed by Scalar(Unit) for the unit payload
+            // @foo - named tag with implicit unit payload
             self.peeked_events
                 .push(ParseEvent::Scalar(ScalarValue::Unit));
-            return ParseEvent::VariantTag(tag_name);
+            return ParseEvent::VariantTag(Some(tag_name));
         }
 
-        // Just @ alone - unit value
-        ParseEvent::Scalar(ScalarValue::Unit)
+        // Just @ alone - unit tag (no name) with unit payload
+        self.peeked_events
+            .push(ParseEvent::Scalar(ScalarValue::Unit));
+        ParseEvent::VariantTag(None)
     }
 }
 
