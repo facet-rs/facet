@@ -7,6 +7,39 @@ insert_anchor_links = "heading"
 
 How Rust types map to STYX syntax. Examples use [facet](https://github.com/facet-rs/facet) derives.
 
+## Implicit root object
+
+STYX documents are implicitly objects. When parsing, the top-level content is wrapped in an implicit root object. This means you cannot parse a bare tagged value directly into an enum — you need a wrapper struct.
+
+```compare
+/// rust
+// This struct wraps the enum value
+#[derive(Facet)]
+struct Doc {
+    status: Status,
+}
+
+#[derive(Facet)]
+enum Status {
+    Ok,
+    Pending,
+}
+
+// Parse: "status @ok"
+let doc: Doc = from_str("status @ok")?;
+assert_eq!(doc.status, Status::Ok);
+/// styx
+status @ok
+```
+
+If you need to parse a document where the root *is* the tagged value, use an explicit root object:
+
+```styx
+{@ @ok}
+```
+
+This creates an object with a unit key (`@`) whose value is the `@ok` tag.
+
 ## Structs
 
 ```compare
@@ -139,47 +172,103 @@ perms (read write)
 
 ## Unit enum variants
 
+Enum variants with no payload use implicit unit (`@variant` is shorthand for `@variant@`).
+
 ```compare
 /// rust
+#[derive(Facet)]
+struct Doc {
+    status: Status,
+}
+
 #[derive(Facet)]
 enum Status {
     Ok,
     Pending,
 }
 
-let s = Status::Ok;
+let d = Doc { status: Status::Ok };
 /// styx
-@ok
+status @ok
 ```
 
 ## Struct enum variants
 
+Struct variants use `@variant{...}` syntax with the variant's fields inside.
+
 ```compare
 /// rust
 #[derive(Facet)]
-enum Result {
+struct Doc {
+    result: MyResult,
+}
+
+#[derive(Facet)]
+enum MyResult {
     Err { message: String },
 }
 
-let r = Result::Err {
-    message: "timeout".into(),
+let d = Doc {
+    result: MyResult::Err {
+        message: "timeout".into(),
+    },
 };
 /// styx
-@err{message "timeout"}
+result @err{message "timeout"}
 ```
 
 ## Tuple enum variants
 
+Tuple variants use `@variant(...)` syntax. Note: parentheses create a *sequence*, so each tuple element is a sequence element.
+
 ```compare
 /// rust
+#[derive(Facet)]
+struct Doc {
+    color: Color,
+}
+
 #[derive(Facet)]
 enum Color {
     Rgb(u8, u8, u8),
 }
 
-let c = Color::Rgb(255, 128, 0);
+let d = Doc {
+    color: Color::Rgb(255, 128, 0),
+};
 /// styx
-@rgb(255 128 0)
+color @rgb(255 128 0)
+```
+
+## Catch-all variants with `#[facet(other)]`
+
+For extensible enums, mark a variant with `#[facet(other)]` to catch unknown tags.
+Use `#[facet(tag)]` and `#[facet(content)]` on fields to capture the tag name and payload.
+
+```compare
+/// rust
+#[derive(Facet)]
+struct Doc {
+    schema: Schema,
+}
+
+#[derive(Facet)]
+enum Schema {
+    // Known variant
+    Object { fields: Vec<String> },
+    // Catch-all for unknown type references
+    #[facet(other)]
+    Type {
+        #[facet(tag)]
+        name: String,
+    },
+}
+
+// @string doesn't match any known variant,
+// so it's captured as Type { name: "string" }
+let d: Doc = from_str("schema @string")?;
+/// styx
+schema @string
 ```
 
 ## Durations
