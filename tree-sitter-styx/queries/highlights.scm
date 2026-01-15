@@ -11,7 +11,7 @@
 (unit) @constant.builtin
 
 ; Tags
-(tag) @type
+(tag) @function
 
 ; Attributes
 (attribute

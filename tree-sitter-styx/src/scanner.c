@@ -177,6 +177,7 @@ static bool scan_heredoc_start(Scanner *scanner, TSLexer *lexer) {
 
 // Try to scan heredoc lang hint: ,lang followed by newline
 // Only returns true if there IS a lang hint (comma present)
+// The token captures just the lang name (without comma)
 static bool scan_heredoc_lang(Scanner *scanner, TSLexer *lexer) {
   if (!scanner->heredoc_needs_lang_check)
     return false;
@@ -185,22 +186,26 @@ static bool scan_heredoc_lang(Scanner *scanner, TSLexer *lexer) {
   if (lexer->lookahead != ',')
     return false;
 
-  advance(lexer);
+  // Skip the comma (don't include in token)
+  skip(lexer);
 
   // Must start with lowercase letter
   if (!is_lang_hint_start(lexer->lookahead))
     return false;
 
-  // Consume the lang hint
+  // Consume the lang hint (this is the actual token content)
   while (is_lang_hint_char(lexer->lookahead)) {
     advance(lexer);
   }
+
+  // Mark end before consuming newline (newline not part of token)
+  lexer->mark_end(lexer);
 
   // Must be followed by newline
   if (lexer->lookahead != '\n' && lexer->lookahead != '\r')
     return false;
 
-  // Consume the newline
+  // Consume the newline (but it's not part of the token)
   if (lexer->lookahead == '\r')
     advance(lexer);
   if (lexer->lookahead == '\n')
