@@ -859,20 +859,10 @@ impl MultiPeerHostDriver {
     }
 
     async fn run_inner(mut self) -> Result<(), ShmConnectionError> {
-        info!(
+        debug!(
             "MultiPeerHostDriver::run() entered, peers={}",
             self.peers.len()
         );
-
-        struct NoisyGuard;
-        impl Drop for NoisyGuard {
-            fn drop(&mut self) {
-                warn!("the driver is dropping now children!");
-                panic!("someone IS DROPPING OUR DRIVER");
-            }
-        }
-        let _guard = NoisyGuard;
-
         loop {
             trace!("top of loop, peers={}", self.peers.len());
             tokio::select! {
@@ -947,7 +937,7 @@ impl MultiPeerHostDriver {
                 dispatcher,
                 response,
             } => {
-                info!("MultiPeerHostDriver: adding peer {:?} dynamically", peer_id);
+                debug!("MultiPeerHostDriver: adding peer {:?} dynamically", peer_id);
                 // Create single unified channel for all messages (Call/Data/Close/Response).
                 let (driver_tx, mut driver_rx) = mpsc::channel(256);
 
@@ -966,7 +956,7 @@ impl MultiPeerHostDriver {
                         handle: handle.clone(),
                     },
                 );
-                info!("MultiPeerHostDriver: {} peers now active", self.peers.len());
+                debug!("MultiPeerHostDriver: {} peers now active", self.peers.len());
 
                 // Spawn forwarder task for this peer's driver messages
                 let driver_msg_tx = self.driver_msg_tx.clone();
