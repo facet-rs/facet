@@ -233,7 +233,10 @@ pub fn peek_to_vec(peek: Peek<'_, '_>) -> Result<Vec<u8>, SerializeError> {
 /// Returns an error if:
 /// - The value is not a dynamic value type
 /// - The value's structure doesn't match the target shape
-pub fn to_vec_with_shape<T>(value: &T, target_shape: &'static Shape) -> Result<Vec<u8>, SerializeError>
+pub fn to_vec_with_shape<T>(
+    value: &T,
+    target_shape: &'static Shape,
+) -> Result<Vec<u8>, SerializeError>
 where
     T: facet_core::Facet<'static>,
 {
@@ -338,9 +341,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             facet_format::ScalarValue::I128(n) => write_varint_signed_i128(n, self.writer),
             facet_format::ScalarValue::U128(n) => write_varint_u128(n, self.writer),
             facet_format::ScalarValue::F64(n) => self.writer.write_bytes(&n.to_le_bytes()),
-            facet_format::ScalarValue::Str(s) | facet_format::ScalarValue::StringlyTyped(s) => {
-                self.write_str(&s)
-            }
+            facet_format::ScalarValue::Str(s) => self.write_str(&s),
             facet_format::ScalarValue::Bytes(bytes) => self.write_bytes(&bytes),
         }
     }
@@ -1191,8 +1192,7 @@ mod tests {
         let typed_bytes = to_vec(&original).unwrap();
 
         // Deserialize into Value using from_slice_with_shape
-        let value: Value =
-            crate::from_slice_with_shape(&typed_bytes, Config::SHAPE).unwrap();
+        let value: Value = crate::from_slice_with_shape(&typed_bytes, Config::SHAPE).unwrap();
 
         // Serialize back using to_vec_with_shape
         let value_bytes = to_vec_with_shape(&value, Config::SHAPE).unwrap();

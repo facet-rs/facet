@@ -151,37 +151,6 @@ where
                     wip = wip.set(b.into_owned()).map_err(&reflect_err)?;
                 }
             }
-            ScalarValue::StringlyTyped(s) => {
-                // Stringly-typed values from XML need to be parsed based on target type.
-                //
-                // For DynamicValue (like facet_value::Value), we need to detect the type
-                // by trying to parse as null, bool, number, then falling back to string.
-                //
-                // For concrete types with has_parse(), use parse_from_str.
-                // For string types, use set_string_value.
-                if matches!(shape.def, facet_core::Def::DynamicValue(_)) {
-                    // Try to detect the type for DynamicValue
-                    let text = s.as_ref();
-                    if text.eq_ignore_ascii_case("null") {
-                        wip = wip.set_default().map_err(&reflect_err)?;
-                    } else if let Ok(b) = text.parse::<bool>() {
-                        wip = wip.set(b).map_err(&reflect_err)?;
-                    } else if let Ok(n) = text.parse::<i64>() {
-                        wip = wip.set(n).map_err(&reflect_err)?;
-                    } else if let Ok(n) = text.parse::<u64>() {
-                        wip = wip.set(n).map_err(&reflect_err)?;
-                    } else if let Ok(n) = text.parse::<f64>() {
-                        wip = wip.set(n).map_err(&reflect_err)?;
-                    } else {
-                        // Fall back to string
-                        wip = self.set_string_value(wip, s)?;
-                    }
-                } else if shape.vtable.has_parse() {
-                    wip = wip.parse_from_str(s.as_ref()).map_err(&reflect_err)?;
-                } else {
-                    wip = self.set_string_value(wip, s)?;
-                }
-            }
             ScalarValue::Unit => {
                 // Unit value - set to default/unit value
                 wip = wip.set_default().map_err(&reflect_err)?;

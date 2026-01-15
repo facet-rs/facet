@@ -111,33 +111,6 @@ where
                 // Unit matches Unit type
                 matches!(scalar_type, ScalarType::Unit)
             }
-            ScalarValue::StringlyTyped(s) => {
-                // StringlyTyped can match any scalar type - it will be parsed.
-                // Use the same logic as Str: check if parse would succeed.
-                #[allow(unsafe_code)]
-                if shape.vtable.has_parse()
-                    && shape
-                        .layout
-                        .sized_layout()
-                        .is_ok_and(|layout| layout.size() <= 128)
-                {
-                    // Attempt to parse - this is a probe, not the actual deserialization
-                    let mut temp = [0u8; 128];
-                    let temp_ptr = facet_core::PtrMut::new(temp.as_mut_ptr());
-                    // SAFETY: temp buffer is properly aligned and sized for this shape
-                    if let Some(Ok(())) = unsafe { shape.call_parse(s.as_ref(), temp_ptr) } {
-                        // Parse succeeded - drop the temp value
-                        // SAFETY: we just successfully parsed into temp_ptr
-                        unsafe { shape.call_drop_in_place(temp_ptr) };
-                        return true;
-                    }
-                }
-                // StringlyTyped also matches string types directly
-                matches!(
-                    scalar_type,
-                    ScalarType::String | ScalarType::Str | ScalarType::CowStr | ScalarType::Char
-                )
-            }
         }
     }
 }

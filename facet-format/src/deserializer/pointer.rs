@@ -34,8 +34,7 @@ where
                 self.parser.hint_scalar_type(ScalarTypeHint::String);
                 let event = self.expect_event("string for Cow<str>")?;
                 match event {
-                    ParseEvent::Scalar(ScalarValue::Str(s))
-                    | ParseEvent::Scalar(ScalarValue::StringlyTyped(s)) => {
+                    ParseEvent::Scalar(ScalarValue::Str(s)) => {
                         // Pass through the Cow as-is to preserve borrowing
                         wip = wip.set(s).map_err(DeserializeError::reflect)?;
                         return Ok(wip);
@@ -90,8 +89,7 @@ where
             self.parser.hint_scalar_type(ScalarTypeHint::String);
             let event = self.expect_event("string for &str")?;
             match event {
-                ParseEvent::Scalar(ScalarValue::Str(s))
-                | ParseEvent::Scalar(ScalarValue::StringlyTyped(s)) => {
+                ParseEvent::Scalar(ScalarValue::Str(s)) => {
                     return self.set_string_value(wip, s);
                 }
                 _ => {
@@ -141,11 +139,8 @@ where
             self.parser.hint_sequence();
             let event = self.expect_event("value")?;
 
-            // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
-            // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
-            let struct_mode = match event {
-                ParseEvent::SequenceStart(_) => false,
-                ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+            match event {
+                ParseEvent::SequenceStart(_) => {}
                 ParseEvent::StructStart(kind) => {
                     return Err(DeserializeError::TypeMismatch {
                         expected: "array",
@@ -167,16 +162,10 @@ where
             loop {
                 let event = self.expect_peek("value")?;
 
-                // Check for end of container
-                if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
+                // Check for end of sequence
+                if matches!(event, ParseEvent::SequenceEnd) {
                     self.expect_event("value")?;
                     break;
-                }
-
-                // In struct mode, skip FieldKey events
-                if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
-                    self.expect_event("value")?;
-                    continue;
                 }
 
                 wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;

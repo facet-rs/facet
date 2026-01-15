@@ -503,13 +503,11 @@ impl<'de> YamlParser<'de> {
                                 FieldLocationHint::KeyValue,
                                 None,
                                 sv,
-                                None,
                             ));
                         } else {
                             evidence.push(FieldEvidence::new(
                                 key,
                                 FieldLocationHint::KeyValue,
-                                None,
                                 None,
                             ));
                         }

@@ -4,45 +4,29 @@ use alloc::borrow::Cow;
 use core::fmt;
 
 /// Location hint for a serialized field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FieldLocationHint {
-    /// Key/value entry (JSON/YAML/TOML).
+    /// Key/value entry (JSON/YAML/TOML/etc).
+    #[default]
     KeyValue,
-    /// XML attribute.
-    Attribute,
-    /// XML text node.
-    Text,
-    /// XML child element.
-    Child,
-    /// Element tag name (for custom elements in XML/HTML).
-    Tag,
 }
 
-/// Field key with optional namespace (for XML).
+/// Field key for a serialized field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldKey<'de> {
     /// Field name.
     pub name: Cow<'de, str>,
     /// Location hint.
     pub location: FieldLocationHint,
-    /// Optional namespace URI (for XML namespace support).
-    pub namespace: Option<Cow<'de, str>>,
 }
 
 impl<'de> FieldKey<'de> {
-    /// Create a new field key without namespace.
+    /// Create a new field key.
     pub fn new(name: impl Into<Cow<'de, str>>, location: FieldLocationHint) -> Self {
         Self {
             name: name.into(),
             location,
-            namespace: None,
         }
-    }
-
-    /// Add a namespace to this field key (builder pattern).
-    pub fn with_namespace(mut self, namespace: impl Into<Cow<'de, str>>) -> Self {
-        self.namespace = Some(namespace.into());
-        self
     }
 }
 
@@ -52,30 +36,20 @@ impl<'de> FieldKey<'de> {
 /// better error messages and type checking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerKind {
-    /// JSON/YAML/TOML object: definitely struct-like with key-value pairs.
+    /// Object: struct-like with key-value pairs.
     /// Type mismatches (e.g., object where array expected) should produce errors.
     Object,
-    /// JSON/YAML array: definitely sequence-like.
+    /// Array: sequence-like.
     /// Type mismatches (e.g., array where object expected) should produce errors.
     Array,
-    /// XML element: semantically ambiguous.
-    /// Could be interpreted as struct, sequence, or scalar wrapper depending on target type.
-    /// The deserializer decides based on what type it's deserializing into.
-    Element,
 }
 
 impl ContainerKind {
-    /// Returns true if this container kind is ambiguous (can be struct or sequence).
-    pub const fn is_ambiguous(self) -> bool {
-        matches!(self, ContainerKind::Element)
-    }
-
     /// Human-readable name for error messages.
     pub const fn name(self) -> &'static str {
         match self {
             ContainerKind::Object => "object",
             ContainerKind::Array => "array",
-            ContainerKind::Element => "element",
         }
     }
 }
@@ -120,21 +94,10 @@ pub enum ScalarValue<'de> {
     U128(u128),
     /// Floating-point literal.
     F64(f64),
-    /// UTF-8 string literal (definitely a string, not a number).
+    /// UTF-8 string literal.
     Str(Cow<'de, str>),
     /// Binary literal.
     Bytes(Cow<'de, [u8]>),
-    /// Stringly-typed value from formats like XML where all values are text.
-    ///
-    /// Unlike `Str`, this value's type is ambiguous - it could be a number,
-    /// boolean, or actual string depending on the target type. The deserializer
-    /// will attempt to parse it according to the expected type.
-    ///
-    /// Examples:
-    /// - XML `<value>42</value>` → StringlyTyped("42") → parses as i32, u64, String, etc.
-    /// - XML `<value>2.5</value>` → StringlyTyped("2.5") → parses as f64, Decimal, String, etc.
-    /// - JSON `"42"` → Str("42") → definitely a string, not a number
-    StringlyTyped(Cow<'de, str>),
 }
 
 /// Event emitted by a format parser while streaming through input.

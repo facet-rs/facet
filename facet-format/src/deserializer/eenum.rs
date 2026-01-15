@@ -71,10 +71,7 @@ where
         let event = self.expect_peek("value")?;
         trace!(?event, "peeked event");
         // Check for unit variant (just a string)
-        if let ParseEvent::Scalar(
-            ScalarValue::Str(variant_name) | ScalarValue::StringlyTyped(variant_name),
-        ) = &event
-        {
+        if let ParseEvent::Scalar(ScalarValue::Str(variant_name)) = &event {
             self.expect_event("value")?;
             wip = wip
                 .select_variant_named(variant_name)
@@ -284,17 +281,11 @@ where
                         continue;
                     }
 
-                    // Look up field in variant's fields
-                    // Uses namespace-aware matching when namespace is present
-                    let field_info = variant_fields.iter().enumerate().find(|(_, f)| {
-                        Self::field_matches_with_namespace(
-                            f,
-                            key.name.as_ref(),
-                            key.namespace.as_deref(),
-                            key.location,
-                            None, // Enums don't have ns_all
-                        )
-                    });
+                    // Look up field in variant's fields by name/alias
+                    let field_info = variant_fields
+                        .iter()
+                        .enumerate()
+                        .find(|(_, f)| Self::field_matches(f, key.name.as_ref()));
 
                     if let Some((idx, _field)) = field_info {
                         wip = wip
@@ -635,16 +626,11 @@ where
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
-                    // Look up field in variant's fields
-                    let field_info = variant_fields.iter().enumerate().find(|(_, f)| {
-                        Self::field_matches_with_namespace(
-                            f,
-                            key.name.as_ref(),
-                            key.namespace.as_deref(),
-                            key.location,
-                            None,
-                        )
-                    });
+                    // Look up field in variant's fields by name/alias
+                    let field_info = variant_fields
+                        .iter()
+                        .enumerate()
+                        .find(|(_, f)| Self::field_matches(f, key.name.as_ref()));
 
                     if let Some((idx, _field)) = field_info {
                         wip = wip
@@ -847,11 +833,9 @@ where
                     // Multi-field tuple variant - expect array or struct (for XML/TOML with numeric keys)
                     let event = self.expect_event("value")?;
 
-                    // Accept SequenceStart (JSON arrays), ambiguous StructStart (XML elements),
-                    // or Object StructStart (TOML/JSON with numeric keys like "0", "1")
+                    // Accept SequenceStart (JSON arrays) or Object StructStart (TOML/JSON with numeric keys like "0", "1")
                     let struct_mode = match event {
                         ParseEvent::SequenceStart(_) => false,
-                        ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
                         // Accept objects with numeric keys as valid tuple representations
                         ParseEvent::StructStart(ContainerKind::Object) => true,
                         ParseEvent::StructStart(kind) => {
@@ -937,16 +921,11 @@ where
                             }
                         }
                         ParseEvent::FieldKey(key) => {
-                            // Uses namespace-aware matching when namespace is present
-                            let field_info = variant_fields.iter().enumerate().find(|(_, f)| {
-                                Self::field_matches_with_namespace(
-                                    f,
-                                    key.name.as_ref(),
-                                    key.namespace.as_deref(),
-                                    key.location,
-                                    None, // Enums don't have ns_all
-                                )
-                            });
+                            // Look up field in variant's fields by name/alias
+                            let field_info = variant_fields
+                                .iter()
+                                .enumerate()
+                                .find(|(_, f)| Self::field_matches(f, key.name.as_ref()));
 
                             if let Some((idx, _field)) = field_info {
                                 wip = wip
@@ -1036,8 +1015,7 @@ where
                         }
                     })?
                 }
-                ScalarValue::Str(str_discriminant)
-                | ScalarValue::StringlyTyped(str_discriminant) => {
+                ScalarValue::Str(str_discriminant) => {
                     let discriminant =
                         str_discriminant
                             .parse()
@@ -1100,28 +1078,12 @@ where
                 // This handles untagged enums with only unit variants like:
                 // #[facet(untagged)] enum Color { Red, Green, Blue }
                 // which deserialize from "Red", "Green", "Blue"
-                if let ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) = scalar {
-                    // For StringlyTyped, handle "null" specially - it should match
-                    // unit variants named "Null" (case-insensitive) since stringly
-                    // formats like XML don't have a native null type.
-                    let is_stringly_null = matches!(scalar, ScalarValue::StringlyTyped(_))
-                        && s.as_ref().eq_ignore_ascii_case("null");
-
+                if let ScalarValue::Str(s) = scalar {
                     for variant in &variants_by_format.unit_variants {
                         // Match against variant name or rename attribute
-                        let variant_display_name = variant
-                            .get_builtin_attr("rename")
-                            .and_then(|attr| attr.get_as::<&str>().copied())
-                            .unwrap_or(variant.name);
+                        let variant_display_name = variant.effective_name();
 
-                        // For StringlyTyped("null"), match any variant named "Null" or "null"
-                        let matches = if is_stringly_null {
-                            variant_display_name.eq_ignore_ascii_case("null")
-                        } else {
-                            s.as_ref() == variant_display_name
-                        };
-
-                        if matches {
+                        if s.as_ref() == variant_display_name {
                             wip = wip
                                 .select_variant_named(variant.effective_name())
                                 .map_err(DeserializeError::reflect)?;
@@ -1132,101 +1094,14 @@ where
                     }
                 }
 
-                // ┌─────────────────────────────────────────────────────────────────┐
-                // │ UNTAGGED ENUM SCALAR VARIANT DISCRIMINATION                       │
-                // └─────────────────────────────────────────────────────────────────┘
-                //
-                // For untagged enums, we try to match scalar values against variant
-                // types. Since we can't backtrack parser state, we use the first
-                // variant that matches.
-                //
-                // ## Regular Scalars (I64, Str, Bool, etc.)
-                //
-                // For typed scalars, we simply try variants in definition order.
-                // The first matching variant wins. This is predictable and matches
-                // user expectations based on how they defined their enum.
-                //
-                // ## StringlyTyped Scalars (from XML and other text-based formats)
-                //
-                // StringlyTyped represents a value that arrived as text but may
-                // encode a more specific type. For example, XML `<value>42</value>`
-                // produces StringlyTyped("42"), which could be:
-                //   - A String (any text is valid)
-                //   - A u64 (if it parses as a number)
-                //   - NOT a bool (doesn't parse as true/false)
-                //
-                // The problem: String always matches StringlyTyped, so if String
-                // comes first in the enum definition, it would always win.
-                //
-                // Solution: Two-tier matching for StringlyTyped:
-                //
-                //   **Tier 1 (Parseable types)**: Try non-string types that can
-                //   parse the value (u64, i32, bool, IpAddr, etc.). First match wins.
-                //
-                //   **Tier 2 (String fallback)**: If no parseable type matched,
-                //   fall back to String/Str/CowStr variants.
-                //
-                // This ensures StringlyTyped("42") matches Number(u64) over
-                // String(String), regardless of definition order, while still
-                // allowing String as a catch-all fallback.
-                //
-                // Example:
-                //   #[facet(untagged)]
-                //   enum Value {
-                //       Text(String),    // Tier 2: fallback
-                //       Number(u64),     // Tier 1: parseable
-                //       Flag(bool),      // Tier 1: parseable
-                //   }
-                //
-                //   StringlyTyped("42")    → Number(42)   (parses as u64)
-                //   StringlyTyped("true")  → Flag(true)   (parses as bool)
-                //   StringlyTyped("hello") → Text(hello)  (fallback to String)
-
-                let is_stringly_typed = matches!(scalar, ScalarValue::StringlyTyped(_));
-
-                // Tier 1: Try variants that match the scalar type
-                // For StringlyTyped, skip string types (they're Tier 2 fallback)
+                // Try scalar variants that match the scalar type
                 for (variant, inner_shape) in &variants_by_format.scalar_variants {
-                    // For StringlyTyped, defer String-like types to Tier 2
-                    if is_stringly_typed
-                        && let Some(st) = inner_shape.scalar_type()
-                        && matches!(
-                            st,
-                            facet_core::ScalarType::String
-                                | facet_core::ScalarType::Str
-                                | facet_core::ScalarType::CowStr
-                        )
-                    {
-                        continue;
-                    }
-
                     if self.scalar_matches_shape(scalar, inner_shape) {
                         wip = wip
                             .select_variant_named(variant.effective_name())
                             .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_enum_variant_content(wip)?;
                         return Ok(wip);
-                    }
-                }
-
-                // Tier 2: For StringlyTyped, try string types as fallback
-                if is_stringly_typed {
-                    for (variant, inner_shape) in &variants_by_format.scalar_variants {
-                        if let Some(st) = inner_shape.scalar_type()
-                            && matches!(
-                                st,
-                                facet_core::ScalarType::String
-                                    | facet_core::ScalarType::Str
-                                    | facet_core::ScalarType::CowStr
-                            )
-                            && self.scalar_matches_shape(scalar, inner_shape)
-                        {
-                            wip = wip
-                                .select_variant_named(variant.effective_name())
-                                .map_err(DeserializeError::reflect)?;
-                            wip = self.deserialize_enum_variant_content(wip)?;
-                            return Ok(wip);
-                        }
                     }
                 }
 

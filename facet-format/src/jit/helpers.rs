@@ -159,10 +159,8 @@ pub enum ScalarTag {
     U128 = 9,
     /// Character value
     Char = 10,
-    /// Stringly-typed value (from XML, type determined by target)
-    StringlyTyped = 11,
     /// Unit type (Rust's `()`)
-    Unit = 12,
+    Unit = 11,
 }
 
 impl ScalarTag {
@@ -180,7 +178,7 @@ impl ScalarTag {
             8 => ScalarTag::I128,
             9 => ScalarTag::U128,
             10 => ScalarTag::Char,
-            11 => ScalarTag::StringlyTyped,
+            11 => ScalarTag::Unit,
             _ => ScalarTag::None,
         }
     }
@@ -557,28 +555,6 @@ fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
                         scalar: ScalarPayload { u128_val: n },
                     },
                 ),
-                ScalarValue::StringlyTyped(s) => {
-                    let (ptr, len, capacity, owned) = match s {
-                        Cow::Borrowed(s) => (s.as_ptr(), s.len(), 0, false),
-                        Cow::Owned(s) => {
-                            let (ptr, len, cap) = string_into_raw_parts(s);
-                            (ptr as *const u8, len, cap, true)
-                        }
-                    };
-                    (
-                        ScalarTag::StringlyTyped,
-                        EventPayload {
-                            scalar: ScalarPayload {
-                                string_val: StringPayload {
-                                    ptr,
-                                    len,
-                                    capacity,
-                                    owned,
-                                },
-                            },
-                        },
-                    )
-                }
                 ScalarValue::Unit => (
                     ScalarTag::Unit,
                     EventPayload {

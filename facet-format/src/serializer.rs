@@ -13,11 +13,9 @@ use crate::ScalarValue;
 /// Field ordering preference for serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FieldOrdering {
-    /// Fields are serialized in declaration order (default for JSON, etc.)
+    /// Fields are serialized in declaration order (default).
     #[default]
     Declaration,
-    /// Attributes first, then elements, then text (for XML)
-    AttributesFirst,
 }
 
 /// How struct fields should be serialized.
@@ -109,22 +107,18 @@ pub trait FormatSerializer {
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error>;
 
     /// Optional: Provide field metadata before field_key is called.
-    /// This allows formats like XML to extract namespace information.
     /// Default implementation does nothing.
     fn field_metadata(&mut self, _field: &facet_reflect::FieldItem) -> Result<(), Self::Error> {
         Ok(())
     }
 
     /// Optional: Provide struct/enum type metadata when beginning to serialize it.
-    /// This allows formats to extract container-level attributes like xml::ns_all.
     /// Default implementation does nothing.
     fn struct_metadata(&mut self, _shape: &facet_core::Shape) -> Result<(), Self::Error> {
         Ok(())
     }
 
     /// Optional: Provide variant metadata before serializing an enum variant.
-    /// This allows formats like XML to use the variant name as the element name
-    /// for xml::elements serialization.
     /// Default implementation does nothing.
     fn variant_metadata(
         &mut self,
@@ -134,7 +128,6 @@ pub trait FormatSerializer {
     }
 
     /// Preferred field ordering for this format.
-    /// Formats like XML can request attributes-first ordering to avoid buffering.
     /// Default is declaration order.
     fn preferred_field_order(&self) -> FieldOrdering {
         FieldOrdering::Declaration
@@ -380,25 +373,14 @@ where
     shared_serialize(serializer, value)
 }
 
-/// Helper to sort fields according to format preference
+/// Helper to sort fields according to format preference (currently a no-op).
 fn sort_fields_if_needed<'mem, 'facet, S>(
-    serializer: &S,
-    fields: &mut alloc::vec::Vec<(facet_reflect::FieldItem, Peek<'mem, 'facet>)>,
+    _serializer: &S,
+    _fields: &mut alloc::vec::Vec<(facet_reflect::FieldItem, Peek<'mem, 'facet>)>,
 ) where
     S: FormatSerializer,
 {
-    if serializer.preferred_field_order() == FieldOrdering::AttributesFirst {
-        fields.sort_by_key(|(field_item, _)| {
-            // Determine field category: 0=attribute, 1=element, 2=text
-            // For flattened map entries (field is None), treat as attributes
-            match &field_item.field {
-                Some(field) if field.is_attribute() => 0, // attributes first
-                Some(field) if field.is_text() => 2,      // text last
-                None => 0,                                // flattened map entries are attributes
-                _ => 1,                                   // elements in the middle
-            }
-        });
-    }
+    // Currently only Declaration order is supported, which preserves the original order.
 }
 
 fn shared_serialize<'mem, 'facet, S>(
