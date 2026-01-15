@@ -175,15 +175,33 @@ pub mod builtin {
             #[storage(field)]
             Alias(&'static str),
 
-            /// For internally/adjacently tagged enums: the field name for the tag.
+            /// Tag attribute with dual usage:
+            ///
+            /// **Container-level (with value):** For internally/adjacently tagged enums,
+            /// specifies the field name for the discriminator tag.
             ///
             /// Usage: `#[facet(tag = "type")]`
-            Tag(&'static str),
+            ///
+            /// **Field-level (without value):** Within an `#[facet(other)]` variant,
+            /// marks a field as capturing the variant tag name when deserializing
+            /// self-describing formats that emit VariantTag events.
+            ///
+            /// Usage: `#[facet(tag)]` on a String field
+            Tag(Option<&'static str>),
 
-            /// For adjacently tagged enums: the field name for the content.
+            /// Content attribute with dual usage:
+            ///
+            /// **Container-level (with value):** For adjacently tagged enums,
+            /// specifies the field name for the variant content.
             ///
             /// Usage: `#[facet(content = "data")]`
-            Content(&'static str),
+            ///
+            /// **Field-level (without value):** Within an `#[facet(other)]` variant,
+            /// marks a field as capturing the variant payload when deserializing
+            /// self-describing formats that emit VariantTag events.
+            ///
+            /// Usage: `#[facet(content)]` on a field
+            Content(Option<&'static str>),
 
             /// Identifies the type with a tag for self-describing formats.
             ///

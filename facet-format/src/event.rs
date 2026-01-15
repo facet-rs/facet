@@ -121,8 +121,14 @@ pub enum ParseEvent<'de> {
     SequenceEnd,
     /// Scalar literal.
     Scalar(ScalarValue<'de>),
-    /// Variant discriminant that needs to be propagated to the solver.
-    VariantTag(&'de str),
+    /// Tagged value from a self-describing format with native tagged union syntax.
+    ///
+    /// This is used by formats like Styx that have explicit tag syntax (e.g., `@tag(value)`).
+    /// Most formats (JSON, TOML, etc.) don't need this - they represent enums as
+    /// `{"variant_name": value}` which goes through the struct/field path instead.
+    ///
+    /// `None` represents a unit tag (bare `@` in Styx) with no name.
+    VariantTag(Option<&'de str>),
 }
 
 impl<'de> fmt::Debug for ParseEvent<'de> {
