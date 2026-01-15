@@ -1,7 +1,7 @@
 #![cfg_attr(not(feature = "jit"), deny(unsafe_code))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
-//! Prototype types for the format codex deserializer.
+//! Prototype types for the format deserializer.
 
 /// Trace-level logging macro that forwards to `tracing::trace!` when the `tracing` feature is enabled.
 ///

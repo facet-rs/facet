@@ -97,7 +97,7 @@ where
                         .variants
                         .iter()
                         .find(|v| v.is_other())
-                        .map(|v| v.name)
+                        .map(|v| v.effective_name())
                 })
                 .ok_or_else(|| DeserializeError::TypeMismatch {
                     expected: "known enum variant",
@@ -153,7 +153,7 @@ where
                     .variants
                     .iter()
                     .find(|v| v.is_other())
-                    .map(|v| v.name)
+                    .map(|v| v.effective_name())
             })
             .ok_or_else(|| DeserializeError::TypeMismatch {
                 expected: "known enum variant",

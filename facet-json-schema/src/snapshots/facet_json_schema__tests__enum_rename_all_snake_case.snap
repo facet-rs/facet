@@ -1,0 +1,27 @@
+---
+source: facet-json-schema/src/lib.rs
+expression: schema
+---
+{
+  "$schema": null,
+  "$ref": null,
+  "$defs": null,
+  "type": "string",
+  "properties": null,
+  "required": null,
+  "additionalProperties": null,
+  "items": null,
+  "enum": [
+    "circular_dependency",
+    "invalid_naming",
+    "unknown_requirement"
+  ],
+  "minimum": null,
+  "maximum": null,
+  "oneOf": null,
+  "anyOf": null,
+  "allOf": null,
+  "description": null,
+  "title": "ValidationErrorCode",
+  "const": null
+}
