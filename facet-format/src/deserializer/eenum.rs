@@ -298,6 +298,12 @@ where
             return Ok(wip);
         }
 
+        // Check if variant has any flattened fields
+        let has_flatten = variant_fields.iter().any(|f| f.is_flattened());
+
+        // Track currently open path segments for flatten handling: (field_name, is_option)
+        let mut open_segments: alloc::vec::Vec<(&str, bool)> = alloc::vec::Vec::new();
+
         // Process all fields (they can come in any order now)
         loop {
             let event = self.expect_event("value")?;
@@ -310,21 +316,69 @@ where
                         continue;
                     }
 
-                    // Look up field in variant's fields by name/alias
-                    let field_info = variant_fields
-                        .iter()
-                        .enumerate()
-                        .find(|(_, f)| Self::field_matches(f, key.name.as_ref()));
+                    if has_flatten {
+                        // Use path-based lookup for variants with flattened fields
+                        if let Some(path) = find_field_path(variant_fields, key.name.as_ref()) {
+                            // Find common prefix with currently open segments
+                            let common_len = open_segments
+                                .iter()
+                                .zip(path.iter())
+                                .take_while(|((name, _), b)| *name == **b)
+                                .count();
 
-                    if let Some((idx, _field)) = field_info {
-                        wip = wip
-                            .begin_nth_field(idx)
-                            .map_err(DeserializeError::reflect)?;
-                        wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                            // Close segments that are no longer needed (in reverse order)
+                            while open_segments.len() > common_len {
+                                let (_, is_option) = open_segments.pop().unwrap();
+                                if is_option {
+                                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                                }
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
+                            }
+
+                            // Open new segments
+                            for &field_name in &path[common_len..] {
+                                wip = wip
+                                    .begin_field(field_name)
+                                    .map_err(DeserializeError::reflect)?;
+                                let is_option = matches!(wip.shape().def, Def::Option(_));
+                                if is_option {
+                                    wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                                }
+                                open_segments.push((field_name, is_option));
+                            }
+
+                            // Deserialize the value
+                            wip = self.deserialize_into(wip)?;
+
+                            // Close the leaf field we just deserialized into
+                            // (but keep parent segments open for potential sibling fields)
+                            if let Some((_, is_option)) = open_segments.pop() {
+                                if is_option {
+                                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                                }
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
+                            }
+                        } else {
+                            // Unknown field - skip
+                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                        }
                     } else {
-                        // Unknown field - skip
-                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                        // Simple case: direct field lookup by name/alias
+                        let field_info = variant_fields
+                            .iter()
+                            .enumerate()
+                            .find(|(_, f)| Self::field_matches(f, key.name.as_ref()));
+
+                        if let Some((idx, _field)) = field_info {
+                            wip = wip
+                                .begin_nth_field(idx)
+                                .map_err(DeserializeError::reflect)?;
+                            wip = self.deserialize_into(wip)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        } else {
+                            // Unknown field - skip
+                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                        }
                     }
                 }
                 other => {
@@ -336,6 +390,14 @@ where
                     });
                 }
             }
+        }
+
+        // Close any remaining open segments
+        while let Some((_, is_option)) = open_segments.pop() {
+            if is_option {
+                wip = wip.end().map_err(DeserializeError::reflect)?;
+            }
+            wip = wip.end().map_err(DeserializeError::reflect)?;
         }
 
         // Defaults for missing fields are applied automatically by facet-reflect's
@@ -1301,4 +1363,47 @@ where
 
         Ok(wip)
     }
+}
+
+/// Find a field path through flattened fields.
+///
+/// Given a list of fields and a serialized key name, finds the path of field names
+/// to navigate to reach that key. For flattened fields, this recursively searches
+/// through the flattened struct's fields.
+///
+/// Returns `Some(path)` where path is a Vec of field names (e.g., `["base", "name"]`),
+/// or `None` if the key doesn't match any field.
+fn find_field_path(
+    fields: &'static [facet_core::Field],
+    key: &str,
+) -> Option<alloc::vec::Vec<&'static str>> {
+    for field in fields {
+        // Check if this field matches directly (by effective name or alias)
+        if field.effective_name() == key {
+            return Some(alloc::vec![field.name]);
+        }
+
+        // Check alias
+        if field.alias == Some(key) {
+            return Some(alloc::vec![field.name]);
+        }
+
+        // If this is a flattened field, search recursively
+        if field.is_flattened() {
+            let shape = field.shape();
+            // Unwrap Option if present
+            let inner_shape = match shape.def {
+                Def::Option(opt) => opt.t,
+                _ => shape,
+            };
+
+            if let Type::User(UserType::Struct(inner_struct)) = inner_shape.ty
+                && let Some(mut inner_path) = find_field_path(inner_struct.fields, key)
+            {
+                inner_path.insert(0, field.name);
+                return Some(inner_path);
+            }
+        }
+    }
+    None
 }
