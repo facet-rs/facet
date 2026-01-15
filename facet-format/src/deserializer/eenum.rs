@@ -91,6 +91,7 @@ where
             };
             // First try exact match, then fall back to #[facet(other)] variant
             let by_display = Self::find_variant_by_display_name(enum_def, tag_name);
+            let is_using_other_fallback = by_display.is_none();
             let variant_name = by_display
                 .or_else(|| {
                     enum_def
@@ -109,8 +110,14 @@ where
             wip = wip
                 .select_variant_named(variant_name)
                 .map_err(DeserializeError::reflect)?;
-            // Deserialize the variant content
-            wip = self.deserialize_enum_variant_content(wip)?;
+
+            // For #[facet(other)] variants, check for #[facet(tag)] and #[facet(content)] fields
+            if is_using_other_fallback {
+                wip = self.deserialize_other_variant_with_captured_tag(wip, tag_name)?;
+            } else {
+                // Deserialize the variant content normally
+                wip = self.deserialize_enum_variant_content(wip)?;
+            }
             return Ok(wip);
         }
 
@@ -826,9 +833,28 @@ where
             StructKind::Tuple | StructKind::TupleStruct => {
                 if variant_fields.len() == 1 {
                     // Newtype variant - content is the single field's value
+                    // Some formats (like Styx) wrap the value in a sequence, so we unwrap it
+                    let event = self.expect_peek("value")?;
+                    let wrapped_in_sequence = matches!(event, ParseEvent::SequenceStart(_));
+                    if wrapped_in_sequence {
+                        self.expect_event("value")?; // consume SequenceStart
+                    }
+
                     wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
                     wip = self.deserialize_into(wip)?;
                     wip = wip.end().map_err(DeserializeError::reflect)?;
+
+                    if wrapped_in_sequence {
+                        let end_event = self.expect_event("value")?;
+                        if !matches!(end_event, ParseEvent::SequenceEnd) {
+                            return Err(DeserializeError::TypeMismatch {
+                                expected: "sequence end for newtype variant",
+                                got: format!("{end_event:?}"),
+                                span: self.last_span,
+                                path: None,
+                            });
+                        }
+                    }
                 } else {
                     // Multi-field tuple variant - expect array or struct (for XML/TOML with numeric keys)
                     let event = self.expect_event("value")?;
@@ -1197,5 +1223,88 @@ where
                 path: None,
             }),
         }
+    }
+
+    /// Deserialize an `#[facet(other)]` variant that may have `#[facet(tag)]` and `#[facet(content)]` fields.
+    ///
+    /// This is called when a VariantTag event didn't match any known variant and we're falling
+    /// back to an `#[facet(other)]` variant. The tag name is captured and stored in the
+    /// `#[facet(tag)]` field, while the payload is deserialized into the `#[facet(content)]` field.
+    fn deserialize_other_variant_with_captured_tag(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        captured_tag: &'input str,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        let variant = wip
+            .selected_variant()
+            .ok_or_else(|| DeserializeError::TypeMismatch {
+                expected: "selected variant",
+                got: "no variant selected".into(),
+                span: self.last_span,
+                path: None,
+            })?;
+
+        let variant_fields = variant.data.fields;
+
+        // Find tag and content field indices
+        let tag_field_idx = variant_fields.iter().position(|f| f.is_variant_tag());
+        let content_field_idx = variant_fields.iter().position(|f| f.is_variant_content());
+
+        // If no tag field and no content field, fall back to regular deserialization
+        if tag_field_idx.is_none() && content_field_idx.is_none() {
+            return self.deserialize_enum_variant_content(wip);
+        }
+
+        // Set the tag field to the captured tag name
+        if let Some(idx) = tag_field_idx {
+            wip = wip
+                .begin_nth_field(idx)
+                .map_err(DeserializeError::reflect)?;
+            wip = self.set_string_value(wip, Cow::Borrowed(captured_tag))?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
+        }
+
+        // Deserialize the content into the content field (if present)
+        if let Some(idx) = content_field_idx {
+            // Some formats (like Styx) wrap the payload in a sequence, so we unwrap it
+            let event = self.expect_peek("value")?;
+            let wrapped_in_sequence = matches!(event, ParseEvent::SequenceStart(_));
+            if wrapped_in_sequence {
+                self.expect_event("value")?; // consume SequenceStart
+            }
+
+            wip = wip
+                .begin_nth_field(idx)
+                .map_err(DeserializeError::reflect)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
+
+            if wrapped_in_sequence {
+                let end_event = self.expect_event("value")?;
+                if !matches!(end_event, ParseEvent::SequenceEnd) {
+                    return Err(DeserializeError::TypeMismatch {
+                        expected: "sequence end for #[facet(content)] field",
+                        got: format!("{end_event:?}"),
+                        span: self.last_span,
+                        path: None,
+                    });
+                }
+            }
+        } else {
+            // No content field - the payload must be Unit
+            let event = self.expect_peek("value")?;
+            if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
+                self.expect_event("value")?; // consume Unit
+            } else {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "unit payload for #[facet(other)] variant without #[facet(content)]",
+                    got: format!("{event:?}"),
+                    span: self.last_span,
+                    path: None,
+                });
+            }
+        }
+
+        Ok(wip)
     }
 }
