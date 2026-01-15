@@ -107,6 +107,23 @@ pub trait FormatParser<'de> {
         // Default: ignore (self-describing formats don't need this)
     }
 
+    /// Hint to the parser that a byte sequence (`Vec<u8>`, `&[u8]`, etc.) is expected.
+    ///
+    /// For binary formats like postcard that store `Vec<u8>` as raw bytes (varint length
+    /// followed by raw data), this allows bulk reading instead of element-by-element
+    /// deserialization.
+    ///
+    /// If the parser handles this hint, it should emit `Scalar(Bytes(...))` directly.
+    /// If it doesn't support this optimization, it should return `false` and the
+    /// deserializer will fall back to element-by-element deserialization via `hint_sequence`.
+    ///
+    /// Returns `true` if the hint is handled (parser will emit `Scalar(Bytes(...))`),
+    /// `false` otherwise.
+    fn hint_byte_sequence(&mut self) -> bool {
+        // Default: not supported, fall back to element-by-element
+        false
+    }
+
     /// Hint to the parser that a fixed-size array is expected.
     ///
     /// For non-self-describing formats, this tells the parser the array length
