@@ -1428,3 +1428,20 @@ fn issue_aria_label_roundtrip() {
 
     assert_eq!(serialized, reserialized, "Roundtrip should be idempotent");
 }
+
+#[test]
+fn doctype_roundtrip() {
+    let html = r#"<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body><p>Hello</p></body>
+</html>"#;
+
+    let doc: Html = facet_html::from_str(html).expect("parse");
+    eprintln!("doctype field: {:?}", doc.doctype);
+    
+    let serialized = facet_html::to_string(&doc).expect("serialize");
+    eprintln!("serialized:\n{}", serialized);
+    
+    assert!(serialized.contains("<!DOCTYPE"), "DOCTYPE should be preserved in roundtrip");
+}

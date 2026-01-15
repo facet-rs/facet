@@ -457,11 +457,20 @@ impl DomSerializer for HtmlSerializer {
             return Ok(());
         }
 
-        // Handle doctype pseudo-attribute
-        // Note: DOCTYPE should come before the html element, but by the time we see
-        // the doctype attribute, we've already started the element. This is a limitation
-        // of the current approach. For proper DOCTYPE handling, use a dedicated field.
+        // Handle doctype pseudo-attribute: prepend DOCTYPE before the opening tag
         if name == "doctype" {
+            if let Some(value_str) = scalar_to_string(value, self.options.float_formatter) {
+                // Prepend DOCTYPE before the element we already started
+                let mut new_out = Vec::new();
+                new_out.extend_from_slice(b"<!DOCTYPE ");
+                new_out.extend_from_slice(value_str.as_bytes());
+                new_out.push(b'>');
+                if self.options.pretty {
+                    new_out.push(b'\n');
+                }
+                new_out.append(&mut self.out);
+                self.out = new_out;
+            }
             return Ok(());
         }
 
