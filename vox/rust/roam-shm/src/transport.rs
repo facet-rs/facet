@@ -497,7 +497,7 @@ impl ShmGuestTransport {
                         continue;
                     } else {
                         // No doorbell - can't wait, must fail
-                        return Err(io::Error::new(io::ErrorKind::Other, "slot exhausted"));
+                        return Err(io::Error::other("slot exhausted"));
                     }
                 }
                 Err(SendError::RingFull) => {
@@ -508,7 +508,7 @@ impl ShmGuestTransport {
                         debug!("ring full: doorbell rang, retrying send");
                         continue;
                     } else {
-                        return Err(io::Error::new(io::ErrorKind::Other, "ring full"));
+                        return Err(io::Error::other("ring full"));
                     }
                 }
                 Err(SendError::HostGoodbye) => {
@@ -623,11 +623,11 @@ impl<'a> ShmHostGuestTransport<'a> {
                 SendError::PeerNotAttached => {
                     io::Error::new(io::ErrorKind::NotConnected, "peer not attached")
                 }
-                SendError::RingFull => io::Error::new(io::ErrorKind::Other, "ring full"),
+                SendError::RingFull => io::Error::other("ring full"),
                 SendError::PayloadTooLarge => {
                     io::Error::new(io::ErrorKind::InvalidData, "payload too large")
                 }
-                SendError::SlotExhausted => io::Error::new(io::ErrorKind::Other, "slot exhausted"),
+                SendError::SlotExhausted => io::Error::other("slot exhausted"),
             }
         })
     }

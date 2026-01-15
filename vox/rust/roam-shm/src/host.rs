@@ -824,7 +824,8 @@ impl ShmHost {
     ///
     /// shm[impl shm.doorbell.ring-integration]
     pub async fn ring_doorbell(&self, peer_id: PeerId) -> Option<SignalResult> {
-        if let Some(doorbell) = self.guests
+        if let Some(doorbell) = self
+            .guests
             .get(&peer_id)
             .and_then(|state| state.doorbell.as_ref())
         {

@@ -18,7 +18,6 @@ fn init_tracing() {
 
 use roam_session::{Rx, Tx};
 use roam_shm::driver::{establish_guest, establish_multi_peer_host};
-use roam_shm::guest::ShmGuest;
 use roam_shm::host::ShmHost;
 use roam_shm::layout::SegmentConfig;
 use roam_shm::peer::PeerId;

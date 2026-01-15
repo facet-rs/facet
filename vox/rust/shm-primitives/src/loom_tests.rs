@@ -5,8 +5,6 @@ use crate::spsc::{SpscRing, SpscRingHeader, SpscRingRaw};
 use crate::sync::{AtomicU32, Ordering, thread};
 use crate::treiber::{AllocResult, SlotHandle, TreiberSlab, TreiberSlabHeader, TreiberSlabRaw};
 use crate::{SlotMeta, SlotState};
-use alloc::vec;
-use alloc::vec::Vec;
 use core::mem::size_of;
 use loom::sync::Arc;
 
@@ -35,7 +33,7 @@ fn spsc_ring_concurrent() {
         let consumer_thread = thread::spawn(move || {
             let _keep = consumer_owner;
             let (_, mut consumer) = consumer_ring.split();
-            let mut received = alloc::vec::Vec::new();
+            let mut received = Vec::new();
             while received.len() < 3 {
                 if let Some(v) = consumer.try_pop() {
                     received.push(v);

@@ -147,13 +147,11 @@ impl Doorbell {
                     Err(e) => Err(e),
                 }
             }
-            DoorbellPipe::Client(client) => {
-                match client.ready(Interest::WRITABLE).await {
-                    Ok(ready) if ready.is_writable() => client.try_write(&buf),
-                    Ok(_) => return SignalResult::BufferFull,
-                    Err(e) => Err(e),
-                }
-            }
+            DoorbellPipe::Client(client) => match client.ready(Interest::WRITABLE).await {
+                Ok(ready) if ready.is_writable() => client.try_write(&buf),
+                Ok(_) => return SignalResult::BufferFull,
+                Err(e) => Err(e),
+            },
         };
 
         let signal_result = match result {

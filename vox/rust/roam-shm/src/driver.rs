@@ -761,7 +761,10 @@ impl MultiPeerHostDriverBuilder {
                         trace!("Doorbell accept failed for peer {:?}: {:?}", peer_id, e);
                         return;
                     }
-                    trace!("Doorbell waiter: accepted connection for peer {:?}", peer_id);
+                    trace!(
+                        "Doorbell waiter: accepted connection for peer {:?}",
+                        peer_id
+                    );
                     loop {
                         trace!("Doorbell waiter: waiting for peer {:?}", peer_id);
                         match doorbell.wait().await {
@@ -990,7 +993,10 @@ impl MultiPeerHostDriver {
                             trace!("Doorbell accept failed for peer {:?}: {:?}", peer_id, e);
                             return;
                         }
-                        trace!("Doorbell waiter: accepted connection for peer {:?}", peer_id);
+                        trace!(
+                            "Doorbell waiter: accepted connection for peer {:?}",
+                            peer_id
+                        );
                         loop {
                             trace!("Doorbell waiter: waiting for peer {:?}", peer_id);
                             match doorbell.wait().await {

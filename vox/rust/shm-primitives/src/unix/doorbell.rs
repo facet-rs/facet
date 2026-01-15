@@ -141,7 +141,7 @@ impl Doorbell {
 
     /// Create a Doorbell from a raw file descriptor (plugin side).
     ///
-    /// Prefer [`from_handle`] for cross-platform code.
+    /// Prefer [`Self::from_handle`] for cross-platform code.
     ///
     /// # Safety
     ///
