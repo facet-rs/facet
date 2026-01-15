@@ -31,13 +31,15 @@ impl LocalListener {
     /// The name should be a Windows named pipe path like `\\.\pipe\my-pipe`.
     /// Unlike Unix sockets, named pipes don't create files - they exist in a
     /// virtual namespace managed by Windows.
+    ///
+    /// Note: We don't use `first_pipe_instance(true)` because we want to allow
+    /// taking over from a stale/crashed daemon. If another server exists and is
+    /// actively using the pipe, clients will connect to whichever server is
+    /// available - this is fine for our use case.
     pub fn bind(pipe_name: impl Into<String>) -> io::Result<Self> {
         let pipe_name = pipe_name.into();
 
-        // Create the first server instance
-        let next_server = ServerOptions::new()
-            .first_pipe_instance(true)
-            .create(&pipe_name)?;
+        let next_server = ServerOptions::new().create(&pipe_name)?;
 
         Ok(Self {
             pipe_name,
