@@ -385,7 +385,7 @@ impl<'de> PostcardParser<'de> {
                         *field_key_emitted = true;
                     }
                     Ok(ParseEvent::FieldKey(FieldKey {
-                        name: Cow::Owned(variant_name.clone()),
+                        name: Some(Cow::Owned(variant_name.clone())),
                         location: FieldLocationHint::KeyValue,
                     }))
                 } else if !wrapper_start_emitted {
@@ -531,7 +531,7 @@ impl<'de> PostcardParser<'de> {
                         *expecting_key = false;
                     }
                     Ok(ParseEvent::FieldKey(FieldKey {
-                        name: Cow::Borrowed(key),
+                        name: Some(Cow::Borrowed(key)),
                         location: FieldLocationHint::KeyValue,
                     }))
                 } else {
