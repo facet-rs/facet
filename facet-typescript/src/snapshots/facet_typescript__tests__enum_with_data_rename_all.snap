@@ -1,0 +1,7 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts
+---
+export type Message =
+  | { text_message: { content: string } }
+  | { image_upload: { url: string; width: number } };

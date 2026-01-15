@@ -1,0 +1,5 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts
+---
+export type GitStatus = "dirty" | "staged" | "clean";

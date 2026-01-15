@@ -1,0 +1,5 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts
+---
+export type ValidationErrorCode = "circular_dependency" | "invalid_naming" | "unknown_requirement";
