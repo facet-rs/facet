@@ -156,6 +156,8 @@ impl<'src> Lexer<'src> {
             // Comment or doc comment
             '/' if self.starts_with("///") => self.lex_doc_comment(),
             '/' if self.starts_with("//") => self.lex_line_comment(),
+            // Single / is a bare scalar (e.g., /usr/bin/foo)
+            '/' => self.lex_bare_scalar(),
 
             // Heredoc
             '<' if self.starts_with("<<") => self.lex_heredoc_start(),
@@ -672,5 +674,20 @@ mod tests {
                 .iter()
                 .any(|t| t.0 == TokenKind::Error)
         );
+    }
+
+    #[test]
+    fn test_slash_in_bare_scalar() {
+        // Single slash followed by text should be a bare scalar
+        let tokens = lex("/foo");
+        assert_eq!(tokens, vec![(TokenKind::BareScalar, "/foo")]);
+
+        // Path-like value
+        let tokens = lex("/usr/bin/foo");
+        assert_eq!(tokens, vec![(TokenKind::BareScalar, "/usr/bin/foo")]);
+
+        // But // is still a comment
+        let tokens = lex("// comment");
+        assert_eq!(tokens, vec![(TokenKind::LineComment, "// comment")]);
     }
 }
