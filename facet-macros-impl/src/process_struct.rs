@@ -98,6 +98,27 @@ impl<'a> TraitSources<'a> {
     }
 }
 
+/// Generate a phantom use statement that links the attribute span to its Attr variant.
+///
+/// This enables IDE hover documentation when users mouse over attribute names like `proxy`
+/// in `#[facet(proxy)]`. By generating `{ use facet::builtin::Attr::Proxy as _; }` where
+/// `Proxy` has the same span as the source `proxy`, the IDE can follow the connection and
+/// show the Attr variant's documentation.
+pub(crate) fn phantom_attr_use(
+    attr: &PFacetAttr,
+    facet_crate: &TokenStream,
+) -> Option<TokenStream> {
+    if !attr.is_builtin() {
+        return None;
+    }
+    let binding = attr.key_str();
+    let variant_name = RenameRule::PascalCase.apply(&binding);
+
+    // Create ident with the attribute's source span - this is the key to IDE hover!
+    let variant_ident = proc_macro2::Ident::new(&variant_name, attr.key.span());
+    Some(quote! { { use #facet_crate::builtin::Attr::#variant_ident as _; } })
+}
+
 /// Generates the vtable for a type based on trait sources.
 ///
 /// Uses a layered approach for each trait:
@@ -884,11 +905,8 @@ pub(crate) fn gen_field_from_pfield(
                         default_value = Some(DefaultKind::FromTrait);
                     } else {
                         // #[facet(default = expr)] - use custom expression
-                        // Parse `= expr` to get just the expr
-                        let args_str = args.to_string();
-                        let expr_str = args_str.trim_start_matches('=').trim();
-                        let expr: TokenStream = expr_str.parse().unwrap_or_else(|_| args.clone());
-                        default_value = Some(DefaultKind::Custom(expr));
+                        // Use args directly to preserve spans for IDE hover/navigation
+                        default_value = Some(DefaultKind::Custom(args.clone()));
                     }
                 }
                 "recursive_type" => {
@@ -912,10 +930,8 @@ pub(crate) fn gen_field_from_pfield(
                 "skip_serializing_if" => {
                     // User provides a function name: #[facet(skip_serializing_if = fn_name)]
                     // We need to wrap it in a type-erased function that takes PtrConst
-                    let args = &attr.args;
-                    let args_str = args.to_string();
-                    let fn_name_str = args_str.trim_start_matches('=').trim();
-                    let fn_name: TokenStream = fn_name_str.parse().unwrap_or_else(|_| args.clone());
+                    // Use args directly to preserve spans for IDE hover/navigation
+                    let fn_name = &attr.args;
                     // Generate a wrapper function that converts PtrConst to the expected type
                     skip_serializing_if_value = Some(quote! {
                         {
@@ -932,18 +948,14 @@ pub(crate) fn gen_field_from_pfield(
                 }
                 "invariants" => {
                     // User provides a function name: #[facet(invariants = fn_name)]
-                    let args = &attr.args;
-                    let args_str = args.to_string();
-                    let fn_name_str = args_str.trim_start_matches('=').trim();
-                    let fn_name: TokenStream = fn_name_str.parse().unwrap_or_else(|_| args.clone());
+                    // Use args directly to preserve spans for IDE hover/navigation
+                    let fn_name = &attr.args;
                     invariants_value = Some(quote! { #fn_name });
                 }
                 "proxy" => {
                     // User provides a type: #[facet(proxy = ProxyType)]
-                    let args = &attr.args;
-                    let args_str = args.to_string();
-                    let type_str = args_str.trim_start_matches('=').trim();
-                    let proxy_type: TokenStream = type_str.parse().unwrap_or_else(|_| args.clone());
+                    // Use args directly to preserve spans for IDE hover/navigation
+                    let proxy_type = &attr.args;
                     // Generate a full ProxyDef with convert functions for field-level proxy
                     proxy_value = Some(quote! {
                         &const {
@@ -1306,10 +1318,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             if args.is_empty() {
                 return None;
             }
-            let args_str = args.to_string();
-            let fn_name_str = args_str.trim_start_matches('=').trim();
-            let fn_name: TokenStream = fn_name_str.parse().unwrap_or_else(|_| args.clone());
-            Some(fn_name)
+            // Use args directly to preserve spans for IDE hover/navigation
+            Some(args.clone())
         } else {
             None
         }
@@ -1317,6 +1327,29 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
     // Get the facet crate path (custom or default ::facet)
     let facet_crate = ps.container.attrs.facet_crate();
+
+    // Collect phantom use statements for IDE hover support on attribute names.
+    // These link attribute spans to their facet::builtin::Attr variants.
+    let mut phantom_attr_uses: Vec<TokenStream> = Vec::new();
+    // Container-level attributes
+    for attr in &ps.container.attrs.facet {
+        if let Some(phantom) = phantom_attr_use(attr, &facet_crate) {
+            phantom_attr_uses.push(phantom);
+        }
+    }
+    // Field-level attributes
+    let fields: &[PStructField] = match &ps.kind {
+        PStructKind::Struct { fields } => fields,
+        PStructKind::TupleStruct { fields } => fields,
+        PStructKind::UnitStruct => &[],
+    };
+    for field in fields {
+        for attr in &field.attrs.facet {
+            if let Some(phantom) = phantom_attr_use(attr, &facet_crate) {
+                phantom_attr_uses.push(phantom);
+            }
+        }
+    }
 
     let type_name_fn =
         generate_type_name_fn(struct_name, parsed.generics.as_ref(), opaque, &facet_crate);
@@ -1937,8 +1970,20 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         has_type_or_const_generics,
     );
 
+    // Generate phantom use block for IDE hover support on attribute names.
+    // This links attribute spans to facet::builtin::Attr variants.
+    let phantom_attr_block = if phantom_attr_uses.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            const _: () = { #(#phantom_attr_uses)* };
+        }
+    };
+
     // Final quote block using refactored parts
     let result = quote! {
+        #phantom_attr_block
+
         #dead_code_suppression
 
         #trait_assertion_fn

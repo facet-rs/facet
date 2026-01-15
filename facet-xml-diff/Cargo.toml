@@ -10,6 +10,11 @@ keywords = ["xml", "diff", "facet", "serialization"]
 categories = ["encoding", "visualization"]
 homepage = "https://facet.rs"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.42.0" }
 facet-diff-core = { path = "../facet-diff-core", version = "0.42.0" }

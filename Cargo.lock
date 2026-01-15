@@ -1590,6 +1590,7 @@ dependencies = [
  "num-complex",
  "owo-colors",
  "static_assertions",
+ "tempfile",
 ]
 
 [[package]]

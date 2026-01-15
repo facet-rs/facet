@@ -120,6 +120,9 @@ helpful-derive = ["facet-macros/helpful-derive"]
 # Does nothing outside of tests; used to ensure cfg_attr handling keeps working.
 testfeat = []
 
+# Enable slow tests (compile tests)
+slow-tests = []
+
 [build-dependencies]
 autocfg = { workspace = true }
 
@@ -135,6 +138,7 @@ facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 num-complex = "0.4.6"
 owo-colors = "4.2.2"
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
