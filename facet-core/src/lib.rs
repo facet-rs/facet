@@ -104,6 +104,13 @@ pub mod 𝟋 {
     pub use crate::VariantBuilder as 𝟋VarB;
     pub use ::core::option::Option::None as 𝟋None;
     pub use ::core::option::Option::Some as 𝟋Some;
+    pub use ::core::result::Result::Err as 𝟋Err;
+    pub use ::core::result::Result::Ok as 𝟋Ok;
+
+    // === Core utility re-exports ===
+    pub use ::core::mem::forget as 𝟋forget;
+    pub use ::core::mem::transmute as 𝟋transmute;
+    pub use ::core::ptr::drop_in_place as 𝟋drop_in_place;
 
     /// Helper to get shape of a type as a function - monomorphized per type
     pub use crate::shape_of as 𝟋shp;

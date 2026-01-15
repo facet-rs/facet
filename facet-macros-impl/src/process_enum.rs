@@ -356,8 +356,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
                         let proxy: #proxy_type = proxy_ptr.read();
                         match <#enum_type #bgp_display as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
-                            ::core::result::Result::Ok(value) => ::core::result::Result::Ok(field_ptr.put(value)),
-                            ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                            𝟋Ok(value) => 𝟋Ok(field_ptr.put(value)),
+                            𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
                         }
                     }
 
@@ -367,8 +367,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
                         let field_ref: &#enum_type #bgp_display = field_ptr.get();
                         match <#proxy_type as ::core::convert::TryFrom<&#enum_type #bgp_display>>::try_from(field_ref) {
-                            ::core::result::Result::Ok(proxy) => ::core::result::Result::Ok(proxy_ptr.put(proxy)),
-                            ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                            𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
+                            𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
                         }
                     }
 
