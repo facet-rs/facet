@@ -1,22 +1,22 @@
 [package]
 name = "facet-styx"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 
 [dependencies]
-facet-core = "0.42"
-facet-format = "0.42"
-facet-reflect = "0.42"
-styx-format = { path = "../styx-format" }
-styx-parse = { path = "../styx-parse" }
+facet-core.workspace = true
+facet-format.workspace = true
+facet-reflect.workspace = true
+styx-format.workspace = true
+styx-parse.workspace = true
 
 # Tracing (optional - compiles to nothing when disabled)
-tracing = { version = "0.1", optional = true }
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
-facet = "0.42"
-tracing = "0.1"
-facet-testhelpers = { path = "../../../facet/facet-testhelpers" }
+facet.workspace = true
+tracing.workspace = true
+facet-testhelpers.workspace = true
 
 [features]
 tracing = ["dep:tracing", "facet-format/tracing", "facet-reflect/tracing"]

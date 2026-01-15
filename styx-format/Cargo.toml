@@ -1,9 +1,19 @@
 [package]
 name = "styx-format"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 description = "Core formatting and parsing utilities for Styx"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 
 [dependencies]
-styx-parse = { path = "../styx-parse" }
+styx-parse.workspace = true
+
+# Tracing (optional - compiles to nothing when disabled)
+tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+tracing.workspace = true
+facet-testhelpers.workspace = true
+
+[features]
+tracing = ["dep:tracing", "styx-parse/tracing"]

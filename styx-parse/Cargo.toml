@@ -1,18 +1,18 @@
 [package]
 name = "styx-parse"
 version = "0.1.0"
-edition = "2024"
-license = "MIT OR Apache-2.0"
+edition.workspace = true
+license.workspace = true
 description = "Event-based parser for the Styx configuration language"
-repository = "https://github.com/bearcove/styx"
+repository.workspace = true
 
 [features]
 default = []
 tracing = ["dep:tracing"]
 
 [dependencies]
-tracing = { version = "0.1", optional = true }
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing.workspace = true
+facet-testhelpers.workspace = true
