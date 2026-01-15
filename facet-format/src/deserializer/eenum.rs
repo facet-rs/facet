@@ -833,28 +833,9 @@ where
             StructKind::Tuple | StructKind::TupleStruct => {
                 if variant_fields.len() == 1 {
                     // Newtype variant - content is the single field's value
-                    // Some formats (like Styx) wrap the value in a sequence, so we unwrap it
-                    let event = self.expect_peek("value")?;
-                    let wrapped_in_sequence = matches!(event, ParseEvent::SequenceStart(_));
-                    if wrapped_in_sequence {
-                        self.expect_event("value")?; // consume SequenceStart
-                    }
-
                     wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
                     wip = self.deserialize_into(wip)?;
                     wip = wip.end().map_err(DeserializeError::reflect)?;
-
-                    if wrapped_in_sequence {
-                        let end_event = self.expect_event("value")?;
-                        if !matches!(end_event, ParseEvent::SequenceEnd) {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "sequence end for newtype variant",
-                                got: format!("{end_event:?}"),
-                                span: self.last_span,
-                                path: None,
-                            });
-                        }
-                    }
                 } else {
                     // Multi-field tuple variant - expect array or struct (for XML/TOML with numeric keys)
                     let event = self.expect_event("value")?;
@@ -1266,30 +1247,11 @@ where
 
         // Deserialize the content into the content field (if present)
         if let Some(idx) = content_field_idx {
-            // Some formats (like Styx) wrap the payload in a sequence, so we unwrap it
-            let event = self.expect_peek("value")?;
-            let wrapped_in_sequence = matches!(event, ParseEvent::SequenceStart(_));
-            if wrapped_in_sequence {
-                self.expect_event("value")?; // consume SequenceStart
-            }
-
             wip = wip
                 .begin_nth_field(idx)
                 .map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
             wip = wip.end().map_err(DeserializeError::reflect)?;
-
-            if wrapped_in_sequence {
-                let end_event = self.expect_event("value")?;
-                if !matches!(end_event, ParseEvent::SequenceEnd) {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "sequence end for #[facet(content)] field",
-                        got: format!("{end_event:?}"),
-                        span: self.last_span,
-                        path: None,
-                    });
-                }
-            }
         } else {
             // No content field - the payload must be Unit
             let event = self.expect_peek("value")?;
