@@ -770,6 +770,30 @@ where
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         trace!("deserialize_list: starting");
+
+        // Check if this is a Vec<u8> - if so, try the optimized byte sequence path
+        let is_byte_list = matches!(
+            &wip.shape().def,
+            Def::List(list_def) if list_def.t.type_identifier == "u8"
+        );
+
+        if is_byte_list && self.parser.hint_byte_sequence() {
+            // Parser supports bulk byte reading - expect Scalar(Bytes(...))
+            let event = self.expect_event("bytes")?;
+            trace!(?event, "deserialize_list: got bytes event");
+
+            return match event {
+                ParseEvent::Scalar(ScalarValue::Bytes(bytes)) => self.set_bytes_value(wip, bytes),
+                _ => Err(DeserializeError::TypeMismatch {
+                    expected: "bytes",
+                    got: format!("{event:?}"),
+                    span: self.last_span,
+                    path: None,
+                }),
+            };
+        }
+
+        // Fallback: element-by-element deserialization
         // Hint to non-self-describing parsers that a sequence is expected
         self.parser.hint_sequence();
 

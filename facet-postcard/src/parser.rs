@@ -70,6 +70,8 @@ pub struct PostcardParser<'de> {
     pending_scalar_type: Option<ScalarTypeHint>,
     /// Pending sequence flag from `hint_sequence`.
     pending_sequence: bool,
+    /// Pending byte sequence flag from `hint_byte_sequence`.
+    pending_byte_sequence: bool,
     /// Pending fixed-size array length from `hint_array`.
     pending_array: Option<usize>,
     /// Pending option flag from `hint_option`.
@@ -103,6 +105,7 @@ impl<'de> PostcardParser<'de> {
             pending_struct_fields: None,
             pending_scalar_type: None,
             pending_sequence: false,
+            pending_byte_sequence: false,
             pending_array: None,
             pending_option: false,
             pending_enum: None,
@@ -295,6 +298,13 @@ impl<'de> PostcardParser<'de> {
                 remaining_elements: count,
             });
             return Ok(ParseEvent::SequenceStart(ContainerKind::Array));
+        }
+
+        // Check if we have a pending byte sequence hint (bulk read for Vec<u8>)
+        if self.pending_byte_sequence {
+            self.pending_byte_sequence = false;
+            let bytes = self.parse_bytes()?;
+            return Ok(ParseEvent::Scalar(ScalarValue::Bytes(Cow::Borrowed(bytes))));
         }
 
         // Check if we have a pending fixed-size array hint (length known from type, no wire prefix)
@@ -970,6 +980,15 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
         if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
             self.peeked = None;
         }
+    }
+
+    fn hint_byte_sequence(&mut self) -> bool {
+        self.pending_byte_sequence = true;
+        // Clear any peeked OrderedField placeholder
+        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+            self.peeked = None;
+        }
+        true // Postcard supports bulk byte reading
     }
 
     fn hint_array(&mut self, len: usize) {
