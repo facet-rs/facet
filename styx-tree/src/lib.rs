@@ -108,6 +108,12 @@ mod tests {
     #[test]
     fn test_schema_tree_structure() {
         // Parse a schema-like document to understand the tree structure
+        // Structure:
+        //   schema {
+        //     @ @object {        // @ is unit key, @object {...} is the value
+        //       name @string     // @object is tagged unit key, {...} is value
+        //     }
+        //   }
         let source = r#"schema {
   @ @object {
     name @string
@@ -123,29 +129,37 @@ mod tests {
         let schema = obj.get("schema").expect("should have schema key");
         let schema_obj = schema.as_object().expect("schema should be object");
 
-        // schema has one entry with key "@"
+        // schema has one entry with a unit key
         assert_eq!(schema_obj.len(), 1);
         let entry = &schema_obj.entries[0];
 
-        // Key is "@" as a bare scalar (not Unit - Unit is only for the value `@` with no tag)
-        assert_eq!(
-            entry.key.as_str(),
-            Some("@"),
-            "key should be '@', got {:?}",
+        // Key is unit (@ as a key means unit key)
+        assert!(
+            entry.key.is_unit(),
+            "key should be unit, got {:?}",
             entry.key
         );
 
-        // Value is an Object (implicit object after the key "@")
-        // The `@object { ... }` parses as key="object" value={...}
-        // NOT as a Tagged value! This is because we're in object context.
+        // Value is an Object (implicit from the key path expansion)
+        // Entry: @ @object {...} expands to key=@ value={@object: {...}}
         let inner_obj = entry.value.as_object().expect("value should be object");
 
-        // This object has one entry: key "object", value is another object
+        // This object has one entry with tagged unit key "@object"
         assert_eq!(inner_obj.len(), 1);
         let object_entry = &inner_obj.entries[0];
-        assert_eq!(object_entry.key.as_str(), Some("object"));
 
-        // The value of "object" is the inner object { name @string }
+        // Key is "@object" - a tagged unit (tag: "object", no payload)
+        assert_eq!(
+            object_entry.key.tag_name(),
+            Some("object"),
+            "@object key should have tag 'object'"
+        );
+        assert!(
+            object_entry.key.payload.is_none(),
+            "@object key should have no payload (unit)"
+        );
+
+        // The value of "@object" entry is the inner object { name @string }
         let payload_obj = object_entry.value.as_object().expect("should be object");
         assert_eq!(payload_obj.len(), 1);
 

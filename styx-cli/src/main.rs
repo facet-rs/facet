@@ -5,8 +5,10 @@
 //!   styx @<cmd> [args] [options]  - run a subcommand
 
 use std::io::{self, Read};
+use std::path::Path;
 
 use styx_format::{FormatOptions, format_value};
+use styx_schema::{SchemaFile, validate};
 use styx_tree::{Payload, Value};
 
 // ============================================================================
@@ -238,7 +240,11 @@ fn run_file_first(args: &[String]) -> Result<(), CliError> {
 
     // Validate if requested
     if opts.validate {
-        run_validation(&value, &source, opts.override_schema.as_deref())?;
+        run_validation(
+            &value,
+            opts.input.as_deref(),
+            opts.override_schema.as_deref(),
+        )?;
     }
 
     // Determine output format and destination
@@ -273,16 +279,129 @@ fn run_file_first(args: &[String]) -> Result<(), CliError> {
 }
 
 fn run_validation(
-    _value: &Value,
-    _source: &str,
-    _override_schema: Option<&str>,
+    value: &Value,
+    input_path: Option<&str>,
+    override_schema: Option<&str>,
 ) -> Result<(), CliError> {
-    // TODO: Implement validation
-    // 1. Look for @ key in document root for schema declaration
-    // 2. Or use override_schema if provided
-    // 3. Load and parse schema
-    // 4. Run styx_schema::validate
-    Err(CliError::Usage("--validate is not yet implemented".into()))
+    // Determine schema source
+    let schema_file = if let Some(schema_path) = override_schema {
+        // Use override schema
+        load_schema_file(schema_path)?
+    } else {
+        // Look for @ key in document root for schema declaration
+        let schema_ref = find_schema_declaration(value)?;
+        match schema_ref {
+            SchemaRef::External(path) => {
+                // Resolve relative to input file's directory
+                let resolved = resolve_schema_path(&path, input_path)?;
+                load_schema_file(&resolved)?
+            }
+            SchemaRef::Inline(schema_value) => {
+                // Parse inline schema
+                parse_inline_schema(&schema_value)?
+            }
+        }
+    };
+
+    // Run validation
+    let result = validate(value, &schema_file);
+
+    if !result.is_valid() {
+        for error in &result.errors {
+            eprintln!("{}", error);
+        }
+        return Err(CliError::Validation(format!(
+            "{} validation error(s)",
+            result.errors.len()
+        )));
+    }
+
+    // Print warnings
+    for warning in &result.warnings {
+        eprintln!("warning: {}", warning.message);
+    }
+
+    Ok(())
+}
+
+enum SchemaRef {
+    External(String),
+    Inline(Value),
+}
+
+fn find_schema_declaration(value: &Value) -> Result<SchemaRef, CliError> {
+    // Look for @ key (unit key) in root object
+    let obj = value.as_object().ok_or_else(|| {
+        CliError::Validation("document root must be an object for validation".into())
+    })?;
+
+    for entry in &obj.entries {
+        if entry.key.is_unit() {
+            // Found @ key - check if it's a string (external) or object (inline)
+            if let Some(path) = entry.value.as_str() {
+                return Ok(SchemaRef::External(path.to_string()));
+            } else if entry.value.as_object().is_some() {
+                return Ok(SchemaRef::Inline(entry.value.clone()));
+            } else {
+                return Err(CliError::Validation(
+                    "schema declaration (@) must be a path string or inline schema object".into(),
+                ));
+            }
+        }
+    }
+
+    Err(CliError::Validation(
+        "no schema declaration found (@ key)\nhint: use --override-schema to specify a schema file"
+            .into(),
+    ))
+}
+
+fn resolve_schema_path(schema_path: &str, input_path: Option<&str>) -> Result<String, CliError> {
+    // If it's a URL, return as-is (not supported yet)
+    if schema_path.starts_with("http://") || schema_path.starts_with("https://") {
+        return Err(CliError::Usage(
+            "URL schema references are not yet supported".into(),
+        ));
+    }
+
+    // If absolute, return as-is
+    let path = Path::new(schema_path);
+    if path.is_absolute() {
+        return Ok(schema_path.to_string());
+    }
+
+    // Resolve relative to input file's directory
+    if let Some(input) = input_path {
+        if input != "-" {
+            if let Some(parent) = Path::new(input).parent() {
+                return Ok(parent.join(schema_path).to_string_lossy().to_string());
+            }
+        }
+    }
+
+    // Fall back to current directory
+    Ok(schema_path.to_string())
+}
+
+fn load_schema_file(path: &str) -> Result<SchemaFile, CliError> {
+    let source = std::fs::read_to_string(path).map_err(|e| {
+        CliError::Io(io::Error::new(
+            e.kind(),
+            format!("schema file '{}': {}", path, e),
+        ))
+    })?;
+
+    facet_styx::from_str(&source)
+        .map_err(|e| CliError::Parse(format!("failed to parse schema '{}': {}", path, e)))
+}
+
+fn parse_inline_schema(value: &Value) -> Result<SchemaFile, CliError> {
+    // Inline schemas have simplified form - just the schema block is required
+    // For now, serialize back to string and re-parse as SchemaFile
+    // This is inefficient but correct - we can optimize later
+    let source = styx_format::format_value(value, FormatOptions::default());
+    facet_styx::from_str(&source)
+        .map_err(|e| CliError::Parse(format!("failed to parse inline schema: {}", e)))
 }
 
 // ============================================================================

@@ -212,15 +212,25 @@ An **entry** is a sequence of one or more atoms. The parser interprets entries s
 > ```
 
 > r[entry.keys]
-> Keys MUST be scalars or unit, optionally tagged.
-> Heredoc scalars are not allowed as keys.
+> A key may be any value, tagged or not, except objects, sequences, and heredocs.
 >
 > ```styx
+> // Valid keys:
 > host localhost            // bare scalar key
 > "key with spaces" 42      // quoted scalar key
 > @ mapped                  // unit key
 > @root schema              // tagged unit key
 > @env"PATH" "/usr/bin"     // tagged scalar key
+> ```
+>
+> ```styx,bad
+> // Invalid keys:
+> {a 1} value               // object as key
+> (1 2 3) value             // sequence as key
+> <<EOF                     // heredoc as key
+> text
+> EOF
+> value
 > ```
 
 > r[entry.key-equality]

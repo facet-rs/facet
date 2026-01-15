@@ -270,11 +270,7 @@ impl<'src> Parser<'src> {
             seen_keys.insert(key_value);
         }
 
-        if !callback.event(Event::Key {
-            span: key_atom.span,
-            value: self.process_scalar_value(key_atom),
-            kind: key_atom.kind,
-        }) {
+        if !self.emit_atom_as_key(key_atom, callback) {
             return false;
         }
 
@@ -309,11 +305,7 @@ impl<'src> Parser<'src> {
             }
 
             // Second atom becomes key
-            if !callback.event(Event::Key {
-                span: atoms[1].span,
-                value: self.process_scalar_value(&atoms[1]),
-                kind: atoms[1].kind,
-            }) {
+            if !self.emit_atom_as_key(&atoms[1], callback) {
                 return false;
             }
 
@@ -368,11 +360,7 @@ impl<'src> Parser<'src> {
             return false;
         }
 
-        if !callback.event(Event::Key {
-            span: atoms[0].span,
-            value: self.process_scalar_value(&atoms[0]),
-            kind: atoms[0].kind,
-        }) {
+        if !self.emit_atom_as_key(&atoms[0], callback) {
             return false;
         }
 
@@ -1157,11 +1145,7 @@ impl<'src> Parser<'src> {
                     if !callback.event(Event::EntryStart) {
                         return false;
                     }
-                    if !callback.event(Event::Key {
-                        span: entry.key.span,
-                        value: self.process_scalar_value(&entry.key),
-                        kind: entry.key.kind,
-                    }) {
+                    if !self.emit_atom_as_key(&entry.key, callback) {
                         return false;
                     }
                     if !self.emit_atom_as_value(&entry.value, callback) {
@@ -1202,9 +1186,11 @@ impl<'src> Parser<'src> {
                     if !callback.event(Event::EntryStart) {
                         return false;
                     }
+                    // Attribute keys are always bare scalars
                     if !callback.event(Event::Key {
                         span: attr.key_span,
-                        value: Cow::Borrowed(attr.key),
+                        tag: None,
+                        payload: Some(Cow::Borrowed(attr.key)),
                         kind: ScalarKind::Bare,
                     }) {
                         return false;
@@ -1222,16 +1208,101 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Process scalar value (escape handling for keys).
-    fn process_scalar_value(&self, atom: &Atom<'src>) -> Cow<'src, str> {
+    /// Emit an atom as a key event.
+    ///
+    /// Keys can be scalars or unit, optionally tagged.
+    /// Objects, sequences, and heredocs are not allowed as keys.
+    // parser[impl entry.keys]
+    fn emit_atom_as_key<C: ParseCallback<'src>>(
+        &self,
+        atom: &Atom<'src>,
+        callback: &mut C,
+    ) -> bool {
         match &atom.content {
-            AtomContent::Scalar(text) => self.process_scalar(text, atom.kind),
-            AtomContent::Heredoc(content) => Cow::Owned(content.clone()),
-            AtomContent::Unit => Cow::Borrowed("@"),
-            AtomContent::Tag { name, .. } => Cow::Borrowed(name),
-            AtomContent::Object { .. } => Cow::Borrowed("{}"),
-            AtomContent::Sequence(_) => Cow::Borrowed("()"),
-            AtomContent::Attributes(_) => Cow::Borrowed("{}"),
+            AtomContent::Scalar(text) => callback.event(Event::Key {
+                span: atom.span,
+                tag: None,
+                payload: Some(self.process_scalar(text, atom.kind)),
+                kind: atom.kind,
+            }),
+            AtomContent::Heredoc(_) => {
+                // Heredocs are not allowed as keys
+                callback.event(Event::Error {
+                    span: atom.span,
+                    kind: ParseErrorKind::InvalidKey,
+                })
+            }
+            AtomContent::Unit => callback.event(Event::Key {
+                span: atom.span,
+                tag: None,
+                payload: None,
+                kind: ScalarKind::Bare,
+            }),
+            AtomContent::Tag {
+                name,
+                payload,
+                invalid_name_span,
+            } => {
+                // Emit error for invalid tag name
+                if let Some(span) = invalid_name_span
+                    && !callback.event(Event::Error {
+                        span: *span,
+                        kind: ParseErrorKind::InvalidTagName,
+                    })
+                {
+                    return false;
+                }
+
+                match payload {
+                    None => {
+                        // Tagged unit key: @tag
+                        callback.event(Event::Key {
+                            span: atom.span,
+                            tag: Some(name),
+                            payload: None,
+                            kind: ScalarKind::Bare,
+                        })
+                    }
+                    Some(inner) => match &inner.content {
+                        AtomContent::Scalar(text) => {
+                            // Tagged scalar key: @tag"value"
+                            callback.event(Event::Key {
+                                span: atom.span,
+                                tag: Some(name),
+                                payload: Some(self.process_scalar(text, inner.kind)),
+                                kind: inner.kind,
+                            })
+                        }
+                        AtomContent::Unit => {
+                            // Tagged unit key: @tag@
+                            callback.event(Event::Key {
+                                span: atom.span,
+                                tag: Some(name),
+                                payload: None,
+                                kind: ScalarKind::Bare,
+                            })
+                        }
+                        AtomContent::Heredoc(_)
+                        | AtomContent::Object { .. }
+                        | AtomContent::Sequence(_)
+                        | AtomContent::Tag { .. }
+                        | AtomContent::Attributes(_) => {
+                            // Invalid key payload
+                            callback.event(Event::Error {
+                                span: inner.span,
+                                kind: ParseErrorKind::InvalidKey,
+                            })
+                        }
+                    },
+                }
+            }
+            AtomContent::Object { .. } | AtomContent::Sequence(_) | AtomContent::Attributes(_) => {
+                // Objects, sequences not allowed as keys
+                callback.event(Event::Error {
+                    span: atom.span,
+                    kind: ParseErrorKind::InvalidKey,
+                })
+            }
         }
     }
 
@@ -1481,7 +1552,7 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, Event::Key { value, .. } if value == "foo"))
+                .any(|e| matches!(e, Event::Key { payload: Some(value), .. } if value == "foo"))
         );
         assert!(
             events
@@ -1496,7 +1567,7 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, Event::Key { value, .. } if value == "foo"))
+                .any(|e| matches!(e, Event::Key { payload: Some(value), .. } if value == "foo"))
         );
         assert!(events.iter().any(|e| matches!(e, Event::Unit { .. })));
     }
@@ -1507,7 +1578,10 @@ mod tests {
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::Key { value, .. } => Some(value.as_ref()),
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
                 _ => None,
             })
             .collect();
@@ -1539,7 +1613,10 @@ mod tests {
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::Key { value, .. } => Some(value.as_ref()),
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
                 _ => None,
             })
             .collect();
@@ -1550,6 +1627,26 @@ mod tests {
     fn test_unit_value() {
         let events = parse("flag @");
         assert!(events.iter().any(|e| matches!(e, Event::Unit { .. })));
+    }
+
+    #[test]
+    fn test_unit_key() {
+        // @ followed by whitespace then value should emit Key with payload: None (unit key)
+        let events = parse("@ server.schema.styx");
+        trace!(?events, "parsed events for unit key test");
+        // Should have: DocumentStart, EntryStart, Key (unit), Scalar (value), EntryEnd, DocumentEnd
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Key {
+                    payload: None,
+                    tag: None,
+                    ..
+                }
+            )),
+            "should have Key event with payload: None (unit key), got: {:?}",
+            events
+        );
     }
 
     #[test]
@@ -1569,7 +1666,7 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, Event::Key { value, .. } if value == "foo"))
+                .any(|e| matches!(e, Event::Key { payload: Some(value), .. } if value == "foo"))
         );
     }
 
@@ -1662,7 +1759,10 @@ mod tests {
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::Key { value, .. } => Some(value.as_ref()),
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
                 _ => None,
             })
             .collect();
@@ -1793,7 +1893,10 @@ mod tests {
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::Key { value, .. } => Some(value.as_ref()),
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
                 _ => None,
             })
             .collect();
@@ -1824,7 +1927,10 @@ mod tests {
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::Key { value, .. } => Some(value.as_ref()),
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
                 _ => None,
             })
             .collect();
@@ -1839,7 +1945,10 @@ mod tests {
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::Key { value, .. } => Some(value.as_ref()),
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
                 _ => None,
             })
             .collect();
@@ -1866,7 +1975,10 @@ mod tests {
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::Key { value, .. } => Some(value.as_ref()),
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
                 _ => None,
             })
             .collect();
@@ -1883,7 +1995,10 @@ mod tests {
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::Key { value, .. } => Some(value.as_ref()),
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
                 _ => None,
             })
             .collect();
@@ -1904,7 +2019,10 @@ mod tests {
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::Key { value, .. } => Some(value.as_ref()),
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
                 _ => None,
             })
             .collect();
@@ -1928,7 +2046,7 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, Event::Key { value, .. } if value == "a")),
+                .any(|e| matches!(e, Event::Key { payload: Some(value), .. } if value == "a")),
             "Should have key 'a'"
         );
     }

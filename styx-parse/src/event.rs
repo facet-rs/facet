@@ -43,12 +43,17 @@ pub enum Event<'src> {
     /// Start of an entry (key-value pair).
     EntryStart,
     /// A key in an entry.
+    ///
+    /// Keys can be scalars or unit, optionally tagged.
+    /// Objects, sequences, and heredocs are not allowed as keys.
     Key {
         /// Span of the key.
         span: Span,
-        /// Value after escape processing.
-        value: Cow<'src, str>,
-        /// Kind of scalar used for the key.
+        /// Tag name if this key is tagged (without @).
+        tag: Option<&'src str>,
+        /// Scalar payload after escape processing. None means unit.
+        payload: Option<Cow<'src, str>>,
+        /// Kind of scalar used for the key. Only meaningful if payload is Some.
         kind: ScalarKind,
     },
     /// End of an entry.

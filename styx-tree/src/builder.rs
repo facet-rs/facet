@@ -311,18 +311,28 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                 }
             }
 
-            Event::Key { span, value, kind } => {
-                let scalar = Value {
-                    tag: None,
-                    payload: Some(Payload::Scalar(Scalar {
-                        text: cow_to_string(value),
-                        kind,
+            Event::Key {
+                span,
+                tag,
+                payload,
+                kind,
+            } => {
+                let key_value = Value {
+                    tag: tag.map(|name| Tag {
+                        name: name.to_string(),
                         span: Some(span),
-                    })),
+                    }),
+                    payload: payload.map(|text| {
+                        Payload::Scalar(Scalar {
+                            text: cow_to_string(text),
+                            kind,
+                            span: Some(span),
+                        })
+                    }),
                     span: Some(span),
                 };
                 if let Some(BuilderFrame::Entry { key, .. }) = self.stack.last_mut() {
-                    *key = Some(scalar);
+                    *key = Some(key_value);
                 }
             }
 
@@ -554,6 +564,27 @@ mod tests {
         let value = parse("enabled @");
         let obj = value.as_object().unwrap();
         assert!(obj.get("enabled").unwrap().is_unit());
+    }
+
+    #[test]
+    fn test_unit_key() {
+        // @ followed by a value should create a unit key
+        let value = parse("@ server.schema.styx");
+        let obj = value.as_object().unwrap();
+        // The unit key entry
+        let unit_entry = obj.entries.iter().find(|e| e.key.is_unit());
+        assert!(
+            unit_entry.is_some(),
+            "should have unit key entry, got: {:?}",
+            obj.entries
+                .iter()
+                .map(|e| format!("key={:?}", e.key))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            unit_entry.unwrap().value.as_str(),
+            Some("server.schema.styx")
+        );
     }
 
     #[test]
