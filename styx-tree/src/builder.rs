@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use styx_parse::{Event, ParseCallback, Separator, Span};
+use styx_parse::{Event, ParseCallback, ParseErrorKind, Separator, Span};
 
 use crate::value::{Entry, Object, Payload, Scalar, Sequence, Tag, Value};
 
@@ -15,6 +15,8 @@ pub enum BuildError {
     UnclosedStructure,
     /// Empty document.
     EmptyDocument,
+    /// Parse error from the lexer/parser.
+    Parse(ParseErrorKind, Span),
 }
 
 impl std::fmt::Display for BuildError {
@@ -23,6 +25,9 @@ impl std::fmt::Display for BuildError {
             BuildError::UnexpectedEvent(msg) => write!(f, "unexpected event: {}", msg),
             BuildError::UnclosedStructure => write!(f, "unclosed structure"),
             BuildError::EmptyDocument => write!(f, "empty document"),
+            BuildError::Parse(kind, span) => {
+                write!(f, "parse error at {}-{}: {}", span.start, span.end, kind)
+            }
         }
     }
 }
@@ -34,6 +39,7 @@ pub struct TreeBuilder {
     stack: Vec<BuilderFrame>,
     root_entries: Vec<Entry>,
     pending_doc_comment: Option<String>,
+    errors: Vec<(ParseErrorKind, Span)>,
 }
 
 enum BuilderFrame {
@@ -64,11 +70,17 @@ impl TreeBuilder {
             stack: Vec::new(),
             root_entries: Vec::new(),
             pending_doc_comment: None,
+            errors: Vec::new(),
         }
     }
 
     /// Finish building and return the root value.
     pub fn finish(self) -> Result<Value, BuildError> {
+        // Return the first error if any occurred during parsing
+        if let Some((kind, span)) = self.errors.into_iter().next() {
+            return Err(BuildError::Parse(kind, span));
+        }
+
         if !self.stack.is_empty() {
             return Err(BuildError::UnclosedStructure);
         }
@@ -497,8 +509,8 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                 // Ignore regular comments for tree building
             }
 
-            Event::Error { .. } => {
-                // TODO: handle errors
+            Event::Error { span, kind } => {
+                self.errors.push((kind, span));
             }
         }
 

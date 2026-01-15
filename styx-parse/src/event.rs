@@ -164,3 +164,26 @@ pub enum ParseErrorKind {
     /// Dangling doc comment (not followed by entry).
     DanglingDocComment,
 }
+
+impl std::fmt::Display for ParseErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseErrorKind::UnexpectedToken => write!(f, "unexpected token"),
+            ParseErrorKind::UnclosedObject => write!(f, "unclosed object (missing `}}`)"),
+            ParseErrorKind::UnclosedSequence => write!(f, "unclosed sequence (missing `)`)"),
+            ParseErrorKind::MixedSeparators => {
+                write!(f, "mixed separators (use either commas or newlines)")
+            }
+            ParseErrorKind::InvalidEscape(seq) => write!(f, "invalid escape sequence: {}", seq),
+            ParseErrorKind::ExpectedKey => write!(f, "expected a key"),
+            ParseErrorKind::ExpectedValue => write!(f, "expected a value"),
+            ParseErrorKind::UnexpectedEof => write!(f, "unexpected end of input"),
+            ParseErrorKind::DuplicateKey => write!(f, "duplicate key"),
+            ParseErrorKind::InvalidTagName => write!(f, "invalid tag name"),
+            ParseErrorKind::InvalidKey => write!(f, "invalid key"),
+            ParseErrorKind::DanglingDocComment => {
+                write!(f, "doc comment not followed by an entry")
+            }
+        }
+    }
+}

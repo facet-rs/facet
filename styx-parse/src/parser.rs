@@ -702,6 +702,8 @@ impl<'src> Parser<'src> {
         // parser[impl comment.doc]
         let mut pending_doc_comment: Option<Span> = None;
         let mut dangling_doc_comment_spans: Vec<Span> = Vec::new();
+        // Track whether the object was properly closed
+        let mut unclosed = false;
 
         loop {
             // Only skip horizontal whitespace initially
@@ -709,6 +711,7 @@ impl<'src> Parser<'src> {
 
             let Some(token) = self.peek() else {
                 // Unclosed object - EOF
+                unclosed = true;
                 // Check for dangling doc comment
                 if let Some(span) = pending_doc_comment {
                     dangling_doc_comment_spans.push(span);
@@ -767,6 +770,7 @@ impl<'src> Parser<'src> {
 
                 TokenKind::Eof => {
                     // Unclosed object
+                    unclosed = true;
                     if let Some(span) = pending_doc_comment {
                         dangling_doc_comment_spans.push(span);
                     }
@@ -823,6 +827,7 @@ impl<'src> Parser<'src> {
                 duplicate_key_spans,
                 mixed_separator_spans,
                 dangling_doc_comment_spans,
+                unclosed,
             },
         }
     }
@@ -859,6 +864,7 @@ impl<'src> Parser<'src> {
                 duplicate_key_spans: Vec::new(), // Nested objects from keypaths can't have duplicates
                 mixed_separator_spans: Vec::new(), // Nested objects from keypaths can't have mixed separators
                 dangling_doc_comment_spans: Vec::new(), // Nested objects from keypaths can't have doc comments
+                unclosed: false, // Nested objects from keypaths are always complete
             },
         }
     }
@@ -872,6 +878,7 @@ impl<'src> Parser<'src> {
 
         let mut elements: Vec<Atom<'src>> = Vec::new();
         let mut end_span = start_span;
+        let mut unclosed = false;
 
         loop {
             // Sequences allow whitespace and newlines between elements
@@ -879,6 +886,7 @@ impl<'src> Parser<'src> {
 
             let Some(token) = self.peek() else {
                 // Unclosed sequence - EOF
+                unclosed = true;
                 break;
             };
 
@@ -902,6 +910,7 @@ impl<'src> Parser<'src> {
 
                 TokenKind::Eof => {
                     // Unclosed sequence
+                    unclosed = true;
                     break;
                 }
 
@@ -920,7 +929,7 @@ impl<'src> Parser<'src> {
                 end: end_span.end,
             },
             kind: ScalarKind::Bare,
-            content: AtomContent::Sequence(elements),
+            content: AtomContent::Sequence { elements, unclosed },
         }
     }
 
@@ -1100,12 +1109,23 @@ impl<'src> Parser<'src> {
                 duplicate_key_spans,
                 mixed_separator_spans,
                 dangling_doc_comment_spans,
+                unclosed,
             } => {
                 if !callback.event(Event::ObjectStart {
                     span: atom.span,
                     separator: *separator,
                 }) {
                     return false;
+                }
+
+                // Emit error for unclosed object
+                if *unclosed {
+                    if !callback.event(Event::Error {
+                        span: atom.span,
+                        kind: ParseErrorKind::UnclosedObject,
+                    }) {
+                        return false;
+                    }
                 }
 
                 // parser[impl entry.key-equality]
@@ -1159,9 +1179,19 @@ impl<'src> Parser<'src> {
                 callback.event(Event::ObjectEnd { span: atom.span })
             }
             // parser[impl sequence.syntax] parser[impl sequence.elements]
-            AtomContent::Sequence(elements) => {
+            AtomContent::Sequence { elements, unclosed } => {
                 if !callback.event(Event::SequenceStart { span: atom.span }) {
                     return false;
+                }
+
+                // Emit error for unclosed sequence
+                if *unclosed {
+                    if !callback.event(Event::Error {
+                        span: atom.span,
+                        kind: ParseErrorKind::UnclosedSequence,
+                    }) {
+                        return false;
+                    }
                 }
 
                 for elem in elements {
@@ -1284,7 +1314,7 @@ impl<'src> Parser<'src> {
                         }
                         AtomContent::Heredoc(_)
                         | AtomContent::Object { .. }
-                        | AtomContent::Sequence(_)
+                        | AtomContent::Sequence { .. }
                         | AtomContent::Tag { .. }
                         | AtomContent::Attributes(_) => {
                             // Invalid key payload
@@ -1296,7 +1326,9 @@ impl<'src> Parser<'src> {
                     },
                 }
             }
-            AtomContent::Object { .. } | AtomContent::Sequence(_) | AtomContent::Attributes(_) => {
+            AtomContent::Object { .. }
+            | AtomContent::Sequence { .. }
+            | AtomContent::Attributes(_) => {
                 // Objects, sequences not allowed as keys
                 callback.event(Event::Error {
                     span: atom.span,
@@ -1452,10 +1484,16 @@ enum AtomContent<'src> {
         /// Spans of dangling doc comments (for error reporting).
         // parser[impl comment.doc]
         dangling_doc_comment_spans: Vec<Span>,
+        /// Whether the object was not properly closed (missing `}`).
+        unclosed: bool,
     },
     /// A sequence with parsed elements.
     // parser[impl sequence.syntax] parser[impl sequence.elements]
-    Sequence(Vec<Atom<'src>>),
+    Sequence {
+        elements: Vec<Atom<'src>>,
+        /// Whether the sequence was not properly closed (missing `)`).
+        unclosed: bool,
+    },
     /// Attributes (key=value pairs that become an object).
     // parser[impl attr.syntax] parser[impl attr.atom]
     Attributes(Vec<AttributeEntry<'src>>),
@@ -1511,7 +1549,7 @@ impl KeyValue {
             },
             // Objects/Sequences as keys are unusual, treat as their text repr
             AtomContent::Object { .. } => KeyValue::Scalar("{}".into()),
-            AtomContent::Sequence(_) => KeyValue::Scalar("()".into()),
+            AtomContent::Sequence { .. } => KeyValue::Scalar("()".into()),
             AtomContent::Attributes(_) => KeyValue::Scalar("{}".into()),
         }
     }
