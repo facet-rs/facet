@@ -253,7 +253,7 @@ fn gen_vtable_direct(
                             // (caller can downgrade to PtrConst if needed)
                             let wrapper_ptr = src as *mut #struct_type;
                             let inner_ptr: *mut _ = unsafe { &raw mut (*wrapper_ptr).0 };
-                            ::core::result::Result::Ok(#facet_crate::PtrMut::new(inner_ptr as *mut u8))
+                            𝟋Ok(#facet_crate::PtrMut::new(inner_ptr as *mut u8))
                         }
                         __try_borrow_inner
                     })
@@ -497,8 +497,8 @@ fn gen_vtable_indirect(
                     if impls!(#struct_type: ::core::str::FromStr) {
                         𝟋Some(
                             match (&&SpezEmpty::<#struct_type>::SPEZ).spez_parse(s, target.ptr().as_uninit()) {
-                                ::core::result::Result::Ok(_) => ::core::result::Result::Ok(()),
-                                ::core::result::Result::Err(e) => ::core::result::Result::Err(e),
+                                𝟋Ok(_) => 𝟋Ok(()),
+                                𝟋Err(e) => 𝟋Err(e),
                             }
                         )
                     } else {
@@ -596,7 +596,7 @@ fn gen_type_ops_direct(
     let default_field = if has_default {
         quote! {
             default_in_place: 𝟋Some(
-                unsafe { ::core::mem::transmute(#facet_crate::𝟋::𝟋default_for::<Self>() as unsafe fn(*mut Self)) }
+                unsafe { 𝟋transmute(#facet_crate::𝟋::𝟋default_for::<Self>() as unsafe fn(*mut Self)) }
             ),
         }
     } else if sources.should_auto() {
@@ -626,7 +626,7 @@ fn gen_type_ops_direct(
     let clone_field = if has_clone {
         quote! {
             clone_into: 𝟋Some(
-                unsafe { ::core::mem::transmute(#facet_crate::𝟋::𝟋clone_for::<Self>() as unsafe fn(*const Self, *mut Self)) }
+                unsafe { 𝟋transmute(#facet_crate::𝟋::𝟋clone_for::<Self>() as unsafe fn(*const Self, *mut Self)) }
             ),
         }
     } else if sources.should_auto() {
@@ -671,7 +671,7 @@ fn gen_type_ops_direct(
     Some(quote! {
         #facet_crate::TypeOps::Direct(&const {
             #facet_crate::TypeOpsDirect {
-                drop_in_place: unsafe { ::core::mem::transmute(::core::ptr::drop_in_place::<Self> as unsafe fn(*mut Self)) },
+                drop_in_place: unsafe { 𝟋transmute(𝟋drop_in_place::<Self> as unsafe fn(*mut Self)) },
                 #default_field
                 #clone_field
                 #truthy_field
@@ -967,8 +967,8 @@ pub(crate) fn gen_field_from_pfield(
                             ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
                                 let proxy: #proxy_type = proxy_ptr.read();
                                 match <#field_type as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
-                                    ::core::result::Result::Ok(value) => ::core::result::Result::Ok(field_ptr.put(value)),
-                                    ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                                    𝟋Ok(value) => 𝟋Ok(field_ptr.put(value)),
+                                    𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
                                 }
                             }
 
@@ -978,8 +978,8 @@ pub(crate) fn gen_field_from_pfield(
                             ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
                                 let field_ref: &#field_type = field_ptr.get();
                                 match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
-                                    ::core::result::Result::Ok(proxy) => ::core::result::Result::Ok(proxy_ptr.put(proxy)),
-                                    ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                                    𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
+                                    𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
                                 }
                             }
 
@@ -1191,12 +1191,12 @@ pub(crate) fn gen_field_from_pfield(
                         match unsafe { __dst_shape.call_try_from(__src_shape, __src_ptr, __dst_ptr) } {
                             Some(#facet_crate::TryFromOutcome::Converted) => {
                                 // Don't run destructor on source value since we consumed it
-                                ::core::mem::forget(__src_value);
+                                𝟋forget(__src_value);
                                 unsafe { __ptr.assume_init() }
                             },
                             Some(#facet_crate::TryFromOutcome::Failed(e)) => {
                                 // Source was consumed, forget it
-                                ::core::mem::forget(__src_value);
+                                𝟋forget(__src_value);
                                 panic!("default value conversion failed: {}", e)
                             },
                             Some(#facet_crate::TryFromOutcome::Unsupported) => {
@@ -1599,7 +1599,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     // (caller can downgrade to PtrConst if needed)
                     let wrapper_ptr = src as *mut Self;
                     let inner_ptr: *mut _ = unsafe { &raw mut (*wrapper_ptr).0 };
-                    ::core::result::Result::Ok(#facet_crate::PtrMut::new(inner_ptr as *mut u8))
+                    #facet_crate::𝟋::𝟋Ok(#facet_crate::PtrMut::new(inner_ptr as *mut u8))
                 }
             }
         }
@@ -1772,8 +1772,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         extern crate alloc as __alloc;
                         let proxy: #proxy_type = proxy_ptr.read();
                         match <#struct_type #bgp_display as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
-                            ::core::result::Result::Ok(value) => ::core::result::Result::Ok(field_ptr.put(value)),
-                            ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                            #facet_crate::𝟋::𝟋Ok(value) => #facet_crate::𝟋::𝟋Ok(field_ptr.put(value)),
+                            #facet_crate::𝟋::𝟋Err(e) => #facet_crate::𝟋::𝟋Err(__alloc::string::ToString::to_string(&e)),
                         }
                     }
 
@@ -1785,8 +1785,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         extern crate alloc as __alloc;
                         let field_ref: &#struct_type #bgp_display = field_ptr.get();
                         match <#proxy_type as ::core::convert::TryFrom<&#struct_type #bgp_display>>::try_from(field_ref) {
-                            ::core::result::Result::Ok(proxy) => ::core::result::Result::Ok(proxy_ptr.put(proxy)),
-                            ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                            #facet_crate::𝟋::𝟋Ok(proxy) => #facet_crate::𝟋::𝟋Ok(proxy_ptr.put(proxy)),
+                            #facet_crate::𝟋::𝟋Err(e) => #facet_crate::𝟋::𝟋Err(__alloc::string::ToString::to_string(&e)),
                         }
                     }
 
