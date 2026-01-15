@@ -310,221 +310,221 @@ fn gen_vtable_indirect(
     // Display: check declared then auto
     let display_field = if sources.has_declared(|d| d.display) {
         quote! {
-            display: ::core::option::Option::Some({
+            display: 𝟋Some({
                 unsafe fn __display(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
                     let data: &#struct_type = data.ptr().get();
-                    ::core::option::Option::Some(::core::fmt::Display::fmt(data, f))
+                    𝟋Some(::core::fmt::Display::fmt(data, f))
                 }
                 __display
             }),
         }
     } else if sources.should_auto() {
         quote! {
-            display: ::core::option::Option::Some({
+            display: 𝟋Some({
                 unsafe fn __display(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
                     if impls!(#struct_type: ::core::fmt::Display) {
                         let data: &#struct_type = data.ptr().get();
-                        ::core::option::Option::Some((&&Spez(data)).spez_display(f))
+                        𝟋Some((&&Spez(data)).spez_display(f))
                     } else {
-                        ::core::option::Option::None
+                        𝟋None
                     }
                 }
                 __display
             }),
         }
     } else {
-        quote! { display: ::core::option::Option::None, }
+        quote! { display: 𝟋None, }
     };
 
     // Debug: check declared, then auto
     let debug_field = if sources.has_declared(|d| d.debug) {
         quote! {
-            debug: ::core::option::Option::Some({
+            debug: 𝟋Some({
                 unsafe fn __debug(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
                     let data: &#struct_type = data.ptr().get();
-                    ::core::option::Option::Some(::core::fmt::Debug::fmt(data, f))
+                    𝟋Some(::core::fmt::Debug::fmt(data, f))
                 }
                 __debug
             }),
         }
     } else if sources.should_auto() {
         quote! {
-            debug: ::core::option::Option::Some({
+            debug: 𝟋Some({
                 unsafe fn __debug(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
                     if impls!(#struct_type: ::core::fmt::Debug) {
                         let data: &#struct_type = data.ptr().get();
-                        ::core::option::Option::Some((&&Spez(data)).spez_debug(f))
+                        𝟋Some((&&Spez(data)).spez_debug(f))
                     } else {
-                        ::core::option::Option::None
+                        𝟋None
                     }
                 }
                 __debug
             }),
         }
     } else {
-        quote! { debug: ::core::option::Option::None, }
+        quote! { debug: 𝟋None, }
     };
 
     // PartialEq: check declared, then auto
     let partial_eq_field = if sources.has_declared(|d| d.partial_eq) {
         quote! {
-            partial_eq: ::core::option::Option::Some({
+            partial_eq: 𝟋Some({
                 unsafe fn __partial_eq(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<bool> {
                     let left: &#struct_type = left.ptr().get();
                     let right: &#struct_type = right.ptr().get();
-                    ::core::option::Option::Some(<#struct_type as ::core::cmp::PartialEq>::eq(left, right))
+                    𝟋Some(<#struct_type as ::core::cmp::PartialEq>::eq(left, right))
                 }
                 __partial_eq
             }),
         }
     } else if sources.should_auto() {
         quote! {
-            partial_eq: ::core::option::Option::Some({
+            partial_eq: 𝟋Some({
                 unsafe fn __partial_eq(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<bool> {
                     if impls!(#struct_type: ::core::cmp::PartialEq) {
                         let left: &#struct_type = left.ptr().get();
                         let right: &#struct_type = right.ptr().get();
-                        ::core::option::Option::Some((&&Spez(left)).spez_partial_eq(&&Spez(right)))
+                        𝟋Some((&&Spez(left)).spez_partial_eq(&&Spez(right)))
                     } else {
-                        ::core::option::Option::None
+                        𝟋None
                     }
                 }
                 __partial_eq
             }),
         }
     } else {
-        quote! { partial_eq: ::core::option::Option::None, }
+        quote! { partial_eq: 𝟋None, }
     };
 
     // PartialOrd: check declared, then auto
     let partial_cmp_field = if sources.has_declared(|d| d.partial_ord) {
         quote! {
-            partial_cmp: ::core::option::Option::Some({
+            partial_cmp: 𝟋Some({
                 unsafe fn __partial_cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::option::Option<::core::cmp::Ordering>> {
                     let left: &#struct_type = left.ptr().get();
                     let right: &#struct_type = right.ptr().get();
-                    ::core::option::Option::Some(<#struct_type as ::core::cmp::PartialOrd>::partial_cmp(left, right))
+                    𝟋Some(<#struct_type as ::core::cmp::PartialOrd>::partial_cmp(left, right))
                 }
                 __partial_cmp
             }),
         }
     } else if sources.should_auto() {
         quote! {
-            partial_cmp: ::core::option::Option::Some({
+            partial_cmp: 𝟋Some({
                 unsafe fn __partial_cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::option::Option<::core::cmp::Ordering>> {
                     if impls!(#struct_type: ::core::cmp::PartialOrd) {
                         let left: &#struct_type = left.ptr().get();
                         let right: &#struct_type = right.ptr().get();
-                        ::core::option::Option::Some((&&Spez(left)).spez_partial_cmp(&&Spez(right)))
+                        𝟋Some((&&Spez(left)).spez_partial_cmp(&&Spez(right)))
                     } else {
-                        ::core::option::Option::None
+                        𝟋None
                     }
                 }
                 __partial_cmp
             }),
         }
     } else {
-        quote! { partial_cmp: ::core::option::Option::None, }
+        quote! { partial_cmp: 𝟋None, }
     };
 
     // Ord: check declared, then auto
     let cmp_field = if sources.has_declared(|d| d.ord) {
         quote! {
-            cmp: ::core::option::Option::Some({
+            cmp: 𝟋Some({
                 unsafe fn __cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::cmp::Ordering> {
                     let left: &#struct_type = left.ptr().get();
                     let right: &#struct_type = right.ptr().get();
-                    ::core::option::Option::Some(<#struct_type as ::core::cmp::Ord>::cmp(left, right))
+                    𝟋Some(<#struct_type as ::core::cmp::Ord>::cmp(left, right))
                 }
                 __cmp
             }),
         }
     } else if sources.should_auto() {
         quote! {
-            cmp: ::core::option::Option::Some({
+            cmp: 𝟋Some({
                 unsafe fn __cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::cmp::Ordering> {
                     if impls!(#struct_type: ::core::cmp::Ord) {
                         let left: &#struct_type = left.ptr().get();
                         let right: &#struct_type = right.ptr().get();
-                        ::core::option::Option::Some((&&Spez(left)).spez_cmp(&&Spez(right)))
+                        𝟋Some((&&Spez(left)).spez_cmp(&&Spez(right)))
                     } else {
-                        ::core::option::Option::None
+                        𝟋None
                     }
                 }
                 __cmp
             }),
         }
     } else {
-        quote! { cmp: ::core::option::Option::None, }
+        quote! { cmp: 𝟋None, }
     };
 
     // Hash: check declared, then auto
     let hash_field = if sources.has_declared(|d| d.hash) {
         quote! {
-            hash: ::core::option::Option::Some({
+            hash: 𝟋Some({
                 unsafe fn __hash(value: #facet_crate::OxPtrConst, hasher: &mut #facet_crate::HashProxy<'_>) -> ::core::option::Option<()> {
                     let value: &#struct_type = value.ptr().get();
                     <#struct_type as ::core::hash::Hash>::hash(value, hasher);
-                    ::core::option::Option::Some(())
+                    𝟋Some(())
                 }
                 __hash
             }),
         }
     } else if sources.should_auto() {
         quote! {
-            hash: ::core::option::Option::Some({
+            hash: 𝟋Some({
                 unsafe fn __hash(value: #facet_crate::OxPtrConst, hasher: &mut #facet_crate::HashProxy<'_>) -> ::core::option::Option<()> {
                     if impls!(#struct_type: ::core::hash::Hash) {
                         let value: &#struct_type = value.ptr().get();
                         (&&Spez(value)).spez_hash(hasher);
-                        ::core::option::Option::Some(())
+                        𝟋Some(())
                     } else {
-                        ::core::option::Option::None
+                        𝟋None
                     }
                 }
                 __hash
             }),
         }
     } else {
-        quote! { hash: ::core::option::Option::None, }
+        quote! { hash: 𝟋None, }
     };
 
     // Parse (FromStr): no derive exists, only auto-detect if enabled
     let parse_field = if sources.should_auto() {
         quote! {
-            parse: ::core::option::Option::Some({
+            parse: 𝟋Some({
                 unsafe fn __parse(s: &str, target: #facet_crate::OxPtrMut) -> ::core::option::Option<::core::result::Result<(), #facet_crate::ParseError>> {
                     if impls!(#struct_type: ::core::str::FromStr) {
-                        ::core::option::Option::Some(
+                        𝟋Some(
                             match (&&SpezEmpty::<#struct_type>::SPEZ).spez_parse(s, target.ptr().as_uninit()) {
                                 ::core::result::Result::Ok(_) => ::core::result::Result::Ok(()),
                                 ::core::result::Result::Err(e) => ::core::result::Result::Err(e),
                             }
                         )
                     } else {
-                        ::core::option::Option::None
+                        𝟋None
                     }
                 }
                 __parse
             }),
         }
     } else {
-        quote! { parse: ::core::option::Option::None, }
+        quote! { parse: 𝟋None, }
     };
 
     // Invariants: container-level invariants function (wrapped for OxRef signature)
     let invariants_field = if let Some(inv_fn) = invariants_fn {
         quote! {
-            invariants: ::core::option::Option::Some({
+            invariants: 𝟋Some({
                 unsafe fn __invariants(data: #facet_crate::OxPtrConst) -> ::core::option::Option<#facet_crate::𝟋::𝟋Result<(), #facet_crate::𝟋::𝟋Str>> {
                     let value: &#struct_type = data.ptr().get();
-                    ::core::option::Option::Some(#inv_fn(value))
+                    𝟋Some(#inv_fn(value))
                 }
                 __invariants
             }),
         }
     } else {
-        quote! { invariants: ::core::option::Option::None, }
+        quote! { invariants: 𝟋None, }
     };
 
     // Return VTableErased::Indirect wrapping a VTableIndirect using struct literal syntax
@@ -538,10 +538,10 @@ fn gen_vtable_indirect(
                 #hash_field
                 #invariants_field
                 #parse_field
-                parse_bytes: ::core::option::Option::None,
-                try_from: ::core::option::Option::None,
-                try_into_inner: ::core::option::Option::None,
-                try_borrow_inner: ::core::option::Option::None,
+                parse_bytes: 𝟋None,
+                try_from: 𝟋None,
+                try_into_inner: 𝟋None,
+                try_borrow_inner: 𝟋None,
                 #partial_eq_field
                 #partial_cmp_field
                 #cmp_field
@@ -595,7 +595,7 @@ fn gen_type_ops_direct(
     // then transmutes to fn(*mut ()) for the erased signature
     let default_field = if has_default {
         quote! {
-            default_in_place: ::core::option::Option::Some(
+            default_in_place: 𝟋Some(
                 unsafe { ::core::mem::transmute(#facet_crate::𝟋::𝟋default_for::<Self>() as unsafe fn(*mut Self)) }
             ),
         }
@@ -605,7 +605,7 @@ fn gen_type_ops_direct(
         // The impls! check determines whether we return Some or None at const-eval time.
         quote! {
             default_in_place: if #facet_crate::𝟋::impls!(#struct_type: ::core::default::Default) {
-                ::core::option::Option::Some({
+                𝟋Some({
                     unsafe fn __default_in_place(ptr: *mut ()) {
                         let target = #facet_crate::PtrUninit::new(ptr as *mut u8);
                         unsafe { (&&&#facet_crate::𝟋::SpezEmpty::<#struct_type>::SPEZ).spez_default_in_place(target) };
@@ -613,11 +613,11 @@ fn gen_type_ops_direct(
                     __default_in_place
                 })
             } else {
-                ::core::option::Option::None
+                𝟋None
             },
         }
     } else {
-        quote! { default_in_place: ::core::option::Option::None, }
+        quote! { default_in_place: 𝟋None, }
     };
 
     // Generate clone_into field
@@ -625,7 +625,7 @@ fn gen_type_ops_direct(
     // then transmutes to fn(*const (), *mut ()) for the erased signature
     let clone_field = if has_clone {
         quote! {
-            clone_into: ::core::option::Option::Some(
+            clone_into: 𝟋Some(
                 unsafe { ::core::mem::transmute(#facet_crate::𝟋::𝟋clone_for::<Self>() as unsafe fn(*const Self, *mut Self)) }
             ),
         }
@@ -635,7 +635,7 @@ fn gen_type_ops_direct(
         // The impls! check determines whether we return Some or None at const-eval time.
         quote! {
             clone_into: if #facet_crate::𝟋::impls!(#struct_type: ::core::clone::Clone) {
-                ::core::option::Option::Some({
+                𝟋Some({
                     unsafe fn __clone_into(src: *const (), dst: *mut ()) {
                         let src_ref: &#struct_type = unsafe { &*(src as *const #struct_type) };
                         let target = #facet_crate::PtrUninit::new(dst as *mut u8);
@@ -644,11 +644,11 @@ fn gen_type_ops_direct(
                     __clone_into
                 })
             } else {
-                ::core::option::Option::None
+                𝟋None
             },
         }
     } else {
-        quote! { clone_into: ::core::option::Option::None, }
+        quote! { clone_into: 𝟋None, }
     };
 
     // Generate TypeOpsDirect struct literal
@@ -656,7 +656,7 @@ fn gen_type_ops_direct(
     // Uses Self inside the const block which resolves to the implementing type
     let truthy_field = if let Some(truthy) = truthy_fn {
         quote! {
-            is_truthy: ::core::option::Option::Some({
+            is_truthy: 𝟋Some({
                 unsafe fn __truthy(value: #facet_crate::PtrConst) -> bool {
                     let this: &#struct_type = unsafe { value.get::<#struct_type>() };
                     #truthy(this)
@@ -665,7 +665,7 @@ fn gen_type_ops_direct(
             }),
         }
     } else {
-        quote! { is_truthy: ::core::option::Option::None, }
+        quote! { is_truthy: 𝟋None, }
     };
 
     Some(quote! {
@@ -701,12 +701,12 @@ fn gen_type_ops_indirect(
     // For now, only generate default_in_place when Default is explicitly known.
     let default_field = if sources.has_declared(|d| d.default) || sources.facet_default {
         quote! {
-            default_in_place: ::core::option::Option::Some(#facet_crate::𝟋::𝟋indirect_default_for::<Self>()),
+            default_in_place: 𝟋Some(#facet_crate::𝟋::𝟋indirect_default_for::<Self>()),
         }
     } else {
         // For auto_traits or no default, set to None
         // Runtime detection of Default not supported in TypeOps yet
-        quote! { default_in_place: ::core::option::Option::None, }
+        quote! { default_in_place: 𝟋None, }
     };
 
     // Check if Clone is available
@@ -714,17 +714,17 @@ fn gen_type_ops_indirect(
     // For now, only generate clone_into when Clone is explicitly known.
     let clone_field = if sources.has_declared(|d| d.clone) {
         quote! {
-            clone_into: ::core::option::Option::Some(#facet_crate::𝟋::𝟋indirect_clone_for::<Self>()),
+            clone_into: 𝟋Some(#facet_crate::𝟋::𝟋indirect_clone_for::<Self>()),
         }
     } else {
         // For auto_traits or no clone, set to None
         // Runtime detection of Clone not supported in TypeOps yet
-        quote! { clone_into: ::core::option::Option::None, }
+        quote! { clone_into: 𝟋None, }
     };
 
     let truthy_field = if let Some(truthy) = truthy_fn {
         quote! {
-            is_truthy: ::core::option::Option::Some({
+            is_truthy: 𝟋Some({
                 unsafe fn __truthy(value: #facet_crate::PtrConst) -> bool {
                     let this: &Self = unsafe { value.get::<Self>() };
                     #truthy(this)
@@ -733,7 +733,7 @@ fn gen_type_ops_indirect(
             }),
         }
     } else {
-        quote! { is_truthy: ::core::option::Option::None, }
+        quote! { is_truthy: 𝟋None, }
     };
 
     Some(quote! {
@@ -1111,14 +1111,14 @@ pub(crate) fn gen_field_from_pfield(
 
     // Rename: Option - from field.name.rename (set by PName::new from rename attr or rename_all rule)
     let rename_expr = match &field.name.rename {
-        Some(rename) => quote! { ::core::option::Option::Some(#rename) },
-        None => quote! { ::core::option::Option::None },
+        Some(rename) => quote! { 𝟋Some(#rename) },
+        None => quote! { 𝟋None },
     };
 
     // Alias: Option
     let alias_expr = match &alias_value {
-        Some(alias) => quote! { ::core::option::Option::Some(#alias) },
-        None => quote! { ::core::option::Option::None },
+        Some(alias) => quote! { 𝟋Some(#alias) },
+        None => quote! { 𝟋None },
     };
 
     // Default: Option<DefaultSource>
@@ -1135,7 +1135,7 @@ pub(crate) fn gen_field_from_pfield(
                 if is_option {
                     // Option<T> always defaults to None
                     quote! {
-                        ::core::option::Option::Some(𝟋DS::Custom({
+                        𝟋Some(𝟋DS::Custom({
                             unsafe fn __default(__ptr: #facet_crate::PtrUninit) -> #facet_crate::PtrMut {
                                 __ptr.put(<#field_type>::None)
                             }
@@ -1145,7 +1145,7 @@ pub(crate) fn gen_field_from_pfield(
                 } else {
                     // For non-Option opaque types, call Default::default()
                     quote! {
-                        ::core::option::Option::Some(𝟋DS::Custom({
+                        𝟋Some(𝟋DS::Custom({
                             unsafe fn __default(__ptr: #facet_crate::PtrUninit) -> #facet_crate::PtrMut {
                                 __ptr.put(<#field_type as ::core::default::Default>::default())
                             }
@@ -1154,7 +1154,7 @@ pub(crate) fn gen_field_from_pfield(
                     }
                 }
             } else {
-                quote! { ::core::option::Option::Some(𝟋DS::FromTrait) }
+                quote! { 𝟋Some(𝟋DS::FromTrait) }
             }
         }
         Some(DefaultKind::Custom(expr)) => {
@@ -1163,7 +1163,7 @@ pub(crate) fn gen_field_from_pfield(
             // and `default = 42` to work for any integer type.
             // If the types are the same, we just write directly.
             quote! {
-                ::core::option::Option::Some(𝟋DS::Custom({
+                𝟋Some(𝟋DS::Custom({
                     unsafe fn __default(__ptr: #facet_crate::PtrUninit) -> #facet_crate::PtrMut {
                         // Helper function to get shape from a value via type inference
                         #[inline]
@@ -1209,33 +1209,33 @@ pub(crate) fn gen_field_from_pfield(
                 }))
             }
         }
-        None => quote! { ::core::option::Option::None },
+        None => quote! { 𝟋None },
     };
 
     // Skip serializing if: Option
     let skip_ser_if_expr = match &skip_serializing_if_value {
-        Some(skip_ser_if) => quote! { ::core::option::Option::Some(#skip_ser_if) },
-        None => quote! { ::core::option::Option::None },
+        Some(skip_ser_if) => quote! { 𝟋Some(#skip_ser_if) },
+        None => quote! { 𝟋None },
     };
 
     // Invariants: Option
     let invariants_expr = match &invariants_value {
-        Some(inv) => quote! { ::core::option::Option::Some(#inv) },
-        None => quote! { ::core::option::Option::None },
+        Some(inv) => quote! { 𝟋Some(#inv) },
+        None => quote! { 𝟋None },
     };
 
     // Proxy: Option (requires alloc feature in facet-core)
     // We always emit this field since we can't check facet-core's features from generated code.
     // If facet-core was built without alloc, this will cause a compile error (acceptable trade-off).
     let proxy_expr = match &proxy_value {
-        Some(proxy) => quote! { ::core::option::Option::Some(#proxy) },
-        None => quote! { ::core::option::Option::None },
+        Some(proxy) => quote! { 𝟋Some(#proxy) },
+        None => quote! { 𝟋None },
     };
 
     // Metadata: Option<&'static str>
     let metadata_expr = match &metadata_value {
-        Some(kind) => quote! { ::core::option::Option::Some(#kind) },
-        None => quote! { ::core::option::Option::None },
+        Some(kind) => quote! { 𝟋Some(#kind) },
+        None => quote! { 𝟋None },
     };
 
     // Direct Field struct literal

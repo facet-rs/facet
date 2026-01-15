@@ -732,12 +732,12 @@ fn generate_arbitrary_value(
         if !inner.is_empty() {
             // Wrap in Some() for Option<T> types
             return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident(::core::option::Option::Some(#inner))
+                #ns_path::Attr::#variant_ident(𝟋Some(#inner))
             };
         }
         // Empty parens - treat as None for Option types
         return quote_spanned! { span =>
-            #ns_path::Attr::#variant_ident(::core::option::Option::None)
+            #ns_path::Attr::#variant_ident(𝟋None)
         };
     }
 
@@ -757,7 +757,7 @@ fn generate_arbitrary_value(
         if !value_tokens.is_empty() {
             // Wrap in Some() for Option<T> types
             return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident(::core::option::Option::Some(#value_tokens))
+                #ns_path::Attr::#variant_ident(𝟋Some(#value_tokens))
             };
         }
     }
@@ -765,7 +765,7 @@ fn generate_arbitrary_value(
     // No value: for Option types, return None; otherwise error
     // We generate None and let the type system catch mismatches
     quote_spanned! { span =>
-        #ns_path::Attr::#variant_ident(::core::option::Option::None)
+        #ns_path::Attr::#variant_ident(𝟋None)
     }
 }
 
@@ -794,14 +794,14 @@ fn generate_make_t_value(
         if !inner.is_empty() {
             // Wrap expression in a closure that puts the value
             return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident(::core::option::Option::Some(
+                #ns_path::Attr::#variant_ident(𝟋Some(
                     |__ptr| unsafe { __ptr.put(#inner) }
                 ))
             };
         }
         // Empty parens - use None (will use Default trait)
         return quote_spanned! { span =>
-            #ns_path::Attr::#variant_ident(::core::option::Option::None)
+            #ns_path::Attr::#variant_ident(𝟋None)
         };
     }
 
@@ -821,7 +821,7 @@ fn generate_make_t_value(
         if !value_tokens.is_empty() {
             // Wrap expression in a closure that puts the value
             return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident(::core::option::Option::Some(
+                #ns_path::Attr::#variant_ident(𝟋Some(
                     |__ptr| unsafe { __ptr.put(#value_tokens) }
                 ))
             };
@@ -830,7 +830,7 @@ fn generate_make_t_value(
 
     // No value: use None (will use Default trait at runtime)
     quote_spanned! { span =>
-        #ns_path::Attr::#variant_ident(::core::option::Option::None)
+        #ns_path::Attr::#variant_ident(𝟋None)
     }
 }
 
@@ -858,12 +858,12 @@ fn generate_fn_ptr_value(
         if !inner.is_empty() {
             // Store the function pointer directly
             return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident(::core::option::Option::Some(#inner))
+                #ns_path::Attr::#variant_ident(𝟋Some(#inner))
             };
         }
         // Empty parens - use None
         return quote_spanned! { span =>
-            #ns_path::Attr::#variant_ident(::core::option::Option::None)
+            #ns_path::Attr::#variant_ident(𝟋None)
         };
     }
 
@@ -883,14 +883,14 @@ fn generate_fn_ptr_value(
         if !value_tokens.is_empty() {
             // Store the function pointer directly
             return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident(::core::option::Option::Some(#value_tokens))
+                #ns_path::Attr::#variant_ident(𝟋Some(#value_tokens))
             };
         }
     }
 
     // No value: use None
     quote_spanned! { span =>
-        #ns_path::Attr::#variant_ident(::core::option::Option::None)
+        #ns_path::Attr::#variant_ident(𝟋None)
     }
 }
 
@@ -974,7 +974,7 @@ fn generate_newtype_opt_char_value(
     // No args: return None
     if rest_tokens.is_empty() {
         return quote_spanned! { span =>
-            #ns_path::Attr::#variant_ident(::core::option::Option::None)
+            #ns_path::Attr::#variant_ident(𝟋None)
         };
     }
 
@@ -984,7 +984,7 @@ fn generate_newtype_opt_char_value(
         && g.stream().is_empty()
     {
         return quote_spanned! { span =>
-            #ns_path::Attr::#variant_ident(::core::option::Option::None)
+            #ns_path::Attr::#variant_ident(𝟋None)
         };
     }
 
@@ -1000,7 +1000,7 @@ fn generate_newtype_opt_char_value(
             // Check for char literal: 'x'
             if lit_str.starts_with('\'') && lit_str.ends_with('\'') {
                 return quote_spanned! { span =>
-                    #ns_path::Attr::#variant_ident(::core::option::Option::Some(#lit))
+                    #ns_path::Attr::#variant_ident(𝟋Some(#lit))
                 };
             }
         }
@@ -1020,7 +1020,7 @@ fn generate_newtype_opt_char_value(
         // Check for char literal: 'x'
         if lit_str.starts_with('\'') && lit_str.ends_with('\'') {
             return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident(::core::option::Option::Some(#lit))
+                #ns_path::Attr::#variant_ident(𝟋Some(#lit))
             };
         }
     }
@@ -1035,7 +1035,7 @@ fn generate_newtype_opt_char_value(
             // Check for char literal: 'x'
             if lit_str.starts_with('\'') && lit_str.ends_with('\'') {
                 return quote_spanned! { span =>
-                    #ns_path::Attr::#variant_ident(::core::option::Option::Some(#lit))
+                    #ns_path::Attr::#variant_ident(𝟋Some(#lit))
                 };
             }
         }
@@ -1076,11 +1076,11 @@ fn generate_struct_value(
             let default = match f.kind {
                 FieldKind::Bool => quote! { false },
                 FieldKind::String => quote! { "" },
-                FieldKind::OptString => quote! { ::core::option::Option::None },
-                FieldKind::OptBool => quote! { ::core::option::Option::None },
-                FieldKind::OptChar => quote! { ::core::option::Option::None },
+                FieldKind::OptString => quote! { 𝟋None },
+                FieldKind::OptBool => quote! { 𝟋None },
+                FieldKind::OptChar => quote! { 𝟋None },
                 FieldKind::I64 => quote! { 0 },
-                FieldKind::OptI64 => quote! { ::core::option::Option::None },
+                FieldKind::OptI64 => quote! { 𝟋None },
                 FieldKind::ListString => quote! { &[] },
                 FieldKind::ListI64 => quote! { &[] },
                 FieldKind::Ident => quote! { "" },
