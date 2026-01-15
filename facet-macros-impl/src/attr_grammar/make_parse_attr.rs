@@ -706,14 +706,8 @@ fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantK
         }
     }
 
-    // Everything else is an arbitrary type
-    let type_tokens: TokenStream2 = tokens
-        .iter()
-        .map(|tt| {
-            let s = tt.to_string();
-            s.parse::<TokenStream2>().unwrap_or_default()
-        })
-        .collect();
+    // Everything else is an arbitrary type - collect tokens directly
+    let type_tokens: TokenStream2 = tokens.iter().cloned().collect();
     Ok(VariantKind::ArbitraryType(type_tokens))
 }
 

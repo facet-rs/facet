@@ -261,7 +261,7 @@ pub mod builtin {
             ///
             /// If HRTB is too restrictive, you can use the internal lifetime `'ʄ` directly:
             /// `#[facet(traits(Facet<'ʄ>))]` (note: `'ʄ` is internal and may change).
-            Traits(Vec<String>),
+            Traits(&'static str),
 
             /// Automatically identifies which traits are implemented by the type.
             AutoTraits,
