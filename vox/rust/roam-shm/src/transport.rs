@@ -483,7 +483,7 @@ impl ShmGuestTransport {
                 Ok(()) => {
                     // Ring doorbell to notify host of new message
                     if let Some(doorbell) = &self.doorbell {
-                        doorbell.signal();
+                        doorbell.signal().await;
                     }
                     return Ok(());
                 }

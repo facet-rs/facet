@@ -359,7 +359,7 @@ fn test_spawn_ticket_workflow() {
 
             // After child exits, doorbell death detection should work
             std::thread::sleep(Duration::from_millis(50));
-            let dead_peers = host.check_doorbell_deaths();
+            let dead_peers = rt.block_on(host.check_doorbell_deaths());
 
             // The guest did a graceful detach, so it might not trigger death callback
             // But if the child crashed, the death callback would be invoked

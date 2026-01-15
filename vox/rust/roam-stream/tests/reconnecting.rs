@@ -84,7 +84,15 @@ impl Connector for TcpConnector {
 
     async fn connect(&self) -> io::Result<Self::Transport> {
         self.connect_count.fetch_add(1, Ordering::SeqCst);
-        TcpStream::connect(self.addr).await
+        // Add timeout to handle Windows where refused connections may hang
+        match tokio::time::timeout(Duration::from_millis(500), TcpStream::connect(self.addr)).await
+        {
+            Ok(result) => result,
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "connection timed out",
+            )),
+        }
     }
 }
 

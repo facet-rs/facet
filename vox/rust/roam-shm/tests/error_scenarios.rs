@@ -233,7 +233,7 @@ fn test_guest_crash_triggers_death_callback() {
             assert_eq!(libc::WEXITSTATUS(status), 1);
 
             // Now check for doorbell death
-            let dead_peers = host.check_doorbell_deaths();
+            let dead_peers = rt.block_on(host.check_doorbell_deaths());
 
             // The death callback should have been invoked
             assert!(
@@ -327,7 +327,7 @@ fn test_sigkill_triggers_death_detection() {
             assert_eq!(libc::WTERMSIG(status), libc::SIGKILL);
 
             // Check for death
-            let dead_peers = host.check_doorbell_deaths();
+            let dead_peers = rt.block_on(host.check_doorbell_deaths());
 
             assert!(death_called.load(Ordering::SeqCst));
             assert!(dead_peers.contains(&peer_id));
@@ -823,7 +823,7 @@ fn test_graceful_shutdown_no_death_callback() {
             let _ = host.poll();
 
             // Check doorbells - this is where death would be detected for crashes
-            let _ = host.check_doorbell_deaths();
+            let _ = rt.block_on(host.check_doorbell_deaths());
 
             // Graceful shutdown should NOT trigger death callback
             assert!(

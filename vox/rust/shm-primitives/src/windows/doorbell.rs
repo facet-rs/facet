@@ -131,36 +131,49 @@ impl Doorbell {
 
     /// Signal the other side.
     ///
-    /// Sends a 1-byte message. If the pipe buffer is full (EAGAIN),
-    /// the signal is dropped (the other side is already signaled).
+    /// Sends a 1-byte message. If the pipe buffer is full, the signal is
+    /// coalesced with pending ones (returns `BufferFull`).
     ///
     /// Returns `SignalResult::PeerDead` if the peer has disconnected.
-    pub fn signal(&self) -> SignalResult {
+    pub async fn signal(&self) -> SignalResult {
         let buf = [1u8];
 
-        // Use try_write for non-blocking send
+        // Wait for writeability then write
         let result = match &self.pipe {
-            DoorbellPipe::Server(server) => server.try_write(&buf),
-            DoorbellPipe::Client(client) => client.try_write(&buf),
+            DoorbellPipe::Server(server) => {
+                match server.ready(Interest::WRITABLE).await {
+                    Ok(ready) if ready.is_writable() => server.try_write(&buf),
+                    Ok(_) => return SignalResult::BufferFull, // Not writable (shouldn't happen)
+                    Err(e) => Err(e),
+                }
+            }
+            DoorbellPipe::Client(client) => {
+                match client.ready(Interest::WRITABLE).await {
+                    Ok(ready) if ready.is_writable() => client.try_write(&buf),
+                    Ok(_) => return SignalResult::BufferFull,
+                    Err(e) => Err(e),
+                }
+            }
         };
 
-        match result {
+        let signal_result = match result {
             Ok(1) => SignalResult::Sent,
-            Ok(0) => SignalResult::Sent, // Shouldn't happen, treat as success
+            Ok(0) => SignalResult::Sent,
             Ok(_) => SignalResult::Sent,
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => SignalResult::BufferFull,
             Err(ref e) if e.kind() == ErrorKind::BrokenPipe => SignalResult::PeerDead,
             Err(ref e) if e.kind() == ErrorKind::NotConnected => SignalResult::PeerDead,
-            Err(ref e) if e.raw_os_error() == Some(232) => SignalResult::PeerDead, // ERROR_NO_DATA
-            Err(ref e) if e.raw_os_error() == Some(233) => SignalResult::PeerDead, // ERROR_PIPE_NOT_CONNECTED
+            Err(ref e) if e.raw_os_error() == Some(232) => SignalResult::PeerDead,
+            Err(ref e) if e.raw_os_error() == Some(233) => SignalResult::PeerDead,
             Err(e) => {
-                // Some other error - also indicates peer is dead, but log it once
                 if !self.peer_dead_logged.swap(true, Ordering::Relaxed) {
-                    tracing::debug!(pipe = %self.pipe_name, error = %e, "doorbell signal failed (peer likely dead)");
+                    tracing::debug!(pipe = %self.pipe_name, error = %e, "doorbell signal failed");
                 }
                 SignalResult::PeerDead
             }
-        }
+        };
+        tracing::trace!(pipe = %self.pipe_name, ?signal_result, "doorbell signal");
+        signal_result
     }
 
     /// Check if the peer appears to be dead (signal has failed).
@@ -236,6 +249,26 @@ impl Doorbell {
     /// Drain any pending signals without blocking.
     pub fn drain(&self) {
         self.try_drain();
+    }
+
+    /// Accept an incoming connection (required on Windows).
+    ///
+    /// On Windows, named pipe servers must call this to accept the client connection
+    /// before data can flow. On Unix, this is a no-op since socketpairs are already connected.
+    ///
+    /// This should be called after the guest process has been spawned and before
+    /// starting to wait on the doorbell.
+    pub async fn accept(&self) -> io::Result<()> {
+        match &self.pipe {
+            DoorbellPipe::Server(server) => {
+                server.connect().await?;
+                Ok(())
+            }
+            DoorbellPipe::Client(_) => {
+                // Clients don't need to accept
+                Ok(())
+            }
+        }
     }
 
     /// Get the pipe name (for diagnostics).
@@ -330,7 +363,7 @@ mod tests {
         let guest_doorbell = connect_handle.await.unwrap().unwrap();
 
         // Test signaling
-        assert_eq!(host_doorbell.signal(), SignalResult::Sent);
+        assert_eq!(host_doorbell.signal().await, SignalResult::Sent);
 
         // Give some time for the signal to propagate
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;

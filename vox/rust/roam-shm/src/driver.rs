@@ -756,6 +756,12 @@ impl MultiPeerHostDriverBuilder {
                 let ring_tx_clone = ring_tx.clone();
                 tokio::spawn(async move {
                     trace!("Doorbell waiter task started for peer {:?}", peer_id);
+                    // On Windows, accept the named pipe connection from the guest
+                    if let Err(e) = doorbell.accept().await {
+                        trace!("Doorbell accept failed for peer {:?}: {:?}", peer_id, e);
+                        return;
+                    }
+                    trace!("Doorbell waiter: accepted connection for peer {:?}", peer_id);
                     loop {
                         trace!("Doorbell waiter: waiting for peer {:?}", peer_id);
                         match doorbell.wait().await {
@@ -882,7 +888,7 @@ impl MultiPeerHostDriver {
                     // Ring doorbells for guests whose slots were freed (backpressure wakeup)
                     for freed_peer_id in result.slots_freed_for {
                         if let Some(doorbell) = self.doorbells.get(&freed_peer_id) {
-                            doorbell.signal();
+                            doorbell.signal().await;
                         }
                     }
 
@@ -979,6 +985,12 @@ impl MultiPeerHostDriver {
                     let ring_tx = self.ring_tx.clone();
                     tokio::spawn(async move {
                         trace!("Doorbell waiter task started for peer {:?}", peer_id);
+                        // On Windows, accept the named pipe connection from the guest
+                        if let Err(e) = doorbell.accept().await {
+                            trace!("Doorbell accept failed for peer {:?}: {:?}", peer_id, e);
+                            return;
+                        }
+                        trace!("Doorbell waiter: accepted connection for peer {:?}", peer_id);
                         loop {
                             trace!("Doorbell waiter: waiting for peer {:?}", peer_id);
                             match doorbell.wait().await {
@@ -1300,7 +1312,7 @@ impl MultiPeerHostDriver {
 
         // Ring doorbell to wake up guest waiting for messages
         if let Some(doorbell) = self.doorbells.get(&peer_id) {
-            doorbell.signal();
+            doorbell.signal().await;
         }
 
         Ok(())

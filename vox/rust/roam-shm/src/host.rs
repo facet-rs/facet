@@ -794,7 +794,7 @@ impl ShmHost {
     ///
     /// shm[impl shm.doorbell.death]
     /// shm[impl shm.death.detection-methods]
-    pub fn check_doorbell_deaths(&mut self) -> Vec<PeerId> {
+    pub async fn check_doorbell_deaths(&mut self) -> Vec<PeerId> {
         let mut dead_peers = Vec::new();
 
         for (&peer_id, state) in &self.guests {
@@ -804,7 +804,7 @@ impl ShmHost {
 
             if let Some(ref doorbell) = state.doorbell {
                 // Try to signal - if peer is dead, we'll find out
-                if doorbell.signal() == SignalResult::PeerDead {
+                if doorbell.signal().await == SignalResult::PeerDead {
                     dead_peers.push(peer_id);
                 }
             }
@@ -823,11 +823,15 @@ impl ShmHost {
     /// This wakes up a guest that might be waiting for messages.
     ///
     /// shm[impl shm.doorbell.ring-integration]
-    pub fn ring_doorbell(&self, peer_id: PeerId) -> Option<SignalResult> {
-        self.guests
+    pub async fn ring_doorbell(&self, peer_id: PeerId) -> Option<SignalResult> {
+        if let Some(doorbell) = self.guests
             .get(&peer_id)
             .and_then(|state| state.doorbell.as_ref())
-            .map(|doorbell| doorbell.signal())
+        {
+            Some(doorbell.signal().await)
+        } else {
+            None
+        }
     }
 
     /// Take ownership of a peer's doorbell (for async waiting in driver).

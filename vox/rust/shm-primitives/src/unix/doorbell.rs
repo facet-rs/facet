@@ -164,7 +164,7 @@ impl Doorbell {
     /// Returns `SignalResult::PeerDead` if the peer has disconnected
     /// (EPIPE, ECONNRESET, ENOTCONN). This is logged once per doorbell
     /// to avoid spam.
-    pub fn signal(&self) -> SignalResult {
+    pub async fn signal(&self) -> SignalResult {
         let fd = self.async_fd.get_ref().as_raw_fd();
         let buf = [1u8];
 
@@ -244,6 +244,15 @@ impl Doorbell {
     /// Drain any pending signals without blocking.
     pub fn drain(&self) {
         self.try_drain();
+    }
+
+    /// Accept an incoming connection (no-op on Unix).
+    ///
+    /// On Unix, socketpairs are already connected when created, so this is a no-op.
+    /// On Windows, named pipe servers must call this to accept the client connection.
+    pub async fn accept(&self) -> io::Result<()> {
+        // Unix socketpairs are already connected
+        Ok(())
     }
 
     /// Get the number of bytes pending in the socket buffer (for diagnostics).
