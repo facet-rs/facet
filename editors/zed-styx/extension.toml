@@ -9,4 +9,4 @@ repository = "https://github.com/bearcove/styx"
 [grammars.styx]
 repository = "https://github.com/bearcove/styx"
 path = "crates/tree-sitter-styx"
-rev = "97ecbd622911fd6632782d72f924fec83eeacd8c"
+rev = "9e0eddd5ecfcf63b70d1de1de957bfd14a965639"
