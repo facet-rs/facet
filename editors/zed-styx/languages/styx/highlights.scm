@@ -18,16 +18,16 @@
   key: (bare_scalar) @property
   "=" @operator)
 
-; Keys in entries - bare scalars in the key position
-(entry
-  key: (expr
-    payload: (scalar (bare_scalar) @property)))
-
-; Scalars (general fallback)
+; Scalars (general fallback) - must come BEFORE more specific rules
 (bare_scalar) @string
 (quoted_scalar) @string
 (raw_scalar) @string
 (heredoc) @string
+
+; Keys in entries - bare scalars in the key position (overrides @string above)
+(entry
+  key: (expr
+    payload: (scalar (bare_scalar) @property)))
 
 ; Punctuation
 "{" @punctuation.bracket
