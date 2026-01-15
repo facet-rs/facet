@@ -324,6 +324,80 @@ enum Message {
 // {"t": "Text", "c": "hello"}
 ```
 
+## Variant attributes
+
+These attributes apply to enum variants.
+
+### `other`
+
+Mark a variant as a catch-all for unknown variant names. When deserializing, if no variant matches the input tag, the variant marked with `other` will be used.
+
+```rust,noexec
+#[derive(Facet)]
+enum Status {
+    Active,
+    Inactive,
+    #[facet(other)]
+    Unknown(String),  // Catches "Pending", "Archived", etc.
+}
+```
+
+#### Capturing variant tags with `#[facet(tag)]` and `#[facet(content)]`
+
+For self-describing formats that emit `VariantTag` events (like Styx or XML), an `#[facet(other)]` variant can capture both the tag name and its payload using field-level `#[facet(tag)]` and `#[facet(content)]` attributes:
+
+```rust,noexec
+#[derive(Facet)]
+enum Schema {
+    // Known variants
+    Object(ObjectSchema),
+    Seq(SeqSchema),
+    
+    // Catch-all for unknown tags like @string, @unit, @MyCustomType
+    #[facet(other)]
+    Type {
+        #[facet(tag)]
+        name: String,      // Captures the tag name (e.g., "string", "unit")
+        #[facet(content)]
+        payload: Value,    // Captures the payload
+    },
+}
+```
+
+With this definition:
+- `@object{...}` → `Schema::Object(...)` (known variant)
+- `@string` → `Schema::Type { name: "string", payload: Value::Unit }`
+- `@custom"data"` → `Schema::Type { name: "custom", payload: Value::Str("data") }`
+- `@foo{x 1}` → `Schema::Type { name: "foo", payload: Value::Object(...) }`
+
+**Rules for `#[facet(other)]` variants:**
+
+1. Only one variant per enum can be marked `#[facet(other)]`
+2. When used with `VariantTag` events:
+   - A field with `#[facet(tag)]` receives the tag name as a `String`
+   - A field with `#[facet(content)]` receives the deserialized payload
+   - If no `#[facet(content)]` field exists, the payload must be unit (empty)
+3. For non-self-describing formats (JSON with external tagging), the variant name from the input is used directly
+
+**Discarding payloads:**
+
+If you only care about the tag name and know the payload is always unit, you can omit the `#[facet(content)]` field:
+
+```rust,noexec
+#[derive(Facet)]
+enum TypeRef {
+    Object,
+    Seq,
+    #[facet(other)]
+    Named {
+        #[facet(tag)]
+        name: String,  // Just capture the tag name, payload must be unit
+    },
+}
+```
+
+This will fail deserialization if the unknown variant has a non-unit payload.
+
 ## Field attributes
 
 These attributes apply to struct fields.
