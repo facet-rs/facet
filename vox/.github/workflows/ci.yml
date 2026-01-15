@@ -16,7 +16,7 @@ jobs:
     name: Rust / Clippy
     runs-on: depot-ubuntu-24.04-16
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -33,7 +33,7 @@ jobs:
     name: Rust / Format
     runs-on: depot-ubuntu-24.04-4
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -47,7 +47,7 @@ jobs:
     name: Rust / Documentation
     runs-on: depot-ubuntu-24.04-16
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -62,7 +62,7 @@ jobs:
     name: Rust / Miri
     runs-on: depot-ubuntu-24.04-16
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
@@ -88,7 +88,7 @@ jobs:
     name: Rust / Loom
     runs-on: depot-ubuntu-24.04-16
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -108,7 +108,7 @@ jobs:
     name: Conformance / Rust
     runs-on: depot-ubuntu-24.04-16
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -131,7 +131,7 @@ jobs:
     name: Conformance / TypeScript
     runs-on: depot-ubuntu-24.04-4
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -170,7 +170,7 @@ jobs:
     name: Conformance / Swift
     runs-on: depot-macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -193,7 +193,7 @@ jobs:
     name: Rust / Windows
     runs-on: depot-windows-2025-16
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
