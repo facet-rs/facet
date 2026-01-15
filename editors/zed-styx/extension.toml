@@ -3,7 +3,7 @@ name = "Styx"
 description = "Styx configuration language support with syntax highlighting"
 version = "0.1.0"
 schema_version = 1
-authors = ["bearcove <hello@bearcove.net>"]
+authors = ["Amos Wenger <amos@bearcove.eu>"]
 repository = "https://github.com/bearcove/styx"
 
 [grammars.styx]
