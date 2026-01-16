@@ -16,8 +16,6 @@ Learn how to use facet for serialization, deserialization, and rich diagnostics.
 ## Guides
 - [Getting Started](@/guide/getting-started.md)
 - [Why facet?](@/guide/why.md)
-- [Attributes Reference](@/guide/attributes.md) — complete `#[facet(...)]` catalog
-- [XML and HTML](@/guide/xml-html.md) — parsing and serializing markup documents
 - [Dynamic Values](@/guide/dynamic-values.md) — `Value`, `assert_same!`, `RawJson`
 - [Variance and Soundness](@/guide/variance.md) — lifetime safety in reflection
 - [Comparison with serde](@/guide/serde/_index.md)

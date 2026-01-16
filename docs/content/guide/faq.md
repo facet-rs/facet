@@ -220,7 +220,7 @@ enum Event {
 // PageView: {"type": "PageView", "id": 2, "timestamp": "...", "url": "/home"}
 ```
 
-See [Attributes Reference](@/guide/attributes.md#flatten) for more details.
+See [Attributes Reference](@/reference/attributes/_index.md#flatten) for more details.
 
 ## Error handling
 

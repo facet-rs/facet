@@ -7,7 +7,5 @@ insert_anchor_links = "heading"
 
 Lookup-style docs and tables.
 
-- [Attributes Reference](@/reference/attributes/) — complete `#[facet(...)]` catalog.
-- [Format comparison matrix](@/reference/format-crate-matrix/) — feature support across format crates.
-- [Extension Attributes](@/reference/attributes/#extension-attributes) — namespaced attributes by crate.
-- [FAQ](@/guide/faq.md) — common questions and quick answers.
+- [Attributes](@/reference/attributes/_index.md) — complete `#[facet(...)]` catalog
+- [Format Matrix](@/reference/format-crate-matrix/_index.md) — feature support across format crates

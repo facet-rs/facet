@@ -75,6 +75,6 @@ cargo run
 - **Rename fields:** `#[facet(rename = "serverPort")]` or `#[facet(rename_all = "camelCase")]`.
 
 ## Next steps
-- Browse the [Attributes Reference](@/guide/attributes.md) for all available attributes.
+- Browse the [Attributes Reference](@/reference/attributes/_index.md) for all available attributes.
 - Check the [Format Support Matrix](@/reference/format-crate-matrix/_index.md) if you use multiple formats.
 - Read the [FAQ](@/guide/faq.md) for common questions.
