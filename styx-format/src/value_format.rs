@@ -24,6 +24,17 @@ pub fn format_value_default(value: &Value) -> String {
     format_value(value, FormatOptions::default())
 }
 
+/// Format an Object directly (with braces), not as a root document.
+///
+/// This is useful for code actions that need to format a single object
+/// while respecting its separator style.
+pub fn format_object_braced(obj: &Object, options: FormatOptions) -> String {
+    let mut formatter = ValueFormatter::new(options.clone());
+    formatter.format_object(obj);
+    let raw = formatter.finish();
+    format_source(&raw, options)
+}
+
 struct ValueFormatter {
     writer: StyxWriter,
 }

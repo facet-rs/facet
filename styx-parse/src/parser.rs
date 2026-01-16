@@ -827,7 +827,8 @@ impl<'src> Parser<'src> {
             kind: ScalarKind::Bare,
             content: AtomContent::Object {
                 entries,
-                separator: separator_mode.unwrap_or(Separator::Newline),
+                // No separators seen = inline format (like comma-separated)
+                separator: separator_mode.unwrap_or(Separator::Comma),
                 duplicate_key_spans,
                 mixed_separator_spans,
                 dangling_doc_comment_spans,

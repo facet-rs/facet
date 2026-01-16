@@ -12,5 +12,5 @@ mod writer;
 pub use cst_format::{format_cst, format_source};
 pub use options::FormatOptions;
 pub use scalar::{can_be_bare, count_escapes, count_newlines, escape_quoted, unescape_quoted};
-pub use value_format::{format_value, format_value_default};
+pub use value_format::{format_object_braced, format_value, format_value_default};
 pub use writer::StyxWriter;

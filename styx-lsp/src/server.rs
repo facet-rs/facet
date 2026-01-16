@@ -1913,42 +1913,50 @@ fn generate_separator_toggle_edit(
     let mut new_obj = object.clone();
     new_obj.separator = target_separator;
 
-    // Create a Value wrapping this object for formatting
-    let value = styx_tree::Value {
-        tag: None,
-        payload: Some(styx_tree::Payload::Object(new_obj)),
-        span: None,
-    };
+    // Format the object with braces using the appropriate separator style
+    let formatted =
+        styx_format::format_object_braced(&new_obj, styx_format::FormatOptions::default());
 
-    // Format the object
-    let formatted = styx_format::format_value(&value, styx_format::FormatOptions::default());
-
-    // The formatted output is for a root object (no braces), but we need braces
-    // Wrap it in braces with appropriate formatting
+    // For multiline, we need to adjust indentation to match the context
     let new_text = if target_separator == styx_tree::Separator::Comma {
-        // Inline: {field1 value1, field2 value2}
-        format!("{{{}}}", formatted.trim())
+        // Inline format - use as-is (already has braces)
+        formatted.trim().to_string()
     } else {
-        // Multiline: preserve indentation from the original position
-        // Find the indentation of the opening brace
+        // Multiline: adjust indentation to match the document context
         let brace_offset = span.start as usize;
         let line_start = content[..brace_offset]
             .rfind('\n')
             .map(|i| i + 1)
             .unwrap_or(0);
-        let base_indent = &content[line_start..brace_offset];
-        // Find where the key ends (the indent we need for content)
-        let content_indent = format!("{}    ", base_indent);
 
-        let mut result = String::from("{\n");
-        for line in formatted.trim().lines() {
-            result.push_str(&content_indent);
-            result.push_str(line);
+        // Extract just the leading whitespace (not the key name)
+        let line_prefix = &content[line_start..brace_offset];
+        let base_indent: String = line_prefix
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .collect();
+
+        // The formatted output uses default indentation (2 spaces).
+        // Re-indent each line to match the document context.
+        let mut result = String::new();
+        for (i, line) in formatted.trim().lines().enumerate() {
+            if i == 0 {
+                // First line is the opening brace - no extra indent
+                result.push_str(line);
+            } else if line.trim() == "}" {
+                // Closing brace - use base indent
+                result.push_str(&base_indent);
+                result.push('}');
+            } else {
+                // Content lines - use base indent + 4 spaces
+                result.push_str(&base_indent);
+                result.push_str("    ");
+                result.push_str(line.trim());
+            }
             result.push('\n');
         }
-        result.push_str(base_indent);
-        result.push('}');
-        result
+        // Remove trailing newline
+        result.trim_end().to_string()
     };
 
     Some(TextEdit {
@@ -2136,5 +2144,92 @@ schema {
         assert_eq!(levenshtein("abc", "ab"), 1);
         assert_eq!(levenshtein("port", "prot"), 2);
         assert_eq!(levenshtein("name", "nme"), 1);
+    }
+
+    #[test]
+    fn test_separator_toggle_to_multiline() {
+        // Test converting inline object to multiline
+        let content = "logging {level debug, format {timestamp true}}";
+
+        // Parse to get the object
+        let tree = styx_tree::parse(content).unwrap();
+        let obj = tree.as_object().unwrap();
+        let logging_entry = obj.get("logging").unwrap();
+        let logging_obj = logging_entry.as_object().unwrap();
+        let span = logging_entry.span.unwrap();
+
+        let edit = generate_separator_toggle_edit(
+            logging_obj,
+            span,
+            content,
+            styx_tree::Separator::Newline,
+        );
+
+        assert!(edit.is_some());
+        let edit = edit.unwrap();
+
+        // The indentation should be spaces, not "logging"
+        assert!(
+            !edit.new_text.contains("logging     "),
+            "Should not have key name in indentation, got: {:?}",
+            edit.new_text
+        );
+        assert!(
+            edit.new_text.contains("    level"),
+            "Should have proper indentation, got: {:?}",
+            edit.new_text
+        );
+    }
+
+    #[test]
+    fn test_separator_toggle_to_inline() {
+        // Test converting multiline object to inline
+        let content = "config {\n    host localhost\n    port 8080\n}";
+
+        let tree = styx_tree::parse(content).unwrap();
+        let obj = tree.as_object().unwrap();
+        let config_entry = obj.get("config").unwrap();
+        let config_obj = config_entry.as_object().unwrap();
+        let span = config_entry.span.unwrap();
+
+        let edit =
+            generate_separator_toggle_edit(config_obj, span, content, styx_tree::Separator::Comma);
+
+        assert!(edit.is_some());
+        let edit = edit.unwrap();
+
+        // Should be inline with commas
+        assert!(
+            edit.new_text.contains("{host localhost, port 8080}"),
+            "Should be inline with commas, got: {:?}",
+            edit.new_text
+        );
+    }
+
+    #[test]
+    fn test_separator_toggle_nested_indentation() {
+        // Test that nested objects get proper indentation
+        let content = "outer {\n    inner {a 1, b 2}\n}";
+
+        let tree = styx_tree::parse(content).unwrap();
+        let obj = tree.as_object().unwrap();
+        let outer_entry = obj.get("outer").unwrap();
+        let outer_obj = outer_entry.as_object().unwrap();
+        let inner_entry = outer_obj.get("inner").unwrap();
+        let inner_obj = inner_entry.as_object().unwrap();
+        let span = inner_entry.span.unwrap();
+
+        let edit =
+            generate_separator_toggle_edit(inner_obj, span, content, styx_tree::Separator::Newline);
+
+        assert!(edit.is_some());
+        let edit = edit.unwrap();
+
+        // Inner content should be indented relative to "inner" line (4 spaces base + 4 more)
+        assert!(
+            edit.new_text.contains("        a"),
+            "Should have 8 spaces indentation for nested content, got: {:?}",
+            edit.new_text
+        );
     }
 }
