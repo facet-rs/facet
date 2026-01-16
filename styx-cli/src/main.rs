@@ -24,11 +24,16 @@ const EXIT_IO_ERROR: i32 = 3;
 // Main entry point
 // ============================================================================
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     let result = if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
         print_usage();
+        Ok(())
+    } else if args[0] == "--version" || args[0] == "-V" {
+        println!("styx {VERSION}");
         Ok(())
     } else if args[0].starts_with('@') {
         // Subcommand mode: styx @tree, styx @diff, etc.
