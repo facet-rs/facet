@@ -411,7 +411,11 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
             }
 
             Event::Unit { span } => {
-                let unit = Value::unit();
+                let unit = Value {
+                    tag: None,
+                    payload: None,
+                    span: Some(span),
+                };
 
                 // Similar logic to Scalar for entry handling
                 if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.last_mut()
@@ -444,7 +448,6 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                     return true;
                 }
 
-                let _ = span; // suppress unused warning
                 self.push_value(unit);
             }
 

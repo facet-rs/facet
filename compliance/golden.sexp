@@ -32,7 +32,7 @@
 (document [-1, -1]
   (entry
     (scalar [0, 7] bare "nothing")
-    (unit [-1, -1]))
+    (unit [8, 9]))
 )
 ; file: compliance/corpus/01-scalars/bare-simple.styx
 (document [-1, -1]
@@ -311,11 +311,7 @@
 (document [-1, -1]
   (entry
     (scalar [0, 8] bare "explicit")
-    (object [9, 14] newline
-      (entry
-        (tag [9, 14] "none")
-        (unit [-1, -1]))
-    ))
+    (tag [9, 14] "none"))
 )
 ; file: compliance/corpus/04-tags/in-sequence.styx
 (document [-1, -1]
@@ -412,18 +408,12 @@
 (document [-1, -1]
   (entry
     (scalar [0, 7] bare "warning")
-    (object [8, 13] newline
-      (entry
-        (tag [8, 13] "warn")
-        (scalar [14, 34] quoted "deprecated feature"))
-    ))
+    (tag [13, 33] "warn"
+      (scalar [13, 33] quoted "deprecated feature")))
   (entry
-    (scalar [35, 38] bare "env")
-    (object [39, 43] newline
-      (entry
-        (tag [39, 43] "env")
-        (scalar [44, 50] quoted "HOME"))
-    ))
+    (scalar [34, 37] bare "env")
+    (tag [42, 48] "env"
+      (scalar [42, 48] quoted "HOME")))
 )
 ; file: compliance/corpus/04-tags/unit-payload.styx
 (document [-1, -1]
