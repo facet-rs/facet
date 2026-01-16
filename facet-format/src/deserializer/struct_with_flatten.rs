@@ -3,7 +3,7 @@ extern crate alloc;
 use facet_core::Def;
 use facet_reflect::{FieldCategory, Partial};
 
-use crate::{DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue, trace};
+use crate::{DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue};
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where

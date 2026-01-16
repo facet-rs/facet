@@ -4,7 +4,7 @@ use facet_core::{Type, UserType};
 use facet_path::PathStep;
 use facet_reflect::Partial;
 
-use crate::{DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue, trace};
+use crate::{DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue};
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
