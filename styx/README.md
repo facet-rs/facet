@@ -186,7 +186,7 @@ koi   // implicitly set to unit
 ```
 
 So, key-value pairs can be missing a value, and... they can also
-have more than one key.
+have more than one key — those are called "key chains".
 
 ```styx
 fee fi foe fum
@@ -194,8 +194,20 @@ fee fi foe fum
 fee {fi {foe fum}}
 ```
 
-And that's /it/ with the weirdness. Some unfamiliar bits, but hopefully
-not too many, which lets us...
+And, if you need to have an object as your value and you want to avoid
+one last bit of nesting? As a treat? You can use object attribute syntax:
+
+```styx
+{
+    web domain=example.org      port=9000
+    api domain=api.example.org  port=9001
+}
+```
+
+And that's /it/ with the weirdness. (Don't worry, there are comprehensive
+specifications and test suites).
+
+Some unfamiliar bits, but hopefully not too many, which lets us...
 
 ## Styx the schematic
 
