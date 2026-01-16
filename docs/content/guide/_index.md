@@ -11,7 +11,7 @@ Learn how to use facet for serialization, deserialization, and rich diagnostics.
 
 - First run: [Getting Started](@/guide/getting-started.md) — install → derive → round-trip → errors.
 - Decide if facet fits: [Why facet?](@/guide/why.md) — tradeoffs vs serde.
-- See it in action: [Showcases](@/guide/showcases/_index.md).
+- See it in action: [Showcases](@/showcases/_index.md).
 
 ## Guides
 - [Getting Started](@/guide/getting-started.md)

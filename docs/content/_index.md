@@ -31,11 +31,17 @@ From this single derive, you get:
   <p class="tagline">Use facet in your app</p>
   <p class="description">Install a format crate, derive <code>Facet</code>, configure attributes, and ship with great diagnostics.</p>
 </a>
+<a class="guide-card" href="/showcases">
+  <div class="guide-card__icon"><img src="/icons/showcases.svg" alt="" loading="lazy"></div>
+  <h3 id="showcases">Showcases</h3>
+  <p class="tagline">See it in action</p>
+  <p class="description">Interactive examples for JSON, YAML, args parsing, pretty-printing, diffing, and more.</p>
+</a>
 <a class="guide-card" href="/reference">
   <div class="guide-card__icon"><img src="/icons/reference.svg" alt="" loading="lazy"></div>
   <h3 id="reference">Reference</h3>
   <p class="tagline">Look it up fast</p>
-  <p class="description">Attributes catalog, format matrix, extension namespaces, and FAQs in one place.</p>
+  <p class="description">Attributes catalog and format matrix.</p>
 </a>
 <a class="guide-card" href="/extend">
   <div class="guide-card__icon"><img src="/icons/extend.svg" alt="" loading="lazy"></div>

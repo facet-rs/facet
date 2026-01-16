@@ -216,7 +216,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See the [Args showcase](@/guide/showcases/args.md) for comprehensive examples including subcommands, error messages, and more.
+See the [Args showcase](@/showcases/args.md) for comprehensive examples including subcommands, error messages, and more.
 
 ## When a type doesn't implement Facet
 

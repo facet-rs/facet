@@ -130,7 +130,7 @@ facet's goal is not speed. It's expressiveness, diagnostics, and flexibility. If
 
 ## Next steps
 
-- Browse the [showcases](/guide/showcases/) for examples
+- Browse the [Showcases](/showcases/) for examples
 - Check the [format support matrix](/reference/format-crate-matrix/) for available formats
 - Read the [Guide](/guide/) to get started
 - Source: [github.com/facet-rs/facet](https://github.com/facet-rs/facet)

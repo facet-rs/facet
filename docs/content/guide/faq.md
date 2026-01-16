@@ -331,6 +331,6 @@ struct Node {
 ## Still have questions?
 
 - Join the [Discord](https://discord.gg/JhD7CwCJ8F) to chat with the community
-- Check the [Showcases](@/guide/showcases/_index.md) for more examples
+- Check the [Showcases](@/showcases/_index.md) for more examples
 - Browse the [API documentation](https://docs.rs/facet) for detailed type information
 - Open an [issue](https://github.com/facet-rs/facet/issues) if you've found a bug
