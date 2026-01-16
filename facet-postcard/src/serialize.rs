@@ -546,6 +546,12 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
         Ok(true)
     }
 
+    fn serialize_byte_array(&mut self, bytes: &[u8]) -> Result<bool, Self::Error> {
+        // Arrays have no length prefix - just raw bytes
+        self.writer.write_bytes(bytes)?;
+        Ok(true)
+    }
+
     fn serialize_opaque_scalar(
         &mut self,
         shape: &'static facet_core::Shape,

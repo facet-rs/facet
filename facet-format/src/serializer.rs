@@ -351,6 +351,17 @@ pub trait FormatSerializer {
         // Default: not supported, fall back to element-by-element
         Ok(false)
     }
+
+    /// Serialize a fixed-size byte array (`[u8; N]`) in bulk.
+    ///
+    /// Unlike `serialize_byte_sequence`, this does NOT write a length prefix
+    /// since the array size is known from the type.
+    ///
+    /// Returns `Ok(true)` if handled (bytes were written), `Ok(false)` otherwise.
+    fn serialize_byte_array(&mut self, _bytes: &[u8]) -> Result<bool, Self::Error> {
+        // Default: not supported, fall back to element-by-element
+        Ok(false)
+    }
 }
 
 /// Error produced by the shared serializer.
@@ -518,12 +529,20 @@ where
             let len = list.len();
 
             // Check if this is a byte sequence - if so, try bulk serialization
-            if let Some(bytes) = list.as_bytes()
-                && serializer
-                    .serialize_byte_sequence(bytes)
-                    .map_err(SerializeError::Backend)?
-            {
-                return Ok(());
+            if let Some(bytes) = list.as_bytes() {
+                let handled = match value.shape().def {
+                    // Arrays have no length prefix
+                    facet_core::Def::Array(_) => serializer
+                        .serialize_byte_array(bytes)
+                        .map_err(SerializeError::Backend)?,
+                    // Lists and slices have a length prefix
+                    _ => serializer
+                        .serialize_byte_sequence(bytes)
+                        .map_err(SerializeError::Backend)?,
+                };
+                if handled {
+                    return Ok(());
+                }
             }
             // Fall through to element-by-element if not handled
 
