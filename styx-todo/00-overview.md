@@ -54,7 +54,7 @@ All foundational work is done:
 | 08 | [MIME Type](08-mime-type.md) | Low | Low |
 | 09 | [Ecosystem & Adoption](09-ecosystem.md) | Low | Ongoing |
 | 10 | ~~[AI Tooling](10-ai-tooling.md)~~ | ✅ Done | — |
-| 11 | [Compliance Suite](11-compliance-suite.md) | High | Medium |
+| 11 | ~~[Compliance Suite](11-compliance-suite.md)~~ | ✅ Done | — |
 
 ## Recommended Order
 

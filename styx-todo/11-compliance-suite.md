@@ -1,6 +1,6 @@
 # Compliance Suite
 
-**Status:** TODO  
+**Status:** Done  
 **Priority:** High
 
 ## Problem
@@ -136,12 +136,12 @@ diff -u compliance/golden.styx output.styx
 
 ## Implementation Plan
 
-1. [ ] Define s-expression format spec (`compliance/format.md`)
-2. [ ] Add `styx @tree --format sexp` flag  
-3. [ ] Create initial corpus (~50 files covering basics)
-4. [ ] Generate golden files from reference implementation
-5. [ ] Add to CI (Rust impl)
-6. [ ] Document how other implementations can run the suite
+1. [x] Define s-expression format spec (`compliance/format.md`)
+2. [x] Add `styx @tree --format sexp` flag  
+3. [x] Create initial corpus (50 files covering basics)
+4. [x] Generate golden files from reference implementation
+5. [x] Add to CI (`.github/workflows/ci.yml`)
+6. [x] Document how other implementations can run the suite (`compliance/README.md`)
 7. [ ] Expand corpus over time (fuzzing finds edge cases → add to corpus)
 
 ## Future
