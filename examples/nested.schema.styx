@@ -1,24 +1,24 @@
 meta {
-  id https://example.com/nested-config
-  version 2026-01-16
-  description "Schema with nested objects for testing"
+    id https://example.com/nested-config
+    version 2026-01-16
+    description "Schema with nested objects for testing"
+}
+schema {
+    @ @object{
+        name @string
+        server @object{
+            host @string
+            port @int
+            tls @optional(@object{
+                cert @string
+                key @string
+                ca @optional(@string)
+            })
+        }
+        logging @optional(@object{
+            level @string
+            format @optional(@string)
+        })
+    }
 }
 
-schema {
-  @ @object{
-    name @string
-    server @object{
-      host @string
-      port @int
-      tls @optional(@object{
-        cert @string
-        key @string
-        ca @optional(@string)
-      })
-    }
-    logging @optional(@object{
-      level @string
-      format @optional(@string)
-    })
-  }
-}
