@@ -15,9 +15,9 @@ insert_anchor_links = "heading"
 
 Do **not** edit `README.md` files directly. Edit `README.md.in` instead — READMEs are generated.
 
-### facet-dev
+### captain
 
-The [facet-dev](https://github.com/facet-rs/facet-dev) tool keeps all crates in sync. It generates READMEs from templates and ensures consistent metadata across the monorepo.
+The [captain](https://github.com/bearcove/captain) tool keeps all crates in sync. It generates READMEs from templates and ensures consistent metadata across the monorepo.
 
 ## Licensing
 
