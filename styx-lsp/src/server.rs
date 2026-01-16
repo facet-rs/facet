@@ -11,8 +11,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use crate::schema_validation::{
-    SchemaRef, find_schema_declaration, get_error_span, resolve_schema_path,
-    validate_against_schema,
+    SchemaRef, get_error_span, resolve_schema_path, validate_against_schema,
 };
 use crate::semantic_tokens::{compute_semantic_tokens, semantic_token_legend};
 
@@ -122,7 +121,24 @@ impl StyxLanguageServer {
         // Phase 3: Schema validation
         if let Some(tree) = tree {
             // Only validate if there's a schema declaration
-            if find_schema_declaration(tree).is_some() {
+            if let Some((schema_ref, _)) = find_schema_declaration_with_range(tree, content) {
+                // Try to resolve schema for related_information
+                let schema_location = if let SchemaRef::External(ref path) = schema_ref {
+                    resolve_schema_path(path, uri).and_then(|resolved| {
+                        Url::from_file_path(&resolved).ok().map(|schema_uri| {
+                            DiagnosticRelatedInformation {
+                                location: Location {
+                                    uri: schema_uri,
+                                    range: Range::default(),
+                                },
+                                message: format!("schema defined in {}", path),
+                            }
+                        })
+                    })
+                } else {
+                    None
+                };
+
                 match validate_against_schema(tree, uri) {
                     Ok(result) => {
                         // Add validation errors
@@ -148,16 +164,19 @@ impl StyxLanguageServer {
                                 }
                             };
 
+                            // Store quickfix data for code actions
+                            let data = error.quickfix_data();
+
                             diagnostics.push(Diagnostic {
                                 range,
                                 severity: Some(DiagnosticSeverity::ERROR),
                                 code: None,
                                 code_description: None,
                                 source: Some("styx-schema".to_string()),
-                                message: error.message.clone(),
-                                related_information: None,
+                                message: error.diagnostic_message(),
+                                related_information: schema_location.clone().map(|loc| vec![loc]),
                                 tags: None,
-                                data: None,
+                                data,
                             });
                         }
 
@@ -183,7 +202,7 @@ impl StyxLanguageServer {
                                 code_description: None,
                                 source: Some("styx-schema".to_string()),
                                 message: warning.message.clone(),
-                                related_information: None,
+                                related_information: schema_location.clone().map(|loc| vec![loc]),
                                 tags: None,
                                 data: None,
                             });
@@ -249,6 +268,8 @@ impl LanguageServer for StyxLanguageServer {
                     resolve_provider: Some(false),
                     ..Default::default()
                 }),
+                // Code actions (quick fixes)
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -635,6 +656,58 @@ impl LanguageServer for StyxLanguageServer {
             .collect();
 
         Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri;
+        let mut actions = Vec::new();
+
+        // Process each diagnostic to generate code actions
+        for diag in params.context.diagnostics {
+            // Only process our diagnostics
+            if diag.source.as_deref() != Some("styx-schema") {
+                continue;
+            }
+
+            // Check for quickfix data
+            if let Some(data) = &diag.data {
+                if let Some(fix_type) = data.get("type").and_then(|v| v.as_str()) {
+                    if fix_type == "rename_field" {
+                        if let (Some(from), Some(to)) = (
+                            data.get("from").and_then(|v| v.as_str()),
+                            data.get("to").and_then(|v| v.as_str()),
+                        ) {
+                            // Create a text edit to rename the field
+                            let edit = TextEdit {
+                                range: diag.range,
+                                new_text: to.to_string(),
+                            };
+
+                            let mut changes = std::collections::HashMap::new();
+                            changes.insert(uri.clone(), vec![edit]);
+
+                            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                                title: format!("Rename '{}' to '{}'", from, to),
+                                kind: Some(CodeActionKind::QUICKFIX),
+                                diagnostics: Some(vec![diag.clone()]),
+                                edit: Some(WorkspaceEdit {
+                                    changes: Some(changes),
+                                    ..Default::default()
+                                }),
+                                is_preferred: Some(true),
+                                ..Default::default()
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(actions))
+        }
     }
 }
 
