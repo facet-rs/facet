@@ -772,12 +772,15 @@ where
         trace!("deserialize_list: starting");
 
         // Check if this is a Vec<u8> - if so, try the optimized byte sequence path
-        let is_byte_list = matches!(
-            &wip.shape().def,
-            Def::List(list_def) if list_def.t.type_identifier == "u8"
-        );
+        // We specifically check for Vec (not Bytes, BytesMut, or other list-like types)
+        // because those types may have different builder patterns
+        let is_byte_vec = wip.shape().type_identifier == "Vec"
+            && matches!(
+                &wip.shape().def,
+                Def::List(list_def) if list_def.t.type_identifier == "u8"
+            );
 
-        if is_byte_list && self.parser.hint_byte_sequence() {
+        if is_byte_vec && self.parser.hint_byte_sequence() {
             // Parser supports bulk byte reading - expect Scalar(Bytes(...))
             let event = self.expect_event("bytes")?;
             trace!(?event, "deserialize_list: got bytes event");
