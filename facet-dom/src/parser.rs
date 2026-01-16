@@ -35,4 +35,14 @@ pub trait DomParser<'de> {
     fn is_lenient(&self) -> bool {
         false
     }
+
+    /// Returns the format namespace for this parser (e.g., "xml", "html").
+    ///
+    /// This is used to select format-specific proxy types when a field has
+    /// `#[facet(xml::proxy = XmlProxy)]` or similar format-namespaced proxies.
+    ///
+    /// Returns `None` by default, which falls back to format-agnostic proxies.
+    fn format_namespace(&self) -> Option<&'static str> {
+        None
+    }
 }

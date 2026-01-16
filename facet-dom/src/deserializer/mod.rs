@@ -421,7 +421,8 @@ where
             DomEvent::Text(_) => {
                 trace!("deserialize_scalar: matched Text arm");
                 let text = self.parser.expect_text()?;
-                self.set_string_value(wip, text)
+                // Use set_string_value_with_proxy for format-specific proxy support
+                self.set_string_value_with_proxy(wip, text)
             }
             DomEvent::NodeStart { .. } => {
                 trace!("deserialize_scalar: matched NodeStart arm");
@@ -450,7 +451,8 @@ where
                         DomEvent::NodeEnd => {
                             self.parser.expect_node_end()?;
                             trace!("deserialize_scalar: void element, returning empty string");
-                            return self.set_string_value(wip, Cow::Borrowed(""));
+                            // Use set_string_value_with_proxy for format-specific proxy support
+                            return self.set_string_value_with_proxy(wip, Cow::Borrowed(""));
                         }
                         other => {
                             trace!(other = ?other, "deserialize_scalar: unexpected event in attr loop");
@@ -501,7 +503,8 @@ where
                 self.parser.expect_node_end()?;
                 trace!(text_content = %text_content, "deserialize_scalar: setting string value");
 
-                self.set_string_value(wip, Cow::Owned(text_content))
+                // Use set_string_value_with_proxy for format-specific proxy support
+                self.set_string_value_with_proxy(wip, Cow::Owned(text_content))
             }
             other => Err(DomDeserializeError::TypeMismatch {
                 expected: "Text or NodeStart",
@@ -752,17 +755,26 @@ where
     /// 3. End the frame (which converts proxy -> target via TryFrom)
     ///
     /// If no proxy is present, it just calls `set_string_value` directly.
+    ///
+    /// This method supports format-specific proxies: if the parser returns a format
+    /// namespace (e.g., "xml"), fields with `#[facet(xml::proxy = ...)]` will use
+    /// that proxy instead of the format-agnostic one.
     pub(crate) fn set_string_value_with_proxy(
         &mut self,
         mut wip: Partial<'de, BORROW>,
         value: Cow<'de, str>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        // Check if the field has a proxy
-        let has_proxy = wip.parent_field().and_then(|f| f.proxy()).is_some();
+        // Check if the field has a proxy (format-specific or format-agnostic)
+        let format_ns = self.parser.format_namespace();
+        let has_proxy = wip
+            .parent_field()
+            .and_then(|f| f.effective_proxy(format_ns))
+            .is_some();
 
         if has_proxy {
             // Use custom deserialization through the proxy
-            wip = wip.begin_custom_deserialization()?;
+            // The format-aware version will select the right proxy
+            wip = wip.begin_custom_deserialization_with_format(format_ns)?;
             wip = self.set_string_value(wip, value)?;
             wip = wip.end()?;
             Ok(wip)
