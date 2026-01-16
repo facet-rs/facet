@@ -159,13 +159,66 @@ where
                             wip = wip.end().map_err(DeserializeError::reflect)?;
                         }
 
-                        // Open new segments
-                        for &segment in &field_segments[common_len..] {
+                        // Open new segments (all except last)
+                        let segments_to_open = &field_segments[common_len..];
+                        let (intermediate_segments, last_segment) = if segments_to_open.is_empty() {
+                            (&[][..], None)
+                        } else {
+                            (
+                                &segments_to_open[..segments_to_open.len() - 1],
+                                Some(segments_to_open[segments_to_open.len() - 1]),
+                            )
+                        };
+
+                        // Open intermediate segments (these are flatten containers, always enter Some)
+                        for &segment in intermediate_segments {
                             wip = wip
                                 .begin_field(segment)
                                 .map_err(DeserializeError::reflect)?;
                             let is_option = matches!(wip.shape().def, Def::Option(_));
                             if is_option {
+                                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                            }
+                            open_segments.push((segment, is_option, false));
+                        }
+
+                        // Open the last segment (the actual field being deserialized)
+                        if let Some(segment) = last_segment {
+                            wip = wip
+                                .begin_field(segment)
+                                .map_err(DeserializeError::reflect)?;
+                            let is_option = matches!(wip.shape().def, Def::Option(_));
+
+                            if is_option {
+                                // Check if the value is null before deciding to enter Some
+                                let peeked = self
+                                    .parser
+                                    .peek_event()
+                                    .map_err(DeserializeError::Parser)?;
+                                if matches!(
+                                    peeked,
+                                    Some(ParseEvent::Scalar(
+                                        ScalarValue::Null | ScalarValue::Unit
+                                    ))
+                                ) {
+                                    // Value is null - consume it and set Option to None
+                                    let _ = self.expect_event("null or unit")?;
+                                    // Set default (None) for the Option field
+                                    wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                                    open_segments.push((segment, false, false));
+                                    // Skip the deserialization below since we handled it
+                                    // Close segments we just opened (we're done with this field)
+                                    while open_segments.len() > common_len {
+                                        let (_, is_opt, _) = open_segments.pop().unwrap();
+                                        if is_opt {
+                                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                                        }
+                                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                                    }
+                                    fields_set.insert(field_info.serialized_name);
+                                    continue;
+                                }
+                                // Value is not null - enter Some and deserialize
                                 wip = wip.begin_some().map_err(DeserializeError::reflect)?;
                             }
                             open_segments.push((segment, is_option, false));

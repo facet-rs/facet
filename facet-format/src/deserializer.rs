@@ -465,8 +465,13 @@ where
         if let Def::Option(opt_def) = &hint_shape.def {
             self.parser.hint_option();
             let event = self.expect_peek("value for option")?;
-            if matches!(event, ParseEvent::Scalar(ScalarValue::Null)) {
-                let _ = self.expect_event("null")?;
+            // Treat both Null and Unit as None
+            // Unit is used by Styx for tags without payload (e.g., @string vs @string{...})
+            if matches!(
+                event,
+                ParseEvent::Scalar(ScalarValue::Null | ScalarValue::Unit)
+            ) {
+                let _ = self.expect_event("null or unit")?;
                 wip = wip.set_default().map_err(DeserializeError::reflect)?;
             } else {
                 wip = self.deserialize_value_recursive(wip, opt_def.t)?;
