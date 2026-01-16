@@ -3,23 +3,33 @@
 A configuration language that's actually pleasant to use.
 
 ```styx
+// Schema declaration - enables validation, completion, hover
 @ examples/server.schema.styx
 
-name "my-server"
+/// The server's display name
+name my-server
 port 8080
 enabled true
 
 tls {
-    cert "/etc/ssl/cert.pem"
-    key "/etc/ssl/key.pem"
+    cert /etc/ssl/cert.pem
+    key /etc/ssl/key.pem
 }
 
 logging {
-    level "info"
-    format {
-        timestamp true
-        colors true
-    }
+    level info
+    format {timestamp true, colors true}  // inline style works too
+}
+
+// Tagged values for type annotations
+endpoints @seq(
+    @endpoint {path /api/v1, methods (GET POST)}
+    @endpoint {path /health, methods (GET)}
+)
+
+metadata @map {
+    version "1.0.0"  // quotes needed for dots
+    build-date 2024-01-15
 }
 ```
 
