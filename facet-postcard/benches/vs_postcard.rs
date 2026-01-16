@@ -213,6 +213,226 @@ mod vec_u8_4m {
 }
 
 // =============================================================================
+// Vec<u8> Serialization - Bulk copy vs element-by-element
+// =============================================================================
+
+mod vec_u8_serialize_256 {
+    use super::*;
+    use facet::Facet;
+
+    #[derive(Facet)]
+    struct ByteData {
+        data: Vec<u8>,
+    }
+
+    static DATA: LazyLock<ByteData> = LazyLock::new(|| ByteData {
+        data: make_bytes(256),
+    });
+
+    #[derive(Serialize)]
+    struct ByteDataSerde {
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    }
+
+    static DATA_SERDE: LazyLock<ByteDataSerde> = LazyLock::new(|| ByteDataSerde {
+        data: make_bytes(256),
+    });
+
+    #[divan::bench]
+    fn postcard_serde_bytes(bencher: Bencher) {
+        let data = &*DATA_SERDE;
+        bencher.bench(|| black_box(postcard::to_allocvec(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_postcard(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_postcard::to_vec(black_box(data)).unwrap()));
+    }
+}
+
+mod vec_u8_serialize_1k {
+    use super::*;
+    use facet::Facet;
+
+    #[derive(Facet)]
+    struct ByteData {
+        data: Vec<u8>,
+    }
+
+    static DATA: LazyLock<ByteData> = LazyLock::new(|| ByteData {
+        data: make_bytes(1000),
+    });
+
+    #[derive(Serialize)]
+    struct ByteDataSerde {
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    }
+
+    static DATA_SERDE: LazyLock<ByteDataSerde> = LazyLock::new(|| ByteDataSerde {
+        data: make_bytes(1000),
+    });
+
+    #[divan::bench]
+    fn postcard_serde_bytes(bencher: Bencher) {
+        let data = &*DATA_SERDE;
+        bencher.bench(|| black_box(postcard::to_allocvec(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_postcard(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_postcard::to_vec(black_box(data)).unwrap()));
+    }
+}
+
+mod vec_u8_serialize_64k {
+    use super::*;
+    use facet::Facet;
+
+    #[derive(Facet)]
+    struct ByteData {
+        data: Vec<u8>,
+    }
+
+    static DATA: LazyLock<ByteData> = LazyLock::new(|| ByteData {
+        data: make_bytes(65536),
+    });
+
+    #[derive(Serialize)]
+    struct ByteDataSerde {
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    }
+
+    static DATA_SERDE: LazyLock<ByteDataSerde> = LazyLock::new(|| ByteDataSerde {
+        data: make_bytes(65536),
+    });
+
+    #[divan::bench]
+    fn postcard_serde_bytes(bencher: Bencher) {
+        let data = &*DATA_SERDE;
+        bencher.bench(|| black_box(postcard::to_allocvec(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_postcard(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_postcard::to_vec(black_box(data)).unwrap()));
+    }
+}
+
+mod vec_u8_serialize_256k {
+    use super::*;
+    use facet::Facet;
+
+    #[derive(Facet)]
+    struct ByteData {
+        data: Vec<u8>,
+    }
+
+    static DATA: LazyLock<ByteData> = LazyLock::new(|| ByteData {
+        data: make_bytes(256 * 1024),
+    });
+
+    #[derive(Serialize)]
+    struct ByteDataSerde {
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    }
+
+    static DATA_SERDE: LazyLock<ByteDataSerde> = LazyLock::new(|| ByteDataSerde {
+        data: make_bytes(256 * 1024),
+    });
+
+    #[divan::bench]
+    fn postcard_serde_bytes(bencher: Bencher) {
+        let data = &*DATA_SERDE;
+        bencher.bench(|| black_box(postcard::to_allocvec(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_postcard(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_postcard::to_vec(black_box(data)).unwrap()));
+    }
+}
+
+mod vec_u8_serialize_1m {
+    use super::*;
+    use facet::Facet;
+
+    #[derive(Facet)]
+    struct ByteData {
+        data: Vec<u8>,
+    }
+
+    static DATA: LazyLock<ByteData> = LazyLock::new(|| ByteData {
+        data: make_bytes(1024 * 1024),
+    });
+
+    #[derive(Serialize)]
+    struct ByteDataSerde {
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    }
+
+    static DATA_SERDE: LazyLock<ByteDataSerde> = LazyLock::new(|| ByteDataSerde {
+        data: make_bytes(1024 * 1024),
+    });
+
+    #[divan::bench]
+    fn postcard_serde_bytes(bencher: Bencher) {
+        let data = &*DATA_SERDE;
+        bencher.bench(|| black_box(postcard::to_allocvec(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_postcard(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_postcard::to_vec(black_box(data)).unwrap()));
+    }
+}
+
+mod vec_u8_serialize_4m {
+    use super::*;
+    use facet::Facet;
+
+    #[derive(Facet)]
+    struct ByteData {
+        data: Vec<u8>,
+    }
+
+    static DATA: LazyLock<ByteData> = LazyLock::new(|| ByteData {
+        data: make_bytes(4 * 1024 * 1024),
+    });
+
+    #[derive(Serialize)]
+    struct ByteDataSerde {
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    }
+
+    static DATA_SERDE: LazyLock<ByteDataSerde> = LazyLock::new(|| ByteDataSerde {
+        data: make_bytes(4 * 1024 * 1024),
+    });
+
+    #[divan::bench]
+    fn postcard_serde_bytes(bencher: Bencher) {
+        let data = &*DATA_SERDE;
+        bencher.bench(|| black_box(postcard::to_allocvec(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_postcard(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_postcard::to_vec(black_box(data)).unwrap()));
+    }
+}
+
+// =============================================================================
 // Vec<u32> - Varint encoding
 // =============================================================================
 

@@ -540,6 +540,12 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
         write_varint(variant_index as u64, self.writer)
     }
 
+    fn serialize_byte_sequence(&mut self, bytes: &[u8]) -> Result<bool, Self::Error> {
+        // Postcard stores byte sequences as varint length + raw bytes
+        self.write_bytes(bytes)?;
+        Ok(true)
+    }
+
     fn serialize_opaque_scalar(
         &mut self,
         shape: &'static facet_core::Shape,
@@ -931,6 +937,70 @@ mod tests {
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();
         assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_vec_u8() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct BytesStruct {
+            data: Vec<u8>,
+        }
+
+        let value = BytesStruct {
+            data: alloc::vec![0, 1, 2, 3, 4, 5, 255, 128, 64],
+        };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        // Also test the roundtrip
+        let decoded: BytesStruct = crate::from_slice(&facet_bytes).unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn test_vec_u8_large() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct LargeBytes {
+            data: Vec<u8>,
+        }
+
+        // Test with a larger byte array to ensure bulk serialization works
+        let value = LargeBytes {
+            data: (0..1000).map(|i| (i % 256) as u8).collect(),
+        };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        // Also test the roundtrip
+        let decoded: LargeBytes = crate::from_slice(&facet_bytes).unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn test_vec_u8_empty() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct EmptyBytes {
+            data: Vec<u8>,
+        }
+
+        let value = EmptyBytes {
+            data: alloc::vec![],
+        };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        // Also test the roundtrip
+        let decoded: EmptyBytes = crate::from_slice(&facet_bytes).unwrap();
+        assert_eq!(decoded, value);
     }
 
     #[test]
