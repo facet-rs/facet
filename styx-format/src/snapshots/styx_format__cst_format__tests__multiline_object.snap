@@ -1,0 +1,8 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+server {
+    host localhost
+    port 8080
+}

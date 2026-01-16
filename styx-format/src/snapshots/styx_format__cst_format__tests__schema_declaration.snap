@@ -1,0 +1,7 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+@ schema.styx
+
+name test

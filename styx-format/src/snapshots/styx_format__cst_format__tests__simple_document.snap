@@ -1,0 +1,6 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+name Alice
+age 30

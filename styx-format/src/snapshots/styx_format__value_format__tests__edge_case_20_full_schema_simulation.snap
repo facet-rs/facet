@@ -1,0 +1,18 @@
+---
+source: crates/styx-format/src/value_format.rs
+expression: result
+---
+meta {
+    id https://example.com/config
+    version 2024-01-01
+    description "\"A test schema\""
+}
+schema {
+    @ @object{
+        name @string
+        server @object{
+            host @string
+            port @int
+        }
+    }
+}

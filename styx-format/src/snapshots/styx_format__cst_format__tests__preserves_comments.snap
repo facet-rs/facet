@@ -1,0 +1,8 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+// This is a comment
+name Alice
+/// Doc comment
+age 30

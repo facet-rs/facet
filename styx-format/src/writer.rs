@@ -14,9 +14,15 @@ pub enum Context {
         first: bool,
         is_root: bool,
         force_multiline: bool,
+        /// True if this struct started on the same line as its key (inline start)
+        inline_start: bool,
     },
     /// Inside a sequence - tracks if we've written any items
-    Seq { first: bool },
+    Seq {
+        first: bool,
+        /// True if this sequence started on the same line as its key (inline start)
+        inline_start: bool,
+    },
 }
 
 /// Low-level Styx output writer.
@@ -64,14 +70,32 @@ impl StyxWriter {
         self.stack.len()
     }
 
-    /// Effective indentation depth (accounts for root struct not adding indent).
+    /// Effective indentation depth (accounts for root struct and inline containers).
     fn indent_depth(&self) -> usize {
-        // If root struct is on the stack, it doesn't count for indentation
-        if let Some(Context::Struct { is_root: true, .. }) = self.stack.first() {
-            self.stack.len().saturating_sub(1)
-        } else {
-            self.stack.len()
+        let mut depth = 0;
+        for ctx in &self.stack {
+            match ctx {
+                Context::Struct { is_root: true, .. } => {
+                    // Root struct doesn't add indentation
+                }
+                Context::Struct {
+                    inline_start: true,
+                    force_multiline: false,
+                    ..
+                } => {
+                    // Inline struct that stays inline doesn't add indentation
+                }
+                Context::Seq {
+                    inline_start: true, ..
+                } => {
+                    // Inline-started sequence doesn't add indentation
+                }
+                _ => {
+                    depth += 1;
+                }
+            }
         }
+        depth
     }
 
     /// Calculate available width at current depth.
@@ -152,11 +176,16 @@ impl StyxWriter {
     pub fn begin_struct_with_options(&mut self, is_root: bool, force_multiline: bool) {
         self.before_value();
 
+        // A struct starts inline if it's appearing as a value on the same line as its key
+        // (i.e., not the root and the opening brace is on the same line)
+        let inline_start = !is_root;
+
         if is_root {
             self.stack.push(Context::Struct {
                 first: true,
                 is_root: true,
                 force_multiline,
+                inline_start: false,
             });
         } else {
             self.out.push(b'{');
@@ -164,6 +193,7 @@ impl StyxWriter {
                 first: true,
                 is_root: false,
                 force_multiline,
+                inline_start,
             });
         }
     }
@@ -274,10 +304,6 @@ impl StyxWriter {
                         self.write_indent();
                     }
                     self.out.push(b'}');
-                    // Add blank line after closing brace for breathing room
-                    if !should_inline {
-                        self.out.push(b'\n');
-                    }
                 }
                 Ok(())
             }
@@ -289,7 +315,11 @@ impl StyxWriter {
     pub fn begin_seq(&mut self) {
         self.before_value();
         self.out.push(b'(');
-        self.stack.push(Context::Seq { first: true });
+        // Sequences always start inline (on the same line as their key)
+        self.stack.push(Context::Seq {
+            first: true,
+            inline_start: true,
+        });
     }
 
     /// End a sequence.
@@ -300,7 +330,7 @@ impl StyxWriter {
         let should_inline = self.should_inline();
 
         match self.stack.pop() {
-            Some(Context::Seq { first }) => {
+            Some(Context::Seq { first, .. }) => {
                 if !first && !should_inline {
                     self.write_newline_indent();
                 }
@@ -406,7 +436,11 @@ impl StyxWriter {
     /// Begin a sequence directly after a tag (no space before the paren).
     pub fn begin_seq_after_tag(&mut self) {
         self.out.push(b'(');
-        self.stack.push(Context::Seq { first: true });
+        // Sequences after tags always start inline
+        self.stack.push(Context::Seq {
+            first: true,
+            inline_start: true,
+        });
     }
 
     /// Write a doc comment followed by a field key.
@@ -507,7 +541,7 @@ impl StyxWriter {
     fn before_value(&mut self) {
         // Extract state first to avoid borrow conflicts
         let (is_seq, is_first) = match self.stack.last() {
-            Some(Context::Seq { first }) => (true, *first),
+            Some(Context::Seq { first, .. }) => (true, *first),
             _ => (false, true),
         };
 
@@ -520,7 +554,7 @@ impl StyxWriter {
         }
 
         // Update the first flag
-        if let Some(Context::Seq { first }) = self.stack.last_mut() {
+        if let Some(Context::Seq { first, .. }) = self.stack.last_mut() {
             *first = false;
         }
     }

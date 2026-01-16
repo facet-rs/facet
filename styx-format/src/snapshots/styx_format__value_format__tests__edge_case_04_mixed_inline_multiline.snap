@@ -2,8 +2,5 @@
 source: crates/styx-format/src/value_format.rs
 expression: result
 ---
-/// The user's name
-name Alice
-
-/// Age in years
-age 30
+name point
+coords {x 1, y 2}

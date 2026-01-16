@@ -6,8 +6,10 @@ description = "Core formatting and parsing utilities for Styx"
 license.workspace = true
 
 [dependencies]
+styx-cst.workspace = true
 styx-parse.workspace = true
 styx-tree.workspace = true
+rowan = "0.16"
 
 # Tracing (optional - compiles to nothing when disabled)
 tracing = { workspace = true, optional = true }

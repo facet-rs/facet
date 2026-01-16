@@ -2,8 +2,4 @@
 source: crates/styx-format/src/value_format.rs
 expression: result
 ---
-/// The user's name
-name Alice
-
-/// Age in years
-age 30
+data {field1 value1, field2 value2, field3 value3, field4 value4}

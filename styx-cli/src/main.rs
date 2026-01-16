@@ -7,7 +7,7 @@
 use std::io::{self, Read};
 use std::path::Path;
 
-use styx_format::{FormatOptions, format_value};
+use styx_format::{FormatOptions, format_source};
 use styx_schema::{SchemaFile, validate};
 use styx_tree::{Payload, Value};
 
@@ -283,13 +283,13 @@ fn run_file_first(args: &[String]) -> Result<(), CliError> {
             serde_json::to_string_pretty(&json).map_err(|e| CliError::Io(io::Error::other(e)))?;
         write_output(json_path, &output)?;
     } else {
-        // Styx output
+        // Styx output - use CST formatter to preserve comments
         let format_opts = if opts.compact {
             FormatOptions::default().inline()
         } else {
             FormatOptions::default()
         };
-        let output = format_value(&value, format_opts);
+        let output = format_source(&source, format_opts);
 
         if opts.in_place {
             // Write to input file

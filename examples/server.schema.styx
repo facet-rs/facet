@@ -1,14 +1,40 @@
 meta {
-  id https://example.com/server-config
-  version 2026-01-16
-  description "Server configuration schema"
+    id https://example.com/server-config
+    version 2026-01-16
+    description "Server configuration schema"
 }
-
 schema {
-  @ @object{
-    name @string
-    port @int
-    enabled @optional(@bool)
-    host @optional(@string)
-  }
+    @ @object{
+        /// The server's display name
+        name @string
+        /// Port number to listen on
+        port @int
+        /// Whether the server is enabled
+        enabled @optional(@bool)
+        /// Hostname to bind to
+        host @optional(@string)
+        /// TLS configuration for HTTPS
+        tls @optional(@object{
+            /// Path to the certificate file
+            cert @string
+            /// Path to the private key file
+            key @string
+            /// Path to the CA certificate (for client auth)
+            ca @optional(@string)
+        })
+        /// Logging configuration
+        logging @optional(@object{
+            /// Log level: debug, info, warn, error
+            level @string
+            /// Output destination (file path or "stdout")
+            output @optional(@string)
+            /// Output format options
+            format @optional(@object{
+                /// Include timestamps in log output
+                timestamp @optional(@bool)
+                /// Enable colored output
+                colors @optional(@bool)
+            })
+        })
+    }
 }

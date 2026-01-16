@@ -1,5 +1,6 @@
 ---
 source: crates/facet-styx/src/error.rs
+assertion_line: 441
 expression: rendered
 ---
 Error: failed to parse "notanumber" as u32

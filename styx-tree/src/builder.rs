@@ -456,6 +456,11 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
             }
 
             Event::TagEnd => {
+                // Only pop if the top frame is a Tag - otherwise the tag was already
+                // consumed when its payload was processed
+                if !matches!(self.stack.last(), Some(BuilderFrame::Tag { .. })) {
+                    return true;
+                }
                 if let Some(BuilderFrame::Tag { name, span }) = self.stack.pop() {
                     // Tag with no payload - just the tag itself
                     let tagged = Value {
@@ -644,5 +649,80 @@ mod tests {
         assert_eq!(payload_seq.get(0).and_then(|v| v.as_str()), Some("255"));
         assert_eq!(payload_seq.get(1).and_then(|v| v.as_str()), Some("128"));
         assert_eq!(payload_seq.get(2).and_then(|v| v.as_str()), Some("0"));
+    }
+
+    #[test]
+    fn test_schema_structure_with_space() {
+        // @ @object { ... } with space before brace
+        let source = r#"schema {
+  @ @object {
+    name @string
+  }
+}"#;
+
+        // Debug: print all events
+        struct EventPrinter;
+        impl<'src> styx_parse::ParseCallback<'src> for EventPrinter {
+            fn event(&mut self, event: styx_parse::Event<'src>) -> bool {
+                eprintln!("Event: {:?}", event);
+                true
+            }
+        }
+
+        eprintln!("=== Events for with-space version ===");
+        let parser = styx_parse::Parser::new(source);
+        parser.parse(&mut EventPrinter);
+
+        let value = parse(source);
+        let obj = value.as_object().unwrap();
+        assert!(obj.get("schema").is_some(), "should have schema entry");
+        let schema = obj.get("schema").unwrap();
+        assert!(
+            schema.as_object().is_some(),
+            "schema should be an object, got tag={:?} payload={:?}",
+            schema.tag,
+            schema.payload.is_some()
+        );
+    }
+
+    #[test]
+    fn test_schema_structure_no_space() {
+        // @ @object{ ... } without space before brace
+        let source = r#"schema {
+  @ @object{
+    name @string
+  }
+}"#;
+
+        // Debug: print all events
+        struct EventPrinter;
+        impl<'src> styx_parse::ParseCallback<'src> for EventPrinter {
+            fn event(&mut self, event: styx_parse::Event<'src>) -> bool {
+                eprintln!("Event: {:?}", event);
+                true
+            }
+        }
+
+        eprintln!("=== Events for no-space version ===");
+        let parser = styx_parse::Parser::new(source);
+        parser.parse(&mut EventPrinter);
+
+        let value = parse(source);
+        let obj = value.as_object().unwrap();
+        eprintln!(
+            "Root entries: {:?}",
+            obj.entries
+                .iter()
+                .map(|e| e.key.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(obj.get("schema").is_some(), "should have schema entry");
+        let schema = obj.get("schema").unwrap();
+        assert!(
+            schema.as_object().is_some(),
+            "schema should be an object, got tag={:?} payload={:?}",
+            schema.tag,
+            schema.payload.is_some()
+        );
     }
 }

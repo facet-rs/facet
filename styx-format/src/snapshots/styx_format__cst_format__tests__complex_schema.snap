@@ -1,0 +1,14 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+meta {
+    id https://example.com/schema
+    version 1.0
+}
+schema {
+    @ @object{
+        name @string
+        port @int
+    }
+}

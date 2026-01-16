@@ -11,7 +11,8 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use crate::schema_validation::{
-    SchemaRef, get_error_span, resolve_schema_path, validate_against_schema,
+    SchemaRef, find_object_at_offset, get_document_fields, get_error_span, get_schema_fields,
+    get_schema_fields_at_path, load_document_schema, resolve_schema_path, validate_against_schema,
 };
 use crate::semantic_tokens::{compute_semantic_tokens, semantic_token_legend};
 
@@ -270,6 +271,14 @@ impl LanguageServer for StyxLanguageServer {
                 }),
                 // Code actions (quick fixes)
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                // Find all references
+                references_provider: Some(OneOf::Left(true)),
+                // Inlay hints
+                inlay_hint_provider: Some(OneOf::Left(true)),
+                // Document formatting
+                document_formatting_provider: Some(OneOf::Left(true)),
+                // Document symbols (outline)
+                document_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -450,20 +459,65 @@ impl LanguageServer for StyxLanguageServer {
             }
         }
 
-        // Case 2: On a field name - jump to schema definition
+        // Case 2: On a field name in a doc - jump to schema definition
         if let Some(field_name) = find_field_key_at_offset(tree, offset) {
             // Load the schema file
-            if let Some((SchemaRef::External(schema_path), _)) =
-                find_schema_declaration_with_range(tree, &doc.content)
-                && let Some(resolved) = resolve_schema_path(&schema_path, &uri)
-                && let Ok(schema_source) = std::fs::read_to_string(&resolved)
-                && let Some(field_range) = find_field_in_schema_source(&schema_source, &field_name)
-                && let Ok(target_uri) = Url::from_file_path(&resolved)
-            {
-                return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                    uri: target_uri,
-                    range: field_range,
-                })));
+            let schema_decl = find_schema_declaration_with_range(tree, &doc.content);
+
+            if let Some((SchemaRef::External(schema_path), _)) = schema_decl {
+                if let Some(resolved) = resolve_schema_path(&schema_path, &uri) {
+                    if let Ok(schema_source) = std::fs::read_to_string(&resolved) {
+                        if let Some(field_range) =
+                            find_field_in_schema_source(&schema_source, &field_name)
+                        {
+                            if let Ok(target_uri) = Url::from_file_path(&resolved) {
+                                return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                                    uri: target_uri,
+                                    range: field_range,
+                                })));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Case 3: In a schema file - jump to first open doc that uses this field
+        // Check if this looks like a schema file (has "schema" and "meta" blocks)
+        if is_schema_file(tree) {
+            if let Some(field_name) = find_field_key_at_offset(tree, offset) {
+                // Search open documents for one that uses this schema
+                for (doc_uri, doc_state) in docs.iter() {
+                    if doc_uri == &uri {
+                        continue; // Skip the schema file itself
+                    }
+                    if let Some(ref doc_tree) = doc_state.tree {
+                        // Check if this doc references our schema
+                        if let Some((SchemaRef::External(schema_path), _)) =
+                            find_schema_declaration_with_range(doc_tree, &doc_state.content)
+                        {
+                            if let Some(resolved) = resolve_schema_path(&schema_path, doc_uri) {
+                                if let Ok(schema_uri) = Url::from_file_path(&resolved) {
+                                    if schema_uri == uri {
+                                        // This doc uses our schema - find the field
+                                        if let Some(field_range) = find_field_in_doc(
+                                            doc_tree,
+                                            &field_name,
+                                            &doc_state.content,
+                                        ) {
+                                            return Ok(Some(GotoDefinitionResponse::Scalar(
+                                                Location {
+                                                    uri: doc_uri.clone(),
+                                                    range: field_range,
+                                                },
+                                            )));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -509,7 +563,22 @@ impl LanguageServer for StyxLanguageServer {
             && let Ok(schema_source) = std::fs::read_to_string(&resolved)
             && let Some(type_str) = get_field_type_from_schema(&schema_source, &field_name)
         {
-            let content = format_field_hover(&field_name, &type_str, &schema_path);
+            // Create a file:// URI for the schema link with line number
+            let field_range = find_field_in_schema_source(&schema_source, &field_name);
+            let schema_link = if let Ok(mut schema_uri) = Url::from_file_path(&resolved) {
+                // Add line/column fragment for jumping to the field definition
+                if let Some(range) = field_range {
+                    // LSP positions are 0-based, but URI fragments are typically 1-based
+                    let line = range.start.line + 1;
+                    let col = range.start.character + 1;
+                    schema_uri.set_fragment(Some(&format!("L{}:{}", line, col)));
+                }
+                Some(schema_uri)
+            } else {
+                None
+            };
+            let content =
+                format_field_hover(&field_name, &type_str, &schema_path, schema_link.as_ref());
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -550,7 +619,7 @@ impl LanguageServer for StyxLanguageServer {
             return Ok(None);
         };
 
-        let schema_fields = get_schema_fields(&schema_source);
+        let schema_fields = get_schema_fields_from_source(&schema_source);
         let existing_fields = get_existing_fields(tree);
 
         // Get current word being typed for fuzzy matching
@@ -662,7 +731,7 @@ impl LanguageServer for StyxLanguageServer {
         let uri = params.text_document.uri;
         let mut actions = Vec::new();
 
-        // Process each diagnostic to generate code actions
+        // Process each diagnostic to generate code actions (quickfixes)
         for diag in params.context.diagnostics {
             // Only process our diagnostics
             if diag.source.as_deref() != Some("styx-schema") {
@@ -703,12 +772,603 @@ impl LanguageServer for StyxLanguageServer {
             }
         }
 
+        // Add schema-based refactoring actions
+        let docs = self.documents.read().await;
+        if let Some(doc) = docs.get(&uri) {
+            if let Some(ref tree) = doc.tree {
+                // Try to load the schema
+                if let Ok(schema_file) = load_document_schema(tree, &uri) {
+                    // Find the object at cursor position
+                    let cursor_offset = position_to_offset(&doc.content, params.range.start);
+                    let object_ctx = find_object_at_offset(tree, cursor_offset);
+
+                    // Get schema fields for the current context (root or nested)
+                    let (schema_fields, existing_fields, context_name) =
+                        if let Some(ref ctx) = object_ctx {
+                            let fields = get_schema_fields_at_path(&schema_file, &ctx.path);
+                            let existing: Vec<String> = ctx
+                                .object
+                                .entries
+                                .iter()
+                                .filter_map(|e| e.key.as_str().map(String::from))
+                                .collect();
+                            let name = if ctx.path.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" in '{}'", ctx.path.join("."))
+                            };
+                            (fields, existing, name)
+                        } else {
+                            let fields = get_schema_fields(&schema_file);
+                            let existing = get_document_fields(tree);
+                            (fields, existing, String::new())
+                        };
+
+                    // Find missing fields
+                    let missing_required: Vec<_> = schema_fields
+                        .iter()
+                        .filter(|f| !f.optional && !existing_fields.contains(&f.name))
+                        .collect();
+
+                    let missing_optional: Vec<_> = schema_fields
+                        .iter()
+                        .filter(|f| f.optional && !existing_fields.contains(&f.name))
+                        .collect();
+
+                    // Find insert position and indentation within the current object
+                    let insert_info = if let Some(ref ctx) = object_ctx {
+                        if let Some(span) = ctx.span {
+                            // Find insertion point within this object
+                            let obj_content = &doc.content[span.start as usize..span.end as usize];
+                            let obj_insert = find_field_insert_position(obj_content);
+                            // Adjust position to be relative to document start
+                            let obj_start_pos =
+                                offset_to_position(&doc.content, span.start as usize);
+                            InsertPosition {
+                                position: Position {
+                                    line: obj_start_pos.line + obj_insert.position.line,
+                                    character: if obj_insert.position.line == 0 {
+                                        obj_start_pos.character + obj_insert.position.character
+                                    } else {
+                                        obj_insert.position.character
+                                    },
+                                },
+                                indent: obj_insert.indent,
+                            }
+                        } else {
+                            find_field_insert_position(&doc.content)
+                        }
+                    } else {
+                        find_field_insert_position(&doc.content)
+                    };
+
+                    // Action: Fill required fields
+                    if !missing_required.is_empty() {
+                        let new_text = generate_fields_text(&missing_required, &insert_info.indent);
+                        let edit = TextEdit {
+                            range: Range {
+                                start: insert_info.position,
+                                end: insert_info.position,
+                            },
+                            new_text,
+                        };
+
+                        let mut changes = std::collections::HashMap::new();
+                        changes.insert(uri.clone(), vec![edit]);
+
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: format!(
+                                "Fill {} required field{}{}",
+                                missing_required.len(),
+                                if missing_required.len() == 1 { "" } else { "s" },
+                                context_name
+                            ),
+                            kind: Some(CodeActionKind::REFACTOR),
+                            edit: Some(WorkspaceEdit {
+                                changes: Some(changes),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }));
+                    }
+
+                    // Action: Fill all fields (required + optional)
+                    let all_missing: Vec<_> = schema_fields
+                        .iter()
+                        .filter(|f| !existing_fields.contains(&f.name))
+                        .collect();
+
+                    if !all_missing.is_empty() && !missing_optional.is_empty() {
+                        let new_text = generate_fields_text(&all_missing, &insert_info.indent);
+                        let edit = TextEdit {
+                            range: Range {
+                                start: insert_info.position,
+                                end: insert_info.position,
+                            },
+                            new_text,
+                        };
+
+                        let mut changes = std::collections::HashMap::new();
+                        changes.insert(uri.clone(), vec![edit]);
+
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: format!(
+                                "Fill all {} field{}{}",
+                                all_missing.len(),
+                                if all_missing.len() == 1 { "" } else { "s" },
+                                context_name
+                            ),
+                            kind: Some(CodeActionKind::REFACTOR),
+                            edit: Some(WorkspaceEdit {
+                                changes: Some(changes),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }));
+                    }
+
+                    // Action: Reorder fields to match schema (only at root level for now)
+                    if object_ctx
+                        .as_ref()
+                        .map(|c| c.path.is_empty())
+                        .unwrap_or(true)
+                    {
+                        let root_fields = get_schema_fields(&schema_file);
+                        if let Some(reorder_edit) =
+                            generate_reorder_edit(tree, &root_fields, &doc.content)
+                        {
+                            let mut changes = std::collections::HashMap::new();
+                            changes.insert(uri.clone(), vec![reorder_edit]);
+
+                            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                                title: "Reorder fields to match schema".to_string(),
+                                kind: Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+                                edit: Some(WorkspaceEdit {
+                                    changes: Some(changes),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }));
+                        }
+                    }
+                }
+
+                // Separator toggle actions (don't need schema)
+                let cursor_offset = position_to_offset(&doc.content, params.range.start);
+                if let Some(ctx) = find_object_at_offset(tree, cursor_offset) {
+                    // Only offer toggle for non-root objects with entries
+                    if let Some(span) = ctx.span {
+                        if !ctx.object.entries.is_empty() {
+                            let context_name = if ctx.path.is_empty() {
+                                "object".to_string()
+                            } else {
+                                format!("'{}'", ctx.path.last().unwrap_or(&"object".to_string()))
+                            };
+
+                            match ctx.object.separator {
+                                styx_tree::Separator::Newline => {
+                                    // Offer to convert to comma-separated (inline)
+                                    if let Some(edit) = generate_separator_toggle_edit(
+                                        &ctx.object,
+                                        span,
+                                        &doc.content,
+                                        styx_tree::Separator::Comma,
+                                    ) {
+                                        let mut changes = std::collections::HashMap::new();
+                                        changes.insert(uri.clone(), vec![edit]);
+
+                                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                                            title: format!(
+                                                "Convert {} to inline (comma-separated)",
+                                                context_name
+                                            ),
+                                            kind: Some(CodeActionKind::REFACTOR),
+                                            edit: Some(WorkspaceEdit {
+                                                changes: Some(changes),
+                                                ..Default::default()
+                                            }),
+                                            ..Default::default()
+                                        }));
+                                    }
+                                }
+                                styx_tree::Separator::Comma => {
+                                    // Offer to convert to newline-separated (multiline)
+                                    if let Some(edit) = generate_separator_toggle_edit(
+                                        &ctx.object,
+                                        span,
+                                        &doc.content,
+                                        styx_tree::Separator::Newline,
+                                    ) {
+                                        let mut changes = std::collections::HashMap::new();
+                                        changes.insert(uri.clone(), vec![edit]);
+
+                                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                                            title: format!(
+                                                "Convert {} to multiline (newline-separated)",
+                                                context_name
+                                            ),
+                                            kind: Some(CodeActionKind::REFACTOR),
+                                            edit: Some(WorkspaceEdit {
+                                                changes: Some(changes),
+                                                ..Default::default()
+                                            }),
+                                            ..Default::default()
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if actions.is_empty() {
             Ok(None)
         } else {
             Ok(Some(actions))
         }
     }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        let docs = self.documents.read().await;
+        let doc = match docs.get(&uri) {
+            Some(doc) => doc,
+            None => return Ok(None),
+        };
+
+        let Some(tree) = &doc.tree else {
+            return Ok(None);
+        };
+
+        let offset = position_to_offset(&doc.content, position);
+
+        // Find what field we're on
+        let Some(field_name) = find_field_key_at_offset(tree, offset) else {
+            return Ok(None);
+        };
+
+        let mut locations = Vec::new();
+
+        // Check if we're in a schema file
+        if is_schema_file(tree) {
+            // We're in a schema - find all docs that use this field
+            for (doc_uri, doc_state) in docs.iter() {
+                if doc_uri == &uri {
+                    continue;
+                }
+                if let Some(ref doc_tree) = doc_state.tree {
+                    // Check if this doc references our schema
+                    if let Some((SchemaRef::External(schema_path), _)) =
+                        find_schema_declaration_with_range(doc_tree, &doc_state.content)
+                    {
+                        if let Some(resolved) = resolve_schema_path(&schema_path, doc_uri) {
+                            if let Ok(schema_uri) = Url::from_file_path(&resolved) {
+                                if schema_uri == uri {
+                                    // This doc uses our schema - find the field usage
+                                    if let Some(range) =
+                                        find_field_in_doc(doc_tree, &field_name, &doc_state.content)
+                                    {
+                                        locations.push(Location {
+                                            uri: doc_uri.clone(),
+                                            range,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // We're in a doc - find the schema definition and other docs using this field
+            let schema_decl = find_schema_declaration_with_range(tree, &doc.content);
+
+            if let Some((SchemaRef::External(schema_path), _)) = schema_decl {
+                if let Some(resolved) = resolve_schema_path(&schema_path, &uri) {
+                    // Add the schema definition location
+                    if let Ok(schema_source) = std::fs::read_to_string(&resolved) {
+                        if let Some(field_range) =
+                            find_field_in_schema_source(&schema_source, &field_name)
+                        {
+                            if let Ok(schema_uri) = Url::from_file_path(&resolved) {
+                                locations.push(Location {
+                                    uri: schema_uri.clone(),
+                                    range: field_range,
+                                });
+
+                                // Find other docs using the same schema
+                                for (doc_uri, doc_state) in docs.iter() {
+                                    if let Some(ref doc_tree) = doc_state.tree {
+                                        if let Some((SchemaRef::External(other_schema), _)) =
+                                            find_schema_declaration_with_range(
+                                                doc_tree,
+                                                &doc_state.content,
+                                            )
+                                        {
+                                            if let Some(other_resolved) =
+                                                resolve_schema_path(&other_schema, doc_uri)
+                                            {
+                                                if let Ok(other_uri) =
+                                                    Url::from_file_path(&other_resolved)
+                                                {
+                                                    if other_uri == schema_uri {
+                                                        // This doc uses the same schema
+                                                        if let Some(range) = find_field_in_doc(
+                                                            doc_tree,
+                                                            &field_name,
+                                                            &doc_state.content,
+                                                        ) {
+                                                            locations.push(Location {
+                                                                uri: doc_uri.clone(),
+                                                                range,
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if locations.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(locations))
+        }
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = params.text_document.uri;
+
+        let docs = self.documents.read().await;
+        let Some(doc) = docs.get(&uri) else {
+            return Ok(None);
+        };
+
+        let Some(tree) = &doc.tree else {
+            return Ok(None);
+        };
+
+        let mut hints = Vec::new();
+
+        // Check for schema declaration
+        if let Some((SchemaRef::External(schema_path), range)) =
+            find_schema_declaration_with_range(tree, &doc.content)
+        {
+            if let Some(resolved) = resolve_schema_path(&schema_path, &uri) {
+                if let Ok(schema_source) = std::fs::read_to_string(&resolved) {
+                    // Extract meta info from schema
+                    if let Some(meta) = get_schema_meta(&schema_source) {
+                        // Show schema name/description as inlay hint after the schema path
+                        // First line of description is the short desc
+                        let short_desc = meta
+                            .description
+                            .as_ref()
+                            .and_then(|d| d.lines().next().map(|s| s.trim().to_string()));
+
+                        // Build the label: "— short desc (version)" or just "— short desc"
+                        let label = match (&short_desc, &meta.version) {
+                            (Some(desc), Some(ver)) => format!(" — {} ({})", desc, ver),
+                            (Some(desc), None) => format!(" — {}", desc),
+                            (None, Some(ver)) => format!(" — v{}", ver),
+                            (None, None) => String::new(),
+                        };
+
+                        if !label.is_empty() {
+                            // Build tooltip with full description and id
+                            let tooltip = {
+                                let mut parts = Vec::new();
+                                if let Some(id) = &meta.id {
+                                    parts.push(format!("Schema ID: {}", id));
+                                }
+                                // Show full description if it's multi-line
+                                if let Some(desc) = &meta.description {
+                                    if desc.contains('\n') {
+                                        parts.push(String::new()); // blank line
+                                        parts.push(desc.clone());
+                                    }
+                                }
+                                if parts.is_empty() {
+                                    None
+                                } else {
+                                    Some(InlayHintTooltip::String(parts.join("\n")))
+                                }
+                            };
+
+                            hints.push(InlayHint {
+                                position: range.end,
+                                label: InlayHintLabel::String(label),
+                                kind: Some(InlayHintKind::TYPE),
+                                text_edits: None,
+                                tooltip,
+                                padding_left: Some(false),
+                                padding_right: Some(true),
+                                data: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        if hints.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(hints))
+        }
+    }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri;
+
+        let docs = self.documents.read().await;
+        let Some(doc) = docs.get(&uri) else {
+            return Ok(None);
+        };
+
+        // Only format if document parsed successfully
+        if doc.tree.is_none() {
+            return Ok(None);
+        }
+
+        // Build indent string from editor preferences
+        let indent = if params.options.insert_spaces {
+            " ".repeat(params.options.tab_size as usize)
+        } else {
+            "\t".to_string()
+        };
+
+        // Format the document using CST formatter (preserves comments)
+        let options = styx_format::FormatOptions::default().indent(
+            // Leak the string since FormatOptions expects &'static str
+            // This is fine since we're not going to format millions of times
+            Box::leak(indent.into_boxed_str()),
+        );
+
+        let formatted = styx_format::format_source(&doc.content, options);
+
+        // Only return an edit if the content changed
+        if formatted == doc.content {
+            return Ok(None);
+        }
+
+        // Replace the entire document
+        let lines: Vec<&str> = doc.content.lines().collect();
+        let last_line = lines.len().saturating_sub(1);
+        let last_char = lines.last().map(|l| l.len()).unwrap_or(0);
+
+        Ok(Some(vec![TextEdit {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: last_line as u32,
+                    character: last_char as u32,
+                },
+            },
+            new_text: formatted,
+        }]))
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = params.text_document.uri;
+
+        let docs = self.documents.read().await;
+        let Some(doc) = docs.get(&uri) else {
+            return Ok(None);
+        };
+
+        let Some(tree) = &doc.tree else {
+            return Ok(None);
+        };
+
+        let symbols = collect_document_symbols(tree, &doc.content);
+
+        if symbols.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+        }
+    }
+}
+
+/// Collect document symbols recursively from a value tree
+fn collect_document_symbols(value: &Value, content: &str) -> Vec<DocumentSymbol> {
+    let mut symbols = Vec::new();
+
+    let Some(obj) = value.as_object() else {
+        return symbols;
+    };
+
+    for entry in &obj.entries {
+        // Skip the @ (schema declaration)
+        if entry.key.is_unit() {
+            continue;
+        }
+
+        let Some(name) = entry.key.as_str() else {
+            continue;
+        };
+
+        let Some(key_span) = entry.key.span else {
+            continue;
+        };
+
+        let Some(val_span) = entry.value.span else {
+            continue;
+        };
+
+        // Get the value text for the detail
+        let val_text = &content[val_span.start as usize..val_span.end as usize];
+
+        // Determine the symbol kind based on the value type
+        let (kind, detail, children): (SymbolKind, Option<String>, Vec<DocumentSymbol>) =
+            if let Some(nested_obj) = entry.value.as_object() {
+                // It's an object - recurse
+                let nested_value = Value {
+                    tag: entry.value.tag.clone(),
+                    payload: Some(styx_tree::Payload::Object(nested_obj.clone())),
+                    span: entry.value.span,
+                };
+                let children = collect_document_symbols(&nested_value, content);
+                (SymbolKind::OBJECT, None, children)
+            } else if entry.value.as_sequence().is_some() {
+                (SymbolKind::ARRAY, Some("array".to_string()), Vec::new())
+            } else if entry.value.as_str().is_some() {
+                (SymbolKind::STRING, Some(val_text.to_string()), Vec::new())
+            } else if entry.value.is_unit() {
+                (SymbolKind::NULL, Some("@".to_string()), Vec::new())
+            } else if entry.value.tag.is_some() {
+                // Tagged value
+                (SymbolKind::VARIABLE, Some(val_text.to_string()), Vec::new())
+            } else {
+                // Number, bool, or other scalar - just show the text
+                (SymbolKind::CONSTANT, Some(val_text.to_string()), Vec::new())
+            };
+
+        let selection_range = Range {
+            start: offset_to_position(content, key_span.start as usize),
+            end: offset_to_position(content, key_span.end as usize),
+        };
+
+        let range = Range {
+            start: offset_to_position(content, key_span.start as usize),
+            end: offset_to_position(content, val_span.end as usize),
+        };
+
+        #[allow(deprecated)]
+        symbols.push(DocumentSymbol {
+            name: name.to_string(),
+            detail,
+            kind,
+            tags: None,
+            deprecated: None,
+            range,
+            selection_range,
+            children: if children.is_empty() {
+                None
+            } else {
+                Some(children)
+            },
+        });
+    }
+
+    symbols
 }
 
 /// Find the schema declaration and its range in the source
@@ -831,7 +1491,34 @@ fn find_field_in_schema_source(schema_source: &str, field_name: &str) -> Option<
 
     for entry in &obj.entries {
         if entry.key.as_str() == Some("schema") {
-            // Found schema block, look for the field inside
+            // Found schema block
+            // Structure: schema { @ @object { name @string } }
+            //   - entry.value is an Object containing the unit entry
+            //   - get unit entry -> value is Object containing @object entry
+            //   - get @object entry -> value is Object containing fields
+            if let Some(schema_obj) = entry.value.as_object() {
+                // Get the unit entry (@)
+                if let Some(unit_value) = schema_obj.get_unit() {
+                    // unit_value should be @object{...} - an object with @object key
+                    if let Some(inner_obj) = unit_value.as_object() {
+                        // This object has an @object entry
+                        for inner_entry in &inner_obj.entries {
+                            if inner_entry.key.tag_name() == Some("object") {
+                                // Found @object - its value is the fields object
+                                return find_field_in_object(
+                                    &inner_entry.value,
+                                    schema_source,
+                                    field_name,
+                                );
+                            }
+                        }
+                    } else if unit_value.tag_name() == Some("object") {
+                        // Direct @object value (no space before brace)
+                        return find_field_in_object(unit_value, schema_source, field_name);
+                    }
+                }
+            }
+            // Fallback to original approach
             return find_field_in_object(&entry.value, schema_source, field_name);
         }
     }
@@ -875,6 +1562,46 @@ fn find_field_in_object(value: &Value, source: &str, field_name: &str) -> Option
         // Recurse into nested objects
         if let Some(found) = find_field_in_object(&entry.value, source, field_name) {
             return Some(found);
+        }
+    }
+
+    None
+}
+
+/// Schema metadata extracted from the meta block
+struct SchemaMeta {
+    id: Option<String>,
+    version: Option<String>,
+    description: Option<String>,
+}
+
+/// Extract metadata from a schema file's meta block
+fn get_schema_meta(schema_source: &str) -> Option<SchemaMeta> {
+    let tree = styx_tree::parse(schema_source).ok()?;
+    let obj = tree.as_object()?;
+
+    for entry in &obj.entries {
+        if entry.key.as_str() == Some("meta") {
+            let meta_obj = entry.value.as_object()?;
+
+            let id = meta_obj
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let version = meta_obj
+                .get("version")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let description = meta_obj
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+
+            return Some(SchemaMeta {
+                id,
+                version,
+                description,
+            });
         }
     }
 
@@ -932,18 +1659,29 @@ fn get_field_type_in_object(value: &Value, source: &str, field_name: &str) -> Op
 }
 
 /// Format a hover message for a field
-fn format_field_hover(field_name: &str, type_str: &str, schema_path: &str) -> String {
+fn format_field_hover(
+    field_name: &str,
+    type_str: &str,
+    schema_path: &str,
+    schema_uri: Option<&Url>,
+) -> String {
     let mut content = String::new();
 
     content.push_str(&format!("**{}** `{}`\n", field_name, type_str));
     content.push('\n');
-    content.push_str(&format!("Defined in [{}]({})\n", schema_path, schema_path));
+
+    // Use file:// URI if available for clickable link, otherwise just show the path
+    if let Some(uri) = schema_uri {
+        content.push_str(&format!("Defined in [{}]({})\n", schema_path, uri));
+    } else {
+        content.push_str(&format!("Defined in {}\n", schema_path));
+    }
 
     content
 }
 
 /// Get all fields defined in a schema
-fn get_schema_fields(schema_source: &str) -> Vec<(String, String)> {
+fn get_schema_fields_from_source(schema_source: &str) -> Vec<(String, String)> {
     let mut fields = Vec::new();
 
     let Ok(tree) = styx_tree::parse(schema_source) else {
@@ -1062,6 +1800,261 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[n]
 }
 
+/// Check if a tree looks like a schema file (has "schema" and "meta" blocks)
+fn is_schema_file(tree: &Value) -> bool {
+    let Some(obj) = tree.as_object() else {
+        return false;
+    };
+
+    let mut has_schema = false;
+    let mut has_meta = false;
+
+    for entry in &obj.entries {
+        match entry.key.as_str() {
+            Some("schema") => has_schema = true,
+            Some("meta") => has_meta = true,
+            _ => {}
+        }
+    }
+
+    has_schema && has_meta
+}
+
+/// Find a field usage in a document (not a schema)
+fn find_field_in_doc(tree: &Value, field_name: &str, content: &str) -> Option<Range> {
+    let obj = tree.as_object()?;
+
+    for entry in &obj.entries {
+        if entry.key.as_str() == Some(field_name) {
+            if let Some(span) = entry.key.span {
+                return Some(Range {
+                    start: offset_to_position(content, span.start as usize),
+                    end: offset_to_position(content, span.end as usize),
+                });
+            }
+        }
+    }
+
+    None
+}
+
+/// Info about where to insert new fields
+struct InsertPosition {
+    position: Position,
+    indent: String,
+}
+
+/// Find the position where new fields should be inserted and the indentation to use.
+fn find_field_insert_position(content: &str) -> InsertPosition {
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Find the last non-empty, non-comment line
+    for (i, line) in lines.iter().enumerate().rev() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with('#') {
+            // Detect indentation from this line
+            let indent_len = line.len() - line.trim_start().len();
+            let indent = line[..indent_len].to_string();
+
+            return InsertPosition {
+                position: Position {
+                    line: i as u32,
+                    character: line.len() as u32,
+                },
+                indent,
+            };
+        }
+    }
+
+    // Fallback: end of document, no indentation
+    InsertPosition {
+        position: Position {
+            line: lines.len().saturating_sub(1) as u32,
+            character: lines.last().map(|l| l.len()).unwrap_or(0) as u32,
+        },
+        indent: String::new(),
+    }
+}
+
+/// Generate text for inserting missing fields.
+fn generate_fields_text(fields: &[&crate::schema_validation::SchemaField], indent: &str) -> String {
+    use crate::schema_validation::generate_placeholder;
+
+    let mut result = String::new();
+
+    for field in fields {
+        result.push('\n');
+        result.push_str(indent);
+        result.push_str(&field.name);
+        result.push(' ');
+
+        // Use default value if available, otherwise generate placeholder
+        let value = field
+            .default_value
+            .clone()
+            .unwrap_or_else(|| generate_placeholder(&field.schema));
+        result.push_str(&value);
+    }
+
+    result
+}
+
+/// Generate a text edit to toggle an object's separator style.
+///
+/// This reformats the object content with the new separator style while preserving
+/// the indentation context from the surrounding document.
+fn generate_separator_toggle_edit(
+    object: &styx_tree::Object,
+    span: styx_tree::Span,
+    content: &str,
+    target_separator: styx_tree::Separator,
+) -> Option<TextEdit> {
+    // Create a new object with the target separator
+    let mut new_obj = object.clone();
+    new_obj.separator = target_separator;
+
+    // Create a Value wrapping this object for formatting
+    let value = styx_tree::Value {
+        tag: None,
+        payload: Some(styx_tree::Payload::Object(new_obj)),
+        span: None,
+    };
+
+    // Format the object
+    let formatted = styx_format::format_value(&value, styx_format::FormatOptions::default());
+
+    // The formatted output is for a root object (no braces), but we need braces
+    // Wrap it in braces with appropriate formatting
+    let new_text = if target_separator == styx_tree::Separator::Comma {
+        // Inline: {field1 value1, field2 value2}
+        format!("{{{}}}", formatted.trim())
+    } else {
+        // Multiline: preserve indentation from the original position
+        // Find the indentation of the opening brace
+        let brace_offset = span.start as usize;
+        let line_start = content[..brace_offset]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let base_indent = &content[line_start..brace_offset];
+        // Find where the key ends (the indent we need for content)
+        let content_indent = format!("{}    ", base_indent);
+
+        let mut result = String::from("{\n");
+        for line in formatted.trim().lines() {
+            result.push_str(&content_indent);
+            result.push_str(line);
+            result.push('\n');
+        }
+        result.push_str(base_indent);
+        result.push('}');
+        result
+    };
+
+    Some(TextEdit {
+        range: Range {
+            start: offset_to_position(content, span.start as usize),
+            end: offset_to_position(content, span.end as usize),
+        },
+        new_text,
+    })
+}
+
+/// Generate a text edit to reorder fields to match schema order.
+/// Returns None if the fields are already in order or can't be reordered.
+fn generate_reorder_edit(
+    tree: &Value,
+    schema_fields: &[crate::schema_validation::SchemaField],
+    content: &str,
+) -> Option<TextEdit> {
+    let obj = tree.as_object()?;
+
+    // Build schema field order map
+    let schema_order: std::collections::HashMap<&str, usize> = schema_fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.name.as_str(), i))
+        .collect();
+
+    // Collect document entries with their positions
+    let mut doc_entries: Vec<(Option<usize>, &styx_tree::Entry)> = obj
+        .entries
+        .iter()
+        .map(|e| {
+            let order = e
+                .key
+                .as_str()
+                .and_then(|name| schema_order.get(name).copied());
+            (order, e)
+        })
+        .collect();
+
+    // Check if already in order
+    let current_order: Vec<Option<usize>> = doc_entries.iter().map(|(o, _)| *o).collect();
+    let mut sorted_order = current_order.clone();
+    sorted_order.sort_by(|a, b| match (a, b) {
+        (Some(x), Some(y)) => x.cmp(y),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+
+    if current_order == sorted_order {
+        return None; // Already in order
+    }
+
+    // Sort entries by schema order (keep @ declaration first, unknowns last)
+    doc_entries.sort_by(|(a_order, a_entry), (b_order, b_entry)| {
+        // @ declaration always first
+        if a_entry.key.is_unit() {
+            return std::cmp::Ordering::Less;
+        }
+        if b_entry.key.is_unit() {
+            return std::cmp::Ordering::Greater;
+        }
+        // Then by schema order
+        match (a_order, b_order) {
+            (Some(x), Some(y)) => x.cmp(y),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
+
+    // Regenerate the document content, preserving original entry text
+    let mut new_content = String::new();
+
+    for (i, (_, entry)) in doc_entries.iter().enumerate() {
+        if i > 0 {
+            new_content.push('\n');
+        }
+
+        // Get the full entry text from the original source (key + value)
+        // by using the key's start and value's end
+        if let (Some(key_span), Some(val_span)) = (entry.key.span, entry.value.span) {
+            // Find the start of the line to preserve indentation
+            let key_start = key_span.start as usize;
+            let line_start = content[..key_start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            let indent = &content[line_start..key_start];
+
+            new_content.push_str(indent);
+            new_content.push_str(&content[key_start..val_span.end as usize]);
+        }
+    }
+
+    // Find the range of the entire document content (excluding leading/trailing whitespace)
+    let start_offset = obj.span?.start as usize;
+    let end_offset = obj.span?.end as usize;
+
+    Some(TextEdit {
+        range: Range {
+            start: offset_to_position(content, start_offset),
+            end: offset_to_position(content, end_offset),
+        },
+        new_text: new_content,
+    })
+}
+
 /// Run the LSP server on stdin/stdout
 pub async fn run() -> eyre::Result<()> {
     // Set up logging
@@ -1080,4 +2073,68 @@ pub async fn run() -> eyre::Result<()> {
     Server::new(stdin, stdout, socket).serve(service).await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_field_in_schema_source() {
+        let schema_source = r#"meta {
+  name "test"
+}
+schema {
+  @ @object {
+    name @string
+    port @int
+  }
+}"#;
+
+        // Should find 'name' field
+        let range = find_field_in_schema_source(schema_source, "name");
+        assert!(range.is_some(), "should find 'name' field");
+
+        // Should find 'port' field
+        let range = find_field_in_schema_source(schema_source, "port");
+        assert!(range.is_some(), "should find 'port' field");
+
+        // Should not find 'unknown' field
+        let range = find_field_in_schema_source(schema_source, "unknown");
+        assert!(range.is_none(), "should not find 'unknown' field");
+    }
+
+    #[test]
+    fn test_find_field_in_schema_no_space() {
+        // Test @ @object{ ... } without space before brace (actual file format)
+        let schema_no_space = r#"schema {
+  @ @object{
+    name @string
+  }
+}"#;
+
+        let range = find_field_in_schema_source(schema_no_space, "name");
+        assert!(
+            range.is_some(),
+            "should find 'name' without space before brace"
+        );
+    }
+
+    #[test]
+    fn test_offset_to_position() {
+        let content = "line1\nline2\nline3";
+        assert_eq!(offset_to_position(content, 0), Position::new(0, 0));
+        assert_eq!(offset_to_position(content, 5), Position::new(0, 5));
+        assert_eq!(offset_to_position(content, 6), Position::new(1, 0));
+        assert_eq!(offset_to_position(content, 12), Position::new(2, 0));
+    }
+
+    #[test]
+    fn test_levenshtein() {
+        assert_eq!(levenshtein("", ""), 0);
+        assert_eq!(levenshtein("abc", "abc"), 0);
+        assert_eq!(levenshtein("abc", "ab"), 1);
+        assert_eq!(levenshtein("port", "prot"), 2);
+        assert_eq!(levenshtein("name", "nme"), 1);
+    }
 }

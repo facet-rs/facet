@@ -2,8 +2,7 @@
 source: crates/styx-format/src/value_format.rs
 expression: result
 ---
-/// The user's name
-name Alice
+@ schema.styx
 
-/// Age in years
-age 30
+name test
+port 8080

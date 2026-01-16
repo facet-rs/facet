@@ -241,7 +241,7 @@ impl Object {
     /// Detect the separator mode used in this object.
     pub fn separator(&self) -> Separator {
         let mut has_comma = false;
-        let mut has_newline_sep = false;
+        let mut has_newline = false;
 
         for token in self
             .0
@@ -250,16 +250,18 @@ impl Object {
         {
             match token.kind() {
                 SyntaxKind::COMMA => has_comma = true,
-                SyntaxKind::NEWLINE => has_newline_sep = true,
+                SyntaxKind::NEWLINE => has_newline = true,
                 _ => {}
             }
         }
 
-        match (has_comma, has_newline_sep) {
-            (true, false) => Separator::Comma,
-            (false, true) => Separator::Newline,
-            (true, true) => Separator::Mixed,
-            (false, false) => Separator::Newline, // Default for single/no entries
+        if has_comma && has_newline {
+            Separator::Mixed
+        } else if has_newline {
+            Separator::Newline
+        } else {
+            // Comma-separated or no separators (single/empty) = inline format
+            Separator::Comma
         }
     }
 

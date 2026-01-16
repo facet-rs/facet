@@ -1,0 +1,11 @@
+---
+source: crates/styx-format/src/value_format.rs
+expression: result
+---
+/// Server configuration
+server {
+    /// The server hostname
+    host localhost
+    /// The server port
+    port 8080
+}

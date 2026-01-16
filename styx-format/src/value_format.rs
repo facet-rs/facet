@@ -2,16 +2,21 @@
 
 use styx_tree::{Entry, Object, Payload, Sequence, Value};
 
-use crate::{FormatOptions, StyxWriter};
+use crate::{FormatOptions, StyxWriter, format_source};
 
 /// Format a Value as a Styx document string.
 ///
 /// The value is treated as the root of a document, so if it's an Object,
 /// it will be formatted without braces (implicit root object).
+///
+/// This first serializes the Value to text, then pipes through the CST-based
+/// formatter to normalize whitespace and indentation.
 pub fn format_value(value: &Value, options: FormatOptions) -> String {
-    let mut formatter = ValueFormatter::new(options);
+    let mut formatter = ValueFormatter::new(options.clone());
     formatter.format_root(value);
-    formatter.finish()
+    let raw = formatter.finish();
+    // Normalize through CST formatter
+    format_source(&raw, options)
 }
 
 /// Format a Value as a Styx document string with default options.
@@ -37,13 +42,14 @@ impl ValueFormatter {
     fn format_root(&mut self, value: &Value) {
         // Root is typically an untagged object
         if value.tag.is_none()
-            && let Some(Payload::Object(obj)) = &value.payload {
-                // Root object - no braces
-                self.writer.begin_struct(true);
-                self.format_object_entries(obj);
-                self.writer.end_struct().ok();
-                return;
-            }
+            && let Some(Payload::Object(obj)) = &value.payload
+        {
+            // Root object - no braces
+            self.writer.begin_struct(true);
+            self.format_object_entries(obj);
+            self.writer.end_struct().ok();
+            return;
+        }
         // Non-object root or tagged root - just format the value
         self.format_value(value);
     }
@@ -91,14 +97,31 @@ impl ValueFormatter {
     }
 
     fn format_object(&mut self, obj: &Object) {
-        self.writer.begin_struct(false);
+        // Preserve the original separator style - if it was newline-separated, keep it multiline
+        let force_multiline = matches!(obj.separator, styx_parse::Separator::Newline);
+        self.writer
+            .begin_struct_with_options(false, force_multiline);
         self.format_object_entries(obj);
         self.writer.end_struct().ok();
     }
 
     fn format_object_entries(&mut self, obj: &Object) {
-        for entry in &obj.entries {
+        let entry_count = obj.entries.len();
+        for (i, entry) in obj.entries.iter().enumerate() {
             self.format_entry(entry);
+
+            // Add blank lines for readability at root level
+            if self.writer.depth() == 1 && i < entry_count - 1 {
+                // Blank line after schema declaration (@ path/to/schema.styx)
+                // Only when the @ key has a scalar value (path), not a tagged object
+                if i == 0 && entry.key.is_unit() && entry.value.as_str().is_some() {
+                    self.writer.write_str("\n");
+                }
+                // Blank line after entries with doc comments (type definitions)
+                else if entry.doc_comment.is_some() {
+                    self.writer.write_str("\n");
+                }
+            }
         }
     }
 
@@ -261,6 +284,406 @@ mod tests {
         let obj = obj_value(vec![entry("flag", Value::unit())]);
 
         let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // =========================================================================
+    // Edge case tests for formatting
+    // =========================================================================
+
+    /// Helper to create a newline-separated object value
+    fn obj_multiline(entries: Vec<Entry>) -> Value {
+        Value {
+            tag: None,
+            payload: Some(Payload::Object(Object {
+                entries,
+                separator: Separator::Newline,
+                span: None,
+            })),
+            span: None,
+        }
+    }
+
+    /// Helper to create a comma-separated (inline) object value
+    fn obj_inline(entries: Vec<Entry>) -> Value {
+        Value {
+            tag: None,
+            payload: Some(Payload::Object(Object {
+                entries,
+                separator: Separator::Comma,
+                span: None,
+            })),
+            span: None,
+        }
+    }
+
+    /// Helper to create a tagged value with object payload
+    fn tagged_obj(tag_name: &str, entries: Vec<Entry>, separator: Separator) -> Value {
+        Value {
+            tag: Some(Tag {
+                name: tag_name.to_string(),
+                span: None,
+            }),
+            payload: Some(Payload::Object(Object {
+                entries,
+                separator,
+                span: None,
+            })),
+            span: None,
+        }
+    }
+
+    /// Helper to create a tagged value with a single scalar payload
+    fn tagged_scalar(tag_name: &str, text: &str) -> Value {
+        Value {
+            tag: Some(Tag {
+                name: tag_name.to_string(),
+                span: None,
+            }),
+            payload: Some(Payload::Scalar(Scalar {
+                text: text.to_string(),
+                kind: ScalarKind::Bare,
+                span: None,
+            })),
+            span: None,
+        }
+    }
+
+    /// Helper to create a unit entry (@ key)
+    fn unit_entry(value: Value) -> Entry {
+        Entry {
+            key: Value::unit(),
+            value,
+            doc_comment: None,
+        }
+    }
+
+    // --- Edge Case 1: Schema declaration with blank line after ---
+    #[test]
+    fn test_edge_case_01_schema_declaration_blank_line() {
+        // @ schema.styx followed by other fields should have blank line
+        let obj = obj_multiline(vec![
+            unit_entry(scalar("schema.styx")),
+            entry("name", scalar("test")),
+            entry("port", scalar("8080")),
+        ]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 2: Nested multiline objects preserve structure ---
+    #[test]
+    fn test_edge_case_02_nested_multiline_objects() {
+        let inner = obj_multiline(vec![
+            entry("host", scalar("localhost")),
+            entry("port", scalar("8080")),
+        ]);
+        let obj = obj_multiline(vec![entry("name", scalar("myapp")), entry("server", inner)]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 3: Deeply nested multiline objects (3 levels) ---
+    #[test]
+    fn test_edge_case_03_deeply_nested_multiline() {
+        let level3 = obj_multiline(vec![
+            entry("cert", scalar("/path/to/cert")),
+            entry("key", scalar("/path/to/key")),
+        ]);
+        let level2 = obj_multiline(vec![
+            entry("host", scalar("localhost")),
+            entry("tls", level3),
+        ]);
+        let obj = obj_multiline(vec![
+            entry("name", scalar("myapp")),
+            entry("server", level2),
+        ]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 4: Mixed inline and multiline ---
+    #[test]
+    fn test_edge_case_04_mixed_inline_multiline() {
+        // Outer is multiline, inner is inline
+        let inner = obj_inline(vec![entry("x", scalar("1")), entry("y", scalar("2"))]);
+        let obj = obj_multiline(vec![entry("name", scalar("point")), entry("coords", inner)]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 5: Tagged object with multiline content ---
+    #[test]
+    fn test_edge_case_05_tagged_multiline_object() {
+        let obj = obj_multiline(vec![entry(
+            "type",
+            tagged_obj(
+                "object",
+                vec![entry("name", tagged("string")), entry("age", tagged("int"))],
+                Separator::Newline,
+            ),
+        )]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 6: Tagged object with inline content ---
+    #[test]
+    fn test_edge_case_06_tagged_inline_object() {
+        let obj = obj_multiline(vec![entry(
+            "point",
+            tagged_obj(
+                "point",
+                vec![entry("x", scalar("1")), entry("y", scalar("2"))],
+                Separator::Comma,
+            ),
+        )]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 7: Schema-like structure with @object tags ---
+    #[test]
+    fn test_edge_case_07_schema_structure() {
+        // meta { ... }
+        // schema { @ @object{ ... } }
+        let meta = obj_multiline(vec![
+            entry("id", scalar("https://example.com/schema")),
+            entry("version", scalar("1.0")),
+        ]);
+        let schema_obj = tagged_obj(
+            "object",
+            vec![
+                entry("name", tagged("string")),
+                entry("port", tagged("int")),
+            ],
+            Separator::Newline,
+        );
+        let schema = obj_multiline(vec![unit_entry(schema_obj)]);
+        let root = obj_multiline(vec![entry("meta", meta), entry("schema", schema)]);
+
+        let result = format_value_default(&root);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 8: Optional wrapped types ---
+    #[test]
+    fn test_edge_case_08_optional_types() {
+        let obj = obj_multiline(vec![
+            entry("required", tagged("string")),
+            entry("optional", tagged_scalar("optional", "@bool")),
+        ]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 9: Empty object ---
+    #[test]
+    fn test_edge_case_09_empty_object() {
+        let obj = obj_multiline(vec![entry("empty", obj_multiline(vec![]))]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 10: Empty inline object ---
+    #[test]
+    fn test_edge_case_10_empty_inline_object() {
+        let obj = obj_multiline(vec![entry("empty", obj_inline(vec![]))]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 11: Sequence of objects ---
+    #[test]
+    fn test_edge_case_11_sequence_of_objects() {
+        let item1 = obj_inline(vec![entry("name", scalar("Alice"))]);
+        let item2 = obj_inline(vec![entry("name", scalar("Bob"))]);
+        let seq = Value {
+            tag: None,
+            payload: Some(Payload::Sequence(Sequence {
+                items: vec![item1, item2],
+                span: None,
+            })),
+            span: None,
+        };
+        let obj = obj_multiline(vec![entry("users", seq)]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 12: Quoted strings that need escaping ---
+    #[test]
+    fn test_edge_case_12_quoted_strings() {
+        let obj = obj_multiline(vec![
+            entry("message", scalar(r#""Hello, World!""#)),
+            entry("path", scalar("/path/with spaces/file.txt")),
+        ]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 13: Keys that need quoting ---
+    #[test]
+    fn test_edge_case_13_quoted_keys() {
+        let obj = obj_multiline(vec![
+            entry("normal-key", scalar("value1")),
+            entry("key with spaces", scalar("value2")),
+            entry("123numeric", scalar("value3")),
+        ]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 14: Multiple unit entries (unusual but valid) ---
+    #[test]
+    fn test_edge_case_14_multiple_unit_entries() {
+        let obj = obj_multiline(vec![
+            unit_entry(scalar("first.styx")),
+            entry("name", scalar("test")),
+        ]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 15: Nested sequences ---
+    #[test]
+    fn test_edge_case_15_nested_sequences() {
+        let inner_seq = seq_value(vec![scalar("a"), scalar("b")]);
+        let outer_seq = Value {
+            tag: None,
+            payload: Some(Payload::Sequence(Sequence {
+                items: vec![inner_seq, seq_value(vec![scalar("c"), scalar("d")])],
+                span: None,
+            })),
+            span: None,
+        };
+        let obj = obj_multiline(vec![entry("matrix", outer_seq)]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 16: Tagged sequence ---
+    #[test]
+    fn test_edge_case_16_tagged_sequence() {
+        let tagged_seq = Value {
+            tag: Some(Tag {
+                name: "seq".to_string(),
+                span: None,
+            }),
+            payload: Some(Payload::Sequence(Sequence {
+                items: vec![tagged("string")],
+                span: None,
+            })),
+            span: None,
+        };
+        let obj = obj_multiline(vec![entry("items", tagged_seq)]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 17: Doc comments on nested entries ---
+    #[test]
+    fn test_edge_case_17_nested_doc_comments() {
+        let inner = Value {
+            tag: None,
+            payload: Some(Payload::Object(Object {
+                entries: vec![
+                    entry_with_doc("host", scalar("localhost"), "The server hostname"),
+                    entry_with_doc("port", scalar("8080"), "The server port"),
+                ],
+                separator: Separator::Newline,
+                span: None,
+            })),
+            span: None,
+        };
+        let obj = obj_multiline(vec![entry_with_doc(
+            "server",
+            inner,
+            "Server configuration",
+        )]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 18: Very long inline object should stay inline if marked ---
+    #[test]
+    fn test_edge_case_18_long_inline_stays_inline() {
+        let inner = obj_inline(vec![
+            entry("field1", scalar("value1")),
+            entry("field2", scalar("value2")),
+            entry("field3", scalar("value3")),
+            entry("field4", scalar("value4")),
+        ]);
+        let obj = obj_multiline(vec![entry("data", inner)]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 19: Multiline with single field ---
+    #[test]
+    fn test_edge_case_19_multiline_single_field() {
+        let inner = obj_multiline(vec![entry("only", scalar("one"))]);
+        let obj = obj_multiline(vec![entry("wrapper", inner)]);
+
+        let result = format_value_default(&obj);
+        insta::assert_snapshot!(result);
+    }
+
+    // --- Edge Case 20: Full schema file simulation ---
+    #[test]
+    fn test_edge_case_20_full_schema_simulation() {
+        // Simulates: meta { id ..., version ..., description ... }
+        //            schema { @ @object{ name @string, server @object{ host @string, port @int } } }
+        let meta = obj_multiline(vec![
+            entry("id", scalar("https://example.com/config")),
+            entry("version", scalar("2024-01-01")),
+            entry("description", scalar("\"A test schema\"")),
+        ]);
+
+        let server_fields = obj_multiline(vec![
+            entry("host", tagged("string")),
+            entry("port", tagged("int")),
+        ]);
+        let server_schema = tagged_obj(
+            "object",
+            vec![
+                entry("host", tagged("string")),
+                entry("port", tagged("int")),
+            ],
+            Separator::Newline,
+        );
+
+        let root_schema = tagged_obj(
+            "object",
+            vec![
+                entry("name", tagged("string")),
+                entry("server", server_schema),
+            ],
+            Separator::Newline,
+        );
+
+        let schema = obj_multiline(vec![unit_entry(root_schema)]);
+
+        let root = obj_multiline(vec![entry("meta", meta), entry("schema", schema)]);
+
+        let result = format_value_default(&root);
         insta::assert_snapshot!(result);
     }
 }

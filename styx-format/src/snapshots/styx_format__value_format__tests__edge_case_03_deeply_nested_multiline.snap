@@ -1,0 +1,12 @@
+---
+source: crates/styx-format/src/value_format.rs
+expression: result
+---
+name myapp
+server {
+    host localhost
+    tls {
+        cert /path/to/cert
+        key /path/to/key
+    }
+}
