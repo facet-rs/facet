@@ -1,0 +1,5 @@
+@ server.schema.styx
+
+name "My Server"
+port 8080
+enabled true

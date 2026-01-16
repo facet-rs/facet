@@ -1,0 +1,6 @@
+@ server.schema.styx
+
+name "My Server"
+prot 8080
+enbled true
+unknown_field "should error"

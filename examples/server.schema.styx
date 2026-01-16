@@ -1,0 +1,14 @@
+meta {
+  id https://example.com/server-config
+  version 2026-01-16
+  description "Server configuration schema"
+}
+
+schema {
+  @ @object{
+    name @string
+    port @int
+    enabled @optional(@bool)
+    host @optional(@string)
+  }
+}

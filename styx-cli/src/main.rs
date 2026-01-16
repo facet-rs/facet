@@ -272,11 +272,7 @@ fn run_file_first(args: &[String]) -> Result<(), CliError> {
 
     // Validate if requested
     if opts.validate {
-        run_validation(
-            &value,
-            opts.input.as_deref(),
-            opts.override_schema.as_deref(),
-        )?;
+        run_validation(&value, &source, &filename, opts.override_schema.as_deref())?;
     }
 
     // Determine output format and destination
@@ -312,7 +308,8 @@ fn run_file_first(args: &[String]) -> Result<(), CliError> {
 
 fn run_validation(
     value: &Value,
-    input_path: Option<&str>,
+    source: &str,
+    filename: &str,
     override_schema: Option<&str>,
 ) -> Result<(), CliError> {
     // Determine schema source
@@ -325,7 +322,7 @@ fn run_validation(
         match schema_ref {
             SchemaRef::External(path) => {
                 // Resolve relative to input file's directory
-                let resolved = resolve_schema_path(&path, input_path)?;
+                let resolved = resolve_schema_path(&path, Some(filename))?;
                 load_schema_file(&resolved)?
             }
             SchemaRef::Inline(schema_value) => {
@@ -342,18 +339,17 @@ fn run_validation(
     let result = validate(&value_for_validation, &schema_file);
 
     if !result.is_valid() {
-        for error in &result.errors {
-            eprintln!("{}", error);
-        }
+        // Use ariadne for pretty error reporting
+        result.write_report(filename, source, std::io::stderr());
         return Err(CliError::Validation(format!(
             "{} validation error(s)",
             result.errors.len()
         )));
     }
 
-    // Print warnings
-    for warning in &result.warnings {
-        eprintln!("warning: {}", warning.message);
+    // Print warnings (also with ariadne)
+    if !result.warnings.is_empty() {
+        result.write_report(filename, source, std::io::stderr());
     }
 
     Ok(())

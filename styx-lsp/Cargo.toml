@@ -11,7 +11,10 @@ tokio = { version = "1", features = ["full"] }
 
 # Styx crates
 styx-cst = { path = "../styx-cst" }
+styx-tree = { path = "../styx-tree" }
 styx-schema = { path = "../styx-schema" }
+styx-format = { path = "../styx-format" }
+facet-styx = { path = "../facet-styx" }
 
 # Error handling
 eyre = "0.6"
