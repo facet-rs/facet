@@ -1,0 +1,9 @@
+config {
+    server {
+        host localhost
+        tls {
+            enabled true
+            cert /etc/ssl/cert.pem
+        }
+    }
+}

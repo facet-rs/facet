@@ -1,0 +1,5 @@
+int 42
+negative -17
+float 3.14
+scientific 1e10
+hex 0xff

@@ -1,0 +1,2 @@
+error @error{code 500, message "fail"}
+user @user{name alice, age 30}

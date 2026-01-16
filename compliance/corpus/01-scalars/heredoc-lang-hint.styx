@@ -1,0 +1,5 @@
+code <<CODE,rust
+fn main() {
+    println!("Hello!");
+}
+CODE

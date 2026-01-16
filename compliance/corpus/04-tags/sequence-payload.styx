@@ -1,0 +1,3 @@
+point @rgb(255 128 0)
+maybe @some(42)
+union @union(@int @string)

@@ -85,7 +85,7 @@ FILE MODE OPTIONS:
     --override-schema <file>        Use this schema instead of declared
 
 SUBCOMMANDS:
-    @tree <file>                    Show debug parse tree
+    @tree [--format sexp|debug] <file>  Show parse tree
     @diff <old> <new>               Structural diff (not yet implemented)
     @lsp                            Start language server (stdio)
     @skill                          Output Claude Code skill for AI assistance
@@ -483,10 +483,61 @@ fn run_lsp(_args: &[String]) -> Result<(), CliError> {
 }
 
 fn run_tree(args: &[String]) -> Result<(), CliError> {
-    let file = args.first().map(|s| s.as_str());
+    // Parse args: [--format sexp|debug] <file>
+    let mut format = "debug";
+    let mut file = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--format" {
+            i += 1;
+            format = args.get(i).map(|s| s.as_str()).ok_or_else(|| {
+                CliError::Usage("--format requires an argument (sexp or debug)".into())
+            })?;
+        } else if args[i].starts_with('-') {
+            return Err(CliError::Usage(format!("unknown option: {}", args[i])));
+        } else if file.is_none() {
+            file = Some(args[i].as_str());
+        } else {
+            return Err(CliError::Usage(format!("unexpected argument: {}", args[i])));
+        }
+        i += 1;
+    }
+
     let source = read_input(file)?;
-    let value = styx_tree::parse(&source)?;
-    print_tree(&value, 0);
+    let filename = file.unwrap_or("<stdin>");
+
+    match format {
+        "sexp" => {
+            match styx_tree::parse(&source) {
+                Ok(value) => {
+                    println!("; file: {}", filename);
+                    print_sexp(&value, 0);
+                    println!();
+                }
+                Err(e) => {
+                    // Output error in sexp format
+                    let (start, end) = match &e {
+                        styx_tree::BuildError::Parse(_, span) => (span.start, span.end),
+                        _ => (0, 0),
+                    };
+                    let msg = json_escape(&e.to_string());
+                    println!("; file: {}", filename);
+                    println!("(error [{}, {}] \"{}\")", start, end, msg);
+                }
+            }
+        }
+        "debug" => {
+            let value = styx_tree::parse(&source)?;
+            print_tree(&value, 0);
+        }
+        _ => {
+            return Err(CliError::Usage(format!(
+                "unknown format '{}', expected 'sexp' or 'debug'",
+                format
+            )));
+        }
+    }
+
     Ok(())
 }
 
@@ -632,6 +683,190 @@ fn print_tree_inline(value: &Value) {
             Some(Payload::Object(_)) => print!("Object {{...}}"),
         }
     }
+}
+
+// ============================================================================
+// S-expression output (compliance format)
+// ============================================================================
+
+use styx_parse::ScalarKind;
+
+fn print_sexp(value: &Value, indent: usize) {
+    // The root value is always an object representing the document
+    let pad = "  ".repeat(indent);
+
+    if let Some(obj) = value.as_object() {
+        let span = value
+            .span
+            .map(|s| format!("[{}, {}]", s.start, s.end))
+            .unwrap_or_else(|| "[-1, -1]".to_string());
+        println!("{pad}(document {span}");
+        for entry in &obj.entries {
+            print_sexp_entry(entry, indent + 1);
+        }
+        print!("{pad})");
+    } else {
+        // Shouldn't happen for a parsed document, but handle it
+        print_sexp_value(value, indent);
+    }
+}
+
+fn print_sexp_entry(entry: &styx_tree::Entry, indent: usize) {
+    let pad = "  ".repeat(indent);
+    println!("{pad}(entry");
+    print_sexp_value(&entry.key, indent + 1);
+    println!();
+    print_sexp_value(&entry.value, indent + 1);
+    print!(")");
+    println!();
+}
+
+fn print_sexp_value(value: &Value, indent: usize) {
+    let pad = "  ".repeat(indent);
+    let span = value
+        .span
+        .map(|s| format!("[{}, {}]", s.start, s.end))
+        .unwrap_or_else(|| "[-1, -1]".to_string());
+
+    match (&value.tag, &value.payload) {
+        // Unit: no tag, no payload
+        (None, None) => {
+            print!("{pad}(unit {span})");
+        }
+        // Tagged value (with or without payload)
+        (Some(tag), payload) => {
+            let tag_name = json_escape(&tag.name);
+            print!("{pad}(tag {span} \"{tag_name}\"");
+            if let Some(p) = payload {
+                println!();
+                print_sexp_payload(p, indent + 1);
+                print!(")");
+            } else {
+                print!(")");
+            }
+        }
+        // Untagged scalar
+        (None, Some(Payload::Scalar(s))) => {
+            let kind = match s.kind {
+                ScalarKind::Bare => "bare",
+                ScalarKind::Quoted => "quoted",
+                ScalarKind::Raw => "raw",
+                ScalarKind::Heredoc => "heredoc",
+            };
+            let text = json_escape(&s.text);
+            print!("{pad}(scalar {span} {kind} \"{text}\")");
+        }
+        // Untagged sequence
+        (None, Some(Payload::Sequence(seq))) => {
+            print!("{pad}(sequence {span}");
+            if seq.items.is_empty() {
+                print!(")");
+            } else {
+                println!();
+                for (i, item) in seq.items.iter().enumerate() {
+                    print_sexp_value(item, indent + 1);
+                    if i < seq.items.len() - 1 {
+                        println!();
+                    }
+                }
+                print!(")");
+            }
+        }
+        // Untagged object
+        (None, Some(Payload::Object(obj))) => {
+            let sep = match obj.separator {
+                styx_parse::Separator::Newline => "newline",
+                styx_parse::Separator::Comma => "comma",
+            };
+            print!("{pad}(object {span} {sep}");
+            if obj.entries.is_empty() {
+                print!(")");
+            } else {
+                println!();
+                for entry in &obj.entries {
+                    print_sexp_entry(entry, indent + 1);
+                }
+                print!("{pad})");
+            }
+        }
+    }
+}
+
+fn print_sexp_payload(payload: &Payload, indent: usize) {
+    let pad = "  ".repeat(indent);
+    match payload {
+        Payload::Scalar(s) => {
+            let span = s
+                .span
+                .map(|sp| format!("[{}, {}]", sp.start, sp.end))
+                .unwrap_or_else(|| "[-1, -1]".to_string());
+            let kind = match s.kind {
+                ScalarKind::Bare => "bare",
+                ScalarKind::Quoted => "quoted",
+                ScalarKind::Raw => "raw",
+                ScalarKind::Heredoc => "heredoc",
+            };
+            let text = json_escape(&s.text);
+            print!("{pad}(scalar {span} {kind} \"{text}\")");
+        }
+        Payload::Sequence(seq) => {
+            let span = seq
+                .span
+                .map(|s| format!("[{}, {}]", s.start, s.end))
+                .unwrap_or_else(|| "[-1, -1]".to_string());
+            print!("{pad}(sequence {span}");
+            if seq.items.is_empty() {
+                print!(")");
+            } else {
+                println!();
+                for (i, item) in seq.items.iter().enumerate() {
+                    print_sexp_value(item, indent + 1);
+                    if i < seq.items.len() - 1 {
+                        println!();
+                    }
+                }
+                print!(")");
+            }
+        }
+        Payload::Object(obj) => {
+            let span = obj
+                .span
+                .map(|s| format!("[{}, {}]", s.start, s.end))
+                .unwrap_or_else(|| "[-1, -1]".to_string());
+            let sep = match obj.separator {
+                styx_parse::Separator::Newline => "newline",
+                styx_parse::Separator::Comma => "comma",
+            };
+            print!("{pad}(object {span} {sep}");
+            if obj.entries.is_empty() {
+                print!(")");
+            } else {
+                println!();
+                for entry in &obj.entries {
+                    print_sexp_entry(entry, indent + 1);
+                }
+                print!("{pad})");
+            }
+        }
+    }
+}
+
+fn json_escape(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            c if c.is_control() => {
+                result.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => result.push(c),
+        }
+    }
+    result
 }
 
 // ============================================================================

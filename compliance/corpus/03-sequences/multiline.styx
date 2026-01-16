@@ -1,0 +1,2 @@
+hosts (localhost "192.168.1.1" server.example.com)
+

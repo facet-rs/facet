@@ -1,0 +1,3 @@
+one r#"has "quotes""#
+two r##"has "# in it"##
+three r###"has "## in it"###

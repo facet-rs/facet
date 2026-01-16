@@ -1,0 +1,7 @@
+/// The server name
+name hello
+
+/// The port number
+/// Must be between 1 and 65535
+port 8080
+

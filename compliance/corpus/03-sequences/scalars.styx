@@ -1,0 +1,3 @@
+numbers (1 2 3 4 5)
+strings (foo bar baz)
+quoted ("hello world" "foo bar")

@@ -1,0 +1,7 @@
+dash foo-bar
+underscore foo_bar
+dot foo.bar
+colon foo:bar
+slash foo/bar
+plus 1+2
+minus 1-2
