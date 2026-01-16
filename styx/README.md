@@ -6,31 +6,39 @@ A configuration language that's actually pleasant to use.
 // Schema declaration - enables validation, completion, hover
 @ examples/server.schema.styx
 
-/// The server's display name
+/// The server's display name (this is a doc comment)
 name my-server
 port 8080
-enabled true
+enabled @true
 
+// Nested objects
 tls {
     cert /etc/ssl/cert.pem
     key /etc/ssl/key.pem
 }
 
-logging {
-    level info
-    format {timestamp true, colors true}  // inline style works too
-}
+// Newlines or commas - your choice
+logging {level info, format {timestamp @true, colors @true}}
 
-// Tagged values for type annotations
-endpoints @seq(
-    @endpoint {path /api/v1, methods (GET POST)}
-    @endpoint {path /health, methods (GET)}
+// Sequences
+allowed_methods (GET POST PUT DELETE)
+
+// Tagged values for enums
+status @ok
+log_level @warn
+maybe_value @some(42)
+
+// Complex structures
+routes (
+    @route {path /api/v1, handler api}
+    @route {path /health, handler health_check}
 )
 
-metadata @map {
-    version 1.0.0
-    build-date 2024-01-15
-}
+// Heredocs for multi-line content
+query <<SQL
+SELECT * FROM users
+WHERE active = true
+SQL
 ```
 
 ## Features
