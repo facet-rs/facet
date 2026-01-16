@@ -252,24 +252,8 @@ impl PythonGenerator {
 
                 match variant.data.kind {
                     StructKind::Unit => {
-                        // Unit variant - wrapper class with Literal value
-                        let mut variant_output = String::new();
-                        writeln!(
-                            variant_output,
-                            "class {}(TypedDict, total=False):",
-                            pascal_variant_name
-                        )
-                        .unwrap();
-                        writeln!(
-                            variant_output,
-                            "    {}: Required[Literal[\"{}\"]]",
-                            variant_name, variant_name
-                        )
-                        .unwrap();
-                        variant_output.push('\n');
-                        self.generated
-                            .insert(pascal_variant_name.clone(), variant_output);
-                        variant_class_names.push(pascal_variant_name);
+                        // Unit variant - just a Literal in the union, no wrapper class needed
+                        variant_class_names.push(format!("Literal[\"{}\"]", variant_name));
                     }
                     StructKind::TupleStruct if variant.data.fields.len() == 1 => {
                         // Newtype variant - wrapper class pointing to inner type
@@ -611,6 +595,64 @@ mod tests {
         }
 
         let py = to_python::<Message>();
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_unit_struct() {
+        #[derive(Facet)]
+        struct Empty;
+
+        let py = to_python::<Empty>();
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_tuple_struct() {
+        #[derive(Facet)]
+        struct Point(f32, f64);
+
+        let py = to_python::<Point>();
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_newtype_struct() {
+        #[derive(Facet)]
+        struct UserId(u64);
+
+        let py = to_python::<UserId>();
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_hashmap() {
+        use std::collections::HashMap;
+
+        #[derive(Facet)]
+        struct Registry {
+            entries: HashMap<String, i32>,
+        }
+
+        let py = to_python::<Registry>();
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_mixed_enum_variants() {
+        #[derive(Facet)]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum Event {
+            /// Unit variant
+            Empty,
+            /// Newtype variant
+            Id(u64),
+            /// Struct variant
+            Data { name: String, value: f64 },
+        }
+
+        let py = to_python::<Event>();
         insta::assert_snapshot!(py);
     }
 }
