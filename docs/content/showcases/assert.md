@@ -1,5 +1,6 @@
 +++
 title = "Assertions"
+weight = 2
 +++
 
 <div class="showcase">

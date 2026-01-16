@@ -1,5 +1,6 @@
 +++
 title = "Pretty Printing"
+weight = 6
 +++
 
 <div class="showcase">

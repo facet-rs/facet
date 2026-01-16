@@ -1,6 +1,7 @@
 +++
 title = "Derive Macro Diagnostics"
 slug = "derive-diagnostics"
+weight = 3
 +++
 
 <div class="showcase">
