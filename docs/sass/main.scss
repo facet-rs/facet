@@ -377,6 +377,7 @@ table {
   border-collapse: collapse;
   margin-bottom: var(--spacing-md);
   font-size: 0.9rem;
+  table-layout: fixed; // Equal column widths
 }
 
 th,
@@ -385,6 +386,7 @@ td {
   border: 1px solid var(--border-color);
   text-align: left;
   vertical-align: top;
+  width: 50%; // Equal width for comparison tables
 }
 
 th {
@@ -394,11 +396,23 @@ th {
   font-size: 0.9rem;
 }
 
-// Remove redundant background from code blocks inside table cells
-td pre {
+// Remove redundant styling from code blocks inside table cells
+td pre,
+td .code-block pre {
   background: transparent;
   margin: 0;
   padding: 0.25rem 0;
+  border: none;
+  border-radius: 0;
+}
+
+td .code-block {
+  // Remove wrapper styling when inside table cells
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
 }
 
 // Horizontal rule
@@ -663,6 +677,53 @@ pre.term {
       border-radius: 6px;
     }
 
+  }
+}
+
+// Showcase provenance footer
+.showcase-provenance {
+  margin-top: var(--spacing-xl);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--border-color);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+
+  p {
+    margin-bottom: var(--spacing-sm);
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25rem 1rem;
+    margin: 0;
+  }
+
+  dt {
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  dd {
+    margin: 0;
+
+    code {
+      font-size: 0.8rem;
+      padding: 0.15em 0.4em;
+    }
+
+    a {
+      color: var(--link-color);
+
+      &:hover {
+        color: var(--link-hover);
+      }
+    }
+  }
+
+  time {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
   }
 }
 
