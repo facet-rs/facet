@@ -339,35 +339,36 @@ fn find_object_at_offset_recursive(
     let obj = value.as_object()?;
 
     // Check if offset is within this object's span
-    if let Some(span) = obj.span {
-        if offset < span.start as usize || offset > span.end as usize {
-            return None;
-        }
+    if let Some(span) = obj.span
+        && (offset < span.start as usize || offset > span.end as usize)
+    {
+        return None;
     }
 
     // Check each entry to see if we're inside a nested object
     for entry in &obj.entries {
-        if let Some(val_span) = entry.value.span {
-            if offset >= val_span.start as usize && offset <= val_span.end as usize {
-                // We're inside this value - check if it's a nested object
-                if let Some(nested_obj) = entry.value.as_object() {
-                    let mut nested_path = path.clone();
-                    if let Some(key) = entry.key.as_str() {
-                        nested_path.push(key.to_string());
-                    }
-                    // Recurse into the nested object
-                    if let Some(deeper) =
-                        find_object_at_offset_recursive(&entry.value, offset, nested_path.clone())
-                    {
-                        return Some(deeper);
-                    }
-                    // We're in this nested object but not deeper
-                    return Some(ObjectContext {
-                        path: nested_path,
-                        object: nested_obj.clone(),
-                        span: entry.value.span,
-                    });
+        if let Some(val_span) = entry.value.span
+            && offset >= val_span.start as usize
+            && offset <= val_span.end as usize
+        {
+            // We're inside this value - check if it's a nested object
+            if let Some(nested_obj) = entry.value.as_object() {
+                let mut nested_path = path.clone();
+                if let Some(key) = entry.key.as_str() {
+                    nested_path.push(key.to_string());
                 }
+                // Recurse into the nested object
+                if let Some(deeper) =
+                    find_object_at_offset_recursive(&entry.value, offset, nested_path.clone())
+                {
+                    return Some(deeper);
+                }
+                // We're in this nested object but not deeper
+                return Some(ObjectContext {
+                    path: nested_path,
+                    object: nested_obj.clone(),
+                    span: entry.value.span,
+                });
             }
         }
     }

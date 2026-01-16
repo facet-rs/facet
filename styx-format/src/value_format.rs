@@ -123,13 +123,12 @@ impl ValueFormatter {
 
             // Add blank lines for readability at root level
             if self.writer.depth() == 1 && i < entry_count - 1 {
-                // Blank line after schema declaration (@ path/to/schema.styx)
-                // Only when the @ key has a scalar value (path), not a tagged object
-                if i == 0 && entry.key.is_unit() && entry.value.as_str().is_some() {
-                    self.writer.write_str("\n");
-                }
-                // Blank line after entries with doc comments (type definitions)
-                else if entry.doc_comment.is_some() {
+                // Blank line after:
+                // - schema declaration (@ path/to/schema.styx) when @ key has scalar value
+                // - entries with doc comments (type definitions)
+                let is_schema_decl =
+                    i == 0 && entry.key.is_unit() && entry.value.as_str().is_some();
+                if is_schema_decl || entry.doc_comment.is_some() {
                     self.writer.write_str("\n");
                 }
             }
@@ -668,7 +667,7 @@ mod tests {
             entry("description", scalar("\"A test schema\"")),
         ]);
 
-        let server_fields = obj_multiline(vec![
+        let _server_fields = obj_multiline(vec![
             entry("host", tagged("string")),
             entry("port", tagged("int")),
         ]);

@@ -464,57 +464,45 @@ impl LanguageServer for StyxLanguageServer {
             // Load the schema file
             let schema_decl = find_schema_declaration_with_range(tree, &doc.content);
 
-            if let Some((SchemaRef::External(schema_path), _)) = schema_decl {
-                if let Some(resolved) = resolve_schema_path(&schema_path, &uri) {
-                    if let Ok(schema_source) = std::fs::read_to_string(&resolved) {
-                        if let Some(field_range) =
-                            find_field_in_schema_source(&schema_source, &field_name)
-                        {
-                            if let Ok(target_uri) = Url::from_file_path(&resolved) {
-                                return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                                    uri: target_uri,
-                                    range: field_range,
-                                })));
-                            }
-                        }
-                    }
-                }
+            if let Some((SchemaRef::External(schema_path), _)) = schema_decl
+                && let Some(resolved) = resolve_schema_path(&schema_path, &uri)
+                && let Ok(schema_source) = std::fs::read_to_string(&resolved)
+                && let Some(field_range) = find_field_in_schema_source(&schema_source, &field_name)
+                && let Ok(target_uri) = Url::from_file_path(&resolved)
+            {
+                return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                    uri: target_uri,
+                    range: field_range,
+                })));
             }
         }
 
         // Case 3: In a schema file - jump to first open doc that uses this field
         // Check if this looks like a schema file (has "schema" and "meta" blocks)
-        if is_schema_file(tree) {
-            if let Some(field_name) = find_field_key_at_offset(tree, offset) {
-                // Search open documents for one that uses this schema
-                for (doc_uri, doc_state) in docs.iter() {
-                    if doc_uri == &uri {
-                        continue; // Skip the schema file itself
-                    }
-                    if let Some(ref doc_tree) = doc_state.tree {
-                        // Check if this doc references our schema
-                        if let Some((SchemaRef::External(schema_path), _)) =
-                            find_schema_declaration_with_range(doc_tree, &doc_state.content)
+        if is_schema_file(tree)
+            && let Some(field_name) = find_field_key_at_offset(tree, offset)
+        {
+            // Search open documents for one that uses this schema
+            for (doc_uri, doc_state) in docs.iter() {
+                if doc_uri == &uri {
+                    continue; // Skip the schema file itself
+                }
+                if let Some(ref doc_tree) = doc_state.tree {
+                    // Check if this doc references our schema
+                    if let Some((SchemaRef::External(schema_path), _)) =
+                        find_schema_declaration_with_range(doc_tree, &doc_state.content)
+                        && let Some(resolved) = resolve_schema_path(&schema_path, doc_uri)
+                        && let Ok(schema_uri) = Url::from_file_path(&resolved)
+                        && schema_uri == uri
+                    {
+                        // This doc uses our schema - find the field
+                        if let Some(field_range) =
+                            find_field_in_doc(doc_tree, &field_name, &doc_state.content)
                         {
-                            if let Some(resolved) = resolve_schema_path(&schema_path, doc_uri) {
-                                if let Ok(schema_uri) = Url::from_file_path(&resolved) {
-                                    if schema_uri == uri {
-                                        // This doc uses our schema - find the field
-                                        if let Some(field_range) = find_field_in_doc(
-                                            doc_tree,
-                                            &field_name,
-                                            &doc_state.content,
-                                        ) {
-                                            return Ok(Some(GotoDefinitionResponse::Scalar(
-                                                Location {
-                                                    uri: doc_uri.clone(),
-                                                    range: field_range,
-                                                },
-                                            )));
-                                        }
-                                    }
-                                }
-                            }
+                            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                                uri: doc_uri.clone(),
+                                range: field_range,
+                            })));
                         }
                     }
                 }
@@ -749,263 +737,260 @@ impl LanguageServer for StyxLanguageServer {
             }
 
             // Check for quickfix data
-            if let Some(data) = &diag.data {
-                if let Some(fix_type) = data.get("type").and_then(|v| v.as_str()) {
-                    if fix_type == "rename_field" {
-                        if let (Some(from), Some(to)) = (
-                            data.get("from").and_then(|v| v.as_str()),
-                            data.get("to").and_then(|v| v.as_str()),
-                        ) {
-                            // Create a text edit to rename the field
-                            let edit = TextEdit {
-                                range: diag.range,
-                                new_text: to.to_string(),
-                            };
+            if let Some(data) = &diag.data
+                && let Some(fix_type) = data.get("type").and_then(|v| v.as_str())
+                && fix_type == "rename_field"
+                && let (Some(from), Some(to)) = (
+                    data.get("from").and_then(|v| v.as_str()),
+                    data.get("to").and_then(|v| v.as_str()),
+                )
+            {
+                // Create a text edit to rename the field
+                let edit = TextEdit {
+                    range: diag.range,
+                    new_text: to.to_string(),
+                };
 
-                            let mut changes = std::collections::HashMap::new();
-                            changes.insert(uri.clone(), vec![edit]);
+                let mut changes = std::collections::HashMap::new();
+                changes.insert(uri.clone(), vec![edit]);
 
-                            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                                title: format!("Rename '{}' to '{}'", from, to),
-                                kind: Some(CodeActionKind::QUICKFIX),
-                                diagnostics: Some(vec![diag.clone()]),
-                                edit: Some(WorkspaceEdit {
-                                    changes: Some(changes),
-                                    ..Default::default()
-                                }),
-                                is_preferred: Some(true),
-                                ..Default::default()
-                            }));
-                        }
-                    }
-                }
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: format!("Rename '{}' to '{}'", from, to),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    diagnostics: Some(vec![diag.clone()]),
+                    edit: Some(WorkspaceEdit {
+                        changes: Some(changes),
+                        ..Default::default()
+                    }),
+                    is_preferred: Some(true),
+                    ..Default::default()
+                }));
             }
         }
 
         // Add schema-based refactoring actions
         let docs = self.documents.read().await;
-        if let Some(doc) = docs.get(&uri) {
-            if let Some(ref tree) = doc.tree {
-                // Try to load the schema
-                if let Ok(schema_file) = load_document_schema(tree, &uri) {
-                    // Find the object at cursor position
-                    let cursor_offset = position_to_offset(&doc.content, params.range.start);
-                    let object_ctx = find_object_at_offset(tree, cursor_offset);
+        if let Some(doc) = docs.get(&uri)
+            && let Some(ref tree) = doc.tree
+        {
+            // Try to load the schema
+            if let Ok(schema_file) = load_document_schema(tree, &uri) {
+                // Find the object at cursor position
+                let cursor_offset = position_to_offset(&doc.content, params.range.start);
+                let object_ctx = find_object_at_offset(tree, cursor_offset);
 
-                    // Get schema fields for the current context (root or nested)
-                    let (schema_fields, existing_fields, context_name) =
-                        if let Some(ref ctx) = object_ctx {
-                            let fields = get_schema_fields_at_path(&schema_file, &ctx.path);
-                            let existing: Vec<String> = ctx
-                                .object
-                                .entries
-                                .iter()
-                                .filter_map(|e| e.key.as_str().map(String::from))
-                                .collect();
-                            let name = if ctx.path.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" in '{}'", ctx.path.join("."))
-                            };
-                            (fields, existing, name)
+                // Get schema fields for the current context (root or nested)
+                let (schema_fields, existing_fields, context_name) =
+                    if let Some(ref ctx) = object_ctx {
+                        let fields = get_schema_fields_at_path(&schema_file, &ctx.path);
+                        let existing: Vec<String> = ctx
+                            .object
+                            .entries
+                            .iter()
+                            .filter_map(|e| e.key.as_str().map(String::from))
+                            .collect();
+                        let name = if ctx.path.is_empty() {
+                            String::new()
                         } else {
-                            let fields = get_schema_fields(&schema_file);
-                            let existing = get_document_fields(tree);
-                            (fields, existing, String::new())
+                            format!(" in '{}'", ctx.path.join("."))
                         };
+                        (fields, existing, name)
+                    } else {
+                        let fields = get_schema_fields(&schema_file);
+                        let existing = get_document_fields(tree);
+                        (fields, existing, String::new())
+                    };
 
-                    // Find missing fields
-                    let missing_required: Vec<_> = schema_fields
-                        .iter()
-                        .filter(|f| !f.optional && !existing_fields.contains(&f.name))
-                        .collect();
+                // Find missing fields
+                let missing_required: Vec<_> = schema_fields
+                    .iter()
+                    .filter(|f| !f.optional && !existing_fields.contains(&f.name))
+                    .collect();
 
-                    let missing_optional: Vec<_> = schema_fields
-                        .iter()
-                        .filter(|f| f.optional && !existing_fields.contains(&f.name))
-                        .collect();
+                let missing_optional: Vec<_> = schema_fields
+                    .iter()
+                    .filter(|f| f.optional && !existing_fields.contains(&f.name))
+                    .collect();
 
-                    // Find insert position and indentation within the current object
-                    let insert_info = if let Some(ref ctx) = object_ctx {
-                        if let Some(span) = ctx.span {
-                            // Find insertion point within this object
-                            let obj_content = &doc.content[span.start as usize..span.end as usize];
-                            let obj_insert = find_field_insert_position(obj_content);
-                            // Adjust position to be relative to document start
-                            let obj_start_pos =
-                                offset_to_position(&doc.content, span.start as usize);
-                            InsertPosition {
-                                position: Position {
-                                    line: obj_start_pos.line + obj_insert.position.line,
-                                    character: if obj_insert.position.line == 0 {
-                                        obj_start_pos.character + obj_insert.position.character
-                                    } else {
-                                        obj_insert.position.character
-                                    },
+                // Find insert position and indentation within the current object
+                let insert_info = if let Some(ref ctx) = object_ctx {
+                    if let Some(span) = ctx.span {
+                        // Find insertion point within this object
+                        let obj_content = &doc.content[span.start as usize..span.end as usize];
+                        let obj_insert = find_field_insert_position(obj_content);
+                        // Adjust position to be relative to document start
+                        let obj_start_pos = offset_to_position(&doc.content, span.start as usize);
+                        InsertPosition {
+                            position: Position {
+                                line: obj_start_pos.line + obj_insert.position.line,
+                                character: if obj_insert.position.line == 0 {
+                                    obj_start_pos.character + obj_insert.position.character
+                                } else {
+                                    obj_insert.position.character
                                 },
-                                indent: obj_insert.indent,
-                            }
-                        } else {
-                            find_field_insert_position(&doc.content)
+                            },
+                            indent: obj_insert.indent,
                         }
                     } else {
                         find_field_insert_position(&doc.content)
+                    }
+                } else {
+                    find_field_insert_position(&doc.content)
+                };
+
+                // Action: Fill required fields
+                if !missing_required.is_empty() {
+                    let new_text = generate_fields_text(&missing_required, &insert_info.indent);
+                    let edit = TextEdit {
+                        range: Range {
+                            start: insert_info.position,
+                            end: insert_info.position,
+                        },
+                        new_text,
                     };
 
-                    // Action: Fill required fields
-                    if !missing_required.is_empty() {
-                        let new_text = generate_fields_text(&missing_required, &insert_info.indent);
-                        let edit = TextEdit {
-                            range: Range {
-                                start: insert_info.position,
-                                end: insert_info.position,
-                            },
-                            new_text,
-                        };
+                    let mut changes = std::collections::HashMap::new();
+                    changes.insert(uri.clone(), vec![edit]);
 
-                        let mut changes = std::collections::HashMap::new();
-                        changes.insert(uri.clone(), vec![edit]);
-
-                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                            title: format!(
-                                "Fill {} required field{}{}",
-                                missing_required.len(),
-                                if missing_required.len() == 1 { "" } else { "s" },
-                                context_name
-                            ),
-                            kind: Some(CodeActionKind::REFACTOR),
-                            edit: Some(WorkspaceEdit {
-                                changes: Some(changes),
-                                ..Default::default()
-                            }),
+                    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                        title: format!(
+                            "Fill {} required field{}{}",
+                            missing_required.len(),
+                            if missing_required.len() == 1 { "" } else { "s" },
+                            context_name
+                        ),
+                        kind: Some(CodeActionKind::REFACTOR),
+                        edit: Some(WorkspaceEdit {
+                            changes: Some(changes),
                             ..Default::default()
-                        }));
-                    }
-
-                    // Action: Fill all fields (required + optional)
-                    let all_missing: Vec<_> = schema_fields
-                        .iter()
-                        .filter(|f| !existing_fields.contains(&f.name))
-                        .collect();
-
-                    if !all_missing.is_empty() && !missing_optional.is_empty() {
-                        let new_text = generate_fields_text(&all_missing, &insert_info.indent);
-                        let edit = TextEdit {
-                            range: Range {
-                                start: insert_info.position,
-                                end: insert_info.position,
-                            },
-                            new_text,
-                        };
-
-                        let mut changes = std::collections::HashMap::new();
-                        changes.insert(uri.clone(), vec![edit]);
-
-                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                            title: format!(
-                                "Fill all {} field{}{}",
-                                all_missing.len(),
-                                if all_missing.len() == 1 { "" } else { "s" },
-                                context_name
-                            ),
-                            kind: Some(CodeActionKind::REFACTOR),
-                            edit: Some(WorkspaceEdit {
-                                changes: Some(changes),
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        }));
-                    }
-
-                    // Action: Reorder fields to match schema (only at root level for now)
-                    if object_ctx
-                        .as_ref()
-                        .map(|c| c.path.is_empty())
-                        .unwrap_or(true)
-                    {
-                        let root_fields = get_schema_fields(&schema_file);
-                        if let Some(reorder_edit) =
-                            generate_reorder_edit(tree, &root_fields, &doc.content)
-                        {
-                            let mut changes = std::collections::HashMap::new();
-                            changes.insert(uri.clone(), vec![reorder_edit]);
-
-                            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                                title: "Reorder fields to match schema".to_string(),
-                                kind: Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
-                                edit: Some(WorkspaceEdit {
-                                    changes: Some(changes),
-                                    ..Default::default()
-                                }),
-                                ..Default::default()
-                            }));
-                        }
-                    }
+                        }),
+                        ..Default::default()
+                    }));
                 }
 
-                // Separator toggle actions (don't need schema)
-                let cursor_offset = position_to_offset(&doc.content, params.range.start);
-                if let Some(ctx) = find_object_at_offset(tree, cursor_offset) {
-                    // Only offer toggle for non-root objects with entries
-                    if let Some(span) = ctx.span {
-                        if !ctx.object.entries.is_empty() {
-                            let context_name = if ctx.path.is_empty() {
-                                "object".to_string()
-                            } else {
-                                format!("'{}'", ctx.path.last().unwrap_or(&"object".to_string()))
-                            };
+                // Action: Fill all fields (required + optional)
+                let all_missing: Vec<_> = schema_fields
+                    .iter()
+                    .filter(|f| !existing_fields.contains(&f.name))
+                    .collect();
 
-                            match ctx.object.separator {
-                                styx_tree::Separator::Newline => {
-                                    // Offer to convert to comma-separated (inline)
-                                    if let Some(edit) = generate_separator_toggle_edit(
-                                        &ctx.object,
-                                        span,
-                                        &doc.content,
-                                        styx_tree::Separator::Comma,
-                                    ) {
-                                        let mut changes = std::collections::HashMap::new();
-                                        changes.insert(uri.clone(), vec![edit]);
+                if !all_missing.is_empty() && !missing_optional.is_empty() {
+                    let new_text = generate_fields_text(&all_missing, &insert_info.indent);
+                    let edit = TextEdit {
+                        range: Range {
+                            start: insert_info.position,
+                            end: insert_info.position,
+                        },
+                        new_text,
+                    };
 
-                                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                                            title: format!(
-                                                "Convert {} to inline (comma-separated)",
-                                                context_name
-                                            ),
-                                            kind: Some(CodeActionKind::REFACTOR),
-                                            edit: Some(WorkspaceEdit {
-                                                changes: Some(changes),
-                                                ..Default::default()
-                                            }),
-                                            ..Default::default()
-                                        }));
-                                    }
-                                }
-                                styx_tree::Separator::Comma => {
-                                    // Offer to convert to newline-separated (multiline)
-                                    if let Some(edit) = generate_separator_toggle_edit(
-                                        &ctx.object,
-                                        span,
-                                        &doc.content,
-                                        styx_tree::Separator::Newline,
-                                    ) {
-                                        let mut changes = std::collections::HashMap::new();
-                                        changes.insert(uri.clone(), vec![edit]);
+                    let mut changes = std::collections::HashMap::new();
+                    changes.insert(uri.clone(), vec![edit]);
 
-                                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                                            title: format!(
-                                                "Convert {} to multiline (newline-separated)",
-                                                context_name
-                                            ),
-                                            kind: Some(CodeActionKind::REFACTOR),
-                                            edit: Some(WorkspaceEdit {
-                                                changes: Some(changes),
-                                                ..Default::default()
-                                            }),
-                                            ..Default::default()
-                                        }));
-                                    }
-                                }
+                    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                        title: format!(
+                            "Fill all {} field{}{}",
+                            all_missing.len(),
+                            if all_missing.len() == 1 { "" } else { "s" },
+                            context_name
+                        ),
+                        kind: Some(CodeActionKind::REFACTOR),
+                        edit: Some(WorkspaceEdit {
+                            changes: Some(changes),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }));
+                }
+
+                // Action: Reorder fields to match schema (only at root level for now)
+                if object_ctx
+                    .as_ref()
+                    .map(|c| c.path.is_empty())
+                    .unwrap_or(true)
+                {
+                    let root_fields = get_schema_fields(&schema_file);
+                    if let Some(reorder_edit) =
+                        generate_reorder_edit(tree, &root_fields, &doc.content)
+                    {
+                        let mut changes = std::collections::HashMap::new();
+                        changes.insert(uri.clone(), vec![reorder_edit]);
+
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: "Reorder fields to match schema".to_string(),
+                            kind: Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+                            edit: Some(WorkspaceEdit {
+                                changes: Some(changes),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }));
+                    }
+                }
+            }
+
+            // Separator toggle actions (don't need schema)
+            let cursor_offset = position_to_offset(&doc.content, params.range.start);
+            if let Some(ctx) = find_object_at_offset(tree, cursor_offset) {
+                // Only offer toggle for non-root objects with entries
+                if let Some(span) = ctx.span
+                    && !ctx.object.entries.is_empty()
+                {
+                    let context_name = if ctx.path.is_empty() {
+                        "object".to_string()
+                    } else {
+                        format!("'{}'", ctx.path.last().unwrap_or(&"object".to_string()))
+                    };
+
+                    match ctx.object.separator {
+                        styx_tree::Separator::Newline => {
+                            // Offer to convert to comma-separated (inline)
+                            if let Some(edit) = generate_separator_toggle_edit(
+                                &ctx.object,
+                                span,
+                                &doc.content,
+                                styx_tree::Separator::Comma,
+                            ) {
+                                let mut changes = std::collections::HashMap::new();
+                                changes.insert(uri.clone(), vec![edit]);
+
+                                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                                    title: format!(
+                                        "Convert {} to inline (comma-separated)",
+                                        context_name
+                                    ),
+                                    kind: Some(CodeActionKind::REFACTOR),
+                                    edit: Some(WorkspaceEdit {
+                                        changes: Some(changes),
+                                        ..Default::default()
+                                    }),
+                                    ..Default::default()
+                                }));
+                            }
+                        }
+                        styx_tree::Separator::Comma => {
+                            // Offer to convert to newline-separated (multiline)
+                            if let Some(edit) = generate_separator_toggle_edit(
+                                &ctx.object,
+                                span,
+                                &doc.content,
+                                styx_tree::Separator::Newline,
+                            ) {
+                                let mut changes = std::collections::HashMap::new();
+                                changes.insert(uri.clone(), vec![edit]);
+
+                                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                                    title: format!(
+                                        "Convert {} to multiline (newline-separated)",
+                                        context_name
+                                    ),
+                                    kind: Some(CodeActionKind::REFACTOR),
+                                    edit: Some(WorkspaceEdit {
+                                        changes: Some(changes),
+                                        ..Default::default()
+                                    }),
+                                    ..Default::default()
+                                }));
                             }
                         }
                     }
@@ -1054,21 +1039,18 @@ impl LanguageServer for StyxLanguageServer {
                     // Check if this doc references our schema
                     if let Some((SchemaRef::External(schema_path), _)) =
                         find_schema_declaration_with_range(doc_tree, &doc_state.content)
+                        && let Some(resolved) = resolve_schema_path(&schema_path, doc_uri)
+                        && let Ok(schema_uri) = Url::from_file_path(&resolved)
+                        && schema_uri == uri
                     {
-                        if let Some(resolved) = resolve_schema_path(&schema_path, doc_uri) {
-                            if let Ok(schema_uri) = Url::from_file_path(&resolved) {
-                                if schema_uri == uri {
-                                    // This doc uses our schema - find the field usage
-                                    if let Some(range) =
-                                        find_field_in_doc(doc_tree, &field_name, &doc_state.content)
-                                    {
-                                        locations.push(Location {
-                                            uri: doc_uri.clone(),
-                                            range,
-                                        });
-                                    }
-                                }
-                            }
+                        // This doc uses our schema - find the field usage
+                        if let Some(range) =
+                            find_field_in_doc(doc_tree, &field_name, &doc_state.content)
+                        {
+                            locations.push(Location {
+                                uri: doc_uri.clone(),
+                                range,
+                            });
                         }
                     }
                 }
@@ -1077,52 +1059,38 @@ impl LanguageServer for StyxLanguageServer {
             // We're in a doc - find the schema definition and other docs using this field
             let schema_decl = find_schema_declaration_with_range(tree, &doc.content);
 
-            if let Some((SchemaRef::External(schema_path), _)) = schema_decl {
-                if let Some(resolved) = resolve_schema_path(&schema_path, &uri) {
-                    // Add the schema definition location
-                    if let Ok(schema_source) = std::fs::read_to_string(&resolved) {
-                        if let Some(field_range) =
-                            find_field_in_schema_source(&schema_source, &field_name)
-                        {
-                            if let Ok(schema_uri) = Url::from_file_path(&resolved) {
-                                locations.push(Location {
-                                    uri: schema_uri.clone(),
-                                    range: field_range,
-                                });
+            if let Some((SchemaRef::External(schema_path), _)) = schema_decl
+                && let Some(resolved) = resolve_schema_path(&schema_path, &uri)
+            {
+                // Add the schema definition location
+                if let Ok(schema_source) = std::fs::read_to_string(&resolved)
+                    && let Some(field_range) =
+                        find_field_in_schema_source(&schema_source, &field_name)
+                    && let Ok(schema_uri) = Url::from_file_path(&resolved)
+                {
+                    locations.push(Location {
+                        uri: schema_uri.clone(),
+                        range: field_range,
+                    });
 
-                                // Find other docs using the same schema
-                                for (doc_uri, doc_state) in docs.iter() {
-                                    if let Some(ref doc_tree) = doc_state.tree {
-                                        if let Some((SchemaRef::External(other_schema), _)) =
-                                            find_schema_declaration_with_range(
-                                                doc_tree,
-                                                &doc_state.content,
-                                            )
-                                        {
-                                            if let Some(other_resolved) =
-                                                resolve_schema_path(&other_schema, doc_uri)
-                                            {
-                                                if let Ok(other_uri) =
-                                                    Url::from_file_path(&other_resolved)
-                                                {
-                                                    if other_uri == schema_uri {
-                                                        // This doc uses the same schema
-                                                        if let Some(range) = find_field_in_doc(
-                                                            doc_tree,
-                                                            &field_name,
-                                                            &doc_state.content,
-                                                        ) {
-                                                            locations.push(Location {
-                                                                uri: doc_uri.clone(),
-                                                                range,
-                                                            });
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                    // Find other docs using the same schema
+                    for (doc_uri, doc_state) in docs.iter() {
+                        if let Some(ref doc_tree) = doc_state.tree
+                            && let Some((SchemaRef::External(other_schema), _)) =
+                                find_schema_declaration_with_range(doc_tree, &doc_state.content)
+                            && let Some(other_resolved) =
+                                resolve_schema_path(&other_schema, doc_uri)
+                            && let Ok(other_uri) = Url::from_file_path(&other_resolved)
+                            && other_uri == schema_uri
+                        {
+                            // This doc uses the same schema
+                            if let Some(range) =
+                                find_field_in_doc(doc_tree, &field_name, &doc_state.content)
+                            {
+                                locations.push(Location {
+                                    uri: doc_uri.clone(),
+                                    range,
+                                });
                             }
                         }
                     }
@@ -1154,59 +1122,57 @@ impl LanguageServer for StyxLanguageServer {
         // Check for schema declaration
         if let Some((SchemaRef::External(schema_path), range)) =
             find_schema_declaration_with_range(tree, &doc.content)
+            && let Some(resolved) = resolve_schema_path(&schema_path, &uri)
+            && let Ok(schema_source) = std::fs::read_to_string(&resolved)
         {
-            if let Some(resolved) = resolve_schema_path(&schema_path, &uri) {
-                if let Ok(schema_source) = std::fs::read_to_string(&resolved) {
-                    // Extract meta info from schema
-                    if let Some(meta) = get_schema_meta(&schema_source) {
-                        // Show schema name/description as inlay hint after the schema path
-                        // First line of description is the short desc
-                        let short_desc = meta
-                            .description
-                            .as_ref()
-                            .and_then(|d| d.lines().next().map(|s| s.trim().to_string()));
+            // Extract meta info from schema
+            if let Some(meta) = get_schema_meta(&schema_source) {
+                // Show schema name/description as inlay hint after the schema path
+                // First line of description is the short desc
+                let short_desc = meta
+                    .description
+                    .as_ref()
+                    .and_then(|d| d.lines().next().map(|s| s.trim().to_string()));
 
-                        // Build the label: "— short desc (version)" or just "— short desc"
-                        let label = match (&short_desc, &meta.version) {
-                            (Some(desc), Some(ver)) => format!(" — {} ({})", desc, ver),
-                            (Some(desc), None) => format!(" — {}", desc),
-                            (None, Some(ver)) => format!(" — v{}", ver),
-                            (None, None) => String::new(),
-                        };
+                // Build the label: "— short desc (version)" or just "— short desc"
+                let label = match (&short_desc, &meta.version) {
+                    (Some(desc), Some(ver)) => format!(" — {} ({})", desc, ver),
+                    (Some(desc), None) => format!(" — {}", desc),
+                    (None, Some(ver)) => format!(" — v{}", ver),
+                    (None, None) => String::new(),
+                };
 
-                        if !label.is_empty() {
-                            // Build tooltip with full description and id
-                            let tooltip = {
-                                let mut parts = Vec::new();
-                                if let Some(id) = &meta.id {
-                                    parts.push(format!("Schema ID: {}", id));
-                                }
-                                // Show full description if it's multi-line
-                                if let Some(desc) = &meta.description {
-                                    if desc.contains('\n') {
-                                        parts.push(String::new()); // blank line
-                                        parts.push(desc.clone());
-                                    }
-                                }
-                                if parts.is_empty() {
-                                    None
-                                } else {
-                                    Some(InlayHintTooltip::String(parts.join("\n")))
-                                }
-                            };
-
-                            hints.push(InlayHint {
-                                position: range.end,
-                                label: InlayHintLabel::String(label),
-                                kind: Some(InlayHintKind::TYPE),
-                                text_edits: None,
-                                tooltip,
-                                padding_left: Some(false),
-                                padding_right: Some(true),
-                                data: None,
-                            });
+                if !label.is_empty() {
+                    // Build tooltip with full description and id
+                    let tooltip = {
+                        let mut parts = Vec::new();
+                        if let Some(id) = &meta.id {
+                            parts.push(format!("Schema ID: {}", id));
                         }
-                    }
+                        // Show full description if it's multi-line
+                        if let Some(desc) = &meta.description
+                            && desc.contains('\n')
+                        {
+                            parts.push(String::new()); // blank line
+                            parts.push(desc.clone());
+                        }
+                        if parts.is_empty() {
+                            None
+                        } else {
+                            Some(InlayHintTooltip::String(parts.join("\n")))
+                        }
+                    };
+
+                    hints.push(InlayHint {
+                        position: range.end,
+                        label: InlayHintLabel::String(label),
+                        kind: Some(InlayHintKind::TYPE),
+                        text_edits: None,
+                        tooltip,
+                        padding_left: Some(false),
+                        padding_right: Some(true),
+                        data: None,
+                    });
                 }
             }
         }
@@ -1494,10 +1460,11 @@ fn find_path_in_value(value: &Value, offset: usize) -> Option<Vec<PathSegment>> 
             if let Some(span) = entry.key.span {
                 let start = span.start as usize;
                 let end = span.end as usize;
-                if offset >= start && offset < end {
-                    if let Some(key) = entry.key.as_str() {
-                        return Some(vec![PathSegment::Field(key.to_string())]);
-                    }
+                if offset >= start
+                    && offset < end
+                    && let Some(key) = entry.key.as_str()
+                {
+                    return Some(vec![PathSegment::Field(key.to_string())]);
                 }
             }
             // Check if cursor is within this entry's value
@@ -1720,10 +1687,10 @@ fn get_field_info_in_object(value: &Value, path: &[&str]) -> Option<FieldInfo> {
         }
 
         // Check unit key entries (root schema)
-        if entry.key.is_unit() {
-            if let Some(found) = get_field_info_in_object(&entry.value, path) {
-                return Some(found);
-            }
+        if entry.key.is_unit()
+            && let Some(found) = get_field_info_in_object(&entry.value, path)
+        {
+            return Some(found);
         }
     }
 
@@ -1996,13 +1963,13 @@ fn find_field_in_doc(tree: &Value, field_name: &str, content: &str) -> Option<Ra
     let obj = tree.as_object()?;
 
     for entry in &obj.entries {
-        if entry.key.as_str() == Some(field_name) {
-            if let Some(span) = entry.key.span {
-                return Some(Range {
-                    start: offset_to_position(content, span.start as usize),
-                    end: offset_to_position(content, span.end as usize),
-                });
-            }
+        if entry.key.as_str() == Some(field_name)
+            && let Some(span) = entry.key.span
+        {
+            return Some(Range {
+                start: offset_to_position(content, span.start as usize),
+                end: offset_to_position(content, span.end as usize),
+            });
         }
     }
 

@@ -53,6 +53,10 @@ SQL
 
 See [styx.bearcove.eu](https://styx.bearcove.eu) for full documentation.
 
+## Acknowledgments
+
+CI runs on [Depot](https://depot.dev/) runners.
+
 ## License
 
 MIT OR Apache-2.0

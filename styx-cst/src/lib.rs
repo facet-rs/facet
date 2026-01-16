@@ -54,9 +54,9 @@ pub mod parser;
 pub mod syntax_kind;
 pub mod validation;
 
-pub use parser::{parse, Parse, ParseError};
+pub use parser::{Parse, ParseError, parse};
 pub use syntax_kind::{StyxLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
-pub use validation::{validate, Diagnostic, Severity};
+pub use validation::{Diagnostic, Severity, validate};
 
 // Re-export rowan types for convenience
 pub use rowan::{TextRange, TextSize};

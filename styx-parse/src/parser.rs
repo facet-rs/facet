@@ -1178,10 +1178,10 @@ impl<'src> Parser<'src> {
 
                 for entry in entries {
                     // Emit doc comment before entry if present
-                    if let Some((span, text)) = &entry.doc_comment {
-                        if !callback.event(Event::DocComment { span: *span, text }) {
-                            return false;
-                        }
+                    if let Some((span, text)) = &entry.doc_comment
+                        && !callback.event(Event::DocComment { span: *span, text })
+                    {
+                        return false;
                     }
                     if !callback.event(Event::EntryStart) {
                         return false;

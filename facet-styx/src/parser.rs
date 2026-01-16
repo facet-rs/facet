@@ -490,23 +490,22 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         // Check if followed immediately by identifier
                         if let Some(next) = self.peek_token()
                             && next.kind == TokenKind::BareScalar
-                                && next.span.start == at_token.span.end
-                            {
-                                let name_token = self.next_token();
-                                let tag_name = name_token.text.to_string();
-                                let name_end = name_token.span.end;
+                            && next.span.start == at_token.span.end
+                        {
+                            let name_token = self.next_token();
+                            let tag_name = name_token.text.to_string();
+                            let name_end = name_token.span.end;
 
-                                // Check what follows the tag name
-                                let after_info = self.peek_token().map(|t| (t.span.start, t.kind));
-                                if let Some((after_start, after_kind)) = after_info
-                                    && after_start == name_end {
-                                        match after_kind {
-                                            TokenKind::LBrace
-                                            | TokenKind::LParen
-                                            | TokenKind::At => {
-                                                // @foo{...} or @foo(...) or @foo@ as a key
-                                                // This is complex - for now, error
-                                                return Err(self.error(StyxErrorKind::UnexpectedToken {
+                            // Check what follows the tag name
+                            let after_info = self.peek_token().map(|t| (t.span.start, t.kind));
+                            if let Some((after_start, after_kind)) = after_info
+                                && after_start == name_end
+                            {
+                                match after_kind {
+                                    TokenKind::LBrace | TokenKind::LParen | TokenKind::At => {
+                                        // @foo{...} or @foo(...) or @foo@ as a key
+                                        // This is complex - for now, error
+                                        return Err(self.error(StyxErrorKind::UnexpectedToken {
                                                     expected: "simple key",
                                                     got: format!(
                                                         "complex tagged value @{}{} cannot be used as object key",
@@ -519,21 +518,21 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                                                         }
                                                     ),
                                                 }));
-                                            }
-                                            _ => {}
-                                        }
                                     }
-
-                                // @name with space after = "@name" is the key
-                                let key = format!("@{}", name_token.text);
-                                self.pending_key = Some(Cow::Owned(key.clone()));
-                                self.expecting_value = true;
-                                trace!(?key, "next_event: FieldKey (tagged)");
-                                return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
-                                    Cow::Owned(key),
-                                    FieldLocationHint::KeyValue,
-                                ))));
+                                    _ => {}
+                                }
                             }
+
+                            // @name with space after = "@name" is the key
+                            let key = format!("@{}", name_token.text);
+                            self.pending_key = Some(Cow::Owned(key.clone()));
+                            self.expecting_value = true;
+                            trace!(?key, "next_event: FieldKey (tagged)");
+                            return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
+                                Cow::Owned(key),
+                                FieldLocationHint::KeyValue,
+                            ))));
+                        }
 
                         // @ alone or @ followed by space/newline = unit key (None)
                         self.pending_key = Some(Cow::Borrowed("@"));

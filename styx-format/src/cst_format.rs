@@ -62,7 +62,7 @@ impl CstFormatter {
     fn write_indent(&mut self) {
         if self.at_line_start && self.indent_level > 0 {
             for _ in 0..self.indent_level {
-                self.out.push_str(&self.options.indent);
+                self.out.push_str(self.options.indent);
             }
         }
         self.at_line_start = false;
@@ -120,12 +120,11 @@ impl CstFormatter {
             if i < entries.len() - 1 {
                 self.write_newline();
 
-                // Add blank line after schema declaration (@ entry at root)
-                if i == 0 && is_schema_declaration(&entry) {
-                    self.write_newline();
-                }
-                // Add blank line after entries with doc comments
-                else if entry.doc_comments().next().is_some() {
+                // Add extra blank line after:
+                // - schema declaration (@ entry at root)
+                // - entries with doc comments
+                let is_schema_decl = i == 0 && is_schema_declaration(entry);
+                if is_schema_decl || entry.doc_comments().next().is_some() {
                     self.write_newline();
                 }
             }
