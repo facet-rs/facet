@@ -660,6 +660,11 @@ pub struct MultiPeerHostDriver {
 
     /// Sender for unified driver messages (cloned for each peer forwarder task).
     driver_msg_tx: mpsc::UnboundedSender<(PeerId, DriverMessage)>,
+
+    /// Pending outbound messages waiting for backpressure to clear.
+    /// When host slots are exhausted, messages are queued here and retried
+    /// when the guest rings the doorbell (indicating it has consumed messages).
+    pending_sends: HashMap<PeerId, std::collections::VecDeque<Message>>,
 }
 
 /// Handle for controlling a running MultiPeerHostDriver.
@@ -810,6 +815,7 @@ impl MultiPeerHostDriverBuilder {
             ring_tx: ring_tx.clone(),
             driver_msg_rx,
             driver_msg_tx: driver_msg_tx.clone(),
+            pending_sends: HashMap::new(),
         };
 
         let driver_handle = MultiPeerHostDriverHandle { control_tx };
@@ -904,6 +910,10 @@ impl MultiPeerHostDriver {
                             // Continue processing other peers - don't let one peer's error crash the driver
                         }
                     }
+
+                    // Retry pending sends for this peer - guest may have freed slots by consuming messages
+                    // shm[impl shm.backpressure.host-to-guest]
+                    self.retry_pending_sends(peer_id).await;
                 }
 
                 // Driver message (outgoing call from ConnectionHandle)
@@ -1292,26 +1302,141 @@ impl MultiPeerHostDriver {
         Ok(())
     }
 
-    /// Send a message to a specific peer.
+    /// Try to send a message to a specific peer.
+    /// Returns `Ok(true)` if sent, `Ok(false)` if backpressure (should queue), `Err` for fatal errors.
+    async fn try_send_to_peer(
+        &mut self,
+        peer_id: PeerId,
+        msg: &Message,
+    ) -> Result<bool, ShmConnectionError> {
+        let frame = message_to_frame(msg).map_err(|e| {
+            ShmConnectionError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        })?;
+
+        match self.host.send(peer_id, frame) {
+            Ok(()) => {
+                // Ring doorbell to wake up guest waiting for messages
+                if let Some(doorbell) = self.doorbells.get(&peer_id) {
+                    doorbell.signal().await;
+                }
+                Ok(true)
+            }
+            Err(crate::host::SendError::SlotExhausted | crate::host::SendError::RingFull) => {
+                // Backpressure - caller should queue and retry later
+                Ok(false)
+            }
+            Err(e) => {
+                // Fatal error
+                Err(ShmConnectionError::Io(std::io::Error::other(format!(
+                    "send error: {:?}",
+                    e
+                ))))
+            }
+        }
+    }
+
+    /// Send a message to a specific peer, queuing if backpressure.
+    ///
+    /// IMPORTANT: If there are already pending messages for this peer, we MUST
+    /// queue this message too to preserve ordering. Otherwise a Close could
+    /// arrive at the peer before pending Data messages.
     async fn send_to_peer(
         &mut self,
         peer_id: PeerId,
         msg: &Message,
     ) -> Result<(), ShmConnectionError> {
-        let frame = message_to_frame(msg).map_err(|e| {
-            ShmConnectionError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-        })?;
-
-        self.host.send(peer_id, frame).map_err(|e| {
-            ShmConnectionError::Io(std::io::Error::other(format!("send error: {:?}", e)))
-        })?;
-
-        // Ring doorbell to wake up guest waiting for messages
-        if let Some(doorbell) = self.doorbells.get(&peer_id) {
-            doorbell.signal().await;
+        // If there are pending messages, queue this one too to preserve ordering
+        if self
+            .pending_sends
+            .get(&peer_id)
+            .is_some_and(|q| !q.is_empty())
+        {
+            debug!(
+                "send_to_peer: peer {:?} has pending messages, queuing to preserve order",
+                peer_id
+            );
+            self.pending_sends
+                .entry(peer_id)
+                .or_default()
+                .push_back(msg.clone());
+            return Ok(());
         }
 
-        Ok(())
+        match self.try_send_to_peer(peer_id, msg).await {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                // Backpressure - queue for later
+                debug!(
+                    "send_to_peer: backpressure for peer {:?}, queuing message",
+                    peer_id
+                );
+                self.pending_sends
+                    .entry(peer_id)
+                    .or_default()
+                    .push_back(msg.clone());
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Retry sending pending messages for a peer after backpressure clears.
+    /// Returns the number of messages successfully sent.
+    async fn retry_pending_sends(&mut self, peer_id: PeerId) -> usize {
+        let mut sent = 0;
+
+        loop {
+            // Take the front message from the queue (if any)
+            let msg = {
+                let Some(queue) = self.pending_sends.get_mut(&peer_id) else {
+                    break;
+                };
+                match queue.pop_front() {
+                    Some(m) => m,
+                    None => break,
+                }
+            };
+
+            // Try to send it
+            match self.try_send_to_peer(peer_id, &msg).await {
+                Ok(true) => {
+                    // Sent successfully
+                    sent += 1;
+                }
+                Ok(false) => {
+                    // Still backpressured - put it back at the front and stop
+                    self.pending_sends
+                        .entry(peer_id)
+                        .or_default()
+                        .push_front(msg);
+                    break;
+                }
+                Err(e) => {
+                    // Fatal error - log and drop message
+                    warn!(
+                        "retry_pending_sends: error sending to peer {:?}: {:?}",
+                        peer_id, e
+                    );
+                    // Don't put it back - continue to next message
+                }
+            }
+        }
+
+        // Clean up empty queue
+        if let Some(queue) = self.pending_sends.get(&peer_id) {
+            if queue.is_empty() {
+                self.pending_sends.remove(&peer_id);
+            }
+        }
+
+        if sent > 0 {
+            debug!(
+                "retry_pending_sends: sent {} pending messages to peer {:?}",
+                sent, peer_id
+            );
+        }
+
+        sent
     }
 
     /// Send Goodbye to a peer and return error.

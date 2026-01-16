@@ -686,9 +686,25 @@ mod async_transport {
         ///
         /// Waits on doorbell for host notifications, with a timeout.
         async fn recv_timeout(&mut self, timeout: Duration) -> io::Result<Option<Message>> {
+            // Helper to signal doorbell after receiving
+            async fn signal_and_return(
+                doorbell: &Option<shm_primitives::Doorbell>,
+                msg: Option<Message>,
+            ) -> io::Result<Option<Message>> {
+                if msg.is_some() {
+                    // Signal doorbell to notify host that we consumed a message
+                    // (host may have pending sends waiting for slots to free up)
+                    // shm[impl shm.backpressure.host-to-guest]
+                    if let Some(doorbell) = doorbell {
+                        doorbell.signal().await;
+                    }
+                }
+                Ok(msg)
+            }
+
             // First check if there's already a message waiting
             match self.try_recv() {
-                Ok(msg) => return Ok(msg),
+                Ok(msg) => return signal_and_return(&self.doorbell, msg).await,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
                 Err(e) => return Err(e),
             }
@@ -699,7 +715,7 @@ mod async_transport {
                     Ok(Ok(())) => {
                         // Doorbell rang, try to receive
                         match self.try_recv() {
-                            Ok(msg) => Ok(msg),
+                            Ok(msg) => signal_and_return(&self.doorbell, msg).await,
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
                             Err(e) => Err(e),
                         }
@@ -711,7 +727,7 @@ mod async_transport {
                 // No doorbell - fall back to yielding (shouldn't happen in practice)
                 tokio::task::yield_now().await;
                 match self.try_recv() {
-                    Ok(msg) => Ok(msg),
+                    Ok(msg) => signal_and_return(&self.doorbell, msg).await,
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
                     Err(e) => Err(e),
                 }
@@ -723,7 +739,15 @@ mod async_transport {
             loop {
                 // First check if there's already a message waiting
                 match self.try_recv() {
-                    Ok(msg) => return Ok(msg),
+                    Ok(msg) => {
+                        // Signal doorbell to notify host that we consumed a message
+                        // (host may have pending sends waiting for slots to free up)
+                        // shm[impl shm.backpressure.host-to-guest]
+                        if let Some(doorbell) = &self.doorbell {
+                            doorbell.signal().await;
+                        }
+                        return Ok(msg);
+                    }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
                     Err(e) => return Err(e),
                 }

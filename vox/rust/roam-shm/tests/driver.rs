@@ -30,6 +30,10 @@ trait Testbed {
     async fn add(&self, args: (i32, i32)) -> i32;
     async fn sum(&self, numbers: Rx<i32>) -> i64;
     async fn generate(&self, count: u32, output: Tx<i32>);
+    /// Generate large strings (>32 bytes to require slots)
+    async fn generate_large(&self, count: u32, output: Tx<String>);
+    /// Receive large strings from caller (for testing host→guest streaming)
+    async fn consume_large(&self, input: Rx<String>) -> u32;
 }
 
 /// Implementation of the Testbed service.
@@ -75,6 +79,26 @@ impl Testbed for TestbedImpl {
                 break;
             }
         }
+    }
+
+    async fn generate_large(&self, count: u32, output: Tx<String>) {
+        // Generate strings >32 bytes to force slot allocation (not inline)
+        for i in 0..count {
+            let large_string = format!("message_{:04}_padding_to_exceed_32_bytes_inline_limit", i);
+            if output.send(&large_string).await.is_err() {
+                break;
+            }
+        }
+    }
+
+    async fn consume_large(&self, mut input: Rx<String>) -> u32 {
+        let mut count = 0u32;
+        while let Ok(Some(_value)) = input.recv().await {
+            count += 1;
+            // Small delay - backpressure happens due to limited slots, not slow consumption
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        count
     }
 }
 
@@ -574,4 +598,216 @@ async fn test_lazy_spawn_real_processes() {
     // Wait for children to exit
     let _ = child1.wait();
     let _ = child2.wait();
+}
+
+// ============================================================================
+// Backpressure tests - verify host→guest flow control
+// ============================================================================
+
+/// Test host→guest backpressure with streaming: host should wait for slots when sending many messages.
+///
+/// This test verifies that when the host sends many messages to a guest via streaming,
+/// it properly waits for slots to become available instead of failing with
+/// SlotExhausted errors.
+///
+/// The scenario:
+/// 1. Configure very few host slots (4)
+/// 2. Host streams many large messages (requiring slots) via Tx channel
+/// 3. Guest receives slowly
+/// 4. Without backpressure: immediate SlotExhausted errors
+/// 5. With backpressure: host waits for guest to free slots, all messages delivered
+#[tokio::test]
+async fn host_to_guest_backpressure_streaming() {
+    init_tracing();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("backpressure.shm");
+
+    // Configure with very few host slots to trigger exhaustion quickly
+    let config = SegmentConfig {
+        slots_per_guest: 4, // Very few slots - will exhaust quickly
+        ring_size: 64,
+        max_guests: 4,
+        ..SegmentConfig::default()
+    };
+    let mut host = ShmHost::create(&path, config).unwrap();
+
+    // Add peer via ticket (proper doorbell setup)
+    let ticket = host
+        .add_peer(roam_shm::spawn::AddPeerOptions {
+            peer_name: Some("slow-guest".to_string()),
+            on_death: None,
+        })
+        .unwrap();
+    let peer_id = ticket.peer_id;
+    let spawn_args = ticket.into_spawn_args();
+
+    let dispatcher = TestbedDispatcher::new(TestbedImpl);
+
+    // Create guest transport
+    let guest_transport = ShmGuestTransport::from_spawn_args(spawn_args).unwrap();
+    let (_guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
+
+    let (host_driver, mut handles, _driver_handle) =
+        establish_multi_peer_host(host, vec![(peer_id, dispatcher)]);
+    let host_handle = handles.remove(&peer_id).unwrap();
+
+    // Spawn drivers
+    tokio::spawn(guest_driver.run());
+    tokio::spawn(host_driver.run());
+
+    // Give drivers time to start
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    // Host streams many LARGE strings to guest via server streaming
+    // Each string is >32 bytes to force slot allocation (not inline)
+    const NUM_VALUES: u32 = 20; // More than 4 slots worth of messages
+
+    let client = TestbedClient::new(host_handle);
+
+    // Create channel for server-to-client streaming
+    let (tx, mut rx) = roam::channel::<String>();
+
+    // Spawn task to collect streamed values with artificial delay to cause backpressure
+    let collector = tokio::spawn(async move {
+        let mut values = Vec::new();
+        while let Ok(Some(value)) = rx.recv().await {
+            values.push(value);
+            // Artificial delay to slow down consumption and trigger backpressure
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        values
+    });
+
+    // Call generate_large - host sends NUM_VALUES large messages to guest
+    // Each message requires a slot (>32 bytes). With only 4 slots and 20 messages,
+    // this MUST use backpressure to succeed.
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.generate_large(NUM_VALUES, tx),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(())) => {
+            // Wait for all streamed values
+            let values = collector.await.unwrap();
+            assert_eq!(
+                values.len(),
+                NUM_VALUES as usize,
+                "Expected {} values, got {}",
+                NUM_VALUES,
+                values.len()
+            );
+            // Verify values match expected pattern
+            for (i, value) in values.iter().enumerate() {
+                let expected = format!("message_{:04}_padding_to_exceed_32_bytes_inline_limit", i);
+                assert_eq!(value, &expected, "Message {} mismatch", i);
+            }
+        }
+        Ok(Err(e)) => panic!("generate_large() failed: {:?}", e),
+        Err(_) => {
+            panic!("generate_large() timed out - likely deadlock due to missing backpressure")
+        }
+    }
+}
+
+/// Test host→guest backpressure: host streams large messages TO guest.
+///
+/// This is the critical test for the slot exhaustion bug. The host sends
+/// many large messages to a slow guest consumer. Without backpressure in
+/// the host driver, this fails with SlotExhausted errors.
+///
+/// The scenario:
+/// 1. Configure very few host slots (4)
+/// 2. Host calls consume_large on guest, streaming 20 large messages
+/// 3. Guest consumes slowly (10ms delay per message)
+/// 4. Without backpressure: host fails with SlotExhausted
+/// 5. With backpressure: host waits for slots, all messages delivered
+#[tokio::test]
+async fn host_to_guest_backpressure_host_streaming() {
+    init_tracing();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("h2g_backpressure.shm");
+
+    // Configure with very few host slots to trigger exhaustion quickly
+    let config = SegmentConfig {
+        slots_per_guest: 4, // Very few slots - will exhaust quickly
+        ring_size: 64,
+        max_guests: 4,
+        ..SegmentConfig::default()
+    };
+    let mut host = ShmHost::create(&path, config).unwrap();
+
+    // Add peer via ticket (proper doorbell setup)
+    let ticket = host
+        .add_peer(roam_shm::spawn::AddPeerOptions {
+            peer_name: Some("slow-consumer".to_string()),
+            on_death: None,
+        })
+        .unwrap();
+    let peer_id = ticket.peer_id;
+    let spawn_args = ticket.into_spawn_args();
+
+    let dispatcher = TestbedDispatcher::new(TestbedImpl);
+
+    // Create guest transport
+    let guest_transport = ShmGuestTransport::from_spawn_args(spawn_args).unwrap();
+    let (_guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
+
+    let (host_driver, mut handles, _driver_handle) =
+        establish_multi_peer_host(host, vec![(peer_id, dispatcher)]);
+    let host_handle = handles.remove(&peer_id).unwrap();
+
+    // Spawn drivers
+    tokio::spawn(guest_driver.run());
+    tokio::spawn(host_driver.run());
+
+    // Give drivers time to start
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    // HOST streams large messages TO GUEST
+    // This is the direction that was broken - host sending to guest
+    const NUM_VALUES: u32 = 20;
+
+    let client = TestbedClient::new(host_handle);
+
+    // Create channel - host will send, guest will receive
+    let (tx, rx) = roam::channel::<String>();
+
+    // Spawn task to send large messages from host side
+    let sender = tokio::spawn(async move {
+        for i in 0..NUM_VALUES {
+            let large_string = format!("host_msg_{:04}_padding_to_exceed_32_bytes_inline_limit", i);
+            if tx.send(&large_string).await.is_err() {
+                eprintln!("HOST: send {} failed", i);
+                return i;
+            }
+            eprintln!("HOST: sent message {}", i);
+        }
+        eprintln!("HOST: all {} messages sent", NUM_VALUES);
+        NUM_VALUES
+    });
+
+    // Call consume_large - guest will receive and count messages
+    // With only 4 host slots and 20 messages, host MUST wait for backpressure
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(10), client.consume_large(rx)).await;
+
+    // Wait for sender to complete
+    let sent_count = sender.await.unwrap();
+
+    match result {
+        Ok(Ok(received_count)) => {
+            assert_eq!(sent_count, NUM_VALUES, "Not all messages were sent");
+            assert_eq!(
+                received_count, NUM_VALUES,
+                "Expected {} messages received, got {}",
+                NUM_VALUES, received_count
+            );
+        }
+        Ok(Err(e)) => panic!("consume_large() failed: {:?}", e),
+        Err(_) => panic!(
+            "consume_large() timed out - likely deadlock due to missing host→guest backpressure"
+        ),
+    }
 }

@@ -2059,8 +2059,25 @@ impl ConnectionHandle {
                 .await
         } else {
             // Has Rx streams - spawn tasks to drain them
-            // IMPORTANT: We must send Request BEFORE spawning drain tasks to ensure ordering
-            let response_future = self.call_raw_with_channels(method_id, channels, payload);
+            // IMPORTANT: We must send Request BEFORE spawning drain tasks to ensure ordering.
+            // We need to actually send the DriverMessage::Call to the driver's queue
+            // before spawning drains, not just create the future.
+            let request_id = self.shared.request_ids.next();
+            let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+            let msg = DriverMessage::Call {
+                request_id,
+                method_id,
+                metadata: Vec::new(),
+                channels,
+                payload,
+                response_tx,
+            };
+
+            // Send the Call message NOW, before spawning drain tasks
+            if self.shared.driver_tx.send(msg).await.is_err() {
+                return Err(TransportError::DriverGone);
+            }
 
             let task_tx = self.shared.channel_registry.lock().unwrap().driver_tx();
 
@@ -2104,7 +2121,10 @@ impl ConnectionHandle {
             }
 
             // Just await the response - drain tasks run independently
-            response_future.await
+            response_rx
+                .await
+                .map_err(|_| TransportError::DriverGone)?
+                .map_err(|_| TransportError::ConnectionClosed)
         }
     }
 
