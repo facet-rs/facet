@@ -5,6 +5,6 @@ weight = 3
 insert_anchor_links = "heading"
 +++
 
-Help improve facet. This section covers development setup, architecture, and contribution guidelines.
+Development setup, architecture overview, and contribution guidelines. For working on facet itself.
 
 Start with [Development Setup](@/contribute/setup.md).

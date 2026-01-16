@@ -5,6 +5,6 @@ sort_by = "title"
 insert_anchor_links = "heading"
 +++
 
-Interactive examples demonstrating facet's capabilities.
+Generated examples showing facet crates in action. Each showcase is built from real code and updated automatically.
 
 Start with [Pretty Printing](@/showcases/pretty.md).
