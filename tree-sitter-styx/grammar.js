@@ -82,9 +82,8 @@ module.exports = grammar({
     scalar: ($) => choice($.bare_scalar, $.quoted_scalar, $.raw_scalar, $.heredoc),
 
     // Bare scalar: unquoted text without special chars
-    bare_scalar: ($) => /[^{}\(\),"=@\s\/][^{}\(\),"=@\s]*/,
-    // Note: can't start with / to avoid confusion with comments
-    // The second part allows / in the middle (for URLs like https://...)
+    // Can contain / anywhere (including start) - comments require //
+    bare_scalar: ($) => /[^{}\(\),"=@\s][^{}\(\),"=@\s]*/,
 
     // Quoted scalar: "..." with escape sequences
     quoted_scalar: ($) => seq('"', repeat(choice($.escape_sequence, /[^"\\]+/)), '"'),
