@@ -1478,6 +1478,40 @@ pub struct Svg {
     /// Preserve aspect ratio.
     #[facet(html::attribute, default, rename = "preserveAspectRatio")]
     pub preserve_aspect_ratio: Option<String>,
+    /// Child elements (SVG content).
+    #[facet(flatten, default)]
+    #[facet(recursive_type)]
+    pub children: Vec<SvgContent>,
+}
+
+/// A custom SVG element with a dynamic tag name.
+///
+/// This captures any SVG element that isn't explicitly modeled, preserving
+/// its tag name, attributes, and children during parse/serialize roundtrips.
+#[derive(Default, Facet)]
+pub struct CustomSvgElement {
+    /// The tag name of the SVG element (e.g., "rect", "path", "g").
+    #[facet(html::tag, default)]
+    pub tag: String,
+    /// Global attributes (id, class, style, data-*, etc.).
+    #[facet(flatten, default)]
+    pub attrs: GlobalAttrs,
+    /// Child elements.
+    #[facet(flatten, default)]
+    #[facet(recursive_type)]
+    pub children: Vec<SvgContent>,
+}
+
+/// SVG content - elements and text that can appear inside an SVG.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum SvgContent {
+    /// Text node (named to avoid collision with SVG `<text>` element).
+    #[facet(html::text)]
+    TextNode(String),
+    /// Any SVG element (catch-all).
+    #[facet(html::custom_element)]
+    Element(CustomSvgElement),
 }
 
 // =============================================================================
