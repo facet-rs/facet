@@ -14,6 +14,7 @@ members = [
     "rust/roam-macros-parse",
     "rust/roam-stream",
     "rust/roam-local",
+    "rust/roam-fdpass",
     "rust/roam-websocket",
     "rust/roam-http-bridge",
     "rust/subject-rust",
@@ -48,6 +49,7 @@ roam-wire = { path = "rust/roam-wire", version = "0.6.0" }
 roam-session = { path = "rust/roam-session", version = "0.6.0" }
 roam-stream = { path = "rust/roam-stream", version = "0.6.0" }
 roam-local = { path = "rust/roam-local", version = "0.6.0" }
+roam-fdpass = { path = "rust/roam-fdpass", version = "0.6.0" }
 roam-shm = { path = "rust/roam-shm", version = "0.6.0" }
 roam-tracing = { path = "rust/roam-tracing", version = "0.6.0" }
 roam-codegen = { path = "rust/roam-codegen", version = "0.6.0" }

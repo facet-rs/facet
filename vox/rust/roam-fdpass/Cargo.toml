@@ -1,0 +1,24 @@
+[package]
+name = "roam-fdpass"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cross-platform file descriptor / handle passing for roam"
+
+[dependencies]
+tokio = { workspace = true, features = ["net", "io-util"] }
+
+[target.'cfg(unix)'.dependencies]
+passfd = "0.1"
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinSock",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

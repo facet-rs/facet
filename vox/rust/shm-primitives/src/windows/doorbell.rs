@@ -138,20 +138,15 @@ impl Doorbell {
     pub async fn signal(&self) -> SignalResult {
         let buf = [1u8];
 
-        // Wait for writeability then write
+        // On Windows, drain any pending incoming signals first to prevent buffer deadlock.
+        // Both sides of the named pipe share limited buffer space, so if neither side
+        // reads, both can get stuck trying to write.
+        self.try_drain();
+
+        // Try to write without waiting - if buffer is full, that's okay (signal coalesced)
         let result = match &self.pipe {
-            DoorbellPipe::Server(server) => {
-                match server.ready(Interest::WRITABLE).await {
-                    Ok(ready) if ready.is_writable() => server.try_write(&buf),
-                    Ok(_) => return SignalResult::BufferFull, // Not writable (shouldn't happen)
-                    Err(e) => Err(e),
-                }
-            }
-            DoorbellPipe::Client(client) => match client.ready(Interest::WRITABLE).await {
-                Ok(ready) if ready.is_writable() => client.try_write(&buf),
-                Ok(_) => return SignalResult::BufferFull,
-                Err(e) => Err(e),
-            },
+            DoorbellPipe::Server(server) => server.try_write(&buf),
+            DoorbellPipe::Client(client) => client.try_write(&buf),
         };
 
         let signal_result = match result {
