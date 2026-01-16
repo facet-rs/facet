@@ -1936,27 +1936,26 @@ fn generate_separator_toggle_edit(
             .take_while(|c| c.is_whitespace())
             .collect();
 
-        // The formatted output uses default indentation (2 spaces).
-        // Re-indent each line to match the document context.
-        let mut result = String::new();
-        for (i, line) in formatted.trim().lines().enumerate() {
-            if i == 0 {
-                // First line is the opening brace - no extra indent
-                result.push_str(line);
-            } else if line.trim() == "}" {
-                // Closing brace - use base indent
-                result.push_str(&base_indent);
-                result.push('}');
-            } else {
-                // Content lines - use base indent + 4 spaces
-                result.push_str(&base_indent);
-                result.push_str("    ");
-                result.push_str(line.trim());
+        // If no base indent needed (root level), use formatted output as-is
+        if base_indent.is_empty() {
+            formatted.trim().to_string()
+        } else {
+            // Prepend base_indent to each line (except the first which is just `{`)
+            let mut result = String::new();
+            for (i, line) in formatted.trim().lines().enumerate() {
+                if i == 0 {
+                    // First line is the opening brace - no extra indent
+                    result.push_str(line);
+                } else {
+                    // Add base indent before the line's existing indentation
+                    result.push_str(&base_indent);
+                    result.push_str(line);
+                }
+                result.push('\n');
             }
-            result.push('\n');
+            // Remove trailing newline
+            result.trim_end().to_string()
         }
-        // Remove trailing newline
-        result.trim_end().to_string()
     };
 
     Some(TextEdit {
@@ -2230,6 +2229,37 @@ schema {
             edit.new_text.contains("        a"),
             "Should have 8 spaces indentation for nested content, got: {:?}",
             edit.new_text
+        );
+    }
+
+    #[test]
+    fn test_separator_toggle_with_nested_multiline_object() {
+        // Exact test case: inline object containing a nested multiline object
+        let content = "logging {level debug, format {\n    timestamp true\n}}";
+
+        let tree = styx_tree::parse(content).unwrap();
+        let obj = tree.as_object().unwrap();
+        let logging_entry = obj.get("logging").unwrap();
+        let logging_obj = logging_entry.as_object().unwrap();
+        let span = logging_entry.span.unwrap();
+
+        let edit = generate_separator_toggle_edit(
+            logging_obj,
+            span,
+            content,
+            styx_tree::Separator::Newline,
+        );
+
+        assert!(edit.is_some());
+        let edit = edit.unwrap();
+
+        // Expected output (at root level, so no base indent):
+        let expected = "{\n    level debug\n    format {\n        timestamp true\n    }\n}";
+
+        assert_eq!(
+            edit.new_text, expected,
+            "Multiline conversion should preserve nested object structure.\nGot:\n{}\n\nExpected:\n{}",
+            edit.new_text, expected
         );
     }
 }
