@@ -42,7 +42,7 @@ impl ParseError {
         let range = self.span.start as usize..self.span.end as usize;
 
         match &self.kind {
-            // diagnostic[impl parser.duplicate-key]
+            // diag[impl parser.duplicate-key]
             ParseErrorKind::DuplicateKey { original } => {
                 let original_range = original.start as usize..original.end as usize;
                 Report::build(ReportKind::Error, filename, range.start)
@@ -60,7 +60,7 @@ impl ParseError {
                     .with_help("each key must appear only once in an object")
             }
 
-            // diagnostic[impl parser.mixed-separators]
+            // diag[impl parser.mixed-separators]
             ParseErrorKind::MixedSeparators => Report::build(ReportKind::Error, filename, range.start)
                 .with_message("mixed separators in object")
                 .with_label(
@@ -70,7 +70,7 @@ impl ParseError {
                 )
                 .with_help("use either commas or newlines to separate entries, not both"),
 
-            // diagnostic[impl parser.unclosed]
+            // diag[impl parser.unclosed]
             ParseErrorKind::UnclosedObject => Report::build(ReportKind::Error, filename, range.start)
                 .with_message("unclosed object")
                 .with_label(
@@ -89,7 +89,7 @@ impl ParseError {
                 )
                 .with_help("add a closing ')'"),
 
-            // diagnostic[impl parser.escape]
+            // diag[impl parser.escape]
             ParseErrorKind::InvalidEscape(seq) => Report::build(ReportKind::Error, filename, range.start)
                 .with_message(format!("invalid escape sequence '{}'", seq))
                 .with_label(
@@ -99,7 +99,7 @@ impl ParseError {
                 )
                 .with_help("valid escapes are: \\\\, \\\", \\n, \\r, \\t, \\0, \\uXXXX, \\u{X...}"),
 
-            // diagnostic[impl parser.unexpected]
+            // diag[impl parser.unexpected]
             ParseErrorKind::UnexpectedToken => Report::build(ReportKind::Error, filename, range.start)
                 .with_message("unexpected token")
                 .with_label(
