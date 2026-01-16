@@ -87,13 +87,12 @@ pub fn spawn_dying_with_parent(mut command: Command) -> io::Result<Child> {
 /// Spawn a child process (async) that will die when this (parent) process dies.
 #[cfg(feature = "tokio")]
 pub fn spawn_dying_with_parent_async(
-    command: tokio::process::Command,
+    mut command: tokio::process::Command,
 ) -> io::Result<tokio::process::Child> {
     let job = create_job_object()?;
     let child = command.spawn()?;
 
-    use std::os::windows::io::AsRawHandle;
-    let child_handle = child.as_raw_handle() as HANDLE;
+    let child_handle = child.raw_handle().expect("child process has no handle") as HANDLE;
     assign_and_leak_job(job, child_handle)?;
 
     Ok(child)
