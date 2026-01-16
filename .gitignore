@@ -45,3 +45,4 @@ scripts/node_modules/
 scripts/pnpm-lock.yaml
 scripts/app.js
 .tracey/
+.playwright-mcp/
