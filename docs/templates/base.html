@@ -20,6 +20,7 @@
         </a>
         <div class="site-nav-links">
             <a href="/guide" {% if current_path is starting_with("/guide") %}class="active"{% endif %}>Guide</a>
+            <a href="/showcases" {% if current_path is starting_with("/showcases") %}class="active"{% endif %}>Showcases</a>
             <a href="/reference" {% if current_path is starting_with("/reference") or current_path == "/format-crate-matrix/" %}class="active"{% endif %}>Reference</a>
             <a href="/extend" {% if current_path is starting_with("/extend") %}class="active"{% endif %}>Extend</a>
             <a href="/contribute" {% if current_path is starting_with("/contribute") %}class="active"{% endif %}>Contribute</a>
@@ -44,6 +45,7 @@
                 <h4>Documentation</h4>
                 <ul>
                     <li><a href="/guide">Guide</a></li>
+                    <li><a href="/showcases">Showcases</a></li>
                     <li><a href="/reference">Reference</a></li>
                     <li><a href="/extend">Extend</a></li>
                     <li><a href="/contribute">Contribute</a></li>
