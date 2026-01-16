@@ -789,6 +789,10 @@ impl<A: TokenSource<'static>> FormatParser<'static> for StreamingJsonParser<A> {
         let evidence = self.build_probe_buffered()?;
         Ok(StreamingProbe { evidence, idx: 0 })
     }
+
+    fn format_namespace(&self) -> Option<&'static str> {
+        Some("json")
+    }
 }
 
 /// Probe for streaming parser with buffered evidence.

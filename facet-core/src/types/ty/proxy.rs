@@ -88,3 +88,37 @@ impl core::fmt::Debug for ProxyDef {
             .finish()
     }
 }
+
+/// A format-specific proxy definition.
+///
+/// This associates a format namespace (like "xml" or "json") with a proxy definition.
+/// Used to support `#[facet(xml::proxy = XmlWrapper)]` style attributes where different
+/// formats need different proxy types for the same field or container.
+///
+/// # Resolution order
+///
+/// When serializing/deserializing, proxies are resolved in this order:
+/// 1. Format-specific proxy (e.g., `xml::proxy` when deserializing XML)
+/// 2. Format-agnostic proxy (`proxy`)
+/// 3. Normal serialization/deserialization (no proxy)
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Facet)]
+/// struct MyType {
+///     #[facet(xml::proxy = XmlParameterProxy)]
+///     #[facet(json::proxy = JsonParameterProxy)]
+///     #[facet(proxy = DefaultProxy)]  // fallback for other formats
+///     parameter: Parameter,
+/// }
+/// ```
+#[cfg(feature = "alloc")]
+#[derive(Clone, Copy, Debug)]
+pub struct FormatProxy {
+    /// The format namespace (e.g., "xml", "json").
+    pub format: &'static str,
+
+    /// The proxy definition for this format.
+    pub proxy: &'static ProxyDef,
+}

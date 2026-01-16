@@ -38,7 +38,6 @@ facet-dom = { path = "../facet-dom", features = ["tracing"] }
 facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 datatest-stable = "0.3"
 indoc.workspace = true
-tracing = { workspace = true }
 
 [[test]]
 name = "roundtrip"

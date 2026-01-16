@@ -908,6 +908,80 @@ let parsed: Container = facet_json::from_str(&json).unwrap();
 assert_eq!(*parsed.counter, 42);
 ```
 
+### Format-specific proxies
+
+Sometimes a type needs different serialization representations for different formats. For example, you might want hex strings in JSON but binary strings in a custom format.
+
+Use the format namespace syntax: `#[facet(json::proxy = JsonProxy)]`, `#[facet(xml::proxy = XmlProxy)]`, etc.
+
+**Resolution order:**
+1. Format-specific proxy (e.g., `json::proxy` when serializing JSON)
+2. Format-agnostic proxy (`proxy`)
+3. Normal serialization (no proxy)
+
+```rust,noexec
+use facet::Facet;
+
+/// Proxy for JSON: serialize as hex string
+#[derive(Facet)]
+#[facet(transparent)]
+struct HexProxy(String);
+
+impl TryFrom<HexProxy> for u32 {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: HexProxy) -> Result<Self, Self::Error> {
+        let s = proxy.0.trim_start_matches("0x");
+        u32::from_str_radix(s, 16)
+    }
+}
+
+impl From<&u32> for HexProxy {
+    fn from(v: &u32) -> Self {
+        HexProxy(format!("0x{:x}", v))
+    }
+}
+
+/// Proxy for other formats: serialize as decimal string
+#[derive(Facet)]
+#[facet(transparent)]
+struct DecimalProxy(String);
+
+impl TryFrom<DecimalProxy> for u32 {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: DecimalProxy) -> Result<Self, Self::Error> {
+        proxy.0.parse()
+    }
+}
+
+impl From<&u32> for DecimalProxy {
+    fn from(v: &u32) -> Self {
+        DecimalProxy(v.to_string())
+    }
+}
+
+#[derive(Facet)]
+struct Config {
+    name: String,
+    #[facet(json::proxy = HexProxy)]  // Use hex in JSON
+    #[facet(proxy = DecimalProxy)]     // Use decimal elsewhere
+    port: u32,
+}
+
+// JSON serialization uses hex:
+// {"name":"app","port":"0x1f90"}
+
+// Other formats use decimal:
+// name: app
+// port: "8080"
+```
+
+**Use cases:**
+- Different encoding requirements per format (hex vs binary vs base64)
+- XML attributes need strings, JSON can use native types
+- Legacy format compatibility with different representations
+
+**Note:** For a format to support format-specific proxies, its parser/serializer must implement `format_namespace()` to return its namespace (e.g., `"json"`). Built-in format crates like `facet-json` already do this.
+
 ## Extension attributes
 
 Format crates can define their own namespaced attributes with compile-time validation and helpful error messages.
@@ -945,9 +1019,12 @@ struct Cli {
 | Crate | Namespace | Attributes |
 |-------|-----------|------------|
 | [`facet-args`](https://docs.rs/facet-args) | `args` | `positional`, `named`, `short`, `subcommand` |
-| [`facet-xml`](https://docs.rs/facet-xml) | `xml` | `element`, `elements`, `attribute`, `text`, `tag`, `ns`, `ns_all` |
-| [`facet-html`](https://docs.rs/facet-html) | `html` | `element`, `elements`, `attribute`, `text`, `tag`, `custom_element` |
+| [`facet-xml`](https://docs.rs/facet-xml) | `xml` | `element`, `elements`, `attribute`, `text`, `tag`, `ns`, `ns_all`, `proxy` |
+| [`facet-html`](https://docs.rs/facet-html) | `html` | `element`, `elements`, `attribute`, `text`, `tag`, `custom_element`, `proxy` |
 | [`facet-yaml`](https://docs.rs/facet-yaml) | `serde` | `rename` |
+| [`facet-json`](https://docs.rs/facet-json) | `json` | `proxy` |
+
+**Note:** The `proxy` attribute is available for any format namespace (e.g., `json::proxy`, `xml::proxy`). It uses the same syntax as the format-agnostic `proxy` attribute but only applies when serializing/deserializing with that specific format.
 
 ### Creating your own
 

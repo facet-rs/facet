@@ -633,14 +633,19 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         // check if this needs deserialization from a different shape
         if popped_frame.using_custom_deserialization {
-            // Check for field-level proxy first, then fall back to shape-level proxy
-            let deserialize_with: Option<facet_core::ProxyConvertInFn> = self
-                .parent_field()
-                .and_then(|f| f.proxy().map(|p| p.convert_in));
+            // First check the proxy stored in the frame (used for format-specific proxies
+            // and container-level proxies), then fall back to field-level proxy.
+            // This ordering is important because format-specific proxies store their
+            // proxy in shape_level_proxy, and we want them to take precedence over
+            // the format-agnostic field.proxy().
+            let deserialize_with: Option<facet_core::ProxyConvertInFn> =
+                popped_frame.shape_level_proxy.map(|p| p.convert_in);
 
-            // Fall back to shape-level proxy stored in the frame
-            let deserialize_with =
-                deserialize_with.or_else(|| popped_frame.shape_level_proxy.map(|p| p.convert_in));
+            // Fall back to field-level proxy (format-agnostic)
+            let deserialize_with = deserialize_with.or_else(|| {
+                self.parent_field()
+                    .and_then(|f| f.proxy().map(|p| p.convert_in))
+            });
 
             if let Some(deserialize_with) = deserialize_with {
                 let parent_frame = self.frames_mut().last_mut().unwrap();

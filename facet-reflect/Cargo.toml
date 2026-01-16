@@ -62,7 +62,6 @@ facet = { path = "../facet", features = ["net", "nonzero"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
 insta = { workspace = true }
-log = { workspace = true }
 proptest = "1.9"
 tempfile = { workspace = true }
 

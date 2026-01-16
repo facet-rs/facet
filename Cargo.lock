@@ -1744,7 +1744,6 @@ dependencies = [
  "facet-testhelpers",
  "facet-value",
  "facet-xml",
- "facet-xml-diff",
  "insta",
  "log",
  "owo-colors",
@@ -1773,12 +1772,10 @@ dependencies = [
 name = "facet-dom"
 version = "0.42.0"
 dependencies = [
- "facet",
  "facet-core",
  "facet-dessert",
  "facet-reflect",
  "facet-singularize",
- "facet-solver",
  "heck",
  "owo-colors",
  "tracing",
@@ -1857,7 +1854,6 @@ dependencies = [
  "html5gum",
  "indoc",
  "itoa",
- "tracing",
  "zmij",
 ]
 
@@ -2049,7 +2045,6 @@ dependencies = [
  "facet-testhelpers",
  "facet-value",
  "insta",
- "log",
  "proptest",
  "tempfile",
  "tracing",
@@ -2119,7 +2114,6 @@ dependencies = [
  "datatest-stable",
  "facet",
  "facet-assert",
- "facet-format",
  "facet-testhelpers",
  "facet-xml",
  "tracing",
@@ -2182,7 +2176,6 @@ dependencies = [
  "libtest-mimic",
  "toml_parser",
  "toml_writer",
- "tracing",
  "zmij",
 ]
 
@@ -2255,7 +2248,6 @@ name = "facet-xml"
 version = "0.42.0"
 dependencies = [
  "axum-core",
- "divan",
  "facet",
  "facet-core",
  "facet-dom",
@@ -2263,11 +2255,8 @@ dependencies = [
  "facet-testhelpers",
  "http",
  "http-body-util",
- "indoc",
  "itoa",
  "quick-xml",
- "serde",
- "serde-xml-rs",
  "tracing",
  "zmij",
 ]
@@ -4667,18 +4656,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde-xml-rs"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc2215ce3e6a77550b80a1c37251b7d294febaf42e36e21b7b411e0bf54d540d"
-dependencies = [
- "log",
- "serde",
- "thiserror",
- "xml",
-]
-
-[[package]]
 name = "serde_bytes"
 version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6235,12 +6212,6 @@ dependencies = [
  "byteorder",
  "error-chain",
 ]
-
-[[package]]
-name = "xml"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8aa498d22c9bbaf482329839bc5620c46be275a19a812e9a22a2b07529a642a"
 
 [[package]]
 name = "xtask"

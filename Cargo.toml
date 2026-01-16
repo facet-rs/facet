@@ -132,7 +132,6 @@ tempfile = "^3.23.0"
 time = { version = "^0.3.44", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "^1.48.0", default-features = false, features = ["macros"] }
 tracing = { version = "^0.1.43", default-features = false, features = ["std"] }
-tracing-log = { version = "^0.2.0" }
 tracing-subscriber = { version = "^0.3.22", default-features = false, features = ["fmt", "std"] }
 ulid = "^1.2.1"
 unsynn = "^0.3.0"

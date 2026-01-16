@@ -702,6 +702,10 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
         self.finish_value_in_parent();
         Ok(Some(raw_str))
     }
+
+    fn format_namespace(&self) -> Option<&'static str> {
+        Some("json")
+    }
 }
 
 // =============================================================================

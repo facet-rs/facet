@@ -1,9 +1,9 @@
 use alloc::alloc::Layout;
 
 use crate::{
-    Attr, ConstTypeId, DeclId, Def, MarkerTraits, ProxyDef, Shape, ShapeFlags, ShapeLayout, Type,
-    TypeNameFn, TypeOps, TypeOpsDirect, TypeOpsIndirect, TypeParam, VTableDirect, VTableErased,
-    VTableIndirect, VarianceDesc,
+    Attr, ConstTypeId, DeclId, Def, FormatProxy, MarkerTraits, ProxyDef, Shape, ShapeFlags,
+    ShapeLayout, Type, TypeNameFn, TypeOps, TypeOpsDirect, TypeOpsIndirect, TypeParam,
+    VTableDirect, VTableErased, VTableIndirect, VarianceDesc,
 };
 
 /// Builder for creating [`Shape`] instances.
@@ -43,6 +43,7 @@ const EMPTY_VESSEL: Shape = Shape {
     builder_shape: None,
     type_name: None,
     proxy: None,
+    format_proxies: &[],
     // Default to bivariant - types with no lifetime parameters impose no
     // constraints on lifetimes. Types that need specific variance must set it explicitly.
     variance: VarianceDesc::BIVARIANT,
@@ -338,6 +339,17 @@ impl ShapeBuilder {
     #[inline]
     pub const fn proxy(mut self, proxy: &'static ProxyDef) -> Self {
         self.shape.proxy = Some(proxy);
+        self
+    }
+
+    /// Set the format-specific container-level proxy definitions.
+    ///
+    /// Format-specific proxies take precedence over the format-agnostic `proxy` when
+    /// the format matches. Use this for types that need different representations
+    /// in different formats (e.g., XML vs JSON).
+    #[inline]
+    pub const fn format_proxies(mut self, proxies: &'static [FormatProxy]) -> Self {
+        self.shape.format_proxies = proxies;
         self
     }
 

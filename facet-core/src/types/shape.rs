@@ -215,6 +215,13 @@ pub struct Shape {
     #[cfg(feature = "alloc")]
     pub proxy: Option<&'static crate::ProxyDef>,
 
+    /// Format-specific container-level proxy definitions.
+    /// Set by `#[facet(xml::proxy = ProxyType)]`, `#[facet(json::proxy = ProxyType)]`, etc.
+    ///
+    /// These take precedence over the format-agnostic `proxy` field when the format matches.
+    #[cfg(feature = "alloc")]
+    pub format_proxies: &'static [crate::FormatProxy],
+
     /// Declarative variance description for this type.
     ///
     /// Describes how this type's variance is computed from its dependencies.
@@ -521,6 +528,53 @@ impl Shape {
                 None
             }
         })
+    }
+
+    /// Gets the format-specific proxy definition for the given format, if present.
+    ///
+    /// # Arguments
+    /// * `format` - The format namespace (e.g., "xml", "json")
+    ///
+    /// # Returns
+    /// The proxy definition for this format, or `None` if no format-specific proxy is defined.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub fn format_proxy(&self, format: &str) -> Option<&'static crate::ProxyDef> {
+        self.format_proxies
+            .iter()
+            .find(|fp| fp.format == format)
+            .map(|fp| fp.proxy)
+    }
+
+    /// Gets the effective proxy definition for the given format.
+    ///
+    /// Resolution order:
+    /// 1. Format-specific proxy (e.g., `xml::proxy` when format is "xml")
+    /// 2. Format-agnostic proxy (`proxy`)
+    ///
+    /// # Arguments
+    /// * `format` - The format namespace (e.g., "xml", "json"), or `None` for format-agnostic
+    ///
+    /// # Returns
+    /// The appropriate proxy definition, or `None` if no proxy is defined.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub fn effective_proxy(&self, format: Option<&str>) -> Option<&'static crate::ProxyDef> {
+        // First try format-specific proxy
+        if let Some(fmt) = format
+            && let Some(proxy) = self.format_proxy(fmt)
+        {
+            return Some(proxy);
+        }
+        // Fall back to format-agnostic proxy
+        self.proxy
+    }
+
+    /// Returns true if this shape has any proxy (format-specific or format-agnostic).
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub fn has_any_proxy(&self) -> bool {
+        self.proxy.is_some() || !self.format_proxies.is_empty()
     }
 
     /// Compute the combined variance of this type over all its lifetime parameters.
