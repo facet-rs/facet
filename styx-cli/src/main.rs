@@ -88,6 +88,7 @@ SUBCOMMANDS:
     @tree <file>                    Show debug parse tree
     @diff <old> <new>               Structural diff (not yet implemented)
     @lsp                            Start language server (stdio)
+    @skill                          Output Claude Code skill for AI assistance
 
 EXAMPLES:
     styx config.styx                Format and print to stdout
@@ -467,6 +468,7 @@ fn run_subcommand(cmd: &str, args: &[String]) -> Result<(), CliError> {
         "tree" => run_tree(args),
         "diff" => Err(CliError::Usage("@diff is not yet implemented".into())),
         "lsp" => run_lsp(args),
+        "skill" => run_skill(args),
         _ => Err(CliError::Usage(format!("unknown subcommand: @{cmd}"))),
     }
 }
@@ -485,6 +487,11 @@ fn run_tree(args: &[String]) -> Result<(), CliError> {
     let source = read_input(file)?;
     let value = styx_tree::parse(&source)?;
     print_tree(&value, 0);
+    Ok(())
+}
+
+fn run_skill(_args: &[String]) -> Result<(), CliError> {
+    print!("{}", include_str!("../../../contrib/claude-skill/SKILL.md"));
     Ok(())
 }
 
