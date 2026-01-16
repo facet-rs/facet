@@ -49,11 +49,58 @@ SQL
 - **Tags** for type annotations and enums (`@optional`, `@default`, custom types)
 - **LSP support** with completions, hover, go-to-definition, and more
 
+## Editor Support
+
+<p>
+<a href="https://zed.dev">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="./static/sponsors/zed-dark.svg">
+<img src="./static/sponsors/zed-light.svg" height="40" alt="Zed">
+</picture>
+</a>
+</p>
+
+Styx has first-class support for [Zed](https://zed.dev) with syntax highlighting, LSP integration, and more.
+
 ## Documentation
 
 See [styx.bearcove.eu](https://styx.bearcove.eu) for full documentation.
 
-## Acknowledgments
+## Sponsors
+
+Thanks to all individual sponsors:
+
+<p>
+<a href="https://github.com/sponsors/fasterthanlime">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="./static/sponsors/github-dark.svg">
+<img src="./static/sponsors/github-light.svg" height="40" alt="GitHub Sponsors">
+</picture>
+</a>
+<a href="https://patreon.com/fasterthanlime">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="./static/sponsors/patreon-dark.svg">
+<img src="./static/sponsors/patreon-light.svg" height="40" alt="Patreon">
+</picture>
+</a>
+</p>
+
+...along with corporate sponsors:
+
+<p>
+<a href="https://zed.dev">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="./static/sponsors/zed-dark.svg">
+<img src="./static/sponsors/zed-light.svg" height="40" alt="Zed">
+</picture>
+</a>
+<a href="https://depot.dev?utm_source=styx">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="./static/sponsors/depot-dark.svg">
+<img src="./static/sponsors/depot-light.svg" height="40" alt="Depot">
+</picture>
+</a>
+</p>
 
 CI runs on [Depot](https://depot.dev/) runners.
 
