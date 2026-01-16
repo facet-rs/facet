@@ -30,6 +30,7 @@ All foundational work is done:
 - ✅ `styx <file>` - format, convert to JSON, validate
 - ✅ `styx @tree` - debug parse tree
 - ✅ `styx @lsp` - start language server
+- ✅ `styx @skill` - output Claude Code skill
 - ⏳ `styx @diff` - structural diff (placeholder)
 
 ## Remaining Work
@@ -52,7 +53,7 @@ All foundational work is done:
 | 07 | [Arborium Integration](07-arborium-integration.md) | Medium | Medium |
 | 08 | [MIME Type](08-mime-type.md) | Low | Low |
 | 09 | [Ecosystem & Adoption](09-ecosystem.md) | Low | Ongoing |
-| 10 | [AI Tooling](10-ai-tooling.md) | Medium | Low |
+| 10 | ~~[AI Tooling](10-ai-tooling.md)~~ | ✅ Done | — |
 
 ## Recommended Order
 
