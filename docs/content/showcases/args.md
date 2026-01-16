@@ -35,16 +35,20 @@ title = "Args"
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-v&quot;</a-s><a-p>,</a-p> <a-s>&quot;-j&quot;</a-s><a-p>,</a-p> <a-s>&quot;4&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>,</a-p> <a-s>&quot;output.txt&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["-v", "-j", "4", "input.txt", "output.txt"])
+```
+
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">verbose</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">jobs</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="color:rgb(81,114,224)">4</span><span style="color:inherit"></span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">input</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">input.txt</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">output</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">output.txt</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -73,16 +77,20 @@ title = "Args"
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-j4&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["-j4", "input.txt"])
+```
+
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">verbose</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">jobs</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="color:rgb(81,114,224)">4</span><span style="color:inherit"></span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">input</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">input.txt</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">output</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -111,16 +119,20 @@ title = "Args"
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;--verbose=true&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["--verbose=true", "input.txt"])
+```
+
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">verbose</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">jobs</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">input</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">input.txt</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">output</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -189,13 +201,13 @@ title = "Args"
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// Remove the remote named &lt;name&gt;
-</a-c>    rm <a-p>{</a-p>
+</a-c>    <a-cr>Remove</a-cr> <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// List all remotes
-</a-c>    ls <a-p>{</a-p>
+</a-c>    <a-cr>List</a-cr> <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
@@ -204,17 +216,21 @@ title = "Args"
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;status&quot;</a-s><a-p>,</a-p> <a-s>&quot;-sb&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["status", "-sb"])
+```
+
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">version</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">command</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitCommand</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">Status</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">short</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
     <span style="color:rgb(115,218,202)">branch</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -283,13 +299,13 @@ title = "Args"
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// Remove the remote named &lt;name&gt;
-</a-c>    rm <a-p>{</a-p>
+</a-c>    <a-cr>Remove</a-cr> <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// List all remotes
-</a-c>    ls <a-p>{</a-p>
+</a-c>    <a-cr>List</a-cr> <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
@@ -298,11 +314,15 @@ title = "Args"
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;clone&quot;</a-s><a-p>,</a-p> <a-s>&quot;--branch&quot;</a-s><a-p>,</a-p> <a-s>&quot;main&quot;</a-s><a-p>,</a-p> <a-s>&quot;https://github.com/user/repo&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["clone", "--branch", "main", "https://github.com/user/repo"])
+```
+
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">version</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">command</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitCommand</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">Clone</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">url</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">https://github.com/user/repo</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
@@ -310,7 +330,7 @@ title = "Args"
     <span style="color:rgb(115,218,202)">branch</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">main</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
     <span style="color:rgb(115,218,202)">depth</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -379,13 +399,13 @@ title = "Args"
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// Remove the remote named &lt;name&gt;
-</a-c>    rm <a-p>{</a-p>
+</a-c>    <a-cr>Remove</a-cr> <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// List all remotes
-</a-c>    ls <a-p>{</a-p>
+</a-c>    <a-cr>List</a-cr> <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
@@ -394,11 +414,15 @@ title = "Args"
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;remote&quot;</a-s><a-p>,</a-p> <a-s>&quot;add&quot;</a-s><a-p>,</a-p> <a-s>&quot;origin&quot;</a-s><a-p>,</a-p> <a-s>&quot;https://github.com/user/repo&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["remote", "add", "origin", "https://github.com/user/repo"])
+```
+
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">version</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">command</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitCommand</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">Remote</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">action</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">RemoteAction</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">Add</span><span style="opacity:0.7"> {</span>
@@ -406,7 +430,7 @@ title = "Args"
       <span style="color:rgb(115,218,202)">url</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">https://github.com/user/repo</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
     <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -437,7 +461,7 @@ title = "Args"
 <a-p>}</a-p></code></pre>
 </details>
 <div class="output">
-<pre><code>mytool 1.0.0
+<div class="code-block"><pre><code>mytool 1.0.0
 
 A simple CLI tool for file processing.
 
@@ -456,7 +480,7 @@ A simple CLI tool for file processing.
     </span><span style="color:#98c379">-j</span><span style="color:inherit">, </span><span style="color:#98c379">--jobs</span><span style="color:inherit"> &lt;OPTION&gt;
             Number of parallel jobs to run
 
-</span></code></pre>
+</span></code></pre></div>
 </div>
 </section>
 
@@ -485,10 +509,14 @@ A simple CLI tool for file processing.
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;--help&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["--help"])
+```
+
 </div>
 <div class="output">
-<pre><code>target/debug/examples/args_showcase
+<div class="code-block"><pre><code>target/debug/examples/args_showcase
 
 A simple CLI tool for file processing.
 
@@ -507,7 +535,7 @@ A simple CLI tool for file processing.
     </span><span style="color:#98c379">-j</span><span style="color:inherit">, </span><span style="color:#98c379">--jobs</span><span style="color:inherit"> &lt;OPTION&gt;
             Number of parallel jobs to run
 
-</span></code></pre>
+</span></code></pre></div>
 </div>
 </section>
 
@@ -576,13 +604,13 @@ A simple CLI tool for file processing.
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// Remove the remote named &lt;name&gt;
-</a-c>    rm <a-p>{</a-p>
+</a-c>    <a-cr>Remove</a-cr> <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// List all remotes
-</a-c>    ls <a-p>{</a-p>
+</a-c>    <a-cr>List</a-cr> <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
@@ -590,7 +618,7 @@ A simple CLI tool for file processing.
 <a-p>}</a-p></code></pre>
 </details>
 <div class="output">
-<pre><code>git 2.40.0
+<div class="code-block"><pre><code>git 2.40.0
 
 Git-like CLI with subcommands.
 
@@ -609,7 +637,7 @@ Git-like CLI with subcommands.
     </span><span style="color:#98c379">remote</span><span style="color:inherit">
             Manage set of tracked repositories
 
-</span></code></pre>
+</span></code></pre></div>
 </div>
 </section>
 
@@ -647,25 +675,34 @@ Git-like CLI with subcommands.
 </details>
 <div class="serialized-output">
 <h4>Output Output</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>_cargo-build() {
+
+```txt
+_cargo-build() {
     local cur prev words cword
     _init_completion || return
-<br>    local commands=&quot;&quot;
-    local flags=&quot;&quot;
-<br>    flags=&quot;--release -r --jobs -j --package -p --workspace --features -F --target&quot;
-<br>    case &quot;$prev&quot; in
+
+    local commands=""
+    local flags=""
+
+    flags="--release -r --jobs -j --package -p --workspace --features -F --target"
+
+    case "$prev" in
         # Add cases for flags that take values
         *)
             ;;
     esac
-<br>    if [[ &quot;$cur&quot; == -* ]]; then
-        COMPREPLY=($(compgen -W &quot;$flags&quot; -- &quot;$cur&quot;))
-    elif [[ -n &quot;$commands&quot; ]]; then
-        COMPREPLY=($(compgen -W &quot;$commands&quot; -- &quot;$cur&quot;))
+
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=($(compgen -W "$flags" -- "$cur"))
+    elif [[ -n "$commands" ]]; then
+        COMPREPLY=($(compgen -W "$commands" -- "$cur"))
     fi
 }
-<br>complete -F _cargo-build cargo-build
-</code></pre>
+
+complete -F _cargo-build cargo-build
+
+```
+
 </div>
 </section>
 
@@ -700,11 +737,15 @@ Git-like CLI with subcommands.
 </details>
 <div class="serialized-output">
 <h4>Output Output</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>#compdef cargo-build
-<br>_cargo-build() {
+
+```txt
+#compdef cargo-build
+
+_cargo-build() {
     local -a commands
     local -a options
-<br>    options=(
+
+    options=(
         '-r[Build in release mode with optimizations]'
         '--release[Build in release mode with optimizations]'
         '-j[Number of parallel jobs]'
@@ -716,10 +757,14 @@ Git-like CLI with subcommands.
         '--features[Space-separated list of features to enable]'
         '--target[Target triple to build for]'
     )
-<br>    _arguments $options
+
+    _arguments $options
 }
-<br>_cargo-build &quot;$@&quot;
-</code></pre>
+
+_cargo-build "$@"
+
+```
+
 </div>
 </section>
 
@@ -754,14 +799,19 @@ Git-like CLI with subcommands.
 </details>
 <div class="serialized-output">
 <h4>Output Output</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code># Fish completion for cargo-build
-<br>complete -c cargo-build -s r -l release -d 'Build in release mode with optimizations'
+
+```txt
+# Fish completion for cargo-build
+
+complete -c cargo-build -s r -l release -d 'Build in release mode with optimizations'
 complete -c cargo-build -s j -l jobs -d 'Number of parallel jobs'
 complete -c cargo-build -s p -l package -d 'Package to build'
 complete -c cargo-build -l workspace -d 'Build all packages in the workspace'
 complete -c cargo-build -s F -l features -d 'Space-separated list of features to enable'
 complete -c cargo-build -l target -d 'Target triple to build for'
-</code></pre>
+
+```
+
 </div>
 </section>
 
@@ -793,10 +843,14 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;--verbos&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["--verbos", "input.txt"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;--verbos&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;--verbos&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">v</span><span style="color:#e06c75">e</span><span style="color:#e06c75">r</span><span style="color:#e06c75">b</span><span style="color:#e06c75">o</span><span style="color:#e06c75">s</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
@@ -805,7 +859,7 @@ complete -c cargo-build -l target -d 'Target triple to build for'
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: did you mean &#96;--verbose&#96;?
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -840,10 +894,14 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;--releas&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["--releas"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;--releas&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;--releas&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">r</span><span style="color:#e06c75">e</span><span style="color:#e06c75">l</span><span style="color:#e06c75">e</span><span style="color:#e06c75">a</span><span style="color:#e06c75">s</span>
@@ -852,7 +910,7 @@ complete -c cargo-build -l target -d 'Target triple to build for'
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: did you mean &#96;--release&#96;?
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -881,10 +939,14 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-vxyz&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["-vxyz", "input.txt"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_short_flag] Error:</span> unknown flag &#96;-x&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_short_flag] Error:</span> unknown flag &#96;-x&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:3 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">v</span><span style="color:#e06c75">x</span><span style="color:#888888">y</span><span style="color:#888888">z</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
@@ -897,7 +959,7 @@ complete -c cargo-build -l target -d 'Target triple to build for'
  <span style="color:#888888">  │</span>             &lt;input&gt;    Input file to process
  <span style="color:#888888">  │</span>             &lt;output&gt;   Output file (defaults to stdout)
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -926,10 +988,14 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;---verbose&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["---verbose", "input.txt"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;---verbose&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;---verbose&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">v</span><span style="color:#e06c75">e</span><span style="color:#e06c75">r</span><span style="color:#e06c75">b</span><span style="color:#e06c75">o</span><span style="color:#e06c75">s</span><span style="color:#e06c75">e</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
@@ -942,7 +1008,7 @@ complete -c cargo-build -l target -d 'Target triple to build for'
  <span style="color:#888888">  │</span>             &lt;input&gt;    Input file to process
  <span style="color:#888888">  │</span>             &lt;output&gt;   Output file (defaults to stdout)
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -971,10 +1037,14 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-verbose&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["-verbose", "input.txt"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_short_flag] Error:</span> unknown flag &#96;-e&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_short_flag] Error:</span> unknown flag &#96;-e&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:3 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">v</span><span style="color:#e06c75">e</span><span style="color:#888888">r</span><span style="color:#888888">b</span><span style="color:#888888">o</span><span style="color:#888888">s</span><span style="color:#888888">e</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
@@ -987,7 +1057,7 @@ complete -c cargo-build -l target -d 'Target triple to build for'
  <span style="color:#888888">  │</span>             &lt;input&gt;    Input file to process
  <span style="color:#888888">  │</span>             &lt;output&gt;   Output file (defaults to stdout)
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1016,10 +1086,14 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-j&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["-j"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::expected_value] Error:</span> expected &#96;usize&#96; value
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::expected_value] Error:</span> expected &#96;usize&#96; value
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">j</span>
@@ -1028,7 +1102,7 @@ complete -c cargo-build -l target -d 'Target triple to build for'
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: provide a value after the flag
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1057,10 +1131,14 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-v&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["-v"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::missing_argument] Error:</span> missing required argument &#96;&lt;input&gt;&#96; (Input file to process)
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::missing_argument] Error:</span> missing required argument &#96;&lt;input&gt;&#96; (Input file to process)
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:4 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">v</span>
@@ -1069,7 +1147,7 @@ complete -c cargo-build -l target -d 'Target triple to build for'
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: provide a value for &#96;&lt;input&gt;&#96;
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1104,10 +1182,14 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;extra&quot;</a-s><a-p>,</a-p> <a-s>&quot;--release&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["extra", "--release"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unexpected_positional] Error:</span> unexpected positional argument
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unexpected_positional] Error:</span> unexpected positional argument
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">e</span><span style="color:#e06c75">x</span><span style="color:#e06c75">t</span><span style="color:#e06c75">r</span><span style="color:#e06c75">a</span><span style="color:#888888"> </span><span style="color:#888888">-</span><span style="color:#888888">-</span><span style="color:#888888">r</span><span style="color:#888888">e</span><span style="color:#888888">l</span><span style="color:#888888">e</span><span style="color:#888888">a</span><span style="color:#888888">s</span><span style="color:#888888">e</span>
@@ -1122,7 +1204,7 @@ complete -c cargo-build -l target -d 'Target triple to build for'
  <span style="color:#888888">  │</span>         -F, --features   Space-separated list of features to enable
  <span style="color:#888888">  │</span>             --target     Target triple to build for
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1191,13 +1273,13 @@ complete -c cargo-build -l target -d 'Target triple to build for'
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// Remove the remote named &lt;name&gt;
-</a-c>    rm <a-p>{</a-p>
+</a-c>    <a-cr>Remove</a-cr> <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// List all remotes
-</a-c>    ls <a-p>{</a-p>
+</a-c>    <a-cr>List</a-cr> <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
@@ -1206,10 +1288,14 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;clon&quot;</a-s><a-p>,</a-p> <a-s>&quot;https://example.com&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["clon", "https://example.com"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_subcommand] Error:</span> unknown subcommand &#96;clon&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_subcommand] Error:</span> unknown subcommand &#96;clon&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">c</span><span style="color:#e06c75">l</span><span style="color:#e06c75">o</span><span style="color:#e06c75">n</span><span style="color:#888888"> </span><span style="color:#888888">h</span><span style="color:#888888">t</span><span style="color:#888888">t</span><span style="color:#888888">p</span><span style="color:#888888">s</span><span style="color:#888888">:</span><span style="color:#888888">/</span><span style="color:#888888">/</span><span style="color:#888888">e</span><span style="color:#888888">x</span><span style="color:#888888">a</span><span style="color:#888888">m</span><span style="color:#888888">p</span><span style="color:#888888">l</span><span style="color:#888888">e</span><span style="color:#888888">.</span><span style="color:#888888">c</span><span style="color:#888888">o</span><span style="color:#888888">m</span>
@@ -1218,7 +1304,7 @@ complete -c cargo-build -l target -d 'Target triple to build for'
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: did you mean &#96;clone&#96;?
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1287,13 +1373,13 @@ complete -c cargo-build -l target -d 'Target triple to build for'
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// Remove the remote named &lt;name&gt;
-</a-c>    rm <a-p>{</a-p>
+</a-c>    <a-cr>Remove</a-cr> <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// List all remotes
-</a-c>    ls <a-p>{</a-p>
+</a-c>    <a-cr>List</a-cr> <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
@@ -1302,10 +1388,14 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;--version&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["--version"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::missing_subcommand] Error:</span> expected a subcommand
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::missing_subcommand] Error:</span> expected a subcommand
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:11 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">-</span><span style="color:#888888">v</span><span style="color:#888888">e</span><span style="color:#888888">r</span><span style="color:#888888">s</span><span style="color:#888888">i</span><span style="color:#888888">o</span><span style="color:#888888">n</span>
@@ -1317,7 +1407,7 @@ complete -c cargo-build -l target -d 'Target triple to build for'
  <span style="color:#888888">  │</span>         status  Show the working tree status
  <span style="color:#888888">  │</span>         remote  Manage set of tracked repositories
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1386,13 +1476,13 @@ complete -c cargo-build -l target -d 'Target triple to build for'
         <a-pr>url</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// Remove the remote named &lt;name&gt;
-</a-c>    rm <a-p>{</a-p>
+</a-c>    <a-cr>Remove</a-cr> <a-p>{</a-p>
         <a-c>/// Name of the remote to remove
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>positional</a-at><a-p>)]</a-p>
         <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
     <a-p>},</a-p>
 <br>    <a-c>/// List all remotes
-</a-c>    ls <a-p>{</a-p>
+</a-c>    <a-cr>List</a-cr> <a-p>{</a-p>
         <a-c>/// Show remote URLs after names
 </a-c>        <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>args</a-at><a-p>::</a-p><a-at>named</a-at><a-p>,</a-p><a-at> args</a-at><a-p>::</a-p><a-at>short</a-at><a-p>)]</a-p>
         <a-pr>verbose</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
@@ -1401,10 +1491,14 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;remote&quot;</a-s><a-p>,</a-p> <a-s>&quot;add&quot;</a-s><a-p>,</a-p> <a-s>&quot;origin&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["remote", "add", "origin"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::missing_argument] Error:</span> missing required argument &#96;&lt;url&gt;&#96; (URL of the remote repository)
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::missing_argument] Error:</span> missing required argument &#96;&lt;url&gt;&#96; (URL of the remote repository)
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:19 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">r</span><span style="color:#888888">e</span><span style="color:#888888">m</span><span style="color:#888888">o</span><span style="color:#888888">t</span><span style="color:#888888">e</span><span style="color:#888888"> </span><span style="color:#888888">a</span><span style="color:#888888">d</span><span style="color:#888888">d</span><span style="color:#888888"> </span><span style="color:#888888">o</span><span style="color:#888888">r</span><span style="color:#888888">i</span><span style="color:#888888">g</span><span style="color:#888888">i</span><span style="color:#888888">n</span>
@@ -1413,7 +1507,7 @@ complete -c cargo-build -l target -d 'Target triple to build for'
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: provide a value for &#96;&lt;url&gt;&#96;
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1442,26 +1536,30 @@ complete -c cargo-build -l target -d 'Target triple to build for'
 </details>
 <div class="input">
 <h4>Rust Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-f>from_slice</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-p>[</a-p><a-s>&quot;-j&quot;</a-s><a-p>,</a-p> <a-s>&quot;not-a-number&quot;</a-s><a-p>,</a-p> <a-s>&quot;input.txt&quot;</a-s><a-p>])</a-p></code></pre>
+
+```rs
+from_slice(&["-j", "not-a-number", "input.txt"])
+```
+
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::reflect_error] Error:</span> invalid value for &#96;usize&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::reflect_error] Error:</span> invalid value for &#96;usize&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:4 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">j</span><span style="color:#888888"> </span><span style="color:#e06c75">n</span><span style="color:#e06c75">o</span><span style="color:#e06c75">t</span><span style="color:#e06c75">-</span><span style="color:#e06c75">a</span><span style="color:#e06c75">-</span><span style="color:#e06c75">n</span><span style="color:#e06c75">u</span><span style="color:#e06c75">m</span><span style="color:#e06c75">b</span><span style="color:#e06c75">e</span><span style="color:#e06c75">r</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
  <span style="color:#888888">  │</span>    <span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">┬</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span>  
  <span style="color:#888888">  │</span>          <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span> invalid value for &#96;usize&#96;
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5b2c5e9712e0f360b2a4aaa22ae966823affca23/facet-args/examples/args_showcase.rs"><code>facet-args/examples/args_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5b2c5e9712e0f360b2a4aaa22ae966823affca23"><code>5b2c5e971</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-11T22:26:32+01:00">2026-01-11T22:26:32+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5c8df10b37be181e3a88be583c1eee213e28dbd5/facet-args/examples/args_showcase.rs"><code>facet-args/examples/args_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5c8df10b37be181e3a88be583c1eee213e28dbd5"><code>5c8df10b3</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-16T05:16:07+01:00">2026-01-16T05:16:07+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

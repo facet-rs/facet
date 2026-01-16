@@ -27,12 +27,12 @@ So we implement `Facet` for third-party types from the facet side, using optiona
    my-crate = ["dep:my-crate"]
    ```
 
-2. Create `facet-core/src/impls_my_crate.rs`
+2. Create `facet-core/src/impls/crates/my_crate.rs`
 
-3. Add to `facet-core/src/lib.rs`:
+3. Add to `facet-core/src/impls/crates/mod.rs`:
    ```rust,noexec
    #[cfg(feature = "my-crate")]
-   mod impls_my_crate;
+   mod my_crate;
    ```
 
 4. Re-export the feature from `facet/Cargo.toml`:
@@ -44,58 +44,15 @@ So we implement `Facet` for third-party types from the facet side, using optiona
 ## Implementing Facet
 
 Most third-party types are scalars (atomic values like UUIDs, timestamps, paths).
-Use `ShapeBuilder` for a cleaner implementation:
 
-```rust,noexec
-unsafe impl Facet<'_> for my_crate::MyType {
-    const SHAPE: &'static Shape = &const {
-        ShapeBuilder::for_sized::<Self>("MyType")
-            .module_path("my_crate")
-            .decl_id(DeclId::new(decl_id_hash("@my_crate#struct#MyType")))
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .vtable_indirect(&MY_TYPE_VTABLE)
-            .build()
-    };
-}
-```
-
-Look at existing implementations in `facet-core/src/impls_*` for patterns:
-- `impls_uuid.rs` — simple scalar
-- `impls_chrono.rs` — multiple related types
-- `impls_camino.rs` — path types with borrowed variants
-- `impls_bytes.rs` — byte buffer types
-
-## Collection types
-
-Collections need vtable functions for their operations (push, get, len, etc.):
-
-```rust,noexec
-unsafe impl<T: Facet<'static>> Facet<'_> for MyVec<T> {
-    const SHAPE: &'static Shape = &const {
-        ShapeBuilder::for_sized::<Self>("MyVec")
-            .module_path("my_crate")
-            // For generic types, the decl_id is the same for all instantiations
-            .decl_id(DeclId::new(decl_id_hash("@my_crate#struct#MyVec")))
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::List(ListDef {
-                vtable: &ListVTable {
-                    init_empty: |target| { /* ... */ },
-                    push: |list, value| { /* ... */ },
-                    len: |list| { /* ... */ },
-                    get: |list, index| { /* ... */ },
-                },
-                item_shape: T::SHAPE,
-            }))
-            .type_params(&[TypeParam { name: "T", shape: T::SHAPE }])
-            .vtable_indirect(&MY_VEC_VTABLE)
-            .build()
-    };
-}
-```
+Look at existing implementations in `facet-core/src/impls/crates/` for patterns:
+- `uuid.rs` — simple scalar
+- `chrono.rs` — multiple related types
+- `camino.rs` — path types with borrowed variants
+- `bytes.rs` — byte buffer types
 
 ## Testing
 
-Add tests in the same file or in `facet-core/tests/`. Make sure to test:
+Add tests in the same file or create a test file. Make sure to test:
 - Round-trip through at least one format (JSON is easiest)
 - Edge cases for the type (empty values, max values, etc.)

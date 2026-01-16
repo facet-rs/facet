@@ -7,7 +7,7 @@ use facet_core::{Def, Facet, NumericType, PrimitiveType, Shape, StructKind, Type
 pub use facet_path::{Path, PathStep};
 use facet_reflect::{HeapValue, Partial, is_spanned_shape};
 
-use crate::{ContainerKind, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue, trace};
+use crate::{ContainerKind, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue};
 
 mod error;
 pub use error::*;

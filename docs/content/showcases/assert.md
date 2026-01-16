@@ -23,12 +23,12 @@ title = "Assertions"
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">host</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">localhost</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">port</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">debug</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">tags</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span>"<span style="color:rgb(158,206,106)">prod</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span> "<span style="color:rgb(158,206,106)">api</span><span style="color:inherit">"</span><span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -48,12 +48,12 @@ title = "Assertions"
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">host</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">localhost</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">port</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">debug</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">tags</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span>"<span style="color:rgb(158,206,106)">prod</span><span style="color:inherit">"</span><span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -77,14 +77,14 @@ title = "Assertions"
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">name</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">age</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">address</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Address</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">street</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123 Main St</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
     <span style="color:rgb(115,218,202)">city</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Springfield</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -94,7 +94,7 @@ title = "Assertions"
 <p class="description">When values differ, you get a precise structural diff showing exactly which fields changed and at what path — then render it as Rust, JSON, or XML for whichever toolchain you need.</p>
 <div class="diff-output">
 <h4>Rust Diff Output</h4>
-<pre><code><span style="color:rgb(86,95,137)">{</span><span style="color:inherit">
+<div class="code-block"><pre><code><span style="color:rgb(86,95,137)">{</span><span style="color:inherit">
     </span><span style="color:rgb(115,218,202)">debug</span><span style="color:inherit"></span><span style="color:rgb(86,95,137)">:</span><span style="color:inherit"> </span><span style="color:rgb(247,118,142)">true</span><span style="color:inherit"> → </span><span style="color:rgb(115,218,202)">false</span><span style="color:inherit">
     </span><span style="color:rgb(115,218,202)">host</span><span style="color:inherit"></span><span style="color:rgb(86,95,137)">:</span><span style="color:inherit"> </span><span style="color:rgb(247,118,142)">"localhost"</span><span style="color:inherit"> → </span><span style="color:rgb(115,218,202)">"prod.example.com"</span><span style="color:inherit">
     </span><span style="color:rgb(115,218,202)">port</span><span style="color:inherit"></span><span style="color:rgb(86,95,137)">:</span><span style="color:inherit"> </span><span style="color:rgb(247,118,142)">8080</span><span style="color:inherit"> → </span><span style="color:rgb(115,218,202)">443</span><span style="color:inherit">
@@ -102,11 +102,11 @@ title = "Assertions"
         </span><span style="color:rgb(86,95,137)">.. 1 unchanged item</span><span style="color:inherit">
         </span><span style="color:rgb(247,118,142)">- "api"</span><span style="color:inherit">
     </span><span style="color:rgb(86,95,137)">]</span><span style="color:inherit">
-</span><span style="color:rgb(86,95,137)">}</span><span style="color:inherit"></span></code></pre>
+</span><span style="color:rgb(86,95,137)">}</span><span style="color:inherit"></span></code></pre></div>
 </div>
 <div class="diff-output">
 <h4>JSON Diff Output</h4>
-<pre><code>    <span style="color:rgb(220,220,220)">{</span><span style="color:inherit"> </span><span style="color:rgb(100,100,100)">/* @Config */</span><span style="color:inherit">
+<div class="code-block"><pre><code>    <span style="color:rgb(220,220,220)">{</span><span style="color:inherit"> </span><span style="color:rgb(100,100,100)">/* @Config */</span><span style="color:inherit">
       </span><span style="color:rgb(229,192,123);background-color:rgb(54,48,38)">←</span> <span style="color:rgb(255,234,162);background-color:rgb(85,81,77)">"debug": </span><span style="color:rgb(255,234,162);background-color:rgb(85,81,77)">true</span><span style="color:rgb(224,209,189);background-color:rgb(54,48,38)"></span> , <span style="color:rgb(255,234,162);background-color:rgb(85,81,77)">"host": </span><span style="color:rgb(229,192,123);background-color:rgb(85,81,77)">"localhost"</span><span style="color:rgb(224,209,189);background-color:rgb(54,48,38)"></span>       , <span style="color:rgb(255,234,162);background-color:rgb(85,81,77)">"port": </span><span style="color:rgb(255,234,162);background-color:rgb(85,81,77)">8080</span><span style="color:rgb(224,209,189);background-color:rgb(54,48,38)"></span>
       <span style="color:rgb(97,175,239);background-color:rgb(38,48,57)">→</span> <span style="color:rgb(142,216,255);background-color:rgb(69,73,77)">"debug": </span><span style="color:rgb(142,216,255);background-color:rgb(69,73,77)">false</span><span style="color:rgb(184,204,228);background-color:rgb(38,48,57)"></span>, <span style="color:rgb(142,216,255);background-color:rgb(69,73,77)">"host": </span><span style="color:rgb(97,175,239);background-color:rgb(69,73,77)">"prod.example.com"</span><span style="color:rgb(184,204,228);background-color:rgb(38,48,57)"></span>, <span style="color:rgb(142,216,255);background-color:rgb(69,73,77)">"port": </span><span style="color:rgb(142,216,255);background-color:rgb(69,73,77)">443</span><span style="color:rgb(184,204,228);background-color:rgb(38,48,57)"></span>
     <span style="color:rgb(220,220,220)"></span><span style="color:inherit">
@@ -115,11 +115,11 @@ title = "Assertions"
             </span><span style="color:rgb(229,192,123);background-color:rgb(54,48,38)">-</span> <span style="color:rgb(229,192,123);background-color:rgb(54,48,38)">"api"</span>
         <span style="color:rgb(220,220,220)">]</span><span style="color:inherit"></span><span style="color:rgb(100,100,100)">,</span><span style="color:inherit">
     </span><span style="color:rgb(220,220,220)">}</span><span style="color:inherit">
-</span></code></pre>
+</span></code></pre></div>
 </div>
 <div class="diff-output">
 <h4>XML Diff Output</h4>
-<pre><code>    <span style="color:rgb(220,220,220)">&lt;@Config</span><span style="color:inherit">
+<div class="code-block"><pre><code>    <span style="color:rgb(220,220,220)">&lt;@Config</span><span style="color:inherit">
       </span><span style="color:rgb(229,192,123);background-color:rgb(54,48,38)">←</span> <span style="color:rgb(255,234,162);background-color:rgb(85,81,77)">debug="</span><span style="color:rgb(255,234,162);background-color:rgb(85,81,77)">true</span><span style="color:rgb(224,209,189);background-color:rgb(54,48,38)">"</span>  <span style="color:rgb(255,234,162);background-color:rgb(85,81,77)">host="</span><span style="color:rgb(229,192,123);background-color:rgb(85,81,77)">localhost</span><span style="color:rgb(224,209,189);background-color:rgb(54,48,38)">"</span>        <span style="color:rgb(255,234,162);background-color:rgb(85,81,77)">port="</span><span style="color:rgb(255,234,162);background-color:rgb(85,81,77)">8080</span><span style="color:rgb(224,209,189);background-color:rgb(54,48,38)">"</span>
       <span style="color:rgb(97,175,239);background-color:rgb(38,48,57)">→</span> <span style="color:rgb(142,216,255);background-color:rgb(69,73,77)">debug="</span><span style="color:rgb(142,216,255);background-color:rgb(69,73,77)">false</span><span style="color:rgb(184,204,228);background-color:rgb(38,48,57)">"</span> <span style="color:rgb(142,216,255);background-color:rgb(69,73,77)">host="</span><span style="color:rgb(97,175,239);background-color:rgb(69,73,77)">prod.example.com</span><span style="color:rgb(184,204,228);background-color:rgb(38,48,57)">"</span> <span style="color:rgb(142,216,255);background-color:rgb(69,73,77)">port="</span><span style="color:rgb(142,216,255);background-color:rgb(69,73,77)">443</span><span style="color:rgb(184,204,228);background-color:rgb(38,48,57)">"</span>
     <span style="color:rgb(220,220,220)">&gt;</span><span style="color:inherit">
@@ -128,7 +128,7 @@ title = "Assertions"
             </span><span style="color:rgb(229,192,123);background-color:rgb(54,48,38)">-</span> <span style="color:rgb(229,192,123);background-color:rgb(54,48,38)">api</span>
         <span style="color:rgb(220,220,220)"></span><span style="color:inherit"></span><span style="color:rgb(100,100,100)"></span><span style="color:inherit">
     </span><span style="color:rgb(220,220,220)">&lt;/@Config&gt;</span><span style="color:inherit">
-</span></code></pre>
+</span></code></pre></div>
 </div>
 </section>
 
@@ -138,21 +138,21 @@ title = "Assertions"
 <p class="description">Vector comparisons show exactly which indices differ, which elements were added, and which were removed.</p>
 <div class="diff-output">
 <h4>Diff Output</h4>
-<pre><code><span style="color:rgb(86,95,137)">[</span><span style="color:inherit">
+<div class="code-block"><pre><code><span style="color:rgb(86,95,137)">[</span><span style="color:inherit">
     </span><span style="color:rgb(86,95,137)">.. 2 unchanged items</span><span style="color:inherit">
     </span><span style="color:rgb(247,118,142)">3</span><span style="color:inherit"> → </span><span style="color:rgb(115,218,202)">99</span><span style="color:inherit">
     </span><span style="color:rgb(86,95,137)">.. 1 unchanged item</span><span style="color:inherit">
     </span><span style="color:rgb(247,118,142)">- 5</span><span style="color:inherit">
-</span><span style="color:rgb(86,95,137)">]</span><span style="color:inherit"></span></code></pre>
+</span><span style="color:rgb(86,95,137)">]</span><span style="color:inherit"></span></code></pre></div>
 </div>
 </section>
 
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5b2c5e9712e0f360b2a4aaa22ae966823affca23/facet-assert/examples/assert_showcase.rs"><code>facet-assert/examples/assert_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5b2c5e9712e0f360b2a4aaa22ae966823affca23"><code>5b2c5e971</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-11T22:26:32+01:00">2026-01-11T22:26:32+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5c8df10b37be181e3a88be583c1eee213e28dbd5/facet-assert/examples/assert_showcase.rs"><code>facet-assert/examples/assert_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5c8df10b37be181e3a88be583c1eee213e28dbd5"><code>5c8df10b3</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-16T05:16:07+01:00">2026-01-16T05:16:07+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

@@ -1,5 +1,6 @@
 #![cfg_attr(not(feature = "jit"), deny(unsafe_code))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![allow(unused_macros)]
 
 //! Prototype types for the format deserializer.
 

@@ -19,15 +19,15 @@ Note: S = Serialization, D = Deserialization
 
 | Crate | Direction | Format Type | Parser | Showcase |
 |-------|-----------|-------------|--------|----------|
-| [facet-json](https://docs.rs/facet-json) | SD | Text | Event-based (custom) | [View](/guide/showcases/json) |
-| [facet-yaml](https://docs.rs/facet-yaml) | SD | Text | Event-based ([saphyr-parser](https://docs.rs/saphyr-parser)) | [View](/guide/showcases/yaml) |
-| [facet-toml](https://docs.rs/facet-toml) | SD | Text | Event-based ([toml_parser](https://docs.rs/toml_parser)) | [View](/guide/showcases/toml) |
+| [facet-json](https://docs.rs/facet-json) | SD | Text | Event-based (custom) | 🚫 |
+| [facet-yaml](https://docs.rs/facet-yaml) | SD | Text | Event-based ([saphyr-parser](https://docs.rs/saphyr-parser)) | 🚫 |
+| [facet-toml](https://docs.rs/facet-toml) | SD | Text | Event-based ([toml_parser](https://docs.rs/toml_parser)) | 🚫 |
 | [facet-xml](https://docs.rs/facet-xml) | SD | Text | Event-based ([quick-xml](https://docs.rs/quick-xml)) | 🚫 |
 | [facet-msgpack](https://docs.rs/facet-msgpack) | SD | Binary | Event-based (custom) | 🚫 |
 | [facet-postcard](https://docs.rs/facet-postcard) | SD | Binary | Event-based (custom) | 🚫 |
 | [facet-asn1](https://docs.rs/facet-asn1) | S | Binary | (Custom) | 🚫 |
 | [facet-xdr](https://docs.rs/facet-xdr) | S | Binary | (Custom) | 🚫 |
-| [facet-args](https://docs.rs/facet-args) | D | CLI | (Custom) | [View](/guide/showcases/args) |
+| [facet-args](https://docs.rs/facet-args) | D | CLI | (Custom) | [View](/showcases/args) |
 | [facet-urlencoded](https://docs.rs/facet-urlencoded) | D | Text | [form_urlencoded](https://docs.rs/form_urlencoded) | 🚫 |
 | [facet-csv](https://docs.rs/facet-csv) | S | Text | (Custom) | 🚫 |
 

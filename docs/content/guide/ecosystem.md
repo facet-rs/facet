@@ -216,7 +216,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See the [Args showcase](@/guide/showcases/args.md) for comprehensive examples including subcommands, error messages, and more.
+See the [Args showcase](@/showcases/args.md) for comprehensive examples including subcommands, error messages, and more.
 
 ## When a type doesn't implement Facet
 
@@ -288,7 +288,7 @@ let json = facet_json::to_string(&wrapper);
 let parsed: MyWrapper = facet_json::from_str(&json).unwrap();
 ```
 
-See the [Attributes Reference](@/guide/attributes.md#opaque) for details on `opaque` and `proxy`.
+See the [Attributes Reference](@/reference/attributes/_index.md#container-attributes--opaque) for details on `opaque` and `proxy`.
 
 ### Third-party type you want full support for
 

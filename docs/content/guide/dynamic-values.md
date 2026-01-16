@@ -268,5 +268,5 @@ assert_same!(payload, expected);
 
 ## Next steps
 
-- See the [Assertions showcase](@/guide/showcases/assert.md) for `assert_same!` examples
+- See the [Assertions showcase](@/showcases/assert.md) for `assert_same!` examples
 - Check out [facet-value on docs.rs](https://docs.rs/facet-value) for the full API

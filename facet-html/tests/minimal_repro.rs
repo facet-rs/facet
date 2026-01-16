@@ -1693,3 +1693,53 @@ fn doctype_roundtrip() {
         "DOCTYPE should be preserved in roundtrip"
     );
 }
+
+// Issue: Inline SVG content is swallowed during parsing
+// SVG elements with child content (rect, text, path, etc.) are being
+// parsed but their children are discarded, resulting in empty SVG elements.
+#[test]
+fn issue_svg_content_preserved() {
+    let html = r#"<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">
+  <rect x="10" y="10" width="80" height="80" fill="blue"/>
+  <text x="50" y="55" text-anchor="middle" fill="white">Hello</text>
+</svg>"#;
+
+    let doc: Html =
+        facet_html::from_str(&format!("<html><body>{}</body></html>", html)).expect("parse failed");
+    let serialized = facet_html::to_string(&doc).expect("serialize failed");
+
+    // The SVG should contain its child elements
+    assert!(
+        serialized.contains("<rect"),
+        "SVG should contain <rect> element, got:\n{}",
+        serialized
+    );
+    assert!(
+        serialized.contains("<text"),
+        "SVG should contain <text> element, got:\n{}",
+        serialized
+    );
+    assert!(
+        serialized.contains("Hello"),
+        "SVG text content should be preserved, got:\n{}",
+        serialized
+    );
+}
+
+#[test]
+fn issue_svg_simple_rect() {
+    use facet_html_dom::Svg;
+
+    let html = r#"<svg width="100" height="100"><rect x="0" y="0" width="50" height="50"/></svg>"#;
+
+    let svg: Svg = facet_html::from_str(html).expect("parse failed");
+
+    let serialized = facet_html::to_string(&svg).expect("serialize failed");
+    eprintln!("Serialized: {}", serialized);
+
+    assert!(
+        serialized.contains("<rect"),
+        "SVG should contain <rect> element, got:\n{}",
+        serialized
+    );
+}

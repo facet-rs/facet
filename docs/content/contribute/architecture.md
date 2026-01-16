@@ -6,42 +6,43 @@ insert_anchor_links = "heading"
 
 ## Crate graph
 
+```aasvg
++-------------------------------------------------------------------+
+|                          User Code                                |
+|                     #[derive(Facet)]                              |
++-------------------------------------------------------------------+
+                               |
+                               v
++-------------------------------------------------------------------+
+|                           facet                                   |
+|               Re-exports from core + macros + reflect             |
++-------------------------------------------------------------------+
+           |                   |                    |
+           v                   v                    v
++------------------+  +------------------+  +------------------+
+|   facet-core     |  |   facet-macros   |  |  facet-reflect   |
+|                  |  |                  |  |                  |
+| - Facet trait    |  | - #[derive]      |  | - Peek (read)    |
+| - Shape          |  | - Proc macros    |  | - Partial (build)|
+| - Def, Type      |  |                  |  |                  |
+| - VTables        |  |        |         |  |                  |
+| - no_std         |  |        v         |  |                  |
++------------------+  | facet-macros-    |  +------------------+
+                      | impl             |           |
+                      |                  |           |
+                      | - unsynn parser  |           |
+                      | - Code gen       |           |
+                      +------------------+           |
+                                                     |
+                               +---------------------+
+                               v
++-------------------------------------------------------------------+
+|               Format Crates & Utility Crates                      |
+|   facet-json, facet-yaml, facet-toml, facet-args                  |
+|   facet-pretty, facet-diff, facet-assert, facet-value             |
++-------------------------------------------------------------------+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         User Code                               │
-│                    #[derive(Facet)]                             │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                          facet                                  │
-│              Re-exports from core + macros + reflect            │
-└─────────────────────────────────────────────────────────────────┘
-          │                   │                   │
-          ▼                   ▼                   ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│   facet-core    │  │  facet-macros   │  │ facet-reflect   │
-│                 │  │                 │  │                 │
-│ • Facet trait   │  │ • #[derive]     │  │ • Peek (read)   │
-│ • Shape         │  │ • Proc macros   │  │ • Partial (build)│
-│ • Def, Type     │  │                 │  │                 │
-│ • VTables       │  │        │        │  │                 │
-│ • no_std        │  │        ▼        │  │                 │
-└─────────────────┘  │ facet-macros-   │  └─────────────────┘
-                     │ impl            │           │
-                     │                 │           │
-                     │ • unsynn parser │           │
-                     │ • Code gen      │           │
-                     └─────────────────┘           │
-                                                   │
-                              ┌────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              Format Crates & Utility Crates                     │
-│  facet-json, facet-yaml, facet-toml, facet-args                 │
-│  facet-pretty, facet-diff, facet-assert, facet-value            │
-└─────────────────────────────────────────────────────────────────┘
-```
+
 
 Format crates and utility crates primarily interact with `facet-reflect` — they use `Peek` to read values and `Partial` to build them.
 

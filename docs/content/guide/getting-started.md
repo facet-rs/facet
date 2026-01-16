@@ -50,16 +50,15 @@ struct Config {
     level: String,
 }
 
-fn main() -> Result<()> {
+fn main() {
     let json = r#"{ "name": "app", "port": 8080 }"#;
 
-    // Deserialize with rich errors
-    let cfg: Config = from_str(json).into_diagnostic()?;
+    // Deserialize
+    let cfg: Config = from_str(json).unwrap();
 
     // Serialize back out
     let out = to_string(&cfg);
     println!("Round trip: {out}");
-    Ok(())
 }
 ```
 
@@ -76,6 +75,6 @@ cargo run
 - **Rename fields:** `#[facet(rename = "serverPort")]` or `#[facet(rename_all = "camelCase")]`.
 
 ## Next steps
-- Browse the [Attributes Reference](@/reference/attributes/_index.md) for all knobs.
-- Read [Errors & diagnostics](@/guide/errors.md) to understand and customize error output.
+- Browse the [Attributes Reference](@/reference/attributes/_index.md) for all available attributes.
 - Check the [Format Support Matrix](@/reference/format-crate-matrix/_index.md) if you use multiple formats.
+- Read the [FAQ](@/guide/faq.md) for common questions.

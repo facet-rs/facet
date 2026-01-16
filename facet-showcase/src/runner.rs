@@ -408,8 +408,11 @@ impl<'a> Scenario<'a> {
             OutputMode::Markdown => {
                 println!("<div class=\"input\">");
                 println!("<h4>{} Input</h4>", lang.name());
-                // highlight_to_html returns a complete <pre> element with inline styles
-                println!("{}", self.runner.highlighter.highlight_to_html(code, lang));
+                println!();
+                println!("```{}", lang.extension());
+                println!("{}", code);
+                println!("```");
+                println!();
                 println!("</div>");
             }
         }
@@ -437,7 +440,10 @@ impl<'a> Scenario<'a> {
                 let pretty_output = format!("{}", value.pretty());
                 println!("<div class=\"input\">");
                 println!("<h4>Value Input</h4>");
-                println!("<pre><code>{}</code></pre>", ansi_to_html(&pretty_output));
+                println!(
+                    "<div class=\"code-block\"><pre><code>{}</code></pre></div>",
+                    ansi_to_html(&pretty_output)
+                );
                 println!("</div>");
             }
         }
@@ -467,8 +473,11 @@ impl<'a> Scenario<'a> {
             OutputMode::Markdown => {
                 println!("<div class=\"serialized-output\">");
                 println!("<h4>{} Output</h4>", lang.name());
-                // highlight_to_html returns a complete <pre> element with inline styles
-                println!("{}", self.runner.highlighter.highlight_to_html(code, lang));
+                println!();
+                println!("```{}", lang.extension());
+                println!("{}", code);
+                println!("```");
+                println!();
                 println!("</div>");
             }
         }
@@ -565,7 +574,10 @@ impl<'a> Scenario<'a> {
             OutputMode::Markdown => {
                 println!("<div class=\"compiler-error\">");
                 println!("<h4>Compiler Error</h4>");
-                println!("<pre><code>{}</code></pre>", ansi_to_html(ansi_output));
+                println!(
+                    "<div class=\"code-block\"><pre><code>{}</code></pre></div>",
+                    ansi_to_html(ansi_output)
+                );
                 println!("</div>");
             }
         }
@@ -591,7 +603,10 @@ impl<'a> Scenario<'a> {
                 let pretty_output = format!("{}", value.pretty());
                 println!("<div class=\"success\">");
                 println!("<h4>Success</h4>");
-                println!("<pre><code>{}</code></pre>", ansi_to_html(&pretty_output));
+                println!(
+                    "<div class=\"code-block\"><pre><code>{}</code></pre></div>",
+                    ansi_to_html(&pretty_output)
+                );
                 println!("</div>");
             }
         }
@@ -617,7 +632,7 @@ impl<'a> Scenario<'a> {
                 println!("<div class=\"error\">");
                 println!("<h4>Error</h4>");
                 println!(
-                    "<pre><code>{}</code></pre>",
+                    "<div class=\"code-block\"><pre><code>{}</code></pre></div>",
                     crate::highlighter::html_escape(&error_text)
                 );
                 println!("</div>");
@@ -654,7 +669,10 @@ impl<'a> Scenario<'a> {
             }
             OutputMode::Markdown => {
                 println!("<div class=\"output\">");
-                println!("<pre><code>{}</code></pre>", ansi_to_html(ansi_text));
+                println!(
+                    "<div class=\"code-block\"><pre><code>{}</code></pre></div>",
+                    ansi_to_html(ansi_text)
+                );
                 println!("</div>");
             }
         }

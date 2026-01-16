@@ -8,9 +8,7 @@ insert_anchor_links = "heading"
 
 ### cargo-nextest
 
-We use [cargo-nextest](https://nexte.st/) instead of `cargo test`. It's faster and runs each test in its own process, which lets us install a process-wide tracing subscriber without conflicts.
-
-If you try to run tests with `cargo test`, you'll see a banner telling you to use `cargo nextest run` instead.
+We use [cargo-nextest](https://nexte.st/) instead of `cargo test`. It runs each test in its own process, which lets us install a process-wide tracing subscriber without conflicts.
 
 ```bash
 cargo install cargo-nextest
@@ -24,9 +22,9 @@ We use [insta](https://insta.rs/) for snapshot testing. When a snapshot changes,
 cargo insta review
 ```
 
-### just (optional)
+### just
 
-[just](https://github.com/casey/just) is a task runner that makes it easy to run common commands. It's not required — you can run the underlying commands directly.
+[just](https://github.com/casey/just) is a task runner. The justfile defines common workflows.
 
 ```bash
 # macOS
@@ -41,27 +39,10 @@ cargo install just
 ```bash
 git clone https://github.com/facet-rs/facet
 cd facet
-./scripts/install-hooks  # Install pre-push hook
 just ci
 ```
 
 `just ci` runs locally what CI runs remotely. If it passes, your PR will likely pass CI.
-
-## Git hooks
-
-We provide a pre-push hook that catches common CI failures before you push:
-
-```bash
-./scripts/install-hooks
-```
-
-This installs a hook that runs before each `git push`:
-- `cargo clippy --all-targets --all-features` — catches lint errors
-- `cargo test --doc` — ensures doc examples compile
-
-If clippy fails, the hook will suggest running `cargo clippy --fix` to auto-fix issues.
-
-The hook is optional but recommended — it saves the round-trip of pushing, waiting for CI, and fixing issues.
 
 ## Common commands
 
@@ -82,5 +63,5 @@ cargo insta review
 just miri
 
 # Check no_std compatibility
-just nostd-ci
+just nostd
 ```

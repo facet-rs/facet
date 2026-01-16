@@ -35,9 +35,9 @@ title = "HTML"
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>BodyElement</a-t> <a-p>{</a-p>
-    h1<a-p>(</a-p><a-t>Heading</a-t><a-p>),</a-p>
-<br>    p<a-p>(</a-p><a-t>Paragraph</a-t><a-p>),</a-p>
-<br>    div<a-p>(</a-p><a-t>DivElement</a-t><a-p>),</a-p>
+    <a-cr>H1</a-cr><a-p>(</a-p><a-t>Heading</a-t><a-p>),</a-p>
+<br>    <a-cr>P</a-cr><a-p>(</a-p><a-t>Paragraph</a-t><a-p>),</a-p>
+<br>    <a-cr>Div</a-cr><a-p>(</a-p><a-t>DivElement</a-t><a-p>),</a-p>
 <a-p>}</a-p>
 <br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>DivElement</a-t> <a-p>{</a-p>
@@ -75,17 +75,21 @@ title = "HTML"
 </details>
 <div class="input">
 <h4>HTML Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>&lt;html&gt;
-    &lt;head&gt;&lt;title&gt;My Page&lt;/title&gt;&lt;/head&gt;
-    &lt;body class=&quot;main&quot;&gt;
-        &lt;h1 id=&quot;header&quot;&gt;Welcome&lt;/h1&gt;
-        &lt;p&gt;Hello, world!&lt;/p&gt;
-    &lt;/body&gt;
-&lt;/html&gt;</code></pre>
+
+```html
+<html>
+    <head><title>My Page</title></head>
+    <body class="main">
+        <h1 id="header">Welcome</h1>
+        <p>Hello, world!</p>
+    </body>
+</html>
+```
+
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimplePage</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimplePage</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">head</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleHead</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">title</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleTitle</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
       <span style="color:rgb(115,218,202)">text</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">My Page</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
@@ -93,18 +97,9 @@ title = "HTML"
   <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">body</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleBody</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">class</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">main</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">children</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;BodyElement&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span>
-      <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">BodyElement</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">h1</span><span style="opacity:0.7">(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Heading</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
-        <span style="color:rgb(115,218,202)">id</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">header</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-        <span style="color:rgb(115,218,202)">text</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Welcome</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
-      <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-      <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">BodyElement</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">p</span><span style="opacity:0.7">(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Paragraph</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
-        <span style="color:rgb(115,218,202)">class</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
-        <span style="color:rgb(115,218,202)">text</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Hello, world!</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
-      <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-    <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">children</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;BodyElement&gt;</span><span style="color:inherit"></span><span style="opacity:0.7">[]</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -133,9 +128,9 @@ title = "HTML"
 </a-c><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
 <a-k>enum</a-k> <a-t>BodyElement</a-t> <a-p>{</a-p>
-    h1<a-p>(</a-p><a-t>Heading</a-t><a-p>),</a-p>
-<br>    p<a-p>(</a-p><a-t>Paragraph</a-t><a-p>),</a-p>
-<br>    div<a-p>(</a-p><a-t>DivElement</a-t><a-p>),</a-p>
+    <a-cr>H1</a-cr><a-p>(</a-p><a-t>Heading</a-t><a-p>),</a-p>
+<br>    <a-cr>P</a-cr><a-p>(</a-p><a-t>Paragraph</a-t><a-p>),</a-p>
+<br>    <a-cr>Div</a-cr><a-p>(</a-p><a-t>DivElement</a-t><a-p>),</a-p>
 <a-p>}</a-p>
 <br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>DivElement</a-t> <a-p>{</a-p>
@@ -173,32 +168,29 @@ title = "HTML"
 </details>
 <div class="input">
 <h4>HTML Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>&lt;html&gt;
-    &lt;body&gt;
-        &lt;div id=&quot;container&quot; class=&quot;wrapper&quot;&gt;
-            &lt;h1&gt;Title&lt;/h1&gt;
-            &lt;p class=&quot;intro&quot;&gt;Introduction paragraph.&lt;/p&gt;
-            &lt;div class=&quot;content&quot;&gt;Main content here.&lt;/div&gt;
-        &lt;/div&gt;
-    &lt;/body&gt;
-&lt;/html&gt;</code></pre>
+
+```html
+<html>
+    <body>
+        <div id="container" class="wrapper">
+            <h1>Title</h1>
+            <p class="intro">Introduction paragraph.</p>
+            <div class="content">Main content here.</div>
+        </div>
+    </body>
+</html>
+```
+
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimplePage</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimplePage</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">head</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">body</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleBody</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">class</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">children</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;BodyElement&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span>
-      <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">BodyElement</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">div</span><span style="opacity:0.7">(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">DivElement</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
-        <span style="color:rgb(115,218,202)">id</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">container</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-        <span style="color:rgb(115,218,202)">class</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">wrapper</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-        <span style="color:rgb(115,218,202)">content</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">
-        </span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
-      <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-    <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">children</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;BodyElement&gt;</span><span style="color:inherit"></span><span style="opacity:0.7">[]</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -221,7 +213,7 @@ title = "HTML"
 <br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>FormInput</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
-    <a-pr>type</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
+    <a-pr>input_type</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>name</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
@@ -232,38 +224,42 @@ title = "HTML"
 </details>
 <div class="input">
 <h4>HTML Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>&lt;form action=&quot;/submit&quot; method=&quot;post&quot;&gt;
-    &lt;input type=&quot;text&quot; name=&quot;username&quot; placeholder=&quot;Username&quot; required /&gt;
-    &lt;input type=&quot;email&quot; name=&quot;email&quot; placeholder=&quot;Email&quot; /&gt;
-    &lt;input type=&quot;submit&quot; name=&quot;submit&quot; /&gt;
-&lt;/form&gt;</code></pre>
+
+```html
+<form action="/submit" method="post">
+    <input type="text" name="username" placeholder="Username" required />
+    <input type="email" name="email" placeholder="Email" />
+    <input type="submit" name="submit" />
+</form>
+```
+
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">ContactForm</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">ContactForm</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">action</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">/submit</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">method</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">post</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">inputs</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;FormInput&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span>
     <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">FormInput</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
-      <span style="color:rgb(115,218,202)">type</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">text</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+      <span style="color:rgb(115,218,202)">input_type</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">text</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
       <span style="color:rgb(115,218,202)">name</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">username</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
       <span style="color:rgb(115,218,202)">placeholder</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">Username</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
       <span style="color:rgb(115,218,202)">required</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)"></span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
     <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
     <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">FormInput</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
-      <span style="color:rgb(115,218,202)">type</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">email</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+      <span style="color:rgb(115,218,202)">input_type</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">email</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
       <span style="color:rgb(115,218,202)">name</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">email</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
       <span style="color:rgb(115,218,202)">placeholder</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">Email</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
       <span style="color:rgb(115,218,202)">required</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
     <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
     <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">FormInput</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
-      <span style="color:rgb(115,218,202)">type</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">submit</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+      <span style="color:rgb(115,218,202)">input_type</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">submit</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
       <span style="color:rgb(115,218,202)">name</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">submit</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
       <span style="color:rgb(115,218,202)">placeholder</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
       <span style="color:rgb(115,218,202)">required</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
     <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -288,7 +284,11 @@ title = "HTML"
 </details>
 <div class="serialized-output">
 <h4>HTML Output</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>&lt;DivElement id=&quot;main&quot; class=&quot;container&quot;&gt;Hello!&lt;/DivElement&gt;</code></pre>
+
+```html
+<divElement id="main" class="container">Hello!</divElement>
+```
+
 </div>
 </section>
 
@@ -311,7 +311,7 @@ title = "HTML"
 <br><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
 <a-k>struct</a-k> <a-t>FormInput</a-t> <a-p>{</a-p>
     <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
-    <a-pr>type</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
+    <a-pr>input_type</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
     <a-pr>name</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
 <br>    <a-at>#</a-at><a-p>[</a-p><a-at>facet</a-at><a-p>(</a-p><a-at>html</a-at><a-p>::</a-p><a-at>attribute</a-at><a-p>)]</a-p>
@@ -322,9 +322,11 @@ title = "HTML"
 </details>
 <div class="serialized-output">
 <h4>HTML Output</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>&lt;form action=&quot;/api/contact&quot; method=&quot;post&quot;&gt;
-  &lt;input type=&quot;text&quot; name=&quot;name&quot; placeholder=&quot;Your name&quot; required&gt;  &lt;input type=&quot;email&quot; name=&quot;email&quot; placeholder=&quot;your@email.com&quot;&gt;&lt;/form&gt;
-</code></pre>
+
+```html
+<form action="/api/contact" method="post"><input type="text" name="name" placeholder="Your name" required><input type="email" name="email" placeholder="your@email.com"></form>
+```
+
 </div>
 </section>
 
@@ -352,11 +354,15 @@ title = "HTML"
 </details>
 <div class="input">
 <h4>HTML Input</h4>
-<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code>&lt;div id=&quot;widget&quot; class=&quot;card&quot; data-user-id=&quot;123&quot; data-theme=&quot;dark&quot; aria-label=&quot;User Card&quot;&gt;Content&lt;/div&gt;</code></pre>
+
+```html
+<div id="widget" class="card" data-user-id="123" data-theme="dark" aria-label="User Card">Content</div>
+```
+
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">DivWithExtras</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">DivWithExtras</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">id</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">widget</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">class</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">card</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">extra</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">BTreeMap&lt;String, String&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span>
@@ -365,16 +371,16 @@ title = "HTML"
     "<span style="color:rgb(158,206,106)">data-user-id</span><span style="color:inherit">"</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">123</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">content</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Content</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5b2c5e9712e0f360b2a4aaa22ae966823affca23/facet-html/examples/html_showcase.rs"><code>facet-html/examples/html_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5b2c5e9712e0f360b2a4aaa22ae966823affca23"><code>5b2c5e971</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-11T22:26:32+01:00">2026-01-11T22:26:32+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5c8df10b37be181e3a88be583c1eee213e28dbd5/facet-html/examples/html_showcase.rs"><code>facet-html/examples/html_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5c8df10b37be181e3a88be583c1eee213e28dbd5"><code>5c8df10b3</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-16T05:16:07+01:00">2026-01-16T05:16:07+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

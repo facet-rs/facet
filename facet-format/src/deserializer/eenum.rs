@@ -7,7 +7,6 @@ use facet_reflect::Partial;
 
 use crate::{
     ContainerKind, DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue,
-    trace,
 };
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>

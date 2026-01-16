@@ -3,7 +3,7 @@ title = "Why facet?"
 weight = 1
 +++
 
-facet is a reflection library for Rust. You derive `Facet` once, and you get serialization, pretty-printing, diffing, CLI argument parsing, and more — all from the same type information.
+facet is a reflection library for Rust. A single `#[derive(Facet)]` provides serialization, pretty-printing, diffing, CLI argument parsing, and more — all from the same type information.
 
 ```rust,noexec
 #[derive(Facet)]
@@ -64,7 +64,7 @@ With facet, you can compare shapes at runtime. A format crate can treat `Vec<u8>
 
 serde's de facto dynamic value type is [`serde_json::Value`](https://docs.rs/serde_json/latest/serde_json/enum.Value.html) — designed for JSON. It doesn't natively support bytes, datetimes, or `u128`.
 
-[`facet_value::Value`](https://docs.rs/facet-value/latest/facet_value/enum.Value.html) is format-agnostic and richer: bytes and datetimes are first-class, not encoded as strings or arrays. Source spans can be preserved for error reporting.
+[`facet_value::Value`](https://docs.rs/facet-value/latest/facet_value/struct.Value.html) is format-agnostic and richer: bytes and datetimes are first-class, not encoded as strings or arrays. Source spans can be preserved for error reporting.
 
 ### flatten without precision loss
 
@@ -122,19 +122,15 @@ If you've profiled your application and serialization is actually your bottlenec
 
 facet's goal is not speed. It's expressiveness, diagnostics, and flexibility. If the computer has information, it should present it clearly. If you can avoid generating separate code for every tool, you should.
 
-## Why now
+## Current state
 
-- The **attribute grammar system** just landed — extension crates can define custom attributes without writing proc-macros
-- Format crates have matured: JSON, YAML, TOML, MessagePack, CSV, XDR, and more
-- facet-args provides CLI parsing, facet-pretty does debug output, facet-diff does structural comparison
-
-The ecosystem is here. The tooling is here.
+- The **attribute grammar system** allows extension crates to define custom attributes without proc-macros
+- Format crates cover JSON, YAML, TOML, MessagePack, CSV, XDR, and more
+- facet-args handles CLI parsing, facet-pretty handles debug output, facet-diff handles structural comparison
 
 ## Next steps
 
-- Browse the [showcases](/guide/showcases/) to see facet in action
-- Check the [format support matrix](/reference/format-crate-matrix/) to see what's available
+- Browse the [Showcases](/showcases/) for examples
+- Check the [format support matrix](/reference/format-crate-matrix/) for available formats
 - Read the [Guide](/guide/) to get started
-- Look at the source: [github.com/facet-rs/facet](https://github.com/facet-rs/facet)
-
-Decide for yourself.
+- Source: [github.com/facet-rs/facet](https://github.com/facet-rs/facet)

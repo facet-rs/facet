@@ -5,9 +5,6 @@ weight = 2
 insert_anchor_links = "heading"
 +++
 
-Lookup-style docs and tables.
+Lookup-oriented documentation. Complete catalogs and comparison tables for when you need a specific answer. Search or scan rather than read sequentially.
 
-- [Attributes Reference](@/reference/attributes/) — complete `#[facet(...)]` catalog.
-- [Format comparison matrix](@/reference/format-crate-matrix/) — feature support across format crates.
-- [Extension Attributes](@/reference/attributes/#extension-attributes) — namespaced attributes by crate.
-- [FAQ](@/guide/faq.md) — common questions and quick answers.
+Start with [Attributes](@/reference/attributes/_index.md).

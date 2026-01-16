@@ -44,12 +44,9 @@ facet targets the latest stable Rust. Check the CI configuration for the current
 1. **Function pointers** — stored in attributes like `default`, `skip_serializing_if`, and `invariants`
 2. **`ConstTypeId`** — compile-time type identifiers that have no meaningful serialized form
 
-If you're looking for a generic value type that can hold any facet-compatible data, use [`facet_value::Value`](https://docs.rs/facet-value).
+If you need a generic value type that can hold any facet-compatible data, use [`facet_value::Value`](https://docs.rs/facet-value).
 
-If you genuinely need to compare, diff, or store shapes at runtime, see [facet-shapelike](https://docs.rs/facet-shapelike). this crate
-implements a version of `Shape` called `Shapelike` which is fully owned and serializable, so you can send it between 2 completely random
-processes if you feel like it. `Shapelike` does not include any data that if sent to a seperate process would cause UB, like TypeId or
-the vtables that are included
+If you need to compare, diff, or store shapes at runtime, see [facet-shapelike](https://docs.rs/facet-shapelike). This crate provides `ShapeLike`, a fully owned and serializable version of `Shape`. It omits function pointers, `TypeId`, and vtables — data that would be meaningless or unsafe across process boundaries.
 
 ## Usage
 
@@ -223,7 +220,7 @@ enum Event {
 // PageView: {"type": "PageView", "id": 2, "timestamp": "...", "url": "/home"}
 ```
 
-See [Attributes Reference](@/guide/attributes.md#flatten) for more details.
+See [Attributes Reference](@/reference/attributes/_index.md#field-attributes--flatten) for more details.
 
 ## Error handling
 
@@ -316,9 +313,9 @@ struct Config {
 
 Without the import, `xml::property` is not recognized.
 
-### Why do i get errors on the recursive data types
-Due to the current facet implementation you need to manually tag where we should introduce indirection,
-this is done with the `#[facet(recursive_type)]` attribute like so
+### Why do I get errors with recursive data types?
+
+Facet requires explicit annotation for recursive types. Use `#[facet(recursive_type)]` on fields that create cycles:
 
 ```rust,noexec
 #[derive(Facet)]
@@ -334,6 +331,6 @@ struct Node {
 ## Still have questions?
 
 - Join the [Discord](https://discord.gg/JhD7CwCJ8F) to chat with the community
-- Check the [Showcases](@/guide/showcases/_index.md) for more examples
+- Check the [Showcases](@/showcases/_index.md) for more examples
 - Browse the [API documentation](https://docs.rs/facet) for detailed type information
 - Open an [issue](https://github.com/facet-rs/facet/issues) if you've found a bug
