@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}{{ config.title }}{% endblock title %}</title>
     <meta name="description" content="{{ config.description }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/main.css">
     <link rel="stylesheet" href="/pagefind/pagefind-ui.css">
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
@@ -13,11 +16,19 @@
     {% block head %}{% endblock head %}
 </head>
 <body>
+    <input type="checkbox" id="nav-toggle" class="nav-toggle">
     <nav class="site-nav">
         <a href="/" class="site-nav-brand">
             <img src="/favicon.png" alt="" class="site-nav-logo">
             <span>facet</span>
         </a>
+        <label for="nav-toggle" class="site-nav-hamburger" aria-label="Toggle menu">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="3" y1="6" x2="21" y2="6"></line>
+                <line x1="3" y1="12" x2="21" y2="12"></line>
+                <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+        </label>
         <div class="site-nav-links">
             <a href="/guide" {% if current_path is starting_with("/guide") %}class="active"{% endif %}>Guide</a>
             <a href="/showcases" {% if current_path is starting_with("/showcases") %}class="active"{% endif %}>Showcases</a>
@@ -84,6 +95,31 @@
                 a.textContent = h3.textContent.replace(/^§/, '');
                 li.appendChild(a);
                 toc.appendChild(li);
+        });
+    }
+
+        // Mobile nested menu: add sidebar items to nav dropdown
+        const navMenu = document.querySelector('.site-nav-links');
+        const sidebar = document.querySelector('.sidebar');
+        if (navMenu && sidebar) {
+            const sidebarNav = sidebar.querySelector('nav');
+            if (sidebarNav) {
+                const sidebarClone = sidebarNav.cloneNode(true);
+                sidebarClone.classList.add('mobile-sidebar-nav');
+                navMenu.appendChild(sidebarClone);
+            }
+        }
+
+        // Toggle nested menus on mobile
+        document.querySelectorAll('.mobile-sidebar-nav > ul > li > a').forEach(link => {
+            link.addEventListener('click', (e) => {
+                const li = e.target.closest('li');
+                const subMenu = li.querySelector('ul');
+                if (subMenu) {
+                    e.preventDefault();
+                    li.classList.toggle('expanded');
+                }
+            });
         });
     });
     </script>

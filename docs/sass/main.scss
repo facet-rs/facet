@@ -64,54 +64,7 @@ h6 {
   }
 }
 
-// Font faces
-@font-face {
-  font-family: "IosevkaFtl";
-  src: url("/fonts/IosevkaFtl-Regular.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "IosevkaFtl";
-  src: url("/fonts/IosevkaFtl-Bold.ttf") format("truetype");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "PublicSans";
-  src: url("/fonts/PublicSans-Regular.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "PublicSans";
-  src: url("/fonts/PublicSans-Bold.woff2") format("woff2");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "PublicSans";
-  src: url("/fonts/PublicSans-Italic.woff2") format("woff2");
-  font-weight: 400;
-  font-style: italic;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "PublicSans";
-  src: url("/fonts/PublicSans-Black.woff2") format("woff2");
-  font-weight: 900;
-  font-style: normal;
-  font-display: swap;
-}
+// Fonts loaded from Google Fonts (Recursive)
 
 // CSS Custom Properties
 :root {
@@ -125,8 +78,8 @@ h6 {
   --link-hover: #3b82f6;    // blue-500
   --accent-color: #7c3aed;  // violet-600
 
-  --font-sans: "PublicSans", system-ui, -apple-system, sans-serif;
-  --font-mono: "IosevkaFtl", ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
+  --font-sans: "Recursive", system-ui, -apple-system, sans-serif;
+  --font-mono: "Recursive", monospace;
 
   --content-width: min(1200px, 100%);
   --spacing-sm: 0.5rem;
@@ -160,9 +113,10 @@ h6 {
   position: sticky;
   top: 0;
   z-index: 100;
+  height: 60px;
 
   @media (prefers-color-scheme: dark) {
-    background-color: rgba(11, 16, 32, 0.85);
+    background-color: rgba(15, 20, 25, 0.85);
   }
 }
 
@@ -182,6 +136,26 @@ h6 {
 .site-nav-logo {
   width: 2rem;
   height: 2rem;
+}
+
+.site-nav-hamburger {
+  display: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-color);
+  padding: 0.5rem;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  right: var(--spacing-md);
+  top: 50%;
+  transform: translateY(-50%);
+
+  svg {
+    width: 24px;
+    height: 24px;
+  }
 }
 
 .site-nav-links {
@@ -337,6 +311,7 @@ li {
 // Code
 code {
   font-family: var(--font-mono);
+  font-variation-settings: "MONO" 1;
   background-color: var(--code-bg);
   padding: 0.1em 0.3em;
   border-radius: 3px;
@@ -344,11 +319,11 @@ code {
 
 pre {
   font-family: var(--font-mono);
-  font-size: 0.85rem;
-  line-height: 1.4;
+  font-size: 0.9rem;
+  line-height: 1.6;
   background-color: var(--code-bg);
   border: 1px solid var(--border-color);
-  padding: var(--spacing-md);
+  padding: 0.5rem 0.75rem;
   border-radius: 6px;
   overflow-x: auto;
   margin-bottom: var(--spacing-md);
@@ -672,8 +647,8 @@ pre.term {
     // Success and error blocks need dark background (they use ANSI colors)
     .success pre,
     .error pre {
-      background-color: #1a1b26;
-      color: #c0caf5;
+      background-color: #1e293b;
+      color: #e2e8f0;
       border-radius: 6px;
     }
 
@@ -917,8 +892,57 @@ pre.term {
   padding: var(--spacing-xl) var(--spacing-lg);
 }
 
-// Responsive sidebar
+// Mobile nav toggle checkbox (hidden)
+.nav-toggle {
+  display: none;
+}
+
+// Responsive sidebar and nav
 @media (max-width: 900px) {
+  .site-nav {
+    position: relative;
+  }
+
+  .site-nav-hamburger {
+    display: flex;
+  }
+
+  .site-nav-links {
+    position: fixed;
+    top: 60px;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    gap: 0;
+    justify-content: flex-start;
+    background-color: var(--bg-color);
+    padding: var(--spacing-md);
+    max-height: 0;
+    overflow: hidden;
+    z-index: 99;
+    visibility: hidden;
+    transition: max-height 0.3s ease, visibility 0.3s ease, border-bottom 0.3s ease;
+
+    a {
+      padding: 0.5rem 0;
+      font-size: 0.95rem;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      background-color: rgba(15, 20, 25, 0.95);
+    }
+  }
+
+  .nav-toggle:checked ~ nav .site-nav-links {
+    max-height: 500px;
+    visibility: visible;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .nav-toggle:checked ~ .sidebar {
+    display: block;
+  }
+
   .docs-layout {
     flex-direction: column;
   }
@@ -930,6 +954,7 @@ pre.term {
     border-right: none;
     border-bottom: 1px solid var(--border-color);
     padding: var(--spacing-md);
+    display: none;
 
     nav {
       padding: 0;
@@ -942,6 +967,91 @@ pre.term {
 
   .docs-content {
     padding: var(--spacing-md);
+  }
+
+  .site-nav-github {
+    padding: 1rem;
+  }
+
+  // Mobile sidebar nav integration
+  .mobile-sidebar-nav {
+    display: none;
+    margin-top: var(--spacing-md);
+    padding-top: var(--spacing-md);
+    border-top: 1px solid var(--border-color);
+
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+
+      ul {
+        padding-left: var(--spacing-lg);
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.3s ease;
+        margin-top: 0.25rem;
+      }
+    }
+
+    li {
+      margin: 0;
+
+      > a {
+        display: block;
+        padding: 0.5rem 0;
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        font-weight: 500;
+        position: relative;
+
+        &:hover {
+          color: var(--link-color);
+        }
+
+        // Add chevron for items with submenus
+        &::after {
+          content: '';
+          position: absolute;
+          right: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 16px;
+          height: 16px;
+          opacity: 0;
+          transition: opacity 0.2s;
+        }
+      }
+
+      // Show chevron for items with submenus
+      &:has(ul) > a::after {
+        content: '›';
+        opacity: 0.5;
+        font-size: 1.2rem;
+        width: auto;
+      }
+
+      // Rotate chevron when expanded
+      &.expanded > a::after {
+        transform: translateY(-50%) rotate(90deg);
+      }
+
+      &.expanded > ul {
+        max-height: 500px;
+      }
+    }
+
+    // Style nested items (second-level)
+    > ul > li > a {
+      color: var(--text-muted);
+      font-weight: 400;
+      padding-left: 0.75rem;
+      font-size: 0.85rem;
+    }
+  }
+
+  .nav-toggle:checked ~ nav .site-nav-links .mobile-sidebar-nav {
+    display: block;
   }
 }
 
@@ -992,7 +1102,6 @@ pre.term {
 
   .tagline {
     color: var(--text-muted);
-    font-style: italic;
     margin: 0 0 var(--spacing-sm) 0;
   }
 
