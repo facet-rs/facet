@@ -58,7 +58,7 @@ impl StyxError {
             .unwrap_or(0..1);
 
         match &self.kind {
-            // diagnostic[impl deser.invalid-value]
+            // diag[impl deser.invalid-value]
             StyxErrorKind::InvalidScalar { value, expected } => {
                 Report::build(ReportKind::Error, filename, range.start)
                     .with_message(format!("invalid value '{}'", value))
@@ -69,7 +69,7 @@ impl StyxError {
                     )
             }
 
-            // diagnostic[impl deser.missing-field]
+            // diag[impl deser.missing-field]
             StyxErrorKind::MissingField { name } => {
                 Report::build(ReportKind::Error, filename, range.start)
                     .with_message(format!("missing required field '{}'", name))
@@ -81,7 +81,7 @@ impl StyxError {
                     .with_help(format!("add the required field: {} <value>", name))
             }
 
-            // diagnostic[impl deser.unknown-field]
+            // diag[impl deser.unknown-field]
             StyxErrorKind::UnknownField { name } => {
                 Report::build(ReportKind::Error, filename, range.start)
                     .with_message(format!("unknown field '{}'", name))
