@@ -18,35 +18,38 @@ As Styx grows (language bindings, alternative implementations), we need a way to
 
 ### Canonical Output Format
 
-The tree format is... Styx! Version `2026-01-16`.
+S-expressions, like tree-sitter. Version `2026-01-16`.
+
+Easy to emit from any language. Battle-tested format.
 
 ```bash
-styx @tree --format styx file.styx
+styx @tree --format sexp file.styx
 ```
 
-```styx
-@ compliance/tree.schema.styx
-version 2026-01-16
-
-root @object{
-    entries (
-        @entry{
-            key @scalar{text name, kind bare, span (0 4)}
-            value @scalar{text hello, kind bare, span (5 10)}
-        }
-    )
-    span (0 10)
-}
+```scheme
+(document [0, 24]
+  (entry [0, 10]
+    (key [0, 4] (scalar "name"))
+    (value [5, 10] (scalar "hello")))
+  (entry [11, 24]
+    (key [11, 14] (scalar "port"))
+    (value [15, 19] (scalar "8080"))))
 ```
 
-Spans are always included (start, end byte offsets).
+Format rules:
+- `(node_type [start, end] children...)`
+- Scalars: `(scalar "text")` — text is JSON-escaped
+- Tags: `(tag "name" payload...)` 
+- Sequences: `(sequence items...)`
+- Objects: `(object entries...)`
+- Unit: `(unit)`
 
 ### Test Corpus Structure
 
 ```
 compliance/
 ├── README.md
-├── tree.schema.styx          # Schema for tree output format
+├── format.md                 # S-expression format specification
 ├── corpus/
 │   ├── 00-basic/
 │   │   ├── empty.styx
@@ -133,14 +136,13 @@ diff -u compliance/golden.styx output.styx
 
 ## Implementation Plan
 
-1. [ ] Define tree schema (`compliance/tree.schema.styx`)
-2. [ ] Add `styx @tree --format styx` flag  
+1. [ ] Define s-expression format spec (`compliance/format.md`)
+2. [ ] Add `styx @tree --format sexp` flag  
 3. [ ] Create initial corpus (~50 files covering basics)
 4. [ ] Generate golden files from reference implementation
-5. [ ] Write `runner.py`
-6. [ ] Add to CI
-7. [ ] Document how other implementations can run the suite
-8. [ ] Expand corpus over time (fuzzing finds edge cases → add to corpus)
+5. [ ] Add to CI (Rust impl)
+6. [ ] Document how other implementations can run the suite
+7. [ ] Expand corpus over time (fuzzing finds edge cases → add to corpus)
 
 ## Future
 
