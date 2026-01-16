@@ -285,4 +285,45 @@ impl<'mem, 'facet> PeekListLike<'mem, 'facet> {
     pub const fn def(&self) -> ListLikeDef {
         self.def
     }
+
+    /// Returns the list contents as a byte slice if the element type is `u8`.
+    ///
+    /// This is useful for serializing `Vec<u8>`, `&[u8]`, `[u8; N]` etc. in bulk
+    /// instead of element-by-element.
+    ///
+    /// Returns `None` if:
+    /// - The element type is not `u8`
+    /// - The list is not contiguous in memory
+    pub fn as_bytes(&self) -> Option<&'mem [u8]> {
+        // Check if element type is u8
+        if !self.def.t().is_type::<u8>() {
+            return None;
+        }
+
+        if self.len == 0 {
+            return Some(&[]);
+        }
+
+        // Get the base pointer
+        let base_ptr = match self.def {
+            ListLikeDef::List(def) => {
+                if let Some(as_ptr) = def.vtable.as_ptr {
+                    unsafe { as_ptr(self.value.data()) }
+                } else {
+                    // No as_ptr means non-contiguous storage
+                    return None;
+                }
+            }
+            ListLikeDef::Array(def) => unsafe { (def.vtable.as_ptr)(self.value.data()) },
+            ListLikeDef::Slice(_) => {
+                // For slices, get the data pointer directly from the wide pointer
+                PtrConst::new(unsafe {
+                    NonNull::new_unchecked(self.value.data().raw_ptr() as *mut u8).as_ptr()
+                })
+            }
+        };
+
+        // Create a slice from the raw pointer and length
+        Some(unsafe { core::slice::from_raw_parts(base_ptr.raw_ptr(), self.len) })
+    }
 }

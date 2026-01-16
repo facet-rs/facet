@@ -334,6 +334,34 @@ pub trait FormatSerializer {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    /// Serialize a byte sequence (`Vec<u8>`, `&[u8]`, etc.) in bulk.
+    ///
+    /// For binary formats like postcard that store byte sequences as raw bytes
+    /// (varint length followed by raw data), this allows bulk writing instead
+    /// of element-by-element serialization.
+    ///
+    /// If the serializer handles this, it should write the bytes directly and
+    /// return `Ok(true)`. If it doesn't support this optimization, it should
+    /// return `Ok(false)` and the serializer will fall back to element-by-element
+    /// serialization.
+    ///
+    /// Returns `Ok(true)` if handled (bytes were written), `Ok(false)` otherwise.
+    fn serialize_byte_sequence(&mut self, _bytes: &[u8]) -> Result<bool, Self::Error> {
+        // Default: not supported, fall back to element-by-element
+        Ok(false)
+    }
+
+    /// Serialize a fixed-size byte array (`[u8; N]`) in bulk.
+    ///
+    /// Unlike `serialize_byte_sequence`, this does NOT write a length prefix
+    /// since the array size is known from the type.
+    ///
+    /// Returns `Ok(true)` if handled (bytes were written), `Ok(false)` otherwise.
+    fn serialize_byte_array(&mut self, _bytes: &[u8]) -> Result<bool, Self::Error> {
+        // Default: not supported, fall back to element-by-element
+        Ok(false)
+    }
 }
 
 /// Error produced by the shared serializer.
@@ -499,6 +527,25 @@ where
         facet_core::Def::List(_) | facet_core::Def::Array(_) | facet_core::Def::Slice(_) => {
             let list = value.into_list_like().map_err(SerializeError::Reflect)?;
             let len = list.len();
+
+            // Check if this is a byte sequence - if so, try bulk serialization
+            if let Some(bytes) = list.as_bytes() {
+                let handled = match value.shape().def {
+                    // Arrays have no length prefix
+                    facet_core::Def::Array(_) => serializer
+                        .serialize_byte_array(bytes)
+                        .map_err(SerializeError::Backend)?,
+                    // Lists and slices have a length prefix
+                    _ => serializer
+                        .serialize_byte_sequence(bytes)
+                        .map_err(SerializeError::Backend)?,
+                };
+                if handled {
+                    return Ok(());
+                }
+            }
+            // Fall through to element-by-element if not handled
+
             match value.shape().def {
                 facet_core::Def::Array(_) => {
                     serializer.begin_seq().map_err(SerializeError::Backend)?
