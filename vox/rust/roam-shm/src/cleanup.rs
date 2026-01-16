@@ -5,6 +5,7 @@
 //! 2. Cleaning up stale SHM files on startup
 //! 3. Writing .meta files to prevent PID reuse issues
 
+#[cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 

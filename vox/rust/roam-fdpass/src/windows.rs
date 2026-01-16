@@ -10,11 +10,25 @@ use std::io::{self, Read, Write};
 use std::mem::{self, MaybeUninit};
 use std::net::TcpListener;
 use std::os::windows::io::{AsRawSocket, FromRawSocket, RawSocket};
+use std::sync::Once;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use windows_sys::Win32::Networking::WinSock::{
-    WSADuplicateSocketW, WSAGetLastError, WSASocketW, INVALID_SOCKET, SOCKET, WSAPROTOCOL_INFOW,
-    WSA_FLAG_OVERLAPPED,
+    WSADuplicateSocketW, WSAGetLastError, WSASocketW, WSAStartup, INVALID_SOCKET, SOCKET,
+    WSAPROTOCOL_INFOW, WSA_FLAG_OVERLAPPED, WSADATA,
 };
+
+/// Ensure Winsock is initialized. This is required before calling any Winsock functions.
+fn ensure_winsock_initialized() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let mut wsa_data: MaybeUninit<WSADATA> = MaybeUninit::uninit();
+        // Request Winsock 2.2
+        let result = unsafe { WSAStartup(0x0202, wsa_data.as_mut_ptr()) };
+        if result != 0 {
+            panic!("WSAStartup failed with error: {}", result);
+        }
+    });
+}
 
 /// Size of the WSAPROTOCOL_INFOW structure.
 const PROTOCOL_INFO_SIZE: usize = mem::size_of::<WSAPROTOCOL_INFOW>();
@@ -111,6 +125,8 @@ where
 
 /// Duplicate a socket for use in another process.
 fn duplicate_socket(socket: SOCKET, target_pid: u32) -> io::Result<WSAPROTOCOL_INFOW> {
+    ensure_winsock_initialized();
+
     let mut protocol_info: MaybeUninit<WSAPROTOCOL_INFOW> = MaybeUninit::uninit();
 
     let result =
@@ -126,6 +142,8 @@ fn duplicate_socket(socket: SOCKET, target_pid: u32) -> io::Result<WSAPROTOCOL_I
 
 /// Create a socket from protocol info received from another process.
 fn create_socket_from_info(protocol_info: &WSAPROTOCOL_INFOW) -> io::Result<SOCKET> {
+    ensure_winsock_initialized();
+
     let socket = unsafe {
         WSASocketW(
             protocol_info.iAddressFamily,

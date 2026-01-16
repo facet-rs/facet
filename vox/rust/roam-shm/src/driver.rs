@@ -883,6 +883,7 @@ impl MultiPeerHostDriver {
                     trace!("MultiPeerHostDriver: doorbell rang for peer {:?}", peer_id);
                     // Poll SHM host for ALL ready messages (not just from the peer that rang)
                     let result = self.host.poll();
+                    trace!("MultiPeerHostDriver: poll returned {} messages", result.messages.len());
 
                     // Ring doorbells for guests whose slots were freed (backpressure wakeup)
                     for freed_peer_id in result.slots_freed_for {
@@ -904,7 +905,7 @@ impl MultiPeerHostDriver {
                             }
                         };
 
-                        trace!("MultiPeerHostDriver: handling SHM message from peer {:?}", pid);
+                        trace!("MultiPeerHostDriver: handling SHM message from peer {:?}: {:?}", pid, std::mem::discriminant(&msg));
                         if let Err(e) = self.handle_message(pid, msg).await {
                             warn!("MultiPeerHostDriver: error handling message from peer {:?}: {:?}", pid, e);
                             // Continue processing other peers - don't let one peer's error crash the driver
@@ -980,43 +981,46 @@ impl MultiPeerHostDriver {
                 });
 
                 // Set up doorbell for this peer (shared via Arc)
+                debug!("AddPeer: looking for doorbell for {:?}", peer_id);
                 if let Some(doorbell) = self.host.take_doorbell(peer_id) {
+                    debug!("AddPeer: found doorbell for {:?}, spawning waiter task", peer_id);
                     let doorbell = Arc::new(doorbell);
                     self.doorbells.insert(peer_id, doorbell.clone());
 
                     // Spawn doorbell waiter task with cloned Arc
                     let ring_tx = self.ring_tx.clone();
                     tokio::spawn(async move {
-                        trace!("Doorbell waiter task started for peer {:?}", peer_id);
+                        debug!("Doorbell waiter task started for peer {:?}", peer_id);
                         // On Windows, accept the named pipe connection from the guest
+                        debug!("Doorbell waiter: calling accept() for {:?}", peer_id);
                         if let Err(e) = doorbell.accept().await {
-                            trace!("Doorbell accept failed for peer {:?}: {:?}", peer_id, e);
+                            debug!("Doorbell accept failed for peer {:?}: {:?}", peer_id, e);
                             return;
                         }
-                        trace!(
-                            "Doorbell waiter: accepted connection for peer {:?}",
+                        debug!(
+                            "Doorbell waiter: accept() returned for peer {:?}",
                             peer_id
                         );
                         loop {
-                            trace!("Doorbell waiter: waiting for peer {:?}", peer_id);
+                            debug!("Doorbell waiter: calling wait() for peer {:?}", peer_id);
                             match doorbell.wait().await {
                                 Ok(()) => {
-                                    trace!("Doorbell waiter: peer {:?} rang doorbell!", peer_id);
+                                    debug!("Doorbell waiter: peer {:?} rang doorbell!", peer_id);
                                     // Peer rang doorbell, notify driver
                                     if ring_tx.send(peer_id).is_err() {
-                                        trace!(
+                                        debug!(
                                             "Doorbell waiter: driver shut down for peer {:?}",
                                             peer_id
                                         );
                                         break;
                                     }
-                                    trace!(
+                                    debug!(
                                         "Doorbell waiter: notification sent for peer {:?}",
                                         peer_id
                                     );
                                 }
                                 Err(e) => {
-                                    trace!(
+                                    debug!(
                                         "Doorbell waiter: error for peer {:?}: {:?}",
                                         peer_id, e
                                     );
@@ -1025,12 +1029,14 @@ impl MultiPeerHostDriver {
                                 }
                             }
                         }
-                        trace!("Doorbell waiter task exiting for peer {:?}", peer_id);
+                        debug!("Doorbell waiter task exiting for peer {:?}", peer_id);
                     });
 
                     // Manually trigger an immediate SHM poll for this peer to catch any messages
                     // that arrived before the doorbell waiter task started waiting.
                     let _ = self.ring_tx.send(peer_id);
+                } else {
+                    error!("AddPeer: NO DOORBELL FOUND for {:?}!", peer_id);
                 }
 
                 // Send the handle back to the caller

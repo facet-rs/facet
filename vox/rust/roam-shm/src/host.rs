@@ -213,6 +213,7 @@ impl ShmHost {
         shm_primitives::clear_cloexec(guest_handle.as_raw_fd())?;
 
         // Track this peer
+        tracing::debug!("add_peer: storing doorbell for {:?}", peer_id);
         self.guests.insert(
             peer_id,
             GuestState {
@@ -224,6 +225,7 @@ impl ShmHost {
                 death_notified: false,
             },
         );
+        tracing::debug!("add_peer: doorbell stored for {:?}", peer_id);
 
         Ok(SpawnTicket::new(hub_path, peer_id, guest_handle))
     }

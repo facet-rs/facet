@@ -56,7 +56,9 @@ impl DoorbellHandle {
     }
 
     /// Parse from a command-line argument value.
-    pub fn from_arg(s: &str) -> Result<Self, std::convert::Infallible> {
+    /// # Safety
+    /// The caller must ensure the pipe name refers to a valid doorbell pipe.
+    pub unsafe fn from_arg(s: &str) -> Result<Self, std::convert::Infallible> {
         Ok(Self(s.to_string()))
     }
 
@@ -143,26 +145,46 @@ impl Doorbell {
         // reads, both can get stuck trying to write.
         self.try_drain();
 
-        // Try to write without waiting - if buffer is full, that's okay (signal coalesced)
-        let result = match &self.pipe {
-            DoorbellPipe::Server(server) => server.try_write(&buf),
-            DoorbellPipe::Client(client) => client.try_write(&buf),
-        };
+        // On Windows named pipes, we may need to wait for write readiness.
+        // Loop until we successfully write or hit an error.
+        let signal_result = loop {
+            // Try to write without waiting
+            let result = match &self.pipe {
+                DoorbellPipe::Server(server) => server.try_write(&buf),
+                DoorbellPipe::Client(client) => client.try_write(&buf),
+            };
 
-        let signal_result = match result {
-            Ok(1) => SignalResult::Sent,
-            Ok(0) => SignalResult::Sent,
-            Ok(_) => SignalResult::Sent,
-            Err(ref e) if e.kind() == ErrorKind::WouldBlock => SignalResult::BufferFull,
-            Err(ref e) if e.kind() == ErrorKind::BrokenPipe => SignalResult::PeerDead,
-            Err(ref e) if e.kind() == ErrorKind::NotConnected => SignalResult::PeerDead,
-            Err(ref e) if e.raw_os_error() == Some(232) => SignalResult::PeerDead,
-            Err(ref e) if e.raw_os_error() == Some(233) => SignalResult::PeerDead,
-            Err(e) => {
-                if !self.peer_dead_logged.swap(true, Ordering::Relaxed) {
-                    tracing::debug!(pipe = %self.pipe_name, error = %e, "doorbell signal failed");
+            match result {
+                Ok(1) => break SignalResult::Sent,
+                Ok(0) => break SignalResult::Sent,
+                Ok(_) => break SignalResult::Sent,
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    // On Windows, WouldBlock can mean the pipe isn't ready yet.
+                    // Wait for write readiness and retry.
+                    let ready_result = match &self.pipe {
+                        DoorbellPipe::Server(server) => server.ready(Interest::WRITABLE).await,
+                        DoorbellPipe::Client(client) => client.ready(Interest::WRITABLE).await,
+                    };
+                    match ready_result {
+                        Ok(_) => continue, // Retry the write
+                        Err(e) => {
+                            if !self.peer_dead_logged.swap(true, Ordering::Relaxed) {
+                                tracing::debug!(pipe = %self.pipe_name, error = %e, "doorbell signal ready failed");
+                            }
+                            break SignalResult::PeerDead;
+                        }
+                    }
                 }
-                SignalResult::PeerDead
+                Err(ref e) if e.kind() == ErrorKind::BrokenPipe => break SignalResult::PeerDead,
+                Err(ref e) if e.kind() == ErrorKind::NotConnected => break SignalResult::PeerDead,
+                Err(ref e) if e.raw_os_error() == Some(232) => break SignalResult::PeerDead,
+                Err(ref e) if e.raw_os_error() == Some(233) => break SignalResult::PeerDead,
+                Err(e) => {
+                    if !self.peer_dead_logged.swap(true, Ordering::Relaxed) {
+                        tracing::debug!(pipe = %self.pipe_name, error = %e, "doorbell signal failed");
+                    }
+                    break SignalResult::PeerDead;
+                }
             }
         };
         tracing::trace!(pipe = %self.pipe_name, ?signal_result, "doorbell signal");
