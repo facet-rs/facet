@@ -1429,6 +1429,251 @@ fn issue_aria_label_roundtrip() {
     assert_eq!(serialized, reserialized, "Roundtrip should be idempotent");
 }
 
+// Issue: DlContent enum lacks Text variant for whitespace between dt/dd elements
+// When parsing HTML like <dl>\n<dt>...</dt>\n<dd>...</dd>\n</dl>, the whitespace
+// between elements cannot be deserialized because DlContent only has Dt and Dd variants.
+#[test]
+fn issue_dl_content_text_variant() {
+    use facet_html_dom::Dl;
+
+    // Simple dl with whitespace between elements (common in real HTML)
+    let html = r#"<dl>
+<dt>Term</dt>
+<dd>Definition</dd>
+</dl>"#;
+
+    let result = facet_html::from_str::<Dl>(html);
+    assert!(
+        result.is_ok(),
+        "DlContent should handle text/whitespace between dt/dd: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn issue_dl_content_in_full_document() {
+    // This is the pattern from the args showcase page that fails
+    let html = r#"<!DOCTYPE html>
+<html lang="en">
+<head><title>Test</title></head>
+<body>
+<dl>
+<dt>Source</dt><dd>Test</dd>
+</dl>
+</body>
+</html>"#;
+
+    let result = facet_html::from_str::<Html>(html);
+    assert!(
+        result.is_ok(),
+        "Full document with dl should parse: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn issue_tr_content_text_variant() {
+    use facet_html_dom::Tr;
+
+    // Text between th/td cells - should this work?
+    let html = r#"<tr><th>A</th>WOOPS<th>B</th></tr>"#;
+
+    let result = facet_html::from_str::<Tr>(html);
+    assert!(
+        result.is_ok(),
+        "Tr should handle text between cells: {:?}",
+        result.err()
+    );
+}
+
+// ============================================================================
+// Devilish HTML corner cases - text in unexpected places
+// ============================================================================
+
+#[test]
+fn lenient_text_in_dl_is_discarded() {
+    use facet_html_dom::Dl;
+
+    // Whitespace AND actual text between dt/dd - all should be discarded
+    let html = r#"<dl>
+        RANDOM TEXT HERE
+        <dt>Term</dt>
+        more garbage
+        <dd>Definition</dd>
+        trailing nonsense
+    </dl>"#;
+
+    let dl: Dl = facet_html::from_str(html).expect("should parse despite garbage text");
+    assert_eq!(
+        dl.children.len(),
+        2,
+        "should have exactly 2 children (dt + dd)"
+    );
+}
+
+#[test]
+fn lenient_text_in_table_structure() {
+    // Text in places it shouldn't be: between rows, between cells
+    let html = r#"<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body>
+<table>
+    GARBAGE IN TABLE
+    <tr>
+        TEXT IN ROW
+        <td>Cell 1</td>
+        MORE TEXT
+        <td>Cell 2</td>
+    </tr>
+    BETWEEN ROWS
+    <tr>
+        <th>Header</th>
+    </tr>
+</table>
+</body>
+</html>"#;
+
+    let doc: Html = facet_html::from_str(html).expect("should parse table with garbage text");
+    // Just verify it parses - the text is silently discarded
+    assert!(doc.body.is_some());
+}
+
+#[test]
+fn lenient_text_in_select() {
+    // Text between options in a select
+    let html = r#"<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body>
+<select>
+    WHAT IS THIS
+    <option>One</option>
+    DOING HERE
+    <option>Two</option>
+    ???
+</select>
+</body>
+</html>"#;
+
+    let doc: Html = facet_html::from_str(html).expect("should parse select with garbage text");
+    assert!(doc.body.is_some());
+}
+
+#[test]
+fn lenient_text_in_ul_ol() {
+    // Text directly in ul/ol (not in li)
+    let html = r#"<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body>
+<ul>
+    BARE TEXT IN UL
+    <li>Item 1</li>
+    MORE BARE TEXT
+    <li>Item 2</li>
+</ul>
+<ol>
+    BARE TEXT IN OL
+    <li>First</li>
+</ol>
+</body>
+</html>"#;
+
+    let doc: Html = facet_html::from_str(html).expect("should parse lists with garbage text");
+    assert!(doc.body.is_some());
+}
+
+#[test]
+fn lenient_deeply_nested_garbage() {
+    // Garbage text at multiple nesting levels
+    let html = r#"<!DOCTYPE html>
+<html>
+GARBAGE AT HTML LEVEL - wait this is actually in body
+<head><title>Test</title></head>
+<body>
+    <div>
+        <dl>
+            TEXT IN DL
+            <dt>
+                <dl>
+                    NESTED DL TEXT
+                    <dt>Inner term</dt>
+                    <dd>Inner def</dd>
+                </dl>
+            </dt>
+            <dd>Outer def</dd>
+        </dl>
+    </div>
+</body>
+</html>"#;
+
+    let doc: Html = facet_html::from_str(html).expect("should handle deeply nested garbage");
+    assert!(doc.body.is_some());
+}
+
+#[test]
+fn lenient_mixed_valid_and_invalid_text() {
+    // Mix of valid text (in p, span) and invalid text (in dl, table)
+    let html = r#"<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body>
+    <p>This text is valid and should be preserved.</p>
+    <dl>
+        This text is invalid and should be discarded.
+        <dt>Term with <span>valid inline text</span></dt>
+        <dd>Definition with <em>emphasis</em></dd>
+    </dl>
+    <p>More valid text.</p>
+</body>
+</html>"#;
+
+    let doc: Html = facet_html::from_str(html).expect("should handle mixed valid/invalid text");
+    assert!(doc.body.is_some());
+}
+
+#[test]
+fn lenient_only_whitespace_vs_actual_text() {
+    use facet_html_dom::Dl;
+
+    // Just whitespace - common in pretty-printed HTML
+    let whitespace_only = r#"<dl>
+        <dt>Term</dt>
+        <dd>Def</dd>
+    </dl>"#;
+
+    // Actual text content - still invalid but should be discarded
+    let with_text = r#"<dl>ACTUAL TEXT<dt>Term</dt><dd>Def</dd></dl>"#;
+
+    let dl1: Dl = facet_html::from_str(whitespace_only).expect("whitespace should parse");
+    let dl2: Dl = facet_html::from_str(with_text).expect("text should also parse");
+
+    // Both should have the same structure
+    assert_eq!(dl1.children.len(), dl2.children.len());
+}
+
+#[test]
+fn lenient_empty_elements_with_text() {
+    // Elements that are normally empty but have text stuffed in them
+    let html = r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <br>
+    <hr>
+    <img src="test.png" alt="test">
+    <input type="text">
+</body>
+</html>"#;
+
+    let doc: Html = facet_html::from_str(html).expect("should handle void elements");
+    assert!(doc.body.is_some());
+}
+
 #[test]
 fn doctype_roundtrip() {
     let html = r#"<!DOCTYPE html>
@@ -1439,9 +1684,12 @@ fn doctype_roundtrip() {
 
     let doc: Html = facet_html::from_str(html).expect("parse");
     eprintln!("doctype field: {:?}", doc.doctype);
-    
+
     let serialized = facet_html::to_string(&doc).expect("serialize");
     eprintln!("serialized:\n{}", serialized);
-    
-    assert!(serialized.contains("<!DOCTYPE"), "DOCTYPE should be preserved in roundtrip");
+
+    assert!(
+        serialized.contains("<!DOCTYPE"),
+        "DOCTYPE should be preserved in roundtrip"
+    );
 }

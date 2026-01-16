@@ -191,6 +191,10 @@ impl<'de> DomParser<'de> for HtmlParser<'de> {
     fn current_span(&self) -> Option<facet_reflect::Span> {
         None
     }
+
+    fn is_lenient(&self) -> bool {
+        true
+    }
 }
 
 /// Build DomEvents from HTML input.

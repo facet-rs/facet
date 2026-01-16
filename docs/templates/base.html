@@ -69,57 +69,19 @@
 
     <script src="/pagefind/pagefind-ui.js"></script>
     <script>
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', () => {
         // Build TOC from showcase scenario headers
         const toc = document.querySelector('.toc ul');
         const showcase = document.querySelector('.showcase');
         if (toc && showcase && toc.children.length === 0) {
             const headers = showcase.querySelectorAll('h3[id]');
-            headers.forEach(function(h3) {
+            headers.forEach((h3) => {
                 const li = document.createElement('li');
                 const a = document.createElement('a');
                 a.href = '#' + h3.id;
                 a.textContent = h3.textContent.replace(/^§/, '');
                 li.appendChild(a);
                 toc.appendChild(li);
-            });
-        }
-
-        // Initialize Pagefind
-        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-        const searchShortcut = isMac ? '⌘K' : 'Ctrl+K';
-        new PagefindUI({
-            element: "#search",
-            showSubResults: true,
-            showImages: false,
-            translations: {
-                placeholder: `Search ${searchShortcut}`
-            }
-        });
-
-        // Keyboard shortcuts for search
-        function isInputElement(el) {
-            const tagName = el.tagName.toLowerCase();
-            return tagName === 'input' || tagName === 'textarea' || el.isContentEditable;
-        }
-
-        document.addEventListener('keydown', function(e) {
-            const searchInput = document.querySelector('#search input');
-            if (!searchInput) return;
-
-            // Cmd+K or Ctrl+K
-            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-                e.preventDefault();
-                searchInput.focus();
-                searchInput.select();
-                return;
-            }
-            // Slash when not in an input
-            if (e.key === '/' && !isInputElement(e.target)) {
-                e.preventDefault();
-                searchInput.focus();
-                searchInput.select();
-            }
         });
     });
     </script>

@@ -355,13 +355,19 @@ where
             }
         };
 
-        let text_variant_idx = enum_def
-            .variants
-            .iter()
-            .position(|v| v.is_text())
-            .ok_or_else(|| {
-                DomDeserializeError::Unsupported("enum has no Text variant for text content".into())
-            })?;
+        let text_variant_idx = match enum_def.variants.iter().position(|v| v.is_text()) {
+            Some(idx) => idx,
+            None => {
+                // No text variant - either error (XML) or silently discard (HTML)
+                if self.parser.is_lenient() {
+                    return Ok(wip);
+                } else {
+                    return Err(DomDeserializeError::Unsupported(
+                        "enum has no Text variant for text content".into(),
+                    ));
+                }
+            }
+        };
 
         let variant = &enum_def.variants[text_variant_idx];
         wip = wip.select_nth_variant(text_variant_idx)?;

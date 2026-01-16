@@ -27,4 +27,12 @@ pub trait DomParser<'de> {
     fn current_span(&self) -> Option<facet_reflect::Span> {
         None
     }
+
+    /// Whether this parser is lenient about text in unexpected places.
+    ///
+    /// HTML parsers return `true` - text without a corresponding field is silently discarded.
+    /// XML parsers return `false` - text without a corresponding field is an error.
+    fn is_lenient(&self) -> bool {
+        false
+    }
 }

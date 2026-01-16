@@ -727,6 +727,8 @@ pub struct Dl {
 }
 
 /// Content types that can appear inside a description list.
+///
+/// Note: Text content is silently discarded (per HTML spec, `<dl>` only contains `<dt>`/`<dd>`).
 #[derive(Facet)]
 #[repr(u8)]
 pub enum DlContent {
@@ -2305,7 +2307,7 @@ pub struct CustomPhrasingElement {
 #[repr(u8)]
 pub enum MetadataContent {
     /// Text node (for whitespace between elements).
-    #[facet(rename = "_text", html::text)]
+    #[facet(html::text)]
     Text(String),
     /// Document title.
     #[facet(rename = "title")]
@@ -2339,7 +2341,7 @@ pub enum MetadataContent {
 #[allow(clippy::large_enum_variant)] // DOM-like structures naturally have large variants
 pub enum FlowContent {
     /// Text node (for mixed content).
-    #[facet(rename = "_text", html::text)]
+    #[facet(html::text)]
     Text(String),
 
     // Sections
@@ -2519,7 +2521,7 @@ pub enum FlowContent {
 #[allow(clippy::large_enum_variant)] // DOM-like structures naturally have large variants
 pub enum PhrasingContent {
     /// Text node (for mixed content).
-    #[facet(rename = "_text", html::text)]
+    #[facet(html::text)]
     Text(String),
     /// A element.
     #[facet(rename = "a")]
