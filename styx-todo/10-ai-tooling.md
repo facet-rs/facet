@@ -1,6 +1,6 @@
 # AI Tooling
 
-**Status:** TODO  
+**Status:** In Progress  
 **Priority:** Medium
 
 ## Problem
@@ -48,8 +48,18 @@ Create a `STYX.md` or similar that projects can include to teach AI about their 
 - Project-specific schemas
 - Validation commands
 
-## Recommended Approach
+## Progress
 
-1. Start with a Claude Code skill (immediate value, easy to iterate)
-2. Add `styx @syntax` CLI command (self-documenting)
-3. Consider MCP server later if there's demand
+### Done
+
+- [x] **Claude Code skill** created at `~/.claude/skills/styx/SKILL.md`
+  - Covers syntax (scalars, objects, sequences, tags, heredocs)
+  - Schema language reference
+  - CLI usage for validation
+  - Common mistakes section
+
+### Remaining
+
+- [ ] Add `styx @syntax` CLI command
+- [ ] Consider MCP server for programmatic access
+- [ ] Consider publishing skill to a public repo
