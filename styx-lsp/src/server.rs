@@ -556,36 +556,46 @@ impl LanguageServer for StyxLanguageServer {
         }
 
         // Case 2: Hover on field name
-        if let Some(field_name) = find_field_key_at_offset(tree, offset)
+        if let Some(field_path) = find_field_path_at_offset(tree, offset)
             && let Some((SchemaRef::External(schema_path), _)) =
                 find_schema_declaration_with_range(tree, &doc.content)
             && let Some(resolved) = resolve_schema_path(&schema_path, &uri)
             && let Ok(schema_source) = std::fs::read_to_string(&resolved)
-            && let Some(type_str) = get_field_type_from_schema(&schema_source, &field_name)
         {
-            // Create a file:// URI for the schema link with line number
-            let field_range = find_field_in_schema_source(&schema_source, &field_name);
-            let schema_link = if let Ok(mut schema_uri) = Url::from_file_path(&resolved) {
-                // Add line/column fragment for jumping to the field definition
-                if let Some(range) = field_range {
-                    // LSP positions are 0-based, but URI fragments are typically 1-based
-                    let line = range.start.line + 1;
-                    let col = range.start.character + 1;
-                    schema_uri.set_fragment(Some(&format!("L{}:{}", line, col)));
-                }
-                Some(schema_uri)
-            } else {
-                None
-            };
-            let content =
-                format_field_hover(&field_name, &type_str, &schema_path, schema_link.as_ref());
-            return Ok(Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: content,
-                }),
-                range: None,
-            }));
+            // Convert path to &[&str] for the lookup
+            let path_refs: Vec<&str> = field_path.iter().map(|s| s.as_str()).collect();
+
+            if let Some(field_info) = get_field_info_from_schema(&schema_source, &path_refs) {
+                // Create a file:// URI for the schema link with line number
+                // Use the last field in the path for finding the definition location
+                let field_name = field_path.last().map(|s| s.as_str()).unwrap_or("");
+                let field_range = find_field_in_schema_source(&schema_source, field_name);
+                let schema_link = if let Ok(mut schema_uri) = Url::from_file_path(&resolved) {
+                    // Add line/column fragment for jumping to the field definition
+                    if let Some(range) = field_range {
+                        // LSP positions are 0-based, but URI fragments are typically 1-based
+                        let line = range.start.line + 1;
+                        let col = range.start.character + 1;
+                        schema_uri.set_fragment(Some(&format!("L{}:{}", line, col)));
+                    }
+                    Some(schema_uri)
+                } else {
+                    None
+                };
+                let content = format_field_hover(
+                    &field_path,
+                    &field_info,
+                    &schema_path,
+                    schema_link.as_ref(),
+                );
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: content,
+                    }),
+                    range: None,
+                }));
+            }
         }
 
         Ok(None)
@@ -1442,38 +1452,91 @@ fn position_to_offset(content: &str, position: Position) -> usize {
     content.len()
 }
 
-/// Find the field key at a given offset in the tree
+/// Find the field key at a given offset in the tree (returns just the immediate field name)
 fn find_field_key_at_offset(tree: &Value, offset: usize) -> Option<String> {
-    let obj = tree.as_object()?;
+    // Use the path-based function and return just the last element
+    find_field_path_at_offset(tree, offset).and_then(|path| path.last().cloned())
+}
 
-    for entry in &obj.entries {
-        if let Some(span) = entry.key.span {
-            let start = span.start as usize;
-            let end = span.end as usize;
-            if offset >= start && offset < end {
-                return entry.key.as_str().map(String::from);
+/// A path segment - either a field name or a sequence index
+#[derive(Debug, Clone)]
+enum PathSegment {
+    Field(String),
+    Index(usize),
+}
+
+impl PathSegment {
+    fn as_str(&self) -> String {
+        match self {
+            PathSegment::Field(name) => name.clone(),
+            PathSegment::Index(i) => i.to_string(),
+        }
+    }
+}
+
+/// Find the field path at the given offset (e.g., ["logging", "format", "timestamp"] or ["items", "0", "name"])
+fn find_field_path_at_offset(tree: &Value, offset: usize) -> Option<Vec<String>> {
+    find_path_segments_at_offset(tree, offset)
+        .map(|segments| segments.iter().map(|s| s.as_str()).collect())
+}
+
+/// Find path segments at the given offset, including sequence indices
+fn find_path_segments_at_offset(tree: &Value, offset: usize) -> Option<Vec<PathSegment>> {
+    find_path_in_value(tree, offset)
+}
+
+/// Recursively find path segments in a value
+fn find_path_in_value(value: &Value, offset: usize) -> Option<Vec<PathSegment>> {
+    // Check if we're in an object
+    if let Some(obj) = value.as_object() {
+        for entry in &obj.entries {
+            // Check if cursor is on the key
+            if let Some(span) = entry.key.span {
+                let start = span.start as usize;
+                let end = span.end as usize;
+                if offset >= start && offset < end {
+                    if let Some(key) = entry.key.as_str() {
+                        return Some(vec![PathSegment::Field(key.to_string())]);
+                    }
+                }
+            }
+            // Check if cursor is within this entry's value
+            if let Some(span) = entry.value.span {
+                let start = span.start as usize;
+                let end = span.end as usize;
+                if offset >= start && offset < end {
+                    // Recurse into the value
+                    if let Some(mut nested_path) = find_path_in_value(&entry.value, offset) {
+                        // Prepend current key to the path
+                        if let Some(key) = entry.key.as_str() {
+                            nested_path.insert(0, PathSegment::Field(key.to_string()));
+                        }
+                        return Some(nested_path);
+                    }
+                    // We're on the value but not in a nested field - return this key
+                    if let Some(key) = entry.key.as_str() {
+                        return Some(vec![PathSegment::Field(key.to_string())]);
+                    }
+                }
             }
         }
-        // Also check if we're on the value side and return the key
-        if let Some(span) = entry.value.span {
-            let start = span.start as usize;
-            let end = span.end as usize;
-            if offset >= start && offset < end {
-                // Recurse into nested objects
-                if let Some(nested) = entry.value.as_object()
-                    && let Some(found) = find_field_key_at_offset(
-                        &Value {
-                            tag: None,
-                            payload: Some(styx_tree::Payload::Object(nested.clone())),
-                            span: entry.value.span,
-                        },
-                        offset,
-                    )
-                {
-                    return Some(found);
+    }
+
+    // Check if we're in a sequence
+    if let Some(seq) = value.as_sequence() {
+        for (index, item) in seq.items.iter().enumerate() {
+            if let Some(span) = item.span {
+                let start = span.start as usize;
+                let end = span.end as usize;
+                if offset >= start && offset < end {
+                    // Recurse into the sequence item
+                    if let Some(mut nested_path) = find_path_in_value(item, offset) {
+                        nested_path.insert(0, PathSegment::Index(index));
+                        return Some(nested_path);
+                    }
+                    // We're on this item but not deeper
+                    return Some(vec![PathSegment::Index(index)]);
                 }
-                // We're on the value, return the key name
-                return entry.key.as_str().map(String::from);
             }
         }
     }
@@ -1609,72 +1672,180 @@ fn get_schema_meta(schema_source: &str) -> Option<SchemaMeta> {
 }
 
 /// Get the schema type for a field from schema source
-fn get_field_type_from_schema(schema_source: &str, field_name: &str) -> Option<String> {
+/// Information about a field from the schema
+struct FieldInfo {
+    /// The type annotation (e.g., "@string", "@optional(@bool)")
+    type_str: String,
+    /// Doc comment if present
+    doc_comment: Option<String>,
+}
+
+fn get_field_info_from_schema(schema_source: &str, field_path: &[&str]) -> Option<FieldInfo> {
     let tree = styx_tree::parse(schema_source).ok()?;
     let obj = tree.as_object()?;
 
     for entry in &obj.entries {
         if entry.key.as_str() == Some("schema") {
-            return get_field_type_in_object(&entry.value, schema_source, field_name);
+            return get_field_info_in_object(&entry.value, field_path);
         }
     }
 
     None
 }
 
-/// Recursively get field type from an object value
-fn get_field_type_in_object(value: &Value, source: &str, field_name: &str) -> Option<String> {
-    let obj = if let Some(obj) = value.as_object() {
-        obj
-    } else if value.tag.is_some() {
-        match &value.payload {
-            Some(styx_tree::Payload::Object(obj)) => obj,
-            _ => return None,
-        }
-    } else {
+/// Recursively get field info from an object value, following a path
+fn get_field_info_in_object(value: &Value, path: &[&str]) -> Option<FieldInfo> {
+    if path.is_empty() {
         return None;
-    };
+    }
+
+    let field_name = path[0];
+    let remaining_path = &path[1..];
+
+    // Try to get the object - handle various wrappings
+    let obj = extract_object_from_value(value)?;
 
     for entry in &obj.entries {
         if entry.key.as_str() == Some(field_name) {
-            // Found the field - get its type from the value span
-            if let Some(span) = entry.value.span {
-                let type_str = &source[span.start as usize..span.end as usize];
-                return Some(type_str.trim().to_string());
+            if remaining_path.is_empty() {
+                // This is the target field
+                return Some(FieldInfo {
+                    type_str: format_type_concise(&entry.value),
+                    doc_comment: entry.doc_comment.clone(),
+                });
+            } else {
+                // Need to go deeper - unwrap wrappers like @optional
+                return get_field_info_in_object(&entry.value, remaining_path);
             }
         }
 
-        if entry.key.is_unit()
-            && let Some(found) = get_field_type_in_object(&entry.value, source, field_name)
-        {
-            return Some(found);
-        }
-
-        if let Some(found) = get_field_type_in_object(&entry.value, source, field_name) {
-            return Some(found);
+        // Check unit key entries (root schema)
+        if entry.key.is_unit() {
+            if let Some(found) = get_field_info_in_object(&entry.value, path) {
+                return Some(found);
+            }
         }
     }
 
     None
+}
+
+/// Extract an object from a value, unwrapping wrappers like @optional, @default, etc.
+fn extract_object_from_value(value: &Value) -> Option<&styx_tree::Object> {
+    // Direct object
+    if let Some(obj) = value.as_object() {
+        return Some(obj);
+    }
+
+    // Tagged object like @object{...}
+    if value.tag.is_some() {
+        match &value.payload {
+            Some(styx_tree::Payload::Object(obj)) => return Some(obj),
+            // Handle @optional(@object{...}) - tag with sequence payload
+            Some(styx_tree::Payload::Sequence(seq)) => {
+                // Look for @object inside the sequence
+                for item in &seq.items {
+                    if let Some(obj) = extract_object_from_value(item) {
+                        return Some(obj);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// Format a type value concisely (without expanding nested objects)
+fn format_type_concise(value: &Value) -> String {
+    let mut result = String::new();
+
+    if let Some(tag) = &value.tag {
+        result.push('@');
+        result.push_str(&tag.name);
+    }
+
+    match &value.payload {
+        None => {}
+        Some(styx_tree::Payload::Scalar(s)) => {
+            if value.tag.is_some() {
+                result.push('(');
+                result.push_str(&s.text);
+                result.push(')');
+            } else {
+                result.push_str(&s.text);
+            }
+        }
+        Some(styx_tree::Payload::Object(obj)) => {
+            if value.tag.is_some() {
+                // For tagged objects, show @tag{...} or @tag(@inner{...})
+                result.push_str("{...}");
+            } else {
+                // Count fields for a hint
+                let field_count = obj.entries.len();
+                result.push_str(&format!("{{...}} ({} fields)", field_count));
+            }
+        }
+        Some(styx_tree::Payload::Sequence(seq)) => {
+            result.push('(');
+            for (i, item) in seq.items.iter().enumerate() {
+                if i > 0 {
+                    result.push(' ');
+                }
+                result.push_str(&format_type_concise(item));
+            }
+            result.push(')');
+        }
+    }
+
+    if result.is_empty() {
+        "@".to_string() // unit
+    } else {
+        result
+    }
+}
+
+/// Format a breadcrumb path like `@ › logging › format › timestamp`
+fn format_breadcrumb(path: &[String]) -> String {
+    let mut result = String::from("@");
+    for segment in path {
+        result.push_str(" › ");
+        result.push_str(segment);
+    }
+    result
 }
 
 /// Format a hover message for a field
 fn format_field_hover(
-    field_name: &str,
-    type_str: &str,
+    field_path: &[String],
+    field_info: &FieldInfo,
     schema_path: &str,
     schema_uri: Option<&Url>,
 ) -> String {
     let mut content = String::new();
 
-    content.push_str(&format!("**{}** `{}`\n", field_name, type_str));
+    // Breadcrumb path
+    let breadcrumb = format_breadcrumb(field_path);
+    content.push_str(&format!("`{}`\n\n", breadcrumb));
+
+    // Type annotation
+    content.push_str(&format!("**Type:** `{}`\n", field_info.type_str));
+
+    // Doc comment (rendered as markdown)
+    if let Some(doc) = &field_info.doc_comment {
+        content.push('\n');
+        content.push_str(doc);
+        content.push('\n');
+    }
+
     content.push('\n');
 
-    // Use file:// URI if available for clickable link, otherwise just show the path
+    // Schema source link
     if let Some(uri) = schema_uri {
-        content.push_str(&format!("Defined in [{}]({})\n", schema_path, uri));
+        content.push_str(&format!("Defined in [{}]({})", schema_path, uri));
     } else {
-        content.push_str(&format!("Defined in {}\n", schema_path));
+        content.push_str(&format!("Defined in {}", schema_path));
     }
 
     content
@@ -2260,6 +2431,157 @@ schema {
             edit.new_text, expected,
             "Multiline conversion should preserve nested object structure.\nGot:\n{}\n\nExpected:\n{}",
             edit.new_text, expected
+        );
+    }
+
+    #[test]
+    fn test_find_field_path_at_offset() {
+        // Test finding path in nested objects
+        let content = "logging {\n    format {\n        timestamp true\n    }\n}";
+        let tree = styx_tree::parse(content).unwrap();
+
+        // Position on "logging" key (offset 0-7)
+        let path = find_field_path_at_offset(&tree, 3);
+        assert_eq!(path, Some(vec!["logging".to_string()]));
+
+        // Position on "format" key (inside logging object)
+        // "logging {\n    format" - format starts at offset 14
+        let path = find_field_path_at_offset(&tree, 16);
+        assert_eq!(
+            path,
+            Some(vec!["logging".to_string(), "format".to_string()])
+        );
+
+        // Position on "timestamp" key (inside format object)
+        // Find the offset of "timestamp"
+        let timestamp_offset = content.find("timestamp").unwrap();
+        let path = find_field_path_at_offset(&tree, timestamp_offset + 2);
+        assert_eq!(
+            path,
+            Some(vec![
+                "logging".to_string(),
+                "format".to_string(),
+                "timestamp".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_format_breadcrumb() {
+        assert_eq!(format_breadcrumb(&[]), "@");
+        assert_eq!(format_breadcrumb(&["logging".to_string()]), "@ › logging");
+        assert_eq!(
+            format_breadcrumb(&["logging".to_string(), "format".to_string()]),
+            "@ › logging › format"
+        );
+        assert_eq!(
+            format_breadcrumb(&[
+                "logging".to_string(),
+                "format".to_string(),
+                "timestamp".to_string()
+            ]),
+            "@ › logging › format › timestamp"
+        );
+        // With index
+        assert_eq!(
+            format_breadcrumb(&["items".to_string(), "0".to_string(), "name".to_string()]),
+            "@ › items › 0 › name"
+        );
+    }
+
+    #[test]
+    fn test_get_field_info_from_schema() {
+        let schema_source = r#"meta {
+    id test
+}
+schema {
+    @ @object{
+        name @string
+        logging @optional(@object{
+            level @string
+            format @optional(@object{
+                timestamp @optional(@bool)
+            })
+        })
+    }
+}"#;
+
+        // Top-level field
+        let info = get_field_info_from_schema(schema_source, &["name"]);
+        assert!(info.is_some(), "Should find 'name' field");
+        let info = info.unwrap();
+        assert_eq!(info.type_str, "@string");
+
+        // Nested field in @optional(@object{...})
+        let info = get_field_info_from_schema(schema_source, &["logging", "level"]);
+        assert!(info.is_some(), "Should find 'logging.level' field");
+        let info = info.unwrap();
+        assert_eq!(info.type_str, "@string");
+
+        // Deeply nested field
+        let info = get_field_info_from_schema(schema_source, &["logging", "format", "timestamp"]);
+        assert!(
+            info.is_some(),
+            "Should find 'logging.format.timestamp' field"
+        );
+        let info = info.unwrap();
+        assert_eq!(info.type_str, "@optional(@bool)");
+    }
+
+    #[test]
+    fn test_doc_comments_in_schema() {
+        let schema_source = r#"meta {
+    id test
+}
+schema {
+    @ @object{
+        /// The server name
+        name @string
+    }
+}"#;
+
+        // First, let's verify the tree structure
+        let tree = styx_tree::parse(schema_source).unwrap();
+        let obj = tree.as_object().unwrap();
+
+        // Find the schema entry
+        let schema_entry = obj
+            .entries
+            .iter()
+            .find(|e| e.key.as_str() == Some("schema"))
+            .unwrap();
+        let schema_obj = schema_entry.value.as_object().unwrap();
+
+        // Find the @ entry (unit key)
+        let unit_entry = schema_obj.entries.iter().find(|e| e.key.is_unit()).unwrap();
+
+        // The value is @object{...} - check if it's an object with entries
+        println!("unit_entry.value tag: {:?}", unit_entry.value.tag);
+        println!(
+            "unit_entry.value payload: {:?}",
+            unit_entry.value.payload.is_some()
+        );
+
+        // Navigate into the @object
+        if let Some(inner_obj) = unit_entry.value.as_object() {
+            for entry in &inner_obj.entries {
+                println!(
+                    "Inner entry: key={:?}, tag={:?}, doc={:?}",
+                    entry.key.as_str(),
+                    entry.key.tag_name(),
+                    entry.doc_comment
+                );
+            }
+        }
+
+        // Now test via our function
+        let info = get_field_info_from_schema(schema_source, &["name"]);
+        assert!(info.is_some(), "Should find 'name' field");
+        let info = info.unwrap();
+        assert_eq!(
+            info.doc_comment,
+            Some("The server name".to_string()),
+            "Doc comment should be extracted"
         );
     }
 }
