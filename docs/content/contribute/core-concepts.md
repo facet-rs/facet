@@ -12,7 +12,7 @@ Facet has two main layers:
 
 **Low-level** (`facet-core`): `Shape`, `Def`, `Type`, and vtables define the raw reflection metadata. The derive macro generates this. You rarely interact with it directly unless you're writing a format crate or implementing `Facet` manually.
 
-## Shape, type, and def
+## Shape, Type, and Def
 
 Every type that implements `Facet` has a `Shape` — a complete description of the type at runtime. The shape contains:
 
@@ -22,7 +22,7 @@ Every type that implements `Facet` has a `Shape` — a complete description of t
 
 - **VTables** — Function pointers for runtime operations. Can I clone this? Display it? Parse it from a string? The vtables answer these questions without requiring trait bounds at compile time.
 
-## Peek and partial
+## Peek and Partial
 
 `Peek` wraps a reference and lets you inspect it through the shape:
 
@@ -38,11 +38,11 @@ Every type that implements `Facet` has a `Shape` — a complete description of t
 
 Format crates use `Peek` to serialize and `Partial` to deserialize. They never see the concrete types — just shapes.
 
-## ValueVTable
+## VTables
 
-The `ValueVTable` contains function pointers for common operations: `clone_into`, `display`, `debug`, `parse`, `hash`, `partial_eq`, etc.
+`VTableDirect` and `VTableIndirect` contain function pointers for common operations: `clone_into`, `display`, `debug`, `parse`, `hash`, `partial_eq`, etc.
 
-The `value_vtable!` macro auto-detects which traits a type implements using autoderef specialization. If a type implements `Clone`, the vtable gets a clone function. If not, that slot is `None`.
+The derive macro auto-detects which traits a type implements. If a type implements `Clone`, the vtable gets a clone function. If not, that slot is `None`.
 
 This lets you clone a value at runtime without a `Clone` bound — you check `shape.is(Characteristic::Clone)` and call the vtable function.
 
@@ -52,7 +52,7 @@ This lets you clone a value at runtime without a `Clone` bound — you check `sh
 
 ```rust,noexec
 if shape.is(Characteristic::Clone) {
-    // Safe to call clone_into from the vtable
+    // Safe to call clone from the vtable
 }
 ```
 

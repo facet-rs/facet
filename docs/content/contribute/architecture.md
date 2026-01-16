@@ -33,8 +33,8 @@ insert_anchor_links = "heading"
                       | - unsynn parser  |           |
                       | - Code gen       |           |
                       +------------------+           |
-                                                    |
-                               +--------------------+
+                                                     |
+                               +---------------------+
                                v
 +-------------------------------------------------------------------+
 |               Format Crates & Utility Crates                      |
@@ -42,6 +42,7 @@ insert_anchor_links = "heading"
 |   facet-pretty, facet-diff, facet-assert, facet-value             |
 +-------------------------------------------------------------------+
 ```
+
 
 Format crates and utility crates primarily interact with `facet-reflect` — they use `Peek` to read values and `Partial` to build them.
 
