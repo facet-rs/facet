@@ -897,6 +897,11 @@ pre.term {
   display: none;
 }
 
+// Mobile sidebar nav - hidden by default on all screen sizes
+.mobile-sidebar-nav {
+  display: none;
+}
+
 // Responsive sidebar and nav
 @media (max-width: 900px) {
   .site-nav {
