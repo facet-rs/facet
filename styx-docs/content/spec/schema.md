@@ -145,19 +145,59 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > | Type | Description |
 > |------|-------------|
 > | `@string` | any scalar |
-> | `@boolean` | `true` or `false` |
-> | `@u8`, `@u16`, `@u32`, `@u64`, `@u128` | unsigned integers |
-> | `@i8`, `@i16`, `@i32`, `@i64`, `@i128` | signed integers |
-> | `@f32`, `@f64` | floating point |
-> | `@duration` | e.g., `30s`, `10ms`, `2h` |
-> | `@datetime` | RFC 3339 date-time, e.g., `2026-01-10T18:43:00Z` |
-> | `@date` | RFC 3339 full-date, e.g., `2026-01-10` |
-> | `@regex` | e.g., `/^hello$/i` |
-> | `@hex` | hex-encoded bytes, e.g., `deadbeef` |
-> | `@b64` | base64-encoded bytes, e.g., `SGVsbG8=` |
+> | `@bool` | `@true` or `@false` |
+> | `@int` | any integer |
+> | `@float` | any floating point number |
+> | `@unit` | the unit value `@` |
 > | `@any` | any value |
 >
 > Composite type constructors (`@optional`, `@union`, `@map`, `@enum`, `@flatten`) are described in their own sections.
+> Modifiers (`@default`, `@deprecated`) are described in their own sections.
+
+### Type constraints
+
+> r[schema.constraints]
+> Scalar types can have constraints specified in an object payload.
+
+> r[schema.constraints.string]
+> `@string` accepts optional constraints:
+>
+> | Constraint | Description |
+> |------------|-------------|
+> | `minLen` | minimum length (inclusive) |
+> | `maxLen` | maximum length (inclusive) |
+> | `pattern` | regex pattern the string must match |
+>
+> ```styx
+> name @string{minLen 1, maxLen 100}
+> slug @string{pattern "^[a-z0-9-]+$"}
+> ```
+
+> r[schema.constraints.int]
+> `@int` accepts optional constraints:
+>
+> | Constraint | Description |
+> |------------|-------------|
+> | `min` | minimum value (inclusive) |
+> | `max` | maximum value (inclusive) |
+>
+> ```styx
+> port @int{min 1, max 65535}
+> age @int{min 0}
+> ```
+
+> r[schema.constraints.float]
+> `@float` accepts optional constraints:
+>
+> | Constraint | Description |
+> |------------|-------------|
+> | `min` | minimum value (inclusive) |
+> | `max` | maximum value (inclusive) |
+>
+> ```styx
+> ratio @float{min 0.0, max 1.0}
+> temperature @float{min -273.15}
+> ```
 
 ### Optional fields
 
@@ -169,6 +209,39 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > server @object{
 >   host @string
 >   timeout @optional(@duration)
+> }
+> ```
+
+### Default values
+
+> r[schema.default]
+> `@default(value @T)` specifies a default value for optional fields.
+> If the field is absent, validation treats it as if the default value were present.
+> The first element is the default value, the second is the type constraint.
+>
+> ```styx
+> server @object{
+>   host @string
+>   port @default(8080 @int{min 1, max 65535})
+>   timeout @default(30s @duration)
+>   enabled @default(@true @bool)
+> }
+> ```
+>
+> Note: `@default` implies the field is optional. Using `@optional(@default(...))` is redundant.
+
+### Deprecation
+
+> r[schema.deprecated]
+> `@deprecated("reason" @T)` marks a field as deprecated.
+> Validation produces a warning (not an error) when deprecated fields are used.
+> The first element is the deprecation message, the second is the type constraint.
+>
+> ```styx
+> server @object{
+>   host @string
+>   // Old field, use 'host' instead
+>   hostname @deprecated("use 'host' instead" @string)
 > }
 > ```
 
@@ -188,7 +261,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > // Closed object (default): only host and port allowed
 > Server @object{
 >   host @string
->   port @u16
+>   port @int
 > }
 >
 > // Open object: allow any extra string fields
@@ -209,7 +282,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > `@union(...)` matches if the value matches any of the listed types.
 >
 > ```styx
-> id @union(@u64 @string)           // integer or string
+> id @union(@int @string)           // integer or string
 > value @union(@string @unit)       // nullable string
 > ```
 
@@ -222,9 +295,9 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > hosts @seq(@string)               // sequence of strings
 > servers @seq(@object{             // sequence of objects
 >   host @string
->   port @u16
+>   port @int
 > })
-> ids @seq(@union(@u64 @string))    // sequence of ids
+> ids @seq(@union(@int @string))    // sequence of ids
 > ```
 
 ### Maps
@@ -235,12 +308,12 @@ that is, any tagged unit value like `@string` or `@MyType`.
 >
 > ```styx
 > env @map(@string)              // string → string
-> ports @map(@u16)               // string → u16
+> ports @map(@int)               // string → int
 > ```
 >
 > r[schema.map.keys]
 > Valid key types are scalar types that can be parsed from the key's text representation:
-> `@string`, integer types (`@u8`, `@i32`, etc.), and `@boolean`.
+> `@string`, `@int`, and `@bool`.
 > Non-scalar key types (objects, sequences) are not allowed.
 > Key uniqueness is determined by the parsed key value per `r[key.equality]` in the parser spec,
 > not by the typed interpretation — `"1"` and `"01"` are distinct keys even if both parse as integer 1.
@@ -319,20 +392,25 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 > r[schema.validation]
 > Schema validation checks that a document conforms to a schema.
-> Validation produces a list of errors; an empty list means the document is valid.
+> Validation produces a list of errors and warnings; an empty error list means the document is valid.
 >
 > r[schema.validation.errors]
 > Validation errors MUST include:
 > - The path to the invalid value (e.g., `server.port`)
-> - The expected constraint (e.g., `@u16`)
+> - The expected constraint (e.g., `@int{min 1, max 65535}`)
 > - The actual value or its type
 >
 > Common error conditions:
-> - **Type mismatch**: value doesn't match the expected type (e.g., `"abc"` for `@u16`)
+> - **Type mismatch**: value doesn't match the expected type (e.g., `"abc"` for `@int`)
+> - **Constraint violation**: value doesn't meet constraints (e.g., `0` for `@int{min 1}`)
 > - **Missing required field**: a non-optional field is absent
 > - **Unknown field**: a field not in the schema (for closed objects)
 > - **Literal mismatch**: value doesn't match a literal constraint
 > - **Union failure**: value doesn't match any variant in a union
+>
+> r[schema.validation.warnings]
+> Validation warnings are non-fatal issues:
+> - **Deprecated field**: a field marked with `@deprecated` is present
 
 ## Meta schema
 
@@ -347,7 +425,7 @@ The schema for STYX schema files.
 ```styx
 meta {
   id https://styx-lang.org/schemas/schema
-  version 2026-01-11
+  version 2026-01-16
   description "Schema for STYX schema files"
 }
 
@@ -372,26 +450,59 @@ schema {
     description @optional(@string)
   }
 
+  /// String type constraints.
+  StringConstraints @object{
+    minLen @optional(@int{min 0})
+    maxLen @optional(@int{min 0})
+    pattern @optional(@string)
+  }
+
+  /// Integer type constraints.
+  IntConstraints @object{
+    min @optional(@int)
+    max @optional(@int)
+  }
+
+  /// Float type constraints.
+  FloatConstraints @object{
+    min @optional(@float)
+    max @optional(@float)
+  }
+
   /// A type constraint.
   Schema @enum{
-    /// Literal value constraint (a scalar).
-    literal @string
-    /// Type reference (any tag with unit payload, e.g., @string, @MyType).
-    type @
+    /// String type with optional constraints.
+    string @optional(@StringConstraints)
+    /// Integer type with optional constraints.
+    int @optional(@IntConstraints)
+    /// Float type with optional constraints.
+    float @optional(@FloatConstraints)
+    /// Boolean type.
+    bool
+    /// Unit type (the value must be @).
+    unit
+    /// Any type (accepts any value).
+    any
     /// Object schema: @object{field @type, @ @type}.
     object @object{@ @Schema}
     /// Sequence schema: @seq(@type).
-    seq @seq(@Schema)
+    seq(@Schema)
     /// Union: @union(@A @B ...).
     union @seq(@Schema)
     /// Optional: @optional(@T).
-    optional @Schema
+    optional(@Schema)
     /// Enum: @enum{variant, variant @object{...}}.
-    enum @object{@ @union(@unit @object{@ @Schema})}
+    enum @object{@ @Schema}
     /// Map: @map(@V) or @map(@K @V).
     map @seq(@Schema)
     /// Flatten: @flatten(@Type).
     flatten @
+    /// Default value: @default(value @type).
+    default @seq(@union(@string @Schema))
+    /// Deprecated: @deprecated("reason" @type).
+    deprecated @seq(@union(@string @Schema))
+    /// Type reference (user-defined type).
+    type @
   }
 }
 ```
