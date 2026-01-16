@@ -195,6 +195,10 @@ impl<'de> DomParser<'de> for HtmlParser<'de> {
     fn is_lenient(&self) -> bool {
         true
     }
+
+    fn format_namespace(&self) -> Option<&'static str> {
+        Some("html")
+    }
 }
 
 /// Build DomEvents from HTML input.

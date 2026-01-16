@@ -142,6 +142,13 @@ pub struct Field {
     #[cfg(feature = "alloc")]
     pub proxy: Option<&'static super::ProxyDef>,
 
+    /// Format-specific proxy definitions.
+    /// Set by `#[facet(xml::proxy = ProxyType)]`, `#[facet(json::proxy = ProxyType)]`, etc.
+    ///
+    /// These take precedence over the format-agnostic `proxy` field when the format matches.
+    #[cfg(feature = "alloc")]
+    pub format_proxies: &'static [super::FormatProxy],
+
     /// Metadata kind for this field, if it stores metadata.
     /// Set by `#[facet(metadata = kind)]` (e.g., `#[facet(metadata = span)]`).
     ///
@@ -440,6 +447,53 @@ impl Field {
     pub fn proxy_convert_out_fn(&self) -> Option<super::ProxyConvertOutFn> {
         self.proxy.map(|p| p.convert_out)
     }
+
+    /// Gets the format-specific proxy definition for the given format, if present.
+    ///
+    /// # Arguments
+    /// * `format` - The format namespace (e.g., "xml", "json")
+    ///
+    /// # Returns
+    /// The proxy definition for this format, or `None` if no format-specific proxy is defined.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub fn format_proxy(&self, format: &str) -> Option<&'static super::ProxyDef> {
+        self.format_proxies
+            .iter()
+            .find(|fp| fp.format == format)
+            .map(|fp| fp.proxy)
+    }
+
+    /// Gets the effective proxy definition for the given format.
+    ///
+    /// Resolution order:
+    /// 1. Format-specific proxy (e.g., `xml::proxy` when format is "xml")
+    /// 2. Format-agnostic proxy (`proxy`)
+    ///
+    /// # Arguments
+    /// * `format` - The format namespace (e.g., "xml", "json"), or `None` for format-agnostic
+    ///
+    /// # Returns
+    /// The appropriate proxy definition, or `None` if no proxy is defined.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub fn effective_proxy(&self, format: Option<&str>) -> Option<&'static super::ProxyDef> {
+        // First try format-specific proxy
+        if let Some(fmt) = format
+            && let Some(proxy) = self.format_proxy(fmt)
+        {
+            return Some(proxy);
+        }
+        // Fall back to format-agnostic proxy
+        self.proxy
+    }
+
+    /// Returns true if this field has any proxy (format-specific or format-agnostic).
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub fn has_any_proxy(&self) -> bool {
+        self.proxy.is_some() || !self.format_proxies.is_empty()
+    }
 }
 
 /// An attribute that can be set on a field.
@@ -531,6 +585,8 @@ pub struct FieldBuilder {
     invariants: Option<InvariantsFn>,
     #[cfg(feature = "alloc")]
     proxy: Option<&'static super::ProxyDef>,
+    #[cfg(feature = "alloc")]
+    format_proxies: &'static [super::FormatProxy],
     metadata: Option<&'static str>,
 }
 
@@ -560,6 +616,8 @@ impl FieldBuilder {
             invariants: None,
             #[cfg(feature = "alloc")]
             proxy: None,
+            #[cfg(feature = "alloc")]
+            format_proxies: &[],
             metadata: None,
         }
     }
@@ -647,6 +705,18 @@ impl FieldBuilder {
         self
     }
 
+    /// Sets the format-specific proxy definitions.
+    ///
+    /// Format-specific proxies take precedence over the format-agnostic `proxy` when
+    /// the format matches. Use this for types that need different representations
+    /// in different formats (e.g., XML vs JSON).
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub const fn format_proxies(mut self, proxies: &'static [super::FormatProxy]) -> Self {
+        self.format_proxies = proxies;
+        self
+    }
+
     /// Marks this field as storing metadata of the given kind.
     ///
     /// Metadata fields are excluded from structural hashing and equality,
@@ -679,6 +749,8 @@ impl FieldBuilder {
             invariants: self.invariants,
             #[cfg(feature = "alloc")]
             proxy: self.proxy,
+            #[cfg(feature = "alloc")]
+            format_proxies: self.format_proxies,
             metadata: self.metadata,
         }
     }

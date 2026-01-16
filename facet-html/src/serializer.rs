@@ -637,6 +637,10 @@ impl DomSerializer for HtmlSerializer {
     fn serialize_none(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    fn format_namespace(&self) -> Option<&'static str> {
+        Some("html")
+    }
 }
 
 // =============================================================================

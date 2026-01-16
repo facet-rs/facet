@@ -970,6 +970,51 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         Err(err)
     }
 
+    /// Performs custom serialization using a specific proxy definition.
+    ///
+    /// This is a lower-level method that takes a `ProxyDef` directly, useful when
+    /// the caller has already resolved which proxy to use (e.g., via `effective_proxy()`).
+    #[cfg(feature = "alloc")]
+    pub fn custom_serialization_with_proxy(
+        &self,
+        proxy_def: &'static facet_core::ProxyDef,
+    ) -> Result<OwnedPeek<'mem>, ReflectError> {
+        let target_shape = proxy_def.shape;
+        let tptr = target_shape.allocate().map_err(|_| ReflectError::Unsized {
+            shape: target_shape,
+            operation: "Not a Sized type",
+        })?;
+        let ser_res = unsafe { (proxy_def.convert_out)(self.data(), tptr) };
+        let err = match ser_res {
+            Ok(rptr) => {
+                if rptr.as_uninit() != tptr {
+                    ReflectError::CustomSerializationError {
+                        message: "convert_out did not return the expected pointer".into(),
+                        src_shape: self.shape,
+                        dst_shape: target_shape,
+                    }
+                } else {
+                    return Ok(OwnedPeek {
+                        shape: target_shape,
+                        data: rptr,
+                        _phantom: PhantomData,
+                    });
+                }
+            }
+            Err(message) => ReflectError::CustomSerializationError {
+                message,
+                src_shape: self.shape,
+                dst_shape: target_shape,
+            },
+        };
+        // if we reach here we have an error and we need to deallocate the target allocation
+        unsafe {
+            // SAFETY: unwrap should be ok since the allocation was ok
+            target_shape.deallocate_uninit(tptr).unwrap()
+        };
+        Err(err)
+    }
+
     /// Returns an `OwnedPeek` using the shape's container-level proxy for serialization.
     ///
     /// This is used when a type has `#[facet(proxy = ProxyType)]` at the container level.
@@ -979,7 +1024,22 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// Returns `None` if the shape has no container-level proxy.
     #[cfg(feature = "alloc")]
     pub fn custom_serialization_from_shape(&self) -> Result<Option<OwnedPeek<'mem>>, ReflectError> {
-        let Some(proxy_def) = self.shape.proxy else {
+        self.custom_serialization_from_shape_with_format(None)
+    }
+
+    /// Returns an `OwnedPeek` using the shape's container-level proxy for serialization,
+    /// with support for format-specific proxies.
+    ///
+    /// If `format_namespace` is provided (e.g., `Some("xml")`), looks for a format-specific
+    /// proxy first, falling back to the format-agnostic proxy.
+    ///
+    /// Returns `None` if no applicable proxy is found.
+    #[cfg(feature = "alloc")]
+    pub fn custom_serialization_from_shape_with_format(
+        &self,
+        format_namespace: Option<&str>,
+    ) -> Result<Option<OwnedPeek<'mem>>, ReflectError> {
+        let Some(proxy_def) = self.shape.effective_proxy(format_namespace) else {
             return Ok(None);
         };
 

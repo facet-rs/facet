@@ -869,6 +869,7 @@ pub(crate) fn gen_field_from_pfield(
     let mut skip_serializing_if_value: Option<TokenStream> = None;
     let mut invariants_value: Option<TokenStream> = None;
     let mut proxy_value: Option<TokenStream> = None;
+    let mut format_proxies_list: Vec<TokenStream> = Vec::new();
     let mut metadata_value: Option<String> = None;
     let mut attribute_list: Vec<TokenStream> = Vec::new();
 
@@ -999,9 +1000,56 @@ pub(crate) fn gen_field_from_pfield(
                 }
             }
         } else {
-            // Non-builtin (namespaced) attrs always go to attributes slice
-            let ext_attr = emit_attr_for_field(attr, field_name_raw, field_type, facet_crate);
-            attribute_list.push(quote! { #ext_attr });
+            // Non-builtin (namespaced) attrs - check for format-specific proxy
+            let key = attr.key_str();
+            let ns = attr.ns.as_ref().expect("namespaced attr should have ns");
+            let ns_str = ns.to_string();
+
+            if key == "proxy" {
+                // Format-specific proxy: #[facet(xml::proxy = ProxyType)]
+                let proxy_type = &attr.args;
+                let format_proxy = quote! {
+                    #facet_crate::FormatProxy {
+                        format: #ns_str,
+                        proxy: &const {
+                            extern crate alloc as __alloc;
+
+                            unsafe fn __proxy_convert_in(
+                                proxy_ptr: #facet_crate::PtrConst,
+                                field_ptr: #facet_crate::PtrUninit,
+                            ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
+                                let proxy: #proxy_type = proxy_ptr.read();
+                                match <#field_type as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
+                                    𝟋Ok(value) => 𝟋Ok(field_ptr.put(value)),
+                                    𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
+                                }
+                            }
+
+                            unsafe fn __proxy_convert_out(
+                                field_ptr: #facet_crate::PtrConst,
+                                proxy_ptr: #facet_crate::PtrUninit,
+                            ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
+                                let field_ref: &#field_type = field_ptr.get();
+                                match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
+                                    𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
+                                    𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
+                                }
+                            }
+
+                            #facet_crate::ProxyDef {
+                                shape: <#proxy_type as #facet_crate::Facet>::SHAPE,
+                                convert_in: __proxy_convert_in,
+                                convert_out: __proxy_convert_out,
+                            }
+                        },
+                    }
+                };
+                format_proxies_list.push(format_proxy);
+            } else {
+                // Other namespaced attrs go to attributes slice
+                let ext_attr = emit_attr_for_field(attr, field_name_raw, field_type, facet_crate);
+                attribute_list.push(quote! { #ext_attr });
+            }
         }
     }
 
@@ -1232,6 +1280,13 @@ pub(crate) fn gen_field_from_pfield(
         None => quote! { 𝟋None },
     };
 
+    // Format-specific proxies: &'static [FormatProxy]
+    let format_proxies_expr = if format_proxies_list.is_empty() {
+        quote! { &[] }
+    } else {
+        quote! { &const {[#(#format_proxies_list),*]} }
+    };
+
     // Metadata: Option<&'static str>
     let metadata_expr = match &metadata_value {
         Some(kind) => quote! { 𝟋Some(#kind) },
@@ -1253,6 +1308,7 @@ pub(crate) fn gen_field_from_pfield(
             skip_serializing_if: #skip_ser_if_expr,
             invariants: #invariants_expr,
             proxy: #proxy_expr,
+            format_proxies: #format_proxies_expr,
             metadata: #metadata_expr,
         }
     }

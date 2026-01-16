@@ -384,6 +384,10 @@ impl FormatSerializer for JsonSerializer {
         self.out.extend_from_slice(content.as_bytes());
         Ok(())
     }
+
+    fn format_namespace(&self) -> Option<&'static str> {
+        Some("json")
+    }
 }
 
 /// Serialize a value to JSON bytes.

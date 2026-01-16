@@ -362,6 +362,21 @@ pub trait FormatSerializer {
         // Default: not supported, fall back to element-by-element
         Ok(false)
     }
+
+    /// Returns the format namespace for format-specific proxy resolution.
+    ///
+    /// When a field or container has format-specific proxies (e.g., `#[facet(xml::proxy = XmlProxy)]`),
+    /// this namespace is used to look up the appropriate proxy. If no namespace is returned,
+    /// only the format-agnostic proxy (`#[facet(proxy = ...)]`) is considered.
+    ///
+    /// Examples:
+    /// - XML serializer should return `Some("xml")`
+    /// - JSON serializer should return `Some("json")`
+    ///
+    /// Default: returns `None` (only format-agnostic proxies are used).
+    fn format_namespace(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// Error produced by the shared serializer.
@@ -449,7 +464,8 @@ where
     let value = value.innermost_peek();
 
     // Check for container-level proxy - serialize through the proxy type
-    if let Some(proxy_def) = value.shape().proxy {
+    // Format-specific proxies take precedence over format-agnostic proxies
+    if let Some(proxy_def) = value.shape().effective_proxy(serializer.format_namespace()) {
         return serialize_via_proxy(serializer, value, proxy_def);
     }
 
@@ -618,7 +634,10 @@ where
             serializer.begin_seq().map_err(SerializeError::Backend)?;
             for (field_item, field_value) in fields {
                 // Check for field-level proxy
-                if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
+                if let Some(proxy_def) = field_item
+                    .field
+                    .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                {
                     serialize_via_proxy(serializer, field_value, proxy_def)?;
                 } else {
                     shared_serialize(serializer, field_value)?;
@@ -648,7 +667,10 @@ where
                         .map_err(SerializeError::Backend)?;
                 }
                 // Check for field-level proxy
-                if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
+                if let Some(proxy_def) = field_item
+                    .field
+                    .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                {
                     serialize_via_proxy(serializer, field_value, proxy_def)?;
                 } else {
                     shared_serialize(serializer, field_value)?;
@@ -681,7 +703,10 @@ where
                 StructKind::Unit => return Ok(()),
                 StructKind::TupleStruct | StructKind::Tuple | StructKind::Struct => {
                     for (field_item, field_value) in enum_.fields_for_serialize() {
-                        if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
+                        if let Some(proxy_def) = field_item
+                            .field
+                            .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                        {
                             serialize_via_proxy(serializer, field_value, proxy_def)?;
                         } else {
                             shared_serialize(serializer, field_value)?;
@@ -731,7 +756,10 @@ where
                                     .map_err(SerializeError::Backend)?;
                             }
                             // Check for field-level proxy
-                            if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
+                            if let Some(proxy_def) = field_item
+                                .field
+                                .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                            {
                                 serialize_via_proxy(serializer, field_value, proxy_def)?;
                             } else {
                                 shared_serialize(serializer, field_value)?;
@@ -780,7 +808,10 @@ where
                                     .map_err(SerializeError::Backend)?;
                             }
                             // Check for field-level proxy
-                            if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
+                            if let Some(proxy_def) = field_item
+                                .field
+                                .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                            {
                                 serialize_via_proxy(serializer, field_value, proxy_def)?;
                             } else {
                                 shared_serialize(serializer, field_value)?;
@@ -903,7 +934,10 @@ where
                             .map_err(SerializeError::Backend)?;
                     }
                     // Check for field-level proxy
-                    if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
+                    if let Some(proxy_def) = field_item
+                        .field
+                        .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                    {
                         serialize_via_proxy(serializer, field_value, proxy_def)?;
                     } else {
                         shared_serialize(serializer, field_value)?;
@@ -1214,7 +1248,10 @@ where
                     .field_key(field_item.effective_name())
                     .map_err(SerializeError::Backend)?;
                 // Check for field-level proxy
-                if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
+                if let Some(proxy_def) = field_item
+                    .field
+                    .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                {
                     serialize_via_proxy(serializer, field_value, proxy_def)?;
                 } else {
                     shared_serialize(serializer, field_value)?;

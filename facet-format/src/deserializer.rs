@@ -320,9 +320,10 @@ where
             return Ok(wip);
         }
 
-        // Check for container-level proxy
+        // Check for container-level proxy (format-specific proxies take precedence)
+        let format_ns = self.parser.format_namespace();
         let (wip_returned, has_proxy) = wip
-            .begin_custom_deserialization_from_shape()
+            .begin_custom_deserialization_from_shape_with_format(format_ns)
             .map_err(DeserializeError::reflect)?;
         wip = wip_returned;
         if has_proxy {
@@ -331,13 +332,14 @@ where
         }
 
         // Check for field-level proxy (opaque types with proxy attribute)
+        // Format-specific proxies take precedence over format-agnostic proxies
         if wip
             .parent_field()
-            .and_then(|field| field.proxy_convert_in_fn())
+            .and_then(|field| field.effective_proxy(format_ns))
             .is_some()
         {
             wip = wip
-                .begin_custom_deserialization()
+                .begin_custom_deserialization_with_format(format_ns)
                 .map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
             wip = wip.end().map_err(DeserializeError::reflect)?;

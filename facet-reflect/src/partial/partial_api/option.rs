@@ -326,12 +326,32 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     ///
     /// Returns `Ok((self, true))` if the shape has a container-level proxy and we've begun
     /// custom deserialization, `Ok((self, false))` if not (self is returned unchanged).
-    pub fn begin_custom_deserialization_from_shape(mut self) -> Result<(Self, bool), ReflectError> {
+    pub fn begin_custom_deserialization_from_shape(self) -> Result<(Self, bool), ReflectError> {
+        // Delegate to the format-aware version with no format namespace
+        self.begin_custom_deserialization_from_shape_with_format(None)
+    }
+
+    /// Begin building the source shape for custom deserialization using container-level proxy,
+    /// with support for format-specific proxy resolution.
+    ///
+    /// If `format_namespace` is provided (e.g., `Some("xml")`), looks for a format-specific
+    /// proxy first (e.g., `#[facet(xml::proxy = XmlProxy)]`), falling back to the format-agnostic
+    /// proxy if no format-specific one is found.
+    ///
+    /// Returns `Ok((self, true))` if a proxy was found and we've begun custom deserialization,
+    /// `Ok((self, false))` if not (self is returned unchanged).
+    pub fn begin_custom_deserialization_from_shape_with_format(
+        mut self,
+        format_namespace: Option<&str>,
+    ) -> Result<(Self, bool), ReflectError> {
         let current_frame = self.frames().last().unwrap();
         let target_shape = current_frame.allocated.shape();
-        trace!("begin_custom_deserialization_from_shape: target_shape={target_shape}");
+        trace!(
+            "begin_custom_deserialization_from_shape_with_format: target_shape={target_shape}, format={format_namespace:?}"
+        );
 
-        let Some(proxy_def) = target_shape.proxy else {
+        // Use effective_proxy for format-aware resolution
+        let Some(proxy_def) = target_shape.effective_proxy(format_namespace) else {
             return Ok((self, false));
         };
 
@@ -347,7 +367,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             .size();
 
         trace!(
-            "begin_custom_deserialization_from_shape: Creating frame for deserialization type {source_shape}"
+            "begin_custom_deserialization_from_shape_with_format: Creating frame for deserialization type {source_shape}"
         );
         let mut new_frame = Frame::new(
             source_data,
@@ -360,5 +380,71 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         self.frames_mut().push(new_frame);
 
         Ok((self, true))
+    }
+
+    /// Begin building the source shape for custom deserialization using field-level proxy,
+    /// with support for format-specific proxy resolution.
+    ///
+    /// If `format_namespace` is provided (e.g., `Some("xml")`), looks for a format-specific
+    /// proxy first (e.g., `#[facet(xml::proxy = XmlProxy)]`), falling back to the format-agnostic
+    /// proxy if no format-specific one is found.
+    ///
+    /// This is the format-aware version of `begin_custom_deserialization`.
+    pub fn begin_custom_deserialization_with_format(
+        mut self,
+        format_namespace: Option<&str>,
+    ) -> Result<Self, ReflectError> {
+        let current_frame = self.frames().last().unwrap();
+        let target_shape = current_frame.allocated.shape();
+        trace!(
+            "begin_custom_deserialization_with_format: target_shape={target_shape}, format={format_namespace:?}"
+        );
+        if let Some(field) = self.parent_field() {
+            trace!(
+                "begin_custom_deserialization_with_format: field name={}",
+                field.name
+            );
+            // Use effective_proxy for format-aware resolution
+            if let Some(proxy_def) = field.effective_proxy(format_namespace) {
+                // Get the source shape from the proxy definition
+                let source_shape = proxy_def.shape;
+                let source_data = source_shape.allocate().map_err(|_| ReflectError::Unsized {
+                    shape: target_shape,
+                    operation: "Not a Sized type",
+                })?;
+                let source_size = source_shape
+                    .layout
+                    .sized_layout()
+                    .expect("must be sized")
+                    .size();
+
+                trace!(
+                    "begin_custom_deserialization_with_format: Creating frame for deserialization type {source_shape}"
+                );
+                let mut new_frame = Frame::new(
+                    source_data,
+                    AllocatedShape::new(source_shape, source_size),
+                    FrameOwnership::Owned,
+                );
+                new_frame.using_custom_deserialization = true;
+                // Store the proxy def so end() can use the correct convert_in function
+                // This is important for format-specific proxies where field.proxy() would
+                // return the wrong proxy.
+                new_frame.shape_level_proxy = Some(proxy_def);
+                self.frames_mut().push(new_frame);
+
+                Ok(self)
+            } else {
+                Err(ReflectError::OperationFailed {
+                    shape: target_shape,
+                    operation: "field does not have a proxy",
+                })
+            }
+        } else {
+            Err(ReflectError::OperationFailed {
+                shape: target_shape,
+                operation: "not currently processing a field",
+            })
+        }
     }
 }

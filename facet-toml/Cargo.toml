@@ -41,7 +41,6 @@ facet-testhelpers = { path = "../facet-testhelpers" }
 facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 libtest-mimic = "0.8.1"
 indoc = { workspace = true }
-tracing = { workspace = true }
 
 [features]
 default = []

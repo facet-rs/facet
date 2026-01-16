@@ -640,6 +640,10 @@ impl DomSerializer for XmlSerializer {
         // For XML, None values should not emit any content
         Ok(())
     }
+
+    fn format_namespace(&self) -> Option<&'static str> {
+        Some("xml")
+    }
 }
 
 /// Serialize a value to XML bytes with default options.

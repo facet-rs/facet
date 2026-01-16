@@ -220,6 +220,21 @@ pub trait FormatParser<'de> {
     fn current_span(&self) -> Option<Span> {
         None
     }
+
+    /// Returns the format namespace for format-specific proxy resolution.
+    ///
+    /// When a field or container has format-specific proxies (e.g., `#[facet(xml::proxy = XmlProxy)]`),
+    /// this namespace is used to look up the appropriate proxy. If no namespace is returned,
+    /// only the format-agnostic proxy (`#[facet(proxy = ...)]`) is considered.
+    ///
+    /// Examples:
+    /// - XML parser should return `Some("xml")`
+    /// - JSON parser should return `Some("json")`
+    ///
+    /// Default: returns `None` (only format-agnostic proxies are used).
+    fn format_namespace(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// Metadata about an enum variant for use with `hint_enum`.

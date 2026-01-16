@@ -146,6 +146,16 @@ pub trait DomSerializer {
     fn serialize_none(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    /// Returns the format namespace for this serializer (e.g., "xml", "html").
+    ///
+    /// This is used to select format-specific proxy types when a field has
+    /// `#[facet(xml::proxy = XmlProxy)]` or similar format-namespaced proxies.
+    ///
+    /// Returns `None` by default, which falls back to format-agnostic proxies.
+    fn format_namespace(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// Error produced by the DOM serializer.
@@ -195,8 +205,12 @@ where
     let value = deref_if_pointer(value);
     let value = value.innermost_peek();
 
-    // Check for container-level proxy
-    if value.shape().proxy.is_some() {
+    // Check for container-level proxy (format-specific or format-agnostic)
+    if value
+        .shape()
+        .effective_proxy(serializer.format_namespace())
+        .is_some()
+    {
         return serialize_via_proxy(serializer, value, element_name);
     }
 
@@ -375,23 +389,19 @@ where
                     field_item.name.clone()
                 };
 
-                // Check for field-level proxy
-                if let Some(field) = field_item.field {
-                    if field.proxy().is_some() {
-                        match field_value.custom_serialization(field) {
-                            Ok(proxy_peek) => {
-                                serializer
-                                    .attribute(&attr_name, proxy_peek.as_peek(), None)
-                                    .map_err(DomSerializeError::Backend)?;
-                            }
-                            Err(e) => {
-                                return Err(DomSerializeError::Reflect(e));
-                            }
+                // Check for field-level proxy (format-specific or format-agnostic)
+                if let Some(field) = field_item.field
+                    && let Some(proxy_def) = field.effective_proxy(serializer.format_namespace())
+                {
+                    match field_value.custom_serialization_with_proxy(proxy_def) {
+                        Ok(proxy_peek) => {
+                            serializer
+                                .attribute(&attr_name, proxy_peek.as_peek(), None)
+                                .map_err(DomSerializeError::Backend)?;
                         }
-                    } else {
-                        serializer
-                            .attribute(&attr_name, *field_value, None)
-                            .map_err(DomSerializeError::Backend)?;
+                        Err(e) => {
+                            return Err(DomSerializeError::Reflect(e));
+                        }
                     }
                 } else {
                     serializer
@@ -467,24 +477,22 @@ where
                     Some(to_element_name(&field_item.name))
                 };
 
-            // Check for field-level proxy
-            if let Some(field) = field_item.field {
-                if field.proxy().is_some() {
-                    // Use custom_serialization for field-level proxy
-                    match field_value.custom_serialization(field) {
-                        Ok(proxy_peek) => {
-                            serialize_value(
-                                serializer,
-                                proxy_peek.as_peek(),
-                                field_element_name.as_deref(),
-                            )?;
-                        }
-                        Err(e) => {
-                            return Err(DomSerializeError::Reflect(e));
-                        }
+            // Check for field-level proxy (format-specific or format-agnostic)
+            if let Some(field) = field_item.field
+                && let Some(proxy_def) = field.effective_proxy(serializer.format_namespace())
+            {
+                // Use custom_serialization_with_proxy for field-level proxy
+                match field_value.custom_serialization_with_proxy(proxy_def) {
+                    Ok(proxy_peek) => {
+                        serialize_value(
+                            serializer,
+                            proxy_peek.as_peek(),
+                            field_element_name.as_deref(),
+                        )?;
                     }
-                } else {
-                    serialize_value(serializer, *field_value, field_element_name.as_deref())?;
+                    Err(e) => {
+                        return Err(DomSerializeError::Reflect(e));
+                    }
                 }
             } else {
                 serialize_value(serializer, *field_value, field_element_name.as_deref())?;
@@ -783,8 +791,9 @@ where
     S: DomSerializer,
 {
     // Use the high-level API that handles allocation and conversion
+    // Pass format namespace for format-specific proxy resolution
     let owned_peek = value
-        .custom_serialization_from_shape()
+        .custom_serialization_from_shape_with_format(serializer.format_namespace())
         .map_err(DomSerializeError::Reflect)?;
 
     match owned_peek {

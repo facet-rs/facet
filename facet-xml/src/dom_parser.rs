@@ -310,6 +310,10 @@ impl<'de> DomParser<'de> for XmlParser<'de> {
     fn current_span(&self) -> Option<facet_reflect::Span> {
         None
     }
+
+    fn format_namespace(&self) -> Option<&'static str> {
+        Some("xml")
+    }
 }
 
 /// Resolve a namespace from quick-xml's ResolveResult.
