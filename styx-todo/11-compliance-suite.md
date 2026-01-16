@@ -87,7 +87,7 @@ compliance/
 │   │   ├── single-entry.tree.styx
 │   │   └── ...
 │   └── ...
-└── runner.py                 # Single Python script, parses all, outputs all
+└── golden.styx               # All expected trees concatenated
 ```
 
 ### Invalid File Testing
@@ -110,17 +110,25 @@ errors (
 
 ### Runner
 
-Single Python script to avoid interpreter warmup:
+Each implementation provides its own runner that:
+1. Takes a directory of `.styx` files
+2. Parses all of them in a single process (avoids startup overhead)
+3. Outputs all trees to stdout in canonical format
 
 ```bash
-python compliance/runner.py compliance/corpus/ > output.styx
-# Compare against concatenated golden files
+# Rust reference implementation
+cargo run --bin styx-compliance compliance/corpus/ > output.styx
+
+# Python implementation
+python -m styx_py.compliance compliance/corpus/ > output.styx
+
+# Node.js implementation  
+node styx-js/compliance.mjs compliance/corpus/ > output.styx
 ```
 
-Or for a specific implementation:
-
+Then diff against golden:
 ```bash
-python compliance/runner.py --impl ./my-styx-parser compliance/corpus/
+diff -u compliance/golden.styx output.styx
 ```
 
 ## Implementation Plan
