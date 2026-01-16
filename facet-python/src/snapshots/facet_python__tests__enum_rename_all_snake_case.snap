@@ -1,0 +1,5 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+ValidationErrorCode = Literal["circular_dependency"] | Literal["invalid_naming"] | Literal["unknown_requirement"]
