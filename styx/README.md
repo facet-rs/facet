@@ -28,7 +28,7 @@ endpoints @seq(
 )
 
 metadata @map {
-    version "1.0.0"  // quotes needed for dots
+    version 1.0.0
     build-date 2024-01-15
 }
 ```
