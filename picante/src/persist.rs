@@ -177,11 +177,15 @@ pub async fn save_cache_with_options(
     ingredients: &[&dyn PersistableIngredient],
     options: &CacheSaveOptions,
 ) -> PicanteResult<()> {
+    use std::time::Instant;
+
+    let total_start = Instant::now();
     let path = path.as_ref();
     debug!(path = %path.display(), "save_cache: start");
 
     ensure_unique_kinds(ingredients)?;
 
+    let collect_start = Instant::now();
     let mut sections = Vec::with_capacity(ingredients.len());
     for ingredient in ingredients {
         let mut records = ingredient.save_records().await?;
@@ -205,6 +209,10 @@ pub async fn save_cache_with_options(
             records,
         });
     }
+    let collect_elapsed = collect_start.elapsed();
+
+    let num_sections = sections.len();
+    let total_records: usize = sections.iter().map(|s| s.records.len()).sum();
 
     let mut cache = CacheFile {
         format_version: FORMAT_VERSION,
@@ -224,7 +232,9 @@ pub async fn save_cache_with_options(
         shrink_cache_to_fit(&mut cache, max_bytes)?;
     }
 
+    let encode_start = Instant::now();
     let bytes = encode_cache_file(&cache)?;
+    let encode_elapsed = encode_start.elapsed();
 
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(|e| {
@@ -234,6 +244,7 @@ pub async fn save_cache_with_options(
         })?;
     }
 
+    let write_start = Instant::now();
     let tmp = path.with_extension("tmp");
     tokio::fs::write(&tmp, &bytes).await.map_err(|e| {
         Arc::new(PicanteError::Cache {
@@ -246,11 +257,19 @@ pub async fn save_cache_with_options(
             message: format!("rename {} -> {}: {e}", tmp.display(), path.display()),
         })
     })?;
+    let write_elapsed = write_start.elapsed();
 
+    let total_elapsed = total_start.elapsed();
     info!(
         path = %path.display(),
         bytes = bytes.len(),
         rev = runtime.current_revision().0,
+        sections = num_sections,
+        records = total_records,
+        collect_ms = collect_elapsed.as_millis(),
+        encode_ms = encode_elapsed.as_millis(),
+        write_ms = write_elapsed.as_millis(),
+        total_ms = total_elapsed.as_millis(),
         "save_cache: done"
     );
     Ok(())
@@ -307,10 +326,14 @@ async fn load_cache_inner(
     ingredients: &[&dyn PersistableIngredient],
     options: &CacheLoadOptions,
 ) -> PicanteResult<bool> {
+    use std::time::Instant;
+
+    let total_start = Instant::now();
     debug!(path = %path.display(), "load_cache: start");
 
     ensure_unique_kinds(ingredients)?;
 
+    let read_start = Instant::now();
     let bytes = match tokio::fs::read(path).await {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -320,6 +343,7 @@ async fn load_cache_inner(
             }));
         }
     };
+    let read_elapsed = read_start.elapsed();
 
     if let Some(max) = options.max_bytes
         && bytes.len() > max
@@ -329,7 +353,11 @@ async fn load_cache_inner(
         }));
     }
 
+    let decode_start = Instant::now();
     let cache: CacheFile = decode_cache_file(&bytes)?;
+    let decode_elapsed = decode_start.elapsed();
+    let num_sections = cache.sections.len();
+    let total_records: usize = cache.sections.iter().map(|s| s.records.len()).sum();
 
     // r[persist.load-version]
     if cache.format_version != FORMAT_VERSION {
@@ -354,6 +382,7 @@ async fn load_cache_inner(
         ingredient.clear();
     }
 
+    let load_start = Instant::now();
     for section in cache.sections {
         let Some(ingredient) = by_kind.get(&section.kind_id).copied() else {
             warn!(
@@ -386,17 +415,28 @@ async fn load_cache_inner(
 
         ingredient.load_records(section.records)?;
     }
+    let load_elapsed = load_start.elapsed();
 
+    let restore_start = Instant::now();
     for ingredient in ingredients {
         ingredient.restore_runtime_state(runtime).await?;
     }
+    let restore_elapsed = restore_start.elapsed();
 
     runtime.set_current_revision(Revision(cache.current_revision));
 
+    let total_elapsed = total_start.elapsed();
     info!(
         path = %path.display(),
         bytes = bytes.len(),
         rev = runtime.current_revision().0,
+        sections = num_sections,
+        records = total_records,
+        read_ms = read_elapsed.as_millis(),
+        decode_ms = decode_elapsed.as_millis(),
+        load_ms = load_elapsed.as_millis(),
+        restore_ms = restore_elapsed.as_millis(),
+        total_ms = total_elapsed.as_millis(),
         "load_cache: done"
     );
     Ok(true)
