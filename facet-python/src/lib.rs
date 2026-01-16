@@ -22,7 +22,7 @@
 
 extern crate alloc;
 
-use alloc::collections::BTreeSet;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write;
@@ -42,9 +42,8 @@ pub fn to_python<T: Facet<'static>>() -> String {
 ///
 /// Use this when you need to generate multiple related types.
 pub struct PythonGenerator {
-    output: String,
-    /// Types already generated (by type identifier)
-    generated: BTreeSet<&'static str>,
+    /// Generated type definitions, keyed by type name for sorting
+    generated: BTreeMap<String, String>,
     /// Types queued for generation
     queue: Vec<&'static Shape>,
 }
@@ -59,8 +58,7 @@ impl PythonGenerator {
     /// Create a new Python generator.
     pub const fn new() -> Self {
         Self {
-            output: String::new(),
-            generated: BTreeSet::new(),
+            generated: BTreeMap::new(),
             queue: Vec::new(),
         }
     }
@@ -72,7 +70,7 @@ impl PythonGenerator {
 
     /// Add a shape to generate.
     pub fn add_shape(&mut self, shape: &'static Shape) {
-        if !self.generated.contains(shape.type_identifier) {
+        if !self.generated.contains_key(shape.type_identifier) {
             self.queue.push(shape);
         }
     }
@@ -81,55 +79,61 @@ impl PythonGenerator {
     pub fn finish(mut self) -> String {
         // Process queue until empty
         while let Some(shape) = self.queue.pop() {
-            if self.generated.contains(shape.type_identifier) {
+            if self.generated.contains_key(shape.type_identifier) {
                 continue;
             }
-            self.generated.insert(shape.type_identifier);
+            // Insert a placeholder to mark as "being generated"
+            self.generated
+                .insert(shape.type_identifier.to_string(), String::new());
             self.generate_shape(shape);
         }
-        self.output
+
+        // Collect all generated code in sorted order (BTreeMap iterates in key order)
+        let mut output = String::new();
+        for code in self.generated.values() {
+            output.push_str(code);
+        }
+        output
     }
 
     fn generate_shape(&mut self, shape: &'static Shape) {
+        let mut output = String::new();
+
         // Handle transparent wrappers - generate a type alias to the inner type
         if let Some(inner) = shape.inner {
             self.add_shape(inner);
             let inner_type = self.type_for_shape(inner);
-            self.write_doc_comment(shape.doc);
-            writeln!(self.output, "{} = {}", shape.type_identifier, inner_type).unwrap();
-            self.output.push('\n');
+            write_doc_comment(&mut output, shape.doc);
+            writeln!(output, "{} = {}", shape.type_identifier, inner_type).unwrap();
+            output.push('\n');
+            self.generated
+                .insert(shape.type_identifier.to_string(), output);
             return;
         }
 
         match &shape.ty {
             Type::User(UserType::Struct(st)) => {
-                self.generate_struct(shape, st.fields, st.kind);
+                self.generate_struct(&mut output, shape, st.fields, st.kind);
             }
             Type::User(UserType::Enum(en)) => {
-                self.generate_enum(shape, en);
+                self.generate_enum(&mut output, shape, en);
             }
             _ => {
                 // For other types, generate a type alias
                 let type_str = self.type_for_shape(shape);
-                self.write_doc_comment(shape.doc);
-                writeln!(self.output, "{} = {}", shape.type_identifier, type_str).unwrap();
-                self.output.push('\n');
+                write_doc_comment(&mut output, shape.doc);
+                writeln!(output, "{} = {}", shape.type_identifier, type_str).unwrap();
+                output.push('\n');
             }
         }
-    }
 
-    fn write_doc_comment(&mut self, doc: &[&str]) {
-        if !doc.is_empty() {
-            for line in doc {
-                self.output.push('#');
-                self.output.push_str(line);
-                self.output.push('\n');
-            }
-        }
+        self.generated
+            .insert(shape.type_identifier.to_string(), output);
     }
 
     fn generate_struct(
         &mut self,
+        output: &mut String,
         shape: &'static Shape,
         fields: &'static [Field],
         kind: StructKind,
@@ -137,14 +141,14 @@ impl PythonGenerator {
         match kind {
             StructKind::Unit => {
                 // Unit struct as None type alias
-                self.write_doc_comment(shape.doc);
-                writeln!(self.output, "{} = None", shape.type_identifier).unwrap();
+                write_doc_comment(output, shape.doc);
+                writeln!(output, "{} = None", shape.type_identifier).unwrap();
             }
             StructKind::TupleStruct if fields.len() == 1 => {
                 // Newtype - type alias to inner
                 let inner_type = self.type_for_shape(fields[0].shape.get());
-                self.write_doc_comment(shape.doc);
-                writeln!(self.output, "{} = {}", shape.type_identifier, inner_type).unwrap();
+                write_doc_comment(output, shape.doc);
+                writeln!(output, "{} = {}", shape.type_identifier, inner_type).unwrap();
             }
             StructKind::TupleStruct | StructKind::Tuple => {
                 // Tuple type
@@ -152,9 +156,9 @@ impl PythonGenerator {
                     .iter()
                     .map(|f| self.type_for_shape(f.shape.get()))
                     .collect();
-                self.write_doc_comment(shape.doc);
+                write_doc_comment(output, shape.doc);
                 writeln!(
-                    self.output,
+                    output,
                     "{} = tuple[{}]",
                     shape.type_identifier,
                     types.join(", ")
@@ -162,9 +166,9 @@ impl PythonGenerator {
                 .unwrap();
             }
             StructKind::Struct => {
-                self.write_doc_comment(shape.doc);
+                write_doc_comment(output, shape.doc);
                 writeln!(
-                    self.output,
+                    output,
                     "class {}(TypedDict, total=False):",
                     shape.type_identifier
                 )
@@ -176,15 +180,15 @@ impl PythonGenerator {
                     .collect();
 
                 if visible_fields.is_empty() {
-                    self.output.push_str("    pass\n");
+                    output.push_str("    pass\n");
                 } else {
                     for field in visible_fields {
                         // Generate doc comment for field
                         if !field.doc.is_empty() {
                             for line in field.doc {
-                                self.output.push_str("    #");
-                                self.output.push_str(line);
-                                self.output.push('\n');
+                                output.push_str("    #");
+                                output.push_str(line);
+                                output.push('\n');
                             }
                         }
 
@@ -195,23 +199,27 @@ impl PythonGenerator {
                             // Optional field - unwrap the Option and don't use Required
                             if let Def::Option(opt) = &field.shape.get().def {
                                 let inner_type = self.type_for_shape(opt.t);
-                                writeln!(self.output, "    {}: {}", field_name, inner_type)
-                                    .unwrap();
+                                writeln!(output, "    {}: {}", field_name, inner_type).unwrap();
                             }
                         } else {
                             // Required field - wrap in Required[]
                             let field_type = self.type_for_shape(field.shape.get());
-                            writeln!(self.output, "    {}: Required[{}]", field_name, field_type)
+                            writeln!(output, "    {}: Required[{}]", field_name, field_type)
                                 .unwrap();
                         }
                     }
                 }
             }
         }
-        self.output.push('\n');
+        output.push('\n');
     }
 
-    fn generate_enum(&mut self, shape: &'static Shape, enum_type: &facet_core::EnumType) {
+    fn generate_enum(
+        &mut self,
+        output: &mut String,
+        shape: &'static Shape,
+        enum_type: &facet_core::EnumType,
+    ) {
         // Check if all variants are unit variants (simple Literal union)
         let all_unit = enum_type
             .variants
@@ -225,9 +233,9 @@ impl PythonGenerator {
                 .iter()
                 .map(|v| format!("Literal[\"{}\"]", v.effective_name()))
                 .collect();
-            self.write_doc_comment(shape.doc);
+            write_doc_comment(output, shape.doc);
             writeln!(
-                self.output,
+                output,
                 "{} = {}",
                 shape.type_identifier,
                 variants.join(" | ")
@@ -245,37 +253,43 @@ impl PythonGenerator {
                 match variant.data.kind {
                     StructKind::Unit => {
                         // Unit variant - wrapper class with Literal value
+                        let mut variant_output = String::new();
                         writeln!(
-                            self.output,
+                            variant_output,
                             "class {}(TypedDict, total=False):",
                             pascal_variant_name
                         )
                         .unwrap();
                         writeln!(
-                            self.output,
+                            variant_output,
                             "    {}: Required[Literal[\"{}\"]]",
                             variant_name, variant_name
                         )
                         .unwrap();
-                        self.output.push('\n');
+                        variant_output.push('\n');
+                        self.generated
+                            .insert(pascal_variant_name.clone(), variant_output);
                         variant_class_names.push(pascal_variant_name);
                     }
                     StructKind::TupleStruct if variant.data.fields.len() == 1 => {
                         // Newtype variant - wrapper class pointing to inner type
                         let inner_type = self.type_for_shape(variant.data.fields[0].shape.get());
+                        let mut variant_output = String::new();
                         writeln!(
-                            self.output,
+                            variant_output,
                             "class {}(TypedDict, total=False):",
                             pascal_variant_name
                         )
                         .unwrap();
                         writeln!(
-                            self.output,
+                            variant_output,
                             "    {}: Required[{}]",
                             variant_name, inner_type
                         )
                         .unwrap();
-                        self.output.push('\n');
+                        variant_output.push('\n');
+                        self.generated
+                            .insert(pascal_variant_name.clone(), variant_output);
                         variant_class_names.push(pascal_variant_name);
                     }
                     _ => {
@@ -283,43 +297,48 @@ impl PythonGenerator {
                         let data_class_name = format!("{}Data", pascal_variant_name);
 
                         // Generate the data class
+                        let mut data_output = String::new();
                         writeln!(
-                            self.output,
+                            data_output,
                             "class {}(TypedDict, total=False):",
                             data_class_name
                         )
                         .unwrap();
 
                         if variant.data.fields.is_empty() {
-                            self.output.push_str("    pass\n");
+                            data_output.push_str("    pass\n");
                         } else {
                             for field in variant.data.fields {
                                 let field_name = field.effective_name();
                                 let field_type = self.type_for_shape(field.shape.get());
                                 writeln!(
-                                    self.output,
+                                    data_output,
                                     "    {}: Required[{}]",
                                     field_name, field_type
                                 )
                                 .unwrap();
                             }
                         }
-                        self.output.push('\n');
+                        data_output.push('\n');
+                        self.generated.insert(data_class_name.clone(), data_output);
 
                         // Generate the wrapper class
+                        let mut variant_output = String::new();
                         writeln!(
-                            self.output,
+                            variant_output,
                             "class {}(TypedDict, total=False):",
                             pascal_variant_name
                         )
                         .unwrap();
                         writeln!(
-                            self.output,
+                            variant_output,
                             "    {}: Required[{}]",
                             variant_name, data_class_name
                         )
                         .unwrap();
-                        self.output.push('\n');
+                        variant_output.push('\n');
+                        self.generated
+                            .insert(pascal_variant_name.clone(), variant_output);
 
                         variant_class_names.push(pascal_variant_name);
                     }
@@ -327,22 +346,22 @@ impl PythonGenerator {
             }
 
             // Generate the union type alias
-            self.write_doc_comment(shape.doc);
+            write_doc_comment(output, shape.doc);
             writeln!(
-                self.output,
+                output,
                 "{} = {}",
                 shape.type_identifier,
                 variant_class_names.join(" | ")
             )
             .unwrap();
         }
-        self.output.push('\n');
+        output.push('\n');
     }
 
     fn type_for_shape(&mut self, shape: &'static Shape) -> String {
         // Check Def first - these take precedence over transparent wrappers
         match &shape.def {
-            Def::Scalar => self.scalar_type(shape),
+            Def::Scalar => scalar_type(shape),
             Def::Option(opt) => {
                 format!("{} | None", self.type_for_shape(opt.t))
             }
@@ -393,28 +412,40 @@ impl PythonGenerator {
             }
         }
     }
+}
 
-    fn scalar_type(&self, shape: &'static Shape) -> String {
-        match shape.type_identifier {
-            // Strings
-            "String" | "str" | "&str" | "Cow" => "str".to_string(),
-
-            // Booleans
-            "bool" => "bool".to_string(),
-
-            // Integers
-            "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64"
-            | "i128" | "isize" => "int".to_string(),
-
-            // Floats
-            "f32" | "f64" => "float".to_string(),
-
-            // Char as string
-            "char" => "str".to_string(),
-
-            // Unknown scalar
-            _ => "Any".to_string(),
+/// Write a doc comment to the output.
+fn write_doc_comment(output: &mut String, doc: &[&str]) {
+    if !doc.is_empty() {
+        for line in doc {
+            output.push('#');
+            output.push_str(line);
+            output.push('\n');
         }
+    }
+}
+
+/// Get the Python type for a scalar shape.
+fn scalar_type(shape: &'static Shape) -> String {
+    match shape.type_identifier {
+        // Strings
+        "String" | "str" | "&str" | "Cow" => "str".to_string(),
+
+        // Booleans
+        "bool" => "bool".to_string(),
+
+        // Integers
+        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128"
+        | "isize" => "int".to_string(),
+
+        // Floats
+        "f32" | "f64" => "float".to_string(),
+
+        // Char as string
+        "char" => "str".to_string(),
+
+        // Unknown scalar
+        _ => "Any".to_string(),
     }
 }
 
