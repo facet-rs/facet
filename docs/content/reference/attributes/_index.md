@@ -980,7 +980,10 @@ struct Config {
 - XML attributes need strings, JSON can use native types
 - Legacy format compatibility with different representations
 
-**Note:** For a format to support format-specific proxies, its parser/serializer must implement `format_namespace()` to return its namespace (e.g., `"json"`). Built-in format crates like `facet-json` already do this.
+**Note:** For a format to support format-specific proxies, its parser/serializer must implement `format_namespace()` to return its namespace. The following built-in format crates support this:
+- `facet-json` → `"json"` (use `#[facet(json::proxy = ...)]`)
+- `facet-xml` → `"xml"` (use `#[facet(xml::proxy = ...)]`)
+- `facet-html` → `"html"` (use `#[facet(html::proxy = ...)]`)
 
 ## Extension attributes
 
