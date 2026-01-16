@@ -10,8 +10,7 @@ A side-by-side comparison of facet and serde derive macro attributes.
 
 ### deny_unknown_fields
 
-Produce an error when an unknown field is encountered during deserialization. The default behaviour
-is to ignore field that are not known.
+Rejects unknown fields during deserialization. By default, unknown fields are silently ignored.
 
 <table>
 <tr>
@@ -26,7 +25,7 @@ is to ignore field that are not known.
 #[facet(deny_unknown_fields)]
 struct MyStruct {
     field1: i32,
-    field2: Option<i32>, // Option<T> implicitly defaults to None
+    field2: Option<i32>,
 }
 ```
 
@@ -48,10 +47,7 @@ struct MyStruct {
 
 ### default
 
-Only allowed for `struct`s, not for `enum`s. During deserialization, any fields that are missing
-from the input will be taken from the `Default::default` implementation of the struct. This is not
-possible for `enum`s because they can only have a single `Default` implementation producing a single
-variant.
+Applies to structs only. Missing fields are filled from the type's `Default` implementation.
 
 <table>
 <tr>
@@ -66,7 +62,7 @@ variant.
 #[facet(default)]
 struct MyStruct {
     field1: i32,
-    field2: Option<i32>, // Option<T> implicitly defaults to None
+    field2: Option<i32>,
 }
 
 impl Default for MyStruct {
@@ -106,7 +102,7 @@ impl Default for MyStruct {
 
 ### rename_all
 
-Rename all fields at once using a casing convention. Supported values are
+Renames all fields using a casing convention. Supported values:
 
 * `"PascalCase"`
 * `"camelCase"`
@@ -150,7 +146,7 @@ struct MyStruct {
 
 ### skip_serializing
 
-Skip this field during serialization.
+Excludes this field from serialization.
 
 <table>
 <tr>
@@ -188,8 +184,7 @@ struct MyStruct {
 
 ### skip_serializing_if
 
-Skip serializing this field when a condition is met. Typically used for `Option` fields when you
-want to omit the field entirely from serialized output when the value is `None`.
+Conditionally excludes a field from serialization based on a predicate.
 
 <table>
 <tr>
@@ -205,7 +200,7 @@ struct MyStruct {
     #[facet(skip_serializing_if = |n| n % 2 == 0)]
     field1: i32,
     #[facet(skip_serializing_if = Option::is_none)]
-    field2: Option<i32>, // Option<T> implicitly defaults to None
+    field2: Option<i32>,
 }
 ```
 
@@ -230,10 +225,11 @@ fn is_even(n: i32) -> bool {
 </tr>
 </table>
 
+Facet accepts closures directly; serde requires a named function passed as a string.
+
 #### skip_unless_truthy
 
-Facet provides a more ergonomic alternative: `skip_unless_truthy`. This uses the type's built-in
-notion of "truthiness" to decide whether to skip. No predicate function needed.
+Facet also provides `skip_unless_truthy`, which uses built-in truthiness predicates instead of requiring a custom function.
 
 <table>
 <tr>
@@ -247,13 +243,13 @@ notion of "truthiness" to decide whether to skip. No predicate function needed.
 #[derive(facet::Facet)]
 struct MyStruct {
     #[facet(skip_unless_truthy)]
-    name: String,        // Omitted if empty
+    name: String,
     #[facet(skip_unless_truthy)]
-    count: u32,          // Omitted if zero
+    count: u32,
     #[facet(skip_unless_truthy)]
-    tags: Vec<String>,   // Omitted if empty
+    tags: Vec<String>,
     #[facet(skip_unless_truthy)]
-    email: Option<String>, // Omitted if None
+    email: Option<String>,
 }
 ```
 
@@ -280,16 +276,15 @@ fn is_zero(n: &u32) -> bool { *n == 0 }
 </tr>
 </table>
 
-**Truthiness by type:**
-- **Booleans**: `true` is truthy, `false` is falsy
-- **Numbers**: non-zero is truthy (for floats, also excludes NaN)
-- **Collections** (`Vec`, `String`, slices, etc.): non-empty is truthy
-- **Option**: `Some(_)` is truthy, `None` is falsy
+Truthiness is defined per type:
+- **Booleans**: `false` is falsy
+- **Numbers**: zero is falsy (for floats, NaN is also falsy)
+- **Collections** (`Vec`, `String`, slices, etc.): empty is falsy
+- **Option**: `None` is falsy
 
 #### skip_all_unless_truthy (container attribute)
 
-For structs where most fields should be skipped when falsy, use the container-level
-`skip_all_unless_truthy` attribute instead of marking each field individually.
+Applies `skip_unless_truthy` to all fields in the struct.
 
 <table>
 <tr>
@@ -309,7 +304,6 @@ struct Config {
     enabled: bool,
     tags: Vec<String>,
 }
-// All fields omitted when falsy!
 ```
 
 </td>
@@ -340,9 +334,7 @@ fn is_false(b: &bool) -> bool { !*b }
 
 ### default
 
-Use a specified function to provide a default value when deserializing if the field is missing from
-input. You can either use `default` alone to use `Default::default()` for the field, or provide an
-expression producing the default value.
+Provides a default value when deserializing a missing field. Can use `Default::default()` or a custom expression.
 
 <table>
 <tr>
@@ -389,14 +381,14 @@ fn default_value() -> i32 {
 </tr>
 </table>
 
-#### Implicit defaults (facet-only)
+Facet accepts expressions directly; serde requires a function path as a string.
 
-Facet automatically provides default values for certain types without requiring `#[facet(default)]`:
+#### Implicit defaults
+
+Facet implicitly defaults certain types when the field is absent:
 
 - **`Option<T>`** defaults to `None`
 - **`Vec<T>`**, **`HashMap<K, V>`**, **`HashSet<T>`**, and other collection types default to empty
-
-This means you don't need to annotate these fields at all — they just work.
 
 <table>
 <tr>
@@ -410,9 +402,9 @@ This means you don't need to annotate these fields at all — they just work.
 #[derive(facet::Facet)]
 struct MyStruct {
     name: String,
-    email: Option<String>,   // No attribute needed!
-    tags: Vec<String>,       // No attribute needed!
-    metadata: HashMap<String, String>, // No attribute needed!
+    email: Option<String>,
+    tags: Vec<String>,
+    metadata: HashMap<String, String>,
 }
 ```
 
@@ -436,15 +428,16 @@ struct MyStruct {
 </tr>
 </table>
 
+This is a trade-off: facet cannot distinguish between "field absent" and "field present but empty" for these types. If that distinction matters, use a wrapper type or explicit handling.
+
 ## Deriving Default
 
-Facet's plugin system lets you derive `Default` with custom field values using `#[facet(derive(Default))]`.
-This requires the `facet-default` crate.
+The `facet-default` crate provides a plugin for deriving `Default` using field-level `#[facet(default = ...)]` attributes.
 
 <table>
 <tr>
 <th>Facet</th>
-<th>Serde (std)</th>
+<th>Rust stdlib</th>
 </tr>
 <tr>
 <td>
@@ -460,11 +453,10 @@ struct Config {
     host: String,
     #[facet(default = 8080u16)]
     port: u16,
-    debug: bool, // Uses Default::default()
+    debug: bool,
 }
 
 let config = Config::default();
-// Config { host: "localhost", port: 8080, debug: false }
 ```
 
 </td>
