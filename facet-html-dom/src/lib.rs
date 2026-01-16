@@ -1505,6 +1505,7 @@ pub struct CustomSvgElement {
 /// SVG content - elements and text that can appear inside an SVG.
 #[derive(Facet)]
 #[repr(u8)]
+#[allow(clippy::large_enum_variant)] // DOM-like structures naturally have large variants
 pub enum SvgContent {
     /// Text node (named to avoid collision with SVG `<text>` element).
     #[facet(html::text)]
