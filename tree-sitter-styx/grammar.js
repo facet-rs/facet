@@ -35,6 +35,8 @@ module.exports = grammar({
     [$.attributes],
     // Object body can be newline or comma separated
     [$._newline_separated, $._comma_separated],
+    // Entry key path: can't tell if next expr is another key or the value
+    [$.entry],
   ],
 
   rules: {
@@ -43,14 +45,19 @@ module.exports = grammar({
     document: ($) =>
       seq(repeat($._newline), repeat(seq(optional($.doc_comment), $.entry, repeat($._newline)))),
 
-    // Entry: key followed by optional value
+    // Entry: key path followed by optional value
     // - key only = implicit unit value
     // - key + value = explicit value
+    // - key key ... value = nested key path (N-1 keys, 1 value)
+    //
+    // Per r[entry.structure] and r[entry.keypath]:
+    // When an entry has N atoms (N > 2), the first N-1 atoms form keys
+    // and only the last atom is the value.
     entry: ($) =>
       prec.right(
         choice(
-          // Key with value(s)
-          seq(field("key", $.expr), field("value", $.expr), repeat(field("value", $.expr))),
+          // Key with value(s) - first N-1 are keys, last is value
+          seq(field("key", $.expr), repeat(field("key", $.expr)), field("value", $.expr)),
           // Key only (implicit unit value)
           field("key", $.expr),
         ),

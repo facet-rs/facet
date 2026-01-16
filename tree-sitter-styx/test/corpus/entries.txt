@@ -57,7 +57,7 @@ Three atom entry (nested key path)
           key: (expr
             payload: (scalar
               (bare_scalar)))
-          value: (expr
+          key: (expr
             payload: (scalar
               (bare_scalar)))
           value: (expr

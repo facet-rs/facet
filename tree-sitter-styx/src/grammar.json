@@ -63,22 +63,22 @@
                 }
               },
               {
+                "type": "REPEAT",
+                "content": {
+                  "type": "FIELD",
+                  "name": "key",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "expr"
+                  }
+                }
+              },
+              {
                 "type": "FIELD",
                 "name": "value",
                 "content": {
                   "type": "SYMBOL",
                   "name": "expr"
-                }
-              },
-              {
-                "type": "REPEAT",
-                "content": {
-                  "type": "FIELD",
-                  "name": "value",
-                  "content": {
-                    "type": "SYMBOL",
-                    "name": "expr"
-                  }
                 }
               }
             ]
@@ -623,6 +623,9 @@
     [
       "_newline_separated",
       "_comma_separated"
+    ],
+    [
+      "entry"
     ]
   ],
   "precedences": [],
