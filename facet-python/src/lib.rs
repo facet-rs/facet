@@ -16,13 +16,13 @@
 //!     email: Option<String>,
 //! }
 //!
-//! let py = to_python::<User>();
+//! let py = to_python::<User>(false);
 //! assert!(py.contains("class User(TypedDict"));
 //! ```
 
 extern crate alloc;
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write;
@@ -32,10 +32,10 @@ use facet_core::{Def, Facet, Field, Shape, StructKind, Type, UserType};
 /// Generate Python definitions for a single type.
 ///
 /// Returns a string containing the Python TypedDict or type declaration.
-pub fn to_python<T: Facet<'static>>() -> String {
+pub fn to_python<T: Facet<'static>>(write_imports: bool) -> String {
     let mut generator = PythonGenerator::new();
     generator.add_shape(T::SHAPE);
-    generator.finish()
+    generator.finish(write_imports)
 }
 
 /// Generator for Python type definitions.
@@ -46,6 +46,8 @@ pub struct PythonGenerator {
     generated: BTreeMap<String, String>,
     /// Types queued for generation
     queue: Vec<&'static Shape>,
+    /// Typing imports used (Any, Literal, Required, TypedDict)
+    imports: BTreeSet<&'static str>,
 }
 
 impl Default for PythonGenerator {
@@ -60,6 +62,7 @@ impl PythonGenerator {
         Self {
             generated: BTreeMap::new(),
             queue: Vec::new(),
+            imports: BTreeSet::new(),
         }
     }
 
@@ -76,7 +79,10 @@ impl PythonGenerator {
     }
 
     /// Finish generation and return the Python code.
-    pub fn finish(mut self) -> String {
+    ///
+    /// If `write_imports` is true, a `from typing import ...` line will be
+    /// prepended with only the imports actually used in the generated code.
+    pub fn finish(mut self, write_imports: bool) -> String {
         // Process queue until empty
         while let Some(shape) = self.queue.pop() {
             if self.generated.contains_key(shape.type_identifier) {
@@ -90,6 +96,14 @@ impl PythonGenerator {
 
         // Collect all generated code in sorted order (BTreeMap iterates in key order)
         let mut output = String::new();
+
+        // Write imports if requested and any were used
+        if write_imports && !self.imports.is_empty() {
+            let imports: Vec<&str> = self.imports.iter().copied().collect();
+            writeln!(output, "from typing import {}", imports.join(", ")).unwrap();
+            output.push('\n');
+        }
+
         for code in self.generated.values() {
             output.push_str(code);
         }
@@ -166,6 +180,7 @@ impl PythonGenerator {
                 .unwrap();
             }
             StructKind::Struct => {
+                self.imports.insert("TypedDict");
                 write_doc_comment(output, shape.doc);
                 writeln!(
                     output,
@@ -203,6 +218,7 @@ impl PythonGenerator {
                             }
                         } else {
                             // Required field - wrap in Required[]
+                            self.imports.insert("Required");
                             let field_type = self.type_for_shape(field.shape.get());
                             writeln!(output, "    {}: Required[{}]", field_name, field_type)
                                 .unwrap();
@@ -228,6 +244,7 @@ impl PythonGenerator {
 
         if all_unit {
             // Simple Literal union
+            self.imports.insert("Literal");
             let variants: Vec<String> = enum_type
                 .variants
                 .iter()
@@ -253,10 +270,13 @@ impl PythonGenerator {
                 match variant.data.kind {
                     StructKind::Unit => {
                         // Unit variant - just a Literal in the union, no wrapper class needed
+                        self.imports.insert("Literal");
                         variant_class_names.push(format!("Literal[\"{}\"]", variant_name));
                     }
                     StructKind::TupleStruct if variant.data.fields.len() == 1 => {
                         // Newtype variant - wrapper class pointing to inner type
+                        self.imports.insert("TypedDict");
+                        self.imports.insert("Required");
                         let inner_type = self.type_for_shape(variant.data.fields[0].shape.get());
                         let mut variant_output = String::new();
                         writeln!(
@@ -278,6 +298,8 @@ impl PythonGenerator {
                     }
                     _ => {
                         // Struct variant - generate data class and wrapper class
+                        self.imports.insert("TypedDict");
+                        self.imports.insert("Required");
                         let data_class_name = format!("{}Data", pascal_variant_name);
 
                         // Generate the data class
@@ -345,7 +367,7 @@ impl PythonGenerator {
     fn type_for_shape(&mut self, shape: &'static Shape) -> String {
         // Check Def first - these take precedence over transparent wrappers
         match &shape.def {
-            Def::Scalar => scalar_type(shape),
+            Def::Scalar => self.scalar_type(shape),
             Def::Option(opt) => {
                 format!("{} | None", self.type_for_shape(opt.t))
             }
@@ -366,6 +388,7 @@ impl PythonGenerator {
                 if let Some(pointee) = ptr.pointee {
                     self.type_for_shape(pointee)
                 } else {
+                    self.imports.insert("Any");
                     "Any".to_string()
                 }
             }
@@ -381,6 +404,7 @@ impl PythonGenerator {
                         if let Some(inner) = shape.inner {
                             self.type_for_shape(inner)
                         } else {
+                            self.imports.insert("Any");
                             "Any".to_string()
                         }
                     }
@@ -391,6 +415,7 @@ impl PythonGenerator {
                 if let Some(inner) = shape.inner {
                     self.type_for_shape(inner)
                 } else {
+                    self.imports.insert("Any");
                     "Any".to_string()
                 }
             }
@@ -410,26 +435,32 @@ fn write_doc_comment(output: &mut String, doc: &[&str]) {
 }
 
 /// Get the Python type for a scalar shape.
-fn scalar_type(shape: &'static Shape) -> String {
-    match shape.type_identifier {
-        // Strings
-        "String" | "str" | "&str" | "Cow" => "str".to_string(),
+impl PythonGenerator {
+    /// Get the Python type for a scalar shape.
+    fn scalar_type(&mut self, shape: &'static Shape) -> String {
+        match shape.type_identifier {
+            // Strings
+            "String" | "str" | "&str" | "Cow" => "str".to_string(),
 
-        // Booleans
-        "bool" => "bool".to_string(),
+            // Booleans
+            "bool" => "bool".to_string(),
 
-        // Integers
-        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128"
-        | "isize" => "int".to_string(),
+            // Integers
+            "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64"
+            | "i128" | "isize" => "int".to_string(),
 
-        // Floats
-        "f32" | "f64" => "float".to_string(),
+            // Floats
+            "f32" | "f64" => "float".to_string(),
 
-        // Char as string
-        "char" => "str".to_string(),
+            // Char as string
+            "char" => "str".to_string(),
 
-        // Unknown scalar
-        _ => "Any".to_string(),
+            // Unknown scalar
+            _ => {
+                self.imports.insert("Any");
+                "Any".to_string()
+            }
+        }
     }
 }
 
@@ -465,7 +496,7 @@ mod tests {
             age: u32,
         }
 
-        let py = to_python::<User>();
+        let py = to_python::<User>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -477,7 +508,7 @@ mod tests {
             optional: Option<String>,
         }
 
-        let py = to_python::<Config>();
+        let py = to_python::<Config>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -491,7 +522,7 @@ mod tests {
             Pending,
         }
 
-        let py = to_python::<Status>();
+        let py = to_python::<Status>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -502,7 +533,7 @@ mod tests {
             items: Vec<String>,
         }
 
-        let py = to_python::<Data>();
+        let py = to_python::<Data>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -519,7 +550,7 @@ mod tests {
             name: String,
         }
 
-        let py = to_python::<Outer>();
+        let py = to_python::<Outer>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -534,7 +565,7 @@ mod tests {
             UnknownRequirement,
         }
 
-        let py = to_python::<ValidationErrorCode>();
+        let py = to_python::<ValidationErrorCode>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -551,7 +582,7 @@ mod tests {
             Clean,
         }
 
-        let py = to_python::<GitStatus>();
+        let py = to_python::<GitStatus>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -565,7 +596,7 @@ mod tests {
             is_active: bool,
         }
 
-        let py = to_python::<ApiResponse>();
+        let py = to_python::<ApiResponse>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -579,7 +610,7 @@ mod tests {
             email: String,
         }
 
-        let py = to_python::<UserProfile>();
+        let py = to_python::<UserProfile>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -594,7 +625,7 @@ mod tests {
             ImageUpload { url: String, width: u32 },
         }
 
-        let py = to_python::<Message>();
+        let py = to_python::<Message>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -603,7 +634,7 @@ mod tests {
         #[derive(Facet)]
         struct Empty;
 
-        let py = to_python::<Empty>();
+        let py = to_python::<Empty>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -612,7 +643,7 @@ mod tests {
         #[derive(Facet)]
         struct Point(f32, f64);
 
-        let py = to_python::<Point>();
+        let py = to_python::<Point>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -621,7 +652,7 @@ mod tests {
         #[derive(Facet)]
         struct UserId(u64);
 
-        let py = to_python::<UserId>();
+        let py = to_python::<UserId>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -634,7 +665,7 @@ mod tests {
             entries: HashMap<String, i32>,
         }
 
-        let py = to_python::<Registry>();
+        let py = to_python::<Registry>(false);
         insta::assert_snapshot!(py);
     }
 
@@ -652,7 +683,19 @@ mod tests {
             Data { name: String, value: f64 },
         }
 
-        let py = to_python::<Event>();
+        let py = to_python::<Event>(false);
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_with_imports() {
+        #[derive(Facet)]
+        struct User {
+            name: String,
+            age: u32,
+        }
+
+        let py = to_python::<User>(true);
         insta::assert_snapshot!(py);
     }
 }
