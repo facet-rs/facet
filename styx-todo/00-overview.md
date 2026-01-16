@@ -52,6 +52,7 @@ All foundational work is done:
 | 07 | [Arborium Integration](07-arborium-integration.md) | Medium | Medium |
 | 08 | [MIME Type](08-mime-type.md) | Low | Low |
 | 09 | [Ecosystem & Adoption](09-ecosystem.md) | Low | Ongoing |
+| 10 | [AI Tooling](10-ai-tooling.md) | Medium | Low |
 
 ## Recommended Order
 
