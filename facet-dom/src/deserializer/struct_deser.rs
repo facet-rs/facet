@@ -363,6 +363,22 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         Ok(wip)
     }
 
+    /// Check if an enum shape has a text variant.
+    fn enum_has_text_variant(shape: &Shape) -> bool {
+        match &shape.ty {
+            Type::User(UserType::Enum(def)) => def.variants.iter().any(|v| v.is_text()),
+            _ => false,
+        }
+    }
+
+    /// Get the inner element shape from a list/vec field shape.
+    fn get_list_element_shape(shape: &Shape) -> Option<&'static Shape> {
+        match &shape.def {
+            Def::List(list_def) => Some(list_def.t),
+            _ => None,
+        }
+    }
+
     fn handle_text(
         &mut self,
         mut wip: Partial<'de, BORROW>,
@@ -374,11 +390,23 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             // Skip text nodes silently (they're typically whitespace between elements).
         } else if self.flattened_enum_list_active {
             // Text inside an active flattened enum list - add as Text variant
-            wip = wip.begin_list_item()?;
-            wip = self
-                .dom_deser
-                .deserialize_text_into_enum(wip, text)?
-                .end()?;
+            // But first check if the enum can accept text (in lenient mode, skip if not)
+            let can_accept = self
+                .field_map
+                .flattened_enum
+                .as_ref()
+                .and_then(|info| Self::get_list_element_shape(info.field_info.field.shape()))
+                .map(Self::enum_has_text_variant)
+                .unwrap_or(false);
+
+            if can_accept || !self.parser().is_lenient() {
+                wip = wip.begin_list_item()?;
+                wip = self
+                    .dom_deser
+                    .deserialize_text_into_enum(wip, text)?
+                    .end()?;
+            }
+            // else: lenient mode and no text variant - silently discard
         } else if let Some(info) = &self.field_map.text_field {
             if info.is_list || info.is_set {
                 // Vec<String> or HashSet<String> with xml::text - each text node is a list item
@@ -401,7 +429,17 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             let field_idx = enum_info.field_idx;
             let is_list = enum_info.field_info.is_list;
 
-            if is_list {
+            // Check if the enum can accept text
+            let enum_shape = if is_list {
+                Self::get_list_element_shape(enum_info.field_info.field.shape())
+            } else {
+                Some(enum_info.field_info.field.shape())
+            };
+            let can_accept = enum_shape.map(Self::enum_has_text_variant).unwrap_or(false);
+
+            if !can_accept && self.parser().is_lenient() {
+                // Lenient mode and no text variant - silently discard
+            } else if is_list {
                 if !self.flattened_enum_list_started {
                     // First text/element: start the list
                     trace!(field_idx, "starting flattened enum list for text");
