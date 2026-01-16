@@ -39,7 +39,6 @@ fn main() {
     runner.section("Rename Errors");
 
     scenario_unknown_rename_all_rule(&mut runner);
-    scenario_rename_on_container(&mut runner);
 
     runner.footer();
 }
@@ -309,33 +308,6 @@ fn main() {}
         .description(
             "Using an unknown case convention in `rename_all` is a facet-specific error.\n\
              Valid options: `camelCase`, `snake_case`, `kebab-case`, `PascalCase`, `SCREAMING_SNAKE_CASE`.",
-        )
-        .input(Language::Rust, code)
-        .compiler_error(&error)
-        .finish();
-}
-
-fn scenario_rename_on_container(runner: &mut ShowcaseRunner) {
-    let code = r#"use facet::Facet;
-
-#[derive(Facet)]
-#[facet(rename = "MyConfig")]
-struct Config {
-    name: String,
-    value: u32,
-}
-
-fn main() {}
-"#;
-
-    let output = compile_snippet(code);
-    let error = extract_error(&output);
-
-    runner
-        .scenario("rename on container (facet-specific)")
-        .description(
-            "Using `#[facet(rename = \"...\")]` on a struct/enum is a facet-specific error.\n\
-             A container's name is controlled by its parent field, not by itself.",
         )
         .input(Language::Rust, code)
         .compiler_error(&error)

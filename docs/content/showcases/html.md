@@ -378,9 +378,9 @@ title = "HTML"
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/ea74c5e518b711b1ae1503003b0cf4c180b288a2/facet-html/examples/html_showcase.rs"><code>facet-html/examples/html_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/ea74c5e518b711b1ae1503003b0cf4c180b288a2"><code>ea74c5e51</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-16T05:08:16+01:00">2026-01-16T05:08:16+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/5c8df10b37be181e3a88be583c1eee213e28dbd5/facet-html/examples/html_showcase.rs"><code>facet-html/examples/html_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/5c8df10b37be181e3a88be583c1eee213e28dbd5"><code>5c8df10b3</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-16T05:16:07+01:00">2026-01-16T05:16:07+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>
