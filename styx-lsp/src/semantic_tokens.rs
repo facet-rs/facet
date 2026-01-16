@@ -26,6 +26,7 @@ pub enum TokenType {
 }
 
 impl TokenType {
+    #[allow(dead_code)]
     pub const COUNT: usize = 8;
 
     pub fn as_str(self) -> &'static str {
@@ -53,6 +54,7 @@ pub enum TokenModifier {
 }
 
 impl TokenModifier {
+    #[allow(dead_code)]
     pub const COUNT: usize = 2;
 
     pub fn as_str(self) -> &'static str {
@@ -114,10 +116,10 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>) {
         SyntaxKind::KEY => {
             // Key nodes contain scalars - highlight the scalar tokens as properties
             for child in node.children_with_tokens() {
-                if let Some(token) = child.as_token() {
-                    if is_scalar_token(token.kind()) {
-                        add_token_from_syntax(tokens, content, token, TokenType::Property, 0);
-                    }
+                if let Some(token) = child.as_token()
+                    && is_scalar_token(token.kind())
+                {
+                    add_token_from_syntax(tokens, content, token, TokenType::Property, 0);
                 }
             }
         }
@@ -132,16 +134,10 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>) {
                     if child_node.kind() == SyntaxKind::TAG_NAME {
                         // Get the token inside TAG_NAME
                         for t in child_node.children_with_tokens() {
-                            if let Some(token) = t.as_token() {
-                                if is_scalar_token(token.kind()) {
-                                    add_token_from_syntax(
-                                        tokens,
-                                        content,
-                                        token,
-                                        TokenType::Type,
-                                        0,
-                                    );
-                                }
+                            if let Some(token) = t.as_token()
+                                && is_scalar_token(token.kind())
+                            {
+                                add_token_from_syntax(tokens, content, token, TokenType::Type, 0);
                             }
                         }
                     } else if child_node.kind() == SyntaxKind::TAG_PAYLOAD {
@@ -154,20 +150,20 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>) {
         SyntaxKind::UNIT => {
             // Unit @ token
             for child in node.children_with_tokens() {
-                if let Some(token) = child.as_token() {
-                    if token.kind() == SyntaxKind::AT {
-                        add_token_from_syntax(tokens, content, token, TokenType::Operator, 0);
-                    }
+                if let Some(token) = child.as_token()
+                    && token.kind() == SyntaxKind::AT
+                {
+                    add_token_from_syntax(tokens, content, token, TokenType::Operator, 0);
                 }
             }
         }
         SyntaxKind::SCALAR => {
             // Scalar values (not in KEY position) get string highlighting
             for child in node.children_with_tokens() {
-                if let Some(token) = child.as_token() {
-                    if is_scalar_token(token.kind()) {
-                        add_token_from_syntax(tokens, content, token, TokenType::String, 0);
-                    }
+                if let Some(token) = child.as_token()
+                    && is_scalar_token(token.kind())
+                {
+                    add_token_from_syntax(tokens, content, token, TokenType::String, 0);
                 }
             }
         }

@@ -14,10 +14,12 @@ use crate::semantic_tokens::{compute_semantic_tokens, semantic_token_legend};
 /// Document state tracked by the server
 struct DocumentState {
     /// Document content
+    #[allow(dead_code)]
     content: String,
     /// Parsed CST
     parse: Parse,
     /// Document version
+    #[allow(dead_code)]
     version: i32,
 }
 

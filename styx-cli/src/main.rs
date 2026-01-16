@@ -471,7 +471,7 @@ fn run_subcommand(cmd: &str, args: &[String]) -> Result<(), CliError> {
 }
 
 fn run_lsp(_args: &[String]) -> Result<(), CliError> {
-    let rt = tokio::runtime::Runtime::new().map_err(|e| CliError::Io(e.into()))?;
+    let rt = tokio::runtime::Runtime::new().map_err(CliError::Io)?;
     rt.block_on(async {
         styx_lsp::run()
             .await
