@@ -1,6 +1,6 @@
 # AI Tooling
 
-**Status:** In Progress  
+**Status:** Done  
 **Priority:** Medium
 
 ## Problem
@@ -52,14 +52,16 @@ Create a `STYX.md` or similar that projects can include to teach AI about their 
 
 ### Done
 
-- [x] **Claude Code skill** created at `~/.claude/skills/styx/SKILL.md`
+- [x] **Claude Code skill** at `contrib/claude-skill/SKILL.md`
   - Covers syntax (scalars, objects, sequences, tags, heredocs)
   - Schema language reference
   - CLI usage for validation
   - Common mistakes section
+- [x] **CLI command** `styx @skill` outputs the skill for easy installation
+- [x] **Website docs** at `docs/content/guide/claude-skill.md`
+- [x] **Installation README** with multiple install methods
 
-### Remaining
+### Future Ideas
 
-- [ ] Add `styx @syntax` CLI command
-- [ ] Consider MCP server for programmatic access
-- [ ] Consider publishing skill to a public repo
+- [ ] Consider MCP server for programmatic access (validate, format, etc.)
+- [ ] Skills for other AI tools (GitHub Copilot, Cursor, etc.)
