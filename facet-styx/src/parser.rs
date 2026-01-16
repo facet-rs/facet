@@ -172,7 +172,6 @@ impl<'de> StyxParser<'de> {
                     Some('t') => result.push('\t'),
                     Some('\\') => result.push('\\'),
                     Some('"') => result.push('"'),
-                    Some('0') => result.push('\0'),
                     Some('u') => {
                         if chars.next() == Some('{') {
                             let mut hex = String::new();

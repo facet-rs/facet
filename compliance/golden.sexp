@@ -108,9 +108,6 @@
   (entry
     (scalar [88, 97] bare "backslash")
     (scalar [98, 114] quoted "path\\to\\file"))
-  (entry
-    (scalar [115, 119] bare "null")
-    (scalar [120, 132] quoted "null\u0000char"))
 )
 ; file: compliance/corpus/01-scalars/quoted-simple.styx
 (document [-1, -1]
@@ -588,11 +585,7 @@
       (scalar [21, 22] bare "j")))
 )
 ; file: compliance/corpus/07-invalid/invalid-escape.styx
-(document [-1, -1]
-  (entry
-    (scalar [0, 3] bare "bad")
-    (scalar [4, 23] quoted "invalid \\x escape"))
-)
+(error [13, 15] "parse error at 13-15: invalid escape sequence: \\x")
 ; file: compliance/corpus/07-invalid/mixed-separators.styx
 (error [13, 14] "parse error at 13-14: mixed separators (use either commas or newlines)")
 ; file: compliance/corpus/07-invalid/unclosed-brace.styx

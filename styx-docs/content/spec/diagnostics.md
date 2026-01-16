@@ -104,7 +104,7 @@ NN | source line
 > 2 |   name "foo\qbar"
 >   |            ^^ invalid escape
 >   |
->   = help: valid escapes are: \\, \", \n, \r, \t, \0, \uXXXX, \u{X...}
+>   = help: valid escapes are: \\, \", \n, \r, \t, \uXXXX, \u{X...}
 > ```
 
 ### Unterminated string

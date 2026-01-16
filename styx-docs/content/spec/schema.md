@@ -60,6 +60,17 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > }
 > ```
 
+> r[schema.meta.version]
+> The `version` field in schema metadata MUST use datever format: `YYYY-MM-DD` (ISO 8601 date).
+> This enables simple chronological ordering of schema versions.
+>
+> ```styx
+> meta {
+>   id https://example.com/schemas/config
+>   version 2026-01-16
+> }
+> ```
+
 > r[schema.root]
 > Inside `schema`, the key `@` defines the expected structure of the document root.
 > Other keys define named types that can be referenced with `@TypeName`.
@@ -93,20 +104,20 @@ that is, any tagged unit value like `@string` or `@MyType`.
 ## Schema declaration in documents
 
 > r[schema.declaration]
-> A document MAY declare its schema using a tagged unit key `@` at the document root.
+> A document MAY declare its schema using the `@schema` tag at the document root.
 > The value is either a URL/path string (external reference) or an inline schema object.
 > Inline schemas use a simplified form: only the `schema` block is required; `meta` and `imports` are optional.
 >
 > ```styx
 > // External schema reference
-> @ https://example.com/schemas/server.styx
+> @schema https://example.com/schemas/server.styx
 >
 > server {host localhost, port 8080}
 > ```
 >
 > ```styx
 > // Inline schema (simplified form)
-> @ {
+> @schema {
 >   schema {
 >     @ @object{server @object{host @string, port @u16}}
 >   }
@@ -147,7 +158,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > | `@string` | any scalar |
 > | `@bool` | `@true` or `@false` |
 > | `@int` | any integer |
-> | `@float` | any floating point number |
+> | `@float` | any finite floating point number (JSON number syntax) |
 > | `@unit` | the unit value `@` |
 > | `@any` | any value |
 >
@@ -166,7 +177,13 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > |------------|-------------|
 > | `minLen` | minimum length (inclusive) |
 > | `maxLen` | maximum length (inclusive) |
-> | `pattern` | regex pattern the string must match |
+> | `pattern` | ECMAScript regular expression the string must match |
+>
+> r[schema.constraints.string.pattern]
+> The `pattern` constraint uses ECMAScript (JavaScript) regular expression syntax as defined in ECMA-262.
+> The pattern is implicitly anchored — it must match the entire string, not just a substring.
+> Implementations SHOULD support at minimum the common subset: character classes, quantifiers,
+> alternation, grouping, and Unicode escapes.
 >
 > ```styx
 > name @string{minLen 1, maxLen 100}
@@ -198,6 +215,19 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > ratio @float{min 0.0, max 1.0}
 > temperature @float{min -273.15}
 > ```
+>
+> r[schema.constraints.float.syntax]
+> Float values use JSON number syntax: an optional minus sign, integer digits, optional decimal fraction,
+> and optional exponent. `NaN`, `Infinity`, and `-Infinity` are NOT valid float values.
+>
+> ```
+> float = "-"? integer ("." digits)? exponent?
+> integer = "0" | [1-9] digits
+> digits = [0-9]*
+> exponent = ("e" | "E") ("+" | "-")? digits
+> ```
+>
+> Examples: `3.14`, `-273.15`, `6.022e23`, `1E-10`, `0.0`
 
 ### Optional fields
 
@@ -229,6 +259,10 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > ```
 >
 > Note: `@default` implies the field is optional. Using `@optional(@default(...))` is redundant.
+>
+> r[schema.default.validation]
+> The default value MUST satisfy all validation rules of its type constraint.
+> A schema with an invalid default value (e.g., `@default(0 @int{min 1})`) is itself invalid.
 
 ### Deprecation
 
@@ -444,8 +478,8 @@ schema {
   Meta @object{
     /// Unique identifier for the schema (URL recommended).
     id @string
-    /// Schema version (date or semver).
-    version @string
+    /// Schema version (datever format: YYYY-MM-DD).
+    version @string{pattern "^\\d{4}-\\d{2}-\\d{2}$"}
     /// Human-readable description.
     description @optional(@string)
   }

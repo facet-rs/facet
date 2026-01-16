@@ -120,9 +120,7 @@ impl StyxError {
                             .with_message("invalid escape")
                             .with_color(Color::Red),
                     )
-                    .with_help(
-                        "valid escapes are: \\\\, \\\", \\n, \\r, \\t, \\0, \\uXXXX, \\u{X...}",
-                    )
+                    .with_help("valid escapes are: \\\\, \\\", \\n, \\r, \\t, \\uXXXX, \\u{X...}")
             }
         }
     }

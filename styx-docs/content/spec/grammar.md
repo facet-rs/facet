@@ -137,7 +137,7 @@ referenced by:
 
 ```
 EscapeSeq
-         ::= '\' ( [\"nrt0] | 'u' HexDigit HexDigit HexDigit HexDigit | 'u{' HexDigit+ '}' )
+         ::= '\' ( [\"nrt] | 'u' HexDigit HexDigit HexDigit HexDigit | 'u{' HexDigit+ '}' )
 ```
 
 referenced by:

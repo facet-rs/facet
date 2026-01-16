@@ -88,7 +88,6 @@ pub fn unescape_quoted(s: &str) -> Cow<'_, str> {
                 Some('t') => result.push('\t'),
                 Some('\\') => result.push('\\'),
                 Some('"') => result.push('"'),
-                Some('0') => result.push('\0'),
                 Some('u') => {
                     // Handle \u{XXXX} or \uXXXX
                     if chars.peek() == Some(&'{') {

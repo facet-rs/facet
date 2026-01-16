@@ -1072,11 +1072,27 @@ impl<'src> Parser<'src> {
         callback: &mut C,
     ) -> bool {
         match &atom.content {
-            AtomContent::Scalar(text) => callback.event(Event::Scalar {
-                span: atom.span,
-                value: self.process_scalar(text, atom.kind),
-                kind: atom.kind,
-            }),
+            AtomContent::Scalar(text) => {
+                // parser[impl scalar.quoted.escapes]
+                // Validate escape sequences for quoted scalars
+                if atom.kind == ScalarKind::Quoted {
+                    for (offset, seq) in Self::validate_quoted_escapes(text) {
+                        let error_start = atom.span.start + offset as u32;
+                        let error_span = Span::new(error_start, error_start + seq.len() as u32);
+                        if !callback.event(Event::Error {
+                            span: error_span,
+                            kind: ParseErrorKind::InvalidEscape(seq),
+                        }) {
+                            return false;
+                        }
+                    }
+                }
+                callback.event(Event::Scalar {
+                    span: atom.span,
+                    value: self.process_scalar(text, atom.kind),
+                    kind: atom.kind,
+                })
+            }
             AtomContent::Heredoc(content) => callback.event(Event::Scalar {
                 span: atom.span,
                 value: Cow::Owned(content.clone()),
@@ -1270,12 +1286,28 @@ impl<'src> Parser<'src> {
         callback: &mut C,
     ) -> bool {
         match &atom.content {
-            AtomContent::Scalar(text) => callback.event(Event::Key {
-                span: atom.span,
-                tag: None,
-                payload: Some(self.process_scalar(text, atom.kind)),
-                kind: atom.kind,
-            }),
+            AtomContent::Scalar(text) => {
+                // parser[impl scalar.quoted.escapes]
+                // Validate escape sequences for quoted scalars
+                if atom.kind == ScalarKind::Quoted {
+                    for (offset, seq) in Self::validate_quoted_escapes(text) {
+                        let error_start = atom.span.start + offset as u32;
+                        let error_span = Span::new(error_start, error_start + seq.len() as u32);
+                        if !callback.event(Event::Error {
+                            span: error_span,
+                            kind: ParseErrorKind::InvalidEscape(seq),
+                        }) {
+                            return false;
+                        }
+                    }
+                }
+                callback.event(Event::Key {
+                    span: atom.span,
+                    tag: None,
+                    payload: Some(self.process_scalar(text, atom.kind)),
+                    kind: atom.kind,
+                })
+            }
             AtomContent::Heredoc(_) => {
                 // Heredocs are not allowed as keys
                 callback.event(Event::Error {
@@ -1316,6 +1348,21 @@ impl<'src> Parser<'src> {
                     }
                     Some(inner) => match &inner.content {
                         AtomContent::Scalar(text) => {
+                            // parser[impl scalar.quoted.escapes]
+                            // Validate escape sequences for quoted scalars
+                            if inner.kind == ScalarKind::Quoted {
+                                for (offset, seq) in Self::validate_quoted_escapes(text) {
+                                    let error_start = inner.span.start + offset as u32;
+                                    let error_span =
+                                        Span::new(error_start, error_start + seq.len() as u32);
+                                    if !callback.event(Event::Error {
+                                        span: error_span,
+                                        kind: ParseErrorKind::InvalidEscape(seq),
+                                    }) {
+                                        return false;
+                                    }
+                                }
+                            }
                             // Tagged scalar key: @tag"value"
                             callback.event(Event::Key {
                                 span: atom.span,
@@ -1368,6 +1415,91 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// Validate escape sequences in a quoted string and return invalid escapes.
+    /// Returns a list of (byte_offset_within_string, invalid_sequence) pairs.
+    /// parser[impl scalar.quoted.escapes]
+    fn validate_quoted_escapes(text: &str) -> Vec<(usize, String)> {
+        let mut errors = Vec::new();
+
+        // Remove surrounding quotes for validation
+        let inner = if text.starts_with('"') && text.ends_with('"') && text.len() >= 2 {
+            &text[1..text.len() - 1]
+        } else {
+            text
+        };
+
+        let mut chars = inner.char_indices().peekable();
+
+        while let Some((i, c)) = chars.next() {
+            if c == '\\' {
+                let escape_start = i;
+                match chars.next() {
+                    Some((_, 'n' | 'r' | 't' | '\\' | '"')) => {
+                        // Valid escape
+                    }
+                    Some((_, 'u')) => {
+                        // Unicode escape - validate format
+                        match chars.peek() {
+                            Some((_, '{')) => {
+                                // \u{X...} form - consume until }
+                                chars.next(); // consume '{'
+                                let mut valid = true;
+                                let mut found_close = false;
+                                while let Some((_, c)) = chars.next() {
+                                    if c == '}' {
+                                        found_close = true;
+                                        break;
+                                    }
+                                    if !c.is_ascii_hexdigit() {
+                                        valid = false;
+                                    }
+                                }
+                                if !found_close || !valid {
+                                    // Extract the sequence for error reporting
+                                    let end = chars.peek().map(|(i, _)| *i).unwrap_or(inner.len());
+                                    let seq = &inner[escape_start..end.min(escape_start + 12)];
+                                    errors.push((escape_start + 1, format!("\\{}", &seq[1..])));
+                                }
+                            }
+                            Some((_, c)) if c.is_ascii_hexdigit() => {
+                                // \uXXXX form - need exactly 4 hex digits
+                                let mut count = 1;
+                                while count < 4 {
+                                    match chars.peek() {
+                                        Some((_, c)) if c.is_ascii_hexdigit() => {
+                                            chars.next();
+                                            count += 1;
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if count != 4 {
+                                    let end = chars.peek().map(|(i, _)| *i).unwrap_or(inner.len());
+                                    let seq = &inner[escape_start..end];
+                                    errors.push((escape_start + 1, seq.to_string()));
+                                }
+                            }
+                            _ => {
+                                // Invalid \u with no hex digits
+                                errors.push((escape_start + 1, "\\u".to_string()));
+                            }
+                        }
+                    }
+                    Some((_, c)) => {
+                        // Invalid escape sequence
+                        errors.push((escape_start + 1, format!("\\{}", c)));
+                    }
+                    None => {
+                        // Trailing backslash
+                        errors.push((escape_start + 1, "\\".to_string()));
+                    }
+                }
+            }
+        }
+
+        errors
+    }
+
     /// Strip the r#*"..."#* delimiters from a raw string, returning just the content.
     fn strip_raw_delimiters(text: &str) -> &str {
         // Raw string format: r#*"content"#*
@@ -1416,7 +1548,6 @@ impl<'src> Parser<'src> {
                     Some('t') => result.push('\t'),
                     Some('\\') => result.push('\\'),
                     Some('"') => result.push('"'),
-                    Some('0') => result.push('\0'),
                     // parser[impl scalar.quoted.escapes]
                     Some('u') => {
                         // Unicode escape: \u{X...} or \uXXXX
@@ -2475,6 +2606,156 @@ mod tests {
                 }
             )),
             "Heredoc as key should be rejected"
+        );
+    }
+
+    // parser[verify scalar.quoted.escapes]
+    #[test]
+    fn test_invalid_escape_null() {
+        // \0 is no longer a valid escape - must use \u{0} instead
+        let events = parse(r#"x "\0""#);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidEscape(seq),
+                    ..
+                } if seq == "\\0"
+            )),
+            "\\0 should be rejected as invalid escape"
+        );
+    }
+
+    // parser[verify scalar.quoted.escapes]
+    #[test]
+    fn test_invalid_escape_unknown() {
+        // \q, \?, \a etc. are not valid escapes
+        let events = parse(r#"x "\q""#);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidEscape(seq),
+                    ..
+                } if seq == "\\q"
+            )),
+            "\\q should be rejected as invalid escape"
+        );
+    }
+
+    // parser[verify scalar.quoted.escapes]
+    #[test]
+    fn test_invalid_escape_multiple() {
+        // Multiple invalid escapes should all be reported
+        let events = parse(r#"x "\0\q\?""#);
+        let invalid_escapes: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Error {
+                    kind: ParseErrorKind::InvalidEscape(seq),
+                    ..
+                } => Some(seq.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            invalid_escapes.len(),
+            3,
+            "Should report 3 invalid escapes, got: {:?}",
+            invalid_escapes
+        );
+    }
+
+    // parser[verify scalar.quoted.escapes]
+    #[test]
+    fn test_valid_escapes_still_work() {
+        // Make sure valid escapes still work
+        let events = parse(r#"x "a\nb\tc\\d\"e""#);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "a\nb\tc\\d\"e")),
+            "Valid escapes should still work"
+        );
+        // No errors should be reported
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidEscape(_),
+                    ..
+                }
+            )),
+            "Valid escapes should not produce errors"
+        );
+    }
+
+    // parser[verify scalar.quoted.escapes]
+    #[test]
+    fn test_invalid_escape_in_key() {
+        // Invalid escapes in keys should also be reported
+        let events = parse(r#""\0" value"#);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidEscape(seq),
+                    ..
+                } if seq == "\\0"
+            )),
+            "\\0 in key should be rejected as invalid escape"
+        );
+    }
+
+    // parser[verify entry.keypath.attributes]
+    #[test]
+    fn test_attributes_at_end_of_path() {
+        // Attributes at the end of a key path should work
+        let events = parse("spec selector matchLabels app=web tier=frontend");
+        // Should have keys: spec, selector, matchLabels, app, tier
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"spec"), "Missing key 'spec'");
+        assert!(keys.contains(&"selector"), "Missing key 'selector'");
+        assert!(keys.contains(&"matchLabels"), "Missing key 'matchLabels'");
+        assert!(keys.contains(&"app"), "Missing key 'app'");
+        assert!(keys.contains(&"tier"), "Missing key 'tier'");
+        // No errors should be reported
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidKey,
+                    ..
+                }
+            )),
+            "Attributes at end of path should not produce errors"
+        );
+    }
+
+    // parser[verify entry.keypath.attributes]
+    #[test]
+    fn test_attributes_mid_path_rejected() {
+        // Attributes in the middle of a key path are invalid (attributes produce objects, objects can't be keys)
+        let events = parse("spec selector foo=bar matchLabels app web");
+        // foo=bar produces an object, which is then used as a key for matchLabels - this is invalid
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidKey,
+                    ..
+                }
+            )),
+            "Attributes mid-path should produce InvalidKey error"
         );
     }
 }

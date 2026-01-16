@@ -67,7 +67,11 @@ Scalars are opaque text. The parser assigns no type information.
 
 > r[scalar.quoted.escapes]
 > Quoted scalars use `"..."` and support escape sequences:
-> `\\`, `\"`, `\n`, `\r`, `\t`, `\0`, `\uXXXX`, `\u{X...}`.
+> `\\`, `\"`, `\n`, `\r`, `\t`, `\uXXXX`, `\u{X...}`.
+>
+> r[scalar.quoted.newline]
+> The `\n` escape sequence always produces a single LF character (U+000A), regardless of platform.
+> Use `\r\n` explicitly if CRLF is needed.
 >
 > ```styx
 > greeting "hello\nworld"
@@ -184,12 +188,11 @@ An **entry** is a sequence of one or more atoms. The parser interprets entries s
 > An entry consists of one or more atoms:
 >
 > - **1 atom**: the atom is the key, the value is implicit unit (`@`)
-> - **2 atoms**: first is the key, second is the value
-> - **N atoms** (N > 2): first N-1 atoms form a nested key path, last atom is the value
+> - **N atoms** (N ≥ 2): first N-1 atoms form a nested key path, last atom is the value
 >
 > ```styx
 > enabled                  // enabled = @
-> host localhost           // host = localhost
+> host localhost           // host = localhost (path length 1)
 > server host localhost    // server {host localhost}
 > server host port 8080    // server {host {port 8080}}
 > ```
@@ -300,10 +303,12 @@ Attribute syntax is shorthand for inline object entries.
 
 > r[entry.keypath.attributes]
 > Key paths compose naturally with attribute syntax.
+> Attributes MUST appear at the end of the entry, as the final value.
+> Attributes cannot appear in the middle of a key path.
 >
 > ```compare
 > /// styx
-> // Key path with attributes
+> // Key path with attributes at end (valid)
 > spec selector matchLabels app=web tier=frontend
 > /// styx
 > // Canonical

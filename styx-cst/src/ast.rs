@@ -461,7 +461,6 @@ fn unescape_quoted(text: &str) -> String {
                 Some('t') => result.push('\t'),
                 Some('\\') => result.push('\\'),
                 Some('"') => result.push('"'),
-                Some('0') => result.push('\0'),
                 Some(c) => {
                     // Unknown escape, keep as-is
                     result.push('\\');

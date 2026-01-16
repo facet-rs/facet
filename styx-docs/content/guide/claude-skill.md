@@ -112,7 +112,7 @@ Four forms of string values:
 
 **Bare scalars**: Any characters except `{}(),"=@ \t\n\r`. Cannot start with `@`.
 
-**Quoted strings**: Escapes: `\\`, `\"`, `\n`, `\r`, `\t`, `\0`, `\u{hex}`.
+**Quoted strings**: Escapes: `\\`, `\"`, `\n`, `\r`, `\t`, `\u{hex}`.
 
 **Raw strings**: `r"..."` or `r#"..."#` (add `#` to include quotes).
 

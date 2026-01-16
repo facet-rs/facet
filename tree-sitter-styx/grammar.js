@@ -96,7 +96,7 @@ module.exports = grammar({
     quoted_scalar: ($) => seq('"', repeat(choice($.escape_sequence, /[^"\\]+/)), '"'),
 
     escape_sequence: ($) =>
-      token(choice(/\\[\\\"nrt0]/, /\\u[0-9A-Fa-f]{4}/, /\\u\{[0-9A-Fa-f]{1,6}\}/)),
+      token(choice(/\\[\\\"nrt]/, /\\u[0-9A-Fa-f]{4}/, /\\u\{[0-9A-Fa-f]{1,6}\}/)),
 
     // Raw scalar: r#"..."# - handled by external scanner
     raw_scalar: ($) => seq($._raw_string_start, optional($._raw_string_content), $._raw_string_end),

@@ -97,7 +97,7 @@ impl ParseError {
                         .with_message("invalid escape")
                         .with_color(Color::Red),
                 )
-                .with_help("valid escapes are: \\\\, \\\", \\n, \\r, \\t, \\0, \\uXXXX, \\u{X...}"),
+                .with_help("valid escapes are: \\\\, \\\", \\n, \\r, \\t, \\uXXXX, \\u{X...}"),
 
             // diag[impl diagnostic.parser.unexpected]
             ParseErrorKind::UnexpectedToken => Report::build(ReportKind::Error, filename, range.start)
