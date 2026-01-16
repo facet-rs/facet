@@ -64,7 +64,7 @@ With facet, you can compare shapes at runtime. A format crate can treat `Vec<u8>
 
 serde's de facto dynamic value type is [`serde_json::Value`](https://docs.rs/serde_json/latest/serde_json/enum.Value.html) — designed for JSON. It doesn't natively support bytes, datetimes, or `u128`.
 
-[`facet_value::Value`](https://docs.rs/facet-value/latest/facet_value/enum.Value.html) is format-agnostic and richer: bytes and datetimes are first-class, not encoded as strings or arrays. Source spans can be preserved for error reporting.
+[`facet_value::Value`](https://docs.rs/facet-value/latest/facet_value/struct.Value.html) is format-agnostic and richer: bytes and datetimes are first-class, not encoded as strings or arrays. Source spans can be preserved for error reporting.
 
 ### flatten without precision loss
 

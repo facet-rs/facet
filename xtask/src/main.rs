@@ -200,7 +200,7 @@ fn bench_report(args: benchmark_defs::BenchReportArgs) {
 
 fn generate_showcases() {
     let workspace_root = workspace_root();
-    let output_dir = workspace_root.join("docs/content/guide/showcases");
+    let output_dir = workspace_root.join("docs/content/showcases");
 
     fs::create_dir_all(&output_dir).expect("Failed to create output directory");
 

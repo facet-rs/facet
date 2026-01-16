@@ -6,7 +6,7 @@ insert_anchor_links = "heading"
 
 Extension attributes let your crate define custom `#[facet(...)]` attributes with **compile-time validation** and helpful error messages.
 
-For the full guide on creating extension attributes, see this page; for a quick consumer reference, see [Extension Attributes](@/extension-attributes.md).
+This page covers both using extension attributes and creating your own.
 
 ## Using extension attributes
 
@@ -174,7 +174,7 @@ The system uses string similarity to suggest corrections.
 
 ## Querying attributes at runtime
 
-When your format crate needs to check for attributes, use the `get_as` method on [`ExtensionAttr`](https://docs.rs/facet-core/latest/facet_core/struct.ExtensionAttr.html):
+When your format crate needs to check for attributes, use the `get_as` method on [`Attr`](https://docs.rs/facet-core/latest/facet_core/struct.Attr.html):
 
 ```rust,noexec
 use facet_core::{Field, FieldAttribute, Facet};

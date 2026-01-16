@@ -240,7 +240,10 @@ fn print_diff_scenario(
             for (label, diff) in outputs {
                 println!("<div class=\"diff-output\">");
                 println!("<h4>{label}</h4>");
-                println!("<pre><code>{}</code></pre>", ansi_to_html(diff));
+                println!(
+                    "<div class=\"code-block\"><pre><code>{}</code></pre></div>",
+                    ansi_to_html(diff)
+                );
                 println!("</div>");
             }
             println!("</section>");

@@ -1,7 +1,6 @@
 +++
 title = "Derive Macro Diagnostics"
 slug = "derive-diagnostics"
-weight = 3
 +++
 
 <div class="showcase">
@@ -36,14 +35,14 @@ fn main() {}
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error[E0566]</span><span style="font-weight:bold">: conflicting representation hints</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error[E0566]</span><span style="font-weight:bold">: conflicting representation hints</span>
  <span style="font-weight:bold"></span><span style="color:#0000ff">--&gt; </span>src/main.rs:4:8
   <span style="font-weight:bold"></span><span style="color:#0000ff">|</span>
 <span style="font-weight:bold"></span><span style="color:#0000ff">4</span> <span style="font-weight:bold"></span><span style="color:#0000ff">|</span> #[repr(C, Rust)]
   <span style="font-weight:bold"></span><span style="color:#0000ff">|</span>        <span style="font-weight:bold"></span><span style="color:#ff0000">^</span>  <span style="font-weight:bold"></span><span style="color:#ff0000">^^^^</span>
 
 <span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0566&#96;.</span>
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre></div>
 </div>
 </section>
 
@@ -68,14 +67,14 @@ fn main() {}
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error[E0692]</span><span style="font-weight:bold">: transparent struct cannot have other repr hints</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error[E0692]</span><span style="font-weight:bold">: transparent struct cannot have other repr hints</span>
  <span style="font-weight:bold"></span><span style="color:#0000ff">--&gt; </span>src/main.rs:4:8
   <span style="font-weight:bold"></span><span style="color:#0000ff">|</span>
 <span style="font-weight:bold"></span><span style="color:#0000ff">4</span> <span style="font-weight:bold"></span><span style="color:#0000ff">|</span> #[repr(C, transparent)]
   <span style="font-weight:bold"></span><span style="color:#0000ff">|</span>        <span style="font-weight:bold"></span><span style="color:#ff0000">^</span>  <span style="font-weight:bold"></span><span style="color:#ff0000">^^^^^^^^^^^</span>
 
 <span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0692&#96;.</span>
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre></div>
 </div>
 </section>
 
@@ -103,7 +102,7 @@ fn main() {}
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error[E0692]</span><span style="font-weight:bold">: transparent enum cannot have other repr hints</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error[E0692]</span><span style="font-weight:bold">: transparent enum cannot have other repr hints</span>
  <span style="font-weight:bold"></span><span style="color:#0000ff">--&gt; </span>src/main.rs:4:8
   <span style="font-weight:bold"></span><span style="color:#0000ff">|</span>
 <span style="font-weight:bold"></span><span style="color:#0000ff">4</span> <span style="font-weight:bold"></span><span style="color:#0000ff">|</span> #[repr(transparent, u8)]
@@ -121,7 +120,7 @@ fn main() {}
 
 <span style="font-weight:bold">Some errors have detailed explanations: E0692, E0731.</span>
 <span style="font-weight:bold">For more information about an error, try &#96;rustc --explain E0692&#96;.</span>
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 2 previous errors</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 2 previous errors</code></pre></div>
 </div>
 </section>
 
@@ -150,7 +149,7 @@ fn main() {}
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error[E0566]</span><span style="font-weight:bold">: conflicting representation hints</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error[E0566]</span><span style="font-weight:bold">: conflicting representation hints</span>
  <span style="font-weight:bold"></span><span style="color:#0000ff">--&gt; </span>src/main.rs:4:8
   <span style="font-weight:bold"></span><span style="color:#0000ff">|</span>
 <span style="font-weight:bold"></span><span style="color:#0000ff">4</span> <span style="font-weight:bold"></span><span style="color:#0000ff">|</span> #[repr(u8, u16)]
@@ -170,7 +169,7 @@ fn main() {}
 
 <span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0566&#96;.</span>
 <span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span>: &#96;test&#96; (bin "test") generated 1 warning
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 2 previous errors; 1 warning emitted</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 2 previous errors; 1 warning emitted</code></pre></div>
 </div>
 </section>
 
@@ -198,13 +197,13 @@ fn main() {}
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error</span><span style="font-weight:bold">: unsupported repr &#96;packed&#96; - facet only supports C, Rust, transparent, and primitive integer types</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error</span><span style="font-weight:bold">: unsupported repr &#96;packed&#96; - facet only supports C, Rust, transparent, and primitive integer types</span>
  <span style="font-weight:bold"></span><span style="color:#0000ff">--&gt; </span>src/main.rs:4:8
   <span style="font-weight:bold"></span><span style="color:#0000ff">|</span>
 <span style="font-weight:bold"></span><span style="color:#0000ff">4</span> <span style="font-weight:bold"></span><span style="color:#0000ff">|</span> #[repr(packed)]
   <span style="font-weight:bold"></span><span style="color:#0000ff">|</span>        <span style="font-weight:bold"></span><span style="color:#ff0000">^^^^^^</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre></div>
 </div>
 </section>
 
@@ -233,7 +232,7 @@ fn main() {}
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error[E0566]</span><span style="font-weight:bold">: conflicting representation hints</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error[E0566]</span><span style="font-weight:bold">: conflicting representation hints</span>
  <span style="font-weight:bold"></span><span style="color:#0000ff">--&gt; </span>src/main.rs:4:8
   <span style="font-weight:bold"></span><span style="color:#0000ff">|</span>
 <span style="font-weight:bold"></span><span style="color:#0000ff">4</span> <span style="font-weight:bold"></span><span style="color:#0000ff">|</span> #[repr(C)]
@@ -255,7 +254,7 @@ fn main() {}
 
 <span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0566&#96;.</span>
 <span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span>: &#96;test&#96; (bin "test") generated 1 warning
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 2 previous errors; 1 warning emitted</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 2 previous errors; 1 warning emitted</code></pre></div>
 </div>
 </section>
 
@@ -286,13 +285,13 @@ fn main() {}
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error</span><span style="font-weight:bold">: unknown #[facet(rename_all = "...")] rule: &#96;SCREAMING_SNAKE&#96;. Valid options: camelCase, snake_case, kebab-case, PascalCase, SCREAMING_SNAKE_CASE, SCREAMING-KEBAB-CASE, lowercase, UPPERCASE</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:#ff0000">error</span><span style="font-weight:bold">: unknown #[facet(rename_all = "...")] rule: &#96;SCREAMING_SNAKE&#96;. Valid options: camelCase, snake_case, kebab-case, PascalCase, SCREAMING_SNAKE_CASE, SCREAMING-KEBAB-CASE, lowercase, UPPERCASE</span>
  <span style="font-weight:bold"></span><span style="color:#0000ff">--&gt; </span>src/main.rs:4:9
   <span style="font-weight:bold"></span><span style="color:#0000ff">|</span>
 <span style="font-weight:bold"></span><span style="color:#0000ff">4</span> <span style="font-weight:bold"></span><span style="color:#0000ff">|</span> #[facet(rename_all = "SCREAMING_SNAKE")]
   <span style="font-weight:bold"></span><span style="color:#0000ff">|</span>         <span style="font-weight:bold"></span><span style="color:#ff0000">^^^^^^^^^^</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre></div>
 </div>
 </section>
 
@@ -320,16 +319,16 @@ fn main() {}
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code></code></pre>
+<div class="code-block"><pre><code></code></pre></div>
 </div>
 </section>
 
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/f0d6e522a410985db7f0cd94ecfafc55c77a8d95/facet/examples/derive_showcase.rs"><code>facet/examples/derive_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/f0d6e522a410985db7f0cd94ecfafc55c77a8d95"><code>f0d6e522a</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-16T04:11:10+01:00">2026-01-16T04:11:10+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/ea74c5e518b711b1ae1503003b0cf4c180b288a2/facet/examples/derive_showcase.rs"><code>facet/examples/derive_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/ea74c5e518b711b1ae1503003b0cf4c180b288a2"><code>ea74c5e51</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-16T05:08:16+01:00">2026-01-16T05:08:16+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

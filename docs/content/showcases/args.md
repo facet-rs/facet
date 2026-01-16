@@ -1,6 +1,5 @@
 +++
 title = "Args"
-weight = 1
 +++
 
 <div class="showcase">
@@ -44,12 +43,12 @@ from_slice(&["-v", "-j", "4", "input.txt", "output.txt"])
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">verbose</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">jobs</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="color:rgb(81,114,224)">4</span><span style="color:inherit"></span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">input</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">input.txt</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">output</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">output.txt</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -86,12 +85,12 @@ from_slice(&["-j4", "input.txt"])
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">verbose</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">jobs</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="color:rgb(81,114,224)">4</span><span style="color:inherit"></span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">input</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">input.txt</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">output</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -128,12 +127,12 @@ from_slice(&["--verbose=true", "input.txt"])
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">verbose</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">jobs</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">input</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">input.txt</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">output</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -225,13 +224,13 @@ from_slice(&["status", "-sb"])
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">version</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">command</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitCommand</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">Status</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">short</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
     <span style="color:rgb(115,218,202)">branch</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -323,7 +322,7 @@ from_slice(&["clone", "--branch", "main", "https://github.com/user/repo"])
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">version</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">command</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitCommand</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">Clone</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">url</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">https://github.com/user/repo</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
@@ -331,7 +330,7 @@ from_slice(&["clone", "--branch", "main", "https://github.com/user/repo"])
     <span style="color:rgb(115,218,202)">branch</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">main</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
     <span style="color:rgb(115,218,202)">depth</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -423,7 +422,7 @@ from_slice(&["remote", "add", "origin", "https://github.com/user/repo"])
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">version</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">command</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitCommand</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">Remote</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">action</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">RemoteAction</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">Add</span><span style="opacity:0.7"> {</span>
@@ -431,7 +430,7 @@ from_slice(&["remote", "add", "origin", "https://github.com/user/repo"])
       <span style="color:rgb(115,218,202)">url</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">https://github.com/user/repo</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
     <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -462,7 +461,7 @@ from_slice(&["remote", "add", "origin", "https://github.com/user/repo"])
 <a-p>}</a-p></code></pre>
 </details>
 <div class="output">
-<pre><code>mytool 1.0.0
+<div class="code-block"><pre><code>mytool 1.0.0
 
 A simple CLI tool for file processing.
 
@@ -481,7 +480,7 @@ A simple CLI tool for file processing.
     </span><span style="color:#98c379">-j</span><span style="color:inherit">, </span><span style="color:#98c379">--jobs</span><span style="color:inherit"> &lt;OPTION&gt;
             Number of parallel jobs to run
 
-</span></code></pre>
+</span></code></pre></div>
 </div>
 </section>
 
@@ -517,7 +516,7 @@ from_slice(&["--help"])
 
 </div>
 <div class="output">
-<pre><code>target/debug/examples/args_showcase
+<div class="code-block"><pre><code>target/debug/examples/args_showcase
 
 A simple CLI tool for file processing.
 
@@ -536,7 +535,7 @@ A simple CLI tool for file processing.
     </span><span style="color:#98c379">-j</span><span style="color:inherit">, </span><span style="color:#98c379">--jobs</span><span style="color:inherit"> &lt;OPTION&gt;
             Number of parallel jobs to run
 
-</span></code></pre>
+</span></code></pre></div>
 </div>
 </section>
 
@@ -619,7 +618,7 @@ A simple CLI tool for file processing.
 <a-p>}</a-p></code></pre>
 </details>
 <div class="output">
-<pre><code>git 2.40.0
+<div class="code-block"><pre><code>git 2.40.0
 
 Git-like CLI with subcommands.
 
@@ -638,7 +637,7 @@ Git-like CLI with subcommands.
     </span><span style="color:#98c379">remote</span><span style="color:inherit">
             Manage set of tracked repositories
 
-</span></code></pre>
+</span></code></pre></div>
 </div>
 </section>
 
@@ -851,7 +850,7 @@ from_slice(&["--verbos", "input.txt"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;--verbos&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;--verbos&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">v</span><span style="color:#e06c75">e</span><span style="color:#e06c75">r</span><span style="color:#e06c75">b</span><span style="color:#e06c75">o</span><span style="color:#e06c75">s</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
@@ -860,7 +859,7 @@ from_slice(&["--verbos", "input.txt"])
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: did you mean &#96;--verbose&#96;?
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -902,7 +901,7 @@ from_slice(&["--releas"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;--releas&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;--releas&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">r</span><span style="color:#e06c75">e</span><span style="color:#e06c75">l</span><span style="color:#e06c75">e</span><span style="color:#e06c75">a</span><span style="color:#e06c75">s</span>
@@ -911,7 +910,7 @@ from_slice(&["--releas"])
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: did you mean &#96;--release&#96;?
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -947,7 +946,7 @@ from_slice(&["-vxyz", "input.txt"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_short_flag] Error:</span> unknown flag &#96;-x&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_short_flag] Error:</span> unknown flag &#96;-x&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:3 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">v</span><span style="color:#e06c75">x</span><span style="color:#888888">y</span><span style="color:#888888">z</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
@@ -960,7 +959,7 @@ from_slice(&["-vxyz", "input.txt"])
  <span style="color:#888888">  │</span>             &lt;input&gt;    Input file to process
  <span style="color:#888888">  │</span>             &lt;output&gt;   Output file (defaults to stdout)
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -996,7 +995,7 @@ from_slice(&["---verbose", "input.txt"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;---verbose&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_long_flag] Error:</span> unknown flag &#96;---verbose&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">-</span><span style="color:#e06c75">v</span><span style="color:#e06c75">e</span><span style="color:#e06c75">r</span><span style="color:#e06c75">b</span><span style="color:#e06c75">o</span><span style="color:#e06c75">s</span><span style="color:#e06c75">e</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
@@ -1009,7 +1008,7 @@ from_slice(&["---verbose", "input.txt"])
  <span style="color:#888888">  │</span>             &lt;input&gt;    Input file to process
  <span style="color:#888888">  │</span>             &lt;output&gt;   Output file (defaults to stdout)
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1045,7 +1044,7 @@ from_slice(&["-verbose", "input.txt"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_short_flag] Error:</span> unknown flag &#96;-e&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_short_flag] Error:</span> unknown flag &#96;-e&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:3 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">v</span><span style="color:#e06c75">e</span><span style="color:#888888">r</span><span style="color:#888888">b</span><span style="color:#888888">o</span><span style="color:#888888">s</span><span style="color:#888888">e</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
@@ -1058,7 +1057,7 @@ from_slice(&["-verbose", "input.txt"])
  <span style="color:#888888">  │</span>             &lt;input&gt;    Input file to process
  <span style="color:#888888">  │</span>             &lt;output&gt;   Output file (defaults to stdout)
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1094,7 +1093,7 @@ from_slice(&["-j"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::expected_value] Error:</span> expected &#96;usize&#96; value
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::expected_value] Error:</span> expected &#96;usize&#96; value
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">-</span><span style="color:#e06c75">j</span>
@@ -1103,7 +1102,7 @@ from_slice(&["-j"])
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: provide a value after the flag
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1139,7 +1138,7 @@ from_slice(&["-v"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::missing_argument] Error:</span> missing required argument &#96;&lt;input&gt;&#96; (Input file to process)
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::missing_argument] Error:</span> missing required argument &#96;&lt;input&gt;&#96; (Input file to process)
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:4 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">v</span>
@@ -1148,7 +1147,7 @@ from_slice(&["-v"])
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: provide a value for &#96;&lt;input&gt;&#96;
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1190,7 +1189,7 @@ from_slice(&["extra", "--release"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unexpected_positional] Error:</span> unexpected positional argument
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unexpected_positional] Error:</span> unexpected positional argument
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">e</span><span style="color:#e06c75">x</span><span style="color:#e06c75">t</span><span style="color:#e06c75">r</span><span style="color:#e06c75">a</span><span style="color:#888888"> </span><span style="color:#888888">-</span><span style="color:#888888">-</span><span style="color:#888888">r</span><span style="color:#888888">e</span><span style="color:#888888">l</span><span style="color:#888888">e</span><span style="color:#888888">a</span><span style="color:#888888">s</span><span style="color:#888888">e</span>
@@ -1205,7 +1204,7 @@ from_slice(&["extra", "--release"])
  <span style="color:#888888">  │</span>         -F, --features   Space-separated list of features to enable
  <span style="color:#888888">  │</span>             --target     Target triple to build for
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1296,7 +1295,7 @@ from_slice(&["clon", "https://example.com"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::unknown_subcommand] Error:</span> unknown subcommand &#96;clon&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::unknown_subcommand] Error:</span> unknown subcommand &#96;clon&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:1 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#e06c75">c</span><span style="color:#e06c75">l</span><span style="color:#e06c75">o</span><span style="color:#e06c75">n</span><span style="color:#888888"> </span><span style="color:#888888">h</span><span style="color:#888888">t</span><span style="color:#888888">t</span><span style="color:#888888">p</span><span style="color:#888888">s</span><span style="color:#888888">:</span><span style="color:#888888">/</span><span style="color:#888888">/</span><span style="color:#888888">e</span><span style="color:#888888">x</span><span style="color:#888888">a</span><span style="color:#888888">m</span><span style="color:#888888">p</span><span style="color:#888888">l</span><span style="color:#888888">e</span><span style="color:#888888">.</span><span style="color:#888888">c</span><span style="color:#888888">o</span><span style="color:#888888">m</span>
@@ -1305,7 +1304,7 @@ from_slice(&["clon", "https://example.com"])
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: did you mean &#96;clone&#96;?
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1396,7 +1395,7 @@ from_slice(&["--version"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::missing_subcommand] Error:</span> expected a subcommand
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::missing_subcommand] Error:</span> expected a subcommand
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:11 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">-</span><span style="color:#888888">v</span><span style="color:#888888">e</span><span style="color:#888888">r</span><span style="color:#888888">s</span><span style="color:#888888">i</span><span style="color:#888888">o</span><span style="color:#888888">n</span>
@@ -1408,7 +1407,7 @@ from_slice(&["--version"])
  <span style="color:#888888">  │</span>         status  Show the working tree status
  <span style="color:#888888">  │</span>         remote  Manage set of tracked repositories
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1499,7 +1498,7 @@ from_slice(&["remote", "add", "origin"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::missing_argument] Error:</span> missing required argument &#96;&lt;url&gt;&#96; (URL of the remote repository)
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::missing_argument] Error:</span> missing required argument &#96;&lt;url&gt;&#96; (URL of the remote repository)
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:19 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">r</span><span style="color:#888888">e</span><span style="color:#888888">m</span><span style="color:#888888">o</span><span style="color:#888888">t</span><span style="color:#888888">e</span><span style="color:#888888"> </span><span style="color:#888888">a</span><span style="color:#888888">d</span><span style="color:#888888">d</span><span style="color:#888888"> </span><span style="color:#888888">o</span><span style="color:#888888">r</span><span style="color:#888888">i</span><span style="color:#888888">g</span><span style="color:#888888">i</span><span style="color:#888888">n</span>
@@ -1508,7 +1507,7 @@ from_slice(&["remote", "add", "origin"])
  <span style="color:#888888">  │</span> 
  <span style="color:#888888">  │</span> <span style="color:#888888">Help</span>: provide a value for &#96;&lt;url&gt;&#96;
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
@@ -1544,23 +1543,23 @@ from_slice(&["-j", "not-a-number", "input.txt"])
 
 </div>
 <div class="output">
-<pre><code><span style="color:#e06c75">[args::reflect_error] Error:</span> invalid value for &#96;usize&#96;
+<div class="code-block"><pre><code><span style="color:#e06c75">[args::reflect_error] Error:</span> invalid value for &#96;usize&#96;
    <span style="color:#888888">╭</span><span style="color:#888888">─</span><span style="color:#888888">[</span> &lt;unknown&gt;:1:4 <span style="color:#888888">]</span>
    <span style="color:#888888">│</span>
  <span style="color:#888888">1 │</span> <span style="color:#888888">-</span><span style="color:#888888">j</span><span style="color:#888888"> </span><span style="color:#e06c75">n</span><span style="color:#e06c75">o</span><span style="color:#e06c75">t</span><span style="color:#e06c75">-</span><span style="color:#e06c75">a</span><span style="color:#e06c75">-</span><span style="color:#e06c75">n</span><span style="color:#e06c75">u</span><span style="color:#e06c75">m</span><span style="color:#e06c75">b</span><span style="color:#e06c75">e</span><span style="color:#e06c75">r</span><span style="color:#888888"> </span><span style="color:#888888">i</span><span style="color:#888888">n</span><span style="color:#888888">p</span><span style="color:#888888">u</span><span style="color:#888888">t</span><span style="color:#888888">.</span><span style="color:#888888">t</span><span style="color:#888888">x</span><span style="color:#888888">t</span>
  <span style="color:#888888">  │</span>    <span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">┬</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span>  
  <span style="color:#888888">  │</span>          <span style="color:#e06c75">╰</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span><span style="color:#e06c75">─</span> invalid value for &#96;usize&#96;
 <span style="color:#888888">───╯</span>
-</code></pre>
+</code></pre></div>
 </div>
 </section>
 
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/f0d6e522a410985db7f0cd94ecfafc55c77a8d95/facet-args/examples/args_showcase.rs"><code>facet-args/examples/args_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/f0d6e522a410985db7f0cd94ecfafc55c77a8d95"><code>f0d6e522a</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-16T04:11:10+01:00">2026-01-16T04:11:10+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/ea74c5e518b711b1ae1503003b0cf4c180b288a2/facet-args/examples/args_showcase.rs"><code>facet-args/examples/args_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/ea74c5e518b711b1ae1503003b0cf4c180b288a2"><code>ea74c5e51</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-16T05:08:16+01:00">2026-01-16T05:08:16+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

@@ -1,6 +1,5 @@
 +++
 title = "HTML"
-weight = 5
 +++
 
 <div class="showcase">
@@ -90,7 +89,7 @@ weight = 5
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimplePage</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimplePage</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">head</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleHead</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">title</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleTitle</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
       <span style="color:rgb(115,218,202)">text</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">My Page</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
@@ -100,7 +99,7 @@ weight = 5
     <span style="color:rgb(115,218,202)">class</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">main</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
     <span style="color:rgb(115,218,202)">children</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;BodyElement&gt;</span><span style="color:inherit"></span><span style="opacity:0.7">[]</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -185,13 +184,13 @@ weight = 5
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimplePage</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimplePage</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">head</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">body</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleBody</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">class</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
     <span style="color:rgb(115,218,202)">children</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;BodyElement&gt;</span><span style="color:inherit"></span><span style="opacity:0.7">[]</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -237,7 +236,7 @@ weight = 5
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">ContactForm</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">ContactForm</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">action</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">/submit</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">method</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">post</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">inputs</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;FormInput&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span>
@@ -260,7 +259,7 @@ weight = 5
       <span style="color:rgb(115,218,202)">required</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
     <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
@@ -363,7 +362,7 @@ weight = 5
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">DivWithExtras</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+<div class="code-block"><pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">DivWithExtras</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">id</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">widget</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">class</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">card</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">extra</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">BTreeMap&lt;String, String&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span>
@@ -372,16 +371,16 @@ weight = 5
     "<span style="color:rgb(158,206,106)">data-user-id</span><span style="color:inherit">"</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">123</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">content</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Content</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<span style="opacity:0.7">}</span></code></pre></div>
 </div>
 </section>
 
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/f0d6e522a410985db7f0cd94ecfafc55c77a8d95/facet-html/examples/html_showcase.rs"><code>facet-html/examples/html_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/f0d6e522a410985db7f0cd94ecfafc55c77a8d95"><code>f0d6e522a</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-16T04:11:10+01:00">2026-01-16T04:11:10+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/ea74c5e518b711b1ae1503003b0cf4c180b288a2/facet-html/examples/html_showcase.rs"><code>facet-html/examples/html_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/ea74c5e518b711b1ae1503003b0cf4c180b288a2"><code>ea74c5e51</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-16T05:08:16+01:00">2026-01-16T05:08:16+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

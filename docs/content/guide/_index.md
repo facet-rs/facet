@@ -22,8 +22,8 @@ Learn how to use facet for serialization, deserialization, and rich diagnostics.
 - [FAQ](@/guide/faq.md) — common questions and quick answers
 
 ## Reference (quick links)
-- [Format comparison matrix](@/reference/format-crate-matrix/) — feature support across format crates
-- [Extension Attributes](@/reference/attributes/) — namespaced attributes by crate
+- [Format comparison matrix](@/reference/format-crate-matrix/_index.md) — feature support across format crates
+- [Attributes](@/reference/attributes/_index.md) — all facet attributes and extension namespaces
 
 ## Ecosystem
 - [Third-party types](@/guide/ecosystem.md) — uuid, chrono, time, camino, bytes, and more

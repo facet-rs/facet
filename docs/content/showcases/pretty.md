@@ -1,6 +1,5 @@
 +++
 title = "Pretty Printing"
-weight = 6
 +++
 
 <div class="showcase">
@@ -388,9 +387,9 @@ weight = 6
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/f0d6e522a410985db7f0cd94ecfafc55c77a8d95/facet-pretty/examples/pretty_showcase.rs"><code>facet-pretty/examples/pretty_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/f0d6e522a410985db7f0cd94ecfafc55c77a8d95"><code>f0d6e522a</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2026-01-16T04:11:10+01:00">2026-01-16T04:11:10+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/ea74c5e518b711b1ae1503003b0cf4c180b288a2/facet-pretty/examples/pretty_showcase.rs"><code>facet-pretty/examples/pretty_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/ea74c5e518b711b1ae1503003b0cf4c180b288a2"><code>ea74c5e51</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-16T05:08:16+01:00">2026-01-16T05:08:16+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>
