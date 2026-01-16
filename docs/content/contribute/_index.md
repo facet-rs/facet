@@ -25,7 +25,6 @@ Help improve facet! This section covers development setup, architecture, and con
 
 ## Performance
 
-- [Benchmark System](@/contribute/benchmarks.md) — Runtime performance benchmarks
 - [Compile-Time Metrics](@/contribute/metrics.md) — Measure and track compile times
 
 ## Community

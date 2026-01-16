@@ -37,6 +37,8 @@ use facet_args as args;  // Enables args:: prefix
 | Crate | Namespace | Example Attributes |
 |-------|-----------|-------------------|
 | [`facet-args`](https://docs.rs/facet-args) | `args` | `positional`, `named`, `short`, `subcommand` |
+| [`facet-xml`](https://docs.rs/facet-xml) | `xml` | `element`, `elements`, `attribute`, `text`, `tag`, `ns` |
+| [`facet-html`](https://docs.rs/facet-html) | `html` | `element`, `elements`, `attribute`, `text`, `tag`, `custom_element` |
 | [`facet-yaml`](https://docs.rs/facet-yaml) | `serde` | `rename` |
 
 ### Creating your own
