@@ -21,8 +21,10 @@ const styxFoldService = foldService.of((state, lineStart, lineEnd) => {
     if (cur.type.name === "Object" || cur.type.name === "Sequence") {
       const first = cur.firstChild;
       const last = cur.lastChild;
-      // Only fold if it spans multiple lines
-      if (first && last && first.to < last.from) {
+      // Only fold if:
+      // 1. It spans multiple lines (first.to < last.from)
+      // 2. The opening brace is on THIS line (first.from >= lineStart)
+      if (first && last && first.to < last.from && first.from >= lineStart) {
         return { from: first.to, to: last.from };
       }
     }
