@@ -16,8 +16,8 @@ pub enum TokenKind {
     RParen,
     /// `,`
     Comma,
-    /// `=`
-    Eq,
+    /// `>`
+    Gt,
     /// `@`
     At,
 

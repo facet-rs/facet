@@ -202,10 +202,10 @@ optional_field @
 
 ## Attributes
 
-HTML-style `key=value` attributes (no space around `=`):
+Attribute syntax `key>value` (no space around `>`):
 
 ```styx
-div id=main class="container" data-count=42
+div id>main class>"container" data-count>42
 ```
 
 ## Comments
@@ -390,7 +390,7 @@ server {
 // WRONG
 div id = main
 ```
-**Right**: No spaces: `div id=main`
+**Right**: No spaces: `div id>main`
 
 **Wrong**: Using `null` or `true`/`false` as keywords
 ```styx

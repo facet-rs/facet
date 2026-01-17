@@ -188,7 +188,7 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>) {
             for child in node.children_with_tokens() {
                 if let Some(token) = child.as_token() {
                     match token.kind() {
-                        SyntaxKind::EQ => {
+                        SyntaxKind::GT => {
                             add_token_from_syntax(tokens, content, token, TokenType::Operator, 0);
                         }
                         kind if is_scalar_token(kind) => {

@@ -126,9 +126,9 @@ impl<'src> Lexer<'src> {
                 self.advance();
                 self.token(TokenKind::Comma, start)
             }
-            '=' => {
+            '>' => {
                 self.advance();
-                self.token(TokenKind::Eq, start)
+                self.token(TokenKind::Gt, start)
             }
             '@' => {
                 self.advance();
@@ -495,14 +495,17 @@ impl<'src> Iterator for Lexer<'src> {
 /// Check if a character can start a bare scalar.
 fn is_bare_scalar_start(c: char) -> bool {
     // Cannot be special chars, whitespace, or `/` (to avoid confusion with comments)
-    !matches!(c, '{' | '}' | '(' | ')' | ',' | '"' | '=' | '@' | '/') && !c.is_whitespace()
+    // `=` and `@` are allowed after first char but not at start
+    !matches!(c, '{' | '}' | '(' | ')' | ',' | '"' | '=' | '@' | '>' | '/') && !c.is_whitespace()
 }
 
 // parser[impl scalar.bare.chars]
 /// Check if a character can continue a bare scalar.
 fn is_bare_scalar_char(c: char) -> bool {
-    // Cannot be special chars or whitespace (but `/` is allowed after the first char)
-    !matches!(c, '{' | '}' | '(' | ')' | ',' | '"' | '=' | '@') && !c.is_whitespace()
+    // Cannot be special chars or whitespace
+    // `/`, `@`, and `=` are allowed after the first char
+    // `>` is never allowed (attribute separator)
+    !matches!(c, '{' | '}' | '(' | ')' | ',' | '"' | '>') && !c.is_whitespace()
 }
 
 #[cfg(test)]
@@ -520,7 +523,7 @@ mod tests {
         assert_eq!(lex("("), vec![(TokenKind::LParen, "(")]);
         assert_eq!(lex(")"), vec![(TokenKind::RParen, ")")]);
         assert_eq!(lex(","), vec![(TokenKind::Comma, ",")]);
-        assert_eq!(lex("="), vec![(TokenKind::Eq, "=")]);
+        assert_eq!(lex(">"), vec![(TokenKind::Gt, ">")]);
         assert_eq!(lex("@"), vec![(TokenKind::At, "@")]);
     }
 

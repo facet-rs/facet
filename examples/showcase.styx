@@ -142,7 +142,7 @@ complex_regex r##"foo"#bar"##
 greeting "Hello, \"World\"!\nHow are you?\tFine!"
 
 unicode "Emoji: \u{1F600} and \u0041"
-/// Attributes (key=value syntax)
+/// Attributes (key>value syntax)
 div main
 
 /// Unit values

@@ -490,7 +490,7 @@ impl<'src> Parser<'src> {
             };
         };
 
-        if eq_kind != TokenKind::Eq || eq_start != start_span.end {
+        if eq_kind != TokenKind::Gt || eq_start != start_span.end {
             // No = or whitespace gap - return as regular scalar
             return Atom {
                 span: start_span,
@@ -568,7 +568,7 @@ impl<'src> Parser<'src> {
                 break;
             };
 
-            if eq_kind != TokenKind::Eq || eq_start != key_span.end {
+            if eq_kind != TokenKind::Gt || eq_start != key_span.end {
                 // Not an attribute - the consumed scalar is lost
                 break;
             }
@@ -975,17 +975,48 @@ impl<'src> Parser<'src> {
             && token.span.start == start_span.end
         {
             // Tag name immediately follows @
+            // But the bare scalar may contain @ which is not valid in tag names.
+            // We need to split at the first @ if present.
             let name_token = self.advance().unwrap();
-            let name = name_token.text;
-            let name_span = name_token.span;
-            let name_end = name_token.span.end;
+            let full_text = name_token.text;
+
+            // Find where the tag name ends (at first @ or end of token)
+            let tag_name_len = full_text.find('@').unwrap_or(full_text.len());
+            let name = &full_text[..tag_name_len];
+            let name_span = Span {
+                start: name_token.span.start,
+                end: name_token.span.start + tag_name_len as u32,
+            };
+            let name_end = name_span.end;
+
+            // If there's leftover after the tag name (starting with @), we need to handle it
+            // For now, if the tag name is empty (token started with @), this is @@ which is
+            // unit followed by unit - but that should have been lexed differently.
+            // If tag name is non-empty and there's @ after, that @ is the unit payload.
+            let has_trailing_at = tag_name_len < full_text.len();
 
             // parser[impl tag.syntax]
             // Validate tag name: must match @[A-Za-z_][A-Za-z0-9_.-]*
-            let invalid_tag_name = !Self::is_valid_tag_name(name);
+            let invalid_tag_name = name.is_empty() || !Self::is_valid_tag_name(name);
 
-            // Check for payload (must immediately follow tag name, no whitespace)
-            let payload = self.parse_tag_payload(name_end);
+            // Check for payload
+            let payload = if has_trailing_at {
+                // The @ after the tag name is the payload (unit)
+                // Any text after that @ is also part of this token but we ignore it
+                // since it would be invalid anyway (e.g., @foo@bar is @foo with unit @, then bar is separate)
+                let at_pos = name_token.span.start + tag_name_len as u32;
+                Some(Atom {
+                    span: Span {
+                        start: at_pos,
+                        end: at_pos + 1,
+                    },
+                    kind: ScalarKind::Bare,
+                    content: AtomContent::Unit,
+                })
+            } else {
+                // Check for payload (must immediately follow tag name, no whitespace)
+                self.parse_tag_payload(name_end)
+            };
             let end_span = payload.as_ref().map(|p| p.span.end).unwrap_or(name_end);
 
             return Atom {
@@ -2137,7 +2168,7 @@ mod tests {
     // parser[verify attr.syntax]
     #[test]
     fn test_simple_attribute() {
-        let events = parse("server host=localhost");
+        let events = parse("server host>localhost");
         // key=server, value is object with {host: localhost}
         let keys: Vec<_> = events
             .iter()
@@ -2156,7 +2187,7 @@ mod tests {
     // parser[verify attr.values]
     #[test]
     fn test_attribute_values() {
-        let events = parse("config name=app tags=(a b) opts={x 1}");
+        let events = parse("config name>app tags>(a b) opts>{x 1}");
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
@@ -2176,7 +2207,7 @@ mod tests {
             events
                 .iter()
                 .any(|e| matches!(e, Event::SequenceStart { .. })),
-            "Missing SequenceStart for tags=(a b)"
+            "Missing SequenceStart for tags>(a b)"
         );
     }
 
@@ -2185,7 +2216,7 @@ mod tests {
     fn test_multiple_attributes() {
         // When attributes are at root level without a preceding key,
         // the first attribute key becomes the entry key, and the rest form the value
-        let events = parse("server host=localhost port=8080");
+        let events = parse("server host>localhost port>8080");
         // key=server, value is object with {host: localhost, port: 8080}
         let keys: Vec<_> = events
             .iter()
@@ -2205,7 +2236,7 @@ mod tests {
     // parser[verify entry.keypath.attributes]
     #[test]
     fn test_keypath_with_attributes() {
-        let events = parse("spec selector matchLabels app=web tier=frontend");
+        let events = parse("spec selector matchLabels app>web tier>frontend");
         // Nested: spec.selector.matchLabels = {app: web, tier: frontend}
         let keys: Vec<_> = events
             .iter()
@@ -2227,10 +2258,10 @@ mod tests {
     // parser[verify attr.syntax]
     #[test]
     fn test_attribute_no_spaces() {
-        // Spaces around = means it's NOT attribute syntax
-        let events = parse("x = y");
-        // This should be: key=x, then "=" and "y" as values (nested)
-        // Since = is a valid bare scalar when preceded by whitespace
+        // Spaces around > means it's NOT attribute syntax
+        let events = parse("x > y");
+        // This should be: key=x, then ">" and "y" as values (nested)
+        // Since > is its own token when preceded by whitespace
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
@@ -2241,9 +2272,9 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // "x" should be the first key, and "=" should NOT be treated as attribute syntax
+        // "x" should be the first key, and ">" should NOT be treated as attribute syntax
         assert!(keys.contains(&"x"), "Missing key 'x'");
-        // There should not be "=" as a key (it would be a value)
+        // There should not be ">" as a key (it would be a value)
     }
 
     // parser[verify document.root]
@@ -2711,7 +2742,7 @@ mod tests {
     #[test]
     fn test_attributes_at_end_of_path() {
         // Attributes at the end of a key path should work
-        let events = parse("spec selector matchLabels app=web tier=frontend");
+        let events = parse("spec selector matchLabels app>web tier>frontend");
         // Should have keys: spec, selector, matchLabels, app, tier
         let keys: Vec<_> = events
             .iter()
@@ -2745,7 +2776,7 @@ mod tests {
     #[test]
     fn test_attributes_mid_path_rejected() {
         // Attributes in the middle of a key path are invalid (attributes produce objects, objects can't be keys)
-        let events = parse("spec selector foo=bar matchLabels app web");
+        let events = parse("spec selector foo>bar matchLabels app web");
         // foo=bar produces an object, which is then used as a key for matchLabels - this is invalid
         assert!(
             events.iter().any(|e| matches!(

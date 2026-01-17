@@ -629,19 +629,28 @@ Config @object {
 <section class="feature">
 <div class="feature-text">
 
-## Publish once, use everywhere
+## Publish to crates.io
 
-Give your schema a URL. That URL becomes its identity — tools fetch it automatically, editors validate against it, and your users get autocomplete for free.
+Schemas are published as crates — immutable, versioned, governed by the Rust Foundation. Pin the major version and let semver do its job.
+
+[Learn more about schema distribution →](/tools/schema-distribution)
 
 </div>
 <div class="feature-code">
 
 ```styx
-// config.styx
-@schema https://example.com/myapp/v1.schema.styx
+@schema {source crate:myapp-config@2, cli myapp}
 
 host localhost
 port 8080
+```
+
+```bash
+$ styx publish myapp-schema
+error: breaking change detected
+  - field `timeout` removed
+
+Requires major version bump: 2.0.0 → 3.0.0
 ```
 
 </div>
@@ -652,17 +661,17 @@ port 8080
 
 ## Zero-config discovery
 
-If your CLI supports `@dump-styx-schema`, editors find your schema automatically. No setup, no configuration files — just run your tool and get validation.
+If your CLI supports `@dump-styx-schema`, editors find your schema automatically. Works offline, always matches your installed version.
 
 </div>
 <div class="feature-code">
 
 ```bash
-$ myapp @dump-styx-schema > /dev/null
-# Editor detects this, fetches schema, enables validation
-
-$ myapp --config app.styx
-# Config validated against the same schema
+$ myapp @dump-styx-schema
+Config @object {
+  host @string
+  port @int{ min 1, max 65535 }
+}
 ```
 
 </div>

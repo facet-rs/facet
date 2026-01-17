@@ -129,9 +129,9 @@ module.exports = grammar({
     // Scalars: four types
     scalar: ($) => choice($.bare_scalar, $.quoted_scalar, $.raw_scalar, $.heredoc),
 
-    // Bare scalar: unquoted text without special chars
-    // Can contain / anywhere (including start) - comments require //
-    bare_scalar: ($) => /[^{}\(\),"=@\s][^{}\(\),"=@\s]*/,
+    // Bare scalar: unquoted text without special chars at start
+    // @ and = are forbidden at the start but allowed in the middle
+    bare_scalar: ($) => /[^{}\(\),"=@>\s][^{}\(\),">\s]*/,
 
     // Quoted scalar: "..." with escape sequences
     quoted_scalar: ($) => seq('"', repeat(choice($.escape_sequence, /[^"\\]+/)), '"'),
@@ -182,7 +182,7 @@ module.exports = grammar({
     // Attributes: key=value pairs that form an object expr
     attributes: ($) => repeat1($.attribute),
 
-    attribute: ($) => seq(field("key", $.bare_scalar), "=", field("value", $._attribute_value)),
+    attribute: ($) => seq(field("key", $.bare_scalar), ">", field("value", $._attribute_value)),
 
     _attribute_value: ($) => choice($.bare_scalar, $.quoted_scalar, $.sequence, $.object),
 

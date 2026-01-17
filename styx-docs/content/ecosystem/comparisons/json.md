@@ -111,5 +111,5 @@ In Styx, both are the scalar `42`. The deserializer interprets based on target t
   }
 }
 /// styx
-server host=localhost port=8080
+server host>localhost port>8080
 ```

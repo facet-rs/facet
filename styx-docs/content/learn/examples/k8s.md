@@ -61,13 +61,13 @@ kind Deployment
 metadata {
   name web-app
   namespace production
-  labels app=web tier=frontend
+  labels app>web tier>frontend
 }
 spec {
   replicas 3
-  selector matchLabels app=web
+  selector matchLabels app>web
   template {
-    metadata labels app=web
+    metadata labels app>web
     spec {
       containers ({
         name nginx
@@ -77,12 +77,12 @@ spec {
           {name API_URL, value https://api.example.com}
           {
             name DB_PASSWORD
-            valueFrom secretKeyRef name=db-secrets key=password
+            valueFrom secretKeyRef name>db-secrets key>password
           }
         )
         resources {
-          limits cpu=500m memory=256Mi
-          requests cpu=100m memory=128Mi
+          limits cpu>500m memory>256Mi
+          requests cpu>100m memory>128Mi
         }
         volumeMounts ({
           name config
@@ -92,7 +92,7 @@ spec {
       })
       volumes ({
         name config
-        configMap name=nginx-config
+        configMap name>nginx-config
       })
     }
   }

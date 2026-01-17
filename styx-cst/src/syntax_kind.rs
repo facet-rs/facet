@@ -28,7 +28,7 @@ pub enum SyntaxKind {
     /// `,`
     COMMA,
     /// `=`
-    EQ,
+    GT,
     /// `@`
     AT,
 
@@ -124,7 +124,7 @@ impl From<TokenKind> for SyntaxKind {
             TokenKind::LParen => Self::L_PAREN,
             TokenKind::RParen => Self::R_PAREN,
             TokenKind::Comma => Self::COMMA,
-            TokenKind::Eq => Self::EQ,
+            TokenKind::Gt => Self::GT,
             TokenKind::At => Self::AT,
             TokenKind::BareScalar => Self::BARE_SCALAR,
             TokenKind::QuotedScalar => Self::QUOTED_SCALAR,
@@ -174,7 +174,7 @@ impl SyntaxKind {
             2 => Some(Self::L_PAREN),
             3 => Some(Self::R_PAREN),
             4 => Some(Self::COMMA),
-            5 => Some(Self::EQ),
+            5 => Some(Self::GT),
             6 => Some(Self::AT),
             7 => Some(Self::BARE_SCALAR),
             8 => Some(Self::QUOTED_SCALAR),

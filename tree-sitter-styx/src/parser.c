@@ -32,7 +32,7 @@ enum ts_symbol_identifiers {
   anon_sym_LPAREN2 = 10,
   anon_sym_LBRACE2 = 11,
   anon_sym_COMMA = 12,
-  anon_sym_EQ = 13,
+  anon_sym_GT = 13,
   sym_line_comment = 14,
   anon_sym_SLASH_SLASH_SLASH = 15,
   aux_sym_doc_comment_token1 = 16,
@@ -100,7 +100,7 @@ static const char * const ts_symbol_names[] = {
   [anon_sym_LPAREN2] = "(",
   [anon_sym_LBRACE2] = "{",
   [anon_sym_COMMA] = ",",
-  [anon_sym_EQ] = "=",
+  [anon_sym_GT] = ">",
   [sym_line_comment] = "line_comment",
   [anon_sym_SLASH_SLASH_SLASH] = "///",
   [aux_sym_doc_comment_token1] = "doc_comment_token1",
@@ -168,7 +168,7 @@ static const TSSymbol ts_symbol_map[] = {
   [anon_sym_LPAREN2] = anon_sym_LPAREN,
   [anon_sym_LBRACE2] = anon_sym_LBRACE,
   [anon_sym_COMMA] = anon_sym_COMMA,
-  [anon_sym_EQ] = anon_sym_EQ,
+  [anon_sym_GT] = anon_sym_GT,
   [sym_line_comment] = sym_line_comment,
   [anon_sym_SLASH_SLASH_SLASH] = anon_sym_SLASH_SLASH_SLASH,
   [aux_sym_doc_comment_token1] = aux_sym_doc_comment_token1,
@@ -275,7 +275,7 @@ static const TSSymbolMetadata ts_symbol_metadata[] = {
     .visible = true,
     .named = false,
   },
-  [anon_sym_EQ] = {
+  [anon_sym_GT] = {
     .visible = true,
     .named = false,
   },
@@ -772,9 +772,9 @@ static const TSStateId ts_primary_state_ids[STATE_COUNT] = {
   [217] = 205,
 };
 
-static const TSCharacterRange sym_bare_scalar_character_set_1[] = {
-  {0, 0x08}, {0x0e, 0x1f}, {'!', '!'}, {'#', '\''}, {'*', '+'}, {'-', '<'}, {'>', '?'}, {'A', 'z'},
-  {'|', '|'}, {'~', 0x10ffff},
+static const TSCharacterRange sym_bare_scalar_character_set_2[] = {
+  {0, 0x08}, {0x0e, 0x1f}, {'!', '!'}, {'#', '\''}, {'*', '+'}, {'-', '='}, {'?', 'z'}, {'|', '|'},
+  {'~', 0x10ffff},
 };
 
 static bool ts_lex(TSLexer *lexer, TSStateId state) {
@@ -791,7 +791,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
         ')', 34,
         ',', 46,
         '/', 38,
-        '=', 47,
+        '>', 47,
         '{', 35,
         '}', 36,
       );
@@ -799,6 +799,8 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
           lookahead == ' ') SKIP(22);
       if (lookahead != 0 &&
           (lookahead < '\t' || '\r' < lookahead) &&
+          lookahead != '=' &&
+          lookahead != '>' &&
           lookahead != '@') ADVANCE(42);
       END_STATE();
     case 1:
@@ -822,6 +824,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
           lookahead != '(' &&
           lookahead != ')' &&
           lookahead != '=' &&
+          lookahead != '>' &&
           lookahead != '@') ADVANCE(42);
       END_STATE();
     case 3:
@@ -833,7 +836,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
         ')', 34,
         ',', 46,
         '/', 40,
-        '=', 47,
+        '>', 47,
         '{', 45,
         '}', 36,
       );
@@ -841,6 +844,8 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
           lookahead == ' ') SKIP(3);
       if (lookahead != 0 &&
           (lookahead < '\t' || '\r' < lookahead) &&
+          lookahead != '=' &&
+          lookahead != '>' &&
           lookahead != '@') ADVANCE(42);
       END_STATE();
     case 4:
@@ -861,6 +866,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
           lookahead != '(' &&
           lookahead != ')' &&
           lookahead != '=' &&
+          lookahead != '>' &&
           lookahead != '@') ADVANCE(42);
       END_STATE();
     case 5:
@@ -875,6 +881,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
           (lookahead < '\t' || '\r' < lookahead) &&
           lookahead != ',' &&
           lookahead != '=' &&
+          lookahead != '>' &&
           lookahead != '@' &&
           lookahead != '}') ADVANCE(42);
       END_STATE();
@@ -884,7 +891,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
         '(', 44,
         ')', 34,
         '/', 40,
-        '=', 47,
+        '>', 47,
         '{', 45,
         '\t', 54,
         ' ', 54,
@@ -892,6 +899,8 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
       if (lookahead != 0 &&
           (lookahead < '\t' || '\r' < lookahead) &&
           lookahead != ',' &&
+          lookahead != '=' &&
+          lookahead != '>' &&
           lookahead != '@' &&
           lookahead != '}') ADVANCE(42);
       END_STATE();
@@ -987,7 +996,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
         ')', 34,
         ',', 46,
         '/', 38,
-        '=', 47,
+        '>', 47,
         '{', 45,
         '}', 36,
       );
@@ -995,6 +1004,8 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
           lookahead == ' ') SKIP(22);
       if (lookahead != 0 &&
           (lookahead < '\t' || '\r' < lookahead) &&
+          lookahead != '=' &&
+          lookahead != '>' &&
           lookahead != '@') ADVANCE(42);
       END_STATE();
     case 23:
@@ -1005,7 +1016,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
         '"', 32,
         '(', 44,
         '/', 38,
-        '=', 47,
+        '>', 47,
         '{', 45,
         '}', 36,
       );
@@ -1016,6 +1027,8 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
           lookahead != '(' &&
           lookahead != ')' &&
           lookahead != ',' &&
+          lookahead != '=' &&
+          lookahead != '>' &&
           lookahead != '@') ADVANCE(42);
       END_STATE();
     case 24:
@@ -1024,7 +1037,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
       if (lookahead == '\r') ADVANCE(1);
       if (lookahead == ',') ADVANCE(46);
       if (lookahead == '/') ADVANCE(8);
-      if (lookahead == '=') ADVANCE(47);
+      if (lookahead == '>') ADVANCE(47);
       if (lookahead == '}') ADVANCE(36);
       if (lookahead == '\t' ||
           lookahead == ' ') SKIP(24);
@@ -1096,8 +1109,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
           lookahead == '(' ||
           lookahead == ')' ||
           lookahead == ',' ||
-          lookahead == '=' ||
-          lookahead == '@' ||
+          lookahead == '>' ||
           lookahead == '{' ||
           lookahead == '}') ADVANCE(48);
       if (lookahead != 0) ADVANCE(41);
@@ -1105,7 +1117,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
     case 38:
       ACCEPT_TOKEN(sym_bare_scalar);
       if (lookahead == '/') ADVANCE(39);
-      if ((!eof && set_contains(sym_bare_scalar_character_set_1, 10, lookahead))) ADVANCE(42);
+      if ((!eof && set_contains(sym_bare_scalar_character_set_2, 9, lookahead))) ADVANCE(42);
       END_STATE();
     case 39:
       ACCEPT_TOKEN(sym_bare_scalar);
@@ -1116,8 +1128,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
           lookahead == '(' ||
           lookahead == ')' ||
           lookahead == ',' ||
-          lookahead == '=' ||
-          lookahead == '@' ||
+          lookahead == '>' ||
           lookahead == '{' ||
           lookahead == '}') ADVANCE(48);
       if (lookahead != 0) ADVANCE(41);
@@ -1125,7 +1136,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
     case 40:
       ACCEPT_TOKEN(sym_bare_scalar);
       if (lookahead == '/') ADVANCE(37);
-      if ((!eof && set_contains(sym_bare_scalar_character_set_1, 10, lookahead))) ADVANCE(42);
+      if ((!eof && set_contains(sym_bare_scalar_character_set_2, 9, lookahead))) ADVANCE(42);
       END_STATE();
     case 41:
       ACCEPT_TOKEN(sym_bare_scalar);
@@ -1138,8 +1149,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
         '(', 48,
         ')', 48,
         ',', 48,
-        '=', 48,
-        '@', 48,
+        '>', 48,
         '{', 48,
         '}', 48,
       );
@@ -1148,7 +1158,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
       END_STATE();
     case 42:
       ACCEPT_TOKEN(sym_bare_scalar);
-      if ((!eof && set_contains(sym_bare_scalar_character_set_1, 10, lookahead))) ADVANCE(42);
+      if ((!eof && set_contains(sym_bare_scalar_character_set_2, 9, lookahead))) ADVANCE(42);
       END_STATE();
     case 43:
       ACCEPT_TOKEN(sym_escape_sequence);
@@ -1163,7 +1173,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
       ACCEPT_TOKEN(anon_sym_COMMA);
       END_STATE();
     case 47:
-      ACCEPT_TOKEN(anon_sym_EQ);
+      ACCEPT_TOKEN(anon_sym_GT);
       END_STATE();
     case 48:
       ACCEPT_TOKEN(sym_line_comment);
@@ -1173,7 +1183,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
       END_STATE();
     case 49:
       ACCEPT_TOKEN(anon_sym_SLASH_SLASH_SLASH);
-      if ((!eof && set_contains(sym_bare_scalar_character_set_1, 10, lookahead))) ADVANCE(42);
+      if ((!eof && set_contains(sym_bare_scalar_character_set_2, 9, lookahead))) ADVANCE(42);
       END_STATE();
     case 50:
       ACCEPT_TOKEN(aux_sym_doc_comment_token1);
@@ -1452,7 +1462,7 @@ static const uint16_t ts_parse_table[LARGE_STATE_COUNT][SYMBOL_COUNT] = {
     [anon_sym_LPAREN2] = ACTIONS(1),
     [anon_sym_LBRACE2] = ACTIONS(1),
     [anon_sym_COMMA] = ACTIONS(1),
-    [anon_sym_EQ] = ACTIONS(1),
+    [anon_sym_GT] = ACTIONS(1),
     [sym_line_comment] = ACTIONS(3),
     [anon_sym_SLASH_SLASH_SLASH] = ACTIONS(1),
     [sym__newline] = ACTIONS(1),
@@ -3603,7 +3613,7 @@ static const uint16_t ts_small_parse_table[] = {
     ACTIONS(3), 1,
       sym_line_comment,
     ACTIONS(260), 1,
-      anon_sym_EQ,
+      anon_sym_GT,
     ACTIONS(258), 2,
       sym_bare_scalar,
       anon_sym_SLASH_SLASH_SLASH,
@@ -3737,7 +3747,7 @@ static const uint16_t ts_small_parse_table[] = {
     ACTIONS(258), 1,
       sym_bare_scalar,
     ACTIONS(289), 1,
-      anon_sym_EQ,
+      anon_sym_GT,
     ACTIONS(256), 10,
       sym__heredoc_start,
       sym__raw_string_start,
@@ -4060,7 +4070,7 @@ static const uint16_t ts_small_parse_table[] = {
     ACTIONS(3), 1,
       sym_line_comment,
     ACTIONS(363), 1,
-      anon_sym_EQ,
+      anon_sym_GT,
     ACTIONS(256), 5,
       sym__heredoc_start,
       sym__raw_string_start,
@@ -5620,7 +5630,7 @@ static const uint16_t ts_small_parse_table[] = {
     ACTIONS(455), 1,
       sym_line_comment,
     ACTIONS(588), 1,
-      anon_sym_EQ,
+      anon_sym_GT,
   [5426] = 2,
     ACTIONS(455), 1,
       sym_line_comment,
@@ -5658,7 +5668,7 @@ static const uint16_t ts_small_parse_table[] = {
       anon_sym_RBRACE,
   [5475] = 2,
     ACTIONS(260), 1,
-      anon_sym_EQ,
+      anon_sym_GT,
     ACTIONS(455), 1,
       sym_line_comment,
   [5482] = 2,
@@ -5678,7 +5688,7 @@ static const uint16_t ts_small_parse_table[] = {
       anon_sym_RBRACE,
   [5503] = 2,
     ACTIONS(289), 1,
-      anon_sym_EQ,
+      anon_sym_GT,
     ACTIONS(455), 1,
       sym_line_comment,
   [5510] = 2,

@@ -262,7 +262,7 @@ NN | source line
 > error: attribute object not allowed as sequence element
 >   --> config.styx:2:3
 >   |
-> 2 |   a=1 b=2
+> 2 |   a>1 b>2
 >   |   ^^^^^^^ attribute object
 >   |
 >   = note: ambiguous whether this is one object {a:1, b:2} or two {a:1} {b:2}

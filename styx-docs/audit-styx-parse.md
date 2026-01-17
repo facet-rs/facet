@@ -24,7 +24,7 @@ This document audits the styx-parse crate against the parser spec (`docs/content
 | entry.keypath | ✅ OK | Nested key paths work |
 | entry.keys | ⚠️ Partial | Heredoc key rejection not checked |
 | entry.key-equality | ❌ Missing | Duplicate key detection NOT implemented |
-| attr.syntax | ❌ Missing | Attribute syntax (`key=value`) NOT implemented |
+| attr.syntax | ❌ Missing | Attribute syntax (`key>value`) NOT implemented |
 | attr.values | ❌ Missing | N/A (attr.syntax missing) |
 | attr.atom | ❌ Missing | N/A (attr.syntax missing) |
 | entry.keypath.attributes | ❌ Missing | N/A (attr.syntax missing) |
@@ -70,16 +70,16 @@ fn parse_tag_or_unit_atom(&mut self) -> Atom<'src> {
 #### 2. Attribute Syntax (`attr.syntax`, `attr.values`, `attr.atom`)
 
 **Spec:**
-> Attribute syntax `key=value` creates an object entry.
+> Attribute syntax `key>value` creates an object entry.
 > ```styx
-> server host=localhost port=8080
+> server host>localhost port>8080
 > ```
 > Is equivalent to:
 > ```styx
 > server {host localhost, port 8080}
 > ```
 
-**Current code:** The lexer produces `TokenKind::Eq` for `=`, but the parser NEVER uses it. The `collect_entry_atoms` function doesn't handle `=` at all.
+**Current code:** The lexer produces `TokenKind::Gt` for `>`, but the parser NEVER uses it. The `collect_entry_atoms` function doesn't handle `>` at all.
 
 #### 3. Duplicate Key Detection (`entry.key-equality`)
 

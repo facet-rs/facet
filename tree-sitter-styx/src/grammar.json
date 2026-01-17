@@ -389,7 +389,7 @@
     },
     "bare_scalar": {
       "type": "PATTERN",
-      "value": "[^{}\\(\\),\"=@\\s][^{}\\(\\),\"=@\\s]*"
+      "value": "[^{}\\(\\),\"=@>\\s][^{}\\(\\),\">\\s]*"
     },
     "quoted_scalar": {
       "type": "SEQ",
@@ -721,7 +721,7 @@
         },
         {
           "type": "STRING",
-          "value": "="
+          "value": ">"
         },
         {
           "type": "FIELD",

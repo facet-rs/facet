@@ -181,19 +181,19 @@ impl<'src> CstParser<'src> {
         if self.peek() != TokenKind::BareScalar {
             return false;
         }
-        // Check if there's an = sign after this bare scalar (possibly with whitespace)
+        // Check if there's a > sign after this bare scalar (possibly with whitespace)
         let token = match self.peek_token() {
             Some(t) => t,
             None => return false,
         };
         let after_scalar = token.span.end as usize;
 
-        // Look for = in the source after the scalar, skipping whitespace
+        // Look for > in the source after the scalar, skipping whitespace
         let rest = &self.source[after_scalar..];
         for ch in rest.chars() {
             match ch {
                 ' ' | '\t' => continue,
-                '=' => return true,
+                '>' => return true,
                 _ => return false,
             }
         }
@@ -303,7 +303,7 @@ impl<'src> CstParser<'src> {
         self.skip_whitespace();
 
         // = sign
-        if self.peek() == TokenKind::Eq {
+        if self.peek() == TokenKind::Gt {
             self.bump();
         }
 
@@ -607,7 +607,7 @@ mod tests {
 
     #[test]
     fn test_attributes() {
-        let source = "id=main class=\"container\"";
+        let source = "id>main class>\"container\"";
         let parse = parse(source);
         assert!(parse.is_ok(), "errors: {:?}", parse.errors());
         assert_eq!(source, parse.syntax().to_string());

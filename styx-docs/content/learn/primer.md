@@ -206,8 +206,8 @@ one last bit of nesting? As a treat? You can use object attribute syntax:
 
 ```styx
 {
-    web domain=example.org      port=9000
-    api domain=api.example.org  port=9001
+    web domain>example.org      port>9000
+    api domain>api.example.org  port>9001
 }
 ```
 

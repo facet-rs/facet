@@ -101,14 +101,14 @@ apiVersion v1
 kind Service
 metadata {
   name my-service
-  labels app=web tier=frontend
+  labels app>web tier>frontend
 }
 spec {
   ports ({
     port 80
     targetPort 8080
   })
-  selector app=web
+  selector app>web
 }
 ```
 

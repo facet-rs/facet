@@ -21,9 +21,10 @@
 (tag) @label
 
 ; Attributes - key in attribute syntax
+; Use @keyword or @punctuation.special to make > stand out
 (attribute
   key: (bare_scalar) @property
-  "=" @operator)
+  ">" @keyword)
 
 ; Keys in entries - bare scalars in the key position (overrides @string above)
 (entry

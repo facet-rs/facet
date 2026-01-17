@@ -53,8 +53,11 @@ Scalars are opaque text. The parser assigns no type information.
 ### Bare scalars
 
 > r[scalar.bare.chars]
-> A bare scalar consists of one or more characters that are NOT:
-> whitespace, `{`, `}`, `(`, `)`, `,`, `"`, `=`, or `@`.
+> A bare scalar starts with a character that is NOT:
+> whitespace, `{`, `}`, `(`, `)`, `,`, `"`, `=`, `@`, or `>`.
+>
+> After the first character, `@` and `=` are allowed but `>` is still forbidden.
+> This allows URLs with `@` (like `user@host` or `crate:pkg@2`) and query strings with `=`.
 >
 > r[scalar.bare.termination]
 > A bare scalar is terminated by any forbidden character or end of input.
@@ -268,14 +271,14 @@ An **entry** is a sequence of one or more atoms. The parser interprets entries s
 Attribute syntax is shorthand for inline object entries.
 
 > r[attr.syntax]
-> Attribute syntax `key=value` creates an object entry.
-> The `=` has no spaces around it.
+> Attribute syntax `key>value` creates an object entry.
+> The `>` has no spaces around it.
 > Attribute keys MUST be bare scalars.
 >
 > ```compare
 > /// styx
 > // Shorthand
-> server host=localhost port=8080
+> server host>localhost port>8080
 > /// styx
 > // Canonical
 > server {
@@ -288,7 +291,7 @@ Attribute syntax is shorthand for inline object entries.
 > Attribute values may be bare scalars, quoted scalars, sequences, or objects.
 >
 > ```styx
-> config name=app tags=(web prod) opts={verbose true}
+> config name>app tags>(web prod) opts>{verbose true}
 > ```
 
 > r[attr.atom]
@@ -296,7 +299,7 @@ Attribute syntax is shorthand for inline object entries.
 >
 > ```compare
 > /// styx
-> host=localhost port=8080
+> host>localhost port>8080
 > /// styx
 > {host localhost, port 8080}
 > ```
@@ -309,7 +312,7 @@ Attribute syntax is shorthand for inline object entries.
 > ```compare
 > /// styx
 > // Key path with attributes at end (valid)
-> spec selector matchLabels app=web tier=frontend
+> spec selector matchLabels app>web tier>frontend
 > /// styx
 > // Canonical
 > spec {
