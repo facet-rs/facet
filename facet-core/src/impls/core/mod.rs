@@ -25,3 +25,5 @@ mod result;
 mod net;
 
 mod fn_ptr;
+
+mod duration;
