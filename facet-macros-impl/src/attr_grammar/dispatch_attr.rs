@@ -1061,12 +1061,11 @@ fn generate_struct_value(
     variant_ident: &proc_macro2::Ident,
     struct_name: &Ident,
     fields: &[ParsedFieldDef],
-    attr_name: &Ident,
+    _attr_name: &Ident,
     rest: &TokenStream2,
     span: Span,
 ) -> TokenStream2 {
     let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
-    let attr_str = attr_name.to_string();
 
     // Generate default field values
     let default_fields: Vec<TokenStream2> = fields
@@ -1089,7 +1088,38 @@ fn generate_struct_value(
         })
         .collect();
 
+    // Generate field metadata for __build_struct_fields
+    let fields_meta: Vec<TokenStream2> = fields
+        .iter()
+        .map(|f| {
+            let name = &f.name;
+            let kind = match f.kind {
+                FieldKind::Bool => quote! { bool },
+                FieldKind::String => quote! { string },
+                FieldKind::OptString => quote! { opt_string },
+                FieldKind::OptBool => quote! { opt_bool },
+                FieldKind::OptChar => quote! { opt_char },
+                FieldKind::I64 => quote! { i64 },
+                FieldKind::OptI64 => quote! { opt_i64 },
+                FieldKind::ListString => quote! { list_string },
+                FieldKind::ListI64 => quote! { list_i64 },
+                FieldKind::Ident => quote! { ident },
+            };
+            quote! { #name: #kind }
+        })
+        .collect();
+
+    // No tokens - use defaults
+    if rest_tokens.is_empty() {
+        return quote_spanned! { span =>
+            #ns_path::Attr::#variant_ident(#ns_path::#struct_name {
+                #(#default_fields),*
+            })
+        };
+    }
+
     // Check for parens style: column(name = "foo", primary_key)
+    // This happens when the attribute is used in a context that preserves the parens.
     if let Some(TokenTree::Group(g)) = rest_tokens.first()
         && g.delimiter() == proc_macro2::Delimiter::Parenthesis
     {
@@ -1105,27 +1135,31 @@ fn generate_struct_value(
         }
 
         // Non-empty - delegate to __build_struct_fields proc-macro
-        // Note: struct variants with complex field initialization cannot be used in statics,
-        // so this returns a compile_error for now. This case is not used by facet-args.
-        let msg = "struct variant attributes with field values cannot be used with define_attr_grammar! yet";
         return quote_spanned! { span =>
-            compile_error!(#msg)
+            ::facet::__build_struct_fields! {
+                @krate { #ns_path }
+                @enum_name { Attr }
+                @variant_name { #variant_ident }
+                @struct_name { #struct_name }
+                @fields { #(#fields_meta),* }
+                @input { #inner }
+            }
         };
     }
 
-    // No parens - use defaults
-    if rest_tokens.is_empty() {
-        return quote_spanned! { span =>
-            #ns_path::Attr::#variant_ident(#ns_path::#struct_name {
-                #(#default_fields),*
-            })
-        };
-    }
-
-    // Error: invalid syntax
-    let msg = format!("`{attr_str}` expects parentheses: `{attr_str}(...)` or just `{attr_str}`");
+    // Non-empty tokens without parens - the derive macro already extracted the paren contents.
+    // This happens when using #[facet(ns::attr(field = value))] syntax - the parser
+    // extracts the paren contents and passes them directly.
+    // Delegate to __build_struct_fields with the tokens as-is.
     quote_spanned! { span =>
-        compile_error!(#msg)
+        ::facet::__build_struct_fields! {
+            @krate { #ns_path }
+            @enum_name { Attr }
+            @variant_name { #variant_ident }
+            @struct_name { #struct_name }
+            @fields { #(#fields_meta),* }
+            @input { #rest }
+        }
     }
 }
 
