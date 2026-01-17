@@ -138,9 +138,9 @@ If your CLI tool supports the `@dump-styx-schema` argument, editors can discover
 ```bash
 $ myapp @dump-styx-schema
 @meta {
-  name myapp
+  crate myapp-config
   version 2.3.1
-  description "Configuration schema for myapp"
+  bin myapp
 }
 
 /// Server configuration.
@@ -174,18 +174,91 @@ This is the best experience for users who have your tool installed:
 
 ### Implementing discovery
 
-In Rust with Facet:
+First, derive `Facet` on your configuration types. Doc comments become schema documentation, and attributes define constraints:
 
 ```rust
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+use std::path::PathBuf;
+use std::time::Duration;
+use facet::Facet;
 
-    if args.get(1).map(|s| s.as_str()) == Some("@dump-styx-schema") {
-        println!("{}", Config::styx_schema());
+#[derive(Facet)]
+/// Server configuration.
+struct Config {
+    /// Hostname or IP address to bind to.
+    host: String,
+
+    /// Port number (1-65535).
+    #[facet(min = 1, max = 65535)]
+    port: u16,
+
+    /// Request timeout.
+    timeout: Duration,
+
+    /// TLS configuration (optional).
+    tls: Option<TlsConfig>,
+}
+
+#[derive(Facet)]
+/// TLS certificate configuration.
+struct TlsConfig {
+    /// Path to certificate file.
+    cert: PathBuf,
+    /// Path to private key file.
+    key: PathBuf,
+}
+```
+
+Then handle the `@dump-styx-schema` argument in your main function:
+
+```rust
+use facet_styx::StyxSchema;
+
+fn main() {
+    if std::env::args().nth(1).as_deref() == Some("@dump-styx-schema") {
+        let schema = StyxSchema::builder()
+            .crate_name("myapp-config")
+            .version(env!("CARGO_PKG_VERSION"))
+            .bin("myapp")
+            .root::<Config>()
+            .build();
+        println!("{schema}");
         return;
     }
 
     // ... rest of your app
+}
+```
+
+This outputs a complete schema with metadata:
+
+```styx
+@meta {
+  crate myapp-config
+  version 1.0.0
+  bin myapp
+}
+
+/// Server configuration.
+Config @object {
+  /// Hostname or IP address to bind to.
+  host @string
+
+  /// Port number (1-65535).
+  port @int{ min 1, max 65535 }
+
+  /// Request timeout.
+  timeout @duration
+
+  /// TLS configuration (optional).
+  tls @optional(TlsConfig)
+}
+
+/// TLS certificate configuration.
+TlsConfig @object {
+  /// Path to certificate file.
+  cert @string
+  /// Path to private key file.
+  key @string
 }
 ```
 

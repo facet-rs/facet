@@ -16,7 +16,7 @@
 ; Attributes
 (attribute
   key: (bare_scalar) @property
-  "=" @operator)
+  ">" @keyword)
 
 ; Scalars (general fallback) - must come BEFORE more specific rules
 (bare_scalar) @string
