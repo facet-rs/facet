@@ -90,7 +90,7 @@ jobs {
       {uses dtolnay/rust-toolchain@stable, with components>"clippy, rustfmt"}
       {
         name Lint
-        run <<SH
+        run <<SH,bash
           cargo fmt --check
           cargo clippy --all-features -- -D warnings
           echo "All checks passed!"

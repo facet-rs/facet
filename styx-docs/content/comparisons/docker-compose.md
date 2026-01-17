@@ -39,7 +39,7 @@ services:
       retries: 3
 
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_DB: myapp
       POSTGRES_USER: myapp
@@ -98,7 +98,7 @@ services {
   }
 
   db {
-    image postgres:16-alpine
+    image postgres:18-alpine
     environment {
       POSTGRES_DB myapp
       POSTGRES_USER myapp
