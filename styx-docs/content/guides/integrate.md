@@ -3,8 +3,6 @@ title = "Use Styx in Your App"
 weight = 1
 +++
 
-# Use Styx in Your App
-
 <!-- TODO: This page needs content -->
 
 Add Styx as a configuration or data language in your application.

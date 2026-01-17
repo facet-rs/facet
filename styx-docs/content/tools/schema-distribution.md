@@ -4,8 +4,6 @@ weight = 10
 insert_anchor_links = "heading"
 +++
 
-# Schema Distribution
-
 Styx schemas can be published to [crates.io](https://crates.io) for versioned, immutable distribution. This page explains the system and its guarantees.
 
 ## The problem with URLs

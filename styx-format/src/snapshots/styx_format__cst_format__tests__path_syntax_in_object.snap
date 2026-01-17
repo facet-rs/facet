@@ -1,0 +1,8 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+resources {
+    limits cpu>500m memory>256Mi
+    requests cpu>100m memory>128Mi
+}

@@ -61,6 +61,18 @@ Publish Styx editor extensions to their respective marketplaces and registries.
   ```
 - [ ] Docs: https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html
 
+### Kate / KDE
+- [ ] Submit to **KSyntaxHighlighting**: https://invent.kde.org/frameworks/syntax-highlighting
+  - Add `styx.xml` to `data/syntax/`
+  - Submit merge request
+- [ ] Docs: https://kate-editor.org/syntax/
+- [ ] Also benefits: KWrite, KDevelop, any KSyntaxHighlighting user
+
+### nano
+- [ ] Submit to **nano-syntax-highlighting**: https://github.com/scopatz/nanorc
+  - Add `styx.nanorc`
+- [ ] Or propose for inclusion in nano upstream
+
 ## Other Registries
 
 ### tree-sitter

@@ -85,6 +85,7 @@ impl CstFormatter {
 
     fn format_node(&mut self, node: &SyntaxNode) {
         match node.kind() {
+            // Nodes
             SyntaxKind::DOCUMENT => self.format_document(node),
             SyntaxKind::ENTRY => self.format_entry(node),
             SyntaxKind::OBJECT => self.format_object(node),
@@ -97,11 +98,32 @@ impl CstFormatter {
             SyntaxKind::TAG_PAYLOAD => self.format_tag_payload(node),
             SyntaxKind::UNIT => self.write("@"),
             SyntaxKind::HEREDOC => self.format_heredoc(node),
-            _ => {
-                // For unknown nodes, format children
-                for child in node.children() {
-                    self.format_node(&child);
-                }
+            SyntaxKind::ATTRIBUTES => self.format_attributes(node),
+            SyntaxKind::ATTRIBUTE => self.format_attribute(node),
+
+            // Tokens - should not appear as nodes, but handle gracefully
+            SyntaxKind::L_BRACE
+            | SyntaxKind::R_BRACE
+            | SyntaxKind::L_PAREN
+            | SyntaxKind::R_PAREN
+            | SyntaxKind::COMMA
+            | SyntaxKind::GT
+            | SyntaxKind::AT
+            | SyntaxKind::BARE_SCALAR
+            | SyntaxKind::QUOTED_SCALAR
+            | SyntaxKind::RAW_SCALAR
+            | SyntaxKind::HEREDOC_START
+            | SyntaxKind::HEREDOC_CONTENT
+            | SyntaxKind::HEREDOC_END
+            | SyntaxKind::LINE_COMMENT
+            | SyntaxKind::DOC_COMMENT
+            | SyntaxKind::WHITESPACE
+            | SyntaxKind::NEWLINE
+            | SyntaxKind::EOF
+            | SyntaxKind::ERROR
+            | SyntaxKind::__LAST_TOKEN => {
+                // Tokens shouldn't be passed to format_node (they're not nodes)
+                // but if they are, ignore them - they're handled by their parent
             }
         }
     }
@@ -256,23 +278,16 @@ impl CstFormatter {
     fn format_tag(&mut self, node: &SyntaxNode) {
         self.write("@");
 
-        for child in node.children() {
-            match child.kind() {
-                SyntaxKind::TAG_NAME => self.format_tag_name(&child),
-                SyntaxKind::TAG_PAYLOAD => {
-                    // Check if payload starts with sequence/object (no space needed)
-                    // or something else (space needed, e.g., @tag value, @outer @inner)
-                    let first_child = child.children().next();
-                    let needs_space = first_child
-                        .as_ref()
-                        .map(|c| !matches!(c.kind(), SyntaxKind::SEQUENCE | SyntaxKind::OBJECT))
-                        .unwrap_or(false);
-                    if needs_space {
-                        self.write(" ");
-                    }
-                    self.format_tag_payload(&child);
+        // Per grammar: Tag ::= '@' TagName TagPayload?
+        // TagPayload must be immediately attached (no whitespace allowed)
+        // TagPayload ::= Object | Sequence | QuotedScalar | RawScalar | HeredocScalar | '@'
+        for el in node.children_with_tokens() {
+            if let rowan::NodeOrToken::Node(child) = el {
+                match child.kind() {
+                    SyntaxKind::TAG_NAME => self.format_tag_name(&child),
+                    SyntaxKind::TAG_PAYLOAD => self.format_tag_payload(&child),
+                    _ => {}
                 }
-                _ => {}
             }
         }
     }
@@ -304,6 +319,36 @@ impl CstFormatter {
     fn format_heredoc(&mut self, node: &SyntaxNode) {
         // Heredocs are preserved as-is
         self.write(&node.to_string());
+    }
+
+    fn format_attributes(&mut self, node: &SyntaxNode) {
+        let attrs: Vec<_> = node
+            .children()
+            .filter(|n| n.kind() == SyntaxKind::ATTRIBUTE)
+            .collect();
+
+        for (i, attr) in attrs.iter().enumerate() {
+            self.format_attribute(attr);
+            if i < attrs.len() - 1 {
+                self.write(" ");
+            }
+        }
+    }
+
+    fn format_attribute(&mut self, node: &SyntaxNode) {
+        // Attribute structure: BARE_SCALAR ">" SCALAR
+        for el in node.children_with_tokens() {
+            match el {
+                rowan::NodeOrToken::Token(token) => match token.kind() {
+                    SyntaxKind::BARE_SCALAR => self.write(token.text()),
+                    SyntaxKind::GT => self.write(">"),
+                    _ => {}
+                },
+                rowan::NodeOrToken::Node(child) => {
+                    self.format_node(&child);
+                }
+            }
+        }
     }
 
     /// Write any doc comments that precede this node.
@@ -449,5 +494,462 @@ schema {
 }"#;
         let output = format(input);
         insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_path_syntax_in_object() {
+        let input = r#"resources {
+    limits cpu>500m memory>256Mi
+    requests cpu>100m memory>128Mi
+}"#;
+        let output = format(input);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_syntax_error_space_after_gt() {
+        // Space after > is a syntax error - should return original
+        let input = "limits cpu> 500m";
+        let parsed = styx_cst::parse(input);
+        assert!(!parsed.is_ok(), "should have parse error");
+        let output = format(input);
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn test_syntax_error_space_before_gt() {
+        // Space before > is a syntax error - should return original
+        let input = "limits cpu >500m";
+        let parsed = styx_cst::parse(input);
+        assert!(!parsed.is_ok(), "should have parse error");
+        let output = format(input);
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn test_tag_with_separate_sequence() {
+        // @a () has space between tag and sequence - must be preserved
+        // (whitespace affects parsing semantics for tag payloads)
+        let input = "@a ()";
+        let output = format(input);
+        assert_eq!(output.trim(), "@a ()");
+    }
+
+    #[test]
+    fn test_tag_with_attached_sequence() {
+        // @a() has no space - compact form must stay compact
+        let input = "@a()";
+        let output = format(input);
+        assert_eq!(output.trim(), "@a()");
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Generate a valid bare scalar (no special chars)
+    fn bare_scalar() -> impl Strategy<Value = String> {
+        // Start with letter, then alphanumeric + some allowed chars
+        prop::string::string_regex("[a-zA-Z][a-zA-Z0-9_-]{0,10}")
+            .unwrap()
+            .prop_filter("non-empty", |s| !s.is_empty())
+    }
+
+    /// Generate a quoted scalar with potential escape sequences
+    fn quoted_scalar() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Simple quoted string
+            prop::string::string_regex(r#"[a-zA-Z0-9 _-]{0,20}"#)
+                .unwrap()
+                .prop_map(|s| format!("\"{}\"", s)),
+            // With common escapes
+            prop::string::string_regex(r#"[a-zA-Z0-9 ]{0,10}"#)
+                .unwrap()
+                .prop_map(|s| format!("\"hello\\n{}\\t\"", s)),
+        ]
+    }
+
+    /// Generate a raw scalar (r"..." or r#"..."#)
+    fn raw_scalar() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Simple raw string
+            prop::string::string_regex(r#"[a-zA-Z0-9/_\\.-]{0,15}"#)
+                .unwrap()
+                .prop_map(|s| format!("r\"{}\"", s)),
+            // Raw string with # delimiters (can contain quotes)
+            prop::string::string_regex(r#"[a-zA-Z0-9 "/_\\.-]{0,15}"#)
+                .unwrap()
+                .prop_map(|s| format!("r#\"{}\"#", s)),
+        ]
+    }
+
+    /// Generate a scalar (bare, quoted, or raw)
+    fn scalar() -> impl Strategy<Value = String> {
+        prop_oneof![
+            4 => bare_scalar(),
+            3 => quoted_scalar(),
+            1 => raw_scalar(),
+        ]
+    }
+
+    /// Generate a tag name
+    fn tag_name() -> impl Strategy<Value = String> {
+        prop::string::string_regex("[a-zA-Z][a-zA-Z0-9_-]{0,8}")
+            .unwrap()
+            .prop_filter("non-empty", |s| !s.is_empty())
+    }
+
+    /// Generate a tag (@name or @name with payload)
+    /// Per grammar: TagPayload must be immediately attached (no whitespace)
+    /// TagPayload ::= Object | Sequence | QuotedScalar | RawScalar | HeredocScalar | '@'
+    /// Note: BareScalar is NOT a valid TagPayload
+    fn tag() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Unit tag (just @)
+            Just("@".to_string()),
+            // Simple tag (no payload)
+            tag_name().prop_map(|n| format!("@{n}")),
+            // Tag with sequence payload (must be attached, no space)
+            (tag_name(), flat_sequence()).prop_map(|(n, s)| format!("@{n}{s}")),
+            // Tag with inline object payload (must be attached, no space)
+            (tag_name(), inline_object()).prop_map(|(n, o)| format!("@{n}{o}")),
+            // Tag with quoted scalar payload (must be attached, no space)
+            (tag_name(), quoted_scalar()).prop_map(|(n, q)| format!("@{n}{q}")),
+            // Tag with unit payload
+            (tag_name()).prop_map(|n| format!("@{n} @")),
+        ]
+    }
+
+    /// Generate an attribute (key>value)
+    fn attribute() -> impl Strategy<Value = String> {
+        (bare_scalar(), scalar()).prop_map(|(k, v)| format!("{k}>{v}"))
+    }
+
+    /// Generate a flat sequence of scalars (no nesting)
+    fn flat_sequence() -> impl Strategy<Value = String> {
+        prop::collection::vec(scalar(), 0..5).prop_map(|items| {
+            if items.is_empty() {
+                "()".to_string()
+            } else {
+                format!("({})", items.join(" "))
+            }
+        })
+    }
+
+    /// Generate a nested sequence like ((a b) (c d))
+    fn nested_sequence() -> impl Strategy<Value = String> {
+        prop::collection::vec(flat_sequence(), 1..4).prop_map(|seqs| format!("({})", seqs.join(" ")))
+    }
+
+    /// Generate a sequence (flat or nested)
+    fn sequence() -> impl Strategy<Value = String> {
+        prop_oneof![
+            3 => flat_sequence(),
+            1 => nested_sequence(),
+        ]
+    }
+
+    /// Generate an inline object {key value, ...}
+    fn inline_object() -> impl Strategy<Value = String> {
+        prop::collection::vec((bare_scalar(), scalar()), 0..4).prop_map(|entries| {
+            if entries.is_empty() {
+                "{}".to_string()
+            } else {
+                let inner: Vec<String> = entries.into_iter().map(|(k, v)| format!("{k} {v}")).collect();
+                format!("{{{}}}", inner.join(", "))
+            }
+        })
+    }
+
+    /// Generate a multiline object
+    fn multiline_object() -> impl Strategy<Value = String> {
+        prop::collection::vec((bare_scalar(), scalar()), 1..4).prop_map(|entries| {
+            let inner: Vec<String> = entries.into_iter().map(|(k, v)| format!("  {k} {v}")).collect();
+            format!("{{\n{}\n}}", inner.join("\n"))
+        })
+    }
+
+    /// Generate a line comment
+    fn line_comment() -> impl Strategy<Value = String> {
+        prop::string::string_regex("[a-zA-Z0-9 _-]{0,30}")
+            .unwrap()
+            .prop_map(|s| format!("// {}", s.trim()))
+    }
+
+    /// Generate a doc comment
+    fn doc_comment() -> impl Strategy<Value = String> {
+        prop::string::string_regex("[a-zA-Z0-9 _-]{0,30}")
+            .unwrap()
+            .prop_map(|s| format!("/// {}", s.trim()))
+    }
+
+    /// Generate a heredoc
+    fn heredoc() -> impl Strategy<Value = String> {
+        let delimiters = prop_oneof![
+            Just("EOF".to_string()),
+            Just("END".to_string()),
+            Just("TEXT".to_string()),
+            Just("CODE".to_string()),
+        ];
+        let content = prop::string::string_regex("[a-zA-Z0-9 \n_.-]{0,50}").unwrap();
+        let lang_hint = prop_oneof![
+            Just("".to_string()),
+            Just(",txt".to_string()),
+            Just(",rust".to_string()),
+        ];
+        (delimiters, content, lang_hint).prop_map(|(delim, content, hint)| {
+            format!("<<{delim}{hint}\n{content}\n{delim}")
+        })
+    }
+
+    /// Generate a simple value (scalar, sequence, or attributes)
+    fn simple_value() -> impl Strategy<Value = String> {
+        prop_oneof![
+            3 => scalar(),
+            2 => sequence(),
+            2 => tag(),
+            1 => inline_object(),
+            1 => multiline_object(),
+            1 => heredoc(),
+            // Multiple attributes (path syntax)
+            1 => prop::collection::vec(attribute(), 1..4).prop_map(|attrs| attrs.join(" ")),
+        ]
+    }
+
+    /// Generate a simple entry (key value)
+    fn entry() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Regular entry
+            (bare_scalar(), simple_value()).prop_map(|(k, v)| format!("{k} {v}")),
+            // Tag as key
+            (tag(), simple_value()).prop_map(|(t, v)| format!("{t} {v}")),
+        ]
+    }
+
+    /// Generate an entry optionally preceded by a comment
+    fn commented_entry() -> impl Strategy<Value = String> {
+        prop_oneof![
+            3 => entry(),
+            1 => (doc_comment(), entry()).prop_map(|(c, e)| format!("{c}\n{e}")),
+            1 => (line_comment(), entry()).prop_map(|(c, e)| format!("{c}\n{e}")),
+        ]
+    }
+
+    /// Generate a simple document (multiple entries)
+    fn document() -> impl Strategy<Value = String> {
+        prop::collection::vec(commented_entry(), 1..5).prop_map(|entries| entries.join("\n"))
+    }
+
+    /// Generate a deeply nested object (recursive)
+    fn deep_object(depth: usize) -> BoxedStrategy<String> {
+        if depth == 0 {
+            scalar().boxed()
+        } else {
+            prop_oneof![
+                // Scalar leaf
+                2 => scalar(),
+                // Nested object
+                1 => prop::collection::vec(
+                    (bare_scalar(), deep_object(depth - 1)),
+                    1..3
+                ).prop_map(|entries| {
+                    let inner: Vec<String> = entries.into_iter()
+                        .map(|(k, v)| format!("  {k} {v}"))
+                        .collect();
+                    format!("{{\n{}\n}}", inner.join("\n"))
+                }),
+            ]
+            .boxed()
+        }
+    }
+
+    /// Generate a sequence containing tags
+    fn sequence_of_tags() -> impl Strategy<Value = String> {
+        prop::collection::vec(tag(), 1..5).prop_map(|tags| format!("({})", tags.join(" ")))
+    }
+
+    /// Generate an object with sequence values
+    fn object_with_sequences() -> impl Strategy<Value = String> {
+        prop::collection::vec((bare_scalar(), flat_sequence()), 1..4).prop_map(|entries| {
+            let inner: Vec<String> = entries
+                .into_iter()
+                .map(|(k, v)| format!("  {k} {v}"))
+                .collect();
+            format!("{{\n{}\n}}", inner.join("\n"))
+        })
+    }
+
+    /// Strip spans from a value tree for comparison (spans change after formatting)
+    fn strip_spans(value: &mut styx_tree::Value) {
+        value.span = None;
+        if let Some(ref mut tag) = value.tag {
+            tag.span = None;
+        }
+        if let Some(ref mut payload) = value.payload {
+            match payload {
+                styx_tree::Payload::Scalar(s) => s.span = None,
+                styx_tree::Payload::Sequence(seq) => {
+                    seq.span = None;
+                    for item in &mut seq.items {
+                        strip_spans(item);
+                    }
+                }
+                styx_tree::Payload::Object(obj) => {
+                    obj.span = None;
+                    for entry in &mut obj.entries {
+                        strip_spans(&mut entry.key);
+                        strip_spans(&mut entry.value);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Parse source into a comparable tree (spans stripped)
+    fn parse_to_tree(source: &str) -> Option<styx_tree::Value> {
+        let mut value = styx_tree::parse(source).ok()?;
+        strip_spans(&mut value);
+        Some(value)
+    }
+
+    proptest! {
+        /// Formatting must preserve document semantics
+        #[test]
+        fn format_preserves_semantics(input in document()) {
+            let tree1 = parse_to_tree(&input);
+
+            // Skip if original doesn't parse (shouldn't happen with our generator)
+            if tree1.is_none() {
+                return Ok(());
+            }
+            let tree1 = tree1.unwrap();
+
+            let formatted = format_source(&input, FormatOptions::default());
+            let tree2 = parse_to_tree(&formatted);
+
+            prop_assert!(
+                tree2.is_some(),
+                "Formatted output should parse. Input:\n{}\nFormatted:\n{}",
+                input,
+                formatted
+            );
+            let tree2 = tree2.unwrap();
+
+            prop_assert_eq!(
+                tree1,
+                tree2,
+                "Formatting changed semantics!\nInput:\n{}\nFormatted:\n{}",
+                input,
+                formatted
+            );
+        }
+
+        /// Formatting should be idempotent
+        #[test]
+        fn format_is_idempotent(input in document()) {
+            let once = format_source(&input, FormatOptions::default());
+            let twice = format_source(&once, FormatOptions::default());
+
+            prop_assert_eq!(
+                &once,
+                &twice,
+                "Formatting is not idempotent!\nInput:\n{}\nOnce:\n{}\nTwice:\n{}",
+                input,
+                &once,
+                &twice
+            );
+        }
+
+        /// Deeply nested objects should format correctly
+        #[test]
+        fn format_deep_objects(key in bare_scalar(), value in deep_object(4)) {
+            let input = format!("{key} {value}");
+            let tree1 = parse_to_tree(&input);
+
+            if tree1.is_none() {
+                return Ok(());
+            }
+            let tree1 = tree1.unwrap();
+
+            let formatted = format_source(&input, FormatOptions::default());
+            let tree2 = parse_to_tree(&formatted);
+
+            prop_assert!(
+                tree2.is_some(),
+                "Deep object should parse after formatting. Input:\n{}\nFormatted:\n{}",
+                input,
+                formatted
+            );
+
+            prop_assert_eq!(
+                tree1,
+                tree2.unwrap(),
+                "Deep object semantics changed!\nInput:\n{}\nFormatted:\n{}",
+                input,
+                formatted
+            );
+        }
+
+        /// Sequences of tags should format correctly
+        #[test]
+        fn format_sequence_of_tags(key in bare_scalar(), seq in sequence_of_tags()) {
+            let input = format!("{key} {seq}");
+            let tree1 = parse_to_tree(&input);
+
+            if tree1.is_none() {
+                return Ok(());
+            }
+            let tree1 = tree1.unwrap();
+
+            let formatted = format_source(&input, FormatOptions::default());
+            let tree2 = parse_to_tree(&formatted);
+
+            prop_assert!(
+                tree2.is_some(),
+                "Tag sequence should parse. Input:\n{}\nFormatted:\n{}",
+                input,
+                formatted
+            );
+
+            prop_assert_eq!(
+                tree1,
+                tree2.unwrap(),
+                "Tag sequence semantics changed!\nInput:\n{}\nFormatted:\n{}",
+                input,
+                formatted
+            );
+        }
+
+        /// Objects containing sequences should format correctly
+        #[test]
+        fn format_objects_with_sequences(key in bare_scalar(), obj in object_with_sequences()) {
+            let input = format!("{key} {obj}");
+            let tree1 = parse_to_tree(&input);
+
+            if tree1.is_none() {
+                return Ok(());
+            }
+            let tree1 = tree1.unwrap();
+
+            let formatted = format_source(&input, FormatOptions::default());
+            let tree2 = parse_to_tree(&formatted);
+
+            prop_assert!(
+                tree2.is_some(),
+                "Object with sequences should parse. Input:\n{}\nFormatted:\n{}",
+                input,
+                formatted
+            );
+
+            prop_assert_eq!(
+                tree1,
+                tree2.unwrap(),
+                "Object with sequences semantics changed!\nInput:\n{}\nFormatted:\n{}",
+                input,
+                formatted
+            );
+        }
     }
 }

@@ -572,6 +572,20 @@ mod tests {
 
     #[test]
     fn test_tag() {
+        // Tag with attached payload (no space) - payload IS part of tag
+        let d = doc("key @Some(value)");
+        let entry = d.entries().next().unwrap();
+        let value = entry.value().unwrap();
+        let tag_node = value.syntax().children().next().unwrap();
+        let tag = Tag::cast(tag_node).unwrap();
+
+        assert_eq!(tag.name(), Some("Some".to_string()));
+        assert!(tag.payload().is_some(), "attached payload should exist");
+    }
+
+    #[test]
+    fn test_tag_without_payload() {
+        // Tag with space before next value - NO payload (per grammar)
         let d = doc("@Some value");
         let entry = d.entries().next().unwrap();
         let key = entry.key().unwrap();
@@ -579,7 +593,11 @@ mod tests {
         let tag = Tag::cast(tag_node).unwrap();
 
         assert_eq!(tag.name(), Some("Some".to_string()));
-        assert!(tag.payload().is_some());
+        assert!(tag.payload().is_none(), "spaced value should not be payload");
+
+        // The value should be separate
+        let value = entry.value().unwrap();
+        assert!(matches!(value.kind(), ValueKind::Scalar(_)));
     }
 
     #[test]

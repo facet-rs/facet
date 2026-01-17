@@ -247,20 +247,34 @@ impl<'src> Parser<'src> {
         let key_atom = &atoms[0];
 
         // parser[impl entry.keys]
-        // Heredoc scalars are not allowed as keys
-        if key_atom.kind == ScalarKind::Heredoc
-            && !callback.event(Event::Error {
-                span: key_atom.span,
-                kind: ParseErrorKind::InvalidKey,
-            })
-        {
-            return false;
+        // Heredoc scalars, objects, and sequences are not allowed as keys
+        match &key_atom.content {
+            AtomContent::Heredoc(_) => {
+                if !callback.event(Event::Error {
+                    span: key_atom.span,
+                    kind: ParseErrorKind::InvalidKey,
+                }) {
+                    return false;
+                }
+            }
+            AtomContent::Object { .. } | AtomContent::Sequence { .. } => {
+                if !callback.event(Event::Error {
+                    span: key_atom.span,
+                    kind: ParseErrorKind::InvalidKey,
+                }) {
+                    return false;
+                }
+            }
+            _ => {}
         }
 
         // parser[impl entry.path]
-        // Check if this is a sequence in key position (path syntax)
-        if let AtomContent::Sequence { elements, .. } = &key_atom.content {
-            return self.emit_path_entry(elements, &atoms, key_atom.span, callback, seen_keys);
+        // Check if this is a dotted path (bare scalar containing '.')
+        if let AtomContent::Scalar(text) = &key_atom.content
+            && key_atom.kind == ScalarKind::Bare
+            && text.contains('.')
+        {
+            return self.emit_dotted_path_entry(text, key_atom.span, &atoms, callback, seen_keys);
         }
 
         let key_value = KeyValue::from_atom(key_atom, self);
@@ -315,19 +329,22 @@ impl<'src> Parser<'src> {
         callback.event(Event::EntryEnd)
     }
 
-    /// Emit a path entry where the key is a sequence.
-    /// `(a b c) value` expands to `a { b { c value } }`
+    /// Emit a dotted path entry.
+    /// `a.b.c value` expands to `a { b { c value } }`
     // parser[impl entry.path]
-    fn emit_path_entry<C: ParseCallback<'src>>(
+    fn emit_dotted_path_entry<C: ParseCallback<'src>>(
         &self,
-        path_elements: &[Atom<'src>],
-        atoms: &[Atom<'src>],
+        path_text: &'src str,
         path_span: Span,
+        atoms: &[Atom<'src>],
         callback: &mut C,
         seen_keys: &mut HashMap<KeyValue, Span>,
     ) -> bool {
-        // Empty path is an error
-        if path_elements.is_empty() {
+        // Split the path on '.'
+        let segments: Vec<&str> = path_text.split('.').collect();
+
+        if segments.is_empty() || segments.iter().any(|s| s.is_empty()) {
+            // Invalid path (empty segment like "a..b" or ".a" or "a.")
             if !callback.event(Event::Error {
                 span: path_span,
                 kind: ParseErrorKind::InvalidKey,
@@ -337,24 +354,12 @@ impl<'src> Parser<'src> {
             return callback.event(Event::EntryEnd);
         }
 
-        // Validate all path elements and emit errors for invalid ones
-        for elem in path_elements {
-            if !self.is_valid_path_element(elem)
-                && !callback.event(Event::Error {
-                    span: elem.span,
-                    kind: ParseErrorKind::InvalidPathElement,
-                })
-            {
-                return false;
-            }
-        }
-
-        // Check for duplicate key (use first element for duplicate detection)
-        let first_elem = &path_elements[0];
-        let key_value = KeyValue::from_atom(first_elem, self);
+        // Check for duplicate key (use first segment for duplicate detection)
+        let first_segment = segments[0];
+        let key_value = KeyValue::Scalar(first_segment.to_string());
         if let Some(&original_span) = seen_keys.get(&key_value) {
             if !callback.event(Event::Error {
-                span: first_elem.span,
+                span: path_span,
                 kind: ParseErrorKind::DuplicateKey {
                     original: original_span,
                 },
@@ -362,34 +367,48 @@ impl<'src> Parser<'src> {
                 return false;
             }
         } else {
-            seen_keys.insert(key_value, first_elem.span);
+            seen_keys.insert(key_value, path_span);
         }
 
-        // Even with errors, continue to emit structure for better error recovery
-        // Emit nested structure: for each element except the last, emit Key + ObjectStart
-        let depth = path_elements.len();
-        for (i, elem) in path_elements.iter().enumerate() {
+        // Calculate spans for each segment
+        // This is approximate - we use the path span and divide it up
+        let mut current_offset = path_span.start;
+
+        // Emit nested structure: for each segment except the last, emit Key + ObjectStart
+        let depth = segments.len();
+        for (i, segment) in segments.iter().enumerate() {
+            let segment_len = segment.len() as u32;
+            let segment_span = Span::new(current_offset, current_offset + segment_len);
+
             if i > 0 {
-                // Start a new entry for nested elements
+                // Start a new entry for nested segments
                 if !callback.event(Event::EntryStart) {
                     return false;
                 }
             }
 
-            // Emit this element as a key
-            if !self.emit_atom_as_key(elem, callback) {
+            // Emit this segment as a key
+            if !callback.event(Event::Key {
+                span: segment_span,
+                tag: None,
+                payload: Some(Cow::Borrowed(segment)),
+                kind: ScalarKind::Bare,
+            }) {
                 return false;
             }
 
             if i < depth - 1 {
-                // Not the last element - emit ObjectStart (value is nested object)
+                // Not the last segment - emit ObjectStart (value is nested object)
                 if !callback.event(Event::ObjectStart {
-                    span: elem.span,
+                    span: segment_span,
                     separator: Separator::Newline,
                 }) {
                     return false;
                 }
             }
+
+            // Move past this segment and the dot
+            current_offset += segment_len + 1; // +1 for the dot
         }
 
         // Emit the actual value
@@ -423,7 +442,7 @@ impl<'src> Parser<'src> {
             if i < depth - 1 {
                 // Close the nested object
                 if !callback.event(Event::ObjectEnd {
-                    span: path_elements[i].span,
+                    span: path_span, // Use path span for all closes
                 }) {
                     return false;
                 }
@@ -434,35 +453,7 @@ impl<'src> Parser<'src> {
             }
         }
 
-        // Note: the outermost EntryEnd was emitted in the loop above
-        // We return true here, not callback.event(Event::EntryEnd) because
-        // we already emitted all necessary EntryEnds
         true
-    }
-
-    /// Check if an atom is a valid path element.
-    /// Path elements must be scalars, unit, or tags - not objects, sequences, or heredocs.
-    // parser[impl entry.path]
-    fn is_valid_path_element(&self, atom: &Atom<'src>) -> bool {
-        match &atom.content {
-            AtomContent::Scalar(_) => atom.kind != ScalarKind::Heredoc,
-            AtomContent::Unit => true,
-            AtomContent::Tag { payload, .. } => {
-                // Tag payload must also be valid (no objects, sequences, heredocs)
-                match payload {
-                    None => true,
-                    Some(inner) => match &inner.content {
-                        AtomContent::Scalar(_) => inner.kind != ScalarKind::Heredoc,
-                        AtomContent::Unit => true,
-                        _ => false,
-                    },
-                }
-            }
-            AtomContent::Object { .. }
-            | AtomContent::Sequence { .. }
-            | AtomContent::Heredoc(_)
-            | AtomContent::Attributes(_) => false,
-        }
     }
 
     /// Collect atoms until entry boundary (newline, comma, closing brace/paren, or EOF).
@@ -1078,7 +1069,8 @@ impl<'src> Parser<'src> {
     }
 
     /// Check if a tag name is valid per parser[tag.syntax].
-    /// Must match pattern: [A-Za-z_][A-Za-z0-9_.-]*
+    /// Must match pattern: [A-Za-z_][A-Za-z0-9_-]*
+    /// Note: dots are NOT allowed in tag names (they are path separators in keys).
     // parser[impl tag.syntax]
     fn is_valid_tag_name(name: &str) -> bool {
         let mut chars = name.chars();
@@ -1089,8 +1081,8 @@ impl<'src> Parser<'src> {
             _ => return false,
         }
 
-        // Rest: alphanumeric, underscore, dot, or hyphen
-        chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+        // Rest: alphanumeric, underscore, or hyphen (no dots!)
+        chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     }
 
     /// Parse a tag payload if present (must immediately follow tag name).
@@ -1518,7 +1510,7 @@ impl<'src> Parser<'src> {
                                 chars.next(); // consume '{'
                                 let mut valid = true;
                                 let mut found_close = false;
-                                while let Some((_, c)) = chars.next() {
+                                for (_, c) in chars.by_ref() {
                                     if c == '}' {
                                         found_close = true;
                                         break;
@@ -2557,11 +2549,12 @@ mod tests {
                 .any(|e| matches!(e, Event::Error { .. })),
             "@_private should be valid"
         );
+        // @Some.Type is now invalid since dots are not allowed in tag names
         assert!(
-            !parse("@Some.Type")
+            parse("@Some.Type")
                 .iter()
                 .any(|e| matches!(e, Event::Error { .. })),
-            "@Some.Type should be valid"
+            "@Some.Type should be invalid (dots not allowed)"
         );
         assert!(
             !parse("@my-tag")
@@ -2822,9 +2815,9 @@ mod tests {
 
     // parser[verify entry.path]
     #[test]
-    fn test_path_simple() {
-        // (a b) value should expand to a { b value }
-        let events = parse("(a b) value");
+    fn test_dotted_path_simple() {
+        // a.b value should expand to a { b value }
+        let events = parse("a.b value");
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
@@ -2853,15 +2846,15 @@ mod tests {
         // No errors
         assert!(
             !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Simple path should not have errors"
+            "Simple dotted path should not have errors"
         );
     }
 
     // parser[verify entry.path]
     #[test]
-    fn test_path_three_elements() {
-        // (a b c) deep should expand to a { b { c deep } }
-        let events = parse("(a b c) deep");
+    fn test_dotted_path_three_segments() {
+        // a.b.c deep should expand to a { b { c deep } }
+        let events = parse("a.b.c deep");
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
@@ -2886,15 +2879,15 @@ mod tests {
         // No errors
         assert!(
             !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Three-element path should not have errors"
+            "Three-segment dotted path should not have errors"
         );
     }
 
     // parser[verify entry.path]
     #[test]
-    fn test_path_with_implicit_unit() {
-        // (a b) without value should have implicit unit
-        let events = parse("(a b)");
+    fn test_dotted_path_with_implicit_unit() {
+        // a.b without value should have implicit unit
+        let events = parse("a.b");
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
@@ -2915,66 +2908,67 @@ mod tests {
 
     // parser[verify entry.path]
     #[test]
-    fn test_path_invalid_element_object() {
-        // (a {} b) value - object in path is invalid
-        let events = parse("(a {} b) value");
+    fn test_dotted_path_empty_segment() {
+        // a..b value - empty segment is invalid
+        let events = parse("a..b value");
         assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidPathElement,
-                    ..
-                }
-            )),
-            "Object in path should produce InvalidPathElement error"
+            events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "Empty segment in dotted path should produce error"
         );
     }
 
     // parser[verify entry.path]
     #[test]
-    fn test_path_invalid_element_sequence() {
-        // (a (nested) b) value - nested sequence in path is invalid
-        let events = parse("(a (nested) b) value");
+    fn test_dotted_path_trailing_dot() {
+        // a.b. value - trailing dot is invalid
+        let events = parse("a.b. value");
         assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidPathElement,
-                    ..
-                }
-            )),
-            "Nested sequence in path should produce InvalidPathElement error"
+            events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "Trailing dot in dotted path should produce error"
         );
     }
 
     // parser[verify entry.path]
     #[test]
-    fn test_path_with_tags() {
-        // (a @tag b) value - tags are valid path elements
-        let events = parse("(a @tag b) value");
-        // Should have keys including the tag
-        let has_tag_key = events.iter().any(|e| {
-            matches!(
-                e,
+    fn test_dotted_path_leading_dot() {
+        // .a.b value - leading dot is invalid
+        let events = parse(".a.b value");
+        assert!(
+            events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "Leading dot in dotted path should produce error"
+        );
+    }
+
+    // parser[verify entry.path]
+    #[test]
+    fn test_dotted_path_with_object_value() {
+        // a.b { c d } should expand to a { b { c d } }
+        let events = parse("a.b { c d }");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
                 Event::Key {
-                    tag: Some("tag"),
+                    payload: Some(value),
                     ..
-                }
-            )
-        });
-        assert!(has_tag_key, "Should have @tag as key");
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"a"), "Should have 'a'");
+        assert!(keys.contains(&"b"), "Should have 'b'");
+        assert!(keys.contains(&"c"), "Should have 'c'");
         // No errors
         assert!(
             !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Path with tags should not have errors"
+            "Dotted path with object value should not have errors"
         );
     }
 
     // parser[verify entry.path]
     #[test]
-    fn test_path_with_attributes_value() {
-        // (selector matchLabels) app>web - path with attributes as value
-        let events = parse("(selector matchLabels) app>web");
+    fn test_dotted_path_with_attributes_value() {
+        // selector.matchLabels app>web - dotted path with attributes as value
+        let events = parse("selector.matchLabels app>web");
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
@@ -2991,32 +2985,15 @@ mod tests {
         // No errors
         assert!(
             !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Path with attributes value should not have errors"
+            "Dotted path with attributes value should not have errors"
         );
     }
 
     // parser[verify entry.path]
     #[test]
-    fn test_empty_path() {
-        // () value - empty path is invalid
-        let events = parse("() value");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidKey,
-                    ..
-                }
-            )),
-            "Empty path should produce InvalidKey error"
-        );
-    }
-
-    // parser[verify entry.path]
-    #[test]
-    fn test_single_element_path() {
-        // (a) value - single element path should work like regular key
-        let events = parse("(a) value");
+    fn test_dot_in_value_is_literal() {
+        // key example.com - dot in value position is literal, not path separator
+        let events = parse("key example.com");
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
@@ -3027,20 +3004,18 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(keys, vec!["a"], "Should have key 'a'");
-        // No nested objects needed for single element
-        let obj_starts: Vec<_> = events
-            .iter()
-            .filter(|e| matches!(e, Event::ObjectStart { .. }))
-            .collect();
-        assert_eq!(
-            obj_starts.len(),
-            0,
-            "Single element path should not create nested objects"
+        assert_eq!(keys, vec!["key"], "Should have only one key 'key'");
+        // Value should be the full domain
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "example.com")),
+            "Value should be 'example.com' as a single scalar"
         );
+        // No errors
         assert!(
             !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Single element path should not have errors"
+            "Dot in value should not cause errors"
         );
     }
 }

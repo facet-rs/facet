@@ -198,6 +198,18 @@ impl StyxWriter {
         }
     }
 
+    /// Begin a struct directly after a tag (no space before the brace).
+    pub fn begin_struct_after_tag(&mut self, force_multiline: bool) {
+        // Don't call before_value() - we want no space after the tag
+        self.out.push(b'{');
+        self.stack.push(Context::Struct {
+            first: true,
+            is_root: false,
+            force_multiline,
+            inline_start: true,
+        });
+    }
+
     /// Write a field key without quoting (raw).
     ///
     /// Use this for keys that should be written exactly as-is, like `@` for unit keys.

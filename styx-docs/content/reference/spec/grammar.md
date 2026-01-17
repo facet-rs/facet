@@ -34,15 +34,53 @@ referenced by:
 ![Key](/grammar/Key.svg)
 
 ```
-Key      ::= Scalar
-           | Sequence
+Key      ::= KeySegment ( '.' KeySegment )*
+```
+
+referenced by:
+
+* Entry
+
+**KeySegment:**
+
+![KeySegment](/grammar/KeySegment.svg)
+
+```
+KeySegment
+         ::= BareKey
+           | QuotedScalar
            | '@'
            | Tag
 ```
 
 referenced by:
 
-* Entry
+* Key
+
+**BareKey:**
+
+![BareKey](/grammar/BareKey.svg)
+
+```
+BareKey  ::= BareKeyChar+
+```
+
+referenced by:
+
+* KeySegment
+
+**BareKeyChar:**
+
+![BareKeyChar](/grammar/BareKeyChar.svg)
+
+```
+BareKeyChar
+         ::= [^{}(),"=@>.#x20#x09#x0A#x0D]
+```
+
+referenced by:
+
+* BareKey
 
 **Value:**
 
@@ -274,7 +312,7 @@ referenced by:
 ![TagName](/grammar/TagName.svg)
 
 ```
-TagName  ::= [A-Za-z_] [A-Za-z0-9_.#x2D]*
+TagName  ::= [A-Za-z_] [A-Za-z0-9_#x2D]*
 ```
 
 referenced by:
@@ -311,7 +349,6 @@ referenced by:
 
 * Atom
 * AttributeValue
-* Key
 * TagPayload
 * Value
 

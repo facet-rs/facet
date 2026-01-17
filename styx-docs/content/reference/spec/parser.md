@@ -135,7 +135,8 @@ Scalars are opaque text. The parser assigns no type information.
 A tag labels a value with an identifier.
 
 > r[tag.syntax]
-> A tag MUST match the pattern `@[A-Za-z_][A-Za-z0-9_.-]*`.
+> A tag MUST match the pattern `@[A-Za-z_][A-Za-z0-9_-]*`.
+> Note: dots are NOT allowed in tag names (they are path separators in keys).
 
 > r[tag.payload]
 > A tag MAY be immediately followed (no whitespace) by a payload:
@@ -220,12 +221,18 @@ An **entry** consists of a key and an optional value.
 > ```
 
 > r[entry.keys]
-> A key may be a scalar, unit, tag, or sequence. Objects and heredocs are not valid keys.
+> A key is a dotted path of one or more segments. Each segment may be:
+> - A bare key (like bare scalar but `.` terminates it)
+> - A quoted scalar
+> - Unit (`@`)
+> - A tag (`@name` or `@name"payload"`)
+>
+> Objects, sequences, and heredocs are not valid keys.
 >
 > ```styx
 > // Valid keys:
-> host localhost            // bare scalar key
-> "key with spaces" 42      // quoted scalar key
+> host localhost            // bare key
+> "key with spaces" 42      // quoted key
 > @ mapped                  // unit key
 > @root schema              // tagged unit key
 > @env"PATH" "/usr/bin"     // tagged scalar key
@@ -234,6 +241,7 @@ An **entry** consists of a key and an optional value.
 > ```styx,bad
 > // Invalid keys:
 > {a 1} value               // object as key
+> (a b) value               // sequence as key
 > <<EOF                     // heredoc as key
 > text
 > EOF
@@ -241,13 +249,13 @@ An **entry** consists of a key and an optional value.
 > ```
 
 > r[entry.path]
-> A sequence in key position defines a nested path. Each element of the sequence
-> is a key in a nested object chain. The value is placed at the innermost level.
+> A dotted key defines a nested path. Each segment separated by `.` becomes
+> a key in a nested object chain. The value is placed at the innermost level.
 >
 > ```compare
 > /// styx
-> // Path syntax
-> (selector matchLabels) app>web
+> // Dotted path
+> selector.matchLabels app>web
 > /// styx
 > // Canonical
 > selector {
@@ -258,12 +266,16 @@ An **entry** consists of a key and an optional value.
 > ```
 >
 > ```styx
-> (a b c) value            // a { b { c value } }
-> (server host) localhost  // server { host localhost }
+> a.b.c value              // a { b { c value } }
+> server.host localhost    // server { host localhost }
+> profile.release.lto true // profile { release { lto true } }
 > ```
 >
-> Path elements follow the same rules as keys: scalars, unit, or tags are allowed.
-> Objects, sequences, and heredocs are not valid path elements.
+> Quoted segments do not split on dots:
+>
+> ```styx
+> "a.b".c value            // "a.b" { c value }
+> ```
 
 > r[entry.key-equality]
 > To detect duplicate keys, the parser MUST compare keys by their parsed value:
@@ -331,12 +343,12 @@ Attribute syntax is shorthand for inline object entries.
 > ```
 
 > r[entry.path.attributes]
-> Paths compose naturally with attribute syntax.
+> Dotted paths compose naturally with attribute syntax.
 >
 > ```compare
 > /// styx
 > // Path with attributes as value
-> (spec selector matchLabels) app>web tier>frontend
+> spec.selector.matchLabels app>web tier>frontend
 > /// styx
 > // Canonical
 > spec {

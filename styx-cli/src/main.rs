@@ -85,7 +85,8 @@ FILE MODE OPTIONS:
     --override-schema <file>        Use this schema instead of declared
 
 SUBCOMMANDS:
-    @tree [--format sexp|debug] <file>  Show parse tree
+    @tree [--format sexp|debug] <file>  Show parse tree (styx_tree)
+    @cst <file>                     Show CST structure (styx_cst)
     @diff <old> <new>               Structural diff (not yet implemented)
     @lsp                            Start language server (stdio)
     @skill                          Output Claude Code skill for AI assistance
@@ -466,6 +467,7 @@ fn parse_inline_schema(value: &Value) -> Result<SchemaFile, CliError> {
 fn run_subcommand(cmd: &str, args: &[String]) -> Result<(), CliError> {
     match cmd {
         "tree" => run_tree(args),
+        "cst" => run_cst(args),
         "diff" => Err(CliError::Usage("@diff is not yet implemented".into())),
         "lsp" => run_lsp(args),
         "skill" => run_skill(args),
@@ -543,6 +545,26 @@ fn run_tree(args: &[String]) -> Result<(), CliError> {
 
 fn run_skill(_args: &[String]) -> Result<(), CliError> {
     print!("{}", include_str!("../../../contrib/claude-skill/SKILL.md"));
+    Ok(())
+}
+
+fn run_cst(args: &[String]) -> Result<(), CliError> {
+    let file = args.first().map(|s| s.as_str());
+    let source = read_input(file)?;
+
+    let parsed = styx_cst::parse(&source);
+
+    // Print the CST using Debug format
+    println!("{:#?}", parsed.syntax());
+
+    // Print parse errors if any
+    if !parsed.errors().is_empty() {
+        println!("\nParse errors:");
+        for err in parsed.errors() {
+            println!("  {:?}", err);
+        }
+    }
+
     Ok(())
 }
 

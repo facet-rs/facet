@@ -292,25 +292,37 @@ impl<'src> CstParser<'src> {
         self.builder.finish_node();
     }
 
-    /// Parse a single attribute: `key=value`
+    /// Parse a single attribute: `key>value`
+    ///
+    /// Per spec r[attr.syntax]: "The `>` has no spaces around it."
     fn parse_attribute(&mut self) {
         self.builder.start_node(SyntaxKind::ATTRIBUTE.into());
 
         // Key (bare scalar)
         self.bump();
 
-        // Skip whitespace before =
-        self.skip_whitespace();
-
-        // = sign
+        // > sign (no whitespace allowed before or after)
         if self.peek() == TokenKind::Gt {
             self.bump();
+        } else {
+            let pos = self.current_pos();
+            self.errors.push(ParseError::new(
+                pos,
+                "expected `>` immediately after attribute key".to_string(),
+            ));
         }
 
-        // Skip whitespace after =
-        self.skip_whitespace();
+        // Value (no whitespace allowed between > and value)
+        if self.peek() == TokenKind::Whitespace || self.peek() == TokenKind::Newline {
+            let pos = self.current_pos();
+            self.errors.push(ParseError::new(
+                pos,
+                "no whitespace allowed after `>` in attribute".to_string(),
+            ));
+            // Skip the whitespace so we can continue parsing
+            self.skip_whitespace();
+        }
 
-        // Value
         self.parse_atom();
 
         self.builder.finish_node();
@@ -439,23 +451,29 @@ impl<'src> CstParser<'src> {
                 self.builder.token(SyntaxKind::AT.into(), token.text);
             }
 
-            // Add tag name
+            // Add tag name and track its end position
             self.builder.start_node(SyntaxKind::TAG_NAME.into());
+            let name_end = self.lexer.peek().map(|t| t.span.end).unwrap_or(0);
             self.bump(); // The bare scalar
             self.builder.finish_node();
 
-            // Check for payload (skip whitespace first)
-            self.skip_whitespace();
+            // Check for payload - must IMMEDIATELY follow tag name (no whitespace)
+            // Per grammar: Tag ::= '@' TagName TagPayload?
+            // TagPayload ::= Object | Sequence | QuotedScalar | RawScalar | HeredocScalar | '@'
+            let has_immediate_payload = self.lexer.peek().is_some_and(|t| {
+                t.span.start == name_end
+                    && matches!(
+                        t.kind,
+                        TokenKind::LBrace
+                            | TokenKind::LParen
+                            | TokenKind::QuotedScalar
+                            | TokenKind::RawScalar
+                            | TokenKind::HeredocStart
+                            | TokenKind::At
+                    )
+            });
 
-            // If there's a payload (another atom), parse it
-            if !matches!(
-                self.peek(),
-                TokenKind::Eof
-                    | TokenKind::Newline
-                    | TokenKind::Comma
-                    | TokenKind::RBrace
-                    | TokenKind::RParen
-            ) {
+            if has_immediate_payload {
                 self.builder.start_node(SyntaxKind::TAG_PAYLOAD.into());
                 self.parse_atom();
                 self.builder.finish_node();

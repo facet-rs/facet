@@ -3,8 +3,6 @@ title = "CLI"
 weight = 2
 +++
 
-# Styx CLI
-
 Process, format, and validate Styx files from the command line.
 
 ## Installation

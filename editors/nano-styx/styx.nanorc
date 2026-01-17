@@ -1,0 +1,39 @@
+# Styx syntax highlighting for GNU nano
+
+syntax "styx" "\.styx$"
+
+# Doc comments
+color brightcyan "///.*$"
+
+# Line comments
+color cyan "//[^/].*$"
+color cyan "//(?!/)$"
+
+# Tags
+color magenta "@[A-Za-z_][A-Za-z0-9_-]*"
+
+# Unit
+color magenta "@(?![A-Za-z_])"
+
+# Attribute arrow
+color yellow ">"
+
+# Strings
+color green ""([^"\\]|\\.)*""
+
+# Raw strings (basic support)
+color green start="r#*\"" end="\"#*"
+
+# Heredocs
+color green start="<<[A-Za-z_][A-Za-z0-9_]*" end="^[A-Za-z_][A-Za-z0-9_]*$"
+
+# Escape sequences in strings
+color brightyellow "\\[\\\"nrt]"
+color brightyellow "\\u[0-9A-Fa-f]{4}"
+color brightyellow "\\u\{[0-9A-Fa-f]{1,6}\}"
+
+# Brackets
+color brightwhite "[{}()]"
+
+# Comma
+color white ","

@@ -57,23 +57,12 @@
 
 .pane-content {
     flex: 1;
-    overflow: auto;
+    overflow: hidden;
+    position: relative;
 }
 
-#editor {
+#editor, #output {
     height: 100%;
-}
-
-#output {
-    height: 100%;
-    padding: 1rem;
-    font-family: 'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
-    font-size: 13px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-break: break-word;
-    color: #d4d4d4;
-    background: #1e1e1e;
 }
 
 .diagnostics {
@@ -135,6 +124,15 @@
     background: rgba(255, 255, 255, 0.03);
 }
 
+/* Read-only output editor - no cursor blink */
+.output-pane .cm-cursor {
+    display: none !important;
+}
+
+.output-pane .cm-activeLine {
+    background: transparent;
+}
+
 /* Loading state */
 .loading {
     display: flex;
@@ -143,29 +141,6 @@
     height: 100%;
     color: #666;
     font-style: italic;
-}
-
-/* Scrollbar styling */
-.pane-content::-webkit-scrollbar,
-#output::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-.pane-content::-webkit-scrollbar-track,
-#output::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.pane-content::-webkit-scrollbar-thumb,
-#output::-webkit-scrollbar-thumb {
-    background: #444;
-    border-radius: 4px;
-}
-
-.pane-content::-webkit-scrollbar-thumb:hover,
-#output::-webkit-scrollbar-thumb:hover {
-    background: #555;
 }
 
 @media (max-width: 900px) {
@@ -192,13 +167,13 @@
         </div>
         <div id="diagnostics" class="diagnostics"></div>
     </div>
-    
+
     <div class="output-pane">
         <div class="pane-header">
             <span>JSON Output</span>
         </div>
         <div class="pane-content">
-            <pre id="output"></pre>
+            <div id="output"><div class="loading">Loading...</div></div>
         </div>
     </div>
 </div>
@@ -207,17 +182,26 @@
 // Set WASM URL before module loads (will be rewritten to cache-busted path)
 window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
 </script>
+<script type="importmap">
+{
+  "imports": {
+    "@codemirror/state": "https://esm.sh/@codemirror/state@6.5.2",
+    "@codemirror/view": "https://esm.sh/@codemirror/view@6.39.11?deps=@codemirror/state@6.5.2"
+  }
+}
+</script>
 <script type="module">
-// Import CodeMirror - pin @codemirror/state@6.5.2 across all packages to avoid duplicate instances
+// Import CodeMirror - pin @codemirror/state@6.5.2 across all packages
 import { EditorView, basicSetup } from 'https://esm.sh/codemirror@6.0.1?deps=@codemirror/state@6.5.2';
 import { EditorState } from 'https://esm.sh/@codemirror/state@6.5.2';
 import { oneDark } from 'https://esm.sh/@codemirror/theme-one-dark@6.1.2?deps=@codemirror/state@6.5.2';
+import { json } from 'https://esm.sh/@codemirror/lang-json@6.0.1?deps=@codemirror/state@6.5.2';
+
+// Import Styx language support for CodeMirror
+import { styx } from '/codemirror-styx/index.js';
 
 // Import Styx WASM
 import init, { to_json, parse, version } from '/wasm/styx_wasm.js';
-
-// Import arborium for syntax highlighting
-import { highlight } from 'https://esm.sh/@arborium/arborium@2';
 
 const DEFAULT_SOURCE = `// Welcome to the Styx Playground!
 // Edit this document and see the JSON output on the right.
@@ -226,7 +210,7 @@ const DEFAULT_SOURCE = `// Welcome to the Styx Playground!
 server {
     host localhost
     port 8080
-    
+
     tls {
         enabled true
         cert "/etc/ssl/cert.pem"
@@ -248,52 +232,68 @@ features (
 )
 `;
 
-let editor;
+let styxEditor;
+let jsonEditor;
 let debounceTimer;
 
 async function main() {
     // Initialize WASM
     await init(window.STYX_WASM_URL);
-    
+
     document.getElementById('status').textContent = `v${version()}`;
-    
-    // Create CodeMirror editor
+
+    // Create read-only JSON output editor
+    jsonEditor = new EditorView({
+        state: EditorState.create({
+            doc: '',
+            extensions: [
+                basicSetup,
+                oneDark,
+                json(),
+                EditorState.readOnly.of(true),
+                EditorView.editable.of(false),
+            ],
+        }),
+        parent: document.getElementById('output'),
+    });
+
+    // Create Styx editor with update listener
     const updateListener = EditorView.updateListener.of((update) => {
         if (update.docChanged) {
-            // Debounce updates
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
                 updateOutput(update.state.doc.toString());
             }, 150);
         }
     });
-    
-    editor = new EditorView({
+
+    styxEditor = new EditorView({
         state: EditorState.create({
             doc: DEFAULT_SOURCE,
             extensions: [
                 basicSetup,
                 oneDark,
+                styx(),
                 updateListener,
             ],
         }),
         parent: document.getElementById('editor'),
     });
-    
-    // Clear loading state
+
+    // Clear loading states
     document.getElementById('editor').querySelector('.loading')?.remove();
-    
+    document.getElementById('output').querySelector('.loading')?.remove();
+
     // Initial render
     updateOutput(DEFAULT_SOURCE);
 }
 
-async function updateOutput(source) {
+function updateOutput(source) {
     const diagnosticsEl = document.getElementById('diagnostics');
-    const outputEl = document.getElementById('output');
-    
+
     // Parse and get diagnostics
     const parseResult = parse(source);
-    
+
     // Convert to JSON
     const jsonResult = to_json(source);
 
@@ -308,12 +308,24 @@ async function updateOutput(source) {
         diagnosticsEl.classList.add('success');
         diagnosticsEl.innerHTML = '<div class="diagnostic-item">✓ No errors</div>';
     }
-    
-    // Update JSON output
+
+    // Update JSON editor content
     if (jsonResult.success) {
-        outputEl.innerHTML = await highlight('json', jsonResult.jsonString);
+        jsonEditor.dispatch({
+            changes: {
+                from: 0,
+                to: jsonEditor.state.doc.length,
+                insert: jsonResult.jsonString
+            }
+        });
     } else {
-        outputEl.innerHTML = `<span style="color: #f87171;">Error: ${escapeHtml(jsonResult.error || 'Unknown error')}</span>`;
+        jsonEditor.dispatch({
+            changes: {
+                from: 0,
+                to: jsonEditor.state.doc.length,
+                insert: `// Error: ${jsonResult.error || 'Unknown error'}`
+            }
+        });
     }
 }
 
@@ -326,7 +338,6 @@ function escapeHtml(text) {
 main().catch(err => {
     console.error('Failed to initialize playground:', err);
     document.getElementById('status').textContent = 'Error';
-    document.getElementById('output').textContent = `Failed to load: ${err.message}`;
 });
 </script>
 {% endblock content %}

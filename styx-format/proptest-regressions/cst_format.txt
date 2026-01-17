@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e02edc35904ae1ce8470be8c56fafd4c369c580a19034a1c15df402c097a082b # shrinks to key = "A", seq = "(@A\"\")"
+cc 29155dbbd84dcccca70a653dca471948daebf880b0704a0c7ca8f56d550e5b22 # shrinks to input = "// \n@a\"\" a"
+cc 3b5e26252c80e983e69b8a6861ecd8510ee80ae232380b7ef42e8c685aa8d4d2 # shrinks to input = "@A A"
+cc bf297340980c0a843c9a0b766472e0105157f41d64361d8ad703ca9b36046599 # shrinks to input = "@a @ A"

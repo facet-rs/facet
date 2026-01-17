@@ -3,8 +3,6 @@ title = "Editor Integration"
 weight = 1
 +++
 
-# Editor Integration
-
 Styx has first-class editor support through LSP and tree-sitter.
 
 ## Zed
@@ -138,6 +136,28 @@ For LSP, install the [LSP package](https://packagecontrol.io/packages/LSP) and c
 }
 ```
 
+## Kate / KDE
+
+Copy syntax definition:
+
+```bash
+mkdir -p ~/.local/share/katepart5/syntax/
+cp /path/to/styx/editors/kate-styx/styx.xml ~/.local/share/katepart5/syntax/
+```
+
+Configure LSP in Settings → Configure Kate → LSP Client → User Server Settings:
+
+```json
+{
+  "servers": {
+    "styx": {
+      "command": ["styx", "@lsp"],
+      "highlightingModeRegex": "^Styx$"
+    }
+  }
+}
+```
+
 ## JetBrains IDEs
 
 Build and install:
@@ -148,6 +168,16 @@ cd editors/jetbrains-styx
 ```
 
 Install from `build/distributions/jetbrains-styx-*.zip` via Settings → Plugins → Install from Disk.
+
+## nano
+
+```bash
+mkdir -p ~/.nano
+cp /path/to/styx/editors/nano-styx/styx.nanorc ~/.nano/
+echo 'include ~/.nano/styx.nanorc' >> ~/.nanorc
+```
+
+Note: nano doesn't support LSP, only syntax highlighting.
 
 ## Other Editors
 

@@ -66,6 +66,8 @@ impl ValueFormatter {
     }
 
     fn format_value(&mut self, value: &Value) {
+        let has_tag = value.tag.is_some();
+
         // Write tag if present
         if let Some(tag) = &value.tag {
             self.writer.write_tag(&tag.name);
@@ -75,14 +77,14 @@ impl ValueFormatter {
         match &value.payload {
             None => {
                 // No payload - if no tag either, this is unit (@)
-                if value.tag.is_none() {
+                if !has_tag {
                     self.writer.write_str("@");
                 }
                 // If there's a tag but no payload, tag was already written
             }
             Some(Payload::Scalar(s)) => {
                 // If tagged, wrap scalar in parens: @tag(scalar)
-                if value.tag.is_some() {
+                if has_tag {
                     self.writer.begin_seq_after_tag();
                     self.writer.write_scalar(&s.text);
                     self.writer.end_seq().ok();
@@ -91,16 +93,22 @@ impl ValueFormatter {
                 }
             }
             Some(Payload::Sequence(seq)) => {
-                self.format_sequence(seq);
+                // If tagged, sequence attaches directly: @tag(...)
+                self.format_sequence_inner(seq, has_tag);
             }
             Some(Payload::Object(obj)) => {
-                self.format_object(obj);
+                // If tagged, object attaches directly: @tag{...}
+                self.format_object_inner(obj, has_tag);
             }
         }
     }
 
-    fn format_sequence(&mut self, seq: &Sequence) {
-        self.writer.begin_seq();
+    fn format_sequence_inner(&mut self, seq: &Sequence, after_tag: bool) {
+        if after_tag {
+            self.writer.begin_seq_after_tag();
+        } else {
+            self.writer.begin_seq();
+        }
         for item in &seq.items {
             self.format_value(item);
         }
@@ -108,10 +116,17 @@ impl ValueFormatter {
     }
 
     fn format_object(&mut self, obj: &Object) {
+        self.format_object_inner(obj, false);
+    }
+
+    fn format_object_inner(&mut self, obj: &Object, after_tag: bool) {
         // Preserve the original separator style - if it was newline-separated, keep it multiline
         let force_multiline = matches!(obj.separator, styx_parse::Separator::Newline);
-        self.writer
-            .begin_struct_with_options(false, force_multiline);
+        if after_tag {
+            self.writer.begin_struct_after_tag(force_multiline);
+        } else {
+            self.writer.begin_struct_with_options(false, force_multiline);
+        }
         self.format_object_entries(obj);
         self.writer.end_struct().ok();
     }

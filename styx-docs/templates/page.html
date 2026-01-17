@@ -4,16 +4,17 @@
 {% block title %}{{ page.title }} - {{ config.title }}{% endblock title %}
 
 {% block body %}
+{% set has_sidebar = false %}
+{% set show_switcher = false %}
 {% if page.ancestors | length > 0 %}
     {% set root_section_path = page.ancestors[0].path %}
     {% set root_section = get_section(path=root_section_path) %}
     {% if root_section.extra and root_section.extra.no_sidebar %}
         {% set has_sidebar = false %}
+        {% set show_switcher = true %}
     {% else %}
         {% set has_sidebar = root_section.pages | length > 0 or root_section.subsections | length > 0 %}
     {% endif %}
-{% else %}
-    {% set has_sidebar = false %}
 {% endif %}
 
 {% if has_sidebar %}
@@ -51,12 +52,16 @@
 </div>
 {% else %}
 <main class="main">
+    {% if show_switcher %}
     {{ macros::page_switcher(section=root_section, current_path=page.path) }}
+    {% endif %}
     <article class="article standalone">
         <h1>{{ page.title }}</h1>
         {{ page.content | safe }}
     </article>
+    {% if show_switcher %}
     {{ macros::page_switcher(section=root_section, current_path=page.path) }}
+    {% endif %}
 </main>
 {% endif %}
 {% endblock body %}

@@ -5,8 +5,6 @@ slug = "primer"
 insert_anchor_links = "heading"
 +++
 
-# Styx
-
 At least it's not YAML!
 
 ## Styx the straightforward

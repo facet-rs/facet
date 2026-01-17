@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE language SYSTEM "language.dtd">
+<!--
+  Styx syntax highlighting for Kate/KSyntaxHighlighting
+  https://kate-editor.org/
+-->
+<language name="Styx" version="1" kateversion="5.0" section="Configuration" extensions="*.styx" mimetype="text/x-styx" author="Bearcove" license="MIT">
+  <highlighting>
+    <contexts>
+      <context name="Normal" attribute="Normal Text" lineEndContext="#stay">
+        <!-- Doc comments -->
+        <Detect2Chars char="/" char1="/" char2="/" attribute="Doc Comment" context="DocComment"/>
+        <!-- Line comments -->
+        <Detect2Chars char="/" char1="/" attribute="Comment" context="LineComment"/>
+        <!-- Strings -->
+        <DetectChar char="&quot;" attribute="String" context="String"/>
+        <!-- Raw strings -->
+        <RegExpr String="r#*&quot;" attribute="String" context="RawString"/>
+        <!-- Heredocs -->
+        <RegExpr String="&lt;&lt;([A-Za-z_][A-Za-z0-9_]*)" attribute="String" context="Heredoc"/>
+        <!-- Tags -->
+        <RegExpr String="@[A-Za-z_][A-Za-z0-9_-]*" attribute="Tag"/>
+        <!-- Unit -->
+        <RegExpr String="@(?![A-Za-z_])" attribute="Constant"/>
+        <!-- Attributes -->
+        <RegExpr String="[A-Za-z_][A-Za-z0-9_-]*(?=\s*&gt;)" attribute="Attribute"/>
+        <DetectChar char="&gt;" attribute="Keyword"/>
+        <!-- Brackets -->
+        <DetectChar char="{" attribute="Bracket" beginRegion="brace"/>
+        <DetectChar char="}" attribute="Bracket" endRegion="brace"/>
+        <DetectChar char="(" attribute="Bracket" beginRegion="paren"/>
+        <DetectChar char=")" attribute="Bracket" endRegion="paren"/>
+        <!-- Comma -->
+        <DetectChar char="," attribute="Separator"/>
+      </context>
+
+      <context name="LineComment" attribute="Comment" lineEndContext="#pop">
+        <IncludeRules context="##Comments"/>
+      </context>
+
+      <context name="DocComment" attribute="Doc Comment" lineEndContext="#pop">
+        <IncludeRules context="##Comments"/>
+      </context>
+
+      <context name="String" attribute="String" lineEndContext="#stay">
+        <DetectChar char="&quot;" attribute="String" context="#pop"/>
+        <RegExpr String="\\(?:[\\&quot;nrt]|u[0-9A-Fa-f]{4}|u\{[0-9A-Fa-f]{1,6}\})" attribute="Escape"/>
+      </context>
+
+      <context name="RawString" attribute="String" lineEndContext="#stay">
+        <RegExpr String="&quot;#*" attribute="String" context="#pop"/>
+      </context>
+
+      <context name="Heredoc" attribute="String" lineEndContext="#stay" dynamic="true">
+        <RegExpr String="^\s*%1\s*$" attribute="String" context="#pop" dynamic="true"/>
+      </context>
+    </contexts>
+
+    <itemDatas>
+      <itemData name="Normal Text" defStyleNum="dsNormal"/>
+      <itemData name="Comment" defStyleNum="dsComment"/>
+      <itemData name="Doc Comment" defStyleNum="dsDocumentation"/>
+      <itemData name="String" defStyleNum="dsString"/>
+      <itemData name="Escape" defStyleNum="dsSpecialChar"/>
+      <itemData name="Tag" defStyleNum="dsDataType"/>
+      <itemData name="Attribute" defStyleNum="dsAttribute"/>
+      <itemData name="Keyword" defStyleNum="dsKeyword"/>
+      <itemData name="Constant" defStyleNum="dsConstant"/>
+      <itemData name="Bracket" defStyleNum="dsOperator"/>
+      <itemData name="Separator" defStyleNum="dsOperator"/>
+    </itemDatas>
+  </highlighting>
+
+  <general>
+    <comments>
+      <comment name="singleLine" start="//"/>
+    </comments>
+    <keywords casesensitive="1"/>
+  </general>
+</language>

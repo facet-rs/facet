@@ -1,0 +1,111 @@
+// Lezer grammar for Styx configuration language
+// Simplified for syntax highlighting
+
+@top Document { line* }
+
+line {
+  Comment newline |
+  DocComment newline |
+  Entry newline |
+  newline
+}
+
+@skip { whitespace }
+
+Entry { KeyExpr ValueExpr? }
+
+KeyExpr {
+  Tag ~tagAmb KeyPayload |
+  Tag ~tagAmb |
+  KeyAtom
+}
+
+ValueExpr {
+  Tag ~tagAmb ValuePayload |
+  Tag ~tagAmb |
+  ValueAtom
+}
+
+Tag { tagName }
+
+KeyPayload { QuotedScalar | RawScalar | Sequence | Object | Unit | Attributes }
+ValuePayload { QuotedScalar | RawScalar | Sequence | Object | Unit | Attributes }
+
+KeyAtom { BareScalar | QuotedScalar | RawScalar | Sequence | Object | Unit | Attributes }
+ValueAtom { BareScalar | QuotedScalar | RawScalar | Heredoc | Sequence | Object | Unit | Attributes }
+
+BareScalar { bareWord }
+
+QuotedScalar { stringLiteral }
+
+RawScalar { rawString }
+
+Heredoc { heredocMarker }
+
+Unit { unitAt }
+
+Sequence { "(" SeqContent? ")" }
+
+SeqContent { SeqItem+ }
+
+SeqItem {
+  Tag ~tagAmb SeqPayload |
+  Tag ~tagAmb |
+  SeqAtom
+}
+
+SeqPayload { QuotedScalar | RawScalar | Sequence | Object | Unit | Attributes }
+SeqAtom { BareScalar | QuotedScalar | RawScalar | Sequence | Object | Unit | Attributes }
+
+Object { "{" ObjContent? "}" }
+
+ObjContent { ObjItem (ObjSep ObjItem)* ObjSep? }
+
+ObjItem { DocComment? Entry }
+
+ObjSep { "," | newline }
+
+Attributes { attributeGroup }
+
+Comment { lineComment }
+DocComment { docCommentLine+ }
+
+docCommentLine { docCommentToken }
+
+@tokens {
+  whitespace { $[ \t]+ }
+  newline { "\r"? "\n" }
+
+  lineComment { "//" ![/\n\r] ![^\n\r]* }
+  docCommentToken { "///" ![^\n\r]* "\r"? "\n" }
+
+  tagName { "@" $[A-Za-z_] $[A-Za-z0-9_\-]* }
+  unitAt { "@" }
+
+  bareWord { ![{}\(\),"=@>\r\n\t ] ![{}\(\),">\r\n\t ]* }
+
+  // Attribute group: one or more key>value pairs
+  attributeGroup {
+    ![{}\(\),"=@>\r\n\t ] ![{}\(\),">\r\n\t ]* ">" ![{}\(\),"\r\n\t ]+
+    ($[ \t]+ ![{}\(\),"=@>\r\n\t ] ![{}\(\),">\r\n\t ]* ">" ![{}\(\),"\r\n\t ]+)*
+  }
+
+  // String literal as a single token
+  stringLiteral { '"' (!["\\\n\r] | "\\" ![])* '"' }
+
+  rawString { "r" "#"* '"' !["]* '"' "#"* }
+
+  // Heredoc as a single marker (content handling is complex)
+  heredocMarker { "<<" $[A-Z] $[A-Z0-9_]* ("," $[a-z]+)? }
+
+  "(" ")" "{" "}" "," ">"
+
+  @precedence {
+    tagName, unitAt, docCommentToken, lineComment,
+    rawString, heredocMarker, attributeGroup, bareWord
+  }
+}
+
+@external propSource styxHighlight from "./highlight"
+
+@detectDelim
