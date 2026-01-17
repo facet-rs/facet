@@ -38,3 +38,17 @@
         </nav>
     </aside>
 {% endmacro %}
+
+{# Render a tag cloud of sibling pages for no-sidebar sections #}
+{% macro page_switcher(section, current_path) %}
+    {% set pages = section.pages | sort(attribute="weight") %}
+    {% if pages | length > 1 %}
+    <nav class="page-switcher">
+        {% for page in pages %}
+            <a href="{{ page.permalink }}" {% if current_path == page.path %}class="active"{% endif %}>
+                {{ page.title }}
+            </a>
+        {% endfor %}
+    </nav>
+    {% endif %}
+{% endmacro %}

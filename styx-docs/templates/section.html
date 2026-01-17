@@ -10,7 +10,11 @@
     {% set root_section_path = section.path %}
 {% endif %}
 {% set root_section = get_section(path=root_section_path) %}
-{% set has_sidebar = root_section.pages | length > 0 or root_section.subsections | length > 0 %}
+{% if root_section.extra and root_section.extra.no_sidebar %}
+    {% set has_sidebar = false %}
+{% else %}
+    {% set has_sidebar = root_section.pages | length > 0 or root_section.subsections | length > 0 %}
+{% endif %}
 
 {% if has_sidebar %}
 <div class="docs">

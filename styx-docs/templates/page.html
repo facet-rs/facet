@@ -7,7 +7,11 @@
 {% if page.ancestors | length > 0 %}
     {% set root_section_path = page.ancestors[0].path %}
     {% set root_section = get_section(path=root_section_path) %}
-    {% set has_sidebar = root_section.pages | length > 0 or root_section.subsections | length > 0 %}
+    {% if root_section.extra and root_section.extra.no_sidebar %}
+        {% set has_sidebar = false %}
+    {% else %}
+        {% set has_sidebar = root_section.pages | length > 0 or root_section.subsections | length > 0 %}
+    {% endif %}
 {% else %}
     {% set has_sidebar = false %}
 {% endif %}
@@ -47,10 +51,12 @@
 </div>
 {% else %}
 <main class="main">
+    {{ macros::page_switcher(section=root_section, current_path=page.path) }}
     <article class="article standalone">
         <h1>{{ page.title }}</h1>
         {{ page.content | safe }}
     </article>
+    {{ macros::page_switcher(section=root_section, current_path=page.path) }}
 </main>
 {% endif %}
 {% endblock body %}
