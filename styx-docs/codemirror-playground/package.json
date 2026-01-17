@@ -1,5 +1,5 @@
 {
-  "name": "styx-playground",
+  "name": "styx-codemirror-playground",
   "private": true,
   "type": "module",
   "scripts": {

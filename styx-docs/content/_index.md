@@ -742,11 +742,11 @@ $ node index.ts
 <a href="/tools/cli">See the CLI →</a>
 </div>
 
-<!-- TODO: CodeMirror integration demo -->
+<!-- Web playground links -->
 <div class="tooling-demo">
 <h3>Web Playground</h3>
 <p>Try Styx in your browser with full syntax highlighting and validation.</p>
-<a href="/playground">Open playground →</a>
+<a href="/codemirror">CodeMirror</a> | <a href="/monaco">Monaco</a>
 </div>
 
 </div>

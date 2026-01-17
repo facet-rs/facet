@@ -178,8 +178,8 @@
 window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
 </script>
 <script type="module">
-// Import from Vite-bundled playground (all deps properly deduped)
-import { EditorView, EditorState, Compartment, Prec, basicSetup, oneDark, json, sql, vim, styx } from '/playground/playground.js';
+// Import from Vite-bundled CodeMirror playground
+import { EditorView, EditorState, Compartment, Prec, basicSetup, oneDark, json, sql, vim, styx } from '/codemirror/codemirror.js';
 
 // Wrap vim in highest precedence so it gets keys before basicSetup
 const vimWithPrecedence = (enabled) => enabled ? Prec.highest(vim()) : [];
@@ -287,7 +287,7 @@ async function main() {
     const vimCheckbox = document.getElementById('vim-mode');
 
     // Load vim setting from localStorage (default: true)
-    const storedVim = localStorage.getItem('styx-playground-vim');
+    const storedVim = localStorage.getItem('styx-codemirror-vim');
     const vimEnabled = storedVim === null ? true : storedVim === 'true';
     vimCheckbox.checked = vimEnabled;
 
@@ -308,7 +308,7 @@ async function main() {
     // Handle vim mode toggle
     vimCheckbox.addEventListener('change', (e) => {
         const enabled = e.target.checked;
-        localStorage.setItem('styx-playground-vim', enabled);
+        localStorage.setItem('styx-codemirror-vim', enabled);
         styxEditor.dispatch({
             effects: vimCompartment.reconfigure(vimWithPrecedence(enabled))
         });
@@ -400,7 +400,7 @@ function escapeHtml(text) {
 }
 
 main().catch(err => {
-    console.error('Failed to initialize playground:', err);
+    console.error('Failed to initialize CodeMirror playground:', err);
     document.getElementById('status').textContent = 'Error';
 });
 </script>

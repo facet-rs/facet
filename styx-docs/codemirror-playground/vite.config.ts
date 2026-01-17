@@ -10,11 +10,11 @@ export default defineConfig({
   build: {
     lib: {
       entry: resolve(__dirname, 'src/main.ts'),
-      name: 'StyxPlayground',
-      fileName: 'playground',
+      name: 'StyxCodemirror',
+      fileName: 'codemirror',
       formats: ['es'],
     },
-    outDir: '../static/playground',
+    outDir: '../static/codemirror',
     emptyOutDir: true,
   },
 });
