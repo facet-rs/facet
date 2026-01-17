@@ -10,6 +10,7 @@
     "@bearcove/codemirror-lang-styx": "workspace:*",
     "@codemirror/autocomplete": "^6.18.0",
     "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/language": "^6.10.0",
     "@codemirror/state": "^6.5.4",
     "@codemirror/theme-one-dark": "^6.1.3",

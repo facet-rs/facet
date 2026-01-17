@@ -40,7 +40,7 @@ QuotedScalar { stringLiteral }
 
 RawScalar { rawString }
 
-Heredoc { heredocMarker }
+Heredoc { heredoc }
 
 Unit { unitAt }
 
@@ -82,7 +82,7 @@ docCommentLine { docCommentToken }
   tagName { "@" $[A-Za-z_] $[A-Za-z0-9_\-]* }
   unitAt { "@" }
 
-  bareWord { ![{}\(\),"=@>\r\n\t ] ![{}\(\),">\r\n\t ]* }
+  bareWord { ![{}\(\),"=@<>\r\n\t ] ![{}\(\),"<>\r\n\t ]* }
 
   // Attribute group: one or more key>value pairs
   attributeGroup {
@@ -95,16 +95,15 @@ docCommentLine { docCommentToken }
 
   rawString { "r" "#"* '"' !["]* '"' "#"* }
 
-  // Heredoc as a single marker (content handling is complex)
-  heredocMarker { "<<" $[A-Z] $[A-Z0-9_]* ("," $[a-z]+)? }
-
   "(" ")" "{" "}" "," ">"
 
   @precedence {
     tagName, unitAt, docCommentToken, lineComment,
-    rawString, heredocMarker, attributeGroup, bareWord
+    rawString, attributeGroup, bareWord
   }
 }
+
+@external tokens heredocTokenizer from "./heredoc" { heredoc }
 
 @external propSource styxHighlight from "./highlight"
 

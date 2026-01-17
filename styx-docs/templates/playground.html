@@ -179,7 +179,17 @@ window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
 </script>
 <script type="module">
 // Import from Vite-bundled playground (all deps properly deduped)
-import { EditorView, EditorState, Compartment, basicSetup, oneDark, json, vim, styx } from '/playground/playground.js';
+import { EditorView, EditorState, Compartment, Prec, basicSetup, oneDark, json, sql, vim, styx } from '/playground/playground.js';
+
+// Wrap vim in highest precedence so it gets keys before basicSetup
+const vimWithPrecedence = (enabled) => enabled ? Prec.highest(vim()) : [];
+
+// Configure styx with SQL support for heredocs
+const styxWithSql = styx({
+    nestedLanguages: [
+        { tag: 'sql', language: sql() }
+    ]
+});
 
 // Import Styx WASM
 import init, { to_json, from_json, parse, version } from '/wasm/styx_wasm.js';
@@ -217,7 +227,7 @@ features (
 )
 
 /// Multi-line content with heredocs
-query <<SQL
+query <<SQL,sql
 SELECT id, name, email
 FROM users
 WHERE active = true
@@ -287,9 +297,9 @@ async function main() {
             extensions: [
                 basicSetup,
                 oneDark,
-                styx(),
+                styxWithSql,
                 styxUpdateListener,
-                vimCompartment.of(vimEnabled ? vim() : []),
+                vimCompartment.of(vimWithPrecedence(vimEnabled)),
             ],
         }),
         parent: document.getElementById('editor'),
@@ -300,7 +310,7 @@ async function main() {
         const enabled = e.target.checked;
         localStorage.setItem('styx-playground-vim', enabled);
         styxEditor.dispatch({
-            effects: vimCompartment.reconfigure(enabled ? vim() : [])
+            effects: vimCompartment.reconfigure(vimWithPrecedence(enabled))
         });
     });
 

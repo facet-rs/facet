@@ -135,7 +135,47 @@
     (unit [8, 9]))
 )
 ; file: compliance/corpus/01-scalars/bare-angle-brackets.styx
-(error [172, 173] "parse error at 172-173: expected scalar, got comma")
+(document [-1, -1]
+  (entry
+    (scalar [34, 43] bare "less-than")
+    (scalar [44, 51] bare "foo<bar"))
+  (entry
+    (scalar [52, 64] bare "greater-than")
+    (object [65, 72] comma
+      (entry
+        (scalar [65, 68] bare "foo")
+        (scalar [69, 72] bare "bar"))
+    ))
+  (entry
+    (scalar [73, 84] bare "both-angles")
+    (object [85, 96] comma
+      (entry
+        (scalar [85, 92] bare "foo<bar")
+        (scalar [93, 96] bare "baz"))
+    ))
+  (entry
+    (scalar [97, 106] bare "html-like")
+    (scalar [107, 111] bare "<div"))
+  (entry
+    (scalar [113, 123] bare "arrow-left")
+    (scalar [124, 127] bare "<--"))
+  (entry
+    (scalar [128, 139] bare "arrow-right")
+    (scalar [140, 142] bare "--"))
+  (entry
+    (scalar [144, 151] bare "generic")
+    (scalar [152, 158] bare "List<T"))
+  (entry
+    (scalar [213, 223] bare "comparison")
+    (object [224, 229] comma
+      (entry
+        (scalar [224, 227] bare "a<b")
+        (scalar [228, 229] bare "c"))
+    ))
+  (entry
+    (scalar [230, 237] bare "xml-tag")
+    (scalar [238, 245] bare "</close"))
+)
 ; file: compliance/corpus/01-scalars/bare-at-in-middle.styx
 (document [-1, -1]
   (entry
@@ -167,7 +207,26 @@
     (scalar [138, 147] bare "var=value"))
 )
 ; file: compliance/corpus/01-scalars/bare-heredoc-like.styx
-(error [90, 96] "parse error at 90-96: invalid key")
+(document [-1, -1]
+  (entry
+    (scalar [45, 54] bare "single-lt")
+    (scalar [55, 61] bare "<value"))
+  (entry
+    (scalar [62, 81] bare "double-lt-lowercase")
+    (scalar [84, 87] bare "eof"))
+  (entry
+    (scalar [88, 106] bare "double-lt-no-delim")
+    (unit [88, 106]))
+  (entry
+    (scalar [110, 125] bare "double-lt-space")
+    (scalar [126, 136] quoted "<< DELIM"))
+  (entry
+    (scalar [137, 153] bare "double-lt-number")
+    (unit [137, 153]))
+  (entry
+    (scalar [160, 172] bare "lt-in-middle")
+    (scalar [173, 181] bare "foo<<bar"))
+)
 ; file: compliance/corpus/01-scalars/bare-paths.styx
 (document [-1, -1]
   (entry
@@ -270,26 +329,20 @@
 ; file: compliance/corpus/01-scalars/bare-tag-like.styx
 (document [-1, -1]
   (entry
-    (scalar [41, 46] bare "email")
-    (scalar [47, 63] bare "user@example.com"))
+    (scalar [64, 69] bare "email")
+    (scalar [70, 86] bare "user@example.com"))
   (entry
-    (scalar [64, 71] bare "version")
-    (scalar [72, 81] bare "crate@2.0"))
+    (scalar [87, 94] bare "version")
+    (scalar [95, 104] bare "crate@2.0"))
   (entry
-    (scalar [82, 88] bare "at-end")
-    (scalar [89, 93] bare "foo@"))
+    (scalar [105, 111] bare "at-end")
+    (scalar [112, 116] bare "foo@"))
   (entry
-    (scalar [94, 103] bare "double-at")
-    (scalar [104, 112] bare "foo@@bar"))
+    (scalar [117, 126] bare "double-at")
+    (scalar [127, 135] bare "foo@@bar"))
   (entry
-    (scalar [113, 122] bare "at-number")
-    (scalar [123, 130] bare "foo@123"))
-  (entry
-    (scalar [131, 137] bare "scoped")
-    (tag [138, 142] "org"))
-  (entry
-    (scalar [142, 150] bare "/package")
-    (unit [142, 150]))
+    (scalar [136, 145] bare "at-number")
+    (scalar [146, 153] bare "foo@123"))
 )
 ; file: compliance/corpus/01-scalars/bare-urls.styx
 (document [-1, -1]
@@ -1017,6 +1070,8 @@
 (error [40, 44] "parse error at 40-44: invalid tag name")
 ; file: compliance/corpus/07-invalid/invalid-tag-hyphen.styx
 (error [43, 47] "parse error at 43-47: invalid tag name")
+; file: compliance/corpus/07-invalid/invalid-tag-slash.styx
+(error [35, 46] "parse error at 35-46: invalid tag name")
 ; file: compliance/corpus/07-invalid/mixed-separators.styx
 (error [13, 14] "parse error at 13-14: mixed separators (use either commas or newlines)")
 ; file: compliance/corpus/07-invalid/object-as-key.styx
