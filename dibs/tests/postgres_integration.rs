@@ -124,7 +124,7 @@ async fn test_execute_schema_on_postgres() {
         client
             .batch_execute(&sql)
             .await
-            .expect(&format!("Failed to create table {}", table.name));
+            .unwrap_or_else(|e| panic!("Failed to create table {}: {e}", table.name));
     }
 
     // Add foreign keys
@@ -142,7 +142,7 @@ async fn test_execute_schema_on_postgres() {
             client
                 .batch_execute(&sql)
                 .await
-                .expect(&format!("Failed to add FK on {}", table.name));
+                .unwrap_or_else(|e| panic!("Failed to add FK on {}: {e}", table.name));
         }
     }
 
@@ -153,7 +153,7 @@ async fn test_execute_schema_on_postgres() {
             client
                 .batch_execute(&sql)
                 .await
-                .expect(&format!("Failed to create index {}", idx.name));
+                .unwrap_or_else(|e| panic!("Failed to create index {}: {e}", idx.name));
         }
     }
 

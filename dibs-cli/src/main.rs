@@ -169,8 +169,9 @@ enum Commands {
     },
     /// Browse the current schema
     Schema {
-        /// Database connection URL
+        /// Database connection URL (not yet used)
         #[facet(default, args::named)]
+        #[allow(dead_code)]
         database_url: Option<String>,
 
         /// Output as plain text (default when not a TTY)
@@ -381,37 +382,37 @@ impl<'a> SchemaApp<'a> {
         loop {
             terminal.draw(|frame| self.ui(frame))?;
 
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    // Handle 'g' prefix for gg command
-                    if self.pending_g {
-                        self.pending_g = false;
-                        if key.code == KeyCode::Char('g') {
-                            self.go_to_first();
-                            continue;
-                        }
-                        // If not 'g', fall through to normal handling
+            if let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press
+            {
+                // Handle 'g' prefix for gg command
+                if self.pending_g {
+                    self.pending_g = false;
+                    if key.code == KeyCode::Char('g') {
+                        self.go_to_first();
+                        continue;
                     }
+                    // If not 'g', fall through to normal handling
+                }
 
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                        KeyCode::Up | KeyCode::Char('k') => self.move_up(),
-                        KeyCode::Down | KeyCode::Char('j') => self.move_down(),
-                        KeyCode::Left | KeyCode::Char('h') => self.focus_tables(),
-                        KeyCode::Right | KeyCode::Char('l') => self.focus_details(),
-                        KeyCode::Enter | KeyCode::Char(' ') => self.activate(),
-                        KeyCode::Tab => self.toggle_focus(),
-                        // Vim-style navigation
-                        KeyCode::Char('g') => self.pending_g = true,
-                        KeyCode::Char('G') => self.go_to_last(),
-                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            self.half_page_down()
-                        }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            self.half_page_up()
-                        }
-                        _ => {}
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                    KeyCode::Up | KeyCode::Char('k') => self.move_up(),
+                    KeyCode::Down | KeyCode::Char('j') => self.move_down(),
+                    KeyCode::Left | KeyCode::Char('h') => self.focus_tables(),
+                    KeyCode::Right | KeyCode::Char('l') => self.focus_details(),
+                    KeyCode::Enter | KeyCode::Char(' ') => self.activate(),
+                    KeyCode::Tab => self.toggle_focus(),
+                    // Vim-style navigation
+                    KeyCode::Char('g') => self.pending_g = true,
+                    KeyCode::Char('G') => self.go_to_last(),
+                    KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.half_page_down()
                     }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.half_page_up()
+                    }
+                    _ => {}
                 }
             }
         }
@@ -851,14 +852,14 @@ impl<'a> SchemaApp<'a> {
 /// Mask password in database URL for display
 fn mask_password(url: &str) -> String {
     // Simple masking: replace password between :// and @
-    if let Some(start) = url.find("://") {
-        if let Some(at) = url.find('@') {
-            let prefix = &url[..start + 3];
-            let suffix = &url[at..];
-            if let Some(colon) = url[start + 3..at].find(':') {
-                let user = &url[start + 3..start + 3 + colon];
-                return format!("{}{}:***{}", prefix, user, suffix);
-            }
+    if let Some(start) = url.find("://")
+        && let Some(at) = url.find('@')
+    {
+        let prefix = &url[..start + 3];
+        let suffix = &url[at..];
+        if let Some(colon) = url[start + 3..at].find(':') {
+            let user = &url[start + 3..start + 3 + colon];
+            return format!("{}{}:***{}", prefix, user, suffix);
         }
     }
     url.to_string()
