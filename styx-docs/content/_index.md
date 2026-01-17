@@ -9,12 +9,9 @@ insert_anchor_links = "heading"
 </div>
 
 ```styx
-@schema ./server.schema.styx
-
 server {
   host localhost
   port 8080
-  tls cert=/etc/ssl/cert.pem
 }
 
 routes (
@@ -27,15 +24,16 @@ routes (
 
 <section class="feature">
 <div class="feature-text">
-<h2>Mortal-first</h2>
-<p>No quotes for simple values. URLs, paths, and identifiers just work.</p>
+<h2>No quotes required</h2>
+<p>URLs, paths, numbers, identifiers — just type them. Quotes only when you need escapes or spaces.</p>
 </div>
 <div class="feature-code">
 
 ```styx
 host localhost
 port 8080
-url https://example.com/path
+url https://example.com/api?q=1
+path /etc/nginx/nginx.conf
 ```
 
 </div>
@@ -43,20 +41,38 @@ url https://example.com/path
 
 <section class="feature">
 <div class="feature-text">
-<h2>Key chains</h2>
-<p>Nested structure without nesting. Keys chain to build deep paths.</p>
+<h2>Sequences</h2>
+<p>Lists use parentheses. Elements separated by whitespace — no commas, no fuss.</p>
 </div>
 <div class="feature-code">
 
 ```styx
-server host localhost
-server port 8080
+ports (8080 8443 9000)
 
-// expands to:
+allowed-hosts (
+  localhost
+  example.com
+  "*.internal.net"
+)
+```
+
+</div>
+</section>
+
+<section class="feature">
+<div class="feature-text">
+<h2>Objects</h2>
+<p>Curly braces for structure. Newlines separate entries. Commas for single-line.</p>
+</div>
+<div class="feature-code">
+
+```styx
 server {
   host localhost
   port 8080
 }
+
+point {x 10, y 20}
 ```
 
 </div>
@@ -64,39 +80,18 @@ server {
 
 <section class="feature">
 <div class="feature-text">
-<h2>Attribute syntax</h2>
-<p>Inline key-value pairs for compact configuration.</p>
+<h2>Key paths</h2>
+<p>Chain keys to build nested structure in a single line.</p>
 </div>
 <div class="feature-code">
 
 ```styx
-tls cert=/etc/ssl/cert.pem key=/etc/ssl/key.pem
+selector matchLabels app web
 
-// expands to:
-tls { cert /etc/ssl/cert.pem, key /etc/ssl/key.pem }
-```
-
-</div>
-</section>
-
-<section class="feature">
-<div class="feature-text">
-<h2>Schema-driven</h2>
-<p>Define types once. Get validation, autocomplete, and documentation.</p>
-</div>
-<div class="feature-code">
-
-```styx
-schema {
-  @ @object{
-    host @string
-    port @int{min 1, max 65535}
-    tls @optional(@TlsConfig)
-  }
-
-  TlsConfig @object{
-    cert @string
-    key @string
+// equivalent to:
+selector {
+  matchLabels {
+    app web
   }
 }
 ```
@@ -106,17 +101,33 @@ schema {
 
 <section class="feature">
 <div class="feature-text">
-<h2>Comments</h2>
-<p>Line comments, inline comments, and doc comments that attach to entries.</p>
+<h2>Attributes</h2>
+<p>Inline <code>key=value</code> pairs for compact configuration.</p>
 </div>
 <div class="feature-code">
 
 ```styx
-// line comment
-host localhost  // inline comment
+server host=localhost port=8080
 
-/// doc comment (attaches to next entry)
-port 8080
+// equivalent to:
+server {host localhost, port 8080}
+```
+
+</div>
+</section>
+
+<section class="feature">
+<div class="feature-text">
+<h2>Tags</h2>
+<p>Label values with types. Tags can wrap objects, sequences, or scalars.</p>
+</div>
+<div class="feature-code">
+
+```styx
+color @rgb(255 128 0)
+result @ok
+error @err{code 404, message "Not found"}
+path @env"HOME"
 ```
 
 </div>
@@ -127,8 +138,6 @@ port 8080
 <div class="hero-links">
 
 [Learn Styx](/learn/primer) — a 5-minute primer
-
-[Install](/tools/cli) — get the CLI
 
 [Reference](/reference) — the spec
 
