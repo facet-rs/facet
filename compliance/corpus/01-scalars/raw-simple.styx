@@ -1,2 +1,2 @@
-path r"C:\Users\name"
-regex r"^\d+$"
+path r#"C:\Users\name"#
+regex r#"^\d+$"#

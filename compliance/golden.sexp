@@ -1,3 +1,55 @@
+; file: compliance/corpus/00-basic/attributes.styx
+(document [-1, -1]
+  (entry
+    (scalar [82, 88] bare "server")
+    (object [89, 103] comma
+      (entry
+        (scalar [89, 93] bare "host")
+        (scalar [94, 103] bare "localhost"))
+    ))
+  (entry
+    (scalar [128, 134] bare "config")
+    (object [135, 159] comma
+      (entry
+        (scalar [135, 139] bare "host")
+        (scalar [140, 149] bare "localhost"))
+      (entry
+        (scalar [150, 154] bare "port")
+        (scalar [155, 159] bare "8080"))
+    ))
+  (entry
+    (scalar [202, 207] bare "mixed")
+    (object [208, 260] comma
+      (entry
+        (scalar [208, 212] bare "name")
+        (scalar [213, 227] quoted "quoted value"))
+      (entry
+        (scalar [228, 233] bare "count")
+        (scalar [234, 236] bare "42"))
+      (entry
+        (scalar [237, 241] bare "tags")
+        (sequence [242, 249]
+          (scalar [243, 244] bare "a")
+          (scalar [245, 246] bare "b")
+          (scalar [247, 248] bare "c")))
+      (entry
+        (scalar [250, 254] bare "opts")
+        (object [255, 260] comma
+          (entry
+            (scalar [256, 257] bare "x")
+            (scalar [258, 259] bare "1"))
+        ))
+    ))
+  (entry
+    (scalar [299, 302] bare "url")
+    (scalar [303, 338] bare "https://example.com?foo=bar&baz=qux"))
+  (entry
+    (scalar [368, 375] bare "contact")
+    (scalar [376, 392] bare "user@example.com"))
+  (entry
+    (scalar [427, 437] bare "dependency")
+    (scalar [438, 451] bare "crate:myapp@2"))
+)
 ; file: compliance/corpus/00-basic/empty.styx
 (document [-1, -1]
 )
@@ -22,11 +74,11 @@
 ; file: compliance/corpus/00-basic/unit-key.styx
 (document [-1, -1]
   (entry
-    (unit [0, 1])
-    (scalar [2, 13] bare "schema.styx"))
+    (tag [0, 7] "schema")
+    (scalar [8, 19] bare "schema.styx"))
   (entry
-    (scalar [15, 19] bare "name")
-    (scalar [20, 25] bare "hello"))
+    (scalar [20, 24] bare "name")
+    (scalar [25, 30] bare "hello"))
 )
 ; file: compliance/corpus/00-basic/unit-value.styx
 (document [-1, -1]
@@ -149,10 +201,10 @@
 (document [-1, -1]
   (entry
     (scalar [0, 4] bare "path")
-    (scalar [5, 21] raw "C:\\Users\\name"))
+    (scalar [5, 23] raw "C:\\Users\\name"))
   (entry
-    (scalar [22, 27] bare "regex")
-    (scalar [28, 36] raw "^\\d+$"))
+    (scalar [24, 29] bare "regex")
+    (scalar [30, 40] raw "^\\d+$"))
 )
 ; file: compliance/corpus/02-objects/comma-sep.styx
 (document [-1, -1]
@@ -415,14 +467,14 @@
 ; file: compliance/corpus/04-tags/unit-payload.styx
 (document [-1, -1]
   (entry
-    (scalar [0, 7] bare "enabled")
-    (tag [8, 13] "true"))
+    (scalar [0, 6] bare "status")
+    (tag [7, 10] "ok"))
   (entry
-    (scalar [14, 22] bare "disabled")
-    (tag [23, 29] "false"))
+    (scalar [11, 16] bare "level")
+    (tag [17, 22] "warn"))
   (entry
-    (scalar [30, 37] bare "nothing")
-    (tag [38, 43] "none"))
+    (scalar [23, 30] bare "nothing")
+    (tag [31, 36] "none"))
 )
 ; file: compliance/corpus/05-comments/doc-comment.styx
 (document [-1, -1]
