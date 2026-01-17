@@ -1,11 +1,51 @@
 import { parser } from "./syntax.grammar";
-import { LRLanguage, LanguageSupport } from "@codemirror/language";
+import {
+  LRLanguage,
+  LanguageSupport,
+  foldNodeProp,
+  foldInside,
+  indentNodeProp,
+  continuedIndent,
+  syntaxTree,
+  foldService,
+} from "@codemirror/language";
 import { completeFromList } from "@codemirror/autocomplete";
 
-// Language definition with syntax highlighting
+// Custom fold service for Styx - finds Object/Sequence nodes and returns fold ranges
+const styxFoldService = foldService.of((state, lineStart, lineEnd) => {
+  const tree = syntaxTree(state);
+  let node = tree.resolveInner(lineEnd, -1);
+
+  // Walk up the tree looking for Object or Sequence
+  for (let cur: typeof node | null = node; cur; cur = cur.parent) {
+    if (cur.type.name === "Object" || cur.type.name === "Sequence") {
+      const first = cur.firstChild;
+      const last = cur.lastChild;
+      // Only fold if it spans multiple lines
+      if (first && last && first.to < last.from) {
+        return { from: first.to, to: last.from };
+      }
+    }
+  }
+  return null;
+});
+
+// Language definition with syntax highlighting and code folding
+// Using parser.configure() like @codemirror/lang-json does
 export const styxLanguage = LRLanguage.define({
   name: "styx",
-  parser: parser,
+  parser: parser.configure({
+    props: [
+      indentNodeProp.add({
+        Object: continuedIndent({ except: /^\s*\}/ }),
+        Sequence: continuedIndent({ except: /^\s*\)/ }),
+      }),
+      foldNodeProp.add({
+        Object: foldInside,
+        Sequence: foldInside,
+      }),
+    ],
+  }),
   languageData: {
     commentTokens: { line: "//" },
     closeBrackets: { brackets: ["(", "{", '"'] },
@@ -52,7 +92,7 @@ const styxCompletion = styxLanguage.data.of({
  * ```
  */
 export function styx(): LanguageSupport {
-  return new LanguageSupport(styxLanguage, [styxCompletion]);
+  return new LanguageSupport(styxLanguage, [styxCompletion, styxFoldService]);
 }
 
 // Re-export for advanced usage

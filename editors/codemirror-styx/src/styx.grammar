@@ -46,7 +46,7 @@ Unit { unitAt }
 
 Sequence { "(" SeqContent? ")" }
 
-SeqContent { SeqItem+ }
+SeqContent { newline* SeqItem (newline* SeqItem)* newline* }
 
 SeqItem {
   Tag ~tagAmb SeqPayload |
@@ -59,7 +59,7 @@ SeqAtom { BareScalar | QuotedScalar | RawScalar | Sequence | Object | Unit | Att
 
 Object { "{" ObjContent? "}" }
 
-ObjContent { ObjItem (ObjSep ObjItem)* ObjSep? }
+ObjContent { ObjSep* ObjItem (ObjSep ObjItem)* ObjSep* }
 
 ObjItem { DocComment? Entry }
 
