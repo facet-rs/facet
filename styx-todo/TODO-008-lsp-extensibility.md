@@ -22,5 +22,32 @@ If the schema declares a field must be a path (and optionally specifies it's rel
 - Validate that the path exists (as a warning or error depending on schema)
 - Handle `~` expansion, env vars, etc.
 
+## Security
+
+We can't just run arbitrary binaries without consent. The UX flow:
+
+1. **Diagnostic appears**: "This field could offer smarter completions if we run `docker ps --format '{{.Names}}'`. Allow?"
+2. **Two code actions**:
+   - **"Allow (add to whitelist)"** — adds the command to the whitelist, never asks again
+   - **"Never ask for this command"** — adds to a deny list, suppresses the diagnostic
+
+The whitelist/denylist lives in `styx.config` (or `~/.config/styx/config.styx` for global). Something like:
+
+```styx
+lsp {
+  external-commands {
+    allow (
+      "docker ps --format '{{.Names}}'"
+      "kubectl get pods -o name"
+    )
+    deny (
+      "rm -rf /"  // nice try
+    )
+  }
+}
+```
+
+This way users explicitly opt in to each command pattern, and the decision persists across sessions.
+
 ## Notes
 Both of these make the "offensively nice tooling" promise real — config that knows about your actual environment, not just abstract types.

@@ -328,6 +328,85 @@ comment "This is a string for sure" // nope, an opaque scalar
   height: 0;
   overflow: hidden;
 }
+
+.cta-section {
+  text-align: center;
+  padding: 4rem 2rem;
+  margin-top: 2rem;
+}
+
+.cta-header {
+  font-family: var(--font-heading);
+  font-size: 2rem;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin: 0 0 2rem 0;
+}
+
+.cta-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1.5rem;
+}
+
+.cta-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 220px;
+  padding: 1.5rem 2.5rem;
+  border-radius: 12px;
+  text-decoration: none;
+  transition: transform 0.2s, box-shadow 0.2s;
+
+  &:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  }
+}
+
+.cta-primary {
+  background: #dc143c;
+  color: #fff;
+
+  .cta-title {
+    font-family: var(--font-heading);
+    font-size: 1.4rem;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  .cta-desc {
+    font-size: 0.9rem;
+    opacity: 0.9;
+    margin-top: 0.25rem;
+  }
+}
+
+.cta-secondary {
+  background: var(--bg-code);
+  border: 2px solid var(--border);
+  color: var(--text);
+
+  .cta-title {
+    font-family: var(--font-heading);
+    font-size: 1.4rem;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  .cta-desc {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+  }
+}
 </style>
 
 <svg class="svg-defs" aria-hidden="true">
@@ -643,7 +722,7 @@ $ node index.ts
 <div class="layers-section tooling-section">
 <div class="section-header">
 <p class="section-title">Offensively nice tooling</p>
-<p class="section-subtitle">because config deserves better.</p>
+<p class="section-subtitle">because you deserve better.</p>
 <p class="section-desc">Errors that actually help. Autocomplete that actually works. From your editor to your CI pipeline.</p>
 </div>
 
@@ -673,10 +752,16 @@ $ node index.ts
 </div>
 </div>
 
-<div class="hero-links">
-
-[Learn Styx](/learn/primer) — a 5-minute primer
-
-[Reference](/reference) — the spec
-
+<div class="cta-section">
+<p class="cta-header">What are you waiting for?</p>
+<div class="cta-buttons">
+<a href="/learn/primer" class="cta-button cta-primary">
+<span class="cta-title">Learn Styx</span>
+<span class="cta-desc">The language in 5 minutes</span>
+</a>
+<a href="/guides/integrate" class="cta-button cta-primary">
+<span class="cta-title">Use Styx</span>
+<span class="cta-desc">In your app or CLI</span>
+</a>
+</div>
 </div>

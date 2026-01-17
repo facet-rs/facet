@@ -112,12 +112,12 @@ mod tests {
         // Parse a schema-like document to understand the tree structure
         // Structure:
         //   schema {
-        //     @ @object {        // @ is unit key, @object {...} is the value
-        //       name @string     // @object is tagged unit key, {...} is value
+        //     @ @object{         // @ is unit key, @object{...} is the value (tag with object payload)
+        //       name @string
         //     }
         //   }
         let source = r#"schema {
-  @ @object {
+  @ @object{
     name @string
   }
 }"#;
@@ -142,27 +142,23 @@ mod tests {
             entry.key
         );
 
-        // Value is an Object (implicit from the key path expansion)
-        // Entry: @ @object {...} expands to key=@ value={@object: {...}}
-        let inner_obj = entry.value.as_object().expect("value should be object");
-
-        // This object has one entry with tagged unit key "@object"
-        assert_eq!(inner_obj.len(), 1);
-        let object_entry = &inner_obj.entries[0];
-
-        // Key is "@object" - a tagged unit (tag: "object", no payload)
+        // Value is @object{...} - a tagged value with tag "object" and object payload
         assert_eq!(
-            object_entry.key.tag_name(),
+            entry.value.tag_name(),
             Some("object"),
-            "@object key should have tag 'object'"
-        );
-        assert!(
-            object_entry.key.payload.is_none(),
-            "@object key should have no payload (unit)"
+            "value should have tag 'object'"
         );
 
-        // The value of "@object" entry is the inner object { name @string }
-        let payload_obj = object_entry.value.as_object().expect("should be object");
+        // The payload of @object{...} is the inner object { name @string }
+        let payload = entry
+            .value
+            .payload
+            .as_ref()
+            .expect("@object should have payload");
+        let payload_obj = match payload {
+            value::Payload::Object(obj) => obj,
+            _ => panic!("payload should be object, got {:?}", payload),
+        };
         assert_eq!(payload_obj.len(), 1);
 
         // "name" entry

@@ -1,0 +1,64 @@
+<idea-plugin>
+    <id>com.bearcove.styx</id>
+    <name>Styx</name>
+    <vendor email="hello@bearcove.net" url="https://bearcove.net">Bearcove</vendor>
+
+    <description><![CDATA[
+    Styx configuration language support for JetBrains IDEs.
+
+    Features:
+    <ul>
+        <li>Syntax highlighting</li>
+        <li>LSP integration for diagnostics, completion, and hover</li>
+        <li>Bracket matching</li>
+        <li>Comment toggling</li>
+    </ul>
+
+    Requires the Styx CLI to be installed: <code>cargo install styx-cli</code>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.redhat.devtools.lsp4ij</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- File type -->
+        <fileType
+            name="Styx"
+            implementationClass="com.bearcove.styx.StyxFileType"
+            fieldName="INSTANCE"
+            language="Styx"
+            extensions="styx"/>
+
+        <!-- Language -->
+        <lang.parserDefinition
+            language="Styx"
+            implementationClass="com.bearcove.styx.StyxParserDefinition"/>
+
+        <!-- Syntax highlighting -->
+        <lang.syntaxHighlighterFactory
+            language="Styx"
+            implementationClass="com.bearcove.styx.StyxSyntaxHighlighterFactory"/>
+
+        <!-- Bracket matching -->
+        <lang.braceMatcher
+            language="Styx"
+            implementationClass="com.bearcove.styx.StyxBraceMatcher"/>
+
+        <!-- Commenter -->
+        <lang.commenter
+            language="Styx"
+            implementationClass="com.bearcove.styx.StyxCommenter"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
+        <!-- LSP server -->
+        <server id="styxLsp"
+                name="Styx"
+                factoryClass="com.bearcove.styx.StyxLspServerFactory">
+            <description><![CDATA[
+            Styx Language Server for configuration file support.
+            ]]></description>
+        </server>
+        <languageMapping language="Styx" serverId="styxLsp"/>
+    </extensions>
+</idea-plugin>

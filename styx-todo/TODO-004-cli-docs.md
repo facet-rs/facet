@@ -1,23 +1,20 @@
 # TODO-004: Add CLI Documentation Section
 
 ## Status
-TODO
+IN PROGRESS
 
 ## Description
 Create a new documentation section covering the Styx CLI tool with examples.
 
-## Content to Include
-- Installation instructions
-- Basic usage
-- Parsing/validating files
-- Schema validation
-- Formatting/pretty-printing
-- Error output examples
-- Integration with other tools
+## Page
+Scaffolded at `docs/content/tools/cli.md`
 
-## New Files
-- `docs/content/cli/_index.md` - CLI section landing page
-- Possibly additional pages for specific commands
-
-## Navigation
-Add "CLI" link to site navigation in `docs/templates/base.html`
+## Content to Complete
+- [ ] Installation instructions (verify crate name)
+- [ ] Basic usage
+- [ ] Parsing/validating files
+- [ ] Schema validation
+- [ ] Formatting/pretty-printing
+- [ ] Error output examples (with actual CLI output)
+- [ ] Integration with other tools
+- [ ] GitHub Actions CI example

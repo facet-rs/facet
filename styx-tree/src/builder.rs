@@ -563,6 +563,13 @@ mod tests {
         builder.finish().unwrap()
     }
 
+    fn try_parse(source: &str) -> Result<Value, BuildError> {
+        let parser = Parser::new(source);
+        let mut builder = TreeBuilder::new();
+        parser.parse(&mut builder);
+        builder.finish()
+    }
+
     #[test]
     fn test_empty_document() {
         let value = parse("");
@@ -655,37 +662,25 @@ mod tests {
     }
 
     #[test]
-    fn test_schema_structure_with_space() {
-        // @ @object { ... } with space before brace
+    fn test_schema_structure_with_space_is_error() {
+        // @ @object { ... } with space before brace is now an error (3 atoms)
         let source = r#"schema {
   @ @object {
     name @string
   }
 }"#;
 
-        // Debug: print all events
-        struct EventPrinter;
-        impl<'src> styx_parse::ParseCallback<'src> for EventPrinter {
-            fn event(&mut self, event: styx_parse::Event<'src>) -> bool {
-                eprintln!("Event: {:?}", event);
-                true
-            }
-        }
-
-        eprintln!("=== Events for with-space version ===");
-        let parser = styx_parse::Parser::new(source);
-        parser.parse(&mut EventPrinter);
-
-        let value = parse(source);
-        let obj = value.as_object().unwrap();
-        assert!(obj.get("schema").is_some(), "should have schema entry");
-        let schema = obj.get("schema").unwrap();
+        // This should produce a parse error (TooManyAtoms)
+        let result = try_parse(source);
         assert!(
-            schema.as_object().is_some(),
-            "schema should be an object, got tag={:?} payload={:?}",
-            schema.tag,
-            schema.payload.is_some()
+            result.is_err(),
+            "@ @object {{ }} with space should be a parse error"
         );
+        match result {
+            Err(BuildError::Parse(styx_parse::ParseErrorKind::TooManyAtoms, _)) => {}
+            Err(e) => panic!("expected TooManyAtoms error, got {:?}", e),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
     }
 
     #[test]

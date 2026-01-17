@@ -1,0 +1,74 @@
+{
+  "name": "styx",
+  "displayName": "Styx",
+  "description": "Styx configuration language support",
+  "version": "0.1.0",
+  "publisher": "bearcove",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bearcove/styx"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:styx"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "styx",
+        "aliases": ["Styx", "styx"],
+        "extensions": [".styx"],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/styx-light.svg",
+          "dark": "./icons/styx-dark.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "styx",
+        "scopeName": "source.styx",
+        "path": "../shared/textmate/styx.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Styx",
+      "properties": {
+        "styx.server.path": {
+          "type": "string",
+          "default": "styx",
+          "description": "Path to the styx executable"
+        },
+        "styx.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the Styx language server"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  }
+}

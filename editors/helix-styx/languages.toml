@@ -1,0 +1,26 @@
+# Styx language configuration for Helix
+#
+# Add this to your ~/.config/helix/languages.toml
+# or merge with your existing configuration.
+
+[[language]]
+name = "styx"
+scope = "source.styx"
+injection-regex = "styx"
+file-types = ["styx"]
+comment-token = "//"
+indent = { tab-width = 2, unit = "  " }
+language-servers = ["styx-lsp"]
+
+[language.auto-pairs]
+'(' = ')'
+'{' = '}'
+'"' = '"'
+
+[[grammar]]
+name = "styx"
+source = { git = "https://github.com/bearcove/styx", subpath = "crates/tree-sitter-styx", rev = "main" }
+
+[language-server.styx-lsp]
+command = "styx"
+args = ["@lsp"]

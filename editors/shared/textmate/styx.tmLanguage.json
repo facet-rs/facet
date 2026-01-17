@@ -1,0 +1,102 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Styx",
+  "scopeName": "source.styx",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#tags" },
+    { "include": "#unit" },
+    { "include": "#attributes" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.documentation.styx",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.double-slash.styx",
+          "match": "//[^/].*$|//(?!/)$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.styx",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.styx",
+              "match": "\\\\(?:[\\\\\"nrt]|u[0-9A-Fa-f]{4}|u\\{[0-9A-Fa-f]{1,6}\\})"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.raw.styx",
+          "begin": "r#*\"",
+          "end": "\"#*",
+          "patterns": []
+        },
+        {
+          "name": "string.heredoc.styx",
+          "begin": "<<([A-Za-z_][A-Za-z0-9_]*)",
+          "end": "^\\s*\\1\\s*$",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.string.begin.styx" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.styx" }
+          }
+        }
+      ]
+    },
+    "tags": {
+      "patterns": [
+        {
+          "name": "entity.name.tag.styx",
+          "match": "@[A-Za-z_][A-Za-z0-9_\\-]*"
+        }
+      ]
+    },
+    "unit": {
+      "patterns": [
+        {
+          "name": "constant.language.unit.styx",
+          "match": "@(?![A-Za-z_])"
+        }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        {
+          "match": "([A-Za-z_][A-Za-z0-9_\\-]*)\\s*(>)",
+          "captures": {
+            "1": { "name": "entity.other.attribute-name.styx" },
+            "2": { "name": "keyword.operator.attribute.styx" }
+          }
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.block.styx",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.definition.sequence.styx",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.separator.styx",
+          "match": ","
+        }
+      ]
+    }
+  }
+}

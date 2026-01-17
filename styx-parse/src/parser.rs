@@ -225,7 +225,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a single entry with duplicate key detection.
-    // parser[impl entry.key-equality] parser[impl entry.structure]
+    // parser[impl entry.key-equality] parser[impl entry.structure] parser[impl entry.path]
     fn parse_entry_with_dup_check<C: ParseCallback<'src>>(
         &mut self,
         callback: &mut C,
@@ -255,6 +255,12 @@ impl<'src> Parser<'src> {
             })
         {
             return false;
+        }
+
+        // parser[impl entry.path]
+        // Check if this is a sequence in key position (path syntax)
+        if let AtomContent::Sequence { elements, .. } = &key_atom.content {
+            return self.emit_path_entry(elements, &atoms, key_atom.span, callback, seen_keys);
         }
 
         let key_value = KeyValue::from_atom(key_atom, self);
@@ -307,6 +313,156 @@ impl<'src> Parser<'src> {
         }
 
         callback.event(Event::EntryEnd)
+    }
+
+    /// Emit a path entry where the key is a sequence.
+    /// `(a b c) value` expands to `a { b { c value } }`
+    // parser[impl entry.path]
+    fn emit_path_entry<C: ParseCallback<'src>>(
+        &self,
+        path_elements: &[Atom<'src>],
+        atoms: &[Atom<'src>],
+        path_span: Span,
+        callback: &mut C,
+        seen_keys: &mut HashMap<KeyValue, Span>,
+    ) -> bool {
+        // Empty path is an error
+        if path_elements.is_empty() {
+            if !callback.event(Event::Error {
+                span: path_span,
+                kind: ParseErrorKind::InvalidKey,
+            }) {
+                return false;
+            }
+            return callback.event(Event::EntryEnd);
+        }
+
+        // Validate all path elements and emit errors for invalid ones
+        for elem in path_elements {
+            if !self.is_valid_path_element(elem)
+                && !callback.event(Event::Error {
+                    span: elem.span,
+                    kind: ParseErrorKind::InvalidPathElement,
+                })
+            {
+                return false;
+            }
+        }
+
+        // Check for duplicate key (use first element for duplicate detection)
+        let first_elem = &path_elements[0];
+        let key_value = KeyValue::from_atom(first_elem, self);
+        if let Some(&original_span) = seen_keys.get(&key_value) {
+            if !callback.event(Event::Error {
+                span: first_elem.span,
+                kind: ParseErrorKind::DuplicateKey {
+                    original: original_span,
+                },
+            }) {
+                return false;
+            }
+        } else {
+            seen_keys.insert(key_value, first_elem.span);
+        }
+
+        // Even with errors, continue to emit structure for better error recovery
+        // Emit nested structure: for each element except the last, emit Key + ObjectStart
+        let depth = path_elements.len();
+        for (i, elem) in path_elements.iter().enumerate() {
+            if i > 0 {
+                // Start a new entry for nested elements
+                if !callback.event(Event::EntryStart) {
+                    return false;
+                }
+            }
+
+            // Emit this element as a key
+            if !self.emit_atom_as_key(elem, callback) {
+                return false;
+            }
+
+            if i < depth - 1 {
+                // Not the last element - emit ObjectStart (value is nested object)
+                if !callback.event(Event::ObjectStart {
+                    span: elem.span,
+                    separator: Separator::Newline,
+                }) {
+                    return false;
+                }
+            }
+        }
+
+        // Emit the actual value
+        if atoms.len() == 1 {
+            // Just the path, implicit unit value
+            if !callback.event(Event::Unit { span: path_span }) {
+                return false;
+            }
+        } else if atoms.len() == 2 {
+            // Path and value
+            if !self.emit_atom_as_value(&atoms[1], callback) {
+                return false;
+            }
+        } else {
+            // parser[impl entry.toomany]
+            // 3+ atoms is an error
+            if !self.emit_atom_as_value(&atoms[1], callback) {
+                return false;
+            }
+            let third_atom = &atoms[2];
+            if !callback.event(Event::Error {
+                span: third_atom.span,
+                kind: ParseErrorKind::TooManyAtoms,
+            }) {
+                return false;
+            }
+        }
+
+        // Close all the nested structures (in reverse order)
+        for i in (0..depth).rev() {
+            if i < depth - 1 {
+                // Close the nested object
+                if !callback.event(Event::ObjectEnd {
+                    span: path_elements[i].span,
+                }) {
+                    return false;
+                }
+            }
+            // Close the entry
+            if !callback.event(Event::EntryEnd) {
+                return false;
+            }
+        }
+
+        // Note: the outermost EntryEnd was emitted in the loop above
+        // We return true here, not callback.event(Event::EntryEnd) because
+        // we already emitted all necessary EntryEnds
+        true
+    }
+
+    /// Check if an atom is a valid path element.
+    /// Path elements must be scalars, unit, or tags - not objects, sequences, or heredocs.
+    // parser[impl entry.path]
+    fn is_valid_path_element(&self, atom: &Atom<'src>) -> bool {
+        match &atom.content {
+            AtomContent::Scalar(_) => atom.kind != ScalarKind::Heredoc,
+            AtomContent::Unit => true,
+            AtomContent::Tag { payload, .. } => {
+                // Tag payload must also be valid (no objects, sequences, heredocs)
+                match payload {
+                    None => true,
+                    Some(inner) => match &inner.content {
+                        AtomContent::Scalar(_) => inner.kind != ScalarKind::Heredoc,
+                        AtomContent::Unit => true,
+                        _ => false,
+                    },
+                }
+            }
+            AtomContent::Object { .. }
+            | AtomContent::Sequence { .. }
+            | AtomContent::Heredoc(_)
+            | AtomContent::Attributes(_) => false,
+        }
     }
 
     /// Collect atoms until entry boundary (newline, comma, closing brace/paren, or EOF).
@@ -2661,6 +2817,230 @@ mod tests {
                 }
             )),
             "Simple key-value with attributes should not produce TooManyAtoms"
+        );
+    }
+
+    // parser[verify entry.path]
+    #[test]
+    fn test_path_simple() {
+        // (a b) value should expand to a { b value }
+        let events = parse("(a b) value");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, vec!["a", "b"], "Should have keys 'a' and 'b'");
+        // Should have ObjectStart for the nested object
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::ObjectStart { .. })),
+            "Should have ObjectStart for nested structure"
+        );
+        // Should have the value
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "value")),
+            "Should have scalar value 'value'"
+        );
+        // No errors
+        assert!(
+            !events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "Simple path should not have errors"
+        );
+    }
+
+    // parser[verify entry.path]
+    #[test]
+    fn test_path_three_elements() {
+        // (a b c) deep should expand to a { b { c deep } }
+        let events = parse("(a b c) deep");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, vec!["a", "b", "c"], "Should have keys 'a', 'b', 'c'");
+        // Should have two ObjectStart events for nested objects
+        let obj_starts: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Event::ObjectStart { .. }))
+            .collect();
+        assert_eq!(
+            obj_starts.len(),
+            2,
+            "Should have 2 ObjectStart for nested structure"
+        );
+        // No errors
+        assert!(
+            !events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "Three-element path should not have errors"
+        );
+    }
+
+    // parser[verify entry.path]
+    #[test]
+    fn test_path_with_implicit_unit() {
+        // (a b) without value should have implicit unit
+        let events = parse("(a b)");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, vec!["a", "b"], "Should have keys 'a' and 'b'");
+        // Should have Unit for implicit value
+        assert!(
+            events.iter().any(|e| matches!(e, Event::Unit { .. })),
+            "Should have implicit unit value"
+        );
+    }
+
+    // parser[verify entry.path]
+    #[test]
+    fn test_path_invalid_element_object() {
+        // (a {} b) value - object in path is invalid
+        let events = parse("(a {} b) value");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidPathElement,
+                    ..
+                }
+            )),
+            "Object in path should produce InvalidPathElement error"
+        );
+    }
+
+    // parser[verify entry.path]
+    #[test]
+    fn test_path_invalid_element_sequence() {
+        // (a (nested) b) value - nested sequence in path is invalid
+        let events = parse("(a (nested) b) value");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidPathElement,
+                    ..
+                }
+            )),
+            "Nested sequence in path should produce InvalidPathElement error"
+        );
+    }
+
+    // parser[verify entry.path]
+    #[test]
+    fn test_path_with_tags() {
+        // (a @tag b) value - tags are valid path elements
+        let events = parse("(a @tag b) value");
+        // Should have keys including the tag
+        let has_tag_key = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::Key {
+                    tag: Some("tag"),
+                    ..
+                }
+            )
+        });
+        assert!(has_tag_key, "Should have @tag as key");
+        // No errors
+        assert!(
+            !events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "Path with tags should not have errors"
+        );
+    }
+
+    // parser[verify entry.path]
+    #[test]
+    fn test_path_with_attributes_value() {
+        // (selector matchLabels) app>web - path with attributes as value
+        let events = parse("(selector matchLabels) app>web");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"selector"), "Should have 'selector'");
+        assert!(keys.contains(&"matchLabels"), "Should have 'matchLabels'");
+        assert!(keys.contains(&"app"), "Should have 'app' from attribute");
+        // No errors
+        assert!(
+            !events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "Path with attributes value should not have errors"
+        );
+    }
+
+    // parser[verify entry.path]
+    #[test]
+    fn test_empty_path() {
+        // () value - empty path is invalid
+        let events = parse("() value");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::InvalidKey,
+                    ..
+                }
+            )),
+            "Empty path should produce InvalidKey error"
+        );
+    }
+
+    // parser[verify entry.path]
+    #[test]
+    fn test_single_element_path() {
+        // (a) value - single element path should work like regular key
+        let events = parse("(a) value");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, vec!["a"], "Should have key 'a'");
+        // No nested objects needed for single element
+        let obj_starts: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Event::ObjectStart { .. }))
+            .collect();
+        assert_eq!(
+            obj_starts.len(),
+            0,
+            "Single element path should not create nested objects"
+        );
+        assert!(
+            !events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "Single element path should not have errors"
         );
     }
 }

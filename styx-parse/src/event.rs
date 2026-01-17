@@ -164,9 +164,11 @@ pub enum ParseErrorKind {
     /// Dangling doc comment (not followed by entry).
     DanglingDocComment,
     /// Too many atoms in entry (expected at most 2: key and value).
-    /// Contains the span of the unexpected third atom.
     // parser[impl entry.toomany]
     TooManyAtoms,
+    /// Invalid path element (objects, sequences, and heredocs are not allowed).
+    // parser[impl entry.path]
+    InvalidPathElement,
 }
 
 impl std::fmt::Display for ParseErrorKind {
@@ -190,6 +192,12 @@ impl std::fmt::Display for ParseErrorKind {
             }
             ParseErrorKind::TooManyAtoms => {
                 write!(f, "unexpected atom after value (entry has too many atoms)")
+            }
+            ParseErrorKind::InvalidPathElement => {
+                write!(
+                    f,
+                    "invalid path element (only scalars, unit, and tags are allowed)"
+                )
             }
         }
     }

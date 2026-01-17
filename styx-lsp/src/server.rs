@@ -2230,7 +2230,7 @@ mod tests {
   name "test"
 }
 schema {
-  @ @object {
+  @ @object{
     name @string
     port @int
   }
