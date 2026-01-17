@@ -216,6 +216,102 @@ impl Schema {
 
         Self { tables }
     }
+
+    /// Generate SQL to create all tables, foreign keys, and indices.
+    ///
+    /// Returns a complete SQL script that can be executed to create the schema.
+    /// Tables are created first, then foreign keys (as ALTER TABLE), then indices.
+    pub fn to_sql(&self) -> String {
+        let mut sql = String::new();
+
+        // Create tables (without foreign keys to avoid dependency issues)
+        for table in &self.tables {
+            sql.push_str(&table.to_create_table_sql());
+            sql.push_str("\n\n");
+        }
+
+        // Add foreign keys
+        for table in &self.tables {
+            for fk in &table.foreign_keys {
+                sql.push_str(&format!(
+                    "ALTER TABLE {} ADD CONSTRAINT fk_{}_{} FOREIGN KEY ({}) REFERENCES {}({});\n",
+                    table.name,
+                    table.name,
+                    fk.columns.join("_"),
+                    fk.columns.join(", "),
+                    fk.references_table,
+                    fk.references_columns.join(", ")
+                ));
+            }
+        }
+
+        if self.tables.iter().any(|t| !t.foreign_keys.is_empty()) {
+            sql.push('\n');
+        }
+
+        // Create indices
+        for table in &self.tables {
+            for idx in &table.indices {
+                sql.push_str(&table.to_create_index_sql(idx));
+                sql.push('\n');
+            }
+        }
+
+        sql.trim_end().to_string()
+    }
+}
+
+impl Table {
+    /// Generate CREATE TABLE SQL statement.
+    ///
+    /// Does not include foreign key constraints (those should be added
+    /// separately to handle table creation order).
+    pub fn to_create_table_sql(&self) -> String {
+        let mut sql = format!("CREATE TABLE {} (\n", self.name);
+
+        let col_defs: Vec<String> = self
+            .columns
+            .iter()
+            .map(|col| {
+                let mut def = format!("    {} {}", col.name, col.pg_type);
+
+                if col.primary_key {
+                    def.push_str(" PRIMARY KEY");
+                }
+
+                if !col.nullable && !col.primary_key {
+                    def.push_str(" NOT NULL");
+                }
+
+                if col.unique && !col.primary_key {
+                    def.push_str(" UNIQUE");
+                }
+
+                if let Some(default) = &col.default {
+                    def.push_str(&format!(" DEFAULT {}", default));
+                }
+
+                def
+            })
+            .collect();
+
+        sql.push_str(&col_defs.join(",\n"));
+        sql.push_str("\n);");
+
+        sql
+    }
+
+    /// Generate CREATE INDEX SQL statement for a given index.
+    pub fn to_create_index_sql(&self, idx: &Index) -> String {
+        let unique = if idx.unique { "UNIQUE " } else { "" };
+        format!(
+            "CREATE {}INDEX {} ON {} ({});",
+            unique,
+            idx.name,
+            self.name,
+            idx.columns.join(", ")
+        )
+    }
 }
 
 /// Map a Rust type name to a Postgres type.

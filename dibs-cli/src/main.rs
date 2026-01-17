@@ -176,6 +176,10 @@ enum Commands {
         /// Output as plain text (default when not a TTY)
         #[facet(default, args::named)]
         plain: bool,
+
+        /// Output as SQL (CREATE TABLE statements)
+        #[facet(default, args::named)]
+        sql: bool,
     },
 }
 
@@ -234,6 +238,7 @@ fn run(cli: Cli) {
         Some(Commands::Schema {
             database_url: _,
             plain,
+            sql,
         }) => {
             let schema = dibs::Schema::collect();
 
@@ -244,8 +249,11 @@ fn run(cli: Cli) {
                 return;
             }
 
-            // Use TUI if stdout is a TTY and --plain wasn't specified
-            if stdout().is_terminal() && !plain {
+            if sql {
+                // Output SQL CREATE statements
+                println!("{}", schema.to_sql());
+            } else if stdout().is_terminal() && !plain {
+                // Use TUI if stdout is a TTY and --plain wasn't specified
                 if let Err(e) = run_schema_tui(&schema) {
                     eprintln!("TUI error: {}", e);
                     std::process::exit(1);
