@@ -1,4 +1,0 @@
-// Tag names can contain dots
-qualified @com.example.MyType
-nested @foo.bar.baz
-version @v1.0.0

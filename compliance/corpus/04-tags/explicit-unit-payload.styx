@@ -1,5 +1,5 @@
 // @tag@ is a tag with explicit unit payload (same as @tag but explicit)
-status @ok @
-nothing @none @
-flag @enabled @
+status @ok@
+nothing @none@
+flag @enabled@
 

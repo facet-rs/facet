@@ -593,7 +593,10 @@ mod tests {
         let tag = Tag::cast(tag_node).unwrap();
 
         assert_eq!(tag.name(), Some("Some".to_string()));
-        assert!(tag.payload().is_none(), "spaced value should not be payload");
+        assert!(
+            tag.payload().is_none(),
+            "spaced value should not be payload"
+        );
 
         // The value should be separate
         let value = entry.value().unwrap();

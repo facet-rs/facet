@@ -640,7 +640,8 @@ mod proptests {
 
     /// Generate a nested sequence like ((a b) (c d))
     fn nested_sequence() -> impl Strategy<Value = String> {
-        prop::collection::vec(flat_sequence(), 1..4).prop_map(|seqs| format!("({})", seqs.join(" ")))
+        prop::collection::vec(flat_sequence(), 1..4)
+            .prop_map(|seqs| format!("({})", seqs.join(" ")))
     }
 
     /// Generate a sequence (flat or nested)
@@ -657,7 +658,10 @@ mod proptests {
             if entries.is_empty() {
                 "{}".to_string()
             } else {
-                let inner: Vec<String> = entries.into_iter().map(|(k, v)| format!("{k} {v}")).collect();
+                let inner: Vec<String> = entries
+                    .into_iter()
+                    .map(|(k, v)| format!("{k} {v}"))
+                    .collect();
                 format!("{{{}}}", inner.join(", "))
             }
         })
@@ -666,7 +670,10 @@ mod proptests {
     /// Generate a multiline object
     fn multiline_object() -> impl Strategy<Value = String> {
         prop::collection::vec((bare_scalar(), scalar()), 1..4).prop_map(|entries| {
-            let inner: Vec<String> = entries.into_iter().map(|(k, v)| format!("  {k} {v}")).collect();
+            let inner: Vec<String> = entries
+                .into_iter()
+                .map(|(k, v)| format!("  {k} {v}"))
+                .collect();
             format!("{{\n{}\n}}", inner.join("\n"))
         })
     }
@@ -699,9 +706,8 @@ mod proptests {
             Just(",txt".to_string()),
             Just(",rust".to_string()),
         ];
-        (delimiters, content, lang_hint).prop_map(|(delim, content, hint)| {
-            format!("<<{delim}{hint}\n{content}\n{delim}")
-        })
+        (delimiters, content, lang_hint)
+            .prop_map(|(delim, content, hint)| format!("<<{delim}{hint}\n{content}\n{delim}"))
     }
 
     /// Generate a simple value (scalar, sequence, or attributes)

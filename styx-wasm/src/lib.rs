@@ -96,7 +96,7 @@ pub fn to_json(source: &str) -> JsValue {
 /// Convert a Styx Value to a JSON value.
 fn value_to_json(value: &Value) -> serde_json::Value {
     let tag = value.tag.as_ref().map(|t| t.name.as_str());
-    let payload = value.payload.as_ref().map(|p| payload_to_json(p));
+    let payload = value.payload.as_ref().map(payload_to_json);
 
     match (tag, payload) {
         // Unit with no tag: null

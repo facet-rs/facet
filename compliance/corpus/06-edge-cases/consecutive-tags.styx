@@ -1,4 +1,3 @@
-// Multiple tags in sequence
+// Multiple tags in a sequence
 items (@ok @err @none)
-nested @outer @inner
 

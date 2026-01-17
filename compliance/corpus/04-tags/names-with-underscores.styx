@@ -1,0 +1,4 @@
+// Tag names with underscores (dots are reserved for paths)
+qualified @com_example_MyType
+nested @foo_bar_baz
+version @v1_0_0

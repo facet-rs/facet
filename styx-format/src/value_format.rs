@@ -125,7 +125,8 @@ impl ValueFormatter {
         if after_tag {
             self.writer.begin_struct_after_tag(force_multiline);
         } else {
-            self.writer.begin_struct_with_options(false, force_multiline);
+            self.writer
+                .begin_struct_with_options(false, force_multiline);
         }
         self.format_object_entries(obj);
         self.writer.end_struct().ok();

@@ -65,27 +65,6 @@
     (scalar [68, 75] bare "dry_run")
     (unit [68, 75]))
 )
-; file: compliance/corpus/00-basic/key-paths-deep.styx
-(document [-1, -1]
-  (entry
-    (scalar [40, 41] bare "a")
-    (scalar [42, 43] bare "b"))
-  (entry
-    (scalar [44, 50] bare "config")
-    (scalar [51, 57] bare "server"))
-)
-; file: compliance/corpus/00-basic/key-paths.styx
-(document [-1, -1]
-  (entry
-    (scalar [128, 134] bare "server")
-    (scalar [135, 139] bare "host"))
-  (entry
-    (scalar [140, 148] bare "database")
-    (scalar [149, 153] bare "host"))
-  (entry
-    (scalar [154, 159] bare "cache")
-    (scalar [160, 164] bare "host"))
-)
 ; file: compliance/corpus/00-basic/multiple-entries.styx
 (document [-1, -1]
   (entry
@@ -97,6 +76,30 @@
   (entry
     (scalar [21, 28] bare "enabled")
     (scalar [29, 33] bare "true"))
+)
+; file: compliance/corpus/00-basic/paths.styx
+(document [-1, -1]
+  (entry
+    (scalar [35, 41] bare "server")
+    (object [35, 46] newline
+      (entry
+        (scalar [42, 46] bare "host")
+        (scalar [47, 56] bare "localhost"))
+    ))
+  (entry
+    (scalar [57, 65] bare "database")
+    (object [57, 70] newline
+      (entry
+        (scalar [66, 70] bare "port")
+        (scalar [71, 75] bare "5432"))
+    ))
+  (entry
+    (scalar [76, 81] bare "cache")
+    (object [76, 85] newline
+      (entry
+        (scalar [82, 85] bare "ttl")
+        (scalar [86, 90] bare "3600"))
+    ))
 )
 ; file: compliance/corpus/00-basic/schema-declaration.styx
 (document [-1, -1]
@@ -343,22 +346,6 @@
     (scalar [0, 3] bare "obj")
     (object [4, 6] comma))
 )
-; file: compliance/corpus/02-objects/key-paths-in-object.styx
-(document [-1, -1]
-  (entry
-    (scalar [37, 43] bare "config")
-    (object [44, 96] newline
-      (entry
-        (scalar [50, 56] bare "server")
-        (scalar [57, 61] bare "host"))
-      (entry
-        (scalar [66, 74] bare "database")
-        (scalar [75, 79] bare "host"))
-      (entry
-        (scalar [84, 89] bare "cache")
-        (scalar [90, 94] bare "host"))
-    ))
-)
 ; file: compliance/corpus/02-objects/nested.styx
 (document [-1, -1]
   (entry
@@ -594,25 +581,13 @@
 (document [-1, -1]
   (entry
     (scalar [73, 79] bare "status")
-    (object [80, 83] newline
-      (entry
-        (tag [80, 83] "ok")
-        (unit [84, 85]))
-    ))
+    (tag [83, 84] "ok"))
   (entry
-    (scalar [86, 93] bare "nothing")
-    (object [94, 99] newline
-      (entry
-        (tag [94, 99] "none")
-        (unit [100, 101]))
-    ))
+    (scalar [85, 92] bare "nothing")
+    (tag [98, 99] "none"))
   (entry
-    (scalar [102, 106] bare "flag")
-    (object [107, 115] newline
-      (entry
-        (tag [107, 115] "enabled")
-        (unit [116, 117]))
-    ))
+    (scalar [100, 104] bare "flag")
+    (tag [113, 114] "enabled"))
 )
 ; file: compliance/corpus/04-tags/explicit-unit.styx
 (document [-1, -1]
@@ -647,14 +622,14 @@
 ; file: compliance/corpus/04-tags/names-mixed.styx
 (document [-1, -1]
   (entry
-    (scalar [66, 73] bare "complex")
-    (tag [74, 90] "foo_bar.baz-qux"))
+    (scalar [60, 67] bare "complex")
+    (tag [68, 84] "foo_bar_baz-qux"))
   (entry
-    (scalar [91, 98] bare "version")
-    (tag [99, 113] "v2.0.0-beta.1"))
+    (scalar [85, 92] bare "version")
+    (tag [93, 107] "v2_0_0-beta_1"))
   (entry
-    (scalar [114, 118] bare "full")
-    (tag [119, 142] "com.example.my_type-v1"))
+    (scalar [108, 112] bare "full")
+    (tag [113, 136] "com_example_my_type-v1"))
 )
 ; file: compliance/corpus/04-tags/names-with-dashes.styx
 (document [-1, -1]
@@ -668,17 +643,17 @@
     (scalar [66, 71] bare "multi")
     (tag [72, 84] "foo-bar-baz"))
 )
-; file: compliance/corpus/04-tags/names-with-dots.styx
+; file: compliance/corpus/04-tags/names-with-underscores.styx
 (document [-1, -1]
   (entry
-    (scalar [30, 39] bare "qualified")
-    (tag [40, 59] "com.example.MyType"))
+    (scalar [60, 69] bare "qualified")
+    (tag [70, 89] "com_example_MyType"))
   (entry
-    (scalar [60, 66] bare "nested")
-    (tag [67, 79] "foo.bar.baz"))
+    (scalar [90, 96] bare "nested")
+    (tag [97, 109] "foo_bar_baz"))
   (entry
-    (scalar [80, 87] bare "version")
-    (tag [88, 95] "v1.0.0"))
+    (scalar [110, 117] bare "version")
+    (tag [118, 125] "v1_0_0"))
 )
 ; file: compliance/corpus/04-tags/nested-tags.styx
 (document [-1, -1]
@@ -809,18 +784,11 @@
 ; file: compliance/corpus/06-edge-cases/consecutive-tags.styx
 (document [-1, -1]
   (entry
-    (scalar [29, 34] bare "items")
-    (sequence [35, 51]
-      (tag [36, 39] "ok")
-      (tag [40, 44] "err")
-      (tag [45, 50] "none")))
-  (entry
-    (scalar [52, 58] bare "nested")
-    (object [59, 65] newline
-      (entry
-        (tag [59, 65] "outer")
-        (tag [66, 72] "inner"))
-    ))
+    (scalar [31, 36] bare "items")
+    (sequence [37, 53]
+      (tag [38, 41] "ok")
+      (tag [42, 46] "err")
+      (tag [47, 52] "none")))
 )
 ; file: compliance/corpus/06-edge-cases/deeply-nested.styx
 (document [-1, -1]
@@ -991,8 +959,17 @@
         (scalar [37, 38] bare "1"))
     ))
 )
+; file: compliance/corpus/07-invalid/reopen-path.styx
+(error [62, 67] "parse error at 62-67: duplicate key")
 ; file: compliance/corpus/07-invalid/sequence-as-key.styx
 (error [36, 43] "parse error at 36-43: invalid key")
+; file: compliance/corpus/07-invalid/too-many-atoms.styx
+(document [-1, -1]
+  (entry
+    (scalar [137, 140] bare "key")
+    (tag [145, 147] "tag"
+      (object [145, 147] comma)))
+)
 ; file: compliance/corpus/07-invalid/unclosed-brace.styx
 (error [4, 5] "parse error at 4-5: unclosed object (missing `}`)")
 ; file: compliance/corpus/07-invalid/unclosed-heredoc.styx
