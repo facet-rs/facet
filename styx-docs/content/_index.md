@@ -24,8 +24,8 @@ routes (
 
 <section class="feature">
 <div class="feature-text">
-<h2>No quotes required</h2>
-<p>Hostnames, paths, numbers — just type them. Quotes when you need spaces or special chars like <code>=</code>.</p>
+<h2>Bare scalars</h2>
+<p>Unquoted values. Quotes required for spaces or <code>=</code>.</p>
 </div>
 <div class="feature-code">
 
@@ -42,7 +42,7 @@ url "https://example.com/api?q=1"
 <section class="feature">
 <div class="feature-text">
 <h2>Sequences</h2>
-<p>Lists use parentheses. Elements separated by whitespace — no commas, no fuss.</p>
+<p>Parentheses. Whitespace-separated.</p>
 </div>
 <div class="feature-code">
 
@@ -62,7 +62,7 @@ allowed-hosts (
 <section class="feature">
 <div class="feature-text">
 <h2>Objects</h2>
-<p>Curly braces for structure. Newlines separate entries. Commas for single-line.</p>
+<p>Curly braces. Newline-separated or comma-separated.</p>
 </div>
 <div class="feature-code">
 
@@ -81,7 +81,7 @@ point {x 10, y 20}
 <section class="feature">
 <div class="feature-text">
 <h2>Key paths</h2>
-<p>Chain keys to build nested structure in a single line.</p>
+<p>Multiple keys in one entry create nested objects.</p>
 </div>
 <div class="feature-code">
 
@@ -102,7 +102,7 @@ selector {
 <section class="feature">
 <div class="feature-text">
 <h2>Attributes</h2>
-<p>Inline <code>key=value</code> pairs for compact configuration.</p>
+<p><code>key=value</code> syntax creates inline object entries.</p>
 </div>
 <div class="feature-code">
 
@@ -119,7 +119,7 @@ server {host localhost, port 8080}
 <section class="feature">
 <div class="feature-text">
 <h2>Tags</h2>
-<p>Label values with types. Tags can wrap objects, sequences, or scalars.</p>
+<p>Labels on values. Can wrap objects, sequences, or scalars.</p>
 </div>
 <div class="feature-code">
 
