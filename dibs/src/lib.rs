@@ -34,7 +34,9 @@ pub mod schema;
 
 pub use error::Error;
 pub use migrate::{Migration, MigrationContext, MigrationRunner, MigrationStatus};
-pub use schema::{Column, ForeignKey, PgType, Schema, Table, TableDef};
+pub use schema::{
+    Attr, Column, CompositeIndex, ForeignKey, Index, PgType, Schema, Table, TableDef,
+};
 
 // Re-export inventory for the proc macro
 pub use inventory;

@@ -66,6 +66,26 @@ facet::define_attr_grammar! {
         ///
         /// Usage: `#[facet(dibs::column = "column_name")]`
         Column(&'static str),
+
+        /// Creates an index on a single column (field-level).
+        ///
+        /// Usage: `#[facet(dibs::index)]` or `#[facet(dibs::index = "index_name")]`
+        Index(Option<&'static str>),
+
+        /// Creates an index on one or more columns (container-level).
+        ///
+        /// Usage:
+        /// - `#[facet(dibs::index(columns = "col1,col2"))]` - auto-named composite index
+        /// - `#[facet(dibs::index(name = "idx_foo", columns = "col1,col2"))]` - named composite index
+        CompositeIndex(CompositeIndex),
+    }
+
+    /// Composite index definition for multi-column indices.
+    pub struct CompositeIndex {
+        /// Optional index name (auto-generated if not provided)
+        pub name: Option<&'static str>,
+        /// Comma-separated column names
+        pub columns: &'static str,
     }
 }
 
@@ -148,6 +168,17 @@ pub struct ForeignKey {
     pub references_columns: Vec<String>,
 }
 
+/// A database index.
+#[derive(Debug, Clone)]
+pub struct Index {
+    /// Index name
+    pub name: String,
+    /// Column(s) in the index
+    pub columns: Vec<String>,
+    /// Whether this is a unique index
+    pub unique: bool,
+}
+
 /// A database table definition.
 #[derive(Debug, Clone)]
 pub struct Table {
@@ -157,6 +188,8 @@ pub struct Table {
     pub columns: Vec<Column>,
     /// Foreign keys
     pub foreign_keys: Vec<ForeignKey>,
+    /// Indices
+    pub indices: Vec<Index>,
 }
 
 /// A complete database schema.
@@ -260,7 +293,7 @@ impl TableDef {
 
     /// Convert this definition to a Table struct.
     pub fn to_table(&self) -> Option<Table> {
-        let name = self.table_name()?.to_string();
+        let table_name = self.table_name()?.to_string();
 
         // Get the struct type to access fields
         let struct_type = match &self.shape.ty {
@@ -270,6 +303,30 @@ impl TableDef {
 
         let mut columns = Vec::new();
         let mut foreign_keys = Vec::new();
+        let mut indices = Vec::new();
+
+        // Collect container-level composite indices
+        for attr in self.shape.attributes.iter() {
+            if attr.ns == Some("dibs") && attr.key == "composite_index" {
+                // The attribute data is Attr::CompositeIndex(CompositeIndex{...})
+                if let Some(Attr::CompositeIndex(composite)) = attr.get_as::<Attr>() {
+                    let cols: Vec<String> = composite
+                        .columns
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .collect();
+                    let idx_name = composite
+                        .name
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("idx_{}_{}", table_name, cols.join("_")));
+                    indices.push(Index {
+                        name: idx_name,
+                        columns: cols,
+                        unique: false,
+                    });
+                }
+            }
+        }
 
         for field in struct_type.fields {
             let field_shape = field.shape.get();
@@ -295,7 +352,7 @@ impl TableDef {
             let default = field_get_dibs_attr_str(field, "default").map(|s| s.to_string());
 
             columns.push(Column {
-                name: col_name,
+                name: col_name.clone(),
                 pg_type,
                 nullable,
                 default,
@@ -314,12 +371,26 @@ impl TableDef {
                     });
                 }
             }
+
+            // Check for field-level index
+            if field_has_dibs_attr(field, "index") {
+                let idx_name = field_get_dibs_attr_str(field, "index")
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("idx_{}_{}", table_name, col_name));
+                indices.push(Index {
+                    name: idx_name,
+                    columns: vec![col_name.clone()],
+                    unique: false,
+                });
+            }
         }
 
         Some(Table {
-            name,
+            name: table_name,
             columns,
             foreign_keys,
+            indices,
         })
     }
 }

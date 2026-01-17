@@ -2,7 +2,7 @@ use std::io::{self, IsTerminal, stdout};
 
 use crossterm::{
     ExecutableCommand,
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use facet::Facet;
@@ -13,9 +13,27 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
-// Example table definition for testing
+// Example table definitions for testing
+
+#[derive(Facet)]
+#[facet(derive(dibs::Table), dibs::table = "tenants")]
+struct Tenant {
+    #[facet(dibs::pk)]
+    id: i64,
+
+    #[facet(dibs::unique)]
+    slug: String,
+
+    #[facet(dibs::index)]
+    name: String,
+
+    #[facet(dibs::default = "now()")]
+    created_at: i64,
+}
+
 #[derive(Facet)]
 #[facet(derive(dibs::Table), dibs::table = "users")]
+#[facet(dibs::composite_index(columns = "tenant_id,email"))]
 struct User {
     #[facet(dibs::pk)]
     id: i64,
@@ -23,12 +41,90 @@ struct User {
     #[facet(dibs::unique)]
     email: String,
 
+    #[facet(dibs::index)]
     name: String,
 
     bio: Option<String>,
 
-    #[facet(dibs::fk = "tenants.id")]
+    #[facet(dibs::fk = "tenants.id", dibs::index)]
     tenant_id: i64,
+
+    #[facet(dibs::default = "now()", dibs::index = "idx_users_created")]
+    created_at: i64,
+}
+
+#[derive(Facet)]
+#[facet(derive(dibs::Table), dibs::table = "posts")]
+#[facet(dibs::composite_index(
+    name = "idx_posts_tenant_published",
+    columns = "tenant_id,published"
+))]
+struct Post {
+    #[facet(dibs::pk)]
+    id: i64,
+
+    #[facet(dibs::index)]
+    title: String,
+
+    body: String,
+
+    published: bool,
+
+    #[facet(dibs::fk = "users.id", dibs::index)]
+    author_id: i64,
+
+    #[facet(dibs::fk = "tenants.id", dibs::index)]
+    tenant_id: i64,
+
+    #[facet(dibs::default = "now()")]
+    created_at: i64,
+
+    updated_at: Option<i64>,
+}
+
+#[derive(Facet)]
+#[facet(derive(dibs::Table), dibs::table = "comments")]
+struct Comment {
+    #[facet(dibs::pk)]
+    id: i64,
+
+    body: String,
+
+    #[facet(dibs::fk = "posts.id", dibs::index)]
+    post_id: i64,
+
+    #[facet(dibs::fk = "users.id", dibs::index)]
+    author_id: i64,
+
+    #[facet(dibs::default = "now()")]
+    created_at: i64,
+}
+
+#[derive(Facet)]
+#[facet(derive(dibs::Table), dibs::table = "tags")]
+struct Tag {
+    #[facet(dibs::pk)]
+    id: i64,
+
+    #[facet(dibs::unique)]
+    name: String,
+
+    #[facet(dibs::fk = "tenants.id", dibs::index)]
+    tenant_id: i64,
+}
+
+#[derive(Facet)]
+#[facet(derive(dibs::Table), dibs::table = "post_tags")]
+#[facet(dibs::composite_index(name = "idx_post_tags_unique", columns = "post_id,tag_id"))]
+struct PostTag {
+    #[facet(dibs::pk)]
+    id: i64,
+
+    #[facet(dibs::fk = "posts.id", dibs::index)]
+    post_id: i64,
+
+    #[facet(dibs::fk = "tags.id", dibs::index)]
+    tag_id: i64,
 }
 
 /// Postgres toolkit for Rust, powered by facet reflection.
@@ -205,6 +301,16 @@ fn print_schema_plain(schema: &dibs::Schema) {
                 fk.references_columns.join(", ")
             );
         }
+
+        for idx in &table.indices {
+            let unique = if idx.unique { " UNIQUE" } else { "" };
+            println!(
+                "  INDEX {} on ({}){}",
+                idx.name,
+                idx.columns.join(", "),
+                unique
+            );
+        }
         println!();
     }
 }
@@ -234,6 +340,10 @@ struct SchemaApp<'a> {
     focus: Focus,
     /// Selected item in details pane (for FK navigation)
     detail_selection: usize,
+    /// Pending 'g' keypress for gg command
+    pending_g: bool,
+    /// Visible height for half-page scrolling
+    visible_height: usize,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -254,6 +364,8 @@ impl<'a> SchemaApp<'a> {
             expanded,
             focus: Focus::Tables,
             detail_selection: 0,
+            pending_g: false,
+            visible_height: 20, // Will be updated during render
         }
     }
 
@@ -263,6 +375,16 @@ impl<'a> SchemaApp<'a> {
 
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
+                    // Handle 'g' prefix for gg command
+                    if self.pending_g {
+                        self.pending_g = false;
+                        if key.code == KeyCode::Char('g') {
+                            self.go_to_first();
+                            continue;
+                        }
+                        // If not 'g', fall through to normal handling
+                    }
+
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                         KeyCode::Up | KeyCode::Char('k') => self.move_up(),
@@ -271,6 +393,15 @@ impl<'a> SchemaApp<'a> {
                         KeyCode::Right | KeyCode::Char('l') => self.focus_details(),
                         KeyCode::Enter | KeyCode::Char(' ') => self.activate(),
                         KeyCode::Tab => self.toggle_focus(),
+                        // Vim-style navigation
+                        KeyCode::Char('g') => self.pending_g = true,
+                        KeyCode::Char('G') => self.go_to_last(),
+                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.half_page_down()
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.half_page_up()
+                        }
                         _ => {}
                     }
                 }
@@ -360,7 +491,7 @@ impl<'a> SchemaApp<'a> {
 
     fn detail_item_count(&self) -> usize {
         if let Some(table) = self.schema.tables.get(self.selected_table) {
-            table.columns.len() + table.foreign_keys.len()
+            table.columns.len() + table.foreign_keys.len() + table.indices.len()
         } else {
             0
         }
@@ -387,14 +518,102 @@ impl<'a> SchemaApp<'a> {
         self.detail_selection = 0;
     }
 
+    fn go_to_first(&mut self) {
+        match self.focus {
+            Focus::Tables => {
+                self.selected_table = 0;
+                self.table_state.select(Some(0));
+                self.detail_selection = 0;
+            }
+            Focus::Details => {
+                self.detail_selection = 0;
+            }
+        }
+    }
+
+    fn go_to_last(&mut self) {
+        match self.focus {
+            Focus::Tables => {
+                if !self.schema.tables.is_empty() {
+                    self.selected_table = self.schema.tables.len() - 1;
+                    self.table_state.select(Some(self.selected_table));
+                    self.detail_selection = 0;
+                }
+            }
+            Focus::Details => {
+                let max = self.detail_item_count();
+                if max > 0 {
+                    self.detail_selection = max - 1;
+                }
+            }
+        }
+    }
+
+    fn half_page_down(&mut self) {
+        let half = self.visible_height / 2;
+        match self.focus {
+            Focus::Tables => {
+                let max = self.schema.tables.len();
+                if max > 0 {
+                    self.selected_table = (self.selected_table + half).min(max - 1);
+                    self.table_state.select(Some(self.selected_table));
+                    self.detail_selection = 0;
+                }
+            }
+            Focus::Details => {
+                let max = self.detail_item_count();
+                if max > 0 {
+                    self.detail_selection = (self.detail_selection + half).min(max - 1);
+                }
+            }
+        }
+    }
+
+    fn half_page_up(&mut self) {
+        let half = self.visible_height / 2;
+        match self.focus {
+            Focus::Tables => {
+                self.selected_table = self.selected_table.saturating_sub(half);
+                self.table_state.select(Some(self.selected_table));
+                self.detail_selection = 0;
+            }
+            Focus::Details => {
+                self.detail_selection = self.detail_selection.saturating_sub(half);
+            }
+        }
+    }
+
     fn ui(&mut self, frame: &mut Frame) {
-        // Reserve 1 line at bottom for help bar
+        // Layout: header (1 line) + main area + help bar (1 line)
+        let header_area = Rect {
+            x: 0,
+            y: 0,
+            width: frame.area().width,
+            height: 1,
+        };
+
         let main_area = Rect {
             x: frame.area().x,
-            y: frame.area().y,
+            y: 1,
             width: frame.area().width,
-            height: frame.area().height.saturating_sub(1),
+            height: frame.area().height.saturating_sub(2), // -1 for header, -1 for help
         };
+
+        // Update visible height for half-page scrolling
+        self.visible_height = main_area.height.saturating_sub(2) as usize; // -2 for borders
+
+        // Header
+        let header = Paragraph::new(Line::from(vec![
+            Span::styled(" [dibs] ", Style::default().fg(Color::Cyan).bold()),
+            Span::styled("Schema Browser", Style::default().fg(Color::White)),
+            Span::raw("  "),
+            Span::styled(
+                format!("{} tables", self.schema.tables.len()),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]))
+        .style(Style::default().bg(Color::Black));
+        frame.render_widget(header, header_area);
 
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -533,6 +752,50 @@ impl<'a> SchemaApp<'a> {
                 }
             }
 
+            if !table.indices.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Indices:",
+                    Style::default().fg(Color::Magenta).bold(),
+                )));
+
+                let col_count = table.columns.len();
+                let fk_count = table.foreign_keys.len();
+                for (i, idx) in table.indices.iter().enumerate() {
+                    let is_selected = self.focus == Focus::Details
+                        && self.detail_selection == col_count + fk_count + i;
+                    let prefix = if is_selected { "› " } else { "  " };
+
+                    let mut spans = vec![
+                        Span::raw(prefix),
+                        Span::styled(
+                            &idx.name,
+                            if is_selected {
+                                Style::default().fg(Color::White).bold()
+                            } else {
+                                Style::default().fg(Color::White)
+                            },
+                        ),
+                        Span::styled(" on ", Style::default().fg(Color::Gray)),
+                        Span::styled(
+                            format!("({})", idx.columns.join(", ")),
+                            Style::default().fg(Color::Cyan),
+                        ),
+                    ];
+
+                    if idx.unique {
+                        spans.push(Span::raw(" "));
+                        spans.push(Span::styled("UNIQUE", Style::default().fg(Color::Yellow)));
+                    }
+
+                    let mut line = Line::from(spans);
+                    if is_selected {
+                        line = line.style(Style::default().bg(Color::DarkGray));
+                    }
+                    lines.push(line);
+                }
+            }
+
             let details_border_style = if self.focus == Focus::Details {
                 Style::default().fg(Color::Cyan)
             } else {
@@ -554,11 +817,15 @@ impl<'a> SchemaApp<'a> {
         let help = Paragraph::new(Line::from(vec![
             Span::styled(" j/k ", Style::default().fg(Color::Yellow)),
             Span::raw("nav  "),
-            Span::styled(" Tab/h/l ", Style::default().fg(Color::Yellow)),
-            Span::raw("switch pane  "),
-            Span::styled(" Enter ", Style::default().fg(Color::Yellow)),
-            Span::raw("expand/jump  "),
-            Span::styled(" q ", Style::default().fg(Color::Yellow)),
+            Span::styled("gg/G ", Style::default().fg(Color::Yellow)),
+            Span::raw("top/bottom  "),
+            Span::styled("^D/^U ", Style::default().fg(Color::Yellow)),
+            Span::raw("½page  "),
+            Span::styled("Tab ", Style::default().fg(Color::Yellow)),
+            Span::raw("pane  "),
+            Span::styled("Enter ", Style::default().fg(Color::Yellow)),
+            Span::raw("expand  "),
+            Span::styled("q ", Style::default().fg(Color::Yellow)),
             Span::raw("quit"),
         ]))
         .style(Style::default().bg(Color::DarkGray));
