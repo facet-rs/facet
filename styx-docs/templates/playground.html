@@ -124,15 +124,6 @@
     background: rgba(255, 255, 255, 0.03);
 }
 
-/* Read-only output editor - no cursor blink */
-.output-pane .cm-cursor {
-    display: none !important;
-}
-
-.output-pane .cm-activeLine {
-    background: transparent;
-}
-
 /* Loading state */
 .loading {
     display: flex;
@@ -174,7 +165,7 @@
 
     <div class="output-pane">
         <div class="pane-header">
-            <span>JSON Output</span>
+            <span>JSON</span>
         </div>
         <div class="pane-content">
             <div id="output"><div class="loading">Loading...</div></div>
@@ -233,7 +224,7 @@ async function main() {
 
     document.getElementById('status').textContent = `v${version()}`;
 
-    // Create read-only JSON output editor
+    // Create JSON editor (editable - changes from Styx will overwrite)
     jsonEditor = new EditorView({
         state: EditorState.create({
             doc: '',
@@ -241,8 +232,6 @@ async function main() {
                 basicSetup,
                 oneDark,
                 json(),
-                EditorState.readOnly.of(true),
-                EditorView.editable.of(false),
             ],
         }),
         parent: document.getElementById('output'),
@@ -261,7 +250,11 @@ async function main() {
     // Vim mode compartment for dynamic toggling
     vimCompartment = new Compartment();
     const vimCheckbox = document.getElementById('vim-mode');
-    const vimEnabled = vimCheckbox.checked;
+
+    // Load vim setting from localStorage (default: true)
+    const storedVim = localStorage.getItem('styx-playground-vim');
+    const vimEnabled = storedVim === null ? true : storedVim === 'true';
+    vimCheckbox.checked = vimEnabled;
 
     styxEditor = new EditorView({
         state: EditorState.create({
@@ -279,8 +272,10 @@ async function main() {
 
     // Handle vim mode toggle
     vimCheckbox.addEventListener('change', (e) => {
+        const enabled = e.target.checked;
+        localStorage.setItem('styx-playground-vim', enabled);
         styxEditor.dispatch({
-            effects: vimCompartment.reconfigure(e.target.checked ? vim() : [])
+            effects: vimCompartment.reconfigure(enabled ? vim() : [])
         });
     });
 
