@@ -17,6 +17,6 @@ facet = { git = "https://github.com/facet-rs/facet" }
 dibs-macros = { path = "../dibs-macros" }
 
 [dev-dependencies]
-testcontainers = "0.23"
-testcontainers-modules = { version = "0.11", features = ["postgres"] }
+testcontainers = "0.26"
+testcontainers-modules = { version = "0.14", features = ["postgres"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
