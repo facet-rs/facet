@@ -39,6 +39,25 @@ doc = parse('name "Alice"\nage 30')
 
 **Source:** [implementations/styx-py](https://github.com/bearcove/styx/tree/main/implementations/styx-py)
 
+## Go
+
+Native Go implementation.
+
+```bash
+go get github.com/bearcove/styx/implementations/styx-go
+```
+
+```go
+import styx "github.com/bearcove/styx/implementations/styx-go"
+
+doc, err := styx.Parse(`name "Alice"
+age 30`)
+```
+
+**Requirements:** Go 1.22+
+
+**Source:** [implementations/styx-go](https://github.com/bearcove/styx/tree/main/implementations/styx-go)
+
 ## JavaScript / TypeScript
 
 Native TypeScript implementation with full type definitions.

@@ -241,6 +241,13 @@ export class Parser {
     };
 
     if (!this.current.hadWhitespaceBefore) {
+      // Check for invalid tag continuation (e.g., @org/package where / is not a valid tag char)
+      if (this.check("scalar")) {
+        throw new ParseError(
+          "invalid tag name",
+          { start: start + 1, end: this.current.span.end }
+        );
+      }
       if (this.check("lbrace")) {
         const obj = this.parseObject();
         return { tag, payload: obj, span: obj.span };
@@ -295,7 +302,24 @@ export class Parser {
       const nextToken = this.current;
 
       if (nextToken.type === "gt" && !nextToken.hadWhitespaceBefore) {
-        return this.parseAttributesStartingWith(scalarToken);
+        // Peek ahead: if > is followed by newline/EOF, just consume the > and return scalar
+        // Otherwise, parse as attributes
+        this.advance(); // consume >
+        const afterGT = this.current;
+        if (afterGT.hadNewlineBefore || this.check("eof", "rbrace", "rparen")) {
+          // > at end of line - return just the scalar
+          return {
+            payload: {
+              type: "scalar",
+              text: scalarToken.text,
+              kind: "bare",
+              span: scalarToken.span,
+            },
+            span: scalarToken.span,
+          };
+        }
+        // Not end of line - parse as attributes (we already consumed >)
+        return this.parseAttributesAfterGT(scalarToken);
       }
 
       return {
@@ -318,6 +342,60 @@ export class Parser {
     const startSpan = firstKeyToken.span;
 
     this.expect("gt");
+    const firstKey: Value = {
+      payload: {
+        type: "scalar",
+        text: firstKeyToken.text,
+        kind: "bare",
+        span: firstKeyToken.span,
+      },
+      span: firstKeyToken.span,
+    };
+    const firstValue = this.parseAttributeValue();
+    attrs.push({ key: firstKey, value: firstValue });
+
+    let endSpan = firstValue.span;
+
+    while (this.check("scalar") && !this.current.hadNewlineBefore) {
+      const keyToken = this.current;
+      const nextToken = this.peek();
+      if (nextToken.type !== "gt" || nextToken.hadWhitespaceBefore) {
+        break;
+      }
+
+      this.advance();
+      this.advance();
+
+      const attrKey: Value = {
+        payload: {
+          type: "scalar",
+          text: keyToken.text,
+          kind: "bare",
+          span: keyToken.span,
+        },
+        span: keyToken.span,
+      };
+
+      const attrValue = this.parseAttributeValue();
+      attrs.push({ key: attrKey, value: attrValue });
+      endSpan = attrValue.span;
+    }
+
+    const obj: StyxObject = {
+      type: "object",
+      entries: attrs,
+      separator: "comma",
+      span: { start: startSpan.start, end: endSpan.end },
+    };
+
+    return { payload: obj, span: obj.span };
+  }
+
+  private parseAttributesAfterGT(firstKeyToken: Token): Value {
+    // Same as parseAttributesStartingWith but > was already consumed
+    const attrs: Entry[] = [];
+    const startSpan = firstKeyToken.span;
+
     const firstKey: Value = {
       payload: {
         type: "scalar",

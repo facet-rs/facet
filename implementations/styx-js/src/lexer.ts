@@ -216,9 +216,19 @@ export class Lexer {
       return this.readRawString(start, hadWhitespace, hadNewline);
     }
 
-    // Heredoc
+    // Heredoc - only if << is followed by uppercase letter
     if (ch === "<" && this.peek(1) === "<") {
-      return this.readHeredoc(start, hadWhitespace, hadNewline);
+      const afterLtLt = this.peek(2);
+      if (afterLtLt >= "A" && afterLtLt <= "Z") {
+        return this.readHeredoc(start, hadWhitespace, hadNewline);
+      }
+      // << not followed by uppercase - skip << and any following digits
+      this.advance(); // <
+      this.advance(); // <
+      while (this.peek() >= "0" && this.peek() <= "9") {
+        this.advance();
+      }
+      return this.nextToken();
     }
 
     // Bare scalar
