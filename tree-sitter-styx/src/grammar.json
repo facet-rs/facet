@@ -230,7 +230,7 @@
         "members": [
           {
             "type": "PATTERN",
-            "value": "\\\\[\\\\\\\"nrt0]"
+            "value": "\\\\[\\\\\\\"nrt]"
           },
           {
             "type": "PATTERN",

@@ -1,0 +1,4 @@
+finally <<HEREDOC
+they work :)
+HEREDOC
+foo bar

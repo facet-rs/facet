@@ -709,7 +709,6 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
     case 6:
       if (lookahead == 'u') ADVANCE(7);
       if (lookahead == '"' ||
-          lookahead == '0' ||
           lookahead == '\\' ||
           lookahead == 'n' ||
           lookahead == 'r' ||

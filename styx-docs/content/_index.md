@@ -43,7 +43,7 @@ or {inline style, with commas, never both}
 <section class="feature">
 <div class="feature-text">
 
-## Pragmatic quoting
+## Minimal quoting
 
 Of course you can have spaces, and special chars:
 
@@ -54,9 +54,9 @@ Of course you can have spaces, and special chars:
 one bare-scalar
 two "double-quoted"
 raw r#"raw quoted a-la Rust"#
-finally HEREDOCS<<
-    they work :)
-    HEREDOC
+finally <<HEREDOCS
+    they work!
+    HEREDOCS
 ```
 
 </div>
@@ -65,7 +65,7 @@ finally HEREDOCS<<
 <section class="feature">
 <div class="feature-text">
 
-## No implicit typing
+## Minimal typing
 
 Objects and sequences contain scalar key-values. Scalars are just opaque text at
 this stage.
@@ -74,14 +74,12 @@ this stage.
 <div class="feature-code">
 
 ```yaml
-# YAML:
 country: NO   # boolean false
 version: 3.10 # 3.1
 comment: "This is a string for sure"
 ```
 
 ```styx
-// Styx
 country NO   // opaque scalar "NO"
 version 3.10 // opaque scalar "3.10"
 comment "This is a string for sure" // nope, an opaque scalar
@@ -109,12 +107,12 @@ comment "This is a string for sure" // nope, an opaque scalar
 
 .layers-section .section-title {
   font-family: var(--font-heading);
-  font-size: 2.5rem;
+  font-size: 3.5rem;
   font-weight: 400;
   letter-spacing: -0.02em;
   text-transform: uppercase;
   color: #fff;
-  margin: 0 0 0.1rem 0;
+  margin: 0 0 -0.25rem 0;
   line-height: 1.1;
 }
 
@@ -123,7 +121,7 @@ comment "This is a string for sure" // nope, an opaque scalar
   font-size: 1.75rem;
   font-weight: 200;
   color: rgba(255,255,255,0.95);
-  margin: 0 0 1.25rem 0;
+  margin: 0 0 3.25rem 0;
 }
 
 .layers-section .section-desc {
@@ -145,6 +143,10 @@ comment "This is a string for sure" // nope, an opaque scalar
   text-transform: uppercase;
 }
 
+.feature {
+    margin: 4rem 0;
+}
+
 .feature-text h2 {
   font-family: var(--font-heading);
   font-weight: 400;
@@ -158,6 +160,11 @@ comment "This is a string for sure" // nope, an opaque scalar
   gap: 0;
   max-width: 650px;
   margin: 0 auto;
+}
+
+.layers-diagram .code-block {
+  min-width: 300px;
+  margin-bottom: 0;
 }
 
 .layer-box {
@@ -215,29 +222,29 @@ comment "This is a string for sure" // nope, an opaque scalar
   margin-top: 1.5rem;
 }
 
-.layers-diagram-horizontal .layer-box {
+.layers-diagram-horizontal .code-block {
   flex: 1;
-  max-width: none;
+  min-width: 280px;
+  margin-bottom: 0;
 }
 
 .layer-arrow-horizontal {
   display: flex;
   align-items: center;
-  padding: 0 0.5rem;
+  margin: 0 -0.5rem;
 }
 
-.layer-arrow-horizontal::before {
-  content: "↔";
-  font-size: 2rem;
-  color: rgba(255,255,255,0.8);
+.layer-arrow-horizontal .arrow-svg-h {
+  width: 80px;
+  height: 40px;
 }
 
 @media (max-width: 600px) {
   .layers-diagram-horizontal {
     flex-direction: column;
   }
-  .layer-arrow-horizontal::before {
-    content: "↕";
+  .layer-arrow-horizontal .arrow-svg-h {
+    transform: rotate(90deg);
   }
 }
 
@@ -245,23 +252,29 @@ comment "This is a string for sure" // nope, an opaque scalar
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0.4rem 0;
+  padding: 0.25rem 0;
 }
 
-.layer-arrow::before {
-  content: "";
-  width: 3px;
-  height: 18px;
-  background: rgba(255,255,255,0.8);
+.layer-arrow .arrow-svg {
+  width: 200px;
+  height: 105px;
 }
 
-.layer-arrow::after {
-  content: "";
+.layer-arrow .arrow-svg .arrow-label {
+  font-family: "Lato", sans-serif;
+  font-size: 10px;
+  font-weight: 400;
+  fill: rgba(255,255,255,0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  dominant-baseline: middle;
+}
+
+.svg-defs {
+  position: absolute;
   width: 0;
   height: 0;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-top: 10px solid rgba(255,255,255,0.8);
+  overflow: hidden;
 }
 
 .layers-section .section-desc a {
@@ -269,6 +282,17 @@ comment "This is a string for sure" // nope, an opaque scalar
   text-decoration: underline;
 }
 </style>
+
+<svg class="svg-defs" aria-hidden="true">
+  <defs>
+    <path id="arrow-line-top" d="M100 0 L100 30" stroke="rgba(255,255,255,0.9)" stroke-width="3" fill="none"/>
+    <path id="arrow-line-bottom" d="M100 62 L100 91" stroke="rgba(255,255,255,0.9)" stroke-width="3" fill="none"/>
+    <path id="arrow-head" d="M100 105 L89 86 Q100 91 111 86 Z" fill="rgba(255,255,255,0.9)"/>
+    <path id="arrow-head-left" d="M0 20 L19 9 Q14 20 19 31 Z" fill="rgba(255,255,255,0.9)"/>
+    <path id="arrow-head-right" d="M80 20 L61 9 Q66 20 61 31 Z" fill="rgba(255,255,255,0.9)"/>
+    <path id="arrow-line-h" d="M14 20 L66 20" stroke="rgba(255,255,255,0.9)" stroke-width="3" fill="none"/>
+  </defs>
+</svg>
 
 <div class="layers-section">
 <div class="section-header">
@@ -278,32 +302,36 @@ comment "This is a string for sure" // nope, an opaque scalar
 </div>
 
 <div class="layers-diagram">
-  <div class="layer-box">
-    <span class="layer-title">Styx source — opaque scalars</span>
 
 ```styx
+// input
 host localhost
 port 8080
 ```
 
-</div>
-
-  <div class="layer-arrow"></div>
-
-  <div class="layer-box">
-    <span class="layer-title">Schema — types & constraints</span>
+  <div class="layer-arrow">
+    <svg viewBox="0 0 200 105" class="arrow-svg">
+      <use href="#arrow-line-top"/>
+      <text x="100" y="46" text-anchor="middle" class="arrow-label">validated by</text>
+      <use href="#arrow-line-bottom"/>
+      <use href="#arrow-head"/>
+    </svg>
+  </div>
 
 ```styx
+// schema
 host @string
 port @int
 ```
 
-</div>
-
-  <div class="layer-arrow"></div>
-
-  <div class="layer-box">
-    <span class="layer-title">Rust struct, JS object, etc.</span>
+  <div class="layer-arrow">
+    <svg viewBox="0 0 200 105" class="arrow-svg">
+      <use href="#arrow-line-top"/>
+      <text x="100" y="46" text-anchor="middle" class="arrow-label">deserialized into</text>
+      <use href="#arrow-line-bottom"/>
+      <use href="#arrow-head"/>
+    </svg>
+  </div>
 
 ```rust
 Server {
@@ -312,7 +340,6 @@ Server {
 }
 ```
 
-</div>
 </div>
 </div>
 
@@ -373,8 +400,6 @@ const created = doc.created.asDateTime();
 </div>
 
 <div class="layers-diagram-horizontal">
-  <div class="layer-box">
-    <span class="layer-title">Durations</span>
 
 ```styx
 timeout 30s
@@ -383,12 +408,13 @@ poll 500ms
 ttl 7d
 ```
 
-</div>
-
-  <div class="layer-arrow-horizontal"></div>
-
-  <div class="layer-box">
-    <span class="layer-title">Typed</span>
+  <div class="layer-arrow-horizontal">
+    <svg viewBox="0 0 80 40" class="arrow-svg-h">
+      <use href="#arrow-head-left"/>
+      <use href="#arrow-line-h"/>
+      <use href="#arrow-head-right"/>
+    </svg>
+  </div>
 
 ```rust
 Duration::from_secs(30)
@@ -398,11 +424,8 @@ Duration::from_secs(604800)
 ```
 
 </div>
-</div>
 
 <div class="layers-diagram-horizontal">
-  <div class="layer-box">
-    <span class="layer-title">Integers</span>
 
 ```styx
 count 1_000_000
@@ -411,12 +434,13 @@ mask 0b1111_0000
 mode 0o755
 ```
 
-</div>
-
-  <div class="layer-arrow-horizontal"></div>
-
-  <div class="layer-box">
-    <span class="layer-title">Typed</span>
+  <div class="layer-arrow-horizontal">
+    <svg viewBox="0 0 80 40" class="arrow-svg-h">
+      <use href="#arrow-head-left"/>
+      <use href="#arrow-line-h"/>
+      <use href="#arrow-head-right"/>
+    </svg>
+  </div>
 
 ```rust
 1000000_i64
@@ -426,11 +450,8 @@ mode 0o755
 ```
 
 </div>
-</div>
 
 <div class="layers-diagram-horizontal">
-  <div class="layer-box">
-    <span class="layer-title">Floats</span>
 
 ```styx
 pi 3.141_592_653
@@ -439,12 +460,13 @@ small 1.5e-10
 max inf
 ```
 
-</div>
-
-  <div class="layer-arrow-horizontal"></div>
-
-  <div class="layer-box">
-    <span class="layer-title">Typed</span>
+  <div class="layer-arrow-horizontal">
+    <svg viewBox="0 0 80 40" class="arrow-svg-h">
+      <use href="#arrow-head-left"/>
+      <use href="#arrow-line-h"/>
+      <use href="#arrow-head-right"/>
+    </svg>
+  </div>
 
 ```rust
 3.141592653_f64
@@ -454,11 +476,8 @@ f64::INFINITY
 ```
 
 </div>
-</div>
 
 <div class="layers-diagram-horizontal">
-  <div class="layer-box">
-    <span class="layer-title">Dates & booleans</span>
 
 ```styx
 created 2024-03-15T14:30:00Z
@@ -466,12 +485,13 @@ enabled true
 debug false
 ```
 
-</div>
-
-  <div class="layer-arrow-horizontal"></div>
-
-  <div class="layer-box">
-    <span class="layer-title">Typed</span>
+  <div class="layer-arrow-horizontal">
+    <svg viewBox="0 0 80 40" class="arrow-svg-h">
+      <use href="#arrow-head-left"/>
+      <use href="#arrow-line-h"/>
+      <use href="#arrow-head-right"/>
+    </svg>
+  </div>
 
 ```rust
 DateTime(2024, 3, 15, 14, 30, 0, UTC)
@@ -543,7 +563,8 @@ Server @object {
 
 ## Love the schema
 
-With a Schema, you get a plain JavaScript object with real types — `number`, `string`, `Date`.
+Dynamically typed languages like JavaScript can get a fully-typed object 
+through the schema:
 
 </div>
 <div class="feature-code">
