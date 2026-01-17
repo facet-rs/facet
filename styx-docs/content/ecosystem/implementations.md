@@ -37,7 +37,7 @@ doc = parse('name "Alice"\nage 30')
 
 **Requirements:** Python 3.12+
 
-**Source:** [bindings/styx-py](https://github.com/bearcove/styx/tree/main/bindings/styx-py)
+**Source:** [implementations/styx-py](https://github.com/bearcove/styx/tree/main/implementations/styx-py)
 
 ## JavaScript / TypeScript
 
@@ -53,7 +53,7 @@ import { parse } from '@aspect/styx';
 const doc = parse('name "Alice"\nage 30');
 ```
 
-**Source:** [bindings/styx-js](https://github.com/bearcove/styx/tree/main/bindings/styx-js)
+**Source:** [implementations/styx-js](https://github.com/bearcove/styx/tree/main/implementations/styx-js)
 
 ## Compliance Testing
 

@@ -1,0 +1,49 @@
+{
+  "name": "@bearcove/styx",
+  "version": "0.1.0",
+  "description": "Styx configuration language parser for JavaScript/TypeScript",
+  "author": "Amos Wenger <amos@bearcove.eu>",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bearcove/styx.git",
+    "directory": "implementations/styx-js"
+  },
+  "homepage": "https://github.com/bearcove/styx/tree/main/implementations/styx-js",
+  "bugs": {
+    "url": "https://github.com/bearcove/styx/issues"
+  },
+  "keywords": [
+    "styx",
+    "config",
+    "configuration",
+    "parser",
+    "ast"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node dist/compliance.js ../../compliance/corpus | diff -u ../../compliance/golden.sexp - && echo '50/50 tests passed'",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.0.0"
+  }
+}
