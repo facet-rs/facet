@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+
+{% block title %}Playground - {{ config.title }}{% endblock title %}
+
+{% block head %}
+<style>
+.playground-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    height: calc(100vh - 200px);
+    min-height: 500px;
+    padding: 0 1rem 1rem;
+}
+
+.editor-pane, .output-pane {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border-color, #2a2a2a);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #1e1e1e;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.pane-header {
+    padding: 0.75rem 1rem;
+    background: linear-gradient(180deg, #2a2a2a 0%, #242424 100%);
+    border-bottom: 1px solid #333;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #999;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.pane-header span:first-child {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.pane-header span:first-child::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4ade80;
+}
+
+.output-pane .pane-header span:first-child::before {
+    background: #60a5fa;
+}
+
+.pane-content {
+    flex: 1;
+    overflow: auto;
+}
+
+#editor {
+    height: 100%;
+}
+
+#output {
+    height: 100%;
+    padding: 1rem;
+    font-family: 'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #d4d4d4;
+    background: #1e1e1e;
+}
+
+.diagnostics {
+    padding: 0.6rem 1rem;
+    background: linear-gradient(180deg, #3d1515 0%, #2d1010 100%);
+    border-top: 1px solid #5c2020;
+    font-size: 0.85rem;
+    font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+    color: #f87171;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.diagnostics:empty {
+    display: none;
+}
+
+.diagnostics.success {
+    background: linear-gradient(180deg, #14352a 0%, #0d261e 100%);
+    border-color: #166534;
+    color: #4ade80;
+}
+
+.diagnostic-item {
+    margin: 0.25rem 0;
+}
+
+.diagnostic-location {
+    color: #888;
+    margin-right: 0.5rem;
+    font-size: 0.8rem;
+}
+
+/* CodeMirror theme overrides */
+.cm-editor {
+    height: 100%;
+    font-size: 14px;
+    background: #1e1e1e;
+}
+
+.cm-scroller {
+    overflow: auto;
+}
+
+.cm-content {
+    font-family: 'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+}
+
+.cm-gutters {
+    background: #1e1e1e;
+    border-right: 1px solid #333;
+}
+
+.cm-activeLineGutter {
+    background: #2a2a2a;
+}
+
+.cm-activeLine {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+/* Loading state */
+.loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #666;
+    font-style: italic;
+}
+
+/* Scrollbar styling */
+.pane-content::-webkit-scrollbar,
+#output::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.pane-content::-webkit-scrollbar-track,
+#output::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.pane-content::-webkit-scrollbar-thumb,
+#output::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 4px;
+}
+
+.pane-content::-webkit-scrollbar-thumb:hover,
+#output::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+@media (max-width: 900px) {
+    .playground-container {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
+        height: calc(100vh - 150px);
+    }
+}
+</style>
+{% endblock head %}
+
+{% block content %}
+<h1>{{ page.title }}</h1>
+
+<div class="playground-container">
+    <div class="editor-pane">
+        <div class="pane-header">
+            <span>Styx</span>
+            <span id="status">Loading...</span>
+        </div>
+        <div class="pane-content">
+            <div id="editor"><div class="loading">Loading editor...</div></div>
+        </div>
+        <div id="diagnostics" class="diagnostics"></div>
+    </div>
+    
+    <div class="output-pane">
+        <div class="pane-header">
+            <span>JSON Output</span>
+        </div>
+        <div class="pane-content">
+            <pre id="output"></pre>
+        </div>
+    </div>
+</div>
+
+<script>
+// Set WASM URL before module loads (will be rewritten to cache-busted path)
+window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
+</script>
+<script type="module">
+// Import CodeMirror - pin @codemirror/state@6.5.2 across all packages to avoid duplicate instances
+import { EditorView, basicSetup } from 'https://esm.sh/codemirror@6.0.1?deps=@codemirror/state@6.5.2';
+import { EditorState } from 'https://esm.sh/@codemirror/state@6.5.2';
+import { oneDark } from 'https://esm.sh/@codemirror/theme-one-dark@6.1.2?deps=@codemirror/state@6.5.2';
+
+// Import Styx WASM
+import init, { to_json, parse, version } from '/wasm/styx_wasm.js';
+
+// Import arborium for syntax highlighting
+import { highlight } from 'https://esm.sh/@arborium/arborium@2';
+
+const DEFAULT_SOURCE = `// Welcome to the Styx Playground!
+// Edit this document and see the JSON output on the right.
+
+/// Server configuration
+server {
+    host localhost
+    port 8080
+    
+    tls {
+        enabled true
+        cert "/etc/ssl/cert.pem"
+        key "/etc/ssl/key.pem"
+    }
+}
+
+/// Database settings
+database {
+    url "postgres://localhost/myapp"
+    pool_size 10
+}
+
+/// Feature flags
+features (
+    dark-mode
+    notifications
+    @experimental analytics
+)
+`;
+
+let editor;
+let debounceTimer;
+
+async function main() {
+    // Initialize WASM
+    await init(window.STYX_WASM_URL);
+    
+    document.getElementById('status').textContent = `v${version()}`;
+    
+    // Create CodeMirror editor
+    const updateListener = EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+            // Debounce updates
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                updateOutput(update.state.doc.toString());
+            }, 150);
+        }
+    });
+    
+    editor = new EditorView({
+        state: EditorState.create({
+            doc: DEFAULT_SOURCE,
+            extensions: [
+                basicSetup,
+                oneDark,
+                updateListener,
+            ],
+        }),
+        parent: document.getElementById('editor'),
+    });
+    
+    // Clear loading state
+    document.getElementById('editor').querySelector('.loading')?.remove();
+    
+    // Initial render
+    updateOutput(DEFAULT_SOURCE);
+}
+
+async function updateOutput(source) {
+    const diagnosticsEl = document.getElementById('diagnostics');
+    const outputEl = document.getElementById('output');
+    
+    // Parse and get diagnostics
+    const parseResult = parse(source);
+    
+    // Convert to JSON
+    const jsonResult = to_json(source);
+
+    // Update diagnostics
+    if (parseResult.diagnostics && parseResult.diagnostics.length > 0) {
+        diagnosticsEl.classList.remove('success');
+        diagnosticsEl.innerHTML = parseResult.diagnostics.map(d => {
+            const loc = `${d.start}-${d.end}`;
+            return `<div class="diagnostic-item"><span class="diagnostic-location">[${loc}]</span>${escapeHtml(d.message)}</div>`;
+        }).join('');
+    } else {
+        diagnosticsEl.classList.add('success');
+        diagnosticsEl.innerHTML = '<div class="diagnostic-item">✓ No errors</div>';
+    }
+    
+    // Update JSON output
+    if (jsonResult.success) {
+        outputEl.innerHTML = await highlight('json', jsonResult.jsonString);
+    } else {
+        outputEl.innerHTML = `<span style="color: #f87171;">Error: ${escapeHtml(jsonResult.error || 'Unknown error')}</span>`;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+main().catch(err => {
+    console.error('Failed to initialize playground:', err);
+    document.getElementById('status').textContent = 'Error';
+    document.getElementById('output').textContent = `Failed to load: ${err.message}`;
+});
+</script>
+{% endblock content %}

@@ -1,0 +1,17 @@
+{
+  "name": "styx-wasm",
+  "type": "module",
+  "description": "WebAssembly bindings for Styx parser",
+  "version": "0.1.0",
+  "license": "MIT OR Apache-2.0",
+  "files": [
+    "styx_wasm_bg.wasm",
+    "styx_wasm.js",
+    "styx_wasm.d.ts"
+  ],
+  "main": "styx_wasm.js",
+  "types": "styx_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
