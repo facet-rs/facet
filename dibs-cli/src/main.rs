@@ -228,16 +228,32 @@ struct SchemaApp<'a> {
     schema: &'a dibs::Schema,
     table_state: ListState,
     selected_table: usize,
+    /// Which tables are expanded (showing columns)
+    expanded: Vec<bool>,
+    /// Current focus: left pane (tables) or right pane (details)
+    focus: Focus,
+    /// Selected item in details pane (for FK navigation)
+    detail_selection: usize,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Focus {
+    Tables,
+    Details,
 }
 
 impl<'a> SchemaApp<'a> {
     fn new(schema: &'a dibs::Schema) -> Self {
         let mut table_state = ListState::default();
         table_state.select(Some(0));
+        let expanded = vec![false; schema.tables.len()];
         Self {
             schema,
             table_state,
             selected_table: 0,
+            expanded,
+            focus: Focus::Tables,
+            detail_selection: 0,
         }
     }
 
@@ -249,12 +265,104 @@ impl<'a> SchemaApp<'a> {
                 if key.kind == KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                        KeyCode::Up | KeyCode::Char('k') => self.previous_table(),
-                        KeyCode::Down | KeyCode::Char('j') => self.next_table(),
+                        KeyCode::Up | KeyCode::Char('k') => self.move_up(),
+                        KeyCode::Down | KeyCode::Char('j') => self.move_down(),
+                        KeyCode::Left | KeyCode::Char('h') => self.focus_tables(),
+                        KeyCode::Right | KeyCode::Char('l') => self.focus_details(),
+                        KeyCode::Enter | KeyCode::Char(' ') => self.activate(),
+                        KeyCode::Tab => self.toggle_focus(),
                         _ => {}
                     }
                 }
             }
+        }
+    }
+
+    fn move_up(&mut self) {
+        match self.focus {
+            Focus::Tables => self.previous_table(),
+            Focus::Details => {
+                if self.detail_selection > 0 {
+                    self.detail_selection -= 1;
+                }
+            }
+        }
+    }
+
+    fn move_down(&mut self) {
+        match self.focus {
+            Focus::Tables => self.next_table(),
+            Focus::Details => {
+                let max = self.detail_item_count();
+                if self.detail_selection < max.saturating_sub(1) {
+                    self.detail_selection += 1;
+                }
+            }
+        }
+    }
+
+    fn focus_tables(&mut self) {
+        self.focus = Focus::Tables;
+    }
+
+    fn focus_details(&mut self) {
+        self.focus = Focus::Details;
+        self.detail_selection = 0;
+    }
+
+    fn toggle_focus(&mut self) {
+        self.focus = match self.focus {
+            Focus::Tables => Focus::Details,
+            Focus::Details => Focus::Tables,
+        };
+        if self.focus == Focus::Details {
+            self.detail_selection = 0;
+        }
+    }
+
+    fn activate(&mut self) {
+        match self.focus {
+            Focus::Tables => {
+                // Toggle expand/collapse
+                if let Some(expanded) = self.expanded.get_mut(self.selected_table) {
+                    *expanded = !*expanded;
+                }
+            }
+            Focus::Details => {
+                // Jump to FK target if on a FK row
+                if let Some(table) = self.schema.tables.get(self.selected_table) {
+                    let col_count = table.columns.len();
+                    // Detail items: columns first, then FKs
+                    if self.detail_selection >= col_count {
+                        let fk_idx = self.detail_selection - col_count;
+                        if let Some(fk) = table.foreign_keys.get(fk_idx) {
+                            // Find the target table
+                            if let Some(target_idx) = self
+                                .schema
+                                .tables
+                                .iter()
+                                .position(|t| t.name == fk.references_table)
+                            {
+                                self.selected_table = target_idx;
+                                self.table_state.select(Some(target_idx));
+                                self.focus = Focus::Tables;
+                                // Expand the target table
+                                if let Some(expanded) = self.expanded.get_mut(target_idx) {
+                                    *expanded = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn detail_item_count(&self) -> usize {
+        if let Some(table) = self.schema.tables.get(self.selected_table) {
+            table.columns.len() + table.foreign_keys.len()
+        } else {
+            0
         }
     }
 
@@ -264,6 +372,7 @@ impl<'a> SchemaApp<'a> {
         }
         self.selected_table = (self.selected_table + 1) % self.schema.tables.len();
         self.table_state.select(Some(self.selected_table));
+        self.detail_selection = 0;
     }
 
     fn previous_table(&mut self) {
@@ -275,35 +384,56 @@ impl<'a> SchemaApp<'a> {
             .checked_sub(1)
             .unwrap_or(self.schema.tables.len() - 1);
         self.table_state.select(Some(self.selected_table));
+        self.detail_selection = 0;
     }
 
     fn ui(&mut self, frame: &mut Frame) {
+        // Reserve 1 line at bottom for help bar
+        let main_area = Rect {
+            x: frame.area().x,
+            y: frame.area().y,
+            width: frame.area().width,
+            height: frame.area().height.saturating_sub(1),
+        };
+
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-            .split(frame.area());
+            .split(main_area);
 
-        // Left pane: table list
+        // Left pane: table list with expand/collapse icons
         let table_items: Vec<ListItem> = self
             .schema
             .tables
             .iter()
-            .map(|t| ListItem::new(format!("{} ({})", t.name, t.columns.len())))
+            .enumerate()
+            .map(|(i, t)| {
+                let expanded = self.expanded.get(i).copied().unwrap_or(false);
+                let icon = if expanded { "▼" } else { "▶" };
+                ListItem::new(format!("{} {} ({})", icon, t.name, t.columns.len()))
+            })
             .collect();
+
+        let tables_border_style = if self.focus == Focus::Tables {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
 
         let tables_list = List::new(table_items)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_style(tables_border_style)
                     .title(" Tables ")
                     .title_style(Style::default().fg(Color::Cyan).bold()),
             )
             .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White).bold())
-            .highlight_symbol("▶ ");
+            .highlight_symbol("› ");
 
         frame.render_stateful_widget(tables_list, chunks[0], &mut self.table_state);
 
-        // Right pane: selected table details
+        // Right pane: selected table details with selectable items
         if let Some(table) = self.schema.tables.get(self.selected_table) {
             let mut lines = vec![
                 Line::from(vec![
@@ -317,10 +447,20 @@ impl<'a> SchemaApp<'a> {
                 )),
             ];
 
-            for col in &table.columns {
+            for (i, col) in table.columns.iter().enumerate() {
+                let is_selected = self.focus == Focus::Details && self.detail_selection == i;
+                let prefix = if is_selected { "› " } else { "  " };
+
                 let mut spans = vec![
-                    Span::raw("  "),
-                    Span::styled(&col.name, Style::default().fg(Color::White)),
+                    Span::raw(prefix),
+                    Span::styled(
+                        &col.name,
+                        if is_selected {
+                            Style::default().fg(Color::White).bold()
+                        } else {
+                            Style::default().fg(Color::White)
+                        },
+                    ),
                     Span::raw(": "),
                     Span::styled(col.pg_type.to_string(), Style::default().fg(Color::Blue)),
                 ];
@@ -345,34 +485,64 @@ impl<'a> SchemaApp<'a> {
                     ));
                 }
 
-                lines.push(Line::from(spans));
+                let mut line = Line::from(spans);
+                if is_selected {
+                    line = line.style(Style::default().bg(Color::DarkGray));
+                }
+                lines.push(line);
             }
 
             if !table.foreign_keys.is_empty() {
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    "Foreign Keys:",
+                    "Foreign Keys: (Enter to jump)",
                     Style::default().fg(Color::Green).bold(),
                 )));
 
-                for fk in &table.foreign_keys {
-                    lines.push(Line::from(vec![
-                        Span::raw("  "),
-                        Span::styled(fk.columns.join(", "), Style::default().fg(Color::White)),
-                        Span::styled(" -> ", Style::default().fg(Color::Gray)),
-                        Span::styled(&fk.references_table, Style::default().fg(Color::Cyan)),
+                let col_count = table.columns.len();
+                for (i, fk) in table.foreign_keys.iter().enumerate() {
+                    let is_selected =
+                        self.focus == Focus::Details && self.detail_selection == col_count + i;
+                    let prefix = if is_selected { "› " } else { "  " };
+
+                    let mut line = Line::from(vec![
+                        Span::raw(prefix),
+                        Span::styled(
+                            fk.columns.join(", "),
+                            if is_selected {
+                                Style::default().fg(Color::White).bold()
+                            } else {
+                                Style::default().fg(Color::White)
+                            },
+                        ),
+                        Span::styled(" → ", Style::default().fg(Color::Gray)),
+                        Span::styled(
+                            &fk.references_table,
+                            Style::default().fg(Color::Cyan).underlined(),
+                        ),
                         Span::raw("."),
                         Span::styled(
                             fk.references_columns.join(", "),
                             Style::default().fg(Color::White),
                         ),
-                    ]));
+                    ]);
+                    if is_selected {
+                        line = line.style(Style::default().bg(Color::DarkGray));
+                    }
+                    lines.push(line);
                 }
             }
+
+            let details_border_style = if self.focus == Focus::Details {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
 
             let details = Paragraph::new(lines).block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_style(details_border_style)
                     .title(" Details ")
                     .title_style(Style::default().fg(Color::Cyan).bold()),
             );
@@ -382,16 +552,17 @@ impl<'a> SchemaApp<'a> {
 
         // Help bar at the bottom
         let help = Paragraph::new(Line::from(vec![
-            Span::styled(" j/↓ ", Style::default().fg(Color::Yellow)),
-            Span::raw("down  "),
-            Span::styled(" k/↑ ", Style::default().fg(Color::Yellow)),
-            Span::raw("up  "),
-            Span::styled(" q/Esc ", Style::default().fg(Color::Yellow)),
+            Span::styled(" j/k ", Style::default().fg(Color::Yellow)),
+            Span::raw("nav  "),
+            Span::styled(" Tab/h/l ", Style::default().fg(Color::Yellow)),
+            Span::raw("switch pane  "),
+            Span::styled(" Enter ", Style::default().fg(Color::Yellow)),
+            Span::raw("expand/jump  "),
+            Span::styled(" q ", Style::default().fg(Color::Yellow)),
             Span::raw("quit"),
         ]))
         .style(Style::default().bg(Color::DarkGray));
 
-        // Create a small area at the bottom for the help bar
         let help_area = Rect {
             x: 0,
             y: frame.area().height.saturating_sub(1),
