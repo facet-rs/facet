@@ -9,15 +9,22 @@ insert_anchor_links = "heading"
 </div>
 
 ```styx
-server {
-  host localhost
-  port 8080
+styx is
+a (fun document language) // with comments
+
+/// and doc comments
+supporting {
+    key-value pairs
+    untyped scalars // (until deserialization)
 }
 
-routes (
-  @redirect{from /old, to /new}
-  @proxy{path /api, upstream localhost:9000}
-)
+you-may @tag(any thing you want) // good for enums
+quote "anything you want"
+raw-quote r#"to "get meta" if you wish"#
+
+and-if-needed <<HEREDOCS
+are here to save the day
+HEREDOCS
 ```
 
 <div class="features">
