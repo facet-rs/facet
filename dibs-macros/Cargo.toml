@@ -1,0 +1,16 @@
+[package]
+name = "dibs-macros"
+version = "0.1.0"
+edition = "2024"
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+description = "Proc macros for dibs"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/dibs"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+unsynn = { version = "0.3", features = ["proc_macro2"] }
+proc-macro2 = "1"
+quote = "1"

@@ -1,0 +1,17 @@
+[package]
+name = "dibs"
+version = "0.1.0"
+edition = "2024"
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+description = "Postgres toolkit for Rust, powered by facet reflection"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/dibs"
+keywords = ["postgres", "database", "migrations", "facet"]
+categories = ["database"]
+
+[dependencies]
+tokio-postgres = "0.7"
+inventory = "0.3"
+thiserror = "2"
+facet = { path = "/Users/amos/bearcove/facet/facet" }
+dibs-macros = { path = "../dibs-macros" }

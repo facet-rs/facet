@@ -1,0 +1,19 @@
+[package]
+name = "dibs-cli"
+version = "0.1.0"
+edition = "2024"
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+description = "CLI for dibs - Postgres toolkit for Rust"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/dibs"
+
+[[bin]]
+name = "dibs"
+path = "src/main.rs"
+
+[dependencies]
+dibs = { path = "../dibs" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+facet = { path = "/Users/amos/bearcove/facet/facet" }
+facet-args = { path = "/Users/amos/bearcove/facet/facet-args" }
+jiff = "0.2"
