@@ -25,15 +25,15 @@ routes (
 <section class="feature">
 <div class="feature-text">
 <h2>No quotes required</h2>
-<p>URLs, paths, numbers, identifiers — just type them. Quotes only when you need escapes or spaces.</p>
+<p>Hostnames, paths, numbers — just type them. Quotes when you need spaces or special chars like <code>=</code>.</p>
 </div>
 <div class="feature-code">
 
 ```styx
 host localhost
 port 8080
-url https://example.com/api?q=1
 path /etc/nginx/nginx.conf
+url "https://example.com/api?q=1"
 ```
 
 </div>
