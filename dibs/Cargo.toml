@@ -13,5 +13,5 @@ categories = ["database"]
 tokio-postgres = "0.7"
 inventory = "0.3"
 thiserror = "2"
-facet = { path = "/Users/amos/bearcove/facet/facet" }
+facet = { git = "https://github.com/facet-rs/facet" }
 dibs-macros = { path = "../dibs-macros" }
