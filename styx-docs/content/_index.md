@@ -60,6 +60,175 @@ comment "This is a string for sure" // nope, an opaque scalar
 </div>
 </section>
 
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=Lato:wght@200&display=swap');
+
+.layers-section {
+  background: #dc143c;
+  margin: 4rem 0;
+  margin-left: calc(-50vw + 50%);
+  margin-right: calc(-50vw + 50%);
+  padding: 4rem 2rem;
+}
+
+.layers-section .section-header {
+  text-align: center;
+  margin-bottom: 2.5rem;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.layers-section .section-title {
+  font-family: "Archivo Black", sans-serif;
+  font-size: 2.5rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  color: #fff;
+  margin: 0 0 0.1rem 0;
+  line-height: 1.1;
+}
+
+.layers-section .section-subtitle {
+  font-family: "Lato", sans-serif;
+  font-size: 1.75rem;
+  font-weight: 200;
+  color: rgba(255,255,255,0.95);
+  margin: 0 0 1.25rem 0;
+}
+
+.layers-section .section-desc {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: rgba(255,255,255,0.8);
+  margin: 0;
+}
+
+.layers-section .section-desc em {
+  color: #fff;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.layers-diagram {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  max-width: 650px;
+  margin: 0 auto;
+}
+
+.layer-box {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-width: 400px;
+  width: 100%;
+  overflow: hidden;
+}
+
+.layer-box .layer-title {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+}
+
+.layer-box pre {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.layer-box code {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  background: none;
+  border: none;
+  padding: 0;
+  white-space: pre;
+}
+
+.layer-arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.4rem 0;
+}
+
+.layer-arrow::before {
+  content: "";
+  width: 3px;
+  height: 18px;
+  background: rgba(255,255,255,0.8);
+}
+
+.layer-arrow::after {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 10px solid rgba(255,255,255,0.8);
+}
+
+</style>
+
+<div class="layers-section">
+<div class="section-header">
+<p class="section-title">Get those types out of your document</p>
+<p class="section-subtitle">and into your schema.</p>
+<p class="section-desc">Styx schemas aren't just for objects and arrays — they're for <em>every scalar</em>.</p>
+</div>
+
+<div class="layers-diagram">
+  <div class="layer-box">
+    <span class="layer-title">Styx source — opaque scalars</span>
+
+```styx
+host localhost
+port 8080
+```
+
+</div>
+
+  <div class="layer-arrow"></div>
+
+  <div class="layer-box">
+    <span class="layer-title">Schema — types & constraints</span>
+
+```styx
+host @string
+port @int
+```
+
+</div>
+
+  <div class="layer-arrow"></div>
+
+  <div class="layer-box">
+    <span class="layer-title">Rust struct, JS object, etc.</span>
+
+```rust
+Server {
+    host: "localhost",
+    port: 8080,
+}
+```
+
+</div>
+</div>
+</div>
+
 <section class="feature">
 <div class="feature-text">
 
@@ -136,7 +305,7 @@ if !result.is_valid() {
 
 ## JavaScript and beyond
 
-Parse Styx in the browser or Node.js. Get a typed tree you can walk, transform, or validate against a schema.
+Parse Styx in the browser or Node.js. With a schema, you get a plain JavaScript object with real types — `number`, `string`, `Date`, not just opaque scalars.
 
 </div>
 <div class="feature-code">
@@ -144,13 +313,11 @@ Parse Styx in the browser or Node.js. Get a typed tree you can walk, transform, 
 ```typescript
 import { parse } from "@bearcove/styx";
 
-const doc = parse(`server { host localhost port 8080 }`);
+const config = parse(input, schema);
 
-for (const entry of doc.entries) {
-    if (entry.value.payload?.type === "object") {
-        // walk the tree
-    }
-}
+// config.server.port is a number
+// config.server.host is a string
+// config.createdAt is a Date
 ```
 
 </div>

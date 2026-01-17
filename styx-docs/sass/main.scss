@@ -572,7 +572,7 @@ article p:has(> img[src*="/grammar/"]) {
 
 // Feature sections
 .features {
-  margin: 4rem 0;
+  margin: 6rem 0;
   display: flex;
   flex-direction: column;
   gap: 3rem;
@@ -612,8 +612,12 @@ article p:has(> img[src*="/grammar/"]) {
 
   p {
     color: var(--text-muted);
-    margin: 0;
+    margin: 0 0 0.75rem 0;
     line-height: 1.6;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
   }
 }
 
