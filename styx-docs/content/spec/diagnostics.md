@@ -10,7 +10,7 @@ diagnostics are essential for a human-authored format.
 
 ## Diagnostic format
 
-STYX implementations SHOULD emit diagnostics in the following format:
+Styx implementations SHOULD emit diagnostics in the following format:
 
 ```
 level: message

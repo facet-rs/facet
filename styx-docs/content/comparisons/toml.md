@@ -5,7 +5,7 @@ slug = "toml"
 insert_anchor_links = "heading"
 +++
 
-TOML is popular for Rust project configuration (Cargo.toml). STYX offers
+TOML is popular for Rust project configuration (Cargo.toml). Styx offers
 different trade-offs for deeply nested structures.
 
 ## Simple object
@@ -74,7 +74,7 @@ point = { x = 1, y = 2 }
 point {x 1, y 2}
 ```
 
-TOML 1.1 allows multi-line inline tables with trailing commas. STYX comma-separated objects must be single-line.
+TOML 1.1 allows multi-line inline tables with trailing commas. Styx comma-separated objects must be single-line.
 
 ## Reopening sections
 
@@ -98,4 +98,4 @@ database {
 }
 ```
 
-TOML allows reopening sections. In STYX, each key appears exactly once.
+TOML allows reopening sections. In Styx, each key appears exactly once.

@@ -5,7 +5,7 @@ slug = "json"
 insert_anchor_links = "heading"
 +++
 
-JSON is the lingua franca of data interchange. STYX is designed for human authoring,
+JSON is the lingua franca of data interchange. Styx is designed for human authoring,
 not machine interchange, which leads to different trade-offs.
 
 ## Simple object
@@ -98,7 +98,7 @@ count 42
 label 42
 ```
 
-In STYX, both are the scalar `42`. The deserializer interprets based on target type.
+In Styx, both are the scalar `42`. The deserializer interprets based on target type.
 
 ## Attribute syntax
 

@@ -5,7 +5,7 @@ slug = "parser"
 insert_anchor_links = "heading"
 +++
 
-The parser converts STYX source text into a document tree.
+The parser converts Styx source text into a document tree.
 
 ## Comments
 
@@ -324,7 +324,7 @@ Attribute syntax is shorthand for inline object entries.
 
 ## Document structure
 
-A STYX document is an object. Top-level entries do not require braces.
+A Styx document is an object. Top-level entries do not require braces.
 
 > r[document.root]
 > The parser MUST interpret top-level entries as entries of an implicit root object.
@@ -348,9 +348,9 @@ A STYX document is an object. Top-level entries do not require braces.
 > }
 > ```
 
-## Appendix: Minified STYX
+## Appendix: Minified Styx
 
-STYX can be written on a single line using commas and explicit braces:
+Styx can be written on a single line using commas and explicit braces:
 
 ```styx
 {server{host localhost,port 8080},database{url "postgres://..."}}
@@ -369,9 +369,9 @@ database {
 }
 ```
 
-This enables NDSTYX (newline-delimited STYX) for streaming:
+This enables NDStyx (newline-delimited Styx) for streaming:
 
-```
+```styx
 {event login,user alice,time 2026-01-12T10:00:00Z}
 {event logout,user alice,time 2026-01-12T10:30:00Z}
 ```

@@ -18,7 +18,7 @@ Imagine JSON
 ```
 
 But you remove everything that's getting in the way: the double quotes, the
-the colon, even the comma:
+colon, even the comma:
 
 ```styx
 {
@@ -75,7 +75,7 @@ In static typing flavor, you may for example deserialize to:
 #[derive(Facet)]
 struct Does {
     name: String,
-    age: number,
+    age: u32,
     retired: bool,
 }
 ```
@@ -146,7 +146,7 @@ sparse_seq (1 2 @ 8 9)
 And in fact, wanna know a secret? `@` is not even the canonical form
 of unit: `@@` is.
 
-An empty tag degenerates to `@`, and a tag without a paylod defaults to
+An empty tag degenerates to `@`, and a tag without a payload defaults to
 a payload of `@`.
 
 Therefore:
@@ -171,7 +171,7 @@ Spaces separate seq elements or key-value pairs in object context:
 @tag()      // key(tag=tag, payload=()) value(tag=@, payload=@)
 ```
 
-Does it confusing? Maybe. Little bit.
+Does it get confusing? Maybe. Little bit.
 
 ## Styx the objective
 
@@ -209,7 +209,7 @@ one last bit of nesting? As a treat? You can use object attribute syntax:
 }
 ```
 
-And that's /it/ with the weirdness. (Don't worry, there are comprehensive
+And that's _it_ with the weirdness. (Don't worry, there are comprehensive
 specifications and test suites).
 
 Some unfamiliar bits, but hopefully not too many, which lets us...
@@ -299,5 +299,5 @@ Styx has first-class support for [Zed](https://zed.dev) with syntax highlighting
 - [Parser Spec](/spec/parser) — Formal syntax rules
 - [Schema Spec](/spec/schema) — Type system and validation
 - [Diagnostics](/spec/diagnostics) — Error message standards
-- [Rust Bindings](/bindings/rust) — How Rust types map to STYX
+- [Rust Bindings](/bindings/rust) — How Rust types map to Styx
 - [Comparisons](/comparisons) — vs JSON, YAML, TOML, KDL

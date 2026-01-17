@@ -75,7 +75,7 @@ Styx is a configuration language with schema support, comments, and flexible syn
 // Key-value pairs
 name "My Config"
 port 8080
-enabled @true
+enabled true
 
 // Nested objects (newline or comma separated)
 server {
@@ -174,8 +174,8 @@ routes (
 Tags start with `@` and optionally have a payload:
 
 ```styx
-// Unit tag (no payload) - shorthand for @true@
-enabled @true
+// Unit tag (no payload)
+status @ok
 
 // Tag with object payload
 error @error{code 500, message "Internal error"}
@@ -190,7 +190,7 @@ message @warn"Deprecated feature"
 nothing @
 ```
 
-**Common built-in tags**: `@true`, `@false`, `@none`, `@some(...)`.
+There are no built-in tags — tags are user-defined for your domain (e.g., `@ok`, `@err{...}`, `@rgb(...)`).
 
 ## Unit Value
 
@@ -267,7 +267,7 @@ schema {
 | `@string` | Any scalar value |
 | `@int` | Integer with optional `{min N, max N}` |
 | `@float` | Float with optional `{min N, max N}` |
-| `@bool` | `@true` or `@false` |
+| `@bool` | `true` or `false` |
 | `@unit` | The unit value `@` |
 | `@any` | Any value |
 | `@optional(@T)` | Field may be absent |
@@ -400,8 +400,8 @@ value null
 ```
 **Right**: Use tags for booleans and unit:
 ```styx
-enabled @true
-value @none
+enabled true
+value @
 nothing @
 ```
 

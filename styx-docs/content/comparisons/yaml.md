@@ -5,7 +5,7 @@ slug = "yaml"
 insert_anchor_links = "heading"
 +++
 
-YAML is the most common human-authored configuration format. STYX addresses several
+YAML is the most common human-authored configuration format. Styx addresses several
 YAML pain points while preserving readability.
 
 ## Simple object
@@ -77,7 +77,7 @@ countries:
 countries (GB NO IE)
 ```
 
-In STYX, `NO` is always the text `NO`. The deserializer interprets based on target type.
+In Styx, `NO` is always the text `NO`. The deserializer interprets based on target type.
 
 ## Kubernetes-style config
 
@@ -128,7 +128,7 @@ server {
 }
 ```
 
-YAML's indentation can cause subtle bugs. STYX structure is always explicit.
+YAML's indentation can cause subtle bugs. Styx structure is always explicit.
 
 ## Anchors and aliases
 
@@ -152,4 +152,4 @@ production {
 }
 ```
 
-STYX does not support references. Use application-level merging instead.
+Styx does not support references. Use application-level merging instead.

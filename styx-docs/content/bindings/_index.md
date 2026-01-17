@@ -5,4 +5,4 @@ sort_by = "weight"
 insert_anchor_links = "heading"
 +++
 
-Language bindings for STYX.
+Language bindings for Styx.

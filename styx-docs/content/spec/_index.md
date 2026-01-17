@@ -5,7 +5,7 @@ sort_by = "weight"
 insert_anchor_links = "heading"
 +++
 
-The normative STYX specification.
+The normative Styx specification.
 
 - [Parser](parser) — Syntax rules and document structure
 - [Schema](schema) — Type system and validation

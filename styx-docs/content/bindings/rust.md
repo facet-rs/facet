@@ -5,11 +5,11 @@ slug = "rust"
 insert_anchor_links = "heading"
 +++
 
-How Rust types map to STYX syntax. Examples use [facet](https://github.com/facet-rs/facet) derives.
+How Rust types map to Styx syntax. Examples use [facet](https://github.com/facet-rs/facet) derives.
 
 ## Implicit root object
 
-STYX documents are implicitly objects. When parsing, the top-level content is wrapped in an implicit root object. This means you cannot parse a bare tagged value directly into an enum — you need a wrapper struct.
+Styx documents are implicitly objects. When parsing, the top-level content is wrapped in an implicit root object. This means you cannot parse a bare tagged value directly into an enum — you need a wrapper struct.
 
 ```compare
 /// rust

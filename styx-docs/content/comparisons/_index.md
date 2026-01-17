@@ -5,7 +5,7 @@ sort_by = "weight"
 insert_anchor_links = "heading"
 +++
 
-How STYX compares to other configuration formats.
+How Styx compares to other configuration formats.
 
 - [JSON](/comparisons/json) — the lingua franca of data interchange
 - [YAML](/comparisons/yaml) — the most common human-authored config format

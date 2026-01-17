@@ -5,7 +5,7 @@ slug = "grammar"
 insert_anchor_links = "heading"
 +++
 
-Visual grammar reference for STYX. See [Parser](@/spec/parser.md) for normative rules.
+Visual grammar reference for Styx. See [Parser](@/spec/parser.md) for normative rules.
 
 **Document:**
 

@@ -5,7 +5,7 @@ slug = "k8s"
 insert_anchor_links = "heading"
 +++
 
-A Kubernetes Deployment in YAML vs STYX.
+A Kubernetes Deployment in YAML vs Styx.
 
 ```compare
 /// yaml

@@ -5,13 +5,13 @@ slug = "schema"
 insert_anchor_links = "heading"
 +++
 
-Schemas define the expected structure of STYX documents for validation purposes.
+Schemas define the expected structure of Styx documents for validation purposes.
 They are optional — deserialization works with target types directly (e.g., Rust structs).
 Schemas are useful for text editors, CLI tools, and documentation.
 
-## Why STYX works for schemas
+## Why Styx works for schemas
 
-STYX schemas are themselves STYX documents. This works because of tags and implicit unit:
+Styx schemas are themselves Styx documents. This works because of tags and implicit unit:
 
 - A tag like `@string` is shorthand for `@string@` — a tag with unit payload
 - In schema context, tags name types: `@string`, `@u64`, `@MyCustomType`
@@ -31,7 +31,7 @@ The `@union(@u64 @string)` is:
 - The payload is a sequence of two tagged unit values
 - Semantically: "id must match @u64 or @string"
 
-This uniformity means schemas require no special syntax — just STYX with semantic interpretation of tags as types.
+This uniformity means schemas require no special syntax — just Styx with semantic interpretation of tags as types.
 
 In schema definitions, the unit value `@` (not a tag) is used as a wildcard meaning "any type reference" —
 that is, any tagged unit value like `@string` or `@MyType`.
@@ -136,7 +136,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > host @string     // type: must be a string
 > ```
 >
-> Since unit payloads are implicit, `@u32` is shorthand for `@u32@` — which makes STYX schemas valid STYX.
+> Since unit payloads are implicit, `@u32` is shorthand for `@u32@` — which makes Styx schemas valid Styx.
 
 > r[schema.literal]
 > A scalar denotes a literal value constraint. The unit value `@` is also a literal constraint.
@@ -349,7 +349,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > Valid key types are scalar types that can be parsed from the key's text representation:
 > `@string`, `@int`, and `@bool`.
 > Non-scalar key types (objects, sequences) are not allowed.
-> Key uniqueness is determined by the parsed key value per `r[key.equality]` in the parser spec,
+> Key uniqueness is determined by the parsed key value per `r[entry.key-equality]` in the parser spec,
 > not by the typed interpretation — `"1"` and `"01"` are distinct keys even if both parse as integer 1.
 
 ## Named types
@@ -448,19 +448,19 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ## Meta schema
 
-The schema for STYX schema files.
+The schema for Styx schema files.
 
 > r[schema.meta.wildcard]
 > In the meta schema, the unit value `@` is used as a wildcard meaning "any type reference" —
 > that is, any tagged unit value like `@string` or `@MyType`.
 > This is a semantic convention for the meta schema; it leverages the fact that `@` (unit) is a valid
-> STYX value, and in schema context represents "match any type tag here".
+> Styx value, and in schema context represents "match any type tag here".
 
 ```styx
 meta {
   id https://styx-lang.org/schemas/schema
   version 2026-01-16
-  description "Schema for STYX schema files"
+  description "Schema for Styx schema files"
 }
 
 schema {
