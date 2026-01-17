@@ -1,0 +1,5 @@
+// Sequence in key position creates nested path
+(a b) value
+(server host) localhost
+(selector matchLabels) app>web
+(a b c) deep

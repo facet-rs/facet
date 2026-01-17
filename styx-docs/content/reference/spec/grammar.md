@@ -20,7 +20,7 @@ Document ::= Entry*
 ![Entry](/grammar/Entry.svg)
 
 ```
-Entry    ::= DocComment? Atom+
+Entry    ::= DocComment? Key Value?
 ```
 
 referenced by:
@@ -28,6 +28,38 @@ referenced by:
 * CommaSeparated
 * Document
 * NewlineSeparated
+
+**Key:**
+
+![Key](/grammar/Key.svg)
+
+```
+Key      ::= Scalar
+           | Sequence
+           | '@'
+           | Tag
+```
+
+referenced by:
+
+* Entry
+
+**Value:**
+
+![Value](/grammar/Value.svg)
+
+```
+Value    ::= Scalar
+           | Sequence
+           | Object
+           | '@'
+           | Tag
+           | Attributes
+```
+
+referenced by:
+
+* Entry
 
 **DocComment:**
 
@@ -57,7 +89,6 @@ Atom     ::= Scalar
 
 referenced by:
 
-* Entry
 * Sequence
 
 **Scalar:**
@@ -74,6 +105,8 @@ Scalar   ::= BareScalar
 referenced by:
 
 * Atom
+* Key
+* Value
 
 **BareScalar:**
 
@@ -233,6 +266,8 @@ Tag      ::= '@' TagName TagPayload?
 referenced by:
 
 * Atom
+* Key
+* Value
 
 **TagName:**
 
@@ -276,7 +311,9 @@ referenced by:
 
 * Atom
 * AttributeValue
+* Key
 * TagPayload
+* Value
 
 **Object:**
 
@@ -291,6 +328,7 @@ referenced by:
 * Atom
 * AttributeValue
 * TagPayload
+* Value
 
 **ObjectBody:**
 
@@ -345,6 +383,7 @@ Attributes
 referenced by:
 
 * Atom
+* Value
 
 **Attribute:**
 

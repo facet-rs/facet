@@ -185,40 +185,42 @@ Objects are ordered collections of entries.
 
 ### Entries
 
-An **entry** is a sequence of one or more atoms. The parser interprets entries structurally:
+An **entry** consists of a key and an optional value.
 
 > r[entry.structure]
-> An entry consists of one or more atoms:
+> An entry has exactly one key and at most one value:
 >
 > - **1 atom**: the atom is the key, the value is implicit unit (`@`)
-> - **N atoms** (N ≥ 2): first N-1 atoms form a nested key path, last atom is the value
+> - **2 atoms**: first is key, second is value
 >
 > ```styx
 > enabled                  // enabled = @
-> host localhost           // host = localhost (path length 1)
-> server host localhost    // server {host localhost}
-> server host port 8080    // server {host {port 8080}}
+> host localhost           // host = localhost
+> type @string             // type = @string
+> config @object{}         // config = @object{}
 > ```
 
-> r[entry.keypath]
-> When an entry has more than two atoms, the first N-1 atoms are keys forming a nested object path.
-> The final atom is the value at the innermost level.
+> r[entry.toomany]
+> An entry with more than two atoms is a parse error.
 >
-> ```compare
-> /// styx
-> // Key path
-> selector matchLabels app web
-> /// styx
-> // Canonical
-> selector {
->   matchLabels {
->     app web
->   }
-> }
+> ```styx,bad
+> key @tag {}              // ERROR: 3 atoms
+> a b c                    // ERROR: 3 atoms
+> ```
+>
+> A common mistake is putting whitespace between a tag and its payload.
+> The error message SHOULD suggest removing the space:
+>
+> ```
+> key @tag {}
+>
+> Error: unexpected `{` after value
+>
+> Hint: did you mean `@tag{}`? Whitespace is not allowed between a tag and its payload.
 > ```
 
 > r[entry.keys]
-> A key may be any value, tagged or not, except objects, sequences, and heredocs.
+> A key may be a scalar, unit, tag, or sequence. Objects and heredocs are not valid keys.
 >
 > ```styx
 > // Valid keys:
@@ -232,12 +234,36 @@ An **entry** is a sequence of one or more atoms. The parser interprets entries s
 > ```styx,bad
 > // Invalid keys:
 > {a 1} value               // object as key
-> (1 2 3) value             // sequence as key
 > <<EOF                     // heredoc as key
 > text
 > EOF
 > value
 > ```
+
+> r[entry.path]
+> A sequence in key position defines a nested path. Each element of the sequence
+> is a key in a nested object chain. The value is placed at the innermost level.
+>
+> ```compare
+> /// styx
+> // Path syntax
+> (selector matchLabels) app>web
+> /// styx
+> // Canonical
+> selector {
+>   matchLabels {
+>     app web
+>   }
+> }
+> ```
+>
+> ```styx
+> (a b c) value            // a { b { c value } }
+> (server host) localhost  // server { host localhost }
+> ```
+>
+> Path elements follow the same rules as keys: scalars, unit, or tags are allowed.
+> Objects, sequences, and heredocs are not valid path elements.
 
 > r[entry.key-equality]
 > To detect duplicate keys, the parser MUST compare keys by their parsed value:
@@ -304,15 +330,13 @@ Attribute syntax is shorthand for inline object entries.
 > {host localhost, port 8080}
 > ```
 
-> r[entry.keypath.attributes]
-> Key paths compose naturally with attribute syntax.
-> Attributes MUST appear at the end of the entry, as the final value.
-> Attributes cannot appear in the middle of a key path.
+> r[entry.path.attributes]
+> Paths compose naturally with attribute syntax.
 >
 > ```compare
 > /// styx
-> // Key path with attributes at end (valid)
-> spec selector matchLabels app>web tier>frontend
+> // Path with attributes as value
+> (spec selector matchLabels) app>web tier>frontend
 > /// styx
 > // Canonical
 > spec {

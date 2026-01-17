@@ -1,4 +1,4 @@
-@schema file:./tools.schema.styx
+@schema tools.schema.styx
+
 host fasterthanli.me
 port 2357888
-

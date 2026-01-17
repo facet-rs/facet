@@ -619,13 +619,24 @@ struct Config {
 
 ```styx
 /// Server configuration.
-Config @object {
+Config @object{
   /// Hostname to bind to.
   host @string
   /// Port number (1-65535).
   port @int{ min 0, max 65535 }
 }
 ```
+
+  <div class="layer-arrow">
+    <svg viewBox="0 0 200 105" class="arrow-svg">
+      <use href="#arrow-line-top"/>
+      <text x="100" y="46" text-anchor="middle" class="arrow-label">powers</text>
+      <use href="#arrow-line-bottom"/>
+      <use href="#arrow-head"/>
+    </svg>
+  </div>
+
+<img src="/tooling-screenshot.png" alt="Editor showing hover documentation and autocomplete" class="tooling-screenshot" />
 
 </div>
 </div>

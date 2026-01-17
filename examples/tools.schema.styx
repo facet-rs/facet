@@ -5,4 +5,3 @@ Config @object{
     /// Port number (1-65535).
     port @int{min 0, max 65535}
 }
-

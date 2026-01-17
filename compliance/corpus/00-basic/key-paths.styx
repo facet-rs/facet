@@ -1,6 +1,0 @@
-// Key paths: multiple keys before the value create nested objects
-// Each entry here is independent (different top-level keys)
-server host
-database host
-cache host
-
