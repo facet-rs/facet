@@ -1,0 +1,6 @@
+// Attributes inside objects
+config {
+    server host>localhost
+    database host>db.local
+}
+

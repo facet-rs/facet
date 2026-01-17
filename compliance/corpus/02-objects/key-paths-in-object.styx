@@ -1,0 +1,7 @@
+// Key paths work inside objects too
+config {
+    server host
+    database host
+    cache host
+}
+

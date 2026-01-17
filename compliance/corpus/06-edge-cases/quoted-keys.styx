@@ -1,0 +1,4 @@
+// Quoted strings can be used as keys
+"key with spaces" value
+"123" numeric-looking-key
+"" empty-key

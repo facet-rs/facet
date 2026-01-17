@@ -1,0 +1,5 @@
+// @ is allowed in the middle of bare scalars (just not at start)
+email user@example.com
+crate myapp@2.0.0
+version pkg@1.0.0
+multi foo@bar@baz

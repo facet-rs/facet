@@ -1,0 +1,2 @@
+// Sequences cannot be used as keys
+(a b c) value

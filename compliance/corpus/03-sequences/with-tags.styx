@@ -1,0 +1,4 @@
+// Sequences containing tagged values
+colors (@red @green @blue)
+results (@ok{value 1} @ok{value 2} @err{msg "failed"})
+mixed (plain @tagged "quoted")

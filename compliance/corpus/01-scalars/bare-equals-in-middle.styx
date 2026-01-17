@@ -1,0 +1,5 @@
+// = is allowed in the middle of bare scalars (just not at start)
+url https://example.com?foo=bar
+query a=1&b=2&c=3
+math x=y+z
+assignment var=value

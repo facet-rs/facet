@@ -1,0 +1,4 @@
+// Trailing comma is allowed in comma-separated objects
+single {a 1}
+multiple {a 1, b 2, c 3}
+

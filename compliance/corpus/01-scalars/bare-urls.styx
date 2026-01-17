@@ -1,0 +1,5 @@
+// URLs with :// are bare scalars, not comments
+http https://example.com
+ftp ftp://files.example.com/pub
+file file:///home/user/doc.txt
+complex https://user:pass@example.com:8080/path?q=1&r=2#anchor

@@ -1,0 +1,5 @@
+// @schema declares the schema for this document
+@schema myapp.schema.styx
+name myapp
+version 1.0.0
+

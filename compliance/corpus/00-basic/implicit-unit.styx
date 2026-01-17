@@ -1,0 +1,4 @@
+// Single key with no value has implicit unit value
+enabled
+verbose
+dry_run

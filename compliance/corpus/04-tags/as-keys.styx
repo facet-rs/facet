@@ -1,0 +1,5 @@
+// Tags (with implicit unit payload) can be used as keys
+@string "hello"
+@int 42
+@schema nested.schema.styx
+@root @object{name @string}

@@ -172,6 +172,8 @@ This is the best experience for users who have your tool installed:
 - Always matches their installed version
 - Zero configuration
 
+See the complete example: [`facet-styx/examples/dump_schema.rs`](https://github.com/bearcove/styx/blob/main/crates/facet-styx/examples/dump_schema.rs)
+
 ### Implementing discovery
 
 First, derive `Facet` on your configuration types. Doc comments become schema documentation, and attributes define constraints:

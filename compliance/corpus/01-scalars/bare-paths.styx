@@ -1,0 +1,6 @@
+// Paths starting with / are valid bare scalars
+unix /usr/bin/styx
+root /
+etc /etc/styx/config
+home ~/config
+windows C:/Users/name

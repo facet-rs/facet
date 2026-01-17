@@ -53,6 +53,39 @@
 ; file: compliance/corpus/00-basic/empty.styx
 (document [-1, -1]
 )
+; file: compliance/corpus/00-basic/implicit-unit.styx
+(document [-1, -1]
+  (entry
+    (scalar [52, 59] bare "enabled")
+    (unit [52, 59]))
+  (entry
+    (scalar [60, 67] bare "verbose")
+    (unit [60, 67]))
+  (entry
+    (scalar [68, 75] bare "dry_run")
+    (unit [68, 75]))
+)
+; file: compliance/corpus/00-basic/key-paths-deep.styx
+(document [-1, -1]
+  (entry
+    (scalar [40, 41] bare "a")
+    (scalar [42, 43] bare "b"))
+  (entry
+    (scalar [44, 50] bare "config")
+    (scalar [51, 57] bare "server"))
+)
+; file: compliance/corpus/00-basic/key-paths.styx
+(document [-1, -1]
+  (entry
+    (scalar [128, 134] bare "server")
+    (scalar [135, 139] bare "host"))
+  (entry
+    (scalar [140, 148] bare "database")
+    (scalar [149, 153] bare "host"))
+  (entry
+    (scalar [154, 159] bare "cache")
+    (scalar [160, 164] bare "host"))
+)
 ; file: compliance/corpus/00-basic/multiple-entries.styx
 (document [-1, -1]
   (entry
@@ -64,6 +97,18 @@
   (entry
     (scalar [21, 28] bare "enabled")
     (scalar [29, 33] bare "true"))
+)
+; file: compliance/corpus/00-basic/schema-declaration.styx
+(document [-1, -1]
+  (entry
+    (tag [49, 56] "schema")
+    (scalar [57, 74] bare "myapp.schema.styx"))
+  (entry
+    (scalar [75, 79] bare "name")
+    (scalar [80, 85] bare "myapp"))
+  (entry
+    (scalar [86, 93] bare "version")
+    (scalar [94, 99] bare "1.0.0"))
 )
 ; file: compliance/corpus/00-basic/single-entry.styx
 (document [-1, -1]
@@ -85,6 +130,54 @@
   (entry
     (scalar [0, 7] bare "nothing")
     (unit [8, 9]))
+)
+; file: compliance/corpus/01-scalars/bare-at-in-middle.styx
+(document [-1, -1]
+  (entry
+    (scalar [66, 71] bare "email")
+    (scalar [72, 88] bare "user@example.com"))
+  (entry
+    (scalar [89, 94] bare "crate")
+    (scalar [95, 106] bare "myapp@2.0.0"))
+  (entry
+    (scalar [107, 114] bare "version")
+    (scalar [115, 124] bare "pkg@1.0.0"))
+  (entry
+    (scalar [125, 130] bare "multi")
+    (scalar [131, 142] bare "foo@bar@baz"))
+)
+; file: compliance/corpus/01-scalars/bare-equals-in-middle.styx
+(document [-1, -1]
+  (entry
+    (scalar [66, 69] bare "url")
+    (scalar [70, 97] bare "https://example.com?foo=bar"))
+  (entry
+    (scalar [98, 103] bare "query")
+    (scalar [104, 115] bare "a=1&b=2&c=3"))
+  (entry
+    (scalar [116, 120] bare "math")
+    (scalar [121, 126] bare "x=y+z"))
+  (entry
+    (scalar [127, 137] bare "assignment")
+    (scalar [138, 147] bare "var=value"))
+)
+; file: compliance/corpus/01-scalars/bare-paths.styx
+(document [-1, -1]
+  (entry
+    (scalar [48, 52] bare "unix")
+    (scalar [53, 66] bare "/usr/bin/styx"))
+  (entry
+    (scalar [67, 71] bare "root")
+    (scalar [72, 73] bare "/"))
+  (entry
+    (scalar [74, 77] bare "etc")
+    (scalar [78, 94] bare "/etc/styx/config"))
+  (entry
+    (scalar [95, 99] bare "home")
+    (scalar [100, 108] bare "~/config"))
+  (entry
+    (scalar [109, 116] bare "windows")
+    (scalar [117, 130] bare "C:/Users/name"))
 )
 ; file: compliance/corpus/01-scalars/bare-simple.styx
 (document [-1, -1]
@@ -125,11 +218,36 @@
     (scalar [81, 86] bare "minus")
     (scalar [87, 90] bare "1-2"))
 )
+; file: compliance/corpus/01-scalars/bare-urls.styx
+(document [-1, -1]
+  (entry
+    (scalar [48, 52] bare "http")
+    (scalar [53, 72] bare "https://example.com"))
+  (entry
+    (scalar [73, 76] bare "ftp")
+    (scalar [77, 104] bare "ftp://files.example.com/pub"))
+  (entry
+    (scalar [105, 109] bare "file")
+    (scalar [110, 135] bare "file:///home/user/doc.txt"))
+  (entry
+    (scalar [136, 143] bare "complex")
+    (scalar [144, 198] bare "https://user:pass@example.com:8080/path?q=1&r=2#anchor"))
+)
 ; file: compliance/corpus/01-scalars/heredoc-empty.styx
 (document [-1, -1]
   (entry
     (scalar [0, 5] bare "empty")
     (scalar [6, 15] heredoc ""))
+)
+; file: compliance/corpus/01-scalars/heredoc-indented.styx
+(document [-1, -1]
+  (entry
+    (scalar [28, 34] bare "config")
+    (object [35, 87] newline
+      (entry
+        (scalar [41, 47] bare "script")
+        (scalar [48, 85] heredoc "echo \"hello\"\necho \"world\"\n"))
+    ))
 )
 ; file: compliance/corpus/01-scalars/heredoc-lang-hint.styx
 (document [-1, -1]
@@ -225,6 +343,22 @@
     (scalar [0, 3] bare "obj")
     (object [4, 6] comma))
 )
+; file: compliance/corpus/02-objects/key-paths-in-object.styx
+(document [-1, -1]
+  (entry
+    (scalar [37, 43] bare "config")
+    (object [44, 96] newline
+      (entry
+        (scalar [50, 56] bare "server")
+        (scalar [57, 61] bare "host"))
+      (entry
+        (scalar [66, 74] bare "database")
+        (scalar [75, 79] bare "host"))
+      (entry
+        (scalar [84, 89] bare "cache")
+        (scalar [90, 94] bare "host"))
+    ))
+)
 ; file: compliance/corpus/02-objects/nested.styx
 (document [-1, -1]
   (entry
@@ -262,6 +396,29 @@
         (scalar [37, 41] bare "8080"))
     ))
 )
+; file: compliance/corpus/02-objects/trailing-comma.styx
+(document [-1, -1]
+  (entry
+    (scalar [56, 62] bare "single")
+    (object [63, 68] comma
+      (entry
+        (scalar [64, 65] bare "a")
+        (scalar [66, 67] bare "1"))
+    ))
+  (entry
+    (scalar [69, 77] bare "multiple")
+    (object [78, 93] comma
+      (entry
+        (scalar [79, 80] bare "a")
+        (scalar [81, 82] bare "1"))
+      (entry
+        (scalar [84, 85] bare "b")
+        (scalar [86, 87] bare "2"))
+      (entry
+        (scalar [89, 90] bare "c")
+        (scalar [91, 92] bare "3"))
+    ))
+)
 ; file: compliance/corpus/02-objects/unit-key-in-object.styx
 (document [-1, -1]
   (entry
@@ -283,6 +440,27 @@
               (scalar [54, 56] bare "id")
               (tag [57, 61] "int"))
           )))
+    ))
+)
+; file: compliance/corpus/02-objects/with-attributes.styx
+(document [-1, -1]
+  (entry
+    (scalar [29, 35] bare "config")
+    (object [36, 92] newline
+      (entry
+        (scalar [42, 48] bare "server")
+        (object [49, 63] comma
+          (entry
+            (scalar [49, 53] bare "host")
+            (scalar [54, 63] bare "localhost"))
+        ))
+      (entry
+        (scalar [68, 76] bare "database")
+        (object [77, 90] comma
+          (entry
+            (scalar [77, 81] bare "host")
+            (scalar [82, 90] bare "db.local"))
+        ))
     ))
 )
 ; file: compliance/corpus/03-sequences/empty.styx
@@ -356,6 +534,86 @@
           (scalar [23, 27] bare "/api"))
       )))
 )
+; file: compliance/corpus/03-sequences/with-tags.styx
+(document [-1, -1]
+  (entry
+    (scalar [38, 44] bare "colors")
+    (sequence [45, 64]
+      (tag [46, 50] "red")
+      (tag [51, 57] "green")
+      (tag [58, 63] "blue")))
+  (entry
+    (scalar [65, 72] bare "results")
+    (sequence [73, 119]
+      (tag [77, 86] "ok"
+        (object [77, 86] comma
+          (entry
+            (scalar [78, 83] bare "value")
+            (scalar [84, 85] bare "1"))
+        ))
+      (tag [90, 99] "ok"
+        (object [90, 99] comma
+          (entry
+            (scalar [91, 96] bare "value")
+            (scalar [97, 98] bare "2"))
+        ))
+      (tag [104, 118] "err"
+        (object [104, 118] comma
+          (entry
+            (scalar [105, 108] bare "msg")
+            (scalar [109, 117] quoted "failed"))
+        ))))
+  (entry
+    (scalar [120, 125] bare "mixed")
+    (sequence [126, 150]
+      (scalar [127, 132] bare "plain")
+      (tag [133, 140] "tagged")
+      (scalar [141, 149] quoted "quoted")))
+)
+; file: compliance/corpus/04-tags/as-keys.styx
+(document [-1, -1]
+  (entry
+    (tag [57, 64] "string")
+    (scalar [65, 72] quoted "hello"))
+  (entry
+    (tag [73, 77] "int")
+    (scalar [78, 80] bare "42"))
+  (entry
+    (tag [81, 88] "schema")
+    (scalar [89, 107] bare "nested.schema.styx"))
+  (entry
+    (tag [108, 113] "root")
+    (tag [121, 135] "object"
+      (object [121, 135] comma
+        (entry
+          (scalar [122, 126] bare "name")
+          (tag [127, 134] "string"))
+      )))
+)
+; file: compliance/corpus/04-tags/explicit-unit-payload.styx
+(document [-1, -1]
+  (entry
+    (scalar [73, 79] bare "status")
+    (object [80, 83] newline
+      (entry
+        (tag [80, 83] "ok")
+        (unit [84, 85]))
+    ))
+  (entry
+    (scalar [86, 93] bare "nothing")
+    (object [94, 99] newline
+      (entry
+        (tag [94, 99] "none")
+        (unit [100, 101]))
+    ))
+  (entry
+    (scalar [102, 106] bare "flag")
+    (object [107, 115] newline
+      (entry
+        (tag [107, 115] "enabled")
+        (unit [116, 117]))
+    ))
+)
 ; file: compliance/corpus/04-tags/explicit-unit.styx
 (document [-1, -1]
   (entry
@@ -385,6 +643,42 @@
             (scalar [48, 52] bare "path")
             (scalar [53, 60] bare "/health"))
         ))))
+)
+; file: compliance/corpus/04-tags/names-mixed.styx
+(document [-1, -1]
+  (entry
+    (scalar [66, 73] bare "complex")
+    (tag [74, 90] "foo_bar.baz-qux"))
+  (entry
+    (scalar [91, 98] bare "version")
+    (tag [99, 113] "v2.0.0-beta.1"))
+  (entry
+    (scalar [114, 118] bare "full")
+    (tag [119, 142] "com.example.my_type-v1"))
+)
+; file: compliance/corpus/04-tags/names-with-dashes.styx
+(document [-1, -1]
+  (entry
+    (scalar [32, 37] bare "kebab")
+    (tag [38, 46] "my-type"))
+  (entry
+    (scalar [47, 51] bare "http")
+    (tag [52, 65] "content-type"))
+  (entry
+    (scalar [66, 71] bare "multi")
+    (tag [72, 84] "foo-bar-baz"))
+)
+; file: compliance/corpus/04-tags/names-with-dots.styx
+(document [-1, -1]
+  (entry
+    (scalar [30, 39] bare "qualified")
+    (tag [40, 59] "com.example.MyType"))
+  (entry
+    (scalar [60, 66] bare "nested")
+    (tag [67, 79] "foo.bar.baz"))
+  (entry
+    (scalar [80, 87] bare "version")
+    (tag [88, 95] "v1.0.0"))
 )
 ; file: compliance/corpus/04-tags/nested-tags.styx
 (document [-1, -1]
@@ -512,6 +806,22 @@
     (scalar [25, 32] bare "mention")
     (scalar [33, 44] quoted "@username"))
 )
+; file: compliance/corpus/06-edge-cases/consecutive-tags.styx
+(document [-1, -1]
+  (entry
+    (scalar [29, 34] bare "items")
+    (sequence [35, 51]
+      (tag [36, 39] "ok")
+      (tag [40, 44] "err")
+      (tag [45, 50] "none")))
+  (entry
+    (scalar [52, 58] bare "nested")
+    (object [59, 65] newline
+      (entry
+        (tag [59, 65] "outer")
+        (tag [66, 72] "inner"))
+    ))
+)
 ; file: compliance/corpus/06-edge-cases/deeply-nested.styx
 (document [-1, -1]
   (entry
@@ -568,6 +878,27 @@
   (entry
     (scalar [47, 50] bare "hex")
     (scalar [51, 55] bare "0xff"))
+)
+; file: compliance/corpus/06-edge-cases/quoted-keys.styx
+(document [-1, -1]
+  (entry
+    (scalar [38, 55] quoted "key with spaces")
+    (scalar [56, 61] bare "value"))
+  (entry
+    (scalar [62, 67] quoted "123")
+    (scalar [68, 87] bare "numeric-looking-key"))
+  (entry
+    (scalar [88, 90] quoted "")
+    (scalar [91, 100] bare "empty-key"))
+)
+; file: compliance/corpus/06-edge-cases/raw-keys.styx
+(document [-1, -1]
+  (entry
+    (scalar [35, 47] raw "raw key")
+    (scalar [48, 53] bare "value"))
+  (entry
+    (scalar [54, 78] raw "key with \"# in it")
+    (scalar [79, 86] bare "another"))
 )
 ; file: compliance/corpus/06-edge-cases/single-char.styx
 (document [-1, -1]
@@ -636,10 +967,32 @@
       (scalar [19, 20] bare "i")
       (scalar [21, 22] bare "j")))
 )
+; file: compliance/corpus/07-invalid/duplicate-keys.styx
+(error [45, 49] "parse error at 45-49: duplicate key")
+; file: compliance/corpus/07-invalid/heredoc-as-key.styx
+(error [35, 49] "parse error at 35-49: invalid key")
 ; file: compliance/corpus/07-invalid/invalid-escape.styx
 (error [13, 15] "parse error at 13-15: invalid escape sequence: \\x")
+; file: compliance/corpus/07-invalid/invalid-tag-digit.styx
+(error [42, 45] "parse error at 42-45: invalid tag name")
+; file: compliance/corpus/07-invalid/invalid-tag-dot.styx
+(error [40, 44] "parse error at 40-44: invalid tag name")
+; file: compliance/corpus/07-invalid/invalid-tag-hyphen.styx
+(error [43, 47] "parse error at 43-47: invalid tag name")
 ; file: compliance/corpus/07-invalid/mixed-separators.styx
 (error [13, 14] "parse error at 13-14: mixed separators (use either commas or newlines)")
+; file: compliance/corpus/07-invalid/object-as-key.styx
+(document [-1, -1]
+  (entry
+    (unit [-1, -1])
+    (object [34, 39] comma
+      (entry
+        (scalar [35, 36] bare "a")
+        (scalar [37, 38] bare "1"))
+    ))
+)
+; file: compliance/corpus/07-invalid/sequence-as-key.styx
+(error [36, 43] "parse error at 36-43: invalid key")
 ; file: compliance/corpus/07-invalid/unclosed-brace.styx
 (error [4, 5] "parse error at 4-5: unclosed object (missing `}`)")
 ; file: compliance/corpus/07-invalid/unclosed-heredoc.styx

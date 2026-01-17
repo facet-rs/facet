@@ -1,0 +1,3 @@
+// Raw strings can be used as keys
+r#"raw key"# value
+r##"key with "# in it"## another

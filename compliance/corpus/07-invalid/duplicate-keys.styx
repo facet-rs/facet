@@ -1,0 +1,3 @@
+// Duplicate keys are not allowed
+name alice
+name bob
