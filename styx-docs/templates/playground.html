@@ -215,6 +215,13 @@ features (
     notifications
     @experimental(analytics)
 )
+
+/// Multi-line content with heredocs
+query <<SQL
+SELECT id, name, email
+FROM users
+WHERE active = true
+SQL
 `;
 
 let styxEditor;
