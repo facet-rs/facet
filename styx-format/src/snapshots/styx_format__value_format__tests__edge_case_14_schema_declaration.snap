@@ -2,6 +2,6 @@
 source: crates/styx-format/src/value_format.rs
 expression: result
 ---
-normal-key value1
-key with
-123numeric value3
+@schema first.styx
+
+name test

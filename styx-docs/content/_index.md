@@ -91,60 +91,61 @@ comment "This is a string for sure" // nope, an opaque scalar
 <style>
 .layers-section {
   background: #dc143c;
-  margin: 0rem 0;
+  margin: 0;
   margin-left: calc(-50vw + 50%);
   margin-right: calc(-50vw + 50%);
   padding: 4rem 2rem;
-}
 
-.layers-section .section-header {
-  text-align: center;
-  margin-bottom: 2.5rem;
-  max-width: 600px;
-  margin-left: auto;
-  margin-right: auto;
-}
+  .section-header {
+    text-align: center;
+    margin-bottom: 2.5rem;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+  }
 
-.layers-section .section-title {
-  font-family: var(--font-heading);
-  font-size: 3.5rem;
-  font-weight: 400;
-  letter-spacing: -0.02em;
-  text-transform: uppercase;
-  color: #fff;
-  margin: 0 0 -0.25rem 0;
-  line-height: 1.1;
-}
+  .section-title {
+    font-family: var(--font-heading);
+    font-size: 3.5rem;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+    color: #fff;
+    margin: 0 0 -0.25rem 0;
+    line-height: 1.1;
+  }
 
-.layers-section .section-subtitle {
-  font-family: "Lato", sans-serif;
-  font-size: 1.75rem;
-  font-weight: 200;
-  color: rgba(255,255,255,0.95);
-  margin: 0 0 3.25rem 0;
-}
+  .section-subtitle {
+    font-family: "Lato", sans-serif;
+    font-size: 1.75rem;
+    font-weight: 200;
+    color: rgba(255,255,255,0.95);
+    margin: 0 0 3.25rem 0;
+  }
 
-.layers-section .section-desc {
-  font-size: 1rem;
-  line-height: 1.6;
-  color: rgba(255,255,255,0.8);
-  margin: 0;
-}
+  .section-desc {
+    font-size: 1rem;
+    line-height: 1.6;
+    color: rgba(255,255,255,0.8);
+    margin: 0;
 
-.layers-section .section-desc em {
-  color: #fff;
-  font-style: normal;
-  font-weight: 700;
+    em {
+      color: #fff;
+      font-style: normal;
+      font-weight: 700;
+    }
+
+    a {
+      color: #fff;
+      text-decoration: underline;
+    }
+  }
 }
 
 .hero-intro h1 {
   font-family: var(--font-heading);
   font-weight: 400;
   text-transform: uppercase;
-}
-
-.feature {
-    margin: 4rem 0;
 }
 
 .feature-text h2 {
@@ -160,11 +161,11 @@ comment "This is a string for sure" // nope, an opaque scalar
   gap: 0;
   max-width: 650px;
   margin: 0 auto;
-}
 
-.layers-diagram .code-block {
-  min-width: 300px;
-  margin-bottom: 0;
+  .code-block {
+    min-width: 300px;
+    margin-bottom: 0;
+  }
 }
 
 .layer-box {
@@ -174,39 +175,39 @@ comment "This is a string for sure" // nope, an opaque scalar
   max-width: 400px;
   width: 100%;
   overflow: hidden;
-}
 
-.layer-box .layer-title {
-  display: block;
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-subtle);
-}
+  .layer-title {
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-subtle);
+  }
 
-.layer-box pre {
-  margin: 0;
-  padding: 0.75rem 1rem;
-  background: none;
-  border: none;
-  border-radius: 0;
-}
+  pre {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    background: none;
+    border: none;
+    border-radius: 0;
+  }
 
-.layer-box code {
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-  background: none;
-  border: none;
-  padding: 0;
-  white-space: pre;
-}
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    background: none;
+    border: none;
+    padding: 0;
+    white-space: pre;
+  }
 
-.layer-box .code-header {
-  display: none;
+  .code-header {
+    display: none;
+  }
 }
 
 .layers-diagram-horizontal {
@@ -216,35 +217,34 @@ comment "This is a string for sure" // nope, an opaque scalar
   gap: 1rem;
   max-width: 750px;
   margin: 0 auto;
-}
 
-.layers-diagram-horizontal + .layers-diagram-horizontal {
-  margin-top: 1.5rem;
-}
+  & + & {
+    margin-top: 1.5rem;
+  }
 
-.layers-diagram-horizontal .code-block {
-  flex: 1;
-  min-width: 280px;
-  margin-bottom: 0;
+  .code-block {
+    flex: 1;
+    min-width: 280px;
+    margin-bottom: 0;
+  }
+
+  @media (max-width: 600px) {
+    flex-direction: column;
+  }
 }
 
 .layer-arrow-horizontal {
   display: flex;
   align-items: center;
   margin: 0 -0.5rem;
-}
 
-.layer-arrow-horizontal .arrow-svg-h {
-  width: 80px;
-  height: 40px;
-}
+  .arrow-svg-h {
+    width: 80px;
+    height: 40px;
 
-@media (max-width: 600px) {
-  .layers-diagram-horizontal {
-    flex-direction: column;
-  }
-  .layer-arrow-horizontal .arrow-svg-h {
-    transform: rotate(90deg);
+    @media (max-width: 600px) {
+      transform: rotate(90deg);
+    }
   }
 }
 
@@ -253,21 +253,21 @@ comment "This is a string for sure" // nope, an opaque scalar
   flex-direction: column;
   align-items: center;
   padding: 0.25rem 0;
-}
 
-.layer-arrow .arrow-svg {
-  width: 200px;
-  height: 105px;
-}
+  .arrow-svg {
+    width: 200px;
+    height: 105px;
 
-.layer-arrow .arrow-svg .arrow-label {
-  font-family: "Lato", sans-serif;
-  font-size: 10px;
-  font-weight: 400;
-  fill: rgba(255,255,255,0.85);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  dominant-baseline: middle;
+    .arrow-label {
+      font-family: "Lato", sans-serif;
+      font-size: 10px;
+      font-weight: 400;
+      fill: rgba(255,255,255,0.85);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      dominant-baseline: middle;
+    }
+  }
 }
 
 .svg-defs {
@@ -275,11 +275,6 @@ comment "This is a string for sure" // nope, an opaque scalar
   width: 0;
   height: 0;
   overflow: hidden;
-}
-
-.layers-section .section-desc a {
-  color: #fff;
-  text-decoration: underline;
 }
 </style>
 
@@ -378,15 +373,21 @@ Durations, integers, dates — the rules are [in the spec](/reference/spec/scala
 <div class="feature-code">
 
 ```rust
-let port: u16 = doc["server"]["port"].parse()?;
-let timeout = doc["timeout"].parse::<Duration>()?;
-let created = doc["created"].parse::<DateTime>()?;
+let port: u16 = doc["server"]["port"].get()?;
+let timeout: Duration = doc["timeout"].get()?;
+let created: DateTime = doc["created"].get()?;
 ```
 
 ```javascript
-const port = doc.server.port.asInt();
-const timeout = doc.timeout.asDuration();
-const created = doc.created.asDateTime();
+let port = doc.server.port.asInt()
+let timeout = doc.timeout.asDuration()
+let created = doc.created.asDateTime()
+```
+
+```python
+port = doc["server"]["port"].as_int()
+timeout = doc["timeout"].as_duration()
+created = doc["created"].as_datetime()
 ```
 
 </div>
@@ -501,7 +502,6 @@ false
 
 </div>
 </div>
-</div>
 
 <section class="feature">
 <div class="feature-text">
@@ -579,6 +579,90 @@ console.log(config);
 ```bash
 $ node index.ts
 {"host": "localhost", "port": 8080}
+```
+
+</div>
+</section>
+
+<div class="layers-section">
+<div class="section-header">
+<p class="section-title">From types to tooling</p>
+<p class="section-subtitle">in one smooth pipeline.</p>
+<p class="section-desc">Your Rust types <em>are</em> the source of truth. Facet reflection extracts full type information — fields, constraints, doc comments — and generates a schema you can publish anywhere.</p>
+</div>
+
+<div class="layers-diagram">
+
+```rust
+#[derive(Facet)]
+/// Server configuration.
+struct Config {
+    /// Hostname to bind to.
+    host: String,
+    /// Port number (1-65535).
+    port: u16,
+}
+```
+
+  <div class="layer-arrow">
+    <svg viewBox="0 0 200 105" class="arrow-svg">
+      <use href="#arrow-line-top"/>
+      <text x="100" y="46" text-anchor="middle" class="arrow-label">generates</text>
+      <use href="#arrow-line-bottom"/>
+      <use href="#arrow-head"/>
+    </svg>
+  </div>
+
+```styx
+/// Server configuration.
+Config @object {
+  /// Hostname to bind to.
+  host @string
+  /// Port number (1-65535).
+  port @int{ min 0, max 65535 }
+}
+```
+
+</div>
+</div>
+
+<section class="feature">
+<div class="feature-text">
+
+## Publish once, use everywhere
+
+Give your schema a URL. That URL becomes its identity — tools fetch it automatically, editors validate against it, and your users get autocomplete for free.
+
+</div>
+<div class="feature-code">
+
+```styx
+// config.styx
+@schema https://example.com/myapp/v1.schema.styx
+
+host localhost
+port 8080
+```
+
+</div>
+</section>
+
+<section class="feature">
+<div class="feature-text">
+
+## Zero-config discovery
+
+If your CLI supports `@dump-styx-schema`, editors find your schema automatically. No setup, no configuration files — just run your tool and get validation.
+
+</div>
+<div class="feature-code">
+
+```bash
+$ myapp @dump-styx-schema > /dev/null
+# Editor detects this, fetches schema, enables validation
+
+$ myapp --config app.styx
+# Config validated against the same schema
 ```
 
 </div>

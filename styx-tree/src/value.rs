@@ -172,6 +172,11 @@ impl Value {
         self.tag.is_none() && self.payload.is_none()
     }
 
+    /// Check if this is a `@schema` tag (used for schema declarations).
+    pub fn is_schema_tag(&self) -> bool {
+        self.tag_name() == Some("schema")
+    }
+
     /// Get the tag name if present.
     pub fn tag_name(&self) -> Option<&str> {
         self.tag.as_ref().map(|t| t.name.as_str())

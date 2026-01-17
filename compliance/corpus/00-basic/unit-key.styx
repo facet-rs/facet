@@ -1,4 +1,3 @@
-@ schema.styx
-
+@schema schema.styx
 name hello
 

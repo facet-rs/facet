@@ -1,6 +1,6 @@
-@ nested.schema.styx
-
+@schema nested.schema.styx
 name "My App"
 server {
     host "localhost"
 }
+

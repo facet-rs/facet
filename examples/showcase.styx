@@ -1,7 +1,7 @@
 /// Example Styx file showcasing various syntax features
 /// This file demonstrates the full range of Styx syntax
-/// Schema declaration (unit key with string value)
-@ examples/showcase.schema.styx
+/// Schema declaration
+@schema examples/showcase.schema.styx
 
 /// Basic key-value pairs
 name "Styx Showcase"

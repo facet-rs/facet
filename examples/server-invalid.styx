@@ -1,5 +1,4 @@
-@ server.schema.styx
-
+@schema server.schema.styx
 name "My Server"
 prot 8080
 enbled true
@@ -10,3 +9,4 @@ tls {
 logging {level debug, format {
     timestamp true
 }}
+

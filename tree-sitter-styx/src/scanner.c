@@ -21,6 +21,8 @@ enum TokenType {
   RAW_STRING_END,
   UNIT_AT,
   TAG_START,
+  IMMEDIATE_RAW_STRING_START,
+  IMMEDIATE_UNIT_AT,
 };
 
 // Maximum delimiter length for heredocs
@@ -296,7 +298,8 @@ static bool scan_heredoc_content_or_end(Scanner *scanner, TSLexer *lexer) {
 }
 
 // Try to scan raw string start: r#*"
-static bool scan_raw_string_start(Scanner *scanner, TSLexer *lexer) {
+static bool scan_raw_string_start(Scanner *scanner, TSLexer *lexer,
+                                   enum TokenType result_symbol) {
   if (lexer->lookahead != 'r')
     return false;
   advance(lexer);
@@ -315,7 +318,7 @@ static bool scan_raw_string_start(Scanner *scanner, TSLexer *lexer) {
   advance(lexer);
 
   scanner->in_raw_string = true;
-  lexer->result_symbol = RAW_STRING_START;
+  lexer->result_symbol = result_symbol;
   return true;
 }
 
@@ -407,14 +410,7 @@ bool tree_sitter_styx_external_scanner_scan(void *payload, TSLexer *lexer,
                                              const bool *valid_symbols) {
   Scanner *scanner = (Scanner *)payload;
 
-  // Skip whitespace if not in heredoc/raw string
-  if (!scanner->in_heredoc && !scanner->in_raw_string) {
-    while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
-      skip(lexer);
-    }
-  }
-
-  // Handle heredoc lang hint if we just saw <<DELIM
+  // Handle heredoc lang hint if we just saw <<DELIM (before skipping whitespace)
   if (scanner->heredoc_needs_lang_check && valid_symbols[HEREDOC_LANG]) {
     if (scan_heredoc_lang(scanner, lexer)) {
       return true;
@@ -436,6 +432,41 @@ bool tree_sitter_styx_external_scanner_scan(void *payload, TSLexer *lexer,
     }
   }
 
+  // IMMEDIATE tokens: check BEFORE skipping whitespace
+  // These must immediately follow the previous token with no whitespace
+
+  // Immediate unit: @ right after a tag (for @tag@ syntax)
+  // We need to peek ahead without consuming to check if this is a unit or start of a tag
+  if (valid_symbols[IMMEDIATE_UNIT_AT] && lexer->lookahead == '@') {
+    // Mark current position
+    lexer->mark_end(lexer);
+    advance(lexer);
+    // Check what follows the @
+    if (!is_tag_name_start(lexer->lookahead)) {
+      // It's a unit (bare @)
+      lexer->mark_end(lexer);
+      lexer->result_symbol = IMMEDIATE_UNIT_AT;
+      return true;
+    }
+    // It's followed by a tag name char, so this @ starts a new tag, not an immediate unit
+    // Don't return - fall through to let other rules handle it
+    // But we've consumed the @... this is a problem.
+    // Actually, returning false here lets tree-sitter backtrack
+    return false;
+  }
+
+  // Immediate raw string: r#"..." right after a tag
+  if (valid_symbols[IMMEDIATE_RAW_STRING_START] && lexer->lookahead == 'r') {
+    return scan_raw_string_start(scanner, lexer, IMMEDIATE_RAW_STRING_START);
+  }
+
+  // Now skip whitespace for non-immediate tokens
+  if (!scanner->in_heredoc && !scanner->in_raw_string) {
+    while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
+      skip(lexer);
+    }
+  }
+
   // Try to scan @ tokens (unit or tag)
   if ((valid_symbols[UNIT_AT] || valid_symbols[TAG_START]) &&
       lexer->lookahead == '@') {
@@ -447,9 +478,9 @@ bool tree_sitter_styx_external_scanner_scan(void *payload, TSLexer *lexer,
     return scan_heredoc_start(scanner, lexer);
   }
 
-  // Try to start a raw string
+  // Try to start a raw string (regular, not immediate - immediate handled above)
   if (valid_symbols[RAW_STRING_START] && lexer->lookahead == 'r') {
-    return scan_raw_string_start(scanner, lexer);
+    return scan_raw_string_start(scanner, lexer, RAW_STRING_START);
   }
 
   return false;

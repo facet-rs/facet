@@ -124,10 +124,9 @@ impl ValueFormatter {
             // Add blank lines for readability at root level
             if self.writer.depth() == 1 && i < entry_count - 1 {
                 // Blank line after:
-                // - schema declaration (@ path/to/schema.styx) when @ key has scalar value
+                // - schema declaration (@schema path/to/schema.styx)
                 // - entries with doc comments (type definitions)
-                let is_schema_decl =
-                    i == 0 && entry.key.is_unit() && entry.value.as_str().is_some();
+                let is_schema_decl = i == 0 && entry.key.is_schema_tag();
                 if is_schema_decl || entry.doc_comment.is_some() {
                     self.writer.write_str("\n");
                 }
@@ -136,33 +135,69 @@ impl ValueFormatter {
     }
 
     fn format_entry(&mut self, entry: &Entry) {
-        // Handle unit key specially - write @ directly (no quoting)
-        if entry.key.is_unit() {
-            if let Some(doc) = &entry.doc_comment {
-                self.writer.write_doc_comment_and_key_raw(doc, "@");
-            } else {
-                self.writer.field_key_raw("@").ok();
-            }
-            self.format_value(&entry.value);
-            return;
-        }
-
-        // Get key as string - must be an untagged scalar
-        let Some(key) = entry.key.as_str() else {
-            panic!(
-                "object key must be untagged Scalar or Unit, got {:?}",
-                entry.key
-            );
-        };
+        // Format the key (which is itself a Value - scalar or unit, optionally tagged)
+        let key_str = self.format_key(&entry.key);
 
         // Write doc comment + key together, or just key
         if let Some(doc) = &entry.doc_comment {
-            self.writer.write_doc_comment_and_key(doc, key);
+            self.writer.write_doc_comment_and_key_raw(doc, &key_str);
         } else {
-            self.writer.field_key(key).ok();
+            self.writer.field_key_raw(&key_str).ok();
         }
 
         self.format_value(&entry.value);
+    }
+
+    /// Format a key value to string.
+    /// Keys are scalars or unit, optionally tagged.
+    fn format_key(&self, key: &Value) -> String {
+        let mut result = String::new();
+
+        // Tag prefix if present
+        if let Some(tag) = &key.tag {
+            result.push('@');
+            result.push_str(&tag.name);
+        }
+
+        // Payload (scalar text or unit)
+        match &key.payload {
+            None => {
+                // Unit - if no tag, write @
+                if key.tag.is_none() {
+                    result.push('@');
+                }
+                // If tagged with no payload, tag is already written (e.g., @schema)
+            }
+            Some(Payload::Scalar(s)) => {
+                // Format scalar based on its kind
+                use styx_parse::ScalarKind;
+                match s.kind {
+                    ScalarKind::Bare => result.push_str(&s.text),
+                    ScalarKind::Quoted => {
+                        result.push('"');
+                        result.push_str(&crate::scalar::escape_quoted(&s.text));
+                        result.push('"');
+                    }
+                    ScalarKind::Raw => {
+                        // For raw strings, just quote them normally for simplicity
+                        result.push('"');
+                        result.push_str(&crate::scalar::escape_quoted(&s.text));
+                        result.push('"');
+                    }
+                    ScalarKind::Heredoc => {
+                        // Heredocs can't be keys, but format as quoted if somehow here
+                        result.push('"');
+                        result.push_str(&crate::scalar::escape_quoted(&s.text));
+                        result.push('"');
+                    }
+                }
+            }
+            Some(Payload::Sequence(_) | Payload::Object(_)) => {
+                panic!("object key cannot be a sequence or object: {:?}", key);
+            }
+        }
+
+        result
     }
 }
 
@@ -368,12 +403,21 @@ mod tests {
         }
     }
 
+    /// Helper to create a schema declaration entry (@schema key)
+    fn schema_entry(value: Value) -> Entry {
+        Entry {
+            key: Value::tag("schema"),
+            value,
+            doc_comment: None,
+        }
+    }
+
     // --- Edge Case 1: Schema declaration with blank line after ---
     #[test]
     fn test_edge_case_01_schema_declaration_blank_line() {
-        // @ schema.styx followed by other fields should have blank line
+        // @schema schema.styx followed by other fields should have blank line
         let obj = obj_multiline(vec![
-            unit_entry(scalar("schema.styx")),
+            schema_entry(scalar("schema.styx")),
             entry("name", scalar("test")),
             entry("port", scalar("8080")),
         ]);
@@ -556,11 +600,11 @@ mod tests {
         insta::assert_snapshot!(result);
     }
 
-    // --- Edge Case 14: Multiple unit entries (unusual but valid) ---
+    // --- Edge Case 14: Schema declaration (now using @schema tag) ---
     #[test]
-    fn test_edge_case_14_multiple_unit_entries() {
+    fn test_edge_case_14_schema_declaration() {
         let obj = obj_multiline(vec![
-            unit_entry(scalar("first.styx")),
+            schema_entry(scalar("first.styx")),
             entry("name", scalar("test")),
         ]);
 

@@ -130,3 +130,109 @@ port 8080
     value: (expr
       payload: (scalar
         (bare_scalar)))))
+
+================================================================================
+Tagged key with scalar value (schema declaration)
+================================================================================
+
+@schema path/to/schema.styx
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      tag: (tag))
+    value: (expr
+      payload: (scalar
+        (bare_scalar)))))
+
+================================================================================
+Unit key with tagged value (root type in schema)
+================================================================================
+
+@ @object{name @string}
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (unit))
+    value: (expr
+      tag: (tag)
+      payload: (object
+        (entry
+          key: (expr
+            payload: (scalar
+              (bare_scalar)))
+          value: (expr
+            tag: (tag)))))))
+
+================================================================================
+Tagged key with object value (inline schema)
+================================================================================
+
+@schema {schema {@ @object{host @string}}}
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      tag: (tag))
+    value: (expr
+      payload: (object
+        (entry
+          key: (expr
+            payload: (scalar
+              (bare_scalar)))
+          value: (expr
+            payload: (object
+              (entry
+                key: (expr
+                  payload: (unit))
+                value: (expr
+                  tag: (tag)
+                  payload: (object
+                    (entry
+                      key: (expr
+                        payload: (scalar
+                          (bare_scalar)))
+                      value: (expr
+                        tag: (tag)))))))))))))
+
+================================================================================
+Quoted key
+================================================================================
+
+"key with spaces" value
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (scalar
+        (quoted_scalar)))
+    value: (expr
+      payload: (scalar
+        (bare_scalar)))))
+
+================================================================================
+Tagged quoted key
+================================================================================
+
+@foo"bar" value
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      tag: (tag)
+      payload: (scalar
+        (quoted_scalar)))
+    value: (expr
+      payload: (scalar
+        (bare_scalar)))))

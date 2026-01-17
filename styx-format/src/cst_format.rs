@@ -332,13 +332,20 @@ impl CstFormatter {
     }
 }
 
-/// Check if an entry is a schema declaration (unit key with a value).
+/// Check if an entry is a schema declaration (@schema tag as key).
 fn is_schema_declaration(entry: &Entry) -> bool {
     if let Some(key) = entry.key() {
-        // Check if the key contains a unit (@)
-        key.syntax()
-            .children()
-            .any(|n| n.kind() == SyntaxKind::UNIT)
+        // Check if the key contains a @schema tag
+        key.syntax().children().any(|n| {
+            if n.kind() == SyntaxKind::TAG {
+                // Look for TAG_NAME child with text "schema"
+                n.children().any(|child| {
+                    child.kind() == SyntaxKind::TAG_NAME && child.to_string() == "schema"
+                })
+            } else {
+                false
+            }
+        })
     } else {
         false
     }
@@ -406,7 +413,7 @@ age 30"#;
 
     #[test]
     fn test_schema_declaration() {
-        let input = "@ schema.styx\n\nname test";
+        let input = "@schema schema.styx\n\nname test";
         let output = format(input);
         insta::assert_snapshot!(output);
     }
