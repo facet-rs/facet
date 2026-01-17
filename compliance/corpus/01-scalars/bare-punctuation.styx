@@ -1,0 +1,14 @@
+// Various punctuation in bare scalars
+semicolon foo;bar
+ampersand foo&bar
+pipe foo|bar
+caret foo^bar
+tilde foo~bar
+backtick foo`bar
+exclaim foo!bar
+question foo?bar
+hash foo#bar
+percent foo%bar
+asterisk foo*bar
+dollar foo$bar
+brackets foo[bar]

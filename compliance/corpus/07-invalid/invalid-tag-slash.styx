@@ -1,0 +1,2 @@
+// Invalid: slash in tag name
+key @org/package

@@ -134,6 +134,8 @@
     (scalar [0, 7] bare "nothing")
     (unit [8, 9]))
 )
+; file: compliance/corpus/01-scalars/bare-angle-brackets.styx
+(error [172, 173] "parse error at 172-173: expected scalar, got comma")
 ; file: compliance/corpus/01-scalars/bare-at-in-middle.styx
 (document [-1, -1]
   (entry
@@ -164,6 +166,8 @@
     (scalar [127, 137] bare "assignment")
     (scalar [138, 147] bare "var=value"))
 )
+; file: compliance/corpus/01-scalars/bare-heredoc-like.styx
+(error [90, 96] "parse error at 90-96: invalid key")
 ; file: compliance/corpus/01-scalars/bare-paths.styx
 (document [-1, -1]
   (entry
@@ -181,6 +185,48 @@
   (entry
     (scalar [109, 116] bare "windows")
     (scalar [117, 130] bare "C:/Users/name"))
+)
+; file: compliance/corpus/01-scalars/bare-punctuation.styx
+(document [-1, -1]
+  (entry
+    (scalar [39, 48] bare "semicolon")
+    (scalar [49, 56] bare "foo;bar"))
+  (entry
+    (scalar [57, 66] bare "ampersand")
+    (scalar [67, 74] bare "foo&bar"))
+  (entry
+    (scalar [75, 79] bare "pipe")
+    (scalar [80, 87] bare "foo|bar"))
+  (entry
+    (scalar [88, 93] bare "caret")
+    (scalar [94, 101] bare "foo^bar"))
+  (entry
+    (scalar [102, 107] bare "tilde")
+    (scalar [108, 115] bare "foo~bar"))
+  (entry
+    (scalar [116, 124] bare "backtick")
+    (scalar [125, 132] bare "foo`bar"))
+  (entry
+    (scalar [133, 140] bare "exclaim")
+    (scalar [141, 148] bare "foo!bar"))
+  (entry
+    (scalar [149, 157] bare "question")
+    (scalar [158, 165] bare "foo?bar"))
+  (entry
+    (scalar [166, 170] bare "hash")
+    (scalar [171, 178] bare "foo#bar"))
+  (entry
+    (scalar [179, 186] bare "percent")
+    (scalar [187, 194] bare "foo%bar"))
+  (entry
+    (scalar [195, 203] bare "asterisk")
+    (scalar [204, 211] bare "foo*bar"))
+  (entry
+    (scalar [212, 218] bare "dollar")
+    (scalar [219, 226] bare "foo$bar"))
+  (entry
+    (scalar [227, 235] bare "brackets")
+    (scalar [236, 244] bare "foo[bar]"))
 )
 ; file: compliance/corpus/01-scalars/bare-simple.styx
 (document [-1, -1]
@@ -220,6 +266,30 @@
   (entry
     (scalar [81, 86] bare "minus")
     (scalar [87, 90] bare "1-2"))
+)
+; file: compliance/corpus/01-scalars/bare-tag-like.styx
+(document [-1, -1]
+  (entry
+    (scalar [41, 46] bare "email")
+    (scalar [47, 63] bare "user@example.com"))
+  (entry
+    (scalar [64, 71] bare "version")
+    (scalar [72, 81] bare "crate@2.0"))
+  (entry
+    (scalar [82, 88] bare "at-end")
+    (scalar [89, 93] bare "foo@"))
+  (entry
+    (scalar [94, 103] bare "double-at")
+    (scalar [104, 112] bare "foo@@bar"))
+  (entry
+    (scalar [113, 122] bare "at-number")
+    (scalar [123, 130] bare "foo@123"))
+  (entry
+    (scalar [131, 137] bare "scoped")
+    (tag [138, 142] "org"))
+  (entry
+    (scalar [142, 150] bare "/package")
+    (unit [142, 150]))
 )
 ; file: compliance/corpus/01-scalars/bare-urls.styx
 (document [-1, -1]

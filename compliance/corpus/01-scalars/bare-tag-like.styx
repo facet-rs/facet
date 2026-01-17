@@ -1,0 +1,6 @@
+// Values that look like tags but aren't (@ in middle of value)
+email user@example.com
+version crate@2.0
+at-end foo@
+double-at foo@@bar
+at-number foo@123

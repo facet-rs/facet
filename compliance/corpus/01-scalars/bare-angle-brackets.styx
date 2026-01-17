@@ -1,0 +1,11 @@
+// Angle brackets in bare scalars
+less-than foo<bar
+greater-than foo>bar
+both-angles foo<bar>baz
+html-like <div>
+arrow-left <--
+arrow-right -->
+generic List<T>
+// nested Map<K,V> - KNOWN ISSUE: causes parser hang
+comparison a<b>c
+xml-tag </close>
