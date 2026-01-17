@@ -38,15 +38,15 @@ HEREDOCS
 <div class="feature-code">
 
 ```yaml
-# YAML: this is a boolean
-country: NO
-version: 3.10
+# YAML:
+country: NO   # boolean false
+version: 3.10 # 3.1
 ```
 
 ```styx
-// Styx: always text until deserialization
-country NO
-version 3.10
+// Styx
+country NO   // opaque scalar "NO"
+version 3.10 // opaque scalar "3.10"
 ```
 
 </div>
@@ -85,7 +85,7 @@ let config: MyConfig = styx::from_str(input)?;
 server @object {
   host @string
   port @int
-  tls @optional @bool
+  tls @optional(@bool)
 }
 ```
 
