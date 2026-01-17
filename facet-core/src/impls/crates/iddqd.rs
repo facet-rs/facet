@@ -148,16 +148,10 @@ where
                 &const { build_set_vtable::<T, S>() },
                 T::SHAPE,
             )))
-            .type_params(&[
-                TypeParam {
-                    name: "T",
-                    shape: T::SHAPE,
-                },
-                TypeParam {
-                    name: "S",
-                    shape: S::SHAPE,
-                },
-            ])
+            .type_params(&[TypeParam {
+                name: "T",
+                shape: T::SHAPE,
+            }])
             .inner(T::SHAPE)
             .type_ops_indirect(&const {
                 TypeOpsIndirect {
@@ -345,7 +339,8 @@ unsafe fn bi_hash_map_contains<T: BiHashItem, S: Clone + BuildHasher>(
     let map = unsafe { ptr.get::<BiHashMap<T, S>>() };
     let value = unsafe { value.get::<T>() };
     let key1 = value.key1();
-    map.contains_key1(&key1)
+    let key2 = value.key2();
+    map.contains_key_unique(&key1, &key2)
 }
 
 unsafe fn bi_hash_map_iter_init<T: BiHashItem, S: Clone + BuildHasher>(ptr: PtrConst) -> PtrMut {
@@ -434,16 +429,10 @@ where
                 &const { build_set_vtable::<T, S>() },
                 T::SHAPE,
             )))
-            .type_params(&[
-                TypeParam {
-                    name: "T",
-                    shape: T::SHAPE,
-                },
-                TypeParam {
-                    name: "S",
-                    shape: S::SHAPE,
-                },
-            ])
+            .type_params(&[TypeParam {
+                name: "T",
+                shape: T::SHAPE,
+            }])
             .inner(T::SHAPE)
             .type_ops_indirect(&const {
                 TypeOpsIndirect {
@@ -494,7 +483,9 @@ unsafe fn tri_hash_map_contains<T: TriHashItem, S: Clone + BuildHasher>(
     let map = unsafe { ptr.get::<TriHashMap<T, S>>() };
     let value = unsafe { value.get::<T>() };
     let key1 = value.key1();
-    map.contains_key1(&key1)
+    let key2 = value.key2();
+    let key3 = value.key3();
+    map.contains_key_unique(&key1, &key2, &key3)
 }
 
 unsafe fn tri_hash_map_iter_init<T: TriHashItem, S: Clone + BuildHasher>(ptr: PtrConst) -> PtrMut {
@@ -583,16 +574,10 @@ where
                 &const { build_set_vtable::<T, S>() },
                 T::SHAPE,
             )))
-            .type_params(&[
-                TypeParam {
-                    name: "T",
-                    shape: T::SHAPE,
-                },
-                TypeParam {
-                    name: "S",
-                    shape: S::SHAPE,
-                },
-            ])
+            .type_params(&[TypeParam {
+                name: "T",
+                shape: T::SHAPE,
+            }])
             .inner(T::SHAPE)
             .type_ops_indirect(&const {
                 TypeOpsIndirect {

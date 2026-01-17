@@ -461,6 +461,18 @@ pub trait FormatSuite {
     #[cfg(feature = "iddqd")]
     fn iddqd_id_hash_map() -> CaseSpec;
 
+    /// Case: `iddqd::IdOrdMap` type.
+    #[cfg(feature = "iddqd")]
+    fn iddqd_id_ord_map() -> CaseSpec;
+
+    /// Case: `iddqd::BiHashMap` type.
+    #[cfg(feature = "iddqd")]
+    fn iddqd_bi_hash_map() -> CaseSpec;
+
+    /// Case: `iddqd::TriHashMap` type.
+    #[cfg(feature = "iddqd")]
+    fn iddqd_tri_hash_map() -> CaseSpec;
+
     // ── Dynamic value tests ──
 
     /// Case: `facet_value::Value` dynamic type - null.
@@ -799,6 +811,12 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, SmolStrWrapper>(&CASE_SMOL_STR, S::smol_str),
         #[cfg(feature = "iddqd")]
         SuiteCase::new::<S, IddqdIdHashMapWrapper>(&CASE_IDDQD_ID_HASH_MAP, S::iddqd_id_hash_map),
+        #[cfg(feature = "iddqd")]
+        SuiteCase::new::<S, IddqdIdOrdMapWrapper>(&CASE_IDDQD_ID_ORD_MAP, S::iddqd_id_ord_map),
+        #[cfg(feature = "iddqd")]
+        SuiteCase::new::<S, IddqdBiHashMapWrapper>(&CASE_IDDQD_BI_HASH_MAP, S::iddqd_bi_hash_map),
+        #[cfg(feature = "iddqd")]
+        SuiteCase::new::<S, IddqdTriHashMapWrapper>(&CASE_IDDQD_TRI_HASH_MAP, S::iddqd_tri_hash_map),
         // Dynamic value cases
         #[cfg(feature = "facet-value")]
         SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_NULL, S::value_null),
@@ -3567,17 +3585,57 @@ const CASE_IDDQD_ID_HASH_MAP: CaseDescriptor<IddqdIdHashMapWrapper> = CaseDescri
     id: "third_party::iddqd_id_hash_map",
     description: "iddqd::IdHashMap type (set-like collection with key extraction)",
     expected: || {
-        let mut map =
-            iddqd::IdHashMap::with_hasher(std::hash::RandomState::new());
+        let mut map = iddqd::IdHashMap::with_hasher(std::hash::RandomState::new());
         map.insert_overwrite(IddqdTestItem {
             id: 1,
             name: String::from("Alice"),
         });
-        map.insert_overwrite(IddqdTestItem {
-            id: 2,
-            name: String::from("Bob"),
-        });
         IddqdIdHashMapWrapper { items: map }
+    },
+};
+
+#[cfg(feature = "iddqd")]
+const CASE_IDDQD_ID_ORD_MAP: CaseDescriptor<IddqdIdOrdMapWrapper> = CaseDescriptor {
+    id: "third_party::iddqd_id_ord_map",
+    description: "iddqd::IdOrdMap type (ordered set-like collection with key extraction)",
+    expected: || {
+        let mut map = iddqd::IdOrdMap::new();
+        map.insert_overwrite(IddqdOrdTestItem {
+            id: 1,
+            name: String::from("Alice"),
+        });
+        IddqdIdOrdMapWrapper { items: map }
+    },
+};
+
+#[cfg(feature = "iddqd")]
+const CASE_IDDQD_BI_HASH_MAP: CaseDescriptor<IddqdBiHashMapWrapper> = CaseDescriptor {
+    id: "third_party::iddqd_bi_hash_map",
+    description: "iddqd::BiHashMap type (bijective map with two keys per value)",
+    expected: || {
+        let mut map = iddqd::BiHashMap::with_hasher(std::hash::RandomState::new());
+        map.insert_overwrite(IddqdBiTestItem {
+            id: 1,
+            code: String::from("A001"),
+            name: String::from("Alice"),
+        });
+        IddqdBiHashMapWrapper { items: map }
+    },
+};
+
+#[cfg(feature = "iddqd")]
+const CASE_IDDQD_TRI_HASH_MAP: CaseDescriptor<IddqdTriHashMapWrapper> = CaseDescriptor {
+    id: "third_party::iddqd_tri_hash_map",
+    description: "iddqd::TriHashMap type (trijective map with three keys per value)",
+    expected: || {
+        let mut map = iddqd::TriHashMap::with_hasher(std::hash::RandomState::new());
+        map.insert_overwrite(IddqdTriTestItem {
+            id: 1,
+            code: String::from("A001"),
+            email: String::from("alice@example.com"),
+            name: String::from("Alice"),
+        });
+        IddqdTriHashMapWrapper { items: map }
     },
 };
 
@@ -3823,6 +3881,98 @@ impl iddqd::IdHashItem for IddqdTestItem {
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct IddqdIdHashMapWrapper {
     pub items: iddqd::IdHashMap<IddqdTestItem, std::hash::RandomState>,
+}
+
+/// Test item type for iddqd IdOrdMap.
+/// Implements `IdOrdItem` with `id` as the key.
+#[cfg(feature = "iddqd")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct IddqdOrdTestItem {
+    pub id: u64,
+    pub name: String,
+}
+
+#[cfg(feature = "iddqd")]
+impl iddqd::IdOrdItem for IddqdOrdTestItem {
+    type Key<'a> = u64;
+    fn key(&self) -> Self::Key<'_> {
+        self.id
+    }
+    iddqd::id_upcast!();
+}
+
+/// Fixture for `iddqd::IdOrdMap` test.
+#[cfg(feature = "iddqd")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct IddqdIdOrdMapWrapper {
+    pub items: iddqd::IdOrdMap<IddqdOrdTestItem>,
+}
+
+/// Test item type for iddqd BiHashMap.
+/// Implements `BiHashItem` with `id` as key1 and `code` as key2.
+#[cfg(feature = "iddqd")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct IddqdBiTestItem {
+    pub id: u64,
+    pub code: String,
+    pub name: String,
+}
+
+#[cfg(feature = "iddqd")]
+impl iddqd::BiHashItem for IddqdBiTestItem {
+    type K1<'a> = u64;
+    type K2<'a> = &'a str;
+    fn key1(&self) -> Self::K1<'_> {
+        self.id
+    }
+    fn key2(&self) -> Self::K2<'_> {
+        &self.code
+    }
+    iddqd::bi_upcast!();
+}
+
+/// Fixture for `iddqd::BiHashMap` test.
+/// Uses `std::hash::RandomState` as the hasher since it implements `Facet`.
+#[cfg(feature = "iddqd")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct IddqdBiHashMapWrapper {
+    pub items: iddqd::BiHashMap<IddqdBiTestItem, std::hash::RandomState>,
+}
+
+/// Test item type for iddqd TriHashMap.
+/// Implements `TriHashItem` with `id` as key1, `code` as key2, and `email` as key3.
+#[cfg(feature = "iddqd")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct IddqdTriTestItem {
+    pub id: u64,
+    pub code: String,
+    pub email: String,
+    pub name: String,
+}
+
+#[cfg(feature = "iddqd")]
+impl iddqd::TriHashItem for IddqdTriTestItem {
+    type K1<'a> = u64;
+    type K2<'a> = &'a str;
+    type K3<'a> = &'a str;
+    fn key1(&self) -> Self::K1<'_> {
+        self.id
+    }
+    fn key2(&self) -> Self::K2<'_> {
+        &self.code
+    }
+    fn key3(&self) -> Self::K3<'_> {
+        &self.email
+    }
+    iddqd::tri_upcast!();
+}
+
+/// Fixture for `iddqd::TriHashMap` test.
+/// Uses `std::hash::RandomState` as the hasher since it implements `Facet`.
+#[cfg(feature = "iddqd")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct IddqdTriHashMapWrapper {
+    pub items: iddqd::TriHashMap<IddqdTriTestItem, std::hash::RandomState>,
 }
 
 fn emit_case_showcase<S, T>(
