@@ -387,6 +387,40 @@ pre {
   }
 }
 
+// Code blocks with language headers
+.code-block {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 1.5rem;
+
+  .code-header {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-subtle);
+  }
+
+  pre {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    background: none;
+    border: none;
+    border-radius: 0;
+  }
+}
+
+.code-block + .code-block {
+  margin-top: 1.5rem;
+}
+
 // Requirement blocks (spec rules)
 .req {
   position: relative;

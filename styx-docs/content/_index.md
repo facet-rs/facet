@@ -9,26 +9,58 @@ insert_anchor_links = "heading"
 </div>
 
 ```styx
-styx is
-a (fun document language) // with comments
-
-/// and doc comments
-supporting {
-    key-value pairs
-    untyped scalars // (until deserialization)
-}
-
-you-may @tag(any thing you want) // good for enums
-quote "anything you want"
-raw-quote r#"to "get meta" if you wish"#
-
-and-if-needed <<HEREDOCS,bash
-export RUST_LOG=trace
-@echo "are here to save the day"
-HEREDOCS
+styx-is (a document language)
+with-features {
+    that make 
+    it {easy to-love} // also comments
+} 
 ```
 
 <div class="features">
+
+<section class="feature">
+<div class="feature-text">
+
+## Minimal punctuation
+
+Everything is space-separated, except inline object form:
+
+</div>
+<div class="feature-code">
+
+```styx
+sequences (look super clean)
+an-object {
+    can be
+    multi line
+}
+or {inline style, with commas, never both}
+```
+
+</div>
+</section>
+
+<section class="feature">
+<div class="feature-text">
+
+## Pragmatic quoting
+
+Of course you can have spaces, and special chars:
+
+</div>
+<div class="feature-code">
+
+```styx
+one bare-scalar
+two "double-quoted"
+raw r#"raw quoted a-la Rust"#
+finally HEREDOCS<<
+    they work :)
+    HEREDOC
+```
+
+</div>
+</section>
 
 <section class="feature">
 <div class="feature-text">
@@ -47,8 +79,6 @@ country: NO   # boolean false
 version: 3.10 # 3.1
 comment: "This is a string for sure"
 ```
-
-<div style="height: 1em;"></div>
 
 ```styx
 // Styx
@@ -172,6 +202,45 @@ comment "This is a string for sure" // nope, an opaque scalar
   display: none;
 }
 
+.layers-diagram-horizontal {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 1rem;
+  max-width: 750px;
+  margin: 0 auto;
+}
+
+.layers-diagram-horizontal + .layers-diagram-horizontal {
+  margin-top: 1.5rem;
+}
+
+.layers-diagram-horizontal .layer-box {
+  flex: 1;
+  max-width: none;
+}
+
+.layer-arrow-horizontal {
+  display: flex;
+  align-items: center;
+  padding: 0 0.5rem;
+}
+
+.layer-arrow-horizontal::before {
+  content: "↔";
+  font-size: 2rem;
+  color: rgba(255,255,255,0.8);
+}
+
+@media (max-width: 600px) {
+  .layers-diagram-horizontal {
+    flex-direction: column;
+  }
+  .layer-arrow-horizontal::before {
+    content: "↕";
+  }
+}
+
 .layer-arrow {
   display: flex;
   flex-direction: column;
@@ -198,24 +267,6 @@ comment "This is a string for sure" // nope, an opaque scalar
 .layers-section .section-desc a {
   color: #fff;
   text-decoration: underline;
-}
-
-.feature-code .code-header {
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin-bottom: 0.25rem;
-}
-
-.feature-code .code-block + .code-block {
-  margin-top: 1.5rem;
-}
-
-.code-block pre {
-    padding: .8rem 1rem;
 }
 </style>
 
@@ -321,27 +372,111 @@ const created = doc.created.asDateTime();
 <p class="section-desc">Durations like <em>30s</em> or <em>1h30m</em>. Integers like <em>0xff</em> or <em>1_000_000</em>. RFC 3339 dates. It's all <a href="/reference/spec/scalars">in the spec</a>.</p>
 </div>
 
-<div class="layers-diagram">
+<div class="layers-diagram-horizontal">
   <div class="layer-box">
-    <span class="layer-title">Opaque scalars</span>
+    <span class="layer-title">Durations</span>
 
 ```styx
 timeout 30s
-color 0xff5500
-created 2024-03-15T14:30:00Z
+retry 1h30m
+poll 500ms
+ttl 7d
 ```
 
 </div>
 
-  <div class="layer-arrow"></div>
+  <div class="layer-arrow-horizontal"></div>
 
   <div class="layer-box">
-    <span class="layer-title">Typed values</span>
+    <span class="layer-title">Typed</span>
 
 ```rust
 Duration::from_secs(30)
+Duration::from_secs(5400)
+Duration::from_millis(500)
+Duration::from_secs(604800)
+```
+
+</div>
+</div>
+
+<div class="layers-diagram-horizontal">
+  <div class="layer-box">
+    <span class="layer-title">Integers</span>
+
+```styx
+count 1_000_000
+color 0xff5500
+mask 0b1111_0000
+mode 0o755
+```
+
+</div>
+
+  <div class="layer-arrow-horizontal"></div>
+
+  <div class="layer-box">
+    <span class="layer-title">Typed</span>
+
+```rust
+1000000_i64
 16733440_u32
-DateTime::parse("2024-03-15T14:30:00Z")
+240_u8
+493_u32
+```
+
+</div>
+</div>
+
+<div class="layers-diagram-horizontal">
+  <div class="layer-box">
+    <span class="layer-title">Floats</span>
+
+```styx
+pi 3.141_592_653
+avogadro 6.022e23
+small 1.5e-10
+max inf
+```
+
+</div>
+
+  <div class="layer-arrow-horizontal"></div>
+
+  <div class="layer-box">
+    <span class="layer-title">Typed</span>
+
+```rust
+3.141592653_f64
+6.022e23_f64
+1.5e-10_f64
+f64::INFINITY
+```
+
+</div>
+</div>
+
+<div class="layers-diagram-horizontal">
+  <div class="layer-box">
+    <span class="layer-title">Dates & booleans</span>
+
+```styx
+created 2024-03-15T14:30:00Z
+enabled true
+debug false
+```
+
+</div>
+
+  <div class="layer-arrow-horizontal"></div>
+
+  <div class="layer-box">
+    <span class="layer-title">Typed</span>
+
+```rust
+DateTime(2024, 3, 15, 14, 30, 0, UTC)
+true
+false
 ```
 
 </div>
@@ -351,9 +486,35 @@ DateTime::parse("2024-03-15T14:30:00Z")
 <section class="feature">
 <div class="feature-text">
 
-## First-class schemas
+## Skip the schema
 
-Write schemas by hand for external contracts, or generate them from your Rust types. Either way works.
+Using Rust? Derive `Facet` on your types and deserialize directly.
+
+No schema files, no code generation — your types are the schema.
+
+</div>
+<div class="feature-code">
+
+```rust
+#[derive(Facet)]
+struct Server {
+    host: String,
+    port: u16,
+    tls: Option<bool>,
+}
+
+let server: Server = facet_styx::from_str(input)?;
+```
+
+</div>
+</section>
+
+<section class="feature">
+<div class="feature-text">
+
+## Live the schema
+
+Generate schemas from Rust types or write them by hand.
 
 Doc comments become hover text in your editor and show up in error messages.
 
@@ -380,33 +541,9 @@ Server @object {
 <section class="feature">
 <div class="feature-text">
 
-## Deserialize to Rust structs
+## Love the schema
 
-Derive `Facet` on your types and deserialize directly. No schema files, no code generation — your types are the schema.
-
-</div>
-<div class="feature-code">
-
-```rust
-#[derive(Facet)]
-struct Server {
-    host: String,
-    port: u16,
-    tls: Option<bool>,
-}
-
-let server: Server = facet_styx::from_str(input)?;
-```
-
-</div>
-</section>
-
-<section class="feature">
-<div class="feature-text">
-
-## JavaScript and beyond
-
-Parse Styx in the browser or Node.js. With a schema, you get a plain JavaScript object with real types — `number`, `string`, `Date`.
+With a Schema, you get a plain JavaScript object with real types — `number`, `string`, `Date`.
 
 </div>
 <div class="feature-code">
@@ -415,10 +552,12 @@ Parse Styx in the browser or Node.js. With a schema, you get a plain JavaScript 
 import { parse } from "@bearcove/styx";
 
 const config = parse(input, schema);
+console.log(config);
+```
 
-// config.server.port is a number
-// config.server.host is a string
-// config.createdAt is a Date
+```bash
+$ node index.ts
+{"host": "localhost", "port": 8080}
 ```
 
 </div>
