@@ -26,8 +26,8 @@ export const styxHighlight = styleTags({
   RawScalar: t.special(t.string),
   Heredoc: t.special(t.string),
 
-  // Other
-  Attributes: t.attributeName,
+  // Inline attributes (key>value pairs)
+  Attributes: t.special(t.variableName),
   Unit: t.null,
   Comment: t.lineComment,
   DocComment: t.docComment,

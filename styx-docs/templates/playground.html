@@ -192,11 +192,8 @@ server {
     host localhost
     port 8080
 
-    // Tags mark values with semantic meaning
-    timeout @duration 30s
-
-    // Inline objects with attributes
-    cache size>1gb ttl>3600
+    // Tags add semantic meaning to values
+    timeout @duration(30s)
 
     tls {
         enabled true
@@ -209,22 +206,15 @@ server {
 database {
     url postgres://localhost/myapp
     pool_size 10
+    max_connections @int(100)
 }
 
 /// Feature flags (a sequence)
 features (
     dark-mode
     notifications
-    @experimental analytics
+    @experimental(analytics)
 )
-
-/// Multi-line content with heredocs
-query <<SQL
-    SELECT id, name, email
-    FROM users
-    WHERE active = true
-    ORDER BY created_at DESC
-SQL
 `;
 
 let styxEditor;
