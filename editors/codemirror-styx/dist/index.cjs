@@ -70,7 +70,6 @@ var parser = import_lr.LRParser.deserialize({
 // src/index.ts
 var import_language = require("@codemirror/language");
 var import_autocomplete = require("@codemirror/autocomplete");
-var import_highlight3 = require("@lezer/highlight");
 var styxLanguage = import_language.LRLanguage.define({
   name: "styx",
   parser,
@@ -100,21 +99,8 @@ var builtinTags = [
 var styxCompletion = styxLanguage.data.of({
   autocomplete: (0, import_autocomplete.completeFromList)(builtinTags)
 });
-var styxHighlightStyle = import_language.HighlightStyle.define([
-  { tag: import_highlight3.tags.lineComment, color: "#6a9955" },
-  { tag: import_highlight3.tags.docComment, color: "#6a9955", fontStyle: "italic" },
-  { tag: import_highlight3.tags.string, color: "#ce9178" },
-  { tag: import_highlight3.tags.special(import_highlight3.tags.string), color: "#d7ba7d" },
-  { tag: import_highlight3.tags.tagName, color: "#569cd6" },
-  { tag: import_highlight3.tags.attributeName, color: "#9cdcfe" },
-  { tag: import_highlight3.tags.null, color: "#569cd6" },
-  { tag: import_highlight3.tags.paren, color: "#ffd700" },
-  { tag: import_highlight3.tags.brace, color: "#da70d6" },
-  { tag: import_highlight3.tags.separator, color: "#d4d4d4" }
-]);
-var styxHighlightingExt = (0, import_language.syntaxHighlighting)(styxHighlightStyle);
 function styx() {
-  return new import_language.LanguageSupport(styxLanguage, [styxCompletion, styxHighlightingExt]);
+  return new import_language.LanguageSupport(styxLanguage, [styxCompletion]);
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

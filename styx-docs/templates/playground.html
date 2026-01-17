@@ -160,6 +160,10 @@
     <div class="editor-pane">
         <div class="pane-header">
             <span>Styx</span>
+            <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: normal; text-transform: none; letter-spacing: normal;">
+                <input type="checkbox" id="vim-mode" checked>
+                vim
+            </label>
             <span id="status">Loading...</span>
         </div>
         <div class="pane-content">
@@ -182,26 +186,9 @@
 // Set WASM URL before module loads (will be rewritten to cache-busted path)
 window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
 </script>
-<script type="importmap">
-{
-  "imports": {
-    "@codemirror/state": "https://esm.sh/@codemirror/state@6.5.2",
-    "@codemirror/view": "https://esm.sh/@codemirror/view@6.39.11?deps=@codemirror/state@6.5.2",
-    "@codemirror/language": "https://esm.sh/@codemirror/language@6.10.8?deps=@codemirror/state@6.5.2",
-    "@codemirror/autocomplete": "https://esm.sh/@codemirror/autocomplete@6.18.6?deps=@codemirror/state@6.5.2",
-    "@lezer/highlight": "https://esm.sh/@lezer/highlight@^1.0.0?target=es2022"
-  }
-}
-</script>
 <script type="module">
-// Import CodeMirror - pin @codemirror/state@6.5.2 across all packages
-import { EditorView, basicSetup } from 'https://esm.sh/codemirror@6.0.1?deps=@codemirror/state@6.5.2';
-import { EditorState } from 'https://esm.sh/@codemirror/state@6.5.2';
-import { oneDark } from 'https://esm.sh/@codemirror/theme-one-dark@6.1.2?deps=@codemirror/state@6.5.2';
-import { json } from 'https://esm.sh/@codemirror/lang-json@6.0.1?deps=@codemirror/state@6.5.2';
-
-// Import Styx language support for CodeMirror
-import { styx } from '/codemirror-styx/index.js';
+// Import from Vite-bundled playground (all deps properly deduped)
+import { EditorView, EditorState, Compartment, basicSetup, oneDark, json, vim, styx } from '/playground/playground.js';
 
 // Import Styx WASM
 import init, { to_json, parse, version } from '/wasm/styx_wasm.js';
@@ -238,6 +225,7 @@ features (
 let styxEditor;
 let jsonEditor;
 let debounceTimer;
+let vimCompartment;
 
 async function main() {
     // Initialize WASM
@@ -270,6 +258,11 @@ async function main() {
         }
     });
 
+    // Vim mode compartment for dynamic toggling
+    vimCompartment = new Compartment();
+    const vimCheckbox = document.getElementById('vim-mode');
+    const vimEnabled = vimCheckbox.checked;
+
     styxEditor = new EditorView({
         state: EditorState.create({
             doc: DEFAULT_SOURCE,
@@ -278,9 +271,17 @@ async function main() {
                 oneDark,
                 styx(),
                 updateListener,
+                vimCompartment.of(vimEnabled ? vim() : []),
             ],
         }),
         parent: document.getElementById('editor'),
+    });
+
+    // Handle vim mode toggle
+    vimCheckbox.addEventListener('change', (e) => {
+        styxEditor.dispatch({
+            effects: vimCompartment.reconfigure(e.target.checked ? vim() : [])
+        });
     });
 
     // Clear loading states

@@ -43,12 +43,6 @@
     "url": "https://github.com/bearcove/styx/issues"
   },
   "homepage": "https://styx.bearcove.net",
-  "dependencies": {
-    "@codemirror/autocomplete": "^6.18.0",
-    "@codemirror/language": "^6.10.0",
-    "@lezer/highlight": "^1.2.0",
-    "@lezer/lr": "^1.4.0"
-  },
   "devDependencies": {
     "@lezer/generator": "^1.7.0",
     "tsup": "^8.0.0",
@@ -56,7 +50,12 @@
     "vitest": "^1.0.0"
   },
   "peerDependencies": {
+    "@codemirror/autocomplete": "^6.0.0",
+    "@codemirror/language": "^6.0.0",
     "@codemirror/state": "^6.0.0",
-    "@codemirror/view": "^6.0.0"
+    "@codemirror/view": "^6.0.0",
+    "@lezer/common": "^1.0.0",
+    "@lezer/highlight": "^1.0.0",
+    "@lezer/lr": "^1.0.0"
   }
 }
