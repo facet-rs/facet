@@ -101,7 +101,7 @@ server @object {
 
 ```bash
 # In CI
-styx validate config.styx --schema schema.styx
+styx config.styx --validate
 
 # In your editor
 # → errors inline, autocomplete, hover docs
