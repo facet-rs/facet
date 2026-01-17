@@ -330,7 +330,11 @@ fn strip_plugin_items_from_content(content: TokenStream) -> TokenStream {
 ///
 /// Returns true for:
 /// - `derive(...)` - plugin registration
-/// - `namespace::key` patterns (e.g., error::from, error::source)
+///
+/// NOTE: We intentionally do NOT strip `namespace::key` patterns here.
+/// Extension attributes like `args::positional`, `dibs::table`, `error::from`
+/// must be preserved so they can be processed by the Facet derive and stored
+/// in the Shape's attributes field.
 fn is_plugin_item(item: &TokenStream) -> bool {
     let mut iter = item.clone().into_iter();
 
@@ -339,15 +343,6 @@ fn is_plugin_item(item: &TokenStream) -> bool {
 
         // Check for derive(...)
         if name == "derive" {
-            return true;
-        }
-
-        // Check for namespace::key pattern
-        if let Some(proc_macro2::TokenTree::Punct(p1)) = iter.next()
-            && p1.as_char() == ':'
-            && let Some(proc_macro2::TokenTree::Punct(p2)) = iter.next()
-            && p2.as_char() == ':'
-        {
             return true;
         }
     }
