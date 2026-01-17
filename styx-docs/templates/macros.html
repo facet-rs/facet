@@ -15,7 +15,7 @@
 
         {% for subsection_path in subsections %}
             {% set subsection = get_section(path=subsection_path) %}
-        <li class="has-children">
+        <li class="has-children{% if current_path is starting_with(subsection.path) %} expanded{% endif %}">
             <a href="{{ subsection.permalink }}" {% if current_path is starting_with(subsection.path) %}class="active"{% endif %}>
                 {{ subsection.title or subsection.path }}
             </a>
@@ -30,9 +30,9 @@
 {% macro sidebar(root_section_path, current_path) %}
     {% set root = get_section(path=root_section_path) %}
     <aside class="sidebar">
-        <nav>
-            <div class="sidebar-header">
-                <a href="{{ root.permalink }}">{{ root.title or root.path }}</a>
+        <nav class="sidebar-nav">
+            <div class="sidebar-section">
+                <a href="{{ root.permalink }}" class="sidebar-title">{{ root.title or root.path }}</a>
             </div>
             {{ self::render_section_tree(section=root, current_path=current_path) }}
         </nav>

@@ -4,60 +4,72 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}{{ config.title }}{% endblock title %}</title>
-    <meta name="description" content="Styx - A structured document format for humans">
+    <meta name="description" content="Styx - A document language for mortals">
     <link rel="stylesheet" href="/main.css">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     {% block head %}{% endblock head %}
 </head>
 <body>
-    <nav class="nav">
-        <a href="/" class="nav-brand">Styx</a>
-        <div class="nav-links">
-            <a href="/learn" {% if current_path is starting_with("/learn") %}class="active"{% endif %}>Learn</a>
-            <a href="/reference" {% if current_path is starting_with("/reference") %}class="active"{% endif %}>Reference</a>
-            <a href="/tools" {% if current_path is starting_with("/tools") %}class="active"{% endif %}>Tools</a>
-            <a href="/ecosystem" {% if current_path is starting_with("/ecosystem") %}class="active"{% endif %}>Ecosystem</a>
-            <a href="https://github.com/bearcove/styx" class="nav-github">GitHub</a>
-        </div>
-    </nav>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">
+                <span class="logo-text">Styx</span>
+            </a>
+            <div class="nav-links">
+                <a href="/learn" {% if current_path is starting_with("/learn") %}class="active"{% endif %}>Learn</a>
+                <a href="/reference" {% if current_path is starting_with("/reference") %}class="active"{% endif %}>Reference</a>
+                <a href="/tools" {% if current_path is starting_with("/tools") %}class="active"{% endif %}>Tools</a>
+                <a href="/ecosystem" {% if current_path is starting_with("/ecosystem") %}class="active"{% endif %}>Ecosystem</a>
+            </div>
+            <a href="https://github.com/bearcove/styx" class="nav-github" aria-label="GitHub">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                </svg>
+            </a>
+        </nav>
+    </header>
 
     {% block body %}
-    <div class="container">
+    <main class="main">
         {% block content %}{% endblock content %}
-    </div>
+    </main>
     {% endblock body %}
 
     <footer class="footer">
-        <p>Styx is open source software.</p>
+        <div class="footer-content">
+            <p>Styx is open source software.</p>
+        </div>
     </footer>
+
     <script>
     document.addEventListener('DOMContentLoaded', () => {
-      document.querySelectorAll('.carousel').forEach(carousel => {
-        const slides = carousel.querySelectorAll('.carousel-slide');
-        const dotsContainer = carousel.querySelector('.carousel-dots');
-        
-        if (slides.length <= 1) return;
-        
-        slides.forEach((_, i) => {
-          const dot = document.createElement('button');
-          dot.className = 'carousel-dot' + (i === 0 ? ' active' : '');
-          dot.addEventListener('click', () => goTo(i));
-          dotsContainer.appendChild(dot);
+        document.querySelectorAll('.carousel').forEach(carousel => {
+            const slides = carousel.querySelectorAll('.carousel-slide');
+            const dotsContainer = carousel.querySelector('.carousel-dots');
+
+            if (slides.length <= 1) return;
+
+            slides.forEach((_, i) => {
+                const dot = document.createElement('button');
+                dot.className = 'carousel-dot' + (i === 0 ? ' active' : '');
+                dot.setAttribute('aria-label', `Slide ${i + 1}`);
+                dot.addEventListener('click', () => goTo(i));
+                dotsContainer.appendChild(dot);
+            });
+
+            const dots = dotsContainer.querySelectorAll('.carousel-dot');
+            let current = 0;
+
+            function goTo(index) {
+                slides[current].classList.remove('active');
+                dots[current].classList.remove('active');
+                current = index;
+                slides[current].classList.add('active');
+                dots[current].classList.add('active');
+            }
+
+            setInterval(() => goTo((current + 1) % slides.length), 5000);
         });
-        
-        const dots = dotsContainer.querySelectorAll('.carousel-dot');
-        let current = 0;
-        
-        function goTo(index) {
-          slides[current].classList.remove('active');
-          dots[current].classList.remove('active');
-          current = index;
-          slides[current].classList.add('active');
-          dots[current].classList.add('active');
-        }
-        
-        setInterval(() => goTo((current + 1) % slides.length), 4000);
-      });
     });
     </script>
 </body>

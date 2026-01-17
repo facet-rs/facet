@@ -13,18 +13,18 @@
 {% endif %}
 
 {% if has_sidebar %}
-<div class="docs-layout">
+<div class="docs">
     {{ macros::sidebar(root_section_path=root_section_path, current_path=page.path) }}
 
-    <main class="docs-main">
-        <article>
+    <main class="docs-content">
+        <article class="article">
             <h1>{{ page.title }}</h1>
             {{ page.content | safe }}
         </article>
 
         {% if page.toc and page.toc | length > 0 %}
         <aside class="toc">
-            <nav>
+            <div class="toc-inner">
                 <h2>On this page</h2>
                 <ul>
                 {% for h1 in page.toc %}
@@ -40,17 +40,17 @@
                     </li>
                 {% endfor %}
                 </ul>
-            </nav>
+            </div>
         </aside>
         {% endif %}
     </main>
 </div>
 {% else %}
-<div class="container">
-    <main class="content">
+<main class="main">
+    <article class="article standalone">
         <h1>{{ page.title }}</h1>
         {{ page.content | safe }}
-    </main>
-</div>
+    </article>
+</main>
 {% endif %}
 {% endblock body %}
