@@ -1,0 +1,19 @@
+// Attribute syntax: key>value creates inline object entries
+
+// Single attribute
+server host>localhost
+
+// Multiple attributes
+config host>localhost port>8080
+
+// Attributes with different value types
+mixed name>"quoted value" count>42 tags>(a b c) opts>{x 1}
+
+// URL with = (not attribute syntax)
+url https://example.com?foo=bar&baz=qux
+
+// Email with @ (not a tag)
+contact user@example.com
+
+// Crate spec with @ (not a tag)
+dependency crate:myapp@2
