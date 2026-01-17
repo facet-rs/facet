@@ -1,10 +1,9 @@
 # Styx Website Tasks
 
-## In Progress
+## TODO
 
 | ID  | Task | File |
 |-----|------|------|
-| 001 | Typos, grammar issues, and minor fixes | [TODO-001](TODO-001-typos-and-fixes.md) |
 | 002 | Improve styling and layout | [TODO-002](TODO-002-styling-layout.md) |
 | 003 | Revise spec: expressions as 2D (tag, payload) | [TODO-003](TODO-003-spec-2d-expressions.md) |
 | 004 | Add CLI documentation section | [TODO-004](TODO-004-cli-docs.md) |
@@ -13,4 +12,4 @@
 
 ## Completed
 
-_None yet_
+- 001: Typos and fixes (d21a942)
