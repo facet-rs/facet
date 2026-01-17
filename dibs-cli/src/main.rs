@@ -1,4 +1,6 @@
-use std::io::{self, IsTerminal, stdout};
+use std::fs;
+use std::io::{self, IsTerminal, Write, stdout};
+use std::path::Path;
 
 use crossterm::{
     ExecutableCommand,
@@ -231,10 +233,7 @@ fn run(cli: Cli) {
             println!("  (not yet implemented)");
         }
         Some(Commands::Generate { name }) => {
-            let date = Zoned::now().date();
-            println!("dibs generate {}", name);
-            println!("  Would create: migrations/{}-{}.rs", date, name);
-            println!("  (not yet implemented)");
+            generate_migration(&name);
         }
         Some(Commands::Schema {
             database_url: _,
@@ -863,4 +862,58 @@ fn mask_password(url: &str) -> String {
         }
     }
     url.to_string()
+}
+
+fn generate_migration(name: &str) {
+    let now = Zoned::now();
+    let timestamp = now.strftime("%Y%m%d%H%M%S");
+
+    // Create migrations directory if it doesn't exist
+    let migrations_dir = Path::new("migrations");
+    if !migrations_dir.exists()
+        && let Err(e) = fs::create_dir_all(migrations_dir)
+    {
+        eprintln!("Failed to create migrations directory: {}", e);
+        std::process::exit(1);
+    }
+
+    // Generate filename: YYYYMMDDHHMMSS_name.sql
+    let filename = format!("{}_{}.sql", timestamp, name);
+    let filepath = migrations_dir.join(&filename);
+
+    if filepath.exists() {
+        eprintln!("Migration file already exists: {}", filepath.display());
+        std::process::exit(1);
+    }
+
+    // Generate migration content
+    let content = format!(
+        r#"-- Migration: {name}
+-- Created: {timestamp}
+
+-- Up migration
+-- Add your SQL statements here
+
+
+-- Down migration (commented out, uncomment if needed)
+-- DROP TABLE IF EXISTS ...;
+"#,
+        name = name,
+        timestamp = now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+    );
+
+    let mut file = match fs::File::create(&filepath) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create migration file: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(e) = file.write_all(content.as_bytes()) {
+        eprintln!("Failed to write migration file: {}", e);
+        std::process::exit(1);
+    }
+
+    println!("Created migration: {}", filepath.display());
 }
