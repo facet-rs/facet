@@ -2,6 +2,14 @@
 /* eslint-disable */
 
 /**
+ * Convert a JSON string to Styx format.
+ *
+ * Returns a Styx document string representation of the JSON.
+ * Tagged values ({"$tag": "name", "$value": ...}) are converted back to tags.
+ */
+export function from_json(json_source: string): any;
+
+/**
  * Parse a Styx document and return diagnostics.
  *
  * Returns a JSON object with `success` boolean and `diagnostics` array.
@@ -31,6 +39,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly from_json: (a: number, b: number) => any;
     readonly parse: (a: number, b: number) => any;
     readonly to_json: (a: number, b: number) => any;
     readonly validate: (a: number, b: number) => number;

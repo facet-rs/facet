@@ -5,7 +5,8 @@
 
 use serde::Serialize;
 use serde_json::json;
-use styx_tree::{Object, Payload, Sequence, Value};
+use styx_parse::{ScalarKind, Separator};
+use styx_tree::{Entry, Object, Payload, Scalar, Sequence, Tag, Value};
 use wasm_bindgen::prelude::*;
 
 /// Serialize a value to JsValue using plain objects (not Maps).
@@ -194,6 +195,144 @@ pub fn validate(source: &str) -> bool {
     !events
         .iter()
         .any(|e| matches!(e, styx_parse::Event::Error { .. }))
+}
+
+/// Convert a JSON string to Styx format.
+///
+/// Returns a Styx document string representation of the JSON.
+/// Tagged values ({"$tag": "name", "$value": ...}) are converted back to tags.
+#[wasm_bindgen]
+pub fn from_json(json_source: &str) -> JsValue {
+    match serde_json::from_str::<serde_json::Value>(json_source) {
+        Ok(json_value) => {
+            let styx_value = json_to_value(&json_value);
+            let styx_string =
+                styx_format::format_value(&styx_value, styx_format::FormatOptions::default());
+
+            to_js_value(&json!({
+                "success": true,
+                "styxString": styx_string
+            }))
+            .unwrap_or(JsValue::NULL)
+        }
+        Err(e) => to_js_value(&json!({
+            "success": false,
+            "error": e.to_string()
+        }))
+        .unwrap_or(JsValue::NULL),
+    }
+}
+
+/// Convert a JSON value to a Styx Value.
+fn json_to_value(json: &serde_json::Value) -> Value {
+    match json {
+        serde_json::Value::Null => Value::unit(),
+
+        serde_json::Value::Bool(b) => Value {
+            tag: None,
+            payload: Some(Payload::Scalar(Scalar {
+                text: b.to_string(),
+                kind: ScalarKind::Bare,
+                span: None,
+            })),
+            span: None,
+        },
+
+        serde_json::Value::Number(n) => Value {
+            tag: None,
+            payload: Some(Payload::Scalar(Scalar {
+                text: n.to_string(),
+                kind: ScalarKind::Bare,
+                span: None,
+            })),
+            span: None,
+        },
+
+        serde_json::Value::String(s) => {
+            // Check if it needs quoting
+            let kind = if needs_quoting(s) {
+                ScalarKind::Quoted
+            } else {
+                ScalarKind::Bare
+            };
+            Value {
+                tag: None,
+                payload: Some(Payload::Scalar(Scalar {
+                    text: s.clone(),
+                    kind,
+                    span: None,
+                })),
+                span: None,
+            }
+        }
+
+        serde_json::Value::Array(arr) => {
+            let items = arr.iter().map(json_to_value).collect();
+            Value {
+                tag: None,
+                payload: Some(Payload::Sequence(Sequence { items, span: None })),
+                span: None,
+            }
+        }
+
+        serde_json::Value::Object(obj) => {
+            // Check for tagged value: {"$tag": "name", "$value": ...}
+            if let Some(serde_json::Value::String(tag_name)) = obj.get("$tag") {
+                let payload = obj.get("$value").map(|v| json_to_value(v).payload).flatten();
+                return Value {
+                    tag: Some(Tag {
+                        name: tag_name.clone(),
+                        span: None,
+                    }),
+                    payload,
+                    span: None,
+                };
+            }
+
+            // Regular object
+            let entries = obj
+                .iter()
+                .map(|(k, v)| Entry {
+                    key: Value {
+                        tag: None,
+                        payload: Some(Payload::Scalar(Scalar {
+                            text: k.clone(),
+                            kind: if needs_quoting(k) {
+                                ScalarKind::Quoted
+                            } else {
+                                ScalarKind::Bare
+                            },
+                            span: None,
+                        })),
+                        span: None,
+                    },
+                    value: json_to_value(v),
+                    doc_comment: None,
+                })
+                .collect();
+
+            Value {
+                tag: None,
+                payload: Some(Payload::Object(Object {
+                    entries,
+                    separator: Separator::Newline,
+                    span: None,
+                })),
+                span: None,
+            }
+        }
+    }
+}
+
+/// Check if a string needs quoting in Styx.
+fn needs_quoting(s: &str) -> bool {
+    if s.is_empty() {
+        return true;
+    }
+
+    // Check for characters that require quoting
+    s.chars().any(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '"' | '{' | '}' | '(' | ')' | ',' | '@' | '>' | '/'))
+        || s.starts_with("//")
 }
 
 /// Get the version of the Styx WASM library.

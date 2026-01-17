@@ -1,6 +1,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const from_json: (a: number, b: number) => any;
 export const parse: (a: number, b: number) => any;
 export const to_json: (a: number, b: number) => any;
 export const validate: (a: number, b: number) => number;

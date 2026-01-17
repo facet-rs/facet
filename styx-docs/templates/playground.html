@@ -182,7 +182,7 @@ window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
 import { EditorView, EditorState, Compartment, basicSetup, oneDark, json, vim, styx } from '/playground/playground.js';
 
 // Import Styx WASM
-import init, { to_json, parse, version } from '/wasm/styx_wasm.js';
+import init, { to_json, from_json, parse, version } from '/wasm/styx_wasm.js';
 
 const DEFAULT_SOURCE = `// Welcome to the Styx Playground!
 // Edit this document and see the JSON output on the right.
@@ -192,31 +192,48 @@ server {
     host localhost
     port 8080
 
+    // Tags mark values with semantic meaning
+    timeout @duration 30s
+
+    // Inline objects with attributes
+    cache size>1gb ttl>3600
+
     tls {
         enabled true
-        cert "/etc/ssl/cert.pem"
-        key "/etc/ssl/key.pem"
+        cert /etc/ssl/cert.pem
+        key /etc/ssl/key.pem
     }
 }
 
 /// Database settings
 database {
-    url "postgres://localhost/myapp"
+    url postgres://localhost/myapp
     pool_size 10
 }
 
-/// Feature flags
+/// Feature flags (a sequence)
 features (
     dark-mode
     notifications
     @experimental analytics
 )
+
+/// Multi-line content with heredocs
+query <<SQL
+    SELECT id, name, email
+    FROM users
+    WHERE active = true
+    ORDER BY created_at DESC
+SQL
 `;
 
 let styxEditor;
 let jsonEditor;
-let debounceTimer;
+let styxDebounceTimer;
+let jsonDebounceTimer;
 let vimCompartment;
+let updatingFromStyx = false;
+let updatingFromJson = false;
 
 async function main() {
     // Initialize WASM
@@ -224,7 +241,17 @@ async function main() {
 
     document.getElementById('status').textContent = `v${version()}`;
 
-    // Create JSON editor (editable - changes from Styx will overwrite)
+    // JSON editor update listener - convert JSON to Styx
+    const jsonUpdateListener = EditorView.updateListener.of((update) => {
+        if (update.docChanged && !updatingFromStyx) {
+            clearTimeout(jsonDebounceTimer);
+            jsonDebounceTimer = setTimeout(() => {
+                updateStyxFromJson(update.state.doc.toString());
+            }, 300);
+        }
+    });
+
+    // Create JSON editor (editable - bidirectional sync)
     jsonEditor = new EditorView({
         state: EditorState.create({
             doc: '',
@@ -232,17 +259,18 @@ async function main() {
                 basicSetup,
                 oneDark,
                 json(),
+                jsonUpdateListener,
             ],
         }),
         parent: document.getElementById('output'),
     });
 
-    // Create Styx editor with update listener
-    const updateListener = EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-                updateOutput(update.state.doc.toString());
+    // Styx editor update listener - convert Styx to JSON
+    const styxUpdateListener = EditorView.updateListener.of((update) => {
+        if (update.docChanged && !updatingFromJson) {
+            clearTimeout(styxDebounceTimer);
+            styxDebounceTimer = setTimeout(() => {
+                updateJsonFromStyx(update.state.doc.toString());
             }, 150);
         }
     });
@@ -263,7 +291,7 @@ async function main() {
                 basicSetup,
                 oneDark,
                 styx(),
-                updateListener,
+                styxUpdateListener,
                 vimCompartment.of(vimEnabled ? vim() : []),
             ],
         }),
@@ -284,10 +312,11 @@ async function main() {
     document.getElementById('output').querySelector('.loading')?.remove();
 
     // Initial render
-    updateOutput(DEFAULT_SOURCE);
+    updateJsonFromStyx(DEFAULT_SOURCE);
 }
 
-function updateOutput(source) {
+// Update JSON editor from Styx source
+function updateJsonFromStyx(source) {
     const diagnosticsEl = document.getElementById('diagnostics');
 
     // Parse and get diagnostics
@@ -304,12 +333,14 @@ function updateOutput(source) {
             return `<div class="diagnostic-item"><span class="diagnostic-location">[${loc}]</span>${escapeHtml(d.message)}</div>`;
         }).join('');
     } else {
-        diagnosticsEl.classList.add('success');
-        diagnosticsEl.innerHTML = '<div class="diagnostic-item">✓ No errors</div>';
+        // No errors - hide the diagnostics panel
+        diagnosticsEl.classList.remove('success');
+        diagnosticsEl.innerHTML = '';
     }
 
     // Update JSON editor content
     if (jsonResult.success) {
+        updatingFromStyx = true;
         jsonEditor.dispatch({
             changes: {
                 from: 0,
@@ -317,7 +348,9 @@ function updateOutput(source) {
                 insert: jsonResult.jsonString
             }
         });
+        updatingFromStyx = false;
     } else {
+        updatingFromStyx = true;
         jsonEditor.dispatch({
             changes: {
                 from: 0,
@@ -325,7 +358,32 @@ function updateOutput(source) {
                 insert: `// Error: ${jsonResult.error || 'Unknown error'}`
             }
         });
+        updatingFromStyx = false;
     }
+}
+
+// Update Styx editor from JSON source
+function updateStyxFromJson(jsonSource) {
+    // Try to parse and convert JSON to Styx
+    const result = from_json(jsonSource);
+
+    if (result.success) {
+        updatingFromJson = true;
+        styxEditor.dispatch({
+            changes: {
+                from: 0,
+                to: styxEditor.state.doc.length,
+                insert: result.styxString
+            }
+        });
+        updatingFromJson = false;
+
+        // Clear diagnostics since JSON was valid
+        const diagnosticsEl = document.getElementById('diagnostics');
+        diagnosticsEl.classList.remove('success');
+        diagnosticsEl.innerHTML = '';
+    }
+    // If JSON is invalid, don't update Styx - just let user fix the JSON
 }
 
 function escapeHtml(text) {

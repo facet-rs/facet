@@ -1,6 +1,21 @@
 /* @ts-self-types="./styx_wasm.d.ts" */
 
 /**
+ * Convert a JSON string to Styx format.
+ *
+ * Returns a Styx document string representation of the JSON.
+ * Tagged values ({"$tag": "name", "$value": ...}) are converted back to tags.
+ * @param {string} json_source
+ * @returns {any}
+ */
+export function from_json(json_source) {
+    const ptr0 = passStringToWasm0(json_source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.from_json(ptr0, len0);
+    return ret;
+}
+
+/**
  * Parse a Styx document and return diagnostics.
  *
  * Returns a JSON object with `success` boolean and `diagnostics` array.
