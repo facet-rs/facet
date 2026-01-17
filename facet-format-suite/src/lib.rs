@@ -431,6 +431,11 @@ pub trait FormatSuite {
     #[cfg(feature = "chrono")]
     fn chrono_duration_negative() -> CaseSpec;
 
+    // ── Standard library time types ──
+
+    /// Case: `core::time::Duration` type - serializes as (secs, nanos) tuple.
+    fn std_duration() -> CaseSpec;
+
     // ── Bytes crate tests ──
 
     /// Case: `bytes::Bytes` type.
@@ -779,6 +784,8 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
             &CASE_CHRONO_DURATION_NEGATIVE,
             S::chrono_duration_negative,
         ),
+        // Standard library time cases
+        SuiteCase::new::<S, StdDurationWrapper>(&CASE_STD_DURATION, S::std_duration),
         // Bytes crate cases
         #[cfg(feature = "bytes")]
         SuiteCase::new::<S, BytesBytesWrapper>(&CASE_BYTES_BYTES, S::bytes_bytes),
@@ -3498,6 +3505,16 @@ const CASE_CHRONO_DURATION_NEGATIVE: CaseDescriptor<ChronoDurationNegativeWrappe
         },
     };
 
+// ── Standard library time case descriptors ──
+
+const CASE_STD_DURATION: CaseDescriptor<StdDurationWrapper> = CaseDescriptor {
+    id: "std::std_duration",
+    description: "core::time::Duration type - serializes as (secs, nanos) tuple",
+    expected: || StdDurationWrapper {
+        duration: core::time::Duration::new(3600, 500_000_000),
+    },
+};
+
 // ── Bytes crate case descriptors ──
 
 #[cfg(feature = "bytes")]
@@ -3724,6 +3741,14 @@ pub struct ChronoDurationWrapper {
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ChronoDurationNegativeWrapper {
     pub duration: chrono::Duration,
+}
+
+// ── Standard library time test fixtures ──
+
+/// Fixture for `core::time::Duration` test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct StdDurationWrapper {
+    pub duration: core::time::Duration,
 }
 
 // ── Bytes crate test fixtures ──

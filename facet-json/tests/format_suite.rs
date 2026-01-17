@@ -766,6 +766,13 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#"{"duration":[-90,-250000000]}"#)
     }
 
+    // ── Standard library time cases ──
+
+    fn std_duration() -> CaseSpec {
+        // Duration serializes as (secs, nanos) tuple: 3600 seconds + 500_000_000 nanoseconds
+        CaseSpec::from_str(r#"{"duration":[3600,500000000]}"#)
+    }
+
     // ── Bytes crate cases ──
 
     fn bytes_bytes() -> CaseSpec {

@@ -484,6 +484,10 @@ impl FormatSuite for MsgPackSlice {
         CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
     }
 
+    fn std_duration() -> CaseSpec {
+        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+    }
+
     fn bytes_bytes() -> CaseSpec {
         CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
     }
