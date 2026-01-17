@@ -61,11 +61,9 @@ comment "This is a string for sure" // nope, an opaque scalar
 </section>
 
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=Lato:wght@200&display=swap');
-
 .layers-section {
   background: #dc143c;
-  margin: 4rem 0;
+  margin: 0rem 0;
   margin-left: calc(-50vw + 50%);
   margin-right: calc(-50vw + 50%);
   padding: 4rem 2rem;
@@ -80,7 +78,7 @@ comment "This is a string for sure" // nope, an opaque scalar
 }
 
 .layers-section .section-title {
-  font-family: "Archivo Black", sans-serif;
+  font-family: var(--font-heading);
   font-size: 2.5rem;
   font-weight: 400;
   letter-spacing: -0.02em;
@@ -109,6 +107,18 @@ comment "This is a string for sure" // nope, an opaque scalar
   color: #fff;
   font-style: normal;
   font-weight: 700;
+}
+
+.hero-intro h1 {
+  font-family: var(--font-heading);
+  font-weight: 400;
+  text-transform: uppercase;
+}
+
+.feature-text h2 {
+  font-family: var(--font-heading);
+  font-weight: 400;
+  text-transform: uppercase;
 }
 
 .layers-diagram {
@@ -232,30 +242,6 @@ Server {
 <section class="feature">
 <div class="feature-text">
 
-## Deserialize to Rust structs
-
-Derive `Facet` on your types and deserialize directly. No schema files, no code generation — your types are the schema.
-
-</div>
-<div class="feature-code">
-
-```rust
-#[derive(Facet)]
-struct Server {
-    host: String,
-    port: u16,
-    tls: Option<bool>,
-}
-
-let server: Server = facet_styx::from_str(input)?;
-```
-
-</div>
-</section>
-
-<section class="feature">
-<div class="feature-text">
-
 ## Parse and explore dynamically
 
 Parse into an untyped tree and walk it. Get values by path, check types at runtime, transform as needed.
@@ -318,6 +304,30 @@ const config = parse(input, schema);
 // config.server.port is a number
 // config.server.host is a string
 // config.createdAt is a Date
+```
+
+</div>
+</section>
+
+<section class="feature">
+<div class="feature-text">
+
+## Deserialize to Rust structs
+
+Derive `Facet` on your types and deserialize directly. No schema files, no code generation — your types are the schema.
+
+</div>
+<div class="feature-code">
+
+```rust
+#[derive(Facet)]
+struct Server {
+    host: String,
+    port: u16,
+    tls: Option<bool>,
+}
+
+let server: Server = facet_styx::from_str(input)?;
 ```
 
 </div>

@@ -14,7 +14,7 @@ Schemas are useful for text editors, CLI tools, and documentation.
 Styx schemas are themselves Styx documents. This works because of tags and implicit unit:
 
 - A tag like `@string` is shorthand for `@string@` — a tag with unit payload
-- In schema context, tags name types: `@string`, `@u64`, `@MyCustomType`
+- In schema context, tags name types: `@string`, `@int`, `@MyCustomType`
 - Built-in tags like `@union`, `@map`, `@enum` take payloads describing composite types
 - User-defined type names are just tags referencing definitions elsewhere in the schema
 
@@ -22,14 +22,14 @@ For example:
 
 ```styx
 host @string           // field "host" must match type @string
-port @u16              // field "port" must match type @u16
-id @union(@u64 @string) // @union tag with sequence payload
+port @int              // field "port" must match type @int
+id @union(@int @string) // @union tag with sequence payload
 ```
 
-The `@union(@u64 @string)` is:
-- Tag `@union` with payload `(@u64 @string)`
+The `@union(@int @string)` is:
+- Tag `@union` with payload `(@int @string)`
 - The payload is a sequence of two tagged unit values
-- Semantically: "id must match @u64 or @string"
+- Semantically: "id must match @int or @string"
 
 This uniformity means schemas require no special syntax — just Styx with semantic interpretation of tags as types.
 
@@ -55,7 +55,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 >
 >   Server @object{
 >     host @string
->     port @u16
+>     port @int{min 1, max 65535}
 >   }
 > }
 > ```
@@ -119,7 +119,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > // Inline schema (simplified form)
 > @schema {
 >   schema {
->     @ @object{server @object{host @string, port @u16}}
+>     @ @object{server @object{host @string, port @int}}
 >   }
 > }
 >
@@ -132,11 +132,11 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > A tagged unit denotes a type constraint.
 >
 > ```styx
-> version @u32     // type: must be an unsigned 32-bit integer
+> version @int     // type: must be an integer
 > host @string     // type: must be a string
 > ```
 >
-> Since unit payloads are implicit, `@u32` is shorthand for `@u32@` — which makes Styx schemas valid Styx.
+> Since unit payloads are implicit, `@int` is shorthand for `@int@` — which makes Styx schemas valid Styx.
 
 > r[schema.literal]
 > A scalar denotes a literal value constraint. The unit value `@` is also a literal constraint.

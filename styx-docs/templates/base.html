@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}{{ config.title }}{% endblock title %}</title>
     <meta name="description" content="Styx - A document language for mortals">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Lato:wght@200&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/main.css">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     {% block head %}{% endblock head %}
@@ -37,7 +40,8 @@
 
     <footer class="footer">
         <div class="footer-content">
-            <p>Styx is open source software.</p>
+            <p>Styx is an open <a href="/reference">specification</a> (<a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0</a>) by <a href="https://fasterthanli.me">Amos Wenger</a> (<a href="https://github.com/fasterthanlime">@fasterthanlime</a>).</p>
+            <p>The Rust implementation is <a href="https://opensource.org/licenses/MIT">MIT</a> or <a href="https://opensource.org/licenses/Apache-2.0">Apache-2.0</a>.</p>
         </div>
     </footer>
 
