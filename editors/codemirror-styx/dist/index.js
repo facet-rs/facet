@@ -42,9 +42,12 @@ var parser = LRParser.deserialize({
 // src/index.ts
 import {
   LRLanguage,
-  LanguageSupport
+  LanguageSupport,
+  syntaxHighlighting,
+  HighlightStyle
 } from "@codemirror/language";
 import { completeFromList } from "@codemirror/autocomplete";
+import { tags as t2 } from "@lezer/highlight";
 var styxLanguage = LRLanguage.define({
   name: "styx",
   parser,
@@ -74,8 +77,21 @@ var builtinTags = [
 var styxCompletion = styxLanguage.data.of({
   autocomplete: completeFromList(builtinTags)
 });
+var styxHighlightStyle = HighlightStyle.define([
+  { tag: t2.lineComment, color: "#6a9955" },
+  { tag: t2.docComment, color: "#6a9955", fontStyle: "italic" },
+  { tag: t2.string, color: "#ce9178" },
+  { tag: t2.special(t2.string), color: "#d7ba7d" },
+  { tag: t2.tagName, color: "#569cd6" },
+  { tag: t2.attributeName, color: "#9cdcfe" },
+  { tag: t2.null, color: "#569cd6" },
+  { tag: t2.paren, color: "#ffd700" },
+  { tag: t2.brace, color: "#da70d6" },
+  { tag: t2.separator, color: "#d4d4d4" }
+]);
+var styxHighlightingExt = syntaxHighlighting(styxHighlightStyle);
 function styx() {
-  return new LanguageSupport(styxLanguage, [styxCompletion]);
+  return new LanguageSupport(styxLanguage, [styxCompletion, styxHighlightingExt]);
 }
 export {
   parser,

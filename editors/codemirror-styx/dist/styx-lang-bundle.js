@@ -69,8 +69,8 @@ var NodeType = class _NodeType {
   /**
   @internal
   */
-  constructor(name2, props, id, flags = 0) {
-    this.name = name2;
+  constructor(name, props, id, flags = 0) {
+    this.name = name;
     this.props = props;
     this.id = id;
     this.flags = flags;
@@ -130,14 +130,14 @@ var NodeType = class _NodeType {
   Returns true when this node's name or one of its
   [groups](#common.NodeProp^group) matches the given string.
   */
-  is(name2) {
-    if (typeof name2 == "string") {
-      if (this.name == name2)
+  is(name) {
+    if (typeof name == "string") {
+      if (this.name == name)
         return true;
       let group = this.prop(NodeProp.group);
-      return group ? group.indexOf(name2) > -1 : false;
+      return group ? group.indexOf(name) > -1 : false;
     }
-    return this.id == name2;
+    return this.id == name;
   }
   /**
   Create a function from node types to arbitrary values by
@@ -150,8 +150,8 @@ var NodeType = class _NodeType {
   static match(map) {
     let direct = /* @__PURE__ */ Object.create(null);
     for (let prop in map)
-      for (let name2 of prop.split(" "))
-        direct[name2] = map[prop];
+      for (let name of prop.split(" "))
+        direct[name] = map[prop];
     return (node) => {
       for (let groups = node.prop(NodeProp.group), i = -1; i < (groups ? groups.length : 0); i++) {
         let found = direct[i < 0 ? node.name : groups[i]];
@@ -495,7 +495,7 @@ function checkSide(side, pos, from, to) {
   }
 }
 function resolveNode(node, pos, side, overlays) {
-  var _a2;
+  var _a;
   while (node.from == node.to || (side < 1 ? node.from >= pos : node.from > pos) || (side > -1 ? node.to <= pos : node.to < pos)) {
     let parent = !overlays && node instanceof TreeNode && node.index < 0 ? null : node.parent;
     if (!parent)
@@ -505,7 +505,7 @@ function resolveNode(node, pos, side, overlays) {
   let mode = overlays ? 0 : IterMode.IgnoreOverlays;
   if (overlays)
     for (let scan = node, parent = scan.parent; parent; scan = parent, parent = scan.parent) {
-      if (scan instanceof TreeNode && scan.index < 0 && ((_a2 = parent.enter(pos, side, mode)) === null || _a2 === void 0 ? void 0 : _a2.from) != scan.from)
+      if (scan instanceof TreeNode && scan.index < 0 && ((_a = parent.enter(pos, side, mode)) === null || _a === void 0 ? void 0 : _a.from) != scan.from)
         node = parent;
     }
   for (; ; ) {
@@ -575,11 +575,11 @@ var TreeNode = class _TreeNode extends BaseNode {
     return this.from + this._tree.length;
   }
   nextChild(i, dir, pos, side, mode = 0) {
-    var _a2;
+    var _a;
     for (let parent = this; ; ) {
       for (let { children, positions } = parent._tree, e = dir > 0 ? children.length : -1; i != e; i += dir) {
         let next = children[i], start = positions[i] + parent.from;
-        if (!(mode & IterMode.EnterBracketed && next instanceof Tree && ((_a2 = MountedTree.get(next)) === null || _a2 === void 0 ? void 0 : _a2.overlay) === null && (start >= pos || start + next.length <= pos)) && !checkSide(side, pos, start, start + next.length))
+        if (!(mode & IterMode.EnterBracketed && next instanceof Tree && ((_a = MountedTree.get(next)) === null || _a === void 0 ? void 0 : _a.overlay) === null && (start >= pos || start + next.length <= pos)) && !checkSide(side, pos, start, start + next.length))
           continue;
         if (next instanceof TreeBuffer) {
           if (mode & IterMode.ExcludeBuffers)
@@ -1242,7 +1242,7 @@ function hasChild(tree) {
   return tree.children.some((ch) => ch instanceof TreeBuffer || !ch.type.isAnonymous || hasChild(ch));
 }
 function buildTree(data) {
-  var _a2;
+  var _a;
   let { buffer, nodeSet, maxBufferLength = DefaultBufferLength, reused = [], minRepeatType = nodeSet.types.length } = data;
   let cursor = Array.isArray(buffer) ? new FlatBufferCursor(buffer, buffer.length) : buffer;
   let types = nodeSet.types;
@@ -1439,7 +1439,7 @@ function buildTree(data) {
   let children = [], positions = [];
   while (cursor.pos > 0)
     takeNode(data.start || 0, data.bufferStart || 0, children, positions, -1, 0);
-  let length = (_a2 = data.length) !== null && _a2 !== void 0 ? _a2 : children.length ? positions[0] + children[0].length : 0;
+  let length = (_a = data.length) !== null && _a !== void 0 ? _a : children.length ? positions[0] + children[0].length : 0;
   return new Tree(types[data.topID], children.reverse(), positions.reverse(), length);
 }
 var nodeSizeCache = /* @__PURE__ */ new WeakMap();
@@ -1496,85 +1496,6 @@ function balanceRange(balanceType, children, positions, from, to, start, length,
   divide(children, positions, from, to, 0);
   return (mkTop || mkTree)(localChildren, localPositions, length);
 }
-var TreeFragment = class _TreeFragment {
-  /**
-  Construct a tree fragment. You'll usually want to use
-  [`addTree`](#common.TreeFragment^addTree) and
-  [`applyChanges`](#common.TreeFragment^applyChanges) instead of
-  calling this directly.
-  */
-  constructor(from, to, tree, offset, openStart = false, openEnd = false) {
-    this.from = from;
-    this.to = to;
-    this.tree = tree;
-    this.offset = offset;
-    this.open = (openStart ? 1 : 0) | (openEnd ? 2 : 0);
-  }
-  /**
-  Whether the start of the fragment represents the start of a
-  parse, or the end of a change. (In the second case, it may not
-  be safe to reuse some nodes at the start, depending on the
-  parsing algorithm.)
-  */
-  get openStart() {
-    return (this.open & 1) > 0;
-  }
-  /**
-  Whether the end of the fragment represents the end of a
-  full-document parse, or the start of a change.
-  */
-  get openEnd() {
-    return (this.open & 2) > 0;
-  }
-  /**
-  Create a set of fragments from a freshly parsed tree, or update
-  an existing set of fragments by replacing the ones that overlap
-  with a tree with content from the new tree. When `partial` is
-  true, the parse is treated as incomplete, and the resulting
-  fragment has [`openEnd`](#common.TreeFragment.openEnd) set to
-  true.
-  */
-  static addTree(tree, fragments = [], partial = false) {
-    let result = [new _TreeFragment(0, tree.length, tree, 0, false, partial)];
-    for (let f of fragments)
-      if (f.to > tree.length)
-        result.push(f);
-    return result;
-  }
-  /**
-  Apply a set of edits to an array of fragments, removing or
-  splitting fragments as necessary to remove edited ranges, and
-  adjusting offsets for fragments that moved.
-  */
-  static applyChanges(fragments, changes, minGap = 128) {
-    if (!changes.length)
-      return fragments;
-    let result = [];
-    let fI = 1, nextF = fragments.length ? fragments[0] : null;
-    for (let cI = 0, pos = 0, off = 0; ; cI++) {
-      let nextC = cI < changes.length ? changes[cI] : null;
-      let nextPos = nextC ? nextC.fromA : 1e9;
-      if (nextPos - pos >= minGap)
-        while (nextF && nextF.from < nextPos) {
-          let cut = nextF;
-          if (pos >= cut.from || nextPos <= cut.to || off) {
-            let fFrom = Math.max(cut.from, pos) - off, fTo = Math.min(cut.to, nextPos) - off;
-            cut = fFrom >= fTo ? null : new _TreeFragment(fFrom, fTo, cut.tree, cut.offset + off, cI > 0, !!nextC);
-          }
-          if (cut)
-            result.push(cut);
-          if (nextF.to > nextPos)
-            break;
-          nextF = fI < fragments.length ? fragments[fI++] : null;
-        }
-      if (!nextC)
-        break;
-      pos = nextC.toA;
-      off = nextC.toA - nextC.toB;
-    }
-    return result;
-  }
-};
 var Parser = class {
   /**
   Start a parse, returning a [partial parse](#common.PartialParse)
@@ -1605,8 +1526,8 @@ var Parser = class {
   }
 };
 var StringInput = class {
-  constructor(string2) {
-    this.string = string2;
+  constructor(string) {
+    this.string = string;
   }
   get length() {
     return this.string.length;
@@ -1678,7 +1599,7 @@ var Stack = class _Stack {
   @internal
   */
   reduce(action) {
-    var _a2;
+    var _a;
     let depth = action >> 19, type = action & 65535;
     let { parser: parser2 } = this.p;
     let lookaheadRecord = this.reducePos < this.pos - 25 && this.setLookAhead(this.pos);
@@ -1694,7 +1615,7 @@ var Stack = class _Stack {
     }
     let base = this.stack.length - (depth - 1) * 3 - (action & 262144 ? 6 : 0);
     let start = base ? this.stack[base - 2] : this.p.ranges[0].from, size = this.reducePos - start;
-    if (size >= 2e3 && !((_a2 = this.p.parser.nodeSet.types[type]) === null || _a2 === void 0 ? void 0 : _a2.isAnonymous)) {
+    if (size >= 2e3 && !((_a = this.p.parser.nodeSet.types[type]) === null || _a === void 0 ? void 0 : _a.isAnonymous)) {
       if (start == this.p.lastBigReductionStart) {
         this.p.bigReductionCount++;
         this.p.lastBigReductionSize = size;
@@ -1729,16 +1650,16 @@ var Stack = class _Stack {
   */
   storeNode(term, start, end, size = 4, mustSink = false) {
     if (term == 0 && (!this.stack.length || this.stack[this.stack.length - 1] < this.buffer.length + this.bufferBase)) {
-      let cur = this, top2 = this.buffer.length;
-      if (top2 == 0 && cur.parent) {
-        top2 = cur.bufferBase - cur.parent.bufferBase;
+      let cur = this, top = this.buffer.length;
+      if (top == 0 && cur.parent) {
+        top = cur.bufferBase - cur.parent.bufferBase;
         cur = cur.parent;
       }
-      if (top2 > 0 && cur.buffer[top2 - 4] == 0 && cur.buffer[top2 - 1] > -1) {
+      if (top > 0 && cur.buffer[top - 4] == 0 && cur.buffer[top - 1] > -1) {
         if (start == end)
           return;
-        if (cur.buffer[top2 - 2] >= start) {
-          cur.buffer[top2 - 2] = end;
+        if (cur.buffer[top - 2] >= start) {
+          cur.buffer[top - 2] = end;
           return;
         }
       }
@@ -2578,15 +2499,15 @@ var FragmentCursor = class {
         this.nextFragment();
         return null;
       }
-      let top2 = this.trees[last], index = this.index[last];
-      if (index == top2.children.length) {
+      let top = this.trees[last], index = this.index[last];
+      if (index == top.children.length) {
         this.trees.pop();
         this.start.pop();
         this.index.pop();
         continue;
       }
-      let next = top2.children[index];
-      let start = this.start[last] + top2.positions[index];
+      let next = top.children[index];
+      let start = this.start[last] + top.positions[index];
       if (start > pos) {
         this.nextStart = start;
         return null;
@@ -3067,8 +2988,8 @@ var LRParser = class _LRParser extends Parser {
           }
         }
       }
-    this.nodeSet = new NodeSet(nodeNames.map((name2, i) => NodeType.define({
-      name: i >= this.minRepeatTerm ? void 0 : name2,
+    this.nodeSet = new NodeSet(nodeNames.map((name, i) => NodeType.define({
+      name: i >= this.minRepeatTerm ? void 0 : name,
       id: i,
       props: nodeProps[i],
       top: topTerms.indexOf(i) > -1,
@@ -3238,9 +3159,9 @@ var LRParser = class _LRParser extends Parser {
       copy.top = info;
     }
     if (config.tokenizers)
-      copy.tokenizers = this.tokenizers.map((t2) => {
-        let found = config.tokenizers.find((r) => r.from == t2);
-        return found ? found.to : t2;
+      copy.tokenizers = this.tokenizers.map((t3) => {
+        let found = config.tokenizers.find((r) => r.from == t3);
+        return found ? found.to : t3;
       });
     if (config.specializers) {
       copy.specializers = this.specializers.slice();
@@ -3352,644 +3273,21 @@ function getSpecializer(spec) {
   return spec.get;
 }
 
-// node_modules/@lezer/highlight/dist/index.js
-var nextTagID = 0;
-var Tag = class _Tag {
-  /**
-  @internal
-  */
-  constructor(name2, set, base, modified) {
-    this.name = name2;
-    this.set = set;
-    this.base = base;
-    this.modified = modified;
-    this.id = nextTagID++;
-  }
-  toString() {
-    let { name: name2 } = this;
-    for (let mod of this.modified)
-      if (mod.name)
-        name2 = `${mod.name}(${name2})`;
-    return name2;
-  }
-  static define(nameOrParent, parent) {
-    let name2 = typeof nameOrParent == "string" ? nameOrParent : "?";
-    if (nameOrParent instanceof _Tag)
-      parent = nameOrParent;
-    if (parent === null || parent === void 0 ? void 0 : parent.base)
-      throw new Error("Can not derive from a modified tag");
-    let tag = new _Tag(name2, [], null, []);
-    tag.set.push(tag);
-    if (parent)
-      for (let t2 of parent.set)
-        tag.set.push(t2);
-    return tag;
-  }
-  /**
-  Define a tag _modifier_, which is a function that, given a tag,
-  will return a tag that is a subtag of the original. Applying the
-  same modifier to a twice tag will return the same value (`m1(t1)
-  == m1(t1)`) and applying multiple modifiers will, regardless or
-  order, produce the same tag (`m1(m2(t1)) == m2(m1(t1))`).
-  
-  When multiple modifiers are applied to a given base tag, each
-  smaller set of modifiers is registered as a parent, so that for
-  example `m1(m2(m3(t1)))` is a subtype of `m1(m2(t1))`,
-  `m1(m3(t1)`, and so on.
-  */
-  static defineModifier(name2) {
-    let mod = new Modifier(name2);
-    return (tag) => {
-      if (tag.modified.indexOf(mod) > -1)
-        return tag;
-      return Modifier.get(tag.base || tag, tag.modified.concat(mod).sort((a, b) => a.id - b.id));
-    };
-  }
-};
-var nextModifierID = 0;
-var Modifier = class _Modifier {
-  constructor(name2) {
-    this.name = name2;
-    this.instances = [];
-    this.id = nextModifierID++;
-  }
-  static get(base, mods) {
-    if (!mods.length)
-      return base;
-    let exists = mods[0].instances.find((t2) => t2.base == base && sameArray(mods, t2.modified));
-    if (exists)
-      return exists;
-    let set = [], tag = new Tag(base.name, set, base, mods);
-    for (let m of mods)
-      m.instances.push(tag);
-    let configs = powerSet(mods);
-    for (let parent of base.set)
-      if (!parent.modified.length)
-        for (let config of configs)
-          set.push(_Modifier.get(parent, config));
-    return tag;
-  }
-};
-function sameArray(a, b) {
-  return a.length == b.length && a.every((x, i) => x == b[i]);
-}
-function powerSet(array) {
-  let sets = [[]];
-  for (let i = 0; i < array.length; i++) {
-    for (let j = 0, e = sets.length; j < e; j++) {
-      sets.push(sets[j].concat(array[i]));
-    }
-  }
-  return sets.sort((a, b) => b.length - a.length);
-}
-function styleTags(spec) {
-  let byName = /* @__PURE__ */ Object.create(null);
-  for (let prop in spec) {
-    let tags2 = spec[prop];
-    if (!Array.isArray(tags2))
-      tags2 = [tags2];
-    for (let part of prop.split(" "))
-      if (part) {
-        let pieces = [], mode = 2, rest = part;
-        for (let pos = 0; ; ) {
-          if (rest == "..." && pos > 0 && pos + 3 == part.length) {
-            mode = 1;
-            break;
-          }
-          let m = /^"(?:[^"\\]|\\.)*?"|[^\/!]+/.exec(rest);
-          if (!m)
-            throw new RangeError("Invalid path: " + part);
-          pieces.push(m[0] == "*" ? "" : m[0][0] == '"' ? JSON.parse(m[0]) : m[0]);
-          pos += m[0].length;
-          if (pos == part.length)
-            break;
-          let next = part[pos++];
-          if (pos == part.length && next == "!") {
-            mode = 0;
-            break;
-          }
-          if (next != "/")
-            throw new RangeError("Invalid path: " + part);
-          rest = part.slice(pos);
-        }
-        let last = pieces.length - 1, inner = pieces[last];
-        if (!inner)
-          throw new RangeError("Invalid path: " + part);
-        let rule = new Rule(tags2, mode, last > 0 ? pieces.slice(0, last) : null);
-        byName[inner] = rule.sort(byName[inner]);
-      }
-  }
-  return ruleNodeProp.add(byName);
-}
-var ruleNodeProp = new NodeProp({
-  combine(a, b) {
-    let cur, root, take;
-    while (a || b) {
-      if (!a || b && a.depth >= b.depth) {
-        take = b;
-        b = b.next;
-      } else {
-        take = a;
-        a = a.next;
-      }
-      if (cur && cur.mode == take.mode && !take.context && !cur.context)
-        continue;
-      let copy = new Rule(take.tags, take.mode, take.context);
-      if (cur)
-        cur.next = copy;
-      else
-        root = copy;
-      cur = copy;
-    }
-    return root;
-  }
-});
-var Rule = class {
-  constructor(tags2, mode, context, next) {
-    this.tags = tags2;
-    this.mode = mode;
-    this.context = context;
-    this.next = next;
-  }
-  get opaque() {
-    return this.mode == 0;
-  }
-  get inherit() {
-    return this.mode == 1;
-  }
-  sort(other) {
-    if (!other || other.depth < this.depth) {
-      this.next = other;
-      return this;
-    }
-    other.next = this.sort(other.next);
-    return other;
-  }
-  get depth() {
-    return this.context ? this.context.length : 0;
-  }
-};
-Rule.empty = new Rule([], 2, null);
-function tagHighlighter(tags2, options) {
-  let map = /* @__PURE__ */ Object.create(null);
-  for (let style of tags2) {
-    if (!Array.isArray(style.tag))
-      map[style.tag.id] = style.class;
-    else
-      for (let tag of style.tag)
-        map[tag.id] = style.class;
-  }
-  let { scope, all = null } = options || {};
-  return {
-    style: (tags3) => {
-      let cls = all;
-      for (let tag of tags3) {
-        for (let sub of tag.set) {
-          let tagClass = map[sub.id];
-          if (tagClass) {
-            cls = cls ? cls + " " + tagClass : tagClass;
-            break;
-          }
-        }
-      }
-      return cls;
-    },
-    scope
-  };
-}
-var t = Tag.define;
-var comment = t();
-var name = t();
-var typeName = t(name);
-var propertyName = t(name);
-var literal = t();
-var string = t(literal);
-var number = t(literal);
-var content = t();
-var heading = t(content);
-var keyword = t();
-var operator = t();
-var punctuation = t();
-var bracket = t(punctuation);
-var meta = t();
-var tags = {
-  /**
-  A comment.
-  */
-  comment,
-  /**
-  A line [comment](#highlight.tags.comment).
-  */
-  lineComment: t(comment),
-  /**
-  A block [comment](#highlight.tags.comment).
-  */
-  blockComment: t(comment),
-  /**
-  A documentation [comment](#highlight.tags.comment).
-  */
-  docComment: t(comment),
-  /**
-  Any kind of identifier.
-  */
-  name,
-  /**
-  The [name](#highlight.tags.name) of a variable.
-  */
-  variableName: t(name),
-  /**
-  A type [name](#highlight.tags.name).
-  */
-  typeName,
-  /**
-  A tag name (subtag of [`typeName`](#highlight.tags.typeName)).
-  */
-  tagName: t(typeName),
-  /**
-  A property or field [name](#highlight.tags.name).
-  */
-  propertyName,
-  /**
-  An attribute name (subtag of [`propertyName`](#highlight.tags.propertyName)).
-  */
-  attributeName: t(propertyName),
-  /**
-  The [name](#highlight.tags.name) of a class.
-  */
-  className: t(name),
-  /**
-  A label [name](#highlight.tags.name).
-  */
-  labelName: t(name),
-  /**
-  A namespace [name](#highlight.tags.name).
-  */
-  namespace: t(name),
-  /**
-  The [name](#highlight.tags.name) of a macro.
-  */
-  macroName: t(name),
-  /**
-  A literal value.
-  */
-  literal,
-  /**
-  A string [literal](#highlight.tags.literal).
-  */
-  string,
-  /**
-  A documentation [string](#highlight.tags.string).
-  */
-  docString: t(string),
-  /**
-  A character literal (subtag of [string](#highlight.tags.string)).
-  */
-  character: t(string),
-  /**
-  An attribute value (subtag of [string](#highlight.tags.string)).
-  */
-  attributeValue: t(string),
-  /**
-  A number [literal](#highlight.tags.literal).
-  */
-  number,
-  /**
-  An integer [number](#highlight.tags.number) literal.
-  */
-  integer: t(number),
-  /**
-  A floating-point [number](#highlight.tags.number) literal.
-  */
-  float: t(number),
-  /**
-  A boolean [literal](#highlight.tags.literal).
-  */
-  bool: t(literal),
-  /**
-  Regular expression [literal](#highlight.tags.literal).
-  */
-  regexp: t(literal),
-  /**
-  An escape [literal](#highlight.tags.literal), for example a
-  backslash escape in a string.
-  */
-  escape: t(literal),
-  /**
-  A color [literal](#highlight.tags.literal).
-  */
-  color: t(literal),
-  /**
-  A URL [literal](#highlight.tags.literal).
-  */
-  url: t(literal),
-  /**
-  A language keyword.
-  */
-  keyword,
-  /**
-  The [keyword](#highlight.tags.keyword) for the self or this
-  object.
-  */
-  self: t(keyword),
-  /**
-  The [keyword](#highlight.tags.keyword) for null.
-  */
-  null: t(keyword),
-  /**
-  A [keyword](#highlight.tags.keyword) denoting some atomic value.
-  */
-  atom: t(keyword),
-  /**
-  A [keyword](#highlight.tags.keyword) that represents a unit.
-  */
-  unit: t(keyword),
-  /**
-  A modifier [keyword](#highlight.tags.keyword).
-  */
-  modifier: t(keyword),
-  /**
-  A [keyword](#highlight.tags.keyword) that acts as an operator.
-  */
-  operatorKeyword: t(keyword),
-  /**
-  A control-flow related [keyword](#highlight.tags.keyword).
-  */
-  controlKeyword: t(keyword),
-  /**
-  A [keyword](#highlight.tags.keyword) that defines something.
-  */
-  definitionKeyword: t(keyword),
-  /**
-  A [keyword](#highlight.tags.keyword) related to defining or
-  interfacing with modules.
-  */
-  moduleKeyword: t(keyword),
-  /**
-  An operator.
-  */
-  operator,
-  /**
-  An [operator](#highlight.tags.operator) that dereferences something.
-  */
-  derefOperator: t(operator),
-  /**
-  Arithmetic-related [operator](#highlight.tags.operator).
-  */
-  arithmeticOperator: t(operator),
-  /**
-  Logical [operator](#highlight.tags.operator).
-  */
-  logicOperator: t(operator),
-  /**
-  Bit [operator](#highlight.tags.operator).
-  */
-  bitwiseOperator: t(operator),
-  /**
-  Comparison [operator](#highlight.tags.operator).
-  */
-  compareOperator: t(operator),
-  /**
-  [Operator](#highlight.tags.operator) that updates its operand.
-  */
-  updateOperator: t(operator),
-  /**
-  [Operator](#highlight.tags.operator) that defines something.
-  */
-  definitionOperator: t(operator),
-  /**
-  Type-related [operator](#highlight.tags.operator).
-  */
-  typeOperator: t(operator),
-  /**
-  Control-flow [operator](#highlight.tags.operator).
-  */
-  controlOperator: t(operator),
-  /**
-  Program or markup punctuation.
-  */
-  punctuation,
-  /**
-  [Punctuation](#highlight.tags.punctuation) that separates
-  things.
-  */
-  separator: t(punctuation),
-  /**
-  Bracket-style [punctuation](#highlight.tags.punctuation).
-  */
-  bracket,
-  /**
-  Angle [brackets](#highlight.tags.bracket) (usually `<` and `>`
-  tokens).
-  */
-  angleBracket: t(bracket),
-  /**
-  Square [brackets](#highlight.tags.bracket) (usually `[` and `]`
-  tokens).
-  */
-  squareBracket: t(bracket),
-  /**
-  Parentheses (usually `(` and `)` tokens). Subtag of
-  [bracket](#highlight.tags.bracket).
-  */
-  paren: t(bracket),
-  /**
-  Braces (usually `{` and `}` tokens). Subtag of
-  [bracket](#highlight.tags.bracket).
-  */
-  brace: t(bracket),
-  /**
-  Content, for example plain text in XML or markup documents.
-  */
-  content,
-  /**
-  [Content](#highlight.tags.content) that represents a heading.
-  */
-  heading,
-  /**
-  A level 1 [heading](#highlight.tags.heading).
-  */
-  heading1: t(heading),
-  /**
-  A level 2 [heading](#highlight.tags.heading).
-  */
-  heading2: t(heading),
-  /**
-  A level 3 [heading](#highlight.tags.heading).
-  */
-  heading3: t(heading),
-  /**
-  A level 4 [heading](#highlight.tags.heading).
-  */
-  heading4: t(heading),
-  /**
-  A level 5 [heading](#highlight.tags.heading).
-  */
-  heading5: t(heading),
-  /**
-  A level 6 [heading](#highlight.tags.heading).
-  */
-  heading6: t(heading),
-  /**
-  A prose [content](#highlight.tags.content) separator (such as a horizontal rule).
-  */
-  contentSeparator: t(content),
-  /**
-  [Content](#highlight.tags.content) that represents a list.
-  */
-  list: t(content),
-  /**
-  [Content](#highlight.tags.content) that represents a quote.
-  */
-  quote: t(content),
-  /**
-  [Content](#highlight.tags.content) that is emphasized.
-  */
-  emphasis: t(content),
-  /**
-  [Content](#highlight.tags.content) that is styled strong.
-  */
-  strong: t(content),
-  /**
-  [Content](#highlight.tags.content) that is part of a link.
-  */
-  link: t(content),
-  /**
-  [Content](#highlight.tags.content) that is styled as code or
-  monospace.
-  */
-  monospace: t(content),
-  /**
-  [Content](#highlight.tags.content) that has a strike-through
-  style.
-  */
-  strikethrough: t(content),
-  /**
-  Inserted text in a change-tracking format.
-  */
-  inserted: t(),
-  /**
-  Deleted text.
-  */
-  deleted: t(),
-  /**
-  Changed text.
-  */
-  changed: t(),
-  /**
-  An invalid or unsyntactic element.
-  */
-  invalid: t(),
-  /**
-  Metadata or meta-instruction.
-  */
-  meta,
-  /**
-  [Metadata](#highlight.tags.meta) that applies to the entire
-  document.
-  */
-  documentMeta: t(meta),
-  /**
-  [Metadata](#highlight.tags.meta) that annotates or adds
-  attributes to a given syntactic element.
-  */
-  annotation: t(meta),
-  /**
-  Processing instruction or preprocessor directive. Subtag of
-  [meta](#highlight.tags.meta).
-  */
-  processingInstruction: t(meta),
-  /**
-  [Modifier](#highlight.Tag^defineModifier) that indicates that a
-  given element is being defined. Expected to be used with the
-  various [name](#highlight.tags.name) tags.
-  */
-  definition: Tag.defineModifier("definition"),
-  /**
-  [Modifier](#highlight.Tag^defineModifier) that indicates that
-  something is constant. Mostly expected to be used with
-  [variable names](#highlight.tags.variableName).
-  */
-  constant: Tag.defineModifier("constant"),
-  /**
-  [Modifier](#highlight.Tag^defineModifier) used to indicate that
-  a [variable](#highlight.tags.variableName) or [property
-  name](#highlight.tags.propertyName) is being called or defined
-  as a function.
-  */
-  function: Tag.defineModifier("function"),
-  /**
-  [Modifier](#highlight.Tag^defineModifier) that can be applied to
-  [names](#highlight.tags.name) to indicate that they belong to
-  the language's standard environment.
-  */
-  standard: Tag.defineModifier("standard"),
-  /**
-  [Modifier](#highlight.Tag^defineModifier) that indicates a given
-  [names](#highlight.tags.name) is local to some scope.
-  */
-  local: Tag.defineModifier("local"),
-  /**
-  A generic variant [modifier](#highlight.Tag^defineModifier) that
-  can be used to tag language-specific alternative variants of
-  some common tag. It is recommended for themes to define special
-  forms of at least the [string](#highlight.tags.string) and
-  [variable name](#highlight.tags.variableName) tags, since those
-  come up a lot.
-  */
-  special: Tag.defineModifier("special")
-};
-for (let name2 in tags) {
-  let val = tags[name2];
-  if (val instanceof Tag)
-    val.name = name2;
-}
-var classHighlighter = tagHighlighter([
-  { tag: tags.link, class: "tok-link" },
-  { tag: tags.heading, class: "tok-heading" },
-  { tag: tags.emphasis, class: "tok-emphasis" },
-  { tag: tags.strong, class: "tok-strong" },
-  { tag: tags.keyword, class: "tok-keyword" },
-  { tag: tags.atom, class: "tok-atom" },
-  { tag: tags.bool, class: "tok-bool" },
-  { tag: tags.url, class: "tok-url" },
-  { tag: tags.labelName, class: "tok-labelName" },
-  { tag: tags.inserted, class: "tok-inserted" },
-  { tag: tags.deleted, class: "tok-deleted" },
-  { tag: tags.literal, class: "tok-literal" },
-  { tag: tags.string, class: "tok-string" },
-  { tag: tags.number, class: "tok-number" },
-  { tag: [tags.regexp, tags.escape, tags.special(tags.string)], class: "tok-string2" },
-  { tag: tags.variableName, class: "tok-variableName" },
-  { tag: tags.local(tags.variableName), class: "tok-variableName tok-local" },
-  { tag: tags.definition(tags.variableName), class: "tok-variableName tok-definition" },
-  { tag: tags.special(tags.variableName), class: "tok-variableName2" },
-  { tag: tags.definition(tags.propertyName), class: "tok-propertyName tok-definition" },
-  { tag: tags.typeName, class: "tok-typeName" },
-  { tag: tags.namespace, class: "tok-namespace" },
-  { tag: tags.className, class: "tok-className" },
-  { tag: tags.macroName, class: "tok-macroName" },
-  { tag: tags.propertyName, class: "tok-propertyName" },
-  { tag: tags.operator, class: "tok-operator" },
-  { tag: tags.comment, class: "tok-comment" },
-  { tag: tags.meta, class: "tok-meta" },
-  { tag: tags.invalid, class: "tok-invalid" },
-  { tag: tags.punctuation, class: "tok-punctuation" }
-]);
-
 // src/highlight.ts
+import { styleTags, tags as t } from "@lezer/highlight";
 var styxHighlight = styleTags({
-  Tag: tags.tagName,
-  BareScalar: tags.string,
-  QuotedScalar: tags.string,
-  RawScalar: tags.special(tags.string),
-  Heredoc: tags.special(tags.string),
-  Attributes: tags.attributeName,
-  Unit: tags.null,
-  Comment: tags.lineComment,
-  DocComment: tags.docComment,
-  "( )": tags.paren,
-  "{ }": tags.brace,
-  ",": tags.separator
+  Tag: t.tagName,
+  BareScalar: t.string,
+  QuotedScalar: t.string,
+  RawScalar: t.special(t.string),
+  Heredoc: t.special(t.string),
+  Attributes: t.attributeName,
+  Unit: t.null,
+  Comment: t.lineComment,
+  DocComment: t.docComment,
+  "( )": t.paren,
+  "{ }": t.brace,
+  ",": t.separator
 });
 
 // src/syntax.grammar.ts
@@ -4013,898 +3311,15 @@ var parser = LRParser.deserialize({
   tokenPrec: 321
 });
 
-// node_modules/@codemirror/language/dist/index.js
-import { StateEffect, StateField, Facet, EditorState, countColumn, combineConfig, RangeSet, RangeSetBuilder, Prec } from "@codemirror/state";
-import { ViewPlugin, logException, EditorView, Decoration, WidgetType, gutter, GutterMarker, Direction } from "@codemirror/view";
-
-// node_modules/style-mod/src/style-mod.js
-var C = "\u037C";
-var COUNT = typeof Symbol == "undefined" ? "__" + C : Symbol.for(C);
-var SET = typeof Symbol == "undefined" ? "__styleSet" + Math.floor(Math.random() * 1e8) : /* @__PURE__ */ Symbol("styleSet");
-var top = typeof globalThis != "undefined" ? globalThis : typeof window != "undefined" ? window : {};
-var StyleModule = class {
-  // :: (Object<Style>, ?{finish: ?(string) → string})
-  // Create a style module from the given spec.
-  //
-  // When `finish` is given, it is called on regular (non-`@`)
-  // selectors (after `&` expansion) to compute the final selector.
-  constructor(spec, options) {
-    this.rules = [];
-    let { finish } = options || {};
-    function splitSelector(selector) {
-      return /^@/.test(selector) ? [selector] : selector.split(/,\s*/);
-    }
-    function render(selectors, spec2, target, isKeyframes) {
-      let local = [], isAt = /^@(\w+)\b/.exec(selectors[0]), keyframes = isAt && isAt[1] == "keyframes";
-      if (isAt && spec2 == null) return target.push(selectors[0] + ";");
-      for (let prop in spec2) {
-        let value = spec2[prop];
-        if (/&/.test(prop)) {
-          render(
-            prop.split(/,\s*/).map((part) => selectors.map((sel) => part.replace(/&/, sel))).reduce((a, b) => a.concat(b)),
-            value,
-            target
-          );
-        } else if (value && typeof value == "object") {
-          if (!isAt) throw new RangeError("The value of a property (" + prop + ") should be a primitive value.");
-          render(splitSelector(prop), value, local, keyframes);
-        } else if (value != null) {
-          local.push(prop.replace(/_.*/, "").replace(/[A-Z]/g, (l) => "-" + l.toLowerCase()) + ": " + value + ";");
-        }
-      }
-      if (local.length || keyframes) {
-        target.push((finish && !isAt && !isKeyframes ? selectors.map(finish) : selectors).join(", ") + " {" + local.join(" ") + "}");
-      }
-    }
-    for (let prop in spec) render(splitSelector(prop), spec[prop], this.rules);
-  }
-  // :: () → string
-  // Returns a string containing the module's CSS rules.
-  getRules() {
-    return this.rules.join("\n");
-  }
-  // :: () → string
-  // Generate a new unique CSS class name.
-  static newName() {
-    let id = top[COUNT] || 1;
-    top[COUNT] = id + 1;
-    return C + id.toString(36);
-  }
-  // :: (union<Document, ShadowRoot>, union<[StyleModule], StyleModule>, ?{nonce: ?string})
-  //
-  // Mount the given set of modules in the given DOM root, which ensures
-  // that the CSS rules defined by the module are available in that
-  // context.
-  //
-  // Rules are only added to the document once per root.
-  //
-  // Rule order will follow the order of the modules, so that rules from
-  // modules later in the array take precedence of those from earlier
-  // modules. If you call this function multiple times for the same root
-  // in a way that changes the order of already mounted modules, the old
-  // order will be changed.
-  //
-  // If a Content Security Policy nonce is provided, it is added to
-  // the `<style>` tag generated by the library.
-  static mount(root, modules, options) {
-    let set = root[SET], nonce = options && options.nonce;
-    if (!set) set = new StyleSet(root, nonce);
-    else if (nonce) set.setNonce(nonce);
-    set.mount(Array.isArray(modules) ? modules : [modules], root);
-  }
-};
-var adoptedSet = /* @__PURE__ */ new Map();
-var StyleSet = class {
-  constructor(root, nonce) {
-    let doc = root.ownerDocument || root, win = doc.defaultView;
-    if (!root.head && root.adoptedStyleSheets && win.CSSStyleSheet) {
-      let adopted = adoptedSet.get(doc);
-      if (adopted) return root[SET] = adopted;
-      this.sheet = new win.CSSStyleSheet();
-      adoptedSet.set(doc, this);
-    } else {
-      this.styleTag = doc.createElement("style");
-      if (nonce) this.styleTag.setAttribute("nonce", nonce);
-    }
-    this.modules = [];
-    root[SET] = this;
-  }
-  mount(modules, root) {
-    let sheet = this.sheet;
-    let pos = 0, j = 0;
-    for (let i = 0; i < modules.length; i++) {
-      let mod = modules[i], index = this.modules.indexOf(mod);
-      if (index < j && index > -1) {
-        this.modules.splice(index, 1);
-        j--;
-        index = -1;
-      }
-      if (index == -1) {
-        this.modules.splice(j++, 0, mod);
-        if (sheet) for (let k = 0; k < mod.rules.length; k++)
-          sheet.insertRule(mod.rules[k], pos++);
-      } else {
-        while (j < index) pos += this.modules[j++].rules.length;
-        pos += mod.rules.length;
-        j++;
-      }
-    }
-    if (sheet) {
-      if (root.adoptedStyleSheets.indexOf(this.sheet) < 0)
-        root.adoptedStyleSheets = [this.sheet, ...root.adoptedStyleSheets];
-    } else {
-      let text = "";
-      for (let i = 0; i < this.modules.length; i++)
-        text += this.modules[i].getRules() + "\n";
-      this.styleTag.textContent = text;
-      let target = root.head || root;
-      if (this.styleTag.parentNode != target)
-        target.insertBefore(this.styleTag, target.firstChild);
-    }
-  }
-  setNonce(nonce) {
-    if (this.styleTag && this.styleTag.getAttribute("nonce") != nonce)
-      this.styleTag.setAttribute("nonce", nonce);
-  }
-};
-
-// node_modules/@codemirror/language/dist/index.js
-var _a;
-var languageDataProp = /* @__PURE__ */ new NodeProp();
-function defineLanguageFacet(baseData) {
-  return Facet.define({
-    combine: baseData ? (values) => values.concat(baseData) : void 0
-  });
-}
-var sublanguageProp = /* @__PURE__ */ new NodeProp();
-var Language = class {
-  /**
-  Construct a language object. If you need to invoke this
-  directly, first define a data facet with
-  [`defineLanguageFacet`](https://codemirror.net/6/docs/ref/#language.defineLanguageFacet), and then
-  configure your parser to [attach](https://codemirror.net/6/docs/ref/#language.languageDataProp) it
-  to the language's outer syntax node.
-  */
-  constructor(data, parser2, extraExtensions = [], name2 = "") {
-    this.data = data;
-    this.name = name2;
-    if (!EditorState.prototype.hasOwnProperty("tree"))
-      Object.defineProperty(EditorState.prototype, "tree", { get() {
-        return syntaxTree(this);
-      } });
-    this.parser = parser2;
-    this.extension = [
-      language.of(this),
-      EditorState.languageData.of((state, pos, side) => {
-        let top2 = topNodeAt(state, pos, side), data2 = top2.type.prop(languageDataProp);
-        if (!data2)
-          return [];
-        let base = state.facet(data2), sub = top2.type.prop(sublanguageProp);
-        if (sub) {
-          let innerNode = top2.resolve(pos - top2.from, side);
-          for (let sublang of sub)
-            if (sublang.test(innerNode, state)) {
-              let data3 = state.facet(sublang.facet);
-              return sublang.type == "replace" ? data3 : data3.concat(base);
-            }
-        }
-        return base;
-      })
-    ].concat(extraExtensions);
-  }
-  /**
-  Query whether this language is active at the given position.
-  */
-  isActiveAt(state, pos, side = -1) {
-    return topNodeAt(state, pos, side).type.prop(languageDataProp) == this.data;
-  }
-  /**
-  Find the document regions that were parsed using this language.
-  The returned regions will _include_ any nested languages rooted
-  in this language, when those exist.
-  */
-  findRegions(state) {
-    let lang = state.facet(language);
-    if ((lang === null || lang === void 0 ? void 0 : lang.data) == this.data)
-      return [{ from: 0, to: state.doc.length }];
-    if (!lang || !lang.allowsNesting)
-      return [];
-    let result = [];
-    let explore = (tree, from) => {
-      if (tree.prop(languageDataProp) == this.data) {
-        result.push({ from, to: from + tree.length });
-        return;
-      }
-      let mount = tree.prop(NodeProp.mounted);
-      if (mount) {
-        if (mount.tree.prop(languageDataProp) == this.data) {
-          if (mount.overlay)
-            for (let r of mount.overlay)
-              result.push({ from: r.from + from, to: r.to + from });
-          else
-            result.push({ from, to: from + tree.length });
-          return;
-        } else if (mount.overlay) {
-          let size = result.length;
-          explore(mount.tree, mount.overlay[0].from + from);
-          if (result.length > size)
-            return;
-        }
-      }
-      for (let i = 0; i < tree.children.length; i++) {
-        let ch = tree.children[i];
-        if (ch instanceof Tree)
-          explore(ch, tree.positions[i] + from);
-      }
-    };
-    explore(syntaxTree(state), 0);
-    return result;
-  }
-  /**
-  Indicates whether this language allows nested languages. The
-  default implementation returns true.
-  */
-  get allowsNesting() {
-    return true;
-  }
-};
-Language.setState = /* @__PURE__ */ StateEffect.define();
-function topNodeAt(state, pos, side) {
-  let topLang = state.facet(language), tree = syntaxTree(state).topNode;
-  if (!topLang || topLang.allowsNesting) {
-    for (let node = tree; node; node = node.enter(pos, side, IterMode.ExcludeBuffers | IterMode.EnterBracketed))
-      if (node.type.isTop)
-        tree = node;
-  }
-  return tree;
-}
-var LRLanguage = class _LRLanguage extends Language {
-  constructor(data, parser2, name2) {
-    super(data, parser2, [], name2);
-    this.parser = parser2;
-  }
-  /**
-  Define a language from a parser.
-  */
-  static define(spec) {
-    let data = defineLanguageFacet(spec.languageData);
-    return new _LRLanguage(data, spec.parser.configure({
-      props: [languageDataProp.add((type) => type.isTop ? data : void 0)]
-    }), spec.name);
-  }
-  /**
-  Create a new instance of this language with a reconfigured
-  version of its parser and optionally a new name.
-  */
-  configure(options, name2) {
-    return new _LRLanguage(this.data, this.parser.configure(options), name2 || this.name);
-  }
-  get allowsNesting() {
-    return this.parser.hasWrappers();
-  }
-};
-function syntaxTree(state) {
-  let field = state.field(Language.state, false);
-  return field ? field.tree : Tree.empty;
-}
-var DocInput = class {
-  /**
-  Create an input object for the given document.
-  */
-  constructor(doc) {
-    this.doc = doc;
-    this.cursorPos = 0;
-    this.string = "";
-    this.cursor = doc.iter();
-  }
-  get length() {
-    return this.doc.length;
-  }
-  syncTo(pos) {
-    this.string = this.cursor.next(pos - this.cursorPos).value;
-    this.cursorPos = pos + this.string.length;
-    return this.cursorPos - this.string.length;
-  }
-  chunk(pos) {
-    this.syncTo(pos);
-    return this.string;
-  }
-  get lineChunks() {
-    return true;
-  }
-  read(from, to) {
-    let stringStart = this.cursorPos - this.string.length;
-    if (from < stringStart || to >= this.cursorPos)
-      return this.doc.sliceString(from, to);
-    else
-      return this.string.slice(from - stringStart, to - stringStart);
-  }
-};
-var currentContext = null;
-var ParseContext = class _ParseContext {
-  constructor(parser2, state, fragments = [], tree, treeLen, viewport, skipped, scheduleOn) {
-    this.parser = parser2;
-    this.state = state;
-    this.fragments = fragments;
-    this.tree = tree;
-    this.treeLen = treeLen;
-    this.viewport = viewport;
-    this.skipped = skipped;
-    this.scheduleOn = scheduleOn;
-    this.parse = null;
-    this.tempSkipped = [];
-  }
-  /**
-  @internal
-  */
-  static create(parser2, state, viewport) {
-    return new _ParseContext(parser2, state, [], Tree.empty, 0, viewport, [], null);
-  }
-  startParse() {
-    return this.parser.startParse(new DocInput(this.state.doc), this.fragments);
-  }
-  /**
-  @internal
-  */
-  work(until, upto) {
-    if (upto != null && upto >= this.state.doc.length)
-      upto = void 0;
-    if (this.tree != Tree.empty && this.isDone(upto !== null && upto !== void 0 ? upto : this.state.doc.length)) {
-      this.takeTree();
-      return true;
-    }
-    return this.withContext(() => {
-      var _a2;
-      if (typeof until == "number") {
-        let endTime = Date.now() + until;
-        until = () => Date.now() > endTime;
-      }
-      if (!this.parse)
-        this.parse = this.startParse();
-      if (upto != null && (this.parse.stoppedAt == null || this.parse.stoppedAt > upto) && upto < this.state.doc.length)
-        this.parse.stopAt(upto);
-      for (; ; ) {
-        let done = this.parse.advance();
-        if (done) {
-          this.fragments = this.withoutTempSkipped(TreeFragment.addTree(done, this.fragments, this.parse.stoppedAt != null));
-          this.treeLen = (_a2 = this.parse.stoppedAt) !== null && _a2 !== void 0 ? _a2 : this.state.doc.length;
-          this.tree = done;
-          this.parse = null;
-          if (this.treeLen < (upto !== null && upto !== void 0 ? upto : this.state.doc.length))
-            this.parse = this.startParse();
-          else
-            return true;
-        }
-        if (until())
-          return false;
-      }
-    });
-  }
-  /**
-  @internal
-  */
-  takeTree() {
-    let pos, tree;
-    if (this.parse && (pos = this.parse.parsedPos) >= this.treeLen) {
-      if (this.parse.stoppedAt == null || this.parse.stoppedAt > pos)
-        this.parse.stopAt(pos);
-      this.withContext(() => {
-        while (!(tree = this.parse.advance())) {
-        }
-      });
-      this.treeLen = pos;
-      this.tree = tree;
-      this.fragments = this.withoutTempSkipped(TreeFragment.addTree(this.tree, this.fragments, true));
-      this.parse = null;
-    }
-  }
-  withContext(f) {
-    let prev = currentContext;
-    currentContext = this;
-    try {
-      return f();
-    } finally {
-      currentContext = prev;
-    }
-  }
-  withoutTempSkipped(fragments) {
-    for (let r; r = this.tempSkipped.pop(); )
-      fragments = cutFragments(fragments, r.from, r.to);
-    return fragments;
-  }
-  /**
-  @internal
-  */
-  changes(changes, newState) {
-    let { fragments, tree, treeLen, viewport, skipped } = this;
-    this.takeTree();
-    if (!changes.empty) {
-      let ranges = [];
-      changes.iterChangedRanges((fromA, toA, fromB, toB) => ranges.push({ fromA, toA, fromB, toB }));
-      fragments = TreeFragment.applyChanges(fragments, ranges);
-      tree = Tree.empty;
-      treeLen = 0;
-      viewport = { from: changes.mapPos(viewport.from, -1), to: changes.mapPos(viewport.to, 1) };
-      if (this.skipped.length) {
-        skipped = [];
-        for (let r of this.skipped) {
-          let from = changes.mapPos(r.from, 1), to = changes.mapPos(r.to, -1);
-          if (from < to)
-            skipped.push({ from, to });
-        }
-      }
-    }
-    return new _ParseContext(this.parser, newState, fragments, tree, treeLen, viewport, skipped, this.scheduleOn);
-  }
-  /**
-  @internal
-  */
-  updateViewport(viewport) {
-    if (this.viewport.from == viewport.from && this.viewport.to == viewport.to)
-      return false;
-    this.viewport = viewport;
-    let startLen = this.skipped.length;
-    for (let i = 0; i < this.skipped.length; i++) {
-      let { from, to } = this.skipped[i];
-      if (from < viewport.to && to > viewport.from) {
-        this.fragments = cutFragments(this.fragments, from, to);
-        this.skipped.splice(i--, 1);
-      }
-    }
-    if (this.skipped.length >= startLen)
-      return false;
-    this.reset();
-    return true;
-  }
-  /**
-  @internal
-  */
-  reset() {
-    if (this.parse) {
-      this.takeTree();
-      this.parse = null;
-    }
-  }
-  /**
-  Notify the parse scheduler that the given region was skipped
-  because it wasn't in view, and the parse should be restarted
-  when it comes into view.
-  */
-  skipUntilInView(from, to) {
-    this.skipped.push({ from, to });
-  }
-  /**
-  Returns a parser intended to be used as placeholder when
-  asynchronously loading a nested parser. It'll skip its input and
-  mark it as not-really-parsed, so that the next update will parse
-  it again.
-  
-  When `until` is given, a reparse will be scheduled when that
-  promise resolves.
-  */
-  static getSkippingParser(until) {
-    return new class extends Parser {
-      createParse(input, fragments, ranges) {
-        let from = ranges[0].from, to = ranges[ranges.length - 1].to;
-        let parser2 = {
-          parsedPos: from,
-          advance() {
-            let cx = currentContext;
-            if (cx) {
-              for (let r of ranges)
-                cx.tempSkipped.push(r);
-              if (until)
-                cx.scheduleOn = cx.scheduleOn ? Promise.all([cx.scheduleOn, until]) : until;
-            }
-            this.parsedPos = to;
-            return new Tree(NodeType.none, [], [], to - from);
-          },
-          stoppedAt: null,
-          stopAt() {
-          }
-        };
-        return parser2;
-      }
-    }();
-  }
-  /**
-  @internal
-  */
-  isDone(upto) {
-    upto = Math.min(upto, this.state.doc.length);
-    let frags = this.fragments;
-    return this.treeLen >= upto && frags.length && frags[0].from == 0 && frags[0].to >= upto;
-  }
-  /**
-  Get the context for the current parse, or `null` if no editor
-  parse is in progress.
-  */
-  static get() {
-    return currentContext;
-  }
-};
-function cutFragments(fragments, from, to) {
-  return TreeFragment.applyChanges(fragments, [{ fromA: from, toA: to, fromB: from, toB: to }]);
-}
-var LanguageState = class _LanguageState {
-  constructor(context) {
-    this.context = context;
-    this.tree = context.tree;
-  }
-  apply(tr) {
-    if (!tr.docChanged && this.tree == this.context.tree)
-      return this;
-    let newCx = this.context.changes(tr.changes, tr.state);
-    let upto = this.context.treeLen == tr.startState.doc.length ? void 0 : Math.max(tr.changes.mapPos(this.context.treeLen), newCx.viewport.to);
-    if (!newCx.work(20, upto))
-      newCx.takeTree();
-    return new _LanguageState(newCx);
-  }
-  static init(state) {
-    let vpTo = Math.min(3e3, state.doc.length);
-    let parseState = ParseContext.create(state.facet(language).parser, state, { from: 0, to: vpTo });
-    if (!parseState.work(20, vpTo))
-      parseState.takeTree();
-    return new _LanguageState(parseState);
-  }
-};
-Language.state = /* @__PURE__ */ StateField.define({
-  create: LanguageState.init,
-  update(value, tr) {
-    for (let e of tr.effects)
-      if (e.is(Language.setState))
-        return e.value;
-    if (tr.startState.facet(language) != tr.state.facet(language))
-      return LanguageState.init(tr.state);
-    return value.apply(tr);
-  }
-});
-var requestIdle = (callback) => {
-  let timeout = setTimeout(
-    () => callback(),
-    500
-    /* Work.MaxPause */
-  );
-  return () => clearTimeout(timeout);
-};
-if (typeof requestIdleCallback != "undefined")
-  requestIdle = (callback) => {
-    let idle = -1, timeout = setTimeout(
-      () => {
-        idle = requestIdleCallback(callback, {
-          timeout: 500 - 100
-          /* Work.MinPause */
-        });
-      },
-      100
-      /* Work.MinPause */
-    );
-    return () => idle < 0 ? clearTimeout(timeout) : cancelIdleCallback(idle);
-  };
-var isInputPending = typeof navigator != "undefined" && ((_a = navigator.scheduling) === null || _a === void 0 ? void 0 : _a.isInputPending) ? () => navigator.scheduling.isInputPending() : null;
-var parseWorker = /* @__PURE__ */ ViewPlugin.fromClass(class ParseWorker {
-  constructor(view) {
-    this.view = view;
-    this.working = null;
-    this.workScheduled = 0;
-    this.chunkEnd = -1;
-    this.chunkBudget = -1;
-    this.work = this.work.bind(this);
-    this.scheduleWork();
-  }
-  update(update) {
-    let cx = this.view.state.field(Language.state).context;
-    if (cx.updateViewport(update.view.viewport) || this.view.viewport.to > cx.treeLen)
-      this.scheduleWork();
-    if (update.docChanged || update.selectionSet) {
-      if (this.view.hasFocus)
-        this.chunkBudget += 50;
-      this.scheduleWork();
-    }
-    this.checkAsyncSchedule(cx);
-  }
-  scheduleWork() {
-    if (this.working)
-      return;
-    let { state } = this.view, field = state.field(Language.state);
-    if (field.tree != field.context.tree || !field.context.isDone(state.doc.length))
-      this.working = requestIdle(this.work);
-  }
-  work(deadline) {
-    this.working = null;
-    let now = Date.now();
-    if (this.chunkEnd < now && (this.chunkEnd < 0 || this.view.hasFocus)) {
-      this.chunkEnd = now + 3e4;
-      this.chunkBudget = 3e3;
-    }
-    if (this.chunkBudget <= 0)
-      return;
-    let { state, viewport: { to: vpTo } } = this.view, field = state.field(Language.state);
-    if (field.tree == field.context.tree && field.context.isDone(
-      vpTo + 1e5
-      /* Work.MaxParseAhead */
-    ))
-      return;
-    let endTime = Date.now() + Math.min(this.chunkBudget, 100, deadline && !isInputPending ? Math.max(25, deadline.timeRemaining() - 5) : 1e9);
-    let viewportFirst = field.context.treeLen < vpTo && state.doc.length > vpTo + 1e3;
-    let done = field.context.work(() => {
-      return isInputPending && isInputPending() || Date.now() > endTime;
-    }, vpTo + (viewportFirst ? 0 : 1e5));
-    this.chunkBudget -= Date.now() - now;
-    if (done || this.chunkBudget <= 0) {
-      field.context.takeTree();
-      this.view.dispatch({ effects: Language.setState.of(new LanguageState(field.context)) });
-    }
-    if (this.chunkBudget > 0 && !(done && !viewportFirst))
-      this.scheduleWork();
-    this.checkAsyncSchedule(field.context);
-  }
-  checkAsyncSchedule(cx) {
-    if (cx.scheduleOn) {
-      this.workScheduled++;
-      cx.scheduleOn.then(() => this.scheduleWork()).catch((err) => logException(this.view.state, err)).then(() => this.workScheduled--);
-      cx.scheduleOn = null;
-    }
-  }
-  destroy() {
-    if (this.working)
-      this.working();
-  }
-  isWorking() {
-    return !!(this.working || this.workScheduled > 0);
-  }
-}, {
-  eventHandlers: { focus() {
-    this.scheduleWork();
-  } }
-});
-var language = /* @__PURE__ */ Facet.define({
-  combine(languages) {
-    return languages.length ? languages[0] : null;
-  },
-  enables: (language2) => [
-    Language.state,
-    parseWorker,
-    EditorView.contentAttributes.compute([language2], (state) => {
-      let lang = state.facet(language2);
-      return lang && lang.name ? { "data-language": lang.name } : {};
-    })
-  ]
-});
-var LanguageSupport = class {
-  /**
-  Create a language support object.
-  */
-  constructor(language2, support = []) {
-    this.language = language2;
-    this.support = support;
-    this.extension = [language2, support];
-  }
-};
-var HighlightStyle = class _HighlightStyle {
-  constructor(specs, options) {
-    this.specs = specs;
-    let modSpec;
-    function def(spec) {
-      let cls = StyleModule.newName();
-      (modSpec || (modSpec = /* @__PURE__ */ Object.create(null)))["." + cls] = spec;
-      return cls;
-    }
-    const all = typeof options.all == "string" ? options.all : options.all ? def(options.all) : void 0;
-    const scopeOpt = options.scope;
-    this.scope = scopeOpt instanceof Language ? (type) => type.prop(languageDataProp) == scopeOpt.data : scopeOpt ? (type) => type == scopeOpt : void 0;
-    this.style = tagHighlighter(specs.map((style) => ({
-      tag: style.tag,
-      class: style.class || def(Object.assign({}, style, { tag: null }))
-    })), {
-      all
-    }).style;
-    this.module = modSpec ? new StyleModule(modSpec) : null;
-    this.themeType = options.themeType;
-  }
-  /**
-  Create a highlighter style that associates the given styles to
-  the given tags. The specs must be objects that hold a style tag
-  or array of tags in their `tag` property, and either a single
-  `class` property providing a static CSS class (for highlighter
-  that rely on external styling), or a
-  [`style-mod`](https://github.com/marijnh/style-mod#documentation)-style
-  set of CSS properties (which define the styling for those tags).
-  
-  The CSS rules created for a highlighter will be emitted in the
-  order of the spec's properties. That means that for elements that
-  have multiple tags associated with them, styles defined further
-  down in the list will have a higher CSS precedence than styles
-  defined earlier.
-  */
-  static define(specs, options) {
-    return new _HighlightStyle(specs, options || {});
-  }
-};
-var defaultHighlightStyle = /* @__PURE__ */ HighlightStyle.define([
-  {
-    tag: tags.meta,
-    color: "#404740"
-  },
-  {
-    tag: tags.link,
-    textDecoration: "underline"
-  },
-  {
-    tag: tags.heading,
-    textDecoration: "underline",
-    fontWeight: "bold"
-  },
-  {
-    tag: tags.emphasis,
-    fontStyle: "italic"
-  },
-  {
-    tag: tags.strong,
-    fontWeight: "bold"
-  },
-  {
-    tag: tags.strikethrough,
-    textDecoration: "line-through"
-  },
-  {
-    tag: tags.keyword,
-    color: "#708"
-  },
-  {
-    tag: [tags.atom, tags.bool, tags.url, tags.contentSeparator, tags.labelName],
-    color: "#219"
-  },
-  {
-    tag: [tags.literal, tags.inserted],
-    color: "#164"
-  },
-  {
-    tag: [tags.string, tags.deleted],
-    color: "#a11"
-  },
-  {
-    tag: [tags.regexp, tags.escape, /* @__PURE__ */ tags.special(tags.string)],
-    color: "#e40"
-  },
-  {
-    tag: /* @__PURE__ */ tags.definition(tags.variableName),
-    color: "#00f"
-  },
-  {
-    tag: /* @__PURE__ */ tags.local(tags.variableName),
-    color: "#30a"
-  },
-  {
-    tag: [tags.typeName, tags.namespace],
-    color: "#085"
-  },
-  {
-    tag: tags.className,
-    color: "#167"
-  },
-  {
-    tag: [/* @__PURE__ */ tags.special(tags.variableName), tags.macroName],
-    color: "#256"
-  },
-  {
-    tag: /* @__PURE__ */ tags.definition(tags.propertyName),
-    color: "#00c"
-  },
-  {
-    tag: tags.comment,
-    color: "#940"
-  },
-  {
-    tag: tags.invalid,
-    color: "#f00"
-  }
-]);
-var noTokens = /* @__PURE__ */ Object.create(null);
-var typeArray = [NodeType.none];
-var warned = [];
-var byTag = /* @__PURE__ */ Object.create(null);
-var defaultTable = /* @__PURE__ */ Object.create(null);
-for (let [legacyName, name2] of [
-  ["variable", "variableName"],
-  ["variable-2", "variableName.special"],
-  ["string-2", "string.special"],
-  ["def", "variableName.definition"],
-  ["tag", "tagName"],
-  ["attribute", "attributeName"],
-  ["type", "typeName"],
-  ["builtin", "variableName.standard"],
-  ["qualifier", "modifier"],
-  ["error", "invalid"],
-  ["header", "heading"],
-  ["property", "propertyName"]
-])
-  defaultTable[legacyName] = /* @__PURE__ */ createTokenType(noTokens, name2);
-function warnForPart(part, msg) {
-  if (warned.indexOf(part) > -1)
-    return;
-  warned.push(part);
-  console.warn(msg);
-}
-function createTokenType(extra, tagStr) {
-  let tags$1 = [];
-  for (let name3 of tagStr.split(" ")) {
-    let found = [];
-    for (let part of name3.split(".")) {
-      let value = extra[part] || tags[part];
-      if (!value) {
-        warnForPart(part, `Unknown highlighting tag ${part}`);
-      } else if (typeof value == "function") {
-        if (!found.length)
-          warnForPart(part, `Modifier ${part} used at start of tag`);
-        else
-          found = found.map(value);
-      } else {
-        if (found.length)
-          warnForPart(part, `Tag ${part} used as modifier`);
-        else
-          found = Array.isArray(value) ? value : [value];
-      }
-    }
-    for (let tag of found)
-      tags$1.push(tag);
-  }
-  if (!tags$1.length)
-    return 0;
-  let name2 = tagStr.replace(/ /g, "_"), key = name2 + " " + tags$1.map((t2) => t2.id);
-  let known = byTag[key];
-  if (known)
-    return known.id;
-  let type = byTag[key] = NodeType.define({
-    id: typeArray.length,
-    name: name2,
-    props: [styleTags({ [name2]: tags$1 })]
-  });
-  typeArray.push(type);
-  return type.id;
-}
-var marks = {
-  rtl: /* @__PURE__ */ Decoration.mark({ class: "cm-iso", inclusive: true, attributes: { dir: "rtl" }, bidiIsolate: Direction.RTL }),
-  ltr: /* @__PURE__ */ Decoration.mark({ class: "cm-iso", inclusive: true, attributes: { dir: "ltr" }, bidiIsolate: Direction.LTR }),
-  auto: /* @__PURE__ */ Decoration.mark({ class: "cm-iso", inclusive: true, attributes: { dir: "auto" }, bidiIsolate: null })
-};
-
-// node_modules/@codemirror/autocomplete/dist/index.js
-import { Annotation, StateEffect as StateEffect2, EditorSelection, codePointAt, codePointSize, fromCodePoint, Facet as Facet2, combineConfig as combineConfig2, StateField as StateField2, Prec as Prec2, Text, Transaction, MapMode, RangeValue, RangeSet as RangeSet2, CharCategory } from "@codemirror/state";
-import { Direction as Direction2, logException as logException2, showTooltip, EditorView as EditorView2, ViewPlugin as ViewPlugin2, getTooltip, Decoration as Decoration2, WidgetType as WidgetType2, keymap } from "@codemirror/view";
-function toSet(chars) {
-  let flat = Object.keys(chars).join("");
-  let words = /\w/.test(flat);
-  if (words)
-    flat = flat.replace(/\w/g, "");
-  return `[${words ? "\\w" : ""}${flat.replace(/[^\w\s]/g, "\\$&")}]`;
-}
-function prefixMatch(options) {
-  let first = /* @__PURE__ */ Object.create(null), rest = /* @__PURE__ */ Object.create(null);
-  for (let { label } of options) {
-    first[label[0]] = true;
-    for (let i = 1; i < label.length; i++)
-      rest[label[i]] = true;
-  }
-  let source = toSet(first) + toSet(rest) + "*$";
-  return [new RegExp("^" + source), new RegExp(source)];
-}
-function completeFromList(list) {
-  let options = list.map((o) => typeof o == "string" ? { label: o } : o);
-  let [validFor, match] = options.every((o) => /^\w+$/.test(o.label)) ? [/\w*$/, /\w+$/] : prefixMatch(options);
-  return (context) => {
-    let token = context.matchBefore(match);
-    return token || context.explicit ? { from: token ? token.from : context.pos, options, validFor } : null;
-  };
-}
-var windows = typeof navigator == "object" && /* @__PURE__ */ /Win/.test(navigator.platform);
-var closedBracket = /* @__PURE__ */ new class extends RangeValue {
-}();
-closedBracket.startSide = 1;
-closedBracket.endSide = -1;
-var android = typeof navigator == "object" && /* @__PURE__ */ /Android\b/.test(navigator.userAgent);
-
 // src/index.ts
+import {
+  LRLanguage,
+  LanguageSupport,
+  syntaxHighlighting,
+  HighlightStyle
+} from "@codemirror/language";
+import { completeFromList } from "@codemirror/autocomplete";
+import { tags as t2 } from "@lezer/highlight";
 var styxLanguage = LRLanguage.define({
   name: "styx",
   parser,
@@ -4934,8 +3349,21 @@ var builtinTags = [
 var styxCompletion = styxLanguage.data.of({
   autocomplete: completeFromList(builtinTags)
 });
+var styxHighlightStyle = HighlightStyle.define([
+  { tag: t2.lineComment, color: "#6a9955" },
+  { tag: t2.docComment, color: "#6a9955", fontStyle: "italic" },
+  { tag: t2.string, color: "#ce9178" },
+  { tag: t2.special(t2.string), color: "#d7ba7d" },
+  { tag: t2.tagName, color: "#569cd6" },
+  { tag: t2.attributeName, color: "#9cdcfe" },
+  { tag: t2.null, color: "#569cd6" },
+  { tag: t2.paren, color: "#ffd700" },
+  { tag: t2.brace, color: "#da70d6" },
+  { tag: t2.separator, color: "#d4d4d4" }
+]);
+var styxHighlightingExt = syntaxHighlighting(styxHighlightStyle);
 function styx() {
-  return new LanguageSupport(styxLanguage, [styxCompletion]);
+  return new LanguageSupport(styxLanguage, [styxCompletion, styxHighlightingExt]);
 }
 export {
   parser,

@@ -6,8 +6,11 @@ import {
   foldNodeProp,
   foldInside,
   delimitedIndent,
+  syntaxHighlighting,
+  HighlightStyle,
 } from "@codemirror/language";
 import { completeFromList } from "@codemirror/autocomplete";
+import { tags as t } from "@lezer/highlight";
 
 // Language definition with syntax highlighting
 export const styxLanguage = LRLanguage.define({
@@ -44,6 +47,23 @@ const styxCompletion = styxLanguage.data.of({
   autocomplete: completeFromList(builtinTags),
 });
 
+// Define Styx-specific highlighting style
+const styxHighlightStyle = HighlightStyle.define([
+  { tag: t.lineComment, color: "#6a9955" },
+  { tag: t.docComment, color: "#6a9955", fontStyle: "italic" },
+  { tag: t.string, color: "#ce9178" },
+  { tag: t.special(t.string), color: "#d7ba7d" },
+  { tag: t.tagName, color: "#569cd6" },
+  { tag: t.attributeName, color: "#9cdcfe" },
+  { tag: t.null, color: "#569cd6" },
+  { tag: t.paren, color: "#ffd700" },
+  { tag: t.brace, color: "#da70d6" },
+  { tag: t.separator, color: "#d4d4d4" },
+]);
+
+// Syntax highlighting extension
+const styxHighlightingExt = syntaxHighlighting(styxHighlightStyle);
+
 /**
  * Styx language support for CodeMirror 6.
  *
@@ -59,7 +79,7 @@ const styxCompletion = styxLanguage.data.of({
  * ```
  */
 export function styx(): LanguageSupport {
-  return new LanguageSupport(styxLanguage, [styxCompletion]);
+  return new LanguageSupport(styxLanguage, [styxCompletion, styxHighlightingExt]);
 }
 
 // Re-export for advanced usage
