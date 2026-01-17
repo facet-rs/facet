@@ -499,6 +499,23 @@ impl FormatSuite for Asn1Slice {
         CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
     }
 
+    fn iddqd_id_hash_map() -> CaseSpec {
+        // IdHashMap serializes as array of values (Set semantics)
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    fn iddqd_id_ord_map() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    fn iddqd_bi_hash_map() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    fn iddqd_tri_hash_map() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
     fn value_null() -> CaseSpec {
         CaseSpec::skip("ASN.1 is a binary format, DynamicValue not supported")
     }

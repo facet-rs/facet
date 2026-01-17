@@ -27,9 +27,12 @@ facet = { version = "{{ data.versions.facet }}", features = ["uuid", "chrono"] }
 | `jiff02` | [jiff](https://docs.rs/jiff) | `Timestamp`, `Zoned`, `DateTime`, `Date`, `Time`, `Span`, `SignedDuration` |
 | `camino` | [camino](https://docs.rs/camino) | `Utf8Path`, `Utf8PathBuf` |
 | `bytes` | [bytes](https://docs.rs/bytes) | `Bytes`, `BytesMut` |
+| `iddqd` | [iddqd](https://docs.rs/iddqd) | `IdHashMap<T>`, `IdOrdMap<T>`[^1], `BiHashMap<T>`, `TriHashMap<T>` |
 | `ordered-float` | [ordered-float](https://docs.rs/ordered-float) | `OrderedFloat<f32>`, `OrderedFloat<f64>`, `NotNan<f32>`, `NotNan<f64>` |
 | `ruint` | [ruint](https://docs.rs/ruint) | `Uint<BITS, LIMBS>`, `Bits<BITS, LIMBS>` |
 | `lock_api` | [lock_api](https://docs.rs/lock_api) | `Mutex<R, T>`, `RwLock<R, T>`, `MutexGuard`, `RwLockReadGuard`, `RwLockWriteGuard` |
+
+[^1]: `IdOrdMap` requires `std` feature
 
 ### Example: uUIDs
 

@@ -33,7 +33,7 @@ http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
-facet = { path = "../facet", features = ["doc", "net"] }
+facet = { path = "../facet", features = ["doc", "net", "iddqd"] }
 facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net"] }
 facet-value = { path = "../facet-value" }
@@ -50,6 +50,7 @@ jit = ["facet-format/jit"]
 fast = ["dep:zmij", "dep:itoa"]
 net = ["facet-format/net", "facet-core/net"]
 tracing = ["facet-reflect/tracing", "facet-format/tracing"]
+iddqd = ["facet/iddqd"]
 
 # Axum HTTP integration
 axum = ["std", "serialize", "dep:axum-core", "dep:http", "dep:http-body-util"]

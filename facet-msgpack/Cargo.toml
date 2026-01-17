@@ -27,7 +27,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 divan = { workspace = true }
-facet = { path = "../facet", features = ["all-impls"] }
+facet = { path = "../facet", features = ["all-impls", "iddqd"] }
 facet-format = { path = "../facet-format", features = ["jit", "net"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "msgpack", "net"] }
 libtest-mimic = "0.8"
@@ -48,6 +48,7 @@ default = []
 std = []
 jit = ["facet-format/jit"]
 net = ["facet-format/net", "facet-core/net"]
+iddqd = ["facet/iddqd"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
