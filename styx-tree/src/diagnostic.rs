@@ -169,6 +169,31 @@ impl ParseError {
                 )
                 .with_help("did you mean `@tag{}`? whitespace is not allowed between a tag and its payload"),
 
+            // diag[impl diagnostic.parser.reopened-path]
+            ParseErrorKind::ReopenedPath { closed_path } => {
+                let path_str = closed_path.join(".");
+                Report::build(ReportKind::Error, (filename, range.clone()))
+                    .with_message(format!("cannot reopen path `{}`", path_str))
+                    .with_label(
+                        Label::new((filename, range))
+                            .with_message("path was closed when sibling appeared")
+                            .with_color(Color::Red),
+                    )
+                    .with_help("sibling paths must appear contiguously; once you move to a different path, you cannot go back")
+            }
+
+            // diag[impl diagnostic.parser.nest-into-terminal]
+            ParseErrorKind::NestIntoTerminal { terminal_path } => {
+                let path_str = terminal_path.join(".");
+                Report::build(ReportKind::Error, (filename, range.clone()))
+                    .with_message(format!("cannot nest into `{}`", path_str))
+                    .with_label(
+                        Label::new((filename, range))
+                            .with_message("path has a terminal value")
+                            .with_color(Color::Red),
+                    )
+                    .with_help("you cannot add children to a path that already has a scalar, sequence, tag, or unit value")
+            }
         }
     }
 }
@@ -189,6 +214,12 @@ impl std::fmt::Display for ParseError {
             ParseErrorKind::InvalidKey => write!(f, "invalid key"),
             ParseErrorKind::DanglingDocComment => write!(f, "dangling doc comment"),
             ParseErrorKind::TooManyAtoms => write!(f, "unexpected atom after value"),
+            ParseErrorKind::ReopenedPath { closed_path } => {
+                write!(f, "cannot reopen path `{}`", closed_path.join("."))
+            }
+            ParseErrorKind::NestIntoTerminal { terminal_path } => {
+                write!(f, "cannot nest into `{}`", terminal_path.join("."))
+            }
         }?;
         write!(f, " at offset {}", self.span.start)
     }

@@ -1,0 +1,5 @@
+// Sibling dotted paths under common prefix
+foo.bar.x value1
+foo.bar.y value2
+foo.baz value3
+other done

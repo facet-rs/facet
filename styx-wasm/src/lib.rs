@@ -183,6 +183,18 @@ fn format_error(kind: &styx_parse::ParseErrorKind) -> String {
         TooManyAtoms => {
             "Too many atoms: did you mean @tag{}? No whitespace between tag and payload".to_string()
         }
+        ReopenedPath { closed_path } => {
+            format!(
+                "Cannot reopen path '{}': sibling paths must appear contiguously",
+                closed_path.join(".")
+            )
+        }
+        NestIntoTerminal { terminal_path } => {
+            format!(
+                "Cannot nest into '{}': path already has a terminal value",
+                terminal_path.join(".")
+            )
+        }
     }
 }
 

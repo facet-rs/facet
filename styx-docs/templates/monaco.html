@@ -17,17 +17,17 @@
 .editor-pane, .output-pane {
     display: flex;
     flex-direction: column;
-    border: 1px solid #3e4451;
+    border: 1px solid #45475a;
     border-radius: 8px;
     overflow: hidden;
-    background: #282c34;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    background: #1e1e2e;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
 }
 
 .pane-header {
     padding: 0.75rem 1rem;
-    background: linear-gradient(180deg, #21252b 0%, #1e2227 100%);
-    border-bottom: 1px solid #3e4451;
+    background: linear-gradient(180deg, #181825 0%, #11111b 100%);
+    border-bottom: 1px solid #45475a;
     font-weight: 600;
     font-size: 0.8rem;
     color: #999;
@@ -49,11 +49,11 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #4ade80;
+    background: #a6e3a1;
 }
 
 .output-pane .pane-header span:first-child::before {
-    background: #60a5fa;
+    background: #89b4fa;
 }
 
 .pane-content {
@@ -68,11 +68,11 @@
 
 .diagnostics {
     padding: 0.6rem 1rem;
-    background: linear-gradient(180deg, #3b2020 0%, #2d1818 100%);
-    border-top: 1px solid #5c3030;
+    background: linear-gradient(180deg, #302030 0%, #1e1825 100%);
+    border-top: 1px solid #45475a;
     font-size: 0.85rem;
     font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
-    color: #e06c75;
+    color: #f38ba8;
     max-height: 150px;
     overflow-y: auto;
 }
@@ -93,11 +93,11 @@
 
 #vim-status {
     padding: 0.3rem 1rem;
-    background: #21252b;
-    border-top: 1px solid #3e4451;
+    background: #181825;
+    border-top: 1px solid #45475a;
     font-family: monospace;
     font-size: 0.75rem;
-    color: #abb2bf;
+    color: #cdd6f4;
     min-height: 1.2em;
 }
 
@@ -192,8 +192,8 @@ features (
     @experimental(analytics)
 )
 
-/// Multi-line content with heredocs
-query <<SQL
+/// Multi-line content with heredocs (language hint after comma)
+query <<SQL,sql
 SELECT id, name, email
 FROM users
 WHERE active = true
@@ -206,7 +206,8 @@ let styxDebounceTimer;
 let jsonDebounceTimer;
 let updatingFromStyx = false;
 let updatingFromJson = false;
-let vimMode = null;
+let vimModeStyxEditor = null;
+let vimModeJsonEditor = null;
 
 async function main() {
     // Initialize WASM
@@ -225,7 +226,7 @@ async function main() {
     styxEditor = monaco.editor.create(document.getElementById('editor'), {
         value: DEFAULT_SOURCE,
         language: 'styx',
-        theme: 'styx-dark',
+        theme: 'catppuccin-mocha',
         automaticLayout: true,
         minimap: { enabled: false },
         fontSize: 14,
@@ -240,7 +241,7 @@ async function main() {
     jsonEditor = monaco.editor.create(document.getElementById('output'), {
         value: '',
         language: 'json',
-        theme: 'styx-dark',
+        theme: 'catppuccin-mocha',
         automaticLayout: true,
         minimap: { enabled: false },
         fontSize: 14,
@@ -259,19 +260,27 @@ async function main() {
     vimCheckbox.checked = vimEnabled;
 
     function enableVim() {
-        if (!vimMode) {
-            vimMode = initVimMode(styxEditor, vimStatusBar);
-            vimStatusBar.style.display = 'block';
+        if (!vimModeStyxEditor) {
+            vimModeStyxEditor = initVimMode(styxEditor, vimStatusBar);
         }
+        if (!vimModeJsonEditor) {
+            // JSON editor shares the same status bar (shows status for focused editor)
+            vimModeJsonEditor = initVimMode(jsonEditor, vimStatusBar);
+        }
+        vimStatusBar.style.display = 'block';
     }
 
     function disableVim() {
-        if (vimMode) {
-            vimMode.dispose();
-            vimMode = null;
-            vimStatusBar.textContent = '';
-            vimStatusBar.style.display = 'none';
+        if (vimModeStyxEditor) {
+            vimModeStyxEditor.dispose();
+            vimModeStyxEditor = null;
         }
+        if (vimModeJsonEditor) {
+            vimModeJsonEditor.dispose();
+            vimModeJsonEditor = null;
+        }
+        vimStatusBar.textContent = '';
+        vimStatusBar.style.display = 'none';
     }
 
     if (vimEnabled) {

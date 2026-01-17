@@ -104,6 +104,18 @@ Scalars are opaque text. The parser assigns no type information.
 >   BASH
 > ```
 
+> r[scalar.heredoc.invalid]
+> A `<<` sequence that is NOT immediately followed by an uppercase letter is a parse error.
+> This includes `<<` followed by lowercase letters, digits, whitespace, or end of input.
+>
+> ```styx,bad
+> value <<eof        // ERROR: delimiter must start with uppercase
+> value <<123        // ERROR: delimiter must start with uppercase
+> value <<           // ERROR: missing delimiter
+> ```
+>
+> Note: A single `<` not followed by another `<` is valid as part of a bare scalar.
+
 > r[scalar.heredoc.lang]
 > A heredoc MAY include a language hint after the delimiter, separated by a comma.
 > The language hint MUST match `[a-z][a-z0-9_.-]*` (lowercase identifiers).
@@ -276,6 +288,38 @@ An **entry** consists of a key and an optional value.
 > ```styx
 > "a.b".c value            // "a.b" { c value }
 > ```
+
+> r[entry.path.sibling]
+> Sibling dotted paths (paths sharing a common prefix) are allowed as long as
+> they appear contiguously. Moving to a different key at any level closes the
+> previous sibling path and all its descendants.
+>
+> ```styx
+> // Valid: sibling paths under common prefix
+> foo.bar.x value1
+> foo.bar.y value2         // foo.bar still open
+> foo.baz value3           // foo still open, foo.bar now closed
+> ```
+>
+> r[entry.path.reopen]
+> Reopening a closed path is an error. A path is closed when a sibling path
+> at the same level receives an entry.
+>
+> ```styx,bad
+> foo.bar {}
+> foo.baz {}               // closes foo.bar
+> foo.bar.x value          // ERROR: foo.bar was closed
+> ```
+>
+> ```styx,bad
+> a.b.c {}
+> a.b.d {}                 // closes a.b.c
+> a.x {}                   // closes a.b
+> a.b.e {}                 // ERROR: a.b was closed
+> ```
+>
+> This rule enables streaming deserialization: once a different sibling appears,
+> the previous subtree is complete and can be finalized without buffering.
 
 > r[entry.key-equality]
 > To detect duplicate keys, the parser MUST compare keys by their parsed value:

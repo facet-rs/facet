@@ -113,6 +113,41 @@
     (scalar [86, 93] bare "version")
     (scalar [94, 99] bare "1.0.0"))
 )
+; file: compliance/corpus/00-basic/sibling-paths.styx
+(document [-1, -1]
+  (entry
+    (scalar [44, 47] bare "foo")
+    (object [44, 53] newline
+      (entry
+        (scalar [48, 51] bare "bar")
+        (object [48, 53] newline
+          (entry
+            (scalar [52, 53] bare "x")
+            (scalar [54, 60] bare "value1"))
+        ))
+    ))
+  (entry
+    (scalar [61, 64] bare "foo")
+    (object [61, 70] newline
+      (entry
+        (scalar [65, 68] bare "bar")
+        (object [65, 70] newline
+          (entry
+            (scalar [69, 70] bare "y")
+            (scalar [71, 77] bare "value2"))
+        ))
+    ))
+  (entry
+    (scalar [78, 81] bare "foo")
+    (object [78, 85] newline
+      (entry
+        (scalar [82, 85] bare "baz")
+        (scalar [86, 92] bare "value3"))
+    ))
+  (entry
+    (scalar [93, 98] bare "other")
+    (scalar [99, 103] bare "done"))
+)
 ; file: compliance/corpus/00-basic/single-entry.styx
 (document [-1, -1]
   (entry
@@ -137,44 +172,25 @@
 ; file: compliance/corpus/01-scalars/bare-angle-brackets.styx
 (document [-1, -1]
   (entry
-    (scalar [34, 43] bare "less-than")
-    (scalar [44, 51] bare "foo<bar"))
+    (scalar [117, 126] bare "less-than")
+    (scalar [127, 134] bare "foo<bar"))
   (entry
-    (scalar [52, 64] bare "greater-than")
-    (object [65, 72] comma
+    (scalar [135, 145] bare "arrow-left")
+    (scalar [146, 149] bare "<--"))
+  (entry
+    (scalar [177, 189] bare "greater-than")
+    (object [190, 197] comma
       (entry
-        (scalar [65, 68] bare "foo")
-        (scalar [69, 72] bare "bar"))
+        (scalar [190, 193] bare "foo")
+        (scalar [194, 197] bare "bar"))
     ))
   (entry
-    (scalar [73, 84] bare "both-angles")
-    (object [85, 96] comma
+    (scalar [198, 209] bare "both-angles")
+    (object [210, 221] comma
       (entry
-        (scalar [85, 92] bare "foo<bar")
-        (scalar [93, 96] bare "baz"))
+        (scalar [210, 217] bare "foo<bar")
+        (scalar [218, 221] bare "baz"))
     ))
-  (entry
-    (scalar [97, 106] bare "html-like")
-    (scalar [107, 111] bare "<div"))
-  (entry
-    (scalar [113, 123] bare "arrow-left")
-    (scalar [124, 127] bare "<--"))
-  (entry
-    (scalar [128, 139] bare "arrow-right")
-    (scalar [140, 142] bare "--"))
-  (entry
-    (scalar [144, 151] bare "generic")
-    (scalar [152, 158] bare "List<T"))
-  (entry
-    (scalar [213, 223] bare "comparison")
-    (object [224, 229] comma
-      (entry
-        (scalar [224, 227] bare "a<b")
-        (scalar [228, 229] bare "c"))
-    ))
-  (entry
-    (scalar [230, 237] bare "xml-tag")
-    (scalar [238, 245] bare "</close"))
 )
 ; file: compliance/corpus/01-scalars/bare-at-in-middle.styx
 (document [-1, -1]
@@ -212,20 +228,11 @@
     (scalar [45, 54] bare "single-lt")
     (scalar [55, 61] bare "<value"))
   (entry
-    (scalar [62, 81] bare "double-lt-lowercase")
-    (scalar [84, 87] bare "eof"))
+    (scalar [62, 77] bare "double-lt-space")
+    (scalar [78, 88] quoted "<< DELIM"))
   (entry
-    (scalar [88, 106] bare "double-lt-no-delim")
-    (unit [88, 106]))
-  (entry
-    (scalar [110, 125] bare "double-lt-space")
-    (scalar [126, 136] quoted "<< DELIM"))
-  (entry
-    (scalar [137, 153] bare "double-lt-number")
-    (unit [137, 153]))
-  (entry
-    (scalar [160, 172] bare "lt-in-middle")
-    (scalar [173, 181] bare "foo<<bar"))
+    (scalar [89, 101] bare "lt-in-middle")
+    (scalar [102, 110] bare "foo<<bar"))
 )
 ; file: compliance/corpus/01-scalars/bare-paths.styx
 (document [-1, -1]
@@ -1062,6 +1069,12 @@
 (error [45, 49] "parse error at 45-49: duplicate key")
 ; file: compliance/corpus/07-invalid/heredoc-as-key.styx
 (error [35, 49] "parse error at 35-49: invalid key")
+; file: compliance/corpus/07-invalid/heredoc-lowercase.styx
+(error [53, 55] "parse error at 53-55: unexpected token")
+; file: compliance/corpus/07-invalid/heredoc-missing-delim.styx
+(error [47, 49] "parse error at 47-49: unexpected token")
+; file: compliance/corpus/07-invalid/heredoc-number.styx
+(error [64, 66] "parse error at 64-66: unexpected token")
 ; file: compliance/corpus/07-invalid/invalid-escape.styx
 (error [13, 15] "parse error at 13-15: invalid escape sequence: \\x")
 ; file: compliance/corpus/07-invalid/invalid-tag-digit.styx
@@ -1074,6 +1087,8 @@
 (error [35, 46] "parse error at 35-46: invalid tag name")
 ; file: compliance/corpus/07-invalid/mixed-separators.styx
 (error [13, 14] "parse error at 13-14: mixed separators (use either commas or newlines)")
+; file: compliance/corpus/07-invalid/nest-into-scalar.styx
+(error [66, 71] "parse error at 66-71: cannot nest into `a.b` which has a terminal value")
 ; file: compliance/corpus/07-invalid/object-as-key.styx
 (document [-1, -1]
   (entry
@@ -1084,8 +1099,10 @@
         (scalar [37, 38] bare "1"))
     ))
 )
+; file: compliance/corpus/07-invalid/reopen-nested-path.styx
+(error [99, 104] "parse error at 99-104: cannot reopen path `a.b` after sibling appeared")
 ; file: compliance/corpus/07-invalid/reopen-path.styx
-(error [62, 67] "parse error at 62-67: duplicate key")
+(error [71, 80] "parse error at 71-80: cannot reopen path `foo.bar` after sibling appeared")
 ; file: compliance/corpus/07-invalid/sequence-as-key.styx
 (error [36, 43] "parse error at 36-43: invalid key")
 ; file: compliance/corpus/07-invalid/too-many-atoms.styx
@@ -1094,6 +1111,12 @@
     (scalar [137, 140] bare "key")
     (tag [145, 147] "tag"
       (object [145, 147] comma)))
+)
+; file: compliance/corpus/07-invalid/trailing-gt.styx
+(document [-1, -1]
+  (entry
+    (scalar [38, 41] bare "key")
+    (scalar [42, 47] bare "value"))
 )
 ; file: compliance/corpus/07-invalid/unclosed-brace.styx
 (error [4, 5] "parse error at 4-5: unclosed object (missing `}`)")

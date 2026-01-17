@@ -166,6 +166,17 @@ pub enum ParseErrorKind {
     /// Too many atoms in entry (expected at most 2: key and value).
     // parser[impl entry.toomany]
     TooManyAtoms,
+    /// Attempted to reopen a path that was closed when a sibling appeared.
+    // parser[impl entry.path.reopen]
+    ReopenedPath {
+        /// The closed path that was attempted to be reopened.
+        closed_path: Vec<String>,
+    },
+    /// Attempted to nest into a path that has a terminal value (scalar/sequence/tag/unit).
+    NestIntoTerminal {
+        /// The path that has a terminal value.
+        terminal_path: Vec<String>,
+    },
 }
 
 impl std::fmt::Display for ParseErrorKind {
@@ -189,6 +200,20 @@ impl std::fmt::Display for ParseErrorKind {
             }
             ParseErrorKind::TooManyAtoms => {
                 write!(f, "unexpected atom after value (entry has too many atoms)")
+            }
+            ParseErrorKind::ReopenedPath { closed_path } => {
+                write!(
+                    f,
+                    "cannot reopen path `{}` after sibling appeared",
+                    closed_path.join(".")
+                )
+            }
+            ParseErrorKind::NestIntoTerminal { terminal_path } => {
+                write!(
+                    f,
+                    "cannot nest into `{}` which has a terminal value",
+                    terminal_path.join(".")
+                )
             }
         }
     }

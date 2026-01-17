@@ -150,14 +150,14 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse entries in an object or at document level.
-    // parser[impl entry.key-equality]
+    // parser[impl entry.key-equality] parser[impl entry.path.sibling] parser[impl entry.path.reopen]
     fn parse_entries<C: ParseCallback<'src>>(
         &mut self,
         callback: &mut C,
         closing: Option<TokenKind>,
     ) {
         trace!("Parsing entries, closing token: {:?}", closing);
-        let mut seen_keys: HashMap<KeyValue, Span> = HashMap::new();
+        let mut path_state = PathState::default();
         // Track last doc comment span for dangling detection
         // parser[impl comment.doc]
         let mut pending_doc_comment: Option<Span> = None;
@@ -205,8 +205,8 @@ impl<'src> Parser<'src> {
             // We're about to parse an entry, so any pending doc comment is attached
             pending_doc_comment = None;
 
-            // Parse entry with duplicate key detection
-            if !self.parse_entry_with_dup_check(callback, &mut seen_keys) {
+            // Parse entry with path state tracking
+            if !self.parse_entry_with_path_check(callback, &mut path_state) {
                 return;
             }
 
@@ -224,12 +224,13 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Parse a single entry with duplicate key detection.
+    /// Parse a single entry with path state tracking.
     // parser[impl entry.key-equality] parser[impl entry.structure] parser[impl entry.path]
-    fn parse_entry_with_dup_check<C: ParseCallback<'src>>(
+    // parser[impl entry.path.sibling] parser[impl entry.path.reopen]
+    fn parse_entry_with_path_check<C: ParseCallback<'src>>(
         &mut self,
         callback: &mut C,
-        seen_keys: &mut HashMap<KeyValue, Span>,
+        path_state: &mut PathState,
     ) -> bool {
         if !callback.event(Event::EntryStart) {
             return false;
@@ -274,22 +275,37 @@ impl<'src> Parser<'src> {
             && key_atom.kind == ScalarKind::Bare
             && text.contains('.')
         {
-            return self.emit_dotted_path_entry(text, key_atom.span, &atoms, callback, seen_keys);
+            return self.emit_dotted_path_entry(text, key_atom.span, &atoms, callback, path_state);
         }
 
-        let key_value = KeyValue::from_atom(key_atom, self);
-        if let Some(&original_span) = seen_keys.get(&key_value) {
-            // Emit duplicate key error with reference to original
-            if !callback.event(Event::Error {
-                span: key_atom.span,
-                kind: ParseErrorKind::DuplicateKey {
-                    original: original_span,
-                },
-            }) {
-                return false;
+        // Non-dotted key: treat as single-segment path
+        let key_text = match &key_atom.content {
+            AtomContent::Scalar(text) => {
+                let processed = self.process_scalar(text, key_atom.kind);
+                processed.into_owned()
+            }
+            AtomContent::Unit => "@".to_string(),
+            AtomContent::Tag { name, .. } => format!("@{}", name),
+            _ => key_atom.span.start.to_string(), // Fallback for invalid keys
+        };
+
+        // Determine value kind
+        let value_kind = if atoms.len() >= 2 {
+            match &atoms[1].content {
+                AtomContent::Object { .. } | AtomContent::Attributes(_) => PathValueKind::Object,
+                _ => PathValueKind::Terminal,
             }
         } else {
-            seen_keys.insert(key_value, key_atom.span);
+            // Implicit unit value
+            PathValueKind::Terminal
+        };
+
+        // Check path state
+        let path = vec![key_text];
+        if let Err(err) = path_state.check_and_update(&path, key_atom.span, value_kind)
+            && !self.emit_path_error(err, key_atom.span, callback)
+        {
+            return false;
         }
 
         if !self.emit_atom_as_key(key_atom, callback) {
@@ -329,16 +345,33 @@ impl<'src> Parser<'src> {
         callback.event(Event::EntryEnd)
     }
 
+    /// Emit an error for a path validation failure.
+    fn emit_path_error<C: ParseCallback<'src>>(
+        &self,
+        err: PathError,
+        span: Span,
+        callback: &mut C,
+    ) -> bool {
+        let kind = match err {
+            PathError::Duplicate { original } => ParseErrorKind::DuplicateKey { original },
+            PathError::Reopened { closed_path } => ParseErrorKind::ReopenedPath { closed_path },
+            PathError::NestIntoTerminal { terminal_path } => {
+                ParseErrorKind::NestIntoTerminal { terminal_path }
+            }
+        };
+        callback.event(Event::Error { span, kind })
+    }
+
     /// Emit a dotted path entry.
     /// `a.b.c value` expands to `a { b { c value } }`
-    // parser[impl entry.path]
+    // parser[impl entry.path] parser[impl entry.path.sibling] parser[impl entry.path.reopen]
     fn emit_dotted_path_entry<C: ParseCallback<'src>>(
         &self,
         path_text: &'src str,
         path_span: Span,
         atoms: &[Atom<'src>],
         callback: &mut C,
-        seen_keys: &mut HashMap<KeyValue, Span>,
+        path_state: &mut PathState,
     ) -> bool {
         // Split the path on '.'
         let segments: Vec<&str> = path_text.split('.').collect();
@@ -354,20 +387,25 @@ impl<'src> Parser<'src> {
             return callback.event(Event::EntryEnd);
         }
 
-        // Check for duplicate key (use first segment for duplicate detection)
-        let first_segment = segments[0];
-        let key_value = KeyValue::Scalar(first_segment.to_string());
-        if let Some(&original_span) = seen_keys.get(&key_value) {
-            if !callback.event(Event::Error {
-                span: path_span,
-                kind: ParseErrorKind::DuplicateKey {
-                    original: original_span,
-                },
-            }) {
-                return false;
+        // Build full path as Vec<String>
+        let path: Vec<String> = segments.iter().map(|s| s.to_string()).collect();
+
+        // Determine value kind based on the value atom
+        let value_kind = if atoms.len() >= 2 {
+            match &atoms[1].content {
+                AtomContent::Object { .. } | AtomContent::Attributes(_) => PathValueKind::Object,
+                _ => PathValueKind::Terminal,
             }
         } else {
-            seen_keys.insert(key_value, path_span);
+            // Implicit unit value
+            PathValueKind::Terminal
+        };
+
+        // Check path state for duplicates, reopening, and nesting errors
+        if let Err(err) = path_state.check_and_update(&path, path_span, value_kind)
+            && !self.emit_path_error(err, path_span, callback)
+        {
+            return false;
         }
 
         // Calculate spans for each segment
@@ -506,6 +544,18 @@ impl<'src> Parser<'src> {
                 // Skip whitespace (handled above)
                 TokenKind::Whitespace => {
                     self.advance();
+                }
+
+                // Error tokens - emit parse error
+                TokenKind::Error => {
+                    let token = self.advance().unwrap();
+                    // Record the error but continue parsing
+                    // The error will be emitted later when processing atoms
+                    atoms.push(Atom {
+                        span: token.span,
+                        kind: ScalarKind::Bare,
+                        content: AtomContent::Error,
+                    });
                 }
 
                 // Unexpected tokens
@@ -1337,6 +1387,13 @@ impl<'src> Parser<'src> {
 
                 callback.event(Event::ObjectEnd { span: atom.span })
             }
+            AtomContent::Error => {
+                // Error atom - emit as unexpected token error
+                callback.event(Event::Error {
+                    span: atom.span,
+                    kind: ParseErrorKind::UnexpectedToken,
+                })
+            }
         }
     }
 
@@ -1449,7 +1506,8 @@ impl<'src> Parser<'src> {
                         | AtomContent::Object { .. }
                         | AtomContent::Sequence { .. }
                         | AtomContent::Tag { .. }
-                        | AtomContent::Attributes(_) => {
+                        | AtomContent::Attributes(_)
+                        | AtomContent::Error => {
                             // Invalid key payload
                             callback.event(Event::Error {
                                 span: inner.span,
@@ -1461,8 +1519,9 @@ impl<'src> Parser<'src> {
             }
             AtomContent::Object { .. }
             | AtomContent::Sequence { .. }
-            | AtomContent::Attributes(_) => {
-                // Objects, sequences not allowed as keys
+            | AtomContent::Attributes(_)
+            | AtomContent::Error => {
+                // Objects, sequences, error tokens not allowed as keys
                 callback.event(Event::Error {
                     span: atom.span,
                     kind: ParseErrorKind::InvalidKey,
@@ -1737,6 +1796,8 @@ enum AtomContent<'src> {
     /// Attributes (key=value pairs that become an object).
     // parser[impl attr.syntax] parser[impl attr.atom]
     Attributes(Vec<AttributeEntry<'src>>),
+    /// A lexer error token.
+    Error,
 }
 
 /// An attribute entry (key=value).
@@ -1796,7 +1857,100 @@ impl KeyValue {
             AtomContent::Object { .. } => KeyValue::Scalar("{}".into()),
             AtomContent::Sequence { .. } => KeyValue::Scalar("()".into()),
             AtomContent::Attributes(_) => KeyValue::Scalar("{}".into()),
+            AtomContent::Error => KeyValue::Scalar("<error>".into()),
         }
+    }
+}
+
+/// Whether a path leads to an object (can have children) or a terminal value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathValueKind {
+    /// Path leads to an object (explicit `{}` or implicit from dotted path).
+    Object,
+    /// Path leads to a terminal value (scalar, sequence, tag, unit).
+    Terminal,
+}
+
+/// Tracks dotted path state for sibling detection and reopen errors.
+// parser[impl entry.path.sibling] parser[impl entry.path.reopen]
+#[derive(Default)]
+struct PathState {
+    /// The current open path segments.
+    current_path: Vec<String>,
+    /// Paths that have been closed (sibling appeared at same level).
+    closed_paths: std::collections::HashSet<Vec<String>>,
+    /// Full paths that have been assigned, with their value kind and span.
+    assigned_paths: HashMap<Vec<String>, (Span, PathValueKind)>,
+}
+
+/// Error returned when path validation fails.
+#[derive(Debug)]
+enum PathError {
+    /// Exact duplicate path.
+    Duplicate { original: Span },
+    /// Trying to reopen a closed path.
+    Reopened { closed_path: Vec<String> },
+    /// Trying to nest into a terminal value.
+    NestIntoTerminal { terminal_path: Vec<String> },
+}
+
+impl PathState {
+    /// Check a path and update state. Returns error if path is invalid.
+    fn check_and_update(
+        &mut self,
+        path: &[String],
+        span: Span,
+        value_kind: PathValueKind,
+    ) -> Result<(), PathError> {
+        // 1. Check for duplicate (exact same path)
+        if let Some(&(original, _)) = self.assigned_paths.get(path) {
+            return Err(PathError::Duplicate { original });
+        }
+
+        // 2. Check if any proper prefix is closed or has a terminal value
+        for i in 1..path.len() {
+            let prefix = &path[..i];
+            if self.closed_paths.contains(prefix) {
+                return Err(PathError::Reopened {
+                    closed_path: prefix.to_vec(),
+                });
+            }
+            if let Some(&(_, PathValueKind::Terminal)) = self.assigned_paths.get(prefix) {
+                return Err(PathError::NestIntoTerminal {
+                    terminal_path: prefix.to_vec(),
+                });
+            }
+        }
+
+        // 3. Find common prefix length with current path
+        let common_len = self
+            .current_path
+            .iter()
+            .zip(path.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        // 4. Close paths beyond the common prefix
+        // Everything in current_path[common_len..] gets closed
+        for i in common_len..self.current_path.len() {
+            let closed: Vec<String> = self.current_path[..=i].to_vec();
+            self.closed_paths.insert(closed);
+        }
+
+        // 5. Record intermediate path segments as objects (if not already assigned)
+        for i in 1..path.len() {
+            let prefix = path[..i].to_vec();
+            self.assigned_paths
+                .entry(prefix)
+                .or_insert((span, PathValueKind::Object));
+        }
+
+        // 6. Update assigned paths and current path
+        self.assigned_paths
+            .insert(path.to_vec(), (span, value_kind));
+        self.current_path = path.to_vec();
+
+        Ok(())
     }
 }
 
@@ -3016,6 +3170,99 @@ mod tests {
         assert!(
             !events.iter().any(|e| matches!(e, Event::Error { .. })),
             "Dot in value should not cause errors"
+        );
+    }
+
+    // parser[verify entry.path.sibling]
+    #[test]
+    fn test_sibling_dotted_paths() {
+        // Sibling paths under common prefix should be allowed
+        let events = parse("foo.bar.x value1\nfoo.bar.y value2\nfoo.baz value3");
+        // Should have no errors
+        assert!(
+            !events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "Sibling dotted paths should not cause errors"
+        );
+        // Should have all keys
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"foo"), "Should have 'foo'");
+        assert!(keys.contains(&"bar"), "Should have 'bar'");
+        assert!(keys.contains(&"baz"), "Should have 'baz'");
+        assert!(keys.contains(&"x"), "Should have 'x'");
+        assert!(keys.contains(&"y"), "Should have 'y'");
+    }
+
+    // parser[verify entry.path.reopen]
+    #[test]
+    fn test_reopen_closed_path_error() {
+        // Can't reopen a path after moving to a sibling
+        let events = parse("foo.bar {}\nfoo.baz {}\nfoo.bar.x value");
+        // Should have a reopen error
+        let errors: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Event::Error { .. }))
+            .collect();
+        assert_eq!(
+            errors.len(),
+            1,
+            "Should have exactly one error for reopening closed path"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Error { kind: ParseErrorKind::ReopenedPath { .. }, .. })),
+            "Error should be ReopenedPath"
+        );
+    }
+
+    // parser[verify entry.path.reopen]
+    #[test]
+    fn test_reopen_nested_closed_path_error() {
+        // Can't reopen a nested path after moving to a higher-level sibling
+        let events = parse("a.b.c {}\na.b.d {}\na.x {}\na.b.e {}");
+        // Should have a reopen error for a.b
+        let errors: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Event::Error { kind: ParseErrorKind::ReopenedPath { .. }, .. }))
+            .collect();
+        assert_eq!(
+            errors.len(),
+            1,
+            "Should have exactly one reopen error"
+        );
+    }
+
+    // parser[verify entry.path.reopen]
+    #[test]
+    fn test_nest_into_scalar_error() {
+        // Can't nest into a path that has a scalar value
+        let events = parse("a.b value\na.b.c deep");
+        // Should have a nest-into-terminal error
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Error { kind: ParseErrorKind::NestIntoTerminal { .. }, .. })),
+            "Should have NestIntoTerminal error"
+        );
+    }
+
+    // parser[verify entry.path.sibling]
+    #[test]
+    fn test_different_top_level_paths_ok() {
+        // Different top-level paths don't conflict
+        let events = parse("server.host localhost\ndatabase.port 5432");
+        assert!(
+            !events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "Different top-level paths should not conflict"
         );
     }
 }

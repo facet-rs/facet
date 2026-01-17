@@ -1,0 +1,5 @@
+// Can't reopen a nested path after moving to a sibling at a higher level
+a.b.c {}
+a.b.d {}
+a.x {}
+a.b.e {}

@@ -1,0 +1,2 @@
+// Heredoc delimiter must start with uppercase, not digit
+value <<123

@@ -144,8 +144,20 @@ impl<'src> Lexer<'src> {
             // Single / is a bare scalar (e.g., /usr/bin/foo)
             '/' => self.lex_bare_scalar(),
 
-            // Heredoc
-            '<' if self.starts_with("<<") => self.lex_heredoc_start(),
+            // Heredoc - only if << is followed by uppercase letter
+            // parser[impl scalar.heredoc.invalid]
+            '<' if self.starts_with("<<")
+                && matches!(self.peek_nth(2), Some(c) if c.is_ascii_uppercase()) =>
+            {
+                self.lex_heredoc_start()
+            }
+            // << not followed by uppercase is an error
+            '<' if self.starts_with("<<") => {
+                let start = self.pos;
+                self.advance(); // <
+                self.advance(); // <
+                self.token(TokenKind::Error, start)
+            }
 
             // Raw string
             'r' if matches!(self.peek_nth(1), Some('#' | '"')) => self.lex_raw_string(),

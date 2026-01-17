@@ -29,6 +29,11 @@
   key: (expr
     payload: (scalar (bare_scalar) @property)))
 
+; Sequence items are values, not keys (must come AFTER entry key rule to override)
+(sequence
+  (expr
+    payload: (scalar (bare_scalar) @string)))
+
 ; Punctuation
 "{" @punctuation.bracket
 "}" @punctuation.bracket

@@ -1,0 +1,2 @@
+// Heredoc requires a delimiter after <<
+value <<

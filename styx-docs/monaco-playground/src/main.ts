@@ -1,210 +1,6 @@
 import * as monaco from 'monaco-editor';
 import { initVimMode, VimMode } from 'monaco-vim';
-
-// Styx Monarch grammar
-// Based on the Styx parser spec:
-// - Entry = key + optional value (1 or 2 atoms)
-// - In object context: first atom is KEY, second is VALUE
-// - In sequence context: everything is VALUE
-// - { } delimit objects, ( ) delimit sequences
-
-const styxLanguage: monaco.languages.IMonarchLanguage = {
-  defaultToken: 'invalid',
-  tokenPostfix: '.styx',
-
-  brackets: [
-    { open: '{', close: '}', token: 'delimiter.curly' },
-    { open: '(', close: ')', token: 'delimiter.parenthesis' },
-  ],
-
-  tokenizer: {
-    // Root = object context, expecting entries (key + optional value)
-    root: [
-      [/[ \t]+/, 'white'],
-      [/\r?\n/, 'white'],
-      [/\/\/\/.*$/, 'comment.doc'],
-      [/\/\/.*$/, 'comment'],
-
-      // Braces - { starts new object context, } ends current
-      [/\{/, { token: 'delimiter.curly', next: '@push' }],
-      [/\}/, { token: 'delimiter.curly', next: '@pop' }],
-
-      // Parentheses - start sequence context
-      [/\(/, { token: 'delimiter.parenthesis', next: '@sequence' }],
-      [/\)/, 'delimiter.parenthesis'],
-
-      [/,/, 'delimiter.comma'],
-
-      // === KEY patterns (first atom of entry) ===
-
-      // Tag as key with immediate payload (no space)
-      // @tag{...} - tag + object payload
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=\{)/, 'tag.key'],
-      // @tag(...) - tag + sequence payload
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=\()/, 'tag.key'],
-      // @tag"..." - tag + string payload
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=")/, { token: 'tag.key', next: '@tagStringKey' }],
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=r#*")/, { token: 'tag.key', next: '@tagRawStringKey' }],
-      // @tag or @ alone (unit) as key
-      [/@[A-Za-z_][A-Za-z0-9_\-]*/, { token: 'tag.key', next: '@afterKey' }],
-      [/@(?![A-Za-z_])/, { token: 'tag.key', next: '@afterKey' }],
-
-      // Quoted string as key
-      [/"/, { token: 'string.key', next: '@stringKey' }],
-      [/r(#*)"/, { token: 'string.key', next: '@rawStringKey.$1' }],
-
-      // Bare key - careful with characters
-      // First char: not whitespace, { } ( ) , " = @ >
-      // Subsequent: @ and = allowed, > still forbidden (for attributes), . terminates (for paths)
-      [/[^\s{}\(\),"=@>\r\n][^\s{}\(\),">\r\n]*/, { token: 'key', next: '@afterKey' }],
-    ],
-
-    // After seeing a key, expect value or end of entry
-    afterKey: [
-      [/[ \t]+/, 'white'],
-      // Newline ends entry, back to root for next key
-      [/\r?\n/, { token: 'white', next: '@root' }],
-      [/\/\/.*$/, 'comment'],
-
-      // Comma ends entry, back to root for next key
-      [/,/, { token: 'delimiter.comma', next: '@root' }],
-
-      // { starts object value (nested object context)
-      [/\{/, { token: 'delimiter.curly', next: '@root' }],
-      // } closes enclosing object, back to root
-      [/\}/, { token: 'delimiter.curly', next: '@root' }],
-
-      // ( starts sequence value
-      [/\(/, { token: 'delimiter.parenthesis', next: '@sequence' }],
-      // ) closes sequence (shouldn't happen here normally)
-      [/\)/, { token: 'delimiter.parenthesis', next: '@root' }],
-
-      // Heredoc as value - with optional language hint for injection
-      // <<DELIM or <<DELIM,lang
-      [/<<([A-Z][A-Z0-9_]*),([a-z][a-z0-9_.\-]*)/, { token: 'string.heredoc', next: '@heredocLang.$1.$2', nextEmbedded: '$2' }],
-      [/<<([A-Z][A-Z0-9_]*)/, { token: 'string.heredoc', next: '@heredoc.$1' }],
-
-      // === VALUE patterns (second atom of entry) ===
-
-      // Tag as value with immediate payload (payload will handle return to root)
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=\{)/, 'tag'],
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=\()/, 'tag'],
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=")/, { token: 'tag', next: '@tagString' }],
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=r#*")/, { token: 'tag', next: '@tagRawString' }],
-      // @tag or @ alone (unit) as value - entry complete
-      [/@[A-Za-z_][A-Za-z0-9_\-]*/, { token: 'tag', next: '@root' }],
-      [/@(?![A-Za-z_])/, { token: 'tag', next: '@root' }],
-
-      // Quoted string as value
-      [/"/, { token: 'string', next: '@string' }],
-      [/r(#*)"/, { token: 'string', next: '@rawString.$1' }],
-
-      // Attribute syntax: key>value (creates inline object) - entry complete
-      [/[^\s{}\(\),"=@>\r\n]+>[^\s{}\(\),"\r\n]*/, { token: 'value', next: '@root' }],
-
-      // Bare value - entry complete, back to root for next key
-      [/[^\s{}\(\),"=@>\r\n][^\s{}\(\),">\r\n]*/, { token: 'value', next: '@root' }],
-    ],
-
-    // Sequence context - everything is a value until )
-    sequence: [
-      [/[ \t\r\n]+/, 'white'],
-      [/\/\/.*$/, 'comment'],
-
-      // Nested sequence
-      [/\(/, { token: 'delimiter.parenthesis', next: '@push' }],
-      [/\)/, { token: 'delimiter.parenthesis', next: '@pop' }],
-
-      // Object inside sequence
-      [/\{/, { token: 'delimiter.curly', next: '@root' }],
-      [/\}/, 'delimiter.curly'],
-
-      // Tags in sequence (all values)
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=\{)/, 'tag'],
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=\()/, 'tag'],
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=")/, { token: 'tag', next: '@tagString' }],
-      [/@[A-Za-z_][A-Za-z0-9_\-]*(?=r#*")/, { token: 'tag', next: '@tagRawString' }],
-      [/@[A-Za-z_][A-Za-z0-9_\-]*/, 'tag'],
-      [/@(?![A-Za-z_])/, 'tag'],
-
-      // Strings
-      [/"/, { token: 'string', next: '@string' }],
-      [/r(#*)"/, { token: 'string', next: '@rawString.$1' }],
-
-      // Values
-      [/[^\s{}\(\),"=@>\r\n][^\s{}\(\),">\r\n]*/, 'value'],
-    ],
-
-    // String as key (quoted)
-    stringKey: [
-      [/[^\\"]+/, 'string.key'],
-      [/\\./, 'string.escape'],
-      [/"/, { token: 'string.key', next: '@afterKey' }],
-    ],
-
-    // Raw string as key
-    'rawStringKey.$S2': [
-      [/"(#*)/, {
-        cases: {
-          '$1==$S2': { token: 'string.key', next: '@afterKey' },
-          '@default': 'string.key'
-        }
-      }],
-      [/[^"]+/, 'string.key'],
-      [/"/, 'string.key'],
-    ],
-
-    // Tag with string payload as key
-    tagStringKey: [
-      [/"/, { token: 'string.key', next: '@stringKey' }],
-    ],
-
-    // Tag with raw string payload as key
-    tagRawStringKey: [
-      [/r(#*)"/, { token: 'string.key', next: '@rawStringKey.$1' }],
-    ],
-
-    // String as value (quoted) - return to root when done
-    string: [
-      [/[^\\"]+/, 'string'],
-      [/\\./, 'string.escape'],
-      [/"/, { token: 'string', next: '@root' }],
-    ],
-
-    // Raw string as value - return to root when done
-    'rawString.$S2': [
-      [/"(#*)/, {
-        cases: {
-          '$1==$S2': { token: 'string', next: '@root' },
-          '@default': 'string'
-        }
-      }],
-      [/[^"]+/, 'string'],
-      [/"/, 'string'],
-    ],
-
-    // Tag with string payload as value
-    tagString: [
-      [/"/, { token: 'string', next: '@string' }],
-    ],
-
-    // Tag with raw string payload as value
-    tagRawString: [
-      [/r(#*)"/, { token: 'string', next: '@rawString.$1' }],
-    ],
-
-    // Heredoc
-    'heredoc.$S2': [
-      [/^(\s*)(\S+)$/, {
-        cases: {
-          '$2==$S2': { token: 'string.heredoc', next: '@pop' },
-          '@default': 'string.heredoc'
-        }
-      }],
-      [/.*$/, 'string.heredoc'],
-    ],
-  },
-};
+import { StyxTokensProvider } from './tokenizer';
 
 const styxLanguageConfig: monaco.languages.LanguageConfiguration = {
   comments: { lineComment: '//' },
@@ -221,52 +17,122 @@ const styxLanguageConfig: monaco.languages.LanguageConfiguration = {
   ],
 };
 
-// OneDark-inspired theme with clear key/value distinction
-const styxDarkTheme: monaco.editor.IStandaloneThemeData = {
+// Catppuccin Mocha theme - https://github.com/catppuccin/catppuccin
+// Base colors
+const mocha = {
+  rosewater: 'f5e0dc',
+  flamingo: 'f2cdcd',
+  pink: 'f5c2e7',
+  mauve: 'cba6f7',
+  red: 'f38ba8',
+  maroon: 'eba0ac',
+  peach: 'fab387',
+  yellow: 'f9e2af',
+  green: 'a6e3a1',
+  teal: '94e2d5',
+  sky: '89dceb',
+  sapphire: '74c7ec',
+  blue: '89b4fa',
+  lavender: 'b4befe',
+  text: 'cdd6f4',
+  subtext1: 'bac2de',
+  subtext0: 'a6adc8',
+  overlay2: '9399b2',
+  overlay1: '7f849c',
+  overlay0: '6c7086',
+  surface2: '585b70',
+  surface1: '45475a',
+  surface0: '313244',
+  base: '1e1e2e',
+  mantle: '181825',
+  crust: '11111b',
+};
+
+const catppuccinMocha: monaco.editor.IStandaloneThemeData = {
   base: 'vs-dark',
   inherit: true,
   rules: [
-    { token: 'comment', foreground: '5c6370', fontStyle: 'italic' },
-    { token: 'comment.doc', foreground: '7f848e', fontStyle: 'italic' },
+    // Comments
+    { token: 'comment', foreground: mocha.overlay1, fontStyle: 'italic' },
+    { token: 'comment.doc', foreground: mocha.overlay2, fontStyle: 'italic' },
 
-    // Keys - red/coral (like object keys in most themes)
-    { token: 'key', foreground: 'e06c75' },
-    { token: 'string.key', foreground: 'e06c75' },
-    { token: 'tag.key', foreground: 'c678dd' },
+    // Keys - pink/flamingo for that warm feel
+    { token: 'key', foreground: mocha.flamingo },
+    { token: 'string.key', foreground: mocha.flamingo },
+    { token: 'tag.key', foreground: mocha.mauve },
 
-    // Values - blue (like string/number values)
-    { token: 'value', foreground: '61afef' },
+    // Values - sapphire/blue
+    { token: 'value', foreground: mocha.sapphire },
 
-    // Tags - purple
-    { token: 'tag', foreground: 'c678dd' },
+    // Tags - mauve (purple)
+    { token: 'tag', foreground: mocha.mauve },
 
     // Strings - green
-    { token: 'string', foreground: '98c379' },
-    { token: 'string.heredoc', foreground: '98c379' },
-    { token: 'string.escape', foreground: 'd19a66' },
+    { token: 'string', foreground: mocha.green },
+    { token: 'string.heredoc', foreground: mocha.green },
+    { token: 'string.escape', foreground: mocha.peach },
 
     // Delimiters
-    { token: 'delimiter.curly', foreground: 'e5c07b' },
-    { token: 'delimiter.parenthesis', foreground: 'c678dd' },
-    { token: 'delimiter.comma', foreground: 'abb2bf' },
+    { token: 'delimiter.curly', foreground: mocha.yellow },
+    { token: 'delimiter.parenthesis', foreground: mocha.pink },
+    { token: 'delimiter.comma', foreground: mocha.overlay2 },
+
+    // Invalid
+    { token: 'invalid', foreground: mocha.red },
+
+    // Additional token types for embedded languages
+    { token: 'keyword', foreground: mocha.mauve },
+    { token: 'keyword.sql', foreground: mocha.mauve },
+    { token: 'operator', foreground: mocha.sky },
+    { token: 'operator.sql', foreground: mocha.sky },
+    { token: 'number', foreground: mocha.peach },
+    { token: 'number.json', foreground: mocha.peach },
+    { token: 'identifier', foreground: mocha.text },
+    { token: 'type', foreground: mocha.yellow },
+    { token: 'type.identifier.json', foreground: mocha.blue },
+    { token: 'predefined', foreground: mocha.blue },
+    { token: 'predefined.sql', foreground: mocha.blue },
+
+    // JSON specific
+    { token: 'string.key.json', foreground: mocha.flamingo },
+    { token: 'string.value.json', foreground: mocha.green },
+    { token: 'keyword.json', foreground: mocha.mauve },
+    { token: 'delimiter.bracket.json', foreground: mocha.overlay2 },
+    { token: 'delimiter.array.json', foreground: mocha.pink },
+    { token: 'delimiter.colon.json', foreground: mocha.overlay2 },
+    { token: 'delimiter.comma.json', foreground: mocha.overlay2 },
   ],
   colors: {
-    'editor.background': '#282c34',
-    'editor.foreground': '#abb2bf',
-    'editor.lineHighlightBackground': '#2c313c',
-    'editorCursor.foreground': '#528bff',
-    'editor.selectionBackground': '#3e4451',
-    'editorLineNumber.foreground': '#4b5263',
-    'editorLineNumber.activeForeground': '#abb2bf',
+    'editor.background': '#' + mocha.base,
+    'editor.foreground': '#' + mocha.text,
+    'editor.lineHighlightBackground': '#' + mocha.surface0,
+    'editorCursor.foreground': '#' + mocha.rosewater,
+    'editor.selectionBackground': '#' + mocha.surface2 + '80',
+    'editorLineNumber.foreground': '#' + mocha.surface2,
+    'editorLineNumber.activeForeground': '#' + mocha.lavender,
+    'editorIndentGuide.background': '#' + mocha.surface1,
+    'editorIndentGuide.activeBackground': '#' + mocha.surface2,
+    'editorBracketMatch.background': '#' + mocha.surface2 + '80',
+    'editorBracketMatch.border': '#' + mocha.mauve,
+    'editor.findMatchBackground': '#' + mocha.peach + '40',
+    'editor.findMatchHighlightBackground': '#' + mocha.yellow + '30',
+    'editorWidget.background': '#' + mocha.mantle,
+    'editorWidget.border': '#' + mocha.surface1,
+    'input.background': '#' + mocha.surface0,
+    'input.border': '#' + mocha.surface1,
+    'input.foreground': '#' + mocha.text,
+    'scrollbarSlider.background': '#' + mocha.surface1 + '80',
+    'scrollbarSlider.hoverBackground': '#' + mocha.surface2 + '80',
+    'scrollbarSlider.activeBackground': '#' + mocha.surface2,
   },
 };
 
-// Register language
+// Register language with custom tokenizer
 export function registerStyxLanguage(): void {
   monaco.languages.register({ id: 'styx' });
-  monaco.languages.setMonarchTokensProvider('styx', styxLanguage);
+  monaco.languages.setTokensProvider('styx', new StyxTokensProvider());
   monaco.languages.setLanguageConfiguration('styx', styxLanguageConfig);
-  monaco.editor.defineTheme('styx-dark', styxDarkTheme);
+  monaco.editor.defineTheme('catppuccin-mocha', catppuccinMocha);
 }
 
 // Export everything needed

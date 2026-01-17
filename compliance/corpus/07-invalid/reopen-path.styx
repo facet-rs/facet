@@ -1,3 +1,4 @@
-// Can't reopen a path that's already been assigned
-a.b value
-a.b.c deep
+// Can't reopen a path after moving to a sibling
+foo.bar {}
+foo.baz {}
+foo.bar.x value

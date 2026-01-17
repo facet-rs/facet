@@ -1,7 +1,4 @@
 // Values that look like heredocs but aren't
 single-lt <value
-double-lt-lowercase <<eof
-double-lt-no-delim <<
 double-lt-space "<< DELIM"
-double-lt-number <<123
 lt-in-middle foo<<bar
