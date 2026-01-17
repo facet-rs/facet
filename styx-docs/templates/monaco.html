@@ -3,6 +3,7 @@
 {% block title %}Monaco Playground - {{ config.title }}{% endblock title %}
 
 {% block head %}
+<link rel="stylesheet" href="/monaco/monaco.css">
 <style>
 .playground-container {
     display: grid;
@@ -80,12 +81,6 @@
     display: none;
 }
 
-.diagnostics.success {
-    background: linear-gradient(180deg, #1e3a2f 0%, #162b23 100%);
-    border-color: #2d5a45;
-    color: #98c379;
-}
-
 .diagnostic-item {
     margin: 0.25rem 0;
 }
@@ -96,7 +91,16 @@
     font-size: 0.8rem;
 }
 
-/* Loading state */
+#vim-status {
+    padding: 0.3rem 1rem;
+    background: #21252b;
+    border-top: 1px solid #3e4451;
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: #abb2bf;
+    min-height: 1.2em;
+}
+
 .loading {
     display: flex;
     align-items: center;
@@ -133,6 +137,7 @@
             <div id="editor"><div class="loading">Loading Monaco editor...</div></div>
         </div>
         <div id="diagnostics" class="diagnostics"></div>
+        <div id="vim-status"></div>
     </div>
 
     <div class="output-pane">
@@ -146,173 +151,14 @@
 </div>
 
 <script>
-// Set WASM URL before module loads (will be rewritten to cache-busted path)
 window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
 </script>
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/monaco-vim@0.4.1/dist/monaco-vim.min.js"></script>
 <script type="module">
+// Import from Vite-bundled Monaco playground
+import { monaco, registerStyxLanguage, initVimMode } from '/monaco/monaco.js';
+
 // Import Styx WASM
 import init, { to_json, from_json, parse, version } from '/wasm/styx_wasm.js';
-
-// Wait for Monaco to load
-const monacoPromise = new Promise((resolve) => {
-    require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } });
-    require(['vs/editor/editor.main'], resolve);
-});
-
-// Styx Monarch grammar definition
-const styxLanguage = {
-    defaultToken: 'invalid',
-    tokenPostfix: '.styx',
-
-    brackets: [
-        { open: '{', close: '}', token: 'delimiter.curly' },
-        { open: '(', close: ')', token: 'delimiter.parenthesis' },
-    ],
-
-    tokenizer: {
-        // Start in key position (beginning of line/entry)
-        root: [
-            [/[ \t]+/, 'white'],
-            [/\r?\n/, 'white'],
-            [/\/\/\/.*$/, 'comment.doc'],
-            [/\/\/.*$/, 'comment'],
-            // After seeing a key, switch to value mode
-            [/@[A-Za-z_][A-Za-z0-9_\-]*/, { token: 'tag', next: '@value' }],
-            [/@(?![A-Za-z_])/, { token: 'tag', next: '@value' }],
-            [/r(#*)"/, { token: 'string.key.begin', next: '@rawStringKey.$1' }],
-            [/"/, { token: 'string.key.begin', next: '@stringKey' }],
-            [/[{}]/, '@brackets'],
-            [/\(/, { token: 'delimiter.parenthesis', next: '@sequence' }],
-            [/,/, 'delimiter.comma'],
-            [/[^\s{}\(\),"=@<>\r\n]+/, { token: 'key', next: '@value' }],
-        ],
-
-        // Value position (after key)
-        value: [
-            [/[ \t]+/, 'white'],
-            [/\r?\n/, { token: 'white', next: '@pop' }],
-            [/\/\/.*$/, { token: 'comment', next: '@pop' }],
-            [/@[A-Za-z_][A-Za-z0-9_\-]*/, 'tag'],
-            [/@(?![A-Za-z_])/, 'tag'],
-            [/r(#*)"/, { token: 'string.begin', next: '@rawString.$1' }],
-            [/<<([A-Z][A-Z0-9_]*)(,[a-z]+)?/, { token: 'string.heredoc.begin', next: '@heredoc.$1' }],
-            [/"/, { token: 'string.begin', next: '@string' }],
-            [/\{/, { token: 'delimiter.curly', next: '@root' }],
-            [/\}/, { token: 'delimiter.curly', next: '@pop' }],
-            [/\(/, { token: 'delimiter.parenthesis', next: '@sequence' }],
-            [/,/, { token: 'delimiter.comma', next: '@pop' }],
-            [/[^\s{}\(\),"=@>\r\n]+>[^\s{}\(\),"\r\n]+/, 'attribute'],
-            [/[^\s{}\(\),"=@<>\r\n]+/, 'value'],
-        ],
-
-        // Inside a sequence - all items are values
-        sequence: [
-            [/[ \t\r\n]+/, 'white'],
-            [/\/\/\/.*$/, 'comment.doc'],
-            [/\/\/.*$/, 'comment'],
-            [/@[A-Za-z_][A-Za-z0-9_\-]*/, 'tag'],
-            [/@(?![A-Za-z_])/, 'tag'],
-            [/r(#*)"/, { token: 'string.begin', next: '@rawString.$1' }],
-            [/"/, { token: 'string.begin', next: '@string' }],
-            [/\{/, { token: 'delimiter.curly', next: '@root' }],
-            [/\(/, { token: 'delimiter.parenthesis', next: '@sequence' }],
-            [/\)/, { token: 'delimiter.parenthesis', next: '@pop' }],
-            [/[^\s{}\(\),"=@<>\r\n]+/, 'value'],
-        ],
-
-        // String in key position
-        stringKey: [
-            [/[^\\"]+/, 'string.key'],
-            [/\\./, 'string.escape'],
-            [/"/, { token: 'string.key.end', next: '@value' }],
-        ],
-
-        rawStringKey: [
-            [/"(#*)/, {
-                cases: {
-                    '"$S2': { token: 'string.key.end', next: '@value' },
-                    '@default': 'string.key',
-                },
-            }],
-            [/[^"]+/, 'string.key'],
-        ],
-
-        string: [
-            [/[^\\"]+/, 'string'],
-            [/\\./, 'string.escape'],
-            [/"/, { token: 'string.end', next: '@pop' }],
-        ],
-
-        rawString: [
-            [/"(#*)/, {
-                cases: {
-                    '"$S2': { token: 'string.raw.end', next: '@pop' },
-                    '@default': 'string.raw',
-                },
-            }],
-            [/[^"]+/, 'string.raw'],
-        ],
-
-        heredoc: [
-            [/^([A-Z][A-Z0-9_]*)$/, {
-                cases: {
-                    '$1==$S2': { token: 'string.heredoc.end', next: '@pop' },
-                    '@default': 'string.heredoc',
-                },
-            }],
-            [/.*$/, 'string.heredoc'],
-        ],
-    },
-};
-
-// Styx language configuration
-const styxLanguageConfig = {
-    comments: { lineComment: '//' },
-    brackets: [['{', '}'], ['(', ')']],
-    autoClosingPairs: [
-        { open: '{', close: '}' },
-        { open: '(', close: ')' },
-        { open: '"', close: '"' },
-    ],
-    surroundingPairs: [
-        { open: '{', close: '}' },
-        { open: '(', close: ')' },
-        { open: '"', close: '"' },
-    ],
-};
-
-// OneDark-inspired theme for Styx
-const styxDarkTheme = {
-    base: 'vs-dark',
-    inherit: true,
-    rules: [
-        { token: 'comment', foreground: '5c6370', fontStyle: 'italic' },
-        { token: 'comment.doc', foreground: '7f848e', fontStyle: 'italic' },
-        { token: 'tag', foreground: 'c678dd' },
-        { token: 'key', foreground: 'e06c75' },
-        { token: 'value', foreground: '61afef' },
-        { token: 'string', foreground: '98c379' },
-        { token: 'string.key', foreground: 'e06c75' },
-        { token: 'string.raw', foreground: '98c379' },
-        { token: 'string.heredoc', foreground: '98c379' },
-        { token: 'string.escape', foreground: 'd19a66' },
-        { token: 'attribute', foreground: '56b6c2' },
-        { token: 'delimiter.curly', foreground: 'e5c07b' },
-        { token: 'delimiter.parenthesis', foreground: 'c678dd' },
-        { token: 'delimiter.comma', foreground: 'abb2bf' },
-    ],
-    colors: {
-        'editor.background': '#282c34',
-        'editor.foreground': '#abb2bf',
-        'editor.lineHighlightBackground': '#2c313c',
-        'editorCursor.foreground': '#528bff',
-        'editor.selectionBackground': '#3e4451',
-        'editorLineNumber.foreground': '#4b5263',
-        'editorLineNumber.activeForeground': '#abb2bf',
-    },
-};
 
 const DEFAULT_SOURCE = `// Welcome to the Styx Monaco Playground!
 // Edit this document and see the JSON output on the right.
@@ -363,19 +209,13 @@ let updatingFromJson = false;
 let vimMode = null;
 
 async function main() {
-    // Initialize WASM and Monaco in parallel
-    const [_, monacoModule] = await Promise.all([
-        init(window.STYX_WASM_URL),
-        monacoPromise
-    ]);
+    // Initialize WASM
+    await init(window.STYX_WASM_URL);
 
     document.getElementById('status').textContent = `v${version()}`;
 
-    // Register Styx language with Monaco
-    monaco.languages.register({ id: 'styx' });
-    monaco.languages.setMonarchTokensProvider('styx', styxLanguage);
-    monaco.languages.setLanguageConfiguration('styx', styxLanguageConfig);
-    monaco.editor.defineTheme('styx-dark', styxDarkTheme);
+    // Register Styx language
+    registerStyxLanguage();
 
     // Clear loading states
     document.getElementById('editor').innerHTML = '';
@@ -413,13 +253,15 @@ async function main() {
 
     // Vim mode setup
     const vimCheckbox = document.getElementById('vim-mode');
+    const vimStatusBar = document.getElementById('vim-status');
     const storedVim = localStorage.getItem('styx-monaco-vim');
     const vimEnabled = storedVim === null ? true : storedVim === 'true';
     vimCheckbox.checked = vimEnabled;
 
     function enableVim() {
-        if (!vimMode && window.MonacoVim) {
-            vimMode = window.MonacoVim.initVimMode(styxEditor);
+        if (!vimMode) {
+            vimMode = initVimMode(styxEditor, vimStatusBar);
+            vimStatusBar.style.display = 'block';
         }
     }
 
@@ -427,11 +269,15 @@ async function main() {
         if (vimMode) {
             vimMode.dispose();
             vimMode = null;
+            vimStatusBar.textContent = '';
+            vimStatusBar.style.display = 'none';
         }
     }
 
     if (vimEnabled) {
         enableVim();
+    } else {
+        vimStatusBar.style.display = 'none';
     }
 
     vimCheckbox.addEventListener('change', (e) => {
@@ -468,29 +314,20 @@ async function main() {
     updateJsonFromStyx(DEFAULT_SOURCE);
 }
 
-// Update JSON editor from Styx source
 function updateJsonFromStyx(source) {
     const diagnosticsEl = document.getElementById('diagnostics');
-
-    // Parse and get diagnostics
     const parseResult = parse(source);
-
-    // Convert to JSON
     const jsonResult = to_json(source);
 
-    // Update diagnostics
     if (parseResult.diagnostics && parseResult.diagnostics.length > 0) {
-        diagnosticsEl.classList.remove('success');
         diagnosticsEl.innerHTML = parseResult.diagnostics.map(d => {
             const loc = `${d.start}-${d.end}`;
             return `<div class="diagnostic-item"><span class="diagnostic-location">[${loc}]</span>${escapeHtml(d.message)}</div>`;
         }).join('');
     } else {
-        diagnosticsEl.classList.remove('success');
         diagnosticsEl.innerHTML = '';
     }
 
-    // Update JSON editor content
     if (jsonResult.success) {
         updatingFromStyx = true;
         jsonEditor.setValue(jsonResult.jsonString);
@@ -502,18 +339,13 @@ function updateJsonFromStyx(source) {
     }
 }
 
-// Update Styx editor from JSON source
 function updateStyxFromJson(jsonSource) {
     const result = from_json(jsonSource);
-
     if (result.success) {
         updatingFromJson = true;
         styxEditor.setValue(result.styxString);
         updatingFromJson = false;
-
-        const diagnosticsEl = document.getElementById('diagnostics');
-        diagnosticsEl.classList.remove('success');
-        diagnosticsEl.innerHTML = '';
+        document.getElementById('diagnostics').innerHTML = '';
     }
 }
 
