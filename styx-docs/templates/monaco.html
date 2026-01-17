@@ -172,23 +172,71 @@ const styxLanguage = {
     ],
 
     tokenizer: {
+        // Start in key position (beginning of line/entry)
         root: [
-            { include: '@whitespace' },
+            [/[ \t]+/, 'white'],
+            [/\r?\n/, 'white'],
+            [/\/\/\/.*$/, 'comment.doc'],
+            [/\/\/.*$/, 'comment'],
+            // After seeing a key, switch to value mode
+            [/@[A-Za-z_][A-Za-z0-9_\-]*/, { token: 'tag', next: '@value' }],
+            [/@(?![A-Za-z_])/, { token: 'tag', next: '@value' }],
+            [/r(#*)"/, { token: 'string.key.begin', next: '@rawStringKey.$1' }],
+            [/"/, { token: 'string.key.begin', next: '@stringKey' }],
+            [/[{}]/, '@brackets'],
+            [/\(/, { token: 'delimiter.parenthesis', next: '@sequence' }],
+            [/,/, 'delimiter.comma'],
+            [/[^\s{}\(\),"=@<>\r\n]+/, { token: 'key', next: '@value' }],
+        ],
+
+        // Value position (after key)
+        value: [
+            [/[ \t]+/, 'white'],
+            [/\r?\n/, { token: 'white', next: '@pop' }],
+            [/\/\/.*$/, { token: 'comment', next: '@pop' }],
+            [/@[A-Za-z_][A-Za-z0-9_\-]*/, 'tag'],
+            [/@(?![A-Za-z_])/, 'tag'],
+            [/r(#*)"/, { token: 'string.begin', next: '@rawString.$1' }],
+            [/<<([A-Z][A-Z0-9_]*)(,[a-z]+)?/, { token: 'string.heredoc.begin', next: '@heredoc.$1' }],
+            [/"/, { token: 'string.begin', next: '@string' }],
+            [/\{/, { token: 'delimiter.curly', next: '@root' }],
+            [/\}/, { token: 'delimiter.curly', next: '@pop' }],
+            [/\(/, { token: 'delimiter.parenthesis', next: '@sequence' }],
+            [/,/, { token: 'delimiter.comma', next: '@pop' }],
+            [/[^\s{}\(\),"=@>\r\n]+>[^\s{}\(\),"\r\n]+/, 'attribute'],
+            [/[^\s{}\(\),"=@<>\r\n]+/, 'value'],
+        ],
+
+        // Inside a sequence - all items are values
+        sequence: [
+            [/[ \t\r\n]+/, 'white'],
             [/\/\/\/.*$/, 'comment.doc'],
             [/\/\/.*$/, 'comment'],
             [/@[A-Za-z_][A-Za-z0-9_\-]*/, 'tag'],
             [/@(?![A-Za-z_])/, 'tag'],
-            [/r(#*)"/, { token: 'string.raw.begin', next: '@rawString.$1' }],
-            [/<<([A-Z][A-Z0-9_]*)(,[a-z]+)?/, { token: 'string.heredoc.begin', next: '@heredoc.$1' }],
+            [/r(#*)"/, { token: 'string.begin', next: '@rawString.$1' }],
             [/"/, { token: 'string.begin', next: '@string' }],
-            [/[{}()]/, '@brackets'],
-            [/,/, 'delimiter.comma'],
-            [/[^\s{}\(\),"=@>\r\n]+>[^\s{}\(\),"\r\n]+/, 'attribute'],
-            [/[^\s{}\(\),"=@<>\r\n]+/, 'identifier'],
+            [/\{/, { token: 'delimiter.curly', next: '@root' }],
+            [/\(/, { token: 'delimiter.parenthesis', next: '@sequence' }],
+            [/\)/, { token: 'delimiter.parenthesis', next: '@pop' }],
+            [/[^\s{}\(\),"=@<>\r\n]+/, 'value'],
         ],
 
-        whitespace: [
-            [/[ \t\r\n]+/, 'white'],
+        // String in key position
+        stringKey: [
+            [/[^\\"]+/, 'string.key'],
+            [/\\./, 'string.escape'],
+            [/"/, { token: 'string.key.end', next: '@value' }],
+        ],
+
+        rawStringKey: [
+            [/"(#*)/, {
+                cases: {
+                    '"$S2': { token: 'string.key.end', next: '@value' },
+                    '@default': 'string.key',
+                },
+            }],
+            [/[^"]+/, 'string.key'],
         ],
 
         string: [
@@ -243,11 +291,13 @@ const styxDarkTheme = {
         { token: 'comment', foreground: '5c6370', fontStyle: 'italic' },
         { token: 'comment.doc', foreground: '7f848e', fontStyle: 'italic' },
         { token: 'tag', foreground: 'c678dd' },
+        { token: 'key', foreground: 'e06c75' },
+        { token: 'value', foreground: '61afef' },
         { token: 'string', foreground: '98c379' },
+        { token: 'string.key', foreground: 'e06c75' },
         { token: 'string.raw', foreground: '98c379' },
         { token: 'string.heredoc', foreground: '98c379' },
         { token: 'string.escape', foreground: 'd19a66' },
-        { token: 'identifier', foreground: 'e06c75' },
         { token: 'attribute', foreground: '56b6c2' },
         { token: 'delimiter.curly', foreground: 'e5c07b' },
         { token: 'delimiter.parenthesis', foreground: 'c678dd' },
