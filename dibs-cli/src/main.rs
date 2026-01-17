@@ -1,6 +1,17 @@
+use std::io::{self, IsTerminal, stdout};
+
+use crossterm::{
+    ExecutableCommand,
+    event::{self, Event, KeyCode, KeyEventKind},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
 use facet::Facet;
 use facet_args as args;
 use jiff::Zoned;
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+};
 
 // Example table definition for testing
 #[derive(Facet)]
@@ -60,11 +71,15 @@ enum Commands {
         #[facet(args::positional)]
         name: String,
     },
-    /// Dump the current schema
+    /// Browse the current schema
     Schema {
         /// Database connection URL
         #[facet(default, args::named)]
         database_url: Option<String>,
+
+        /// Output as plain text (default when not a TTY)
+        #[facet(default, args::named)]
+        plain: bool,
     },
 }
 
@@ -120,55 +135,27 @@ fn run(cli: Cli) {
             println!("  Would create: migrations/{}-{}.rs", date, name);
             println!("  (not yet implemented)");
         }
-        Some(Commands::Schema { database_url: _ }) => {
+        Some(Commands::Schema {
+            database_url: _,
+            plain,
+        }) => {
             let schema = dibs::Schema::collect();
 
             if schema.tables.is_empty() {
                 println!("No tables registered.");
                 println!();
-                println!("Define tables using #[facet(dibs::table = \"name\")] on Facet structs,");
-                println!(
-                    "then register them with: inventory::submit!(dibs::TableDef::new::<YourType>());"
-                );
-            } else {
-                println!("Schema ({} tables):", schema.tables.len());
-                println!();
-                for table in &schema.tables {
-                    println!("  {} ({} columns)", table.name, table.columns.len());
-                    for col in &table.columns {
-                        let mut attrs = Vec::new();
-                        if col.primary_key {
-                            attrs.push("PK");
-                        }
-                        if col.unique {
-                            attrs.push("UNIQUE");
-                        }
-                        if !col.nullable {
-                            attrs.push("NOT NULL");
-                        }
-                        if let Some(default) = &col.default {
-                            attrs.push(default);
-                        }
+                println!("Define tables using #[facet(dibs::table = \"name\")] on Facet structs.");
+                return;
+            }
 
-                        let attrs_str = if attrs.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" [{}]", attrs.join(", "))
-                        };
-
-                        println!("    {}: {}{}", col.name, col.pg_type, attrs_str);
-                    }
-
-                    for fk in &table.foreign_keys {
-                        println!(
-                            "    FK: {} -> {}.{}",
-                            fk.columns.join(", "),
-                            fk.references_table,
-                            fk.references_columns.join(", ")
-                        );
-                    }
-                    println!();
+            // Use TUI if stdout is a TTY and --plain wasn't specified
+            if stdout().is_terminal() && !plain {
+                if let Err(e) = run_schema_tui(&schema) {
+                    eprintln!("TUI error: {}", e);
+                    std::process::exit(1);
                 }
+            } else {
+                print_schema_plain(&schema);
             }
         }
         None => {
@@ -179,6 +166,239 @@ fn run(cli: Cli) {
             };
             print!("{}", args::generate_help::<Cli>(&config));
         }
+    }
+}
+
+/// Print schema as plain text (for piping)
+fn print_schema_plain(schema: &dibs::Schema) {
+    for table in &schema.tables {
+        println!("TABLE {}", table.name);
+        for col in &table.columns {
+            let mut attrs = Vec::new();
+            if col.primary_key {
+                attrs.push("PK");
+            }
+            if col.unique {
+                attrs.push("UNIQUE");
+            }
+            if !col.nullable {
+                attrs.push("NOT NULL");
+            }
+            if let Some(default) = &col.default {
+                attrs.push(default);
+            }
+
+            let attrs_str = if attrs.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", attrs.join(", "))
+            };
+
+            println!("  {} {}{}", col.name, col.pg_type, attrs_str);
+        }
+
+        for fk in &table.foreign_keys {
+            println!(
+                "  FK {} -> {}.{}",
+                fk.columns.join(", "),
+                fk.references_table,
+                fk.references_columns.join(", ")
+            );
+        }
+        println!();
+    }
+}
+
+/// Run the interactive TUI for browsing schema
+fn run_schema_tui(schema: &dibs::Schema) -> io::Result<()> {
+    enable_raw_mode()?;
+    stdout().execute(EnterAlternateScreen)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+
+    let mut app = SchemaApp::new(schema);
+    let result = app.run(&mut terminal);
+
+    disable_raw_mode()?;
+    stdout().execute(LeaveAlternateScreen)?;
+
+    result
+}
+
+struct SchemaApp<'a> {
+    schema: &'a dibs::Schema,
+    table_state: ListState,
+    selected_table: usize,
+}
+
+impl<'a> SchemaApp<'a> {
+    fn new(schema: &'a dibs::Schema) -> Self {
+        let mut table_state = ListState::default();
+        table_state.select(Some(0));
+        Self {
+            schema,
+            table_state,
+            selected_table: 0,
+        }
+    }
+
+    fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+        loop {
+            terminal.draw(|frame| self.ui(frame))?;
+
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                        KeyCode::Up | KeyCode::Char('k') => self.previous_table(),
+                        KeyCode::Down | KeyCode::Char('j') => self.next_table(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    fn next_table(&mut self) {
+        if self.schema.tables.is_empty() {
+            return;
+        }
+        self.selected_table = (self.selected_table + 1) % self.schema.tables.len();
+        self.table_state.select(Some(self.selected_table));
+    }
+
+    fn previous_table(&mut self) {
+        if self.schema.tables.is_empty() {
+            return;
+        }
+        self.selected_table = self
+            .selected_table
+            .checked_sub(1)
+            .unwrap_or(self.schema.tables.len() - 1);
+        self.table_state.select(Some(self.selected_table));
+    }
+
+    fn ui(&mut self, frame: &mut Frame) {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+            .split(frame.area());
+
+        // Left pane: table list
+        let table_items: Vec<ListItem> = self
+            .schema
+            .tables
+            .iter()
+            .map(|t| ListItem::new(format!("{} ({})", t.name, t.columns.len())))
+            .collect();
+
+        let tables_list = List::new(table_items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Tables ")
+                    .title_style(Style::default().fg(Color::Cyan).bold()),
+            )
+            .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White).bold())
+            .highlight_symbol("▶ ");
+
+        frame.render_stateful_widget(tables_list, chunks[0], &mut self.table_state);
+
+        // Right pane: selected table details
+        if let Some(table) = self.schema.tables.get(self.selected_table) {
+            let mut lines = vec![
+                Line::from(vec![
+                    Span::styled("Table: ", Style::default().fg(Color::Gray)),
+                    Span::styled(&table.name, Style::default().fg(Color::Cyan).bold()),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Columns:",
+                    Style::default().fg(Color::Yellow).bold(),
+                )),
+            ];
+
+            for col in &table.columns {
+                let mut spans = vec![
+                    Span::raw("  "),
+                    Span::styled(&col.name, Style::default().fg(Color::White)),
+                    Span::raw(": "),
+                    Span::styled(col.pg_type.to_string(), Style::default().fg(Color::Blue)),
+                ];
+
+                if col.primary_key {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled("PK", Style::default().fg(Color::Yellow)));
+                }
+                if col.unique {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled("UNIQUE", Style::default().fg(Color::Magenta)));
+                }
+                if !col.nullable {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled("NOT NULL", Style::default().fg(Color::Red)));
+                }
+                if let Some(default) = &col.default {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        format!("DEFAULT {}", default),
+                        Style::default().fg(Color::Gray),
+                    ));
+                }
+
+                lines.push(Line::from(spans));
+            }
+
+            if !table.foreign_keys.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Foreign Keys:",
+                    Style::default().fg(Color::Green).bold(),
+                )));
+
+                for fk in &table.foreign_keys {
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(fk.columns.join(", "), Style::default().fg(Color::White)),
+                        Span::styled(" -> ", Style::default().fg(Color::Gray)),
+                        Span::styled(&fk.references_table, Style::default().fg(Color::Cyan)),
+                        Span::raw("."),
+                        Span::styled(
+                            fk.references_columns.join(", "),
+                            Style::default().fg(Color::White),
+                        ),
+                    ]));
+                }
+            }
+
+            let details = Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Details ")
+                    .title_style(Style::default().fg(Color::Cyan).bold()),
+            );
+
+            frame.render_widget(details, chunks[1]);
+        }
+
+        // Help bar at the bottom
+        let help = Paragraph::new(Line::from(vec![
+            Span::styled(" j/↓ ", Style::default().fg(Color::Yellow)),
+            Span::raw("down  "),
+            Span::styled(" k/↑ ", Style::default().fg(Color::Yellow)),
+            Span::raw("up  "),
+            Span::styled(" q/Esc ", Style::default().fg(Color::Yellow)),
+            Span::raw("quit"),
+        ]))
+        .style(Style::default().bg(Color::DarkGray));
+
+        // Create a small area at the bottom for the help bar
+        let help_area = Rect {
+            x: 0,
+            y: frame.area().height.saturating_sub(1),
+            width: frame.area().width,
+            height: 1,
+        };
+        frame.render_widget(help, help_area);
     }
 }
 

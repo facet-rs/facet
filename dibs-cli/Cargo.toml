@@ -17,3 +17,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 facet = { path = "/Users/amos/bearcove/facet/facet" }
 facet-args = { path = "/Users/amos/bearcove/facet/facet-args" }
 jiff = "0.2"
+owo-colors = "4"
+ratatui = "0.29"
+crossterm = "0.28"
