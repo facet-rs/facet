@@ -233,3 +233,117 @@ Tagged quoted key
     value: (expr
       payload: (scalar
         (bare_scalar)))))
+
+================================================================================
+Sequence as key (path syntax)
+================================================================================
+
+(a b) value
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))))
+    value: (expr
+      payload: (scalar
+        (bare_scalar)))))
+
+================================================================================
+Path with three elements
+================================================================================
+
+(a b c) deep
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))))
+    value: (expr
+      payload: (scalar
+        (bare_scalar)))))
+
+================================================================================
+Path with implicit unit value
+================================================================================
+
+(enabled flag)
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))))))
+
+================================================================================
+Path with tag element
+================================================================================
+
+(a @tag b) value
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          tag: (tag))
+        (expr
+          payload: (scalar
+            (bare_scalar)))))
+    value: (expr
+      payload: (scalar
+        (bare_scalar)))))
+
+================================================================================
+Path with attributes as value
+================================================================================
+
+(selector matchLabels) app>web
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))))
+    value: (expr
+      (attributes
+        (attribute
+          key: (bare_scalar)
+          value: (bare_scalar))))))
