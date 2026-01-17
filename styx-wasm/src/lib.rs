@@ -278,7 +278,7 @@ fn json_to_value(json: &serde_json::Value) -> Value {
         serde_json::Value::Object(obj) => {
             // Check for tagged value: {"$tag": "name", "$value": ...}
             if let Some(serde_json::Value::String(tag_name)) = obj.get("$tag") {
-                let payload = obj.get("$value").map(|v| json_to_value(v).payload).flatten();
+                let payload = obj.get("$value").and_then(|v| json_to_value(v).payload);
                 return Value {
                     tag: Some(Tag {
                         name: tag_name.clone(),
@@ -331,8 +331,12 @@ fn needs_quoting(s: &str) -> bool {
     }
 
     // Check for characters that require quoting
-    s.chars().any(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '"' | '{' | '}' | '(' | ')' | ',' | '@' | '>' | '/'))
-        || s.starts_with("//")
+    s.chars().any(|c| {
+        matches!(
+            c,
+            ' ' | '\t' | '\n' | '\r' | '"' | '{' | '}' | '(' | ')' | ',' | '@' | '>' | '/'
+        )
+    }) || s.starts_with("//")
 }
 
 /// Get the version of the Styx WASM library.
