@@ -168,6 +168,10 @@ comment "This is a string for sure" // nope, an opaque scalar
   white-space: pre;
 }
 
+.layer-box .code-header {
+  display: none;
+}
+
 .layer-arrow {
   display: flex;
   flex-direction: column;
@@ -191,6 +195,28 @@ comment "This is a string for sure" // nope, an opaque scalar
   border-top: 10px solid rgba(255,255,255,0.8);
 }
 
+.layers-section .section-desc a {
+  color: #fff;
+  text-decoration: underline;
+}
+
+.feature-code .code-header {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.feature-code .code-block + .code-block {
+  margin-top: 1.5rem;
+}
+
+.code-block pre {
+    padding: .8rem 1rem;
+}
 </style>
 
 <div class="layers-section">
@@ -242,22 +268,20 @@ Server {
 <section class="feature">
 <div class="feature-text">
 
-## Parse and explore dynamically
+## It starts with a tree
 
-Parse into an untyped tree and walk it. Get values by path, check types at runtime, transform as needed.
+At this point, it's all still objects, sequences, and opaque scalars.
 
 </div>
 <div class="feature-code">
 
-```rust
-let doc = styx_tree::Document::parse(input)?;
-
-let name = doc.get("server.host")
-    .and_then(|v| v.as_str());
-
-for entry in doc.root().as_object().unwrap() {
-    println!("{}: {:?}", entry.key, entry.value);
-}
+```
+server
+├─ host: "localhost"
+├─ port: "8080"          ← still text
+└─ tls
+   ├─ cert: "/path/cert.pem"
+   └─ key: "/path/key.pem"
 ```
 
 </div>
@@ -266,44 +290,88 @@ for entry in doc.root().as_object().unwrap() {
 <section class="feature">
 <div class="feature-text">
 
-## Validate with schemas
+## Meaning on tap
 
-Write schemas by hand or generate them from types. Validate documents and get rich error messages with source locations.
+Interpret scalars as typed values when you need them.
+
+Durations, integers, dates — the rules are [in the spec](/reference/spec/scalars), not implementation-defined.
 
 </div>
 <div class="feature-code">
 
 ```rust
-let schema: SchemaFile = facet_styx::from_str(schema_src)?;
-let doc = styx_tree::parse(input)?;
+let port: u16 = doc["server"]["port"].parse()?;
+let timeout = doc["timeout"].parse::<Duration>()?;
+let created = doc["created"].parse::<DateTime>()?;
+```
 
-let result = styx_schema::validate(&doc, &schema);
-if !result.is_valid() {
-    result.write_report("config.styx", input, stderr());
-}
+```javascript
+const port = doc.server.port.asInt();
+const timeout = doc.timeout.asDuration();
+const created = doc.created.asDateTime();
 ```
 
 </div>
 </section>
 
+<div class="layers-section">
+<div class="section-header">
+<p class="section-title">Standardized interpretation</p>
+<p class="section-subtitle">not implementation-defined.</p>
+<p class="section-desc">Durations like <em>30s</em> or <em>1h30m</em>. Integers like <em>0xff</em> or <em>1_000_000</em>. RFC 3339 dates. It's all <a href="/reference/spec/scalars">in the spec</a>.</p>
+</div>
+
+<div class="layers-diagram">
+  <div class="layer-box">
+    <span class="layer-title">Opaque scalars</span>
+
+```styx
+timeout 30s
+color 0xff5500
+created 2024-03-15T14:30:00Z
+```
+
+</div>
+
+  <div class="layer-arrow"></div>
+
+  <div class="layer-box">
+    <span class="layer-title">Typed values</span>
+
+```rust
+Duration::from_secs(30)
+16733440_u32
+DateTime::parse("2024-03-15T14:30:00Z")
+```
+
+</div>
+</div>
+</div>
+
 <section class="feature">
 <div class="feature-text">
 
-## JavaScript and beyond
+## First-class schemas
 
-Parse Styx in the browser or Node.js. With a schema, you get a plain JavaScript object with real types — `number`, `string`, `Date`, not just opaque scalars.
+Write schemas by hand for external contracts, or generate them from your Rust types. Either way works.
+
+Doc comments become hover text in your editor and show up in error messages.
 
 </div>
 <div class="feature-code">
 
-```typescript
-import { parse } from "@bearcove/styx";
+```styx
+/// A server configuration.
+Server @object {
+  /// Hostname or IP address to bind to.
+  host @default(localhost @string)
 
-const config = parse(input, schema);
+  /// Port number (1-65535).
+  port @default(8080 @int{ min 1, max 65535 })
 
-// config.server.port is a number
-// config.server.host is a string
-// config.createdAt is a Date
+  /// Enable TLS. Defaults to false.
+  tls @default(false @bool)
+}
 ```
 
 </div>
@@ -336,31 +404,21 @@ let server: Server = facet_styx::from_str(input)?;
 <section class="feature">
 <div class="feature-text">
 
-## First-class schema support
+## JavaScript and beyond
 
-Write schemas by hand for external contracts, or generate them from your Rust types. Either way works.
-
-Doc comments become hover text in your editor and show up in error messages. Default values, constraints, deprecation warnings — it's all there.
+Parse Styx in the browser or Node.js. With a schema, you get a plain JavaScript object with real types — `number`, `string`, `Date`.
 
 </div>
 <div class="feature-code">
 
-```styx
-/// A server configuration.
-/// Used by the load balancer to route traffic.
-Server @object {
-  /// Hostname or IP address to bind to.
-  host @default(localhost @string)
+```typescript
+import { parse } from "@bearcove/styx";
 
-  /// Port number (1-65535).
-  port @default(8080 @int{ min 1, max 65535 })
+const config = parse(input, schema);
 
-  /// Enable TLS. Defaults to false.
-  tls @default(false @bool)
-
-  /// Allowed origins for CORS.
-  origins @seq(@string)
-}
+// config.server.port is a number
+// config.server.host is a string
+// config.createdAt is a Date
 ```
 
 </div>

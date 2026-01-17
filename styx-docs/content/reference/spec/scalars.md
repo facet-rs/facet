@@ -150,7 +150,7 @@ Styx scalars are opaque text at parse time — the parser assigns no type. Inter
 ## Dates and times
 
 > r[interp.datetime.iso8601]
-> Date and time values follow ISO 8601 format. Implementations MUST support at minimum:
+> Date and time values follow RFC 3339 format. Implementations MUST support at minimum:
 >
 > | Format | Example | Meaning |
 > |--------|---------|---------|
