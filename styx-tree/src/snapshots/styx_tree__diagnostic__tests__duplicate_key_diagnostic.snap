@@ -3,7 +3,7 @@ source: crates/styx-tree/src/diagnostic.rs
 expression: rendered
 ---
 [31mError:[0m duplicate key
-   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0mtest.styx:2:1[38;5;246m][0m
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m test.styx:2:1 [38;5;246m][0m
    [38;5;246m│[0m
  [38;5;246m1 │[0m [34ma[0m[38;5;249m [0m[38;5;249m1[0m
  [38;5;240m  │[0m [34m┬[0m  

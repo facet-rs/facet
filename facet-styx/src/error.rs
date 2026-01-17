@@ -60,7 +60,7 @@ impl StyxError {
         match &self.kind {
             // diag[impl diagnostic.deser.invalid-value]
             StyxErrorKind::InvalidScalar { value, expected } => {
-                Report::build(ReportKind::Error, filename, range.start)
+                Report::build(ReportKind::Error, (filename, range.clone()))
                     .with_message(format!("invalid value '{}'", value))
                     .with_label(
                         Label::new((filename, range))
@@ -71,7 +71,7 @@ impl StyxError {
 
             // diag[impl diagnostic.deser.missing-field]
             StyxErrorKind::MissingField { name } => {
-                Report::build(ReportKind::Error, filename, range.start)
+                Report::build(ReportKind::Error, (filename, range.clone()))
                     .with_message(format!("missing required field '{}'", name))
                     .with_label(
                         Label::new((filename, range))
@@ -83,7 +83,7 @@ impl StyxError {
 
             // diag[impl diagnostic.deser.unknown-field]
             StyxErrorKind::UnknownField { name } => {
-                Report::build(ReportKind::Error, filename, range.start)
+                Report::build(ReportKind::Error, (filename, range.clone()))
                     .with_message(format!("unknown field '{}'", name))
                     .with_label(
                         Label::new((filename, range))
@@ -93,7 +93,7 @@ impl StyxError {
             }
 
             StyxErrorKind::UnexpectedToken { got, expected } => {
-                Report::build(ReportKind::Error, filename, range.start)
+                Report::build(ReportKind::Error, (filename, range.clone()))
                     .with_message(format!("unexpected token '{}'", got))
                     .with_label(
                         Label::new((filename, range))
@@ -103,7 +103,7 @@ impl StyxError {
             }
 
             StyxErrorKind::UnexpectedEof { expected } => {
-                Report::build(ReportKind::Error, filename, range.start)
+                Report::build(ReportKind::Error, (filename, range.clone()))
                     .with_message("unexpected end of input")
                     .with_label(
                         Label::new((filename, range))
@@ -113,7 +113,7 @@ impl StyxError {
             }
 
             StyxErrorKind::InvalidEscape { sequence } => {
-                Report::build(ReportKind::Error, filename, range.start)
+                Report::build(ReportKind::Error, (filename, range.clone()))
                     .with_message(format!("invalid escape sequence '{}'", sequence))
                     .with_label(
                         Label::new((filename, range))
@@ -249,7 +249,7 @@ fn build_deserialize_error_report<'a>(
                 .as_ref()
                 .map(reflect_span_to_range)
                 .unwrap_or(0..source.len().max(1));
-            Report::build(ReportKind::Error, filename, range.start)
+            Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_config(config)
                 .with_message(format!("missing required field '{}'", field))
                 .with_label(
@@ -263,7 +263,7 @@ fn build_deserialize_error_report<'a>(
         // Unknown field from facet-format
         DeserializeError::UnknownField { field, span, .. } => {
             let range = span.as_ref().map(reflect_span_to_range).unwrap_or(0..1);
-            Report::build(ReportKind::Error, filename, range.start)
+            Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_config(config)
                 .with_message(format!("unknown field '{}'", field))
                 .with_label(
@@ -281,7 +281,7 @@ fn build_deserialize_error_report<'a>(
             ..
         } => {
             let range = span.as_ref().map(reflect_span_to_range).unwrap_or(0..1);
-            Report::build(ReportKind::Error, filename, range.start)
+            Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_config(config)
                 .with_message(format!("type mismatch: expected {}", expected))
                 .with_label(
@@ -294,7 +294,7 @@ fn build_deserialize_error_report<'a>(
         // Reflect errors from facet-format
         DeserializeError::Reflect { error, span, .. } => {
             let range = span.as_ref().map(reflect_span_to_range).unwrap_or(0..1);
-            Report::build(ReportKind::Error, filename, range.start)
+            Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_config(config)
                 .with_message(format!("{}", error))
                 .with_label(
@@ -307,7 +307,7 @@ fn build_deserialize_error_report<'a>(
         // Unexpected EOF
         DeserializeError::UnexpectedEof { expected } => {
             let range = source.len().saturating_sub(1)..source.len().max(1);
-            Report::build(ReportKind::Error, filename, range.start)
+            Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_config(config)
                 .with_message("unexpected end of input")
                 .with_label(
@@ -318,14 +318,16 @@ fn build_deserialize_error_report<'a>(
         }
 
         // Unsupported operation
-        DeserializeError::Unsupported(msg) => Report::build(ReportKind::Error, filename, 0)
+        DeserializeError::Unsupported(msg) => Report::build(ReportKind::Error, (filename, 0..1))
             .with_config(config)
             .with_message(format!("unsupported: {}", msg)),
 
         // Cannot borrow
-        DeserializeError::CannotBorrow { message } => Report::build(ReportKind::Error, filename, 0)
-            .with_config(config)
-            .with_message(message.clone()),
+        DeserializeError::CannotBorrow { message } => {
+            Report::build(ReportKind::Error, (filename, 0..1))
+                .with_config(config)
+                .with_message(message.clone())
+        }
     }
 }
 
@@ -341,7 +343,7 @@ mod tests {
 
         let source = "test input";
         let report =
-            Report::<(&str, std::ops::Range<usize>)>::build(ReportKind::Error, "test.styx", 0)
+            Report::<(&str, std::ops::Range<usize>)>::build(ReportKind::Error, ("test.styx", 0..4))
                 .with_config(config)
                 .with_message("test error")
                 .with_label(
@@ -375,7 +377,7 @@ mod tests {
 
         let source = "test input";
         let report =
-            Report::<(&str, std::ops::Range<usize>)>::build(ReportKind::Error, "test.styx", 0)
+            Report::<(&str, std::ops::Range<usize>)>::build(ReportKind::Error, ("test.styx", 0..4))
                 .with_config(config)
                 .with_message("test error")
                 .with_label(

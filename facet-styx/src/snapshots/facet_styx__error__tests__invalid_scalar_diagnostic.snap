@@ -1,10 +1,9 @@
 ---
 source: crates/facet-styx/src/error.rs
-assertion_line: 441
 expression: rendered
 ---
 Error: failed to parse "notanumber" as u32
-   ╭─[test.styx:2:5]
+   ╭─[ test.styx:2:5 ]
    │
  2 │ age notanumber
    │     ─────┬────  

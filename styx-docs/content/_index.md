@@ -578,7 +578,11 @@ console.log(config);
 
 ```bash
 $ node index.ts
-{"host": "localhost", "port": 8080}
+{
+  "host": "localhost",
+  "port": 8080,
+  "created": 2024-03-15T14:30:00.000Z  // a Date!
+}
 ```
 
 </div>

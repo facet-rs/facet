@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 styx-parse.workspace = true
-ariadne = "0.4"
+ariadne = "0.6"
 
 [dev-dependencies]
 insta = "1.42"

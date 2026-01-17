@@ -45,7 +45,7 @@ impl ParseError {
             // diag[impl diagnostic.parser.duplicate-key]
             ParseErrorKind::DuplicateKey { original } => {
                 let original_range = original.start as usize..original.end as usize;
-                Report::build(ReportKind::Error, filename, range.start)
+                Report::build(ReportKind::Error, (filename, range.clone()))
                     .with_message("duplicate key")
                     .with_label(
                         Label::new((filename, original_range))
@@ -61,7 +61,7 @@ impl ParseError {
             }
 
             // diag[impl diagnostic.parser.mixed-separators]
-            ParseErrorKind::MixedSeparators => Report::build(ReportKind::Error, filename, range.start)
+            ParseErrorKind::MixedSeparators => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("mixed separators in object")
                 .with_label(
                     Label::new((filename, range))
@@ -71,7 +71,7 @@ impl ParseError {
                 .with_help("use either commas or newlines to separate entries, not both"),
 
             // diag[impl diagnostic.parser.unclosed]
-            ParseErrorKind::UnclosedObject => Report::build(ReportKind::Error, filename, range.start)
+            ParseErrorKind::UnclosedObject => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("unclosed object")
                 .with_label(
                     Label::new((filename, range))
@@ -80,7 +80,7 @@ impl ParseError {
                 )
                 .with_help("add a closing '}'"),
 
-            ParseErrorKind::UnclosedSequence => Report::build(ReportKind::Error, filename, range.start)
+            ParseErrorKind::UnclosedSequence => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("unclosed sequence")
                 .with_label(
                     Label::new((filename, range))
@@ -90,7 +90,7 @@ impl ParseError {
                 .with_help("add a closing ')'"),
 
             // diag[impl diagnostic.parser.escape]
-            ParseErrorKind::InvalidEscape(seq) => Report::build(ReportKind::Error, filename, range.start)
+            ParseErrorKind::InvalidEscape(seq) => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message(format!("invalid escape sequence '{}'", seq))
                 .with_label(
                     Label::new((filename, range))
@@ -100,7 +100,7 @@ impl ParseError {
                 .with_help("valid escapes are: \\\\, \\\", \\n, \\r, \\t, \\uXXXX, \\u{X...}"),
 
             // diag[impl diagnostic.parser.unexpected]
-            ParseErrorKind::UnexpectedToken => Report::build(ReportKind::Error, filename, range.start)
+            ParseErrorKind::UnexpectedToken => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("unexpected token")
                 .with_label(
                     Label::new((filename, range))
@@ -108,7 +108,7 @@ impl ParseError {
                         .with_color(Color::Red),
                 ),
 
-            ParseErrorKind::ExpectedKey => Report::build(ReportKind::Error, filename, range.start)
+            ParseErrorKind::ExpectedKey => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("expected key")
                 .with_label(
                     Label::new((filename, range))
@@ -116,7 +116,7 @@ impl ParseError {
                         .with_color(Color::Red),
                 ),
 
-            ParseErrorKind::ExpectedValue => Report::build(ReportKind::Error, filename, range.start)
+            ParseErrorKind::ExpectedValue => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("expected value")
                 .with_label(
                     Label::new((filename, range))
@@ -124,7 +124,7 @@ impl ParseError {
                         .with_color(Color::Red),
                 ),
 
-            ParseErrorKind::UnexpectedEof => Report::build(ReportKind::Error, filename, range.start)
+            ParseErrorKind::UnexpectedEof => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("unexpected end of input")
                 .with_label(
                     Label::new((filename, range))
@@ -132,7 +132,7 @@ impl ParseError {
                         .with_color(Color::Red),
                 ),
 
-            ParseErrorKind::InvalidTagName => Report::build(ReportKind::Error, filename, range.start)
+            ParseErrorKind::InvalidTagName => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("invalid tag name")
                 .with_label(
                     Label::new((filename, range))
@@ -141,7 +141,7 @@ impl ParseError {
                 )
                 .with_help("tag names must match @[A-Za-z_][A-Za-z0-9_.-]*"),
 
-            ParseErrorKind::InvalidKey => Report::build(ReportKind::Error, filename, range.start)
+            ParseErrorKind::InvalidKey => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("invalid key")
                 .with_label(
                     Label::new((filename, range))
@@ -150,7 +150,7 @@ impl ParseError {
                 )
                 .with_help("keys must be scalars or unit, optionally tagged (no objects, sequences, or heredocs)"),
 
-            ParseErrorKind::DanglingDocComment => Report::build(ReportKind::Error, filename, range.start)
+            ParseErrorKind::DanglingDocComment => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("dangling doc comment")
                 .with_label(
                     Label::new((filename, range))
