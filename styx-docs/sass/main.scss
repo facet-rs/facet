@@ -544,154 +544,95 @@ article p:has(> img[src*="/grammar/"]) {
 
 // Hero (home page)
 .hero {
-  max-width: 1200px;
+  max-width: 900px;
   margin: 0 auto;
-  padding: 3rem 1.5rem;
+  padding: 4rem 1.5rem;
+}
 
-  > h1 {
-    font-size: 3rem;
+.hero-intro {
+  text-align: center;
+  margin-bottom: 3rem;
+
+  h1 {
+    font-size: 3.5rem;
     letter-spacing: -0.04em;
-    margin-bottom: 0.5rem;
+    margin: 0 0 0.5rem 0;
 
     @media (max-width: 600px) {
-      font-size: 2.25rem;
+      font-size: 2.5rem;
     }
   }
 
-  > p:first-of-type {
-    font-size: 1.25rem;
+  .tagline {
+    font-size: 1.375rem;
     color: var(--text-muted);
-    margin-bottom: 2rem;
-  }
-
-  > pre {
-    font-size: 0.875rem;
-    max-width: 800px;
+    margin: 0;
   }
 }
 
-// Hero cards
-.hero-cards {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1.25rem;
-  margin: 3rem 0;
-
-  @media (max-width: 900px) {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  @media (max-width: 600px) {
-    grid-template-columns: 1fr;
-  }
-}
-
-.hero-card {
-  padding: 1.5rem;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+// Feature sections
+.features {
+  margin: 4rem 0;
   display: flex;
   flex-direction: column;
+  gap: 3rem;
+}
 
-  h3 {
-    margin: 0 0 1rem 0;
-    font-size: 1.125rem;
+.feature {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 2rem;
+  align-items: start;
+
+  @media (max-width: 700px) {
+    grid-template-columns: 1fr;
+    gap: 1rem;
   }
 
-  .carousel {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-  }
+  &:nth-child(even) {
+    direction: rtl;
 
-  .carousel-slides {
-    flex: 1;
-    min-height: 180px;
-  }
+    > * {
+      direction: ltr;
+    }
 
-  .carousel-slide pre {
-    font-size: 0.75rem;
-    line-height: 1.5;
+    @media (max-width: 700px) {
+      direction: ltr;
+    }
   }
 }
 
-// Carousel
-.carousel {
-  position: relative;
-}
-
-.carousel-slides {
-  position: relative;
-  overflow: hidden;
-  border-radius: 8px;
-  background: var(--bg-code);
-  border: 1px solid var(--border);
-}
-
-.carousel-slide {
-  display: none;
-
-  &.active {
-    display: block;
+.feature-text {
+  h2 {
+    font-size: 1.5rem;
+    margin: 0 0 0.5rem 0;
+    padding: 0;
+    border: none;
   }
 
-  img {
-    width: 100%;
-    height: auto;
-    display: block;
+  p {
+    color: var(--text-muted);
+    margin: 0;
+    line-height: 1.6;
   }
+}
 
+.feature-code {
   pre {
     margin: 0;
-    border: none;
-    border-radius: 0;
-  }
-}
-
-.slide-label {
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  padding: 0.75rem 1rem 0;
-}
-
-.carousel-dots {
-  display: flex;
-  justify-content: center;
-  gap: 0.5rem;
-  margin-top: 0.875rem;
-}
-
-.carousel-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--border);
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  transition: all 0.2s ease;
-
-  &.active {
-    background: var(--accent);
-    transform: scale(1.2);
-  }
-
-  &:hover:not(.active) {
-    background: var(--text-muted);
+    font-size: 0.8125rem;
   }
 }
 
 // Hero links
 .hero-links {
-  margin-top: 2.5rem;
+  margin-top: 4rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--border);
   display: flex;
+  justify-content: center;
   flex-wrap: wrap;
-  gap: 0.75rem 2rem;
+  gap: 1rem 2.5rem;
 
   p {
     margin: 0;

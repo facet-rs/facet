@@ -41,36 +41,5 @@
         </div>
     </footer>
 
-    <script>
-    document.addEventListener('DOMContentLoaded', () => {
-        document.querySelectorAll('.carousel').forEach(carousel => {
-            const slides = carousel.querySelectorAll('.carousel-slide');
-            const dotsContainer = carousel.querySelector('.carousel-dots');
-
-            if (slides.length <= 1) return;
-
-            slides.forEach((_, i) => {
-                const dot = document.createElement('button');
-                dot.className = 'carousel-dot' + (i === 0 ? ' active' : '');
-                dot.setAttribute('aria-label', `Slide ${i + 1}`);
-                dot.addEventListener('click', () => goTo(i));
-                dotsContainer.appendChild(dot);
-            });
-
-            const dots = dotsContainer.querySelectorAll('.carousel-dot');
-            let current = 0;
-
-            function goTo(index) {
-                slides[current].classList.remove('active');
-                dots[current].classList.remove('active');
-                current = index;
-                slides[current].classList.add('active');
-                dots[current].classList.add('active');
-            }
-
-            setInterval(() => goTo((current + 1) % slides.length), 5000);
-        });
-    });
-    </script>
 </body>
 </html>

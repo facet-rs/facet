@@ -3,9 +3,10 @@ title = "Styx"
 insert_anchor_links = "heading"
 +++
 
-# Styx
-
-A document language for mortals.
+<div class="hero-intro">
+<h1>Styx</h1>
+<p class="tagline">A document language for mortals.</p>
+</div>
 
 ```styx
 @schema ./server.schema.styx
@@ -22,14 +23,14 @@ routes (
 )
 ```
 
-<div class="hero-cards">
+<div class="features">
 
-<div class="hero-card">
-<h3>Mortal-first</h3>
-<div class="carousel" data-carousel="mortal">
-<div class="carousel-slides">
-<div class="carousel-slide active">
-<div class="slide-label">Bare scalars</div>
+<section class="feature">
+<div class="feature-text">
+<h2>Mortal-first</h2>
+<p>No quotes for simple values. URLs, paths, and identifiers just work.</p>
+</div>
+<div class="feature-code">
 
 ```styx
 host localhost
@@ -38,49 +39,52 @@ url https://example.com/path
 ```
 
 </div>
-<div class="carousel-slide">
-<div class="slide-label">Key chains</div>
+</section>
+
+<section class="feature">
+<div class="feature-text">
+<h2>Key chains</h2>
+<p>Nested structure without nesting. Keys chain to build deep paths.</p>
+</div>
+<div class="feature-code">
 
 ```styx
 server host localhost
+server port 8080
+
 // expands to:
-server { host localhost }
+server {
+  host localhost
+  port 8080
+}
 ```
 
 </div>
-<div class="carousel-slide">
-<div class="slide-label">Attribute syntax</div>
+</section>
+
+<section class="feature">
+<div class="feature-text">
+<h2>Attribute syntax</h2>
+<p>Inline key-value pairs for compact configuration.</p>
+</div>
+<div class="feature-code">
 
 ```styx
 tls cert=/etc/ssl/cert.pem key=/etc/ssl/key.pem
+
 // expands to:
 tls { cert /etc/ssl/cert.pem, key /etc/ssl/key.pem }
 ```
 
 </div>
-<div class="carousel-slide">
-<div class="slide-label">Comments</div>
+</section>
 
-```styx
-// line comment
-host localhost  // inline comment
-
-/// doc comment (attaches to next entry)
-port 8080
-```
-
+<section class="feature">
+<div class="feature-text">
+<h2>Schema-driven</h2>
+<p>Define types once. Get validation, autocomplete, and documentation.</p>
 </div>
-</div>
-<div class="carousel-dots"></div>
-</div>
-</div>
-
-<div class="hero-card">
-<h3>Schema-driven</h3>
-<div class="carousel" data-carousel="schema">
-<div class="carousel-slides">
-<div class="carousel-slide active">
-<div class="slide-label">Schema</div>
+<div class="feature-code">
 
 ```styx
 schema {
@@ -98,34 +102,25 @@ schema {
 ```
 
 </div>
-<div class="carousel-slide">
-<img src="https://placehold.co/400x200/f6f6f6/333?text=CLI+validation" alt="CLI validation">
-</div>
-<div class="carousel-slide">
-<img src="https://placehold.co/400x200/f6f6f6/333?text=Zed+autocomplete" alt="Zed autocomplete">
-</div>
-</div>
-<div class="carousel-dots"></div>
-</div>
-</div>
+</section>
 
-<div class="hero-card">
-<h3>Tooling</h3>
-<div class="carousel" data-carousel="tooling">
-<div class="carousel-slides">
-<div class="carousel-slide active">
-<img src="https://placehold.co/400x200/f6f6f6/333?text=CLI+usage" alt="CLI usage">
+<section class="feature">
+<div class="feature-text">
+<h2>Comments</h2>
+<p>Line comments, inline comments, and doc comments that attach to entries.</p>
 </div>
-<div class="carousel-slide">
-<img src="https://placehold.co/400x200/f6f6f6/333?text=styx+fmt" alt="styx fmt">
+<div class="feature-code">
+
+```styx
+// line comment
+host localhost  // inline comment
+
+/// doc comment (attaches to next entry)
+port 8080
+```
+
 </div>
-<div class="carousel-slide">
-<img src="https://placehold.co/400x200/f6f6f6/333?text=tree-sitter" alt="tree-sitter">
-</div>
-</div>
-<div class="carousel-dots"></div>
-</div>
-</div>
+</section>
 
 </div>
 
