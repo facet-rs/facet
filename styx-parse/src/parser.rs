@@ -289,107 +289,19 @@ impl<'src> Parser<'src> {
                 return false;
             }
         } else {
-            // parser[impl entry.keypath]
-            // Multiple atoms: nested key path
-            // a b c → key=a, value={b: c}
-            // Emit as implicit nested object
-            let start_span = atoms[1].span;
-            if !callback.event(Event::ObjectStart {
-                span: start_span,
-                separator: Separator::Newline,
-            }) {
-                return false;
-            }
-
-            // Recursively emit remaining atoms as entry
-            if !callback.event(Event::EntryStart) {
-                return false;
-            }
-
-            // Second atom becomes key
-            if !self.emit_atom_as_key(&atoms[1], callback) {
-                return false;
-            }
-
-            // Rest become value(s)
-            if atoms.len() == 3 {
-                if !self.emit_atom_as_value(&atoms[2], callback) {
-                    return false;
-                }
-            } else {
-                // Even more nesting
-                let inner_start = atoms[2].span;
-                if !callback.event(Event::ObjectStart {
-                    span: inner_start,
-                    separator: Separator::Newline,
-                }) {
-                    return false;
-                }
-
-                // Continue recursively for remaining atoms
-                if !self.emit_nested_atoms(&atoms[2..], callback) {
-                    return false;
-                }
-
-                if !callback.event(Event::ObjectEnd { span: inner_start }) {
-                    return false;
-                }
-            }
-
-            if !callback.event(Event::EntryEnd) {
-                return false;
-            }
-
-            if !callback.event(Event::ObjectEnd { span: start_span }) {
-                return false;
-            }
-        }
-
-        callback.event(Event::EntryEnd)
-    }
-
-    /// Emit nested atoms as key-value pairs.
-    fn emit_nested_atoms<C: ParseCallback<'src>>(
-        &self,
-        atoms: &[Atom<'src>],
-        callback: &mut C,
-    ) -> bool {
-        if atoms.is_empty() {
-            return true;
-        }
-
-        if !callback.event(Event::EntryStart) {
-            return false;
-        }
-
-        if !self.emit_atom_as_key(&atoms[0], callback) {
-            return false;
-        }
-
-        if atoms.len() == 1 {
-            if !callback.event(Event::Unit {
-                span: atoms[0].span,
-            }) {
-                return false;
-            }
-        } else if atoms.len() == 2 {
+            // parser[impl entry.toomany]
+            // 3+ atoms is an error - emit the second atom as value, then error on the third
             if !self.emit_atom_as_value(&atoms[1], callback) {
                 return false;
             }
-        } else {
-            let inner_start = atoms[1].span;
-            if !callback.event(Event::ObjectStart {
-                span: inner_start,
-                separator: Separator::Newline,
+
+            // Emit error for the third atom (and beyond)
+            // Common case: `key @tag {}` where user meant `@tag{}`
+            let third_atom = &atoms[2];
+            if !callback.event(Event::Error {
+                span: third_atom.span,
+                kind: ParseErrorKind::TooManyAtoms,
             }) {
-                return false;
-            }
-
-            if !self.emit_nested_atoms(&atoms[1..], callback) {
-                return false;
-            }
-
-            if !callback.event(Event::ObjectEnd { span: inner_start }) {
                 return false;
             }
         }
@@ -799,24 +711,29 @@ impl<'src> Parser<'src> {
                             seen_keys.insert(key_value, key.span);
                         }
 
-                        let value = if entry_atoms.len() == 1 {
+                        let (value, too_many_atoms_span) = if entry_atoms.len() == 1 {
                             // Just a key, implicit unit value
-                            Atom {
-                                span: key.span,
-                                kind: ScalarKind::Bare,
-                                content: AtomContent::Unit,
-                            }
+                            (
+                                Atom {
+                                    span: key.span,
+                                    kind: ScalarKind::Bare,
+                                    content: AtomContent::Unit,
+                                },
+                                None,
+                            )
                         } else if entry_atoms.len() == 2 {
                             // Key and value
-                            entry_atoms[1].clone()
+                            (entry_atoms[1].clone(), None)
                         } else {
-                            // Multiple atoms: nested key path (a b c → a: {b: c})
-                            self.build_nested_object(&entry_atoms[1..])
+                            // parser[impl entry.toomany]
+                            // 3+ atoms is an error - use second as value, record third for error
+                            (entry_atoms[1].clone(), Some(entry_atoms[2].span))
                         };
                         entries.push(ObjectEntry {
                             key,
                             value,
                             doc_comment,
+                            too_many_atoms_span,
                         });
                     }
                 }
@@ -837,47 +754,6 @@ impl<'src> Parser<'src> {
                 mixed_separator_spans,
                 dangling_doc_comment_spans,
                 unclosed,
-            },
-        }
-    }
-
-    /// Build a nested object from a slice of atoms (for key paths like `a b c`).
-    fn build_nested_object(&self, atoms: &[Atom<'src>]) -> Atom<'src> {
-        if atoms.is_empty() {
-            // Shouldn't happen, but return unit as fallback
-            return Atom {
-                span: Span { start: 0, end: 0 },
-                kind: ScalarKind::Bare,
-                content: AtomContent::Unit,
-            };
-        }
-
-        if atoms.len() == 1 {
-            return atoms[0].clone();
-        }
-
-        // Build nested: first atom is key, rest becomes nested object value
-        let key = atoms[0].clone();
-        let value = self.build_nested_object(&atoms[1..]);
-        let span = Span {
-            start: key.span.start,
-            end: value.span.end,
-        };
-
-        Atom {
-            span,
-            kind: ScalarKind::Bare,
-            content: AtomContent::Object {
-                entries: vec![ObjectEntry {
-                    key,
-                    value,
-                    doc_comment: None,
-                }],
-                separator: Separator::Newline,
-                duplicate_key_spans: Vec::new(), // Nested objects from keypaths can't have duplicates
-                mixed_separator_spans: Vec::new(), // Nested objects from keypaths can't have mixed separators
-                dangling_doc_comment_spans: Vec::new(), // Nested objects from keypaths can't have doc comments
-                unclosed: false, // Nested objects from keypaths are always complete
             },
         }
     }
@@ -1237,6 +1113,16 @@ impl<'src> Parser<'src> {
                         return false;
                     }
                     if !self.emit_atom_as_value(&entry.value, callback) {
+                        return false;
+                    }
+                    // parser[impl entry.toomany]
+                    // Emit error for too many atoms
+                    if let Some(span) = entry.too_many_atoms_span
+                        && !callback.event(Event::Error {
+                            span,
+                            kind: ParseErrorKind::TooManyAtoms,
+                        })
+                    {
                         return false;
                     }
                     if !callback.event(Event::EntryEnd) {
@@ -1720,6 +1606,9 @@ struct ObjectEntry<'src> {
     value: Atom<'src>,
     /// Doc comment preceding this entry, if any.
     doc_comment: Option<(Span, &'src str)>,
+    /// Span of unexpected third atom (for TooManyAtoms error).
+    // parser[impl entry.toomany]
+    too_many_atoms_span: Option<Span>,
 }
 
 /// A parsed key for equality comparison (duplicate key detection).
@@ -1853,20 +1742,28 @@ mod tests {
     }
 
     #[test]
-    fn test_nested_keys() {
+    fn test_too_many_atoms() {
+        // parser[verify entry.toomany]
+        // 3+ atoms should produce an error
         let events = parse("a b c");
-        // Should produce: key=a, value=(implicit object with key=b, value=c)
-        let keys: Vec<_> = events
-            .iter()
-            .filter_map(|e| match e {
-                Event::Key {
-                    payload: Some(value),
-                    ..
-                } => Some(value.as_ref()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(keys, vec!["a", "b"]);
+        // Should produce: key=a, value=b, error on c
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Key { payload: Some(value), .. } if value == "a"))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "b"))
+        );
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Event::Error {
+                kind: ParseErrorKind::TooManyAtoms,
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -2235,24 +2132,21 @@ mod tests {
 
     // parser[verify entry.keypath.attributes]
     #[test]
-    fn test_keypath_with_attributes() {
+    fn test_too_many_atoms_with_attributes() {
+        // parser[verify entry.toomany]
+        // Old key-path syntax is now an error
         let events = parse("spec selector matchLabels app>web tier>frontend");
-        // Nested: spec.selector.matchLabels = {app: web, tier: frontend}
-        let keys: Vec<_> = events
-            .iter()
-            .filter_map(|e| match e {
-                Event::Key {
-                    payload: Some(value),
+        // Should produce error for too many atoms
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::TooManyAtoms,
                     ..
-                } => Some(value.as_ref()),
-                _ => None,
-            })
-            .collect();
-        assert!(keys.contains(&"spec"), "Missing key 'spec'");
-        assert!(keys.contains(&"selector"), "Missing key 'selector'");
-        assert!(keys.contains(&"matchLabels"), "Missing key 'matchLabels'");
-        assert!(keys.contains(&"app"), "Missing key 'app'");
-        assert!(keys.contains(&"tier"), "Missing key 'tier'");
+                }
+            )),
+            "Should have TooManyAtoms error"
+        );
     }
 
     // parser[verify attr.syntax]
@@ -2738,12 +2632,12 @@ mod tests {
         );
     }
 
-    // parser[verify entry.keypath.attributes]
+    // parser[verify entry.structure]
     #[test]
-    fn test_attributes_at_end_of_path() {
-        // Attributes at the end of a key path should work
-        let events = parse("spec selector matchLabels app>web tier>frontend");
-        // Should have keys: spec, selector, matchLabels, app, tier
+    fn test_simple_key_value_with_attributes() {
+        // Simple key-value where value is an attributes object
+        let events = parse("server host>localhost port>8080");
+        // Should have keys: server, host, port
         let keys: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
@@ -2754,39 +2648,19 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(keys.contains(&"spec"), "Missing key 'spec'");
-        assert!(keys.contains(&"selector"), "Missing key 'selector'");
-        assert!(keys.contains(&"matchLabels"), "Missing key 'matchLabels'");
-        assert!(keys.contains(&"app"), "Missing key 'app'");
-        assert!(keys.contains(&"tier"), "Missing key 'tier'");
+        assert!(keys.contains(&"server"), "Missing key 'server'");
+        assert!(keys.contains(&"host"), "Missing key 'host'");
+        assert!(keys.contains(&"port"), "Missing key 'port'");
         // No errors should be reported
         assert!(
             !events.iter().any(|e| matches!(
                 e,
                 Event::Error {
-                    kind: ParseErrorKind::InvalidKey,
+                    kind: ParseErrorKind::TooManyAtoms,
                     ..
                 }
             )),
-            "Attributes at end of path should not produce errors"
-        );
-    }
-
-    // parser[verify entry.keypath.attributes]
-    #[test]
-    fn test_attributes_mid_path_rejected() {
-        // Attributes in the middle of a key path are invalid (attributes produce objects, objects can't be keys)
-        let events = parse("spec selector foo>bar matchLabels app web");
-        // foo=bar produces an object, which is then used as a key for matchLabels - this is invalid
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidKey,
-                    ..
-                }
-            )),
-            "Attributes mid-path should produce InvalidKey error"
+            "Simple key-value with attributes should not produce TooManyAtoms"
         );
     }
 }

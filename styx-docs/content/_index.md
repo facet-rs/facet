@@ -142,6 +142,58 @@ comment "This is a string for sure" // nope, an opaque scalar
   }
 }
 
+.tooling-demos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.tooling-demo {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 1.75rem;
+  transition: transform 0.2s, background 0.2s;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.3);
+    transform: translateY(-2px);
+  }
+
+  h3 {
+    font-family: var(--font-heading);
+    font-size: 1.25rem;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: #fff;
+    margin: 0 0 0.75rem 0;
+  }
+
+  p {
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.8);
+    margin: 0 0 1.25rem 0;
+  }
+
+  a {
+    display: inline-block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #fff;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+    transition: border-color 0.2s;
+
+    &:hover {
+      border-color: #fff;
+    }
+  }
+}
+
 .hero-intro h1 {
   font-family: var(--font-heading);
   font-weight: 400;
@@ -588,152 +640,37 @@ $ node index.ts
 </div>
 </section>
 
-<div class="layers-section">
+<div class="layers-section tooling-section">
 <div class="section-header">
-<p class="section-title">From types to tooling</p>
-<p class="section-subtitle">in one smooth pipeline.</p>
-<p class="section-desc">Your Rust types <em>are</em> the source of truth. Facet reflection extracts full type information — fields, constraints, doc comments — and generates a schema you can publish anywhere.</p>
+<p class="section-title">Offensively nice tooling</p>
+<p class="section-subtitle">because config deserves better.</p>
+<p class="section-desc">Errors that actually help. Autocomplete that actually works. From your editor to your CI pipeline.</p>
 </div>
 
-<div class="layers-diagram">
+<div class="tooling-demos">
 
-```rust
-#[derive(Facet)]
-/// Server configuration.
-struct Config {
-    /// Hostname to bind to.
-    host: String,
-    /// Port number (1-65535).
-    port: u16,
-}
-```
-
-  <div class="layer-arrow">
-    <svg viewBox="0 0 200 105" class="arrow-svg">
-      <use href="#arrow-line-top"/>
-      <text x="100" y="46" text-anchor="middle" class="arrow-label">generates</text>
-      <use href="#arrow-line-bottom"/>
-      <use href="#arrow-head"/>
-    </svg>
-  </div>
-
-```styx
-/// Server configuration.
-Config @object{
-  /// Hostname to bind to.
-  host @string
-  /// Port number (1-65535).
-  port @int{ min 0, max 65535 }
-}
-```
-
-  <div class="layer-arrow">
-    <svg viewBox="0 0 200 105" class="arrow-svg">
-      <use href="#arrow-line-top"/>
-      <text x="100" y="46" text-anchor="middle" class="arrow-label">powers</text>
-      <use href="#arrow-line-bottom"/>
-      <use href="#arrow-head"/>
-    </svg>
-  </div>
-
-<img src="/tooling-screenshot.png" alt="Editor showing hover documentation and autocomplete" class="tooling-screenshot" />
-
-</div>
+<!-- TODO: Editor integration screenshot/gif -->
+<div class="tooling-demo">
+<h3>Editor Integration</h3>
+<p>Hover docs, autocomplete, inline errors — powered by LSP.</p>
+<a href="/tools/editor">Set up your editor →</a>
 </div>
 
-<section class="feature">
-<div class="feature-text">
+<!-- TODO: Terminal recording (asciinema or gif) -->
+<div class="tooling-demo">
+<h3>CLI Validation</h3>
+<p>Validate in CI. Get actionable errors with "did you mean?" suggestions.</p>
+<a href="/tools/cli">See the CLI →</a>
+</div>
 
-## Publish to crates.io
-
-Schemas are published as crates — immutable, versioned, governed by the Rust Foundation. Pin the major version and let semver do its job.
-
-[Learn more about schema distribution →](/tools/schema-distribution)
+<!-- TODO: CodeMirror integration demo -->
+<div class="tooling-demo">
+<h3>Web Playground</h3>
+<p>Try Styx in your browser with full syntax highlighting and validation.</p>
+<a href="/playground">Open playground →</a>
+</div>
 
 </div>
-<div class="feature-code">
-
-```styx
-@schema {source crate:myapp-config@2, cli myapp}
-
-host localhost
-port 8080
-```
-
-```bash
-$ styx publish myapp-schema
-error: breaking change detected
-  - field `timeout` removed
-
-Requires major version bump: 2.0.0 → 3.0.0
-```
-
-</div>
-</section>
-
-<section class="feature">
-<div class="feature-text">
-
-## Zero-config discovery
-
-If your CLI supports `@dump-styx-schema`, editors find your schema automatically. Works offline, always matches your installed version.
-
-</div>
-<div class="feature-code">
-
-```bash
-$ myapp @dump-styx-schema
-Config @object {
-  host @string
-  port @int{ min 1, max 65535 }
-}
-```
-
-</div>
-</section>
-
-<section class="feature">
-<div class="feature-text">
-
-## Validation everywhere
-
-LSP brings errors and autocomplete to your editor. CLI validates in CI. Same schema, same rules, whether you're writing or shipping.
-
-</div>
-<div class="feature-code">
-
-```bash
-# In CI
-styx config.styx --validate
-
-# In your editor
-# → errors inline, autocomplete, hover docs
-```
-
-</div>
-</section>
-
-<section class="feature">
-<div class="feature-text">
-
-## Best-of-class errors
-
-When something's wrong, you get the location, what was expected, and often a "did you mean?" Colors in your terminal, structure in your editor.
-
-</div>
-<div class="feature-code">
-
-```
-error: unknown field `hots`
-  ┌─ config.styx:2:3
-  │
-2 │   hots localhost
-  │   ^^^^ did you mean `host`?
-```
-
-</div>
-</section>
-
 </div>
 
 <div class="hero-links">

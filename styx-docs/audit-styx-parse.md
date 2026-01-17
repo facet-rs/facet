@@ -20,14 +20,15 @@ This document audits the styx-parse crate against the parser spec (`docs/content
 | sequence.elements | ⚠️ Partial | Elements not properly parsed |
 | object.syntax | ✅ OK | Braces work |
 | object.separators | ❌ Missing | Mixed separator detection NOT enforced |
-| entry.structure | ✅ OK | 1/2/N atom handling works |
-| entry.keypath | ✅ OK | Nested key paths work |
+| entry.structure | ✅ OK | 1/2 atom handling, 3+ is error |
+| entry.toomany | ✅ OK | 3+ atoms emits TooManyAtoms error |
+| entry.path | ❓ TODO | Sequence-as-path not yet implemented |
 | entry.keys | ⚠️ Partial | Heredoc key rejection not checked |
 | entry.key-equality | ❌ Missing | Duplicate key detection NOT implemented |
 | attr.syntax | ❌ Missing | Attribute syntax (`key>value`) NOT implemented |
 | attr.values | ❌ Missing | N/A (attr.syntax missing) |
 | attr.atom | ❌ Missing | N/A (attr.syntax missing) |
-| entry.keypath.attributes | ❌ Missing | N/A (attr.syntax missing) |
+| entry.path.attributes | ❓ TODO | Depends on entry.path implementation |
 | document.root | ✅ OK | Implicit root object works |
 
 ## Detailed Findings

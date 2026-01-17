@@ -163,6 +163,10 @@ pub enum ParseErrorKind {
     InvalidKey,
     /// Dangling doc comment (not followed by entry).
     DanglingDocComment,
+    /// Too many atoms in entry (expected at most 2: key and value).
+    /// Contains the span of the unexpected third atom.
+    // parser[impl entry.toomany]
+    TooManyAtoms,
 }
 
 impl std::fmt::Display for ParseErrorKind {
@@ -183,6 +187,9 @@ impl std::fmt::Display for ParseErrorKind {
             ParseErrorKind::InvalidKey => write!(f, "invalid key"),
             ParseErrorKind::DanglingDocComment => {
                 write!(f, "doc comment not followed by an entry")
+            }
+            ParseErrorKind::TooManyAtoms => {
+                write!(f, "unexpected atom after value (entry has too many atoms)")
             }
         }
     }

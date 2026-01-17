@@ -40,11 +40,11 @@ Two atom entry (key value)
               (bare_scalar))))))))
 
 ================================================================================
-Three atom entry (nested key path)
+Simple key-value entry
 ================================================================================
 
 {
-    server host localhost
+    server localhost
 }
 
 --------------------------------------------------------------------------------
@@ -54,9 +54,6 @@ Three atom entry (nested key path)
     key: (expr
       payload: (object
         (entry
-          key: (expr
-            payload: (scalar
-              (bare_scalar)))
           key: (expr
             payload: (scalar
               (bare_scalar)))
