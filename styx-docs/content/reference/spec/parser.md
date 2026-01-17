@@ -60,7 +60,7 @@ Scalars are opaque text. The parser assigns no type information.
 > A bare scalar is terminated by any forbidden character or end of input.
 >
 > ```styx
-> url https://example.com/path?query=1
+> url https://example.com/path
 > ```
 
 ### Quoted scalars

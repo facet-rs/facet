@@ -1,303 +1,140 @@
 +++
-title = "STYX"
+title = "Styx"
 insert_anchor_links = "heading"
 +++
 
 # Styx
 
-At least it's not YAML!
+A document language for mortals.
 
-## Styx the straightforward
+```styx
+@schema ./server.schema.styx
 
-Imagine JSON
-
-```json
-{
-  "key": "value"
+server {
+  host localhost
+  port 8080
+  tls cert=/etc/ssl/cert.pem
 }
-```
 
-But you remove everything that's getting in the way: the double quotes, the
-colon, even the comma:
-
-```styx
-{
-  key value
-}
-```
-
-Of course you can have the comma back if you want to put everything in a single line:
-
-```styx
-{key value, koi tuvalu}
-```
-
-Not far enough? Wanna get rid of the brackets? Okay, but only for the top-level object:
-
-```styx
-key value
-koi tuvalu
-```
-
-What about arrays? They're called sequences and they use parentheses:
-
-```styx
-methods (GET POST PUT)
-```
-
-They're always whitespace-separated, never comma-separated.
-
-## Styx the typed
-
-```styx
-name "John Doe"
-age 97
-retired true
-```
-
-Hey, which type are those values? Any type you want them to.
-
-Scalars are just text atoms, `97` is not any more a number
-than `https://example.org/` is.
-
-Types matter at exactly two times:
-
-- Validation via [schemas](https://styx.bearcove.eu/spec/schema/) (which are also Styx documents)
-- Deserialization, in either flavor (dynamic or static typing)
-
-In dynamic typing flavor, your Styx document gets parsed into a tree,
-and then you get to request "field name as type string" — and if it can't
-be coerced into a string, you get an error at that point.
-
-In static typing flavor, you may for example deserialize to:
-
-```rust
-#[derive(Facet)]
-struct Does {
-    name: String,
-    age: u32,
-    retired: bool,
-}
-```
-
-And then the type mapping is, well, what you'd expect.
-
-This solves the Norway problem:
-
-```styx
-country no
-```
-
-This `no` is not a boolean, not a string, not a number, it's everything, everywhere,
-all at once, until you _need_ it to be something.
-
-## Styx the nerd
-
-Sometimes a value isn't quite enough, and you want to tag it:
-
-```styx
-this (is an untagged list)
-that @special(list I hold dear)
-```
-
-Remember `()` are for sequences. They're not for grouping/precedence/calls.
-
-You can tag objects, too:
-
-```styx
-rule @path_prefix{
-  prefix /api
-  route_to localhost:9000 // still no need to double-quote anything
-  // oh yeah also comments just work
-}
-```
-
-That's because Styx was designed to play nice with sum types,
-like Rust enums:
-
-```rust
-enum Alternatives {
-    NoPayload
-    TuplePayload(u32, u32)
-    StructPayload { name: String }
-}
-```
-
-And so, tags are a natural way to _select_ a variant:
-
-```styx
-alts (
-    @no_payload@
-    @tuple_payload(3, 7)
-    @struct_payload{name Gisèle}
+routes (
+  @redirect{from /old, to /new}
+  @proxy{path /api, upstream localhost:9000}
 )
 ```
 
-Did you notice the `@` at the end of `@no_payload@`? Not a typo:
-that's the unit value. It means "nothing", "none", kinda like "null"
-but a little superior.
+<div class="hero-cards">
 
-`@` is a value like any other:
-
-```styx
-sparse_seq (1 2 @ 8 9)
-```
-
-And in fact, wanna know a secret? `@` is not even the canonical form
-of unit: `@@` is.
-
-An empty tag degenerates to `@`, and a tag without a payload defaults to
-a payload of `@`.
-
-Therefore:
+<div class="hero-card">
+<h3>Mortal-first</h3>
+<div class="carousel" data-carousel="mortal">
+<div class="carousel-slides">
+<div class="carousel-slide active">
+<div class="slide-label">Bare scalars</div>
 
 ```styx
-@            // tag=@,   payload=@ (implied)
-@@           // tag=@,   payload=@
-@tag         // tag=tag, payload=@ (implied)
-@tag@        // tag=tag, payload=@
-@tag"must"   // tag=tag, payload=must
-@tag()       // tag=tag, payload=() aka empty sequence
+host localhost
+port 8080
+url https://example.com/path
 ```
 
-Importantly, there is NEVER ANY SPACE between a tag and its payload.
-Spaces separate seq elements or key-value pairs in object context:
+</div>
+<div class="carousel-slide">
+<div class="slide-label">Key chains</div>
 
 ```styx
-// this is a key-value pair:
-@tag ()     // key(tag=tag, payload=@) value(tag=@, payload=())
-
-// this is a DIFFERENT key-value pair
-@tag()      // key(tag=tag, payload=()) value(tag=@, payload=@)
+server host localhost
+// expands to:
+server { host localhost }
 ```
 
-Does it get confusing? Maybe. Little bit.
-
-## Styx the objective
-
-We've just seen this in the last gotcha:
+</div>
+<div class="carousel-slide">
+<div class="slide-label">Attribute syntax</div>
 
 ```styx
-@tag()      // key(tag=tag, payload=()) value(tag=@, payload=@)
+tls cert=/etc/ssl/cert.pem key=/etc/ssl/key.pem
+// expands to:
+tls { cert /etc/ssl/cert.pem, key /etc/ssl/key.pem }
 ```
 
-Which, okay, `@tag()` is the entire key. But where's the value?
-
-It's omitted. It defaults to `@`:
+</div>
+<div class="carousel-slide">
+<div class="slide-label">Comments</div>
 
 ```styx
-key @ // explicitly set to unit
-koi   // implicitly set to unit
+// line comment
+host localhost  // inline comment
+
+/// doc comment (attaches to next entry)
+port 8080
 ```
 
-So, key-value pairs can be missing a value, and... they can also
-have more than one key — those are called "key chains".
+</div>
+</div>
+<div class="carousel-dots"></div>
+</div>
+</div>
 
-```styx
-fee fi foe fum
-// equivalent to
-fee {fi {foe fum}}
-```
-
-And, if you need to have an object as your value and you want to avoid
-one last bit of nesting? As a treat? You can use object attribute syntax:
-
-```styx
-{
-    web domain=example.org      port=9000
-    api domain=api.example.org  port=9001
-}
-```
-
-And that's _it_ with the weirdness. (Don't worry, there are comprehensive
-specifications and test suites).
-
-Some unfamiliar bits, but hopefully not too many, which lets us...
-
-## Styx the schematic
-
-...define Styx schemas in Styx itself.
+<div class="hero-card">
+<h3>Schema-driven</h3>
+<div class="carousel" data-carousel="schema">
+<div class="carousel-slides">
+<div class="carousel-slide active">
+<div class="slide-label">Schema</div>
 
 ```styx
 schema {
-  /// The root structure of a schema file.
   @ @object{
-    /// Schema metadata (required).
-    meta @Meta
-    /// External schema imports (optional).
-    imports @optional(@map(@string @string))
-    /// Type definitions: @ for document root, strings for named types.
-    schema @map(@union(@string @unit) @Schema)
+    host @string
+    port @int{min 1, max 65535}
+    tls @optional(@TlsConfig)
   }
-  
-  // etc.
+
+  TlsConfig @object{
+    cert @string
+    key @string
+  }
 }
 ```
 
-Are those doc comments? Yes. Parsers are taught to keep them and attach them to
-the next element. This means your styx documents can be validated against a
-schema:
+</div>
+<div class="carousel-slide">
+<img src="https://placehold.co/400x200/f6f6f6/333?text=CLI+validation" alt="CLI validation">
+</div>
+<div class="carousel-slide">
+<img src="https://placehold.co/400x200/f6f6f6/333?text=Zed+autocomplete" alt="Zed autocomplete">
+</div>
+</div>
+<div class="carousel-dots"></div>
+</div>
+</div>
 
-  * by a CLI, locally, in CI
-  * by an LSP, in your code editor
-  * honestly anytime for any reason
+<div class="hero-card">
+<h3>Tooling</h3>
+<div class="carousel" data-carousel="tooling">
+<div class="carousel-slides">
+<div class="carousel-slide active">
+<img src="https://placehold.co/400x200/f6f6f6/333?text=CLI+usage" alt="CLI usage">
+</div>
+<div class="carousel-slide">
+<img src="https://placehold.co/400x200/f6f6f6/333?text=styx+fmt" alt="styx fmt">
+</div>
+<div class="carousel-slide">
+<img src="https://placehold.co/400x200/f6f6f6/333?text=tree-sitter" alt="tree-sitter">
+</div>
+</div>
+<div class="carousel-dots"></div>
+</div>
+</div>
 
-And that your code editor (mine's [Zed](https://zed.dev)) can have the full
-code editing experience: autocomplete, documentation on hover, jump to definition
-(in schema), hover for field documentation, etc.
+</div>
 
-It's... so nice.
+<div class="hero-links">
 
-## Styx the one last thing
+[Learn Styx](/learn/primer) — a 5-minute primer
 
-Oh! Also, HEREDOCs:
+[Install](/tools/cli) — get the CLI
 
-```styx
-examples (
-    {
-        name hello.rs
-        source <<SRC,rust
-        fn main() {
-          println!("Hello from Rust!")
-        }
-        SRC
-    }
-)
-```
+[Reference](/reference) — the spec
 
-The `,rust` is just a hint which is used by your editor to inject syntax
-highlighting from the embedded language :)
-
-## Implementations
-
-There is a spec for parsing, schema validation, and error reporting,
-tracked with [Tracey](https://github.com/bearcove/tracey) and available
-on the [styx website](https://styx.bearcove.eu).
-
-The flagship implementation is, of course, the Rust one — across multiple
-crates like `facet-styx` and `serde_styx`, but not just.
-
-There's a TypeScript implementation in the repository, and probably more
-to come.
-
-## Editor Support
-
-<p>
-<a href="https://zed.dev">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="./static/sponsors/zed-dark.svg">
-<img src="./static/sponsors/zed-light.svg" height="40" alt="Zed">
-</picture>
-</a>
-</p>
-
-Styx has first-class support for [Zed](https://zed.dev) with syntax highlighting, LSP integration, and more.
-
-
-## Orientation
-
-- [Parser Spec](/spec/parser) — Formal syntax rules
-- [Schema Spec](/spec/schema) — Type system and validation
-- [Diagnostics](/spec/diagnostics) — Error message standards
-- [Rust Bindings](/bindings/rust) — How Rust types map to Styx
-- [Comparisons](/comparisons) — vs JSON, YAML, TOML, KDL
+</div>

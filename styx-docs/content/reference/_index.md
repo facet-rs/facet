@@ -1,0 +1,19 @@
++++
+title = "Reference"
+weight = 2
+sort_by = "weight"
+insert_anchor_links = "heading"
++++
+
+The normative Styx specification and language bindings.
+
+## Specification
+
+- [Parser](spec/parser) — Syntax rules and document structure
+- [Schema](spec/schema) — Type system and validation
+- [Diagnostics](spec/diagnostics) — Error message standards
+- [Grammar](spec/grammar) — Visual grammar reference
+
+## Bindings
+
+- [Rust](bindings/rust) — How Rust types map to Styx

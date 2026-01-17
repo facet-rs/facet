@@ -2,8 +2,8 @@
 
 {% block title %}{{ section.title | default(value=config.title) }}{% endblock title %}
 
-{% block content %}
+{% block body %}
 <main class="home">
     {{ section.content | safe }}
 </main>
-{% endblock content %}
+{% endblock body %}

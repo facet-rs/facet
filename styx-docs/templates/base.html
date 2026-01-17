@@ -4,19 +4,19 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}{{ config.title }}{% endblock title %}</title>
-    <meta name="description" content="STYX - A structured document format for humans">
+    <meta name="description" content="Styx - A structured document format for humans">
     <link rel="stylesheet" href="/main.css">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     {% block head %}{% endblock head %}
 </head>
 <body>
     <nav class="nav">
-        <a href="/" class="nav-brand">STYX</a>
+        <a href="/" class="nav-brand">Styx</a>
         <div class="nav-links">
-            <a href="/spec" {% if current_path is starting_with("/spec") %}class="active"{% endif %}>Spec</a>
-            <a href="/bindings" {% if current_path is starting_with("/bindings") %}class="active"{% endif %}>Bindings</a>
-            <a href="/comparisons" {% if current_path is starting_with("/comparisons") %}class="active"{% endif %}>Comparisons</a>
-            <a href="/examples" {% if current_path is starting_with("/examples") %}class="active"{% endif %}>Examples</a>
+            <a href="/learn" {% if current_path is starting_with("/learn") %}class="active"{% endif %}>Learn</a>
+            <a href="/reference" {% if current_path is starting_with("/reference") %}class="active"{% endif %}>Reference</a>
+            <a href="/tools" {% if current_path is starting_with("/tools") %}class="active"{% endif %}>Tools</a>
+            <a href="/ecosystem" {% if current_path is starting_with("/ecosystem") %}class="active"{% endif %}>Ecosystem</a>
             <a href="https://github.com/bearcove/styx" class="nav-github">GitHub</a>
         </div>
     </nav>
@@ -28,7 +28,37 @@
     {% endblock body %}
 
     <footer class="footer">
-        <p>STYX is open source software.</p>
+        <p>Styx is open source software.</p>
     </footer>
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('.carousel').forEach(carousel => {
+        const slides = carousel.querySelectorAll('.carousel-slide');
+        const dotsContainer = carousel.querySelector('.carousel-dots');
+        
+        if (slides.length <= 1) return;
+        
+        slides.forEach((_, i) => {
+          const dot = document.createElement('button');
+          dot.className = 'carousel-dot' + (i === 0 ? ' active' : '');
+          dot.addEventListener('click', () => goTo(i));
+          dotsContainer.appendChild(dot);
+        });
+        
+        const dots = dotsContainer.querySelectorAll('.carousel-dot');
+        let current = 0;
+        
+        function goTo(index) {
+          slides[current].classList.remove('active');
+          dots[current].classList.remove('active');
+          current = index;
+          slides[current].classList.add('active');
+          dots[current].classList.add('active');
+        }
+        
+        setInterval(() => goTo((current + 1) % slides.length), 4000);
+      });
+    });
+    </script>
 </body>
 </html>
