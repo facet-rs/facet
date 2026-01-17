@@ -156,7 +156,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > | Type | Description |
 > |------|-------------|
 > | `@string` | any scalar |
-> | `@bool` | `@true` or `@false` |
+> | `@bool` | `true` or `false` |
 > | `@int` | any integer |
 > | `@float` | any finite floating point number (JSON number syntax) |
 > | `@unit` | the unit value `@` |
@@ -254,7 +254,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 >   host @string
 >   port @default(8080 @int{min 1, max 65535})
 >   timeout @default(30s @duration)
->   enabled @default(@true @bool)
+>   enabled @default(true @bool)
 > }
 > ```
 >

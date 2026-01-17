@@ -69,8 +69,8 @@ The text is always the **interpreted** value (escapes processed), JSON-escaped f
 A tagged value. The tag name is a string. Payload is optional.
 
 ```scheme
-; @true (no payload)
-(tag [0, 5] "true")
+; @ok (no payload)
+(tag [0, 3] "ok")
 
 ; @error{code 500}
 (tag [0, 16] "error"
@@ -185,7 +185,7 @@ Input (`example.styx`):
 @ schema.styx
 
 name "My Config"
-enabled @true
+enabled true
 server {host localhost, port 8080}
 ```
 

@@ -19,7 +19,7 @@ Styx is a configuration language with schema support, comments, and flexible syn
 // Key-value pairs
 name "My Config"
 port 8080
-enabled @true
+enabled true
 
 // Nested objects (newline or comma separated)
 server {
@@ -118,8 +118,8 @@ routes (
 Tags start with `@` and optionally have a payload:
 
 ```styx
-// Unit tag (no payload) - shorthand for @true@
-enabled @true
+// Tag with unit payload
+status @ok
 
 // Tag with object payload
 error @error{code 500, message "Internal error"}
@@ -134,7 +134,7 @@ message @warn"Deprecated feature"
 nothing @
 ```
 
-**Common built-in tags**: `@true`, `@false`, `@none`, `@some(...)`.
+**Common tags**: `@ok`, `@err(...)`, `@none`, `@some(...)`.
 
 ## Unit Value
 
@@ -211,7 +211,7 @@ schema {
 | `@string` | Any scalar value |
 | `@int` | Integer with optional `{min N, max N}` |
 | `@float` | Float with optional `{min N, max N}` |
-| `@bool` | `@true` or `@false` |
+| `@bool` | `true` or `false` |
 | `@unit` | The unit value `@` |
 | `@any` | Any value |
 | `@optional(@T)` | Field may be absent |
@@ -336,15 +336,13 @@ div id = main
 ```
 **Right**: No spaces: `div id=main`
 
-**Wrong**: Using `null` or `true`/`false` as keywords
+**Wrong**: Using `null` as a keyword
 ```styx
-// WRONG - these are bare scalars, not booleans
-enabled true
+// WRONG - null is just a bare scalar
 value null
 ```
-**Right**: Use tags for booleans and unit:
+**Right**: Use `@` or `@none` for unit/absence:
 ```styx
-enabled @true
 value @none
 nothing @
 ```

@@ -1,15 +1,14 @@
 /// Example Styx file showcasing various syntax features
 /// This file demonstrates the full range of Styx syntax
-
 /// Schema declaration (unit key with string value)
 @ examples/showcase.schema.styx
 
 /// Basic key-value pairs
 name "Styx Showcase"
-version 1.0.0
-enabled @true
-debug @false
 
+version 1.0.0
+enabled true
+debug false
 /// Nested objects with newline separation
 server {
     /// Server hostname
@@ -18,7 +17,7 @@ server {
     port 8080
     /// TLS configuration
     tls {
-        enabled @true
+        enabled true
         cert /etc/ssl/cert.pem
         key /etc/ssl/key.pem
     }
@@ -28,24 +27,16 @@ server {
 limits {max_connections 1000, timeout_ms 30000, retry_count 3}
 
 /// Sequences (tuples/arrays)
-allowed_origins (
-    "https://example.com"
-    "https://api.example.com"
-    "http://localhost:3000"
-)
+allowed_origins ("https://example.com" "https://api.example.com" "http://localhost:3000")
 
 /// Tagged values with various payloads
 status @ok
+
 error_example @error{code 500, message "Internal Server Error"}
 point @rgb(255 128 0)
-nothing @none@
-
+nothing @none @
 /// Mixed tags and sequences
-routes (
-    @route{path "/", handler index}
-    @route{path "/api", handler api_root}
-    @route{path "/health", handler health_check}
-)
+routes (@route{path "/", handler index} @route{path "/api", handler api_root} @route{path "/health", handler health_check})
 
 /// Heredoc for multi-line content
 sql_query <<SQL,sql
@@ -144,24 +135,24 @@ TEXT
 
 /// Raw strings (useful for regex, paths with backslashes)
 windows_path r"C:\Users\amos\Documents"
+
 regex_pattern r#"^[a-z]+\d{2,4}$"#
 complex_regex r##"foo"#bar"##
-
 /// Quoted strings with escapes
 greeting "Hello, \"World\"!\nHow are you?\tFine!"
-unicode "Emoji: \u{1F600} and \u0041"
 
+unicode "Emoji: \u{1F600} and \u0041"
 /// Attributes (key=value syntax)
-div id=main class="container hero" data-value=42
+div main
 
 /// Unit values
 optional_field @
+
 flags {
     verbose
     dry_run
     force
 }
-
 /// Deeply nested structure
 database {
     primary {
@@ -187,27 +178,19 @@ database {
             host db-replica.example.com
             port 5432
             database myapp
-            read_only @true
+            read_only true
         }
     }
 }
 
 /// Enum-like tagged unions
 log_level @warn
+
 result @ok{data "success", timestamp 1705360000}
 maybe_value @some(42)
 empty_value @none
-
 /// Complex nested sequences
-matrix (
-    (1 2 3)
-    (4 5 6)
-    (7 8 9)
-)
+matrix ((1 2 3) (4 5 6) (7 8 9))
 
 /// Mixed content in sequences
-plugins (
-    @plugin{name logger, enabled @true}
-    @plugin{name metrics, enabled @true, endpoint "/metrics"}
-    @plugin{name cache, enabled @false}
-)
+plugins (@plugin{name logger, enabled true} @plugin{name metrics, enabled true, endpoint "/metrics"} @plugin{name cache, enabled false})
