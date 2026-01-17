@@ -22,8 +22,9 @@ you-may @tag(any thing you want) // good for enums
 quote "anything you want"
 raw-quote r#"to "get meta" if you wish"#
 
-and-if-needed <<HEREDOCS
-are here to save the day
+and-if-needed <<HEREDOCS,bash
+export RUST_LOG=trace
+@echo "are here to save the day"
 HEREDOCS
 ```
 
@@ -31,16 +32,21 @@ HEREDOCS
 
 <section class="feature">
 <div class="feature-text">
-<h2>Bare scalars</h2>
-<p>Unquoted values. Quotes required for spaces or <code>=</code>.</p>
+<h2>No implicit typing</h2>
+<p>Values are text until you say otherwise. No silent coercion of <code>NO</code> to <code>false</code> or <code>3.10</code> to <code>3.1</code>. Types come from your schema or your code — not from the parser guessing.</p>
 </div>
 <div class="feature-code">
 
+```yaml
+# YAML: this is a boolean
+country: NO
+version: 3.10
+```
+
 ```styx
-host localhost
-port 8080
-path /etc/nginx/nginx.conf
-url "https://example.com/api?q=1"
+// Styx: always text until deserialization
+country NO
+version 3.10
 ```
 
 </div>
@@ -48,19 +54,20 @@ url "https://example.com/api?q=1"
 
 <section class="feature">
 <div class="feature-text">
-<h2>Sequences</h2>
-<p>Parentheses. Whitespace-separated.</p>
+<h2>Use it your way</h2>
+<p>Parse into an untyped tree and walk it. Add a schema and get typed dynamic values. Or deserialize straight into native types — Rust structs, TypeScript interfaces, whatever your language offers.</p>
 </div>
 <div class="feature-code">
 
-```styx
-ports (8080 8443 9000)
+```rust
+// Untyped: walk the tree
+let tree = styx::parse(input)?;
 
-allowed-hosts (
-  localhost
-  example.com
-  "*.internal.net"
-)
+// With schema: dynamic typed values
+let value = styx::validate(tree, schema)?;
+
+// Native: straight into your types
+let config: MyConfig = styx::from_str(input)?;
 ```
 
 </div>
@@ -68,38 +75,57 @@ allowed-hosts (
 
 <section class="feature">
 <div class="feature-text">
-<h2>Objects</h2>
-<p>Curly braces. Newline-separated or comma-separated.</p>
+<h2>Schemas that fit your workflow</h2>
+<p>Write schemas by hand, or generate them from your type definitions. Either way, you get validation — and you're not maintaining two sources of truth if you don't want to.</p>
 </div>
 <div class="feature-code">
 
 ```styx
+/// A server configuration
+server @object {
+  host @string
+  port @int
+  tls @optional @bool
+}
+```
+
+</div>
+</section>
+
+<section class="feature">
+<div class="feature-text">
+<h2>Validation everywhere</h2>
+<p>LSP brings errors and autocomplete to your editor. CLI validates in CI. Same schema, same rules, whether you're writing or shipping.</p>
+</div>
+<div class="feature-code">
+
+```bash
+# In CI
+styx validate config.styx --schema schema.styx
+
+# In your editor
+# → errors inline, autocomplete, hover docs
+```
+
+</div>
+</section>
+
+<section class="feature">
+<div class="feature-text">
+<h2>Terse, not suffocating</h2>
+<p>One-liners when you want them. Newlines when you need to breathe. No ceremony for simple things, no contortions for complex ones.</p>
+</div>
+<div class="feature-code">
+
+```styx
+// compact
+server host=localhost port=8080 tls=true
+
+// or breathe
 server {
   host localhost
   port 8080
-}
-
-point {x 10, y 20}
-```
-
-</div>
-</section>
-
-<section class="feature">
-<div class="feature-text">
-<h2>Key paths</h2>
-<p>Multiple keys in one entry create nested objects.</p>
-</div>
-<div class="feature-code">
-
-```styx
-selector matchLabels app web
-
-// equivalent to:
-selector {
-  matchLabels {
-    app web
-  }
+  tls true
 }
 ```
 
@@ -108,33 +134,17 @@ selector {
 
 <section class="feature">
 <div class="feature-text">
-<h2>Attributes</h2>
-<p><code>key=value</code> syntax creates inline object entries.</p>
+<h2>Errors that help</h2>
+<p>When something's wrong, you get the location, what was expected, and often a "did you mean?" Colors in your terminal, structure in your editor.</p>
 </div>
 <div class="feature-code">
 
-```styx
-server host=localhost port=8080
-
-// equivalent to:
-server {host localhost, port 8080}
 ```
-
-</div>
-</section>
-
-<section class="feature">
-<div class="feature-text">
-<h2>Tags</h2>
-<p>Labels on values. Can wrap objects, sequences, or scalars.</p>
-</div>
-<div class="feature-code">
-
-```styx
-color @rgb(255 128 0)
-result @ok
-error @err{code 404, message "Not found"}
-path @env"HOME"
+error: unknown field `hots`
+  ┌─ config.styx:2:3
+  │
+2 │   hots localhost
+  │   ^^^^ did you mean `host`?
 ```
 
 </div>

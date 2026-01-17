@@ -239,6 +239,11 @@ static bool scan_heredoc_content_or_end(Scanner *scanner, TSLexer *lexer) {
     // First, skip any leading whitespace (for indented heredocs)
     lexer->mark_end(lexer);
 
+    // Skip leading whitespace on this line
+    while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
+      advance(lexer);
+    }
+
     // Check if we're at the delimiter
     bool at_delimiter = true;
     for (uint8_t i = 0; i < scanner->heredoc_delimiter_len; i++) {

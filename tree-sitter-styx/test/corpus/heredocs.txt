@@ -89,3 +89,23 @@ QUERY
         (heredoc
           (heredoc_lang)
           (heredoc_content))))))
+
+================================================================================
+Heredoc with indented closing delimiter
+================================================================================
+
+key <<DOC
+  this is indented content
+  DOC
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (scalar
+        (bare_scalar)))
+    value: (expr
+      payload: (scalar
+        (heredoc
+          (heredoc_content))))))
