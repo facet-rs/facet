@@ -15,121 +15,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
-// Example table definitions for testing
-
-/// Multi-tenant organization or workspace.
-#[derive(Facet)]
-#[facet(derive(dibs::Table), dibs::table = "tenants")]
-struct Tenant {
-    #[facet(dibs::pk)]
-    id: i64,
-
-    #[facet(dibs::unique)]
-    slug: String,
-
-    #[facet(dibs::index)]
-    name: String,
-
-    #[facet(dibs::default = "now()")]
-    created_at: i64,
-}
-
-/// User accounts in the system.
-#[derive(Facet)]
-#[facet(derive(dibs::Table), dibs::table = "users")]
-#[facet(dibs::composite_index(columns = "tenant_id,email"))]
-struct User {
-    #[facet(dibs::pk)]
-    id: i64,
-
-    #[facet(dibs::unique)]
-    email: String,
-
-    #[facet(dibs::index)]
-    name: String,
-
-    bio: Option<String>,
-
-    #[facet(dibs::fk = "tenants.id", dibs::index)]
-    tenant_id: i64,
-
-    #[facet(dibs::default = "now()", dibs::index = "idx_users_created")]
-    created_at: i64,
-}
-
-#[derive(Facet)]
-#[facet(derive(dibs::Table), dibs::table = "posts")]
-#[facet(dibs::composite_index(
-    name = "idx_posts_tenant_published",
-    columns = "tenant_id,published"
-))]
-struct Post {
-    #[facet(dibs::pk)]
-    id: i64,
-
-    #[facet(dibs::index)]
-    title: String,
-
-    body: String,
-
-    published: bool,
-
-    #[facet(dibs::fk = "users.id", dibs::index)]
-    author_id: i64,
-
-    #[facet(dibs::fk = "tenants.id", dibs::index)]
-    tenant_id: i64,
-
-    #[facet(dibs::default = "now()")]
-    created_at: i64,
-
-    updated_at: Option<i64>,
-}
-
-#[derive(Facet)]
-#[facet(derive(dibs::Table), dibs::table = "comments")]
-struct Comment {
-    #[facet(dibs::pk)]
-    id: i64,
-
-    body: String,
-
-    #[facet(dibs::fk = "posts.id", dibs::index)]
-    post_id: i64,
-
-    #[facet(dibs::fk = "users.id", dibs::index)]
-    author_id: i64,
-
-    #[facet(dibs::default = "now()")]
-    created_at: i64,
-}
-
-#[derive(Facet)]
-#[facet(derive(dibs::Table), dibs::table = "tags")]
-struct Tag {
-    #[facet(dibs::pk)]
-    id: i64,
-
-    #[facet(dibs::unique)]
-    name: String,
-
-    #[facet(dibs::fk = "tenants.id", dibs::index)]
-    tenant_id: i64,
-}
-
-#[derive(Facet)]
-#[facet(derive(dibs::Table), dibs::table = "post_tags")]
-#[facet(dibs::composite_index(name = "idx_post_tags_unique", columns = "post_id,tag_id"))]
-struct PostTag {
-    #[facet(dibs::pk)]
-    id: i64,
-
-    #[facet(dibs::fk = "posts.id", dibs::index)]
-    post_id: i64,
-
-    #[facet(dibs::fk = "tags.id", dibs::index)]
-    tag_id: i64,
-}
+mod tables;
 
 /// Postgres toolkit for Rust, powered by facet reflection.
 #[derive(Facet, Debug)]
@@ -470,12 +356,25 @@ impl<'a> SchemaApp<'a> {
                 }
             }
             Focus::Details => {
-                // Jump to FK target if on a FK row
                 if let Some(table) = self.schema.tables.get(self.selected_table) {
+                    let source_offset = self.detail_source_offset();
+
+                    // Source row is index 0 (if present)
+                    if source_offset > 0 && self.detail_selection == 0 {
+                        // Open source in editor
+                        if let Some(file) = &table.source.file {
+                            let line = table.source.line.unwrap_or(1);
+                            let _ = self.open_in_editor(file, line);
+                        }
+                        return;
+                    }
+
                     let col_count = table.columns.len();
-                    // Detail items: columns first, then FKs
-                    if self.detail_selection >= col_count {
-                        let fk_idx = self.detail_selection - col_count;
+                    let adjusted_selection = self.detail_selection - source_offset;
+
+                    // Jump to FK target if on a FK row
+                    if adjusted_selection >= col_count {
+                        let fk_idx = adjusted_selection - col_count;
                         if let Some(fk) = table.foreign_keys.get(fk_idx) {
                             // Find the target table
                             if let Some(target_idx) = self
@@ -501,7 +400,18 @@ impl<'a> SchemaApp<'a> {
 
     fn detail_item_count(&self) -> usize {
         if let Some(table) = self.schema.tables.get(self.selected_table) {
-            table.columns.len() + table.foreign_keys.len() + table.indices.len()
+            // +1 for Source row (if present), then columns, FKs, indices
+            let source_row = if table.source.is_known() { 1 } else { 0 };
+            source_row + table.columns.len() + table.foreign_keys.len() + table.indices.len()
+        } else {
+            0
+        }
+    }
+
+    /// Returns the offset for column indices based on whether source is shown
+    fn detail_source_offset(&self) -> usize {
+        if let Some(table) = self.schema.tables.get(self.selected_table) {
+            if table.source.is_known() { 1 } else { 0 }
         } else {
             0
         }
@@ -593,6 +503,38 @@ impl<'a> SchemaApp<'a> {
         }
     }
 
+    fn open_in_editor(&self, file: &str, line: u32) -> io::Result<()> {
+        // Restore terminal before launching editor
+        disable_raw_mode()?;
+        stdout().execute(LeaveAlternateScreen)?;
+
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+
+        // Try editor-specific line number syntax
+        let status = match editor.as_str() {
+            "code" | "code-insiders" => std::process::Command::new(&editor)
+                .arg("--goto")
+                .arg(format!("{}:{}", file, line))
+                .status(),
+            "subl" | "sublime" => std::process::Command::new(&editor)
+                .arg(format!("{}:{}", file, line))
+                .status(),
+            _ => {
+                // vim/nvim/nano/emacs style: +line
+                std::process::Command::new(&editor)
+                    .arg(format!("+{}", line))
+                    .arg(file)
+                    .status()
+            }
+        };
+
+        // Re-enter TUI mode
+        stdout().execute(EnterAlternateScreen)?;
+        enable_raw_mode()?;
+
+        status.map(|_| ())
+    }
+
     fn ui(&mut self, frame: &mut Frame) {
         // Layout: header (1 line) + main area + help bar (1 line)
         let header_area = Rect {
@@ -669,21 +611,35 @@ impl<'a> SchemaApp<'a> {
                 Span::styled(&table.name, Style::default().fg(Color::Cyan).bold()),
             ])];
 
-            // Show source location if available
+            let source_offset = self.detail_source_offset();
+
+            // Show source location if available (selectable - index 0)
             if table.source.is_known() {
+                let is_selected = self.focus == Focus::Details && self.detail_selection == 0;
+                let prefix = if is_selected { "› " } else { "  " };
                 lines.push(Line::from(vec![
+                    Span::raw(prefix),
                     Span::styled("Source: ", Style::default().fg(Color::Gray)),
                     Span::styled(
                         table.source.to_string(),
-                        Style::default().fg(Color::DarkGray),
+                        if is_selected {
+                            Style::default().fg(Color::Cyan).bold()
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        },
                     ),
+                    if is_selected {
+                        Span::styled(" [Enter to open]", Style::default().fg(Color::DarkGray))
+                    } else {
+                        Span::raw("")
+                    },
                 ]));
             }
 
             // Show doc comment if available
             if let Some(doc) = &table.doc {
                 lines.push(Line::from(vec![
-                    Span::styled("/// ", Style::default().fg(Color::Green)),
+                    Span::styled("  /// ", Style::default().fg(Color::Green)),
                     Span::styled(doc, Style::default().fg(Color::Green).italic()),
                 ]));
             }
@@ -695,7 +651,8 @@ impl<'a> SchemaApp<'a> {
             )));
 
             for (i, col) in table.columns.iter().enumerate() {
-                let is_selected = self.focus == Focus::Details && self.detail_selection == i;
+                let is_selected =
+                    self.focus == Focus::Details && self.detail_selection == i + source_offset;
                 let prefix = if is_selected { "› " } else { "  " };
 
                 let mut spans = vec![
@@ -748,8 +705,8 @@ impl<'a> SchemaApp<'a> {
 
                 let col_count = table.columns.len();
                 for (i, fk) in table.foreign_keys.iter().enumerate() {
-                    let is_selected =
-                        self.focus == Focus::Details && self.detail_selection == col_count + i;
+                    let is_selected = self.focus == Focus::Details
+                        && self.detail_selection == source_offset + col_count + i;
                     let prefix = if is_selected { "› " } else { "  " };
 
                     let mut line = Line::from(vec![
@@ -791,7 +748,7 @@ impl<'a> SchemaApp<'a> {
                 let fk_count = table.foreign_keys.len();
                 for (i, idx) in table.indices.iter().enumerate() {
                     let is_selected = self.focus == Focus::Details
-                        && self.detail_selection == col_count + fk_count + i;
+                        && self.detail_selection == source_offset + col_count + fk_count + i;
                     let prefix = if is_selected { "› " } else { "  " };
 
                     let mut spans = vec![
