@@ -858,6 +858,12 @@ impl App {
                             rt.block_on(self.run_migrations());
                         }
                     }
+                    KeyCode::Char('d') if !self.show_migration_source => {
+                        // Delete migration (only if not committed)
+                        if self.tab == Tab::Migrations {
+                            self.delete_selected_migration();
+                        }
+                    }
                     KeyCode::Char('r') if !self.show_migration_source => {
                         // Refresh
                         rt.block_on(self.refresh());
@@ -1097,6 +1103,136 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
         }
 
         Ok(filepath.display().to_string())
+    }
+
+    /// Delete the currently selected migration (only if not committed to git).
+    fn delete_selected_migration(&mut self) {
+        let Some(migrations) = &self.migrations else {
+            return;
+        };
+
+        let Some(migration) = migrations.get(self.selected_migration) else {
+            return;
+        };
+
+        // Can't delete applied migrations
+        if migration.applied {
+            self.error = Some("Cannot delete applied migration".to_string());
+            return;
+        }
+
+        let Some(source_file) = &migration.source_file else {
+            self.error = Some("Migration has no source file".to_string());
+            return;
+        };
+
+        let path = std::path::Path::new(source_file);
+        if !path.exists() {
+            self.error = Some("Migration file not found".to_string());
+            return;
+        }
+
+        // Check if file is committed in git
+        if self.is_file_committed(path) {
+            self.show_error(format!(
+                "Cannot delete committed migration!\n\n\
+                 File: {}\n\n\
+                 This migration has been committed to git.\n\
+                 Deleting it could cause issues for other developers.\n\n\
+                 If you really need to remove it, use git manually.",
+                source_file
+            ));
+            return;
+        }
+
+        // Safe to delete - file is not committed
+        match self.delete_migration_file(path) {
+            Ok(()) => {
+                self.error = Some(format!("Deleted: {}", source_file));
+                // Trigger rebuild to pick up the change
+                self.needs_rebuild = true;
+            }
+            Err(e) => {
+                self.show_error(format!("Failed to delete migration: {}", e));
+            }
+        }
+    }
+
+    /// Check if a file is committed in git (not untracked, not just staged).
+    fn is_file_committed(&self, path: &std::path::Path) -> bool {
+        use std::process::Command;
+
+        // Use git status --porcelain to check file status
+        // If file shows up in output, it's either untracked (??) or modified
+        // If it doesn't show up, it's committed and unchanged
+        let output = Command::new("git")
+            .args(["status", "--porcelain", "--"])
+            .arg(path)
+            .output();
+
+        match output {
+            Ok(output) => {
+                let status = String::from_utf8_lossy(&output.stdout);
+                let trimmed = status.trim();
+
+                if trimmed.is_empty() {
+                    // File is tracked and unchanged = committed
+                    true
+                } else if trimmed.starts_with("??") {
+                    // Untracked = not committed
+                    false
+                } else if trimmed.starts_with("A ") {
+                    // Staged but not committed
+                    false
+                } else {
+                    // Modified, deleted, etc. - file exists in git history
+                    true
+                }
+            }
+            Err(_) => {
+                // If git fails, assume it's committed to be safe
+                true
+            }
+        }
+    }
+
+    /// Delete a migration file and remove it from mod.rs.
+    fn delete_migration_file(&self, path: &std::path::Path) -> Result<(), std::io::Error> {
+        use std::fs;
+
+        // Extract module name from filename (e.g., m2026_01_18_185242_name.rs -> m2026_01_18_185242_name)
+        let module_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid filename"))?;
+
+        // Delete the migration file
+        fs::remove_file(path)?;
+
+        // Remove from mod.rs
+        let mod_rs_path = path.parent().unwrap_or(std::path::Path::new(".")).join("mod.rs");
+        if mod_rs_path.exists() {
+            let content = fs::read_to_string(&mod_rs_path)?;
+            let module_line = format!("mod {};", module_name);
+
+            // Filter out the line that declares this module
+            let new_content: String = content
+                .lines()
+                .filter(|line| !line.trim().starts_with(&module_line))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            // Add trailing newline if there was content
+            let new_content = if new_content.is_empty() {
+                new_content
+            } else {
+                format!("{}\n", new_content)
+            };
+
+            fs::write(&mod_rs_path, new_content)?;
+        }
+
+        Ok(())
     }
 
     async fn run_migrations(&mut self) {
@@ -2126,6 +2262,8 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
                 spans.push(Span::raw("view  "));
                 spans.push(Span::styled("m ", Style::default().fg(Color::Yellow)));
                 spans.push(Span::raw("migrate  "));
+                spans.push(Span::styled("d ", Style::default().fg(Color::Yellow)));
+                spans.push(Span::raw("delete  "));
             }
 
             if self.tab == Tab::Diff {
