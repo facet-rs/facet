@@ -314,6 +314,85 @@ async fn test_insert_and_query_data() {
 }
 
 #[tokio::test]
+async fn test_introspect_schema_from_database() {
+    let (_container, client) = create_postgres_container().await;
+
+    // First create some tables
+    client
+        .batch_execute(
+            r#"
+            CREATE TABLE users (
+                id BIGINT PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                bio TEXT,
+                created_at BIGINT NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE posts (
+                id BIGINT PRIMARY KEY,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                author_id BIGINT NOT NULL REFERENCES users(id)
+            );
+
+            CREATE INDEX idx_posts_author_id ON posts(author_id);
+            CREATE INDEX idx_users_name ON users(name);
+            "#,
+        )
+        .await
+        .expect("Failed to create tables");
+
+    // Now introspect
+    let schema = Schema::from_database(&client)
+        .await
+        .expect("Failed to introspect schema");
+
+    // Should have 2 tables
+    assert_eq!(schema.tables.len(), 2);
+
+    // Find users table
+    let users = schema.tables.iter().find(|t| t.name == "users").unwrap();
+    assert_eq!(users.columns.len(), 5);
+
+    // Check id column
+    let id_col = users.columns.iter().find(|c| c.name == "id").unwrap();
+    assert!(id_col.primary_key);
+    assert_eq!(id_col.pg_type, dibs::PgType::BigInt);
+    assert!(!id_col.nullable);
+
+    // Check email column
+    let email_col = users.columns.iter().find(|c| c.name == "email").unwrap();
+    assert!(email_col.unique);
+    assert!(!email_col.nullable);
+
+    // Check bio column (nullable)
+    let bio_col = users.columns.iter().find(|c| c.name == "bio").unwrap();
+    assert!(bio_col.nullable);
+    assert!(!bio_col.unique);
+
+    // Check index
+    assert!(users.indices.iter().any(|i| i.name == "idx_users_name"));
+
+    // Find posts table
+    let posts = schema.tables.iter().find(|t| t.name == "posts").unwrap();
+
+    // Check foreign key
+    assert_eq!(posts.foreign_keys.len(), 1);
+    let fk = &posts.foreign_keys[0];
+    assert_eq!(fk.references_table, "users");
+    assert_eq!(fk.references_columns, vec!["id"]);
+
+    // Check index
+    assert!(
+        posts
+            .indices
+            .iter()
+            .any(|i| i.name == "idx_posts_author_id")
+    );
+}
+
+#[tokio::test]
 async fn test_meta_tables() {
     let (_container, client) = create_postgres_container().await;
 

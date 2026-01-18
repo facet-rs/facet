@@ -141,7 +141,7 @@ impl std::fmt::Display for PgType {
 }
 
 /// A database column definition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Column {
     /// Column name
     pub name: String,
@@ -158,7 +158,7 @@ pub struct Column {
 }
 
 /// A foreign key constraint.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ForeignKey {
     /// Column(s) in this table
     pub columns: Vec<String>,
@@ -169,7 +169,7 @@ pub struct ForeignKey {
 }
 
 /// A database index.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Index {
     /// Index name
     pub name: String,
@@ -180,7 +180,7 @@ pub struct Index {
 }
 
 /// Source location of a schema element.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SourceLocation {
     /// Source file path
     pub file: Option<String>,
@@ -217,7 +217,7 @@ impl std::fmt::Display for SourceLocation {
 }
 
 /// A database table definition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Table {
     /// Table name
     pub name: String,

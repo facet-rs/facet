@@ -114,11 +114,7 @@ fn run(cli: Cli) {
             println!("  (not yet implemented)");
         }
         Some(Commands::Diff { database_url }) => {
-            println!("dibs diff");
-            if let Some(url) = database_url {
-                println!("  database: {}", mask_password(&url));
-            }
-            println!("  (not yet implemented)");
+            run_diff(database_url);
         }
         Some(Commands::Generate { name }) => {
             generate_migration(&name);

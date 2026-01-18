@@ -27,12 +27,15 @@
 use std::future::Future;
 use std::pin::Pin;
 
+mod diff;
 mod error;
+mod introspect;
 pub mod meta;
 mod migrate;
 mod plugin;
 pub mod schema;
 
+pub use diff::{Change, SchemaDiff, TableDiff};
 pub use error::Error;
 pub use meta::{create_meta_tables_sql, record_migration_sql, sync_tables_sql};
 pub use migrate::{Migration, MigrationContext, MigrationRunner, MigrationStatus};
