@@ -1,6 +1,6 @@
 {
-  "name": "styx",
-  "displayName": "Styx",
+  "name": "styx-lang",
+  "displayName": "Styx Configuration Language",
   "description": "Styx configuration language support",
   "version": "1.0.0",
   "publisher": "bearcove",
