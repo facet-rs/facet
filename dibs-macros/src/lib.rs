@@ -49,7 +49,8 @@ pub fn migration(attr: TokenStream, item: TokenStream) -> TokenStream {
                 version: #version_lit,
                 name: stringify!(#fn_ident),
                 run: |ctx| Box::pin(#fn_ident(ctx)),
-                source_file: file!(),
+                // Combine CARGO_MANIFEST_DIR with file!() to get absolute path
+                source_file: concat!(env!("CARGO_MANIFEST_DIR"), "/", file!()),
             }
         }
     }

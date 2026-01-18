@@ -165,7 +165,7 @@ impl DibsService for DibsServiceImpl {
         Ok(status
             .into_iter()
             .map(|s| {
-                // Try to read the source file
+                // source_file is an absolute path (CARGO_MANIFEST_DIR + file!())
                 let source = std::fs::read_to_string(s.source_file).ok();
                 MigrationInfo {
                     version: s.version.to_string(),
