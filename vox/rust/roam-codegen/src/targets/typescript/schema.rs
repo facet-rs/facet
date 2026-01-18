@@ -157,12 +157,12 @@ fn generate_scalar_schema(scalar: ScalarType) -> String {
     }
 }
 
-/// Generate method schemas for runtime channel binding.
+/// Generate method schemas for runtime channel binding and encoding/decoding.
 pub fn generate_method_schemas(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name_lower = service.name.to_lower_camel_case();
 
-    out.push_str("// Method schemas for runtime channel binding\n");
+    out.push_str("// Method schemas for runtime encoding/decoding and channel binding\n");
     out.push_str(&format!(
         "export const {service_name_lower}_schemas: Record<string, MethodSchema> = {{\n"
     ));
@@ -170,10 +170,12 @@ pub fn generate_method_schemas(service: &ServiceDetail) -> String {
     for method in &service.methods {
         let method_name = method.method_name.to_lower_camel_case();
         let arg_schemas: Vec<_> = method.args.iter().map(|a| generate_schema(a.ty)).collect();
+        let return_schema = generate_schema(method.return_type);
 
         out.push_str(&format!(
-            "  {method_name}: {{ args: [{}] }},\n",
-            arg_schemas.join(", ")
+            "  {method_name}: {{ args: [{}], returns: {} }},\n",
+            arg_schemas.join(", "),
+            return_schema
         ));
     }
 

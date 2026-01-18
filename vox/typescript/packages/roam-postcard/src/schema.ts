@@ -209,11 +209,9 @@ export function resolveSchema(schema: Schema, registry: SchemaRegistry): Schema 
  */
 export function findVariantByDiscriminant(
   schema: EnumSchema,
-  discriminant: number
+  discriminant: number,
 ): EnumVariant | undefined {
-  return schema.variants.find(
-    (v, index) => (v.discriminant ?? index) === discriminant
-  );
+  return schema.variants.find((v, index) => (v.discriminant ?? index) === discriminant);
 }
 
 /**
@@ -223,10 +221,7 @@ export function findVariantByDiscriminant(
  * @param name - The variant name (from the `tag` field)
  * @returns The variant, or undefined if not found
  */
-export function findVariantByName(
-  schema: EnumSchema,
-  name: string
-): EnumVariant | undefined {
+export function findVariantByName(schema: EnumSchema, name: string): EnumVariant | undefined {
   return schema.variants.find((v) => v.name === name);
 }
 
@@ -237,10 +232,7 @@ export function findVariantByName(
  * @param variant - The variant
  * @returns The discriminant value (explicit or index-based)
  */
-export function getVariantDiscriminant(
-  schema: EnumSchema,
-  variant: EnumVariant
-): number {
+export function getVariantDiscriminant(schema: EnumSchema, variant: EnumVariant): number {
   if (variant.discriminant !== undefined) {
     return variant.discriminant;
   }
@@ -304,11 +296,7 @@ export function getVariantFieldNames(variant: EnumVariant): string[] | null {
  * @returns True if this is a newtype variant
  */
 export function isNewtypeVariant(variant: EnumVariant): boolean {
-  return (
-    variant.fields !== null &&
-    variant.fields !== undefined &&
-    "kind" in variant.fields
-  );
+  return variant.fields !== null && variant.fields !== undefined && "kind" in variant.fields;
 }
 
 /**
@@ -325,7 +313,8 @@ export function isRefSchema(schema: Schema): schema is RefSchema {
 // Method Schema (for service methods)
 // ============================================================================
 
-/** Schema for a method's arguments. */
+/** Schema for a method's arguments and return type. */
 export interface MethodSchema {
   args: Schema[];
+  returns: Schema;
 }

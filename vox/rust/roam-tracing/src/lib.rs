@@ -91,6 +91,7 @@
 
 mod buffer;
 mod cell;
+mod dispatch;
 mod host;
 mod record;
 mod service;
@@ -120,6 +121,9 @@ pub use cell::{CellTracingLayer, CellTracingService};
 
 // Re-export host-side types
 pub use host::{HostTracingService, HostTracingState, PeerId, TaggedRecord};
+
+// Re-export dispatch functionality
+pub use dispatch::dispatch_record;
 
 /// Initialize cell-side tracing.
 ///

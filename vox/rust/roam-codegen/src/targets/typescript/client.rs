@@ -5,7 +5,7 @@
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use roam_schema::{ServiceDetail, is_rx, is_tx};
 
-use super::types::{is_fully_supported, ts_type_client_arg, ts_type_client_return};
+use super::types::{ts_type_client_arg, ts_type_client_return};
 
 /// Generate caller interface (for making calls to the service).
 ///
@@ -46,9 +46,9 @@ pub fn generate_caller_interface(service: &ServiceDetail) -> String {
 }
 
 /// Generate client implementation (for making calls to the service).
+///
+/// Uses schema-driven encoding/decoding via `encodeWithSchema`/`decodeWithSchema`.
 pub fn generate_client_impl(service: &ServiceDetail) -> String {
-    use super::decode::generate_decode_stmt_client;
-    use super::encode::generate_encode_expr;
     use crate::render::hex_u64;
 
     let mut out = String::new();
@@ -88,10 +88,6 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
         // Return type
         let ret_ty = ts_type_client_return(method.return_type);
 
-        // Check if we can generate encoding/decoding for this method
-        let can_encode_args = method.args.iter().all(|a| is_fully_supported(a.ty));
-        let can_decode_return = is_fully_supported(method.return_type);
-
         if let Some(doc) = &method.doc {
             out.push_str(&format!("  /** {} */\n", doc));
         }
@@ -99,73 +95,65 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
             "  async {method_name}({args}): Promise<{ret_ty}> {{\n"
         ));
 
-        if can_encode_args && can_decode_return {
-            // If method has streaming args, bind channels first
-            if has_streaming_args {
-                // Build args array for binding
-                let arg_names: Vec<_> = method
-                    .args
-                    .iter()
-                    .map(|a| a.name.to_lower_camel_case())
-                    .collect();
-                out.push_str(
-                    "    // Bind any Tx/Rx channels in arguments and collect channel IDs\n",
-                );
-                out.push_str(&format!(
-                    "    const channels = bindChannels(\n      {service_name_lower}_schemas.{method_name}.args,\n      [{}],\n      this.conn.getChannelAllocator(),\n      this.conn.getChannelRegistry(),\n      {service_name_lower}_serializers,\n    );\n",
-                    arg_names.join(", ")
-                ));
-            }
+        // Get schema reference
+        out.push_str(&format!(
+            "    const schema = {service_name_lower}_schemas.{method_name};\n"
+        ));
 
-            // Generate payload encoding
-            if method.args.is_empty() {
-                out.push_str("    const payload = new Uint8Array(0);\n");
-            } else if method.args.len() == 1 {
-                let arg_name = method.args[0].name.to_lower_camel_case();
-                let encode_expr = generate_encode_expr(method.args[0].ty, &arg_name);
-                out.push_str(&format!("    const payload = {encode_expr};\n"));
-            } else {
-                // Multiple args - concat their encodings
-                let parts: Vec<_> = method
-                    .args
-                    .iter()
-                    .map(|a| {
-                        let arg_name = a.name.to_lower_camel_case();
-                        generate_encode_expr(a.ty, &arg_name)
-                    })
-                    .collect();
-                out.push_str(&format!(
-                    "    const payload = concat({});\n",
-                    parts.join(", ")
-                ));
-            }
-
-            // Call the server - pass channels if method has streaming args
-            if has_streaming_args {
-                out.push_str(&format!(
-                    "    const response = await this.conn.call({}n, payload, 30000, channels);\n",
-                    hex_u64(id)
-                ));
-            } else {
-                out.push_str(&format!(
-                    "    const response = await this.conn.call({}n, payload);\n",
-                    hex_u64(id)
-                ));
-            }
-
-            // Parse the result (CallResult<T, RoamError>) - throws RpcError on failure
-            out.push_str("    const buf = response;\n");
-            out.push_str("    let offset = decodeRpcResult(buf, 0);\n");
-            // For client returns, use client-aware decode
-            let decode_stmt = generate_decode_stmt_client(method.return_type, "result", "offset");
-            out.push_str(&format!("    {decode_stmt}\n"));
-            out.push_str("    return result;\n");
-        } else {
-            // Unsupported - throw error
-            out.push_str(
-                "    throw new Error(\"Not yet implemented: encoding/decoding for this method\");\n",
-            );
+        // If method has streaming args, bind channels first
+        if has_streaming_args {
+            let arg_names: Vec<_> = method
+                .args
+                .iter()
+                .map(|a| a.name.to_lower_camel_case())
+                .collect();
+            out.push_str("    // Bind any Tx/Rx channels in arguments and collect channel IDs\n");
+            out.push_str(&format!(
+                "    const channels = bindChannels(\n      schema.args,\n      [{}],\n      this.conn.getChannelAllocator(),\n      this.conn.getChannelRegistry(),\n      {service_name_lower}_serializers,\n    );\n",
+                arg_names.join(", ")
+            ));
         }
+
+        // Encode payload using schema
+        if method.args.is_empty() {
+            out.push_str("    const payload = new Uint8Array(0);\n");
+        } else if method.args.len() == 1 {
+            let arg_name = method.args[0].name.to_lower_camel_case();
+            out.push_str(&format!(
+                "    const payload = encodeWithSchema({arg_name}, schema.args[0]);\n"
+            ));
+        } else {
+            // Multiple args - encode as tuple
+            let arg_names: Vec<_> = method
+                .args
+                .iter()
+                .map(|a| a.name.to_lower_camel_case())
+                .collect();
+            out.push_str(&format!(
+                "    const payload = encodeWithSchema([{}], {{ kind: 'tuple', elements: schema.args }});\n",
+                arg_names.join(", ")
+            ));
+        }
+
+        // Call the server
+        if has_streaming_args {
+            out.push_str(&format!(
+                "    const response = await this.conn.call({}n, payload, 30000, channels);\n",
+                hex_u64(id)
+            ));
+        } else {
+            out.push_str(&format!(
+                "    const response = await this.conn.call({}n, payload);\n",
+                hex_u64(id)
+            ));
+        }
+
+        // Decode the response using schema
+        out.push_str("    const offset = decodeRpcResult(response, 0);\n");
+        out.push_str(
+            "    const result = decodeWithSchema(response, offset, schema.returns).value;\n",
+        );
+        out.push_str(&format!("    return result as {ret_ty};\n"));
 
         out.push_str("  }\n\n");
     }
@@ -174,10 +162,36 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
     out
 }
 
-/// Generate complete client code (interface + implementation).
+/// Generate a connect() helper function for WebSocket connections.
+pub fn generate_connect_function(service: &ServiceDetail) -> String {
+    use heck::ToUpperCamelCase;
+
+    let service_name = service.name.to_upper_camel_case();
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "/**\n * Connect to a {service_name} server over WebSocket.\n"
+    ));
+    out.push_str(" * @param url - WebSocket URL (e.g., \"ws://localhost:9000\")\n");
+    out.push_str(&format!(
+        " * @returns A connected {service_name}Client instance\n"
+    ));
+    out.push_str(" */\n");
+    out.push_str(&format!(
+        "export async function connect{service_name}(url: string): Promise<{service_name}Client<WsTransport>> {{\n"
+    ));
+    out.push_str("  const transport = await connectWs(url);\n");
+    out.push_str("  const connection = await helloExchangeInitiator(transport, defaultHello());\n");
+    out.push_str(&format!("  return new {service_name}Client(connection);\n"));
+    out.push_str("}\n\n");
+    out
+}
+
+/// Generate complete client code (interface + implementation + connect helper).
 pub fn generate_client(service: &ServiceDetail) -> String {
     let mut out = String::new();
     out.push_str(&generate_caller_interface(service));
     out.push_str(&generate_client_impl(service));
+    out.push_str(&generate_connect_function(service));
     out
 }

@@ -87,8 +87,8 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     let named_types = collect_named_types(service);
     output.push_str(&generate_named_types(&named_types));
 
-    // Type aliases for request/response
-    output.push_str(&generate_request_response_types(service));
+    // Type aliases for request/response (only if they don't conflict with named types)
+    output.push_str(&generate_request_response_types(service, &named_types));
 
     // Client
     output.push_str(&generate_client(service));
@@ -127,6 +127,7 @@ fn generate_imports(service: &ServiceDetail, w: &mut CodeWriter<&mut String>) {
             "concat, encodeVarint, decodeVarintNumber, decodeRpcResult,"
         )
         .unwrap();
+        cw_writeln!(w, "encodeWithSchema, decodeWithSchema,").unwrap();
         cw_writeln!(w, "encodeBool, decodeBool,").unwrap();
         cw_writeln!(w, "encodeU8, decodeU8, encodeI8, decodeI8,").unwrap();
         cw_writeln!(w, "encodeU16, decodeU16, encodeI16, decodeI16,").unwrap();
@@ -140,7 +141,15 @@ fn generate_imports(service: &ServiceDetail, w: &mut CodeWriter<&mut String>) {
         cw_writeln!(w, "encodeTuple2, decodeTuple2, encodeTuple3, decodeTuple3,").unwrap();
         cw_writeln!(w, "encodeEnumVariant, decodeEnumVariant,").unwrap();
     }
+    cw_writeln!(w, "  helloExchangeInitiator, defaultHello,").unwrap();
     cw_writeln!(w, "}} from \"@bearcove/roam-core\";").unwrap();
+
+    // WebSocket transport for connect helper
+    cw_writeln!(
+        w,
+        "import {{ connectWs, type WsTransport }} from \"@bearcove/roam-ws\";"
+    )
+    .unwrap();
 
     if has_streaming {
         cw_writeln!(
@@ -156,37 +165,50 @@ fn generate_imports(service: &ServiceDetail, w: &mut CodeWriter<&mut String>) {
     }
 }
 
-/// Generate request/response type aliases
-fn generate_request_response_types(service: &ServiceDetail) -> String {
+/// Generate request/response type aliases, skipping any that conflict with named types
+fn generate_request_response_types(
+    service: &ServiceDetail,
+    named_types: &[(String, &'static facet_core::Shape)],
+) -> String {
     use heck::ToUpperCamelCase;
+    use std::collections::HashSet;
     use types::ts_type;
 
+    // Collect just the type names for conflict checking
+    let type_names: HashSet<&str> = named_types.iter().map(|(name, _)| name.as_str()).collect();
+
     let mut out = String::new();
-    out.push_str("// Type definitions\n");
+    out.push_str("// Request/Response type aliases\n");
 
     for method in &service.methods {
         let method_name = method.method_name.to_upper_camel_case();
+        let request_name = format!("{method_name}Request");
+        let response_name = format!("{method_name}Response");
 
-        // Request type (tuple of args)
-        if method.args.is_empty() {
-            out.push_str(&format!("export type {method_name}Request = [];\n"));
-        } else if method.args.len() == 1 {
-            let ty = ts_type(method.args[0].ty);
-            out.push_str(&format!("export type {method_name}Request = [{ty}];\n"));
-        } else {
-            out.push_str(&format!("export type {method_name}Request = [\n"));
-            for arg in &method.args {
-                let ty = ts_type(arg.ty);
-                out.push_str(&format!("  {ty}, // {}\n", arg.name));
+        // Only generate request type alias if it doesn't conflict with a named type
+        if !type_names.contains(request_name.as_str()) {
+            if method.args.is_empty() {
+                out.push_str(&format!("export type {request_name} = [];\n"));
+            } else if method.args.len() == 1 {
+                let ty = ts_type(method.args[0].ty);
+                out.push_str(&format!("export type {request_name} = [{ty}];\n"));
+            } else {
+                out.push_str(&format!("export type {request_name} = [\n"));
+                for arg in &method.args {
+                    let ty = ts_type(arg.ty);
+                    out.push_str(&format!("  {ty}, // {}\n", arg.name));
+                }
+                out.push_str("];\n");
             }
-            out.push_str("];\n");
         }
 
-        // Response type
-        let ret_ty = ts_type(method.return_type);
-        out.push_str(&format!(
-            "export type {method_name}Response = {ret_ty};\n\n"
-        ));
+        // Only generate response type alias if it doesn't conflict with a named type
+        if !type_names.contains(response_name.as_str()) {
+            let ret_ty = ts_type(method.return_type);
+            out.push_str(&format!("export type {response_name} = {ret_ty};\n"));
+        }
+
+        out.push('\n');
     }
 
     out
