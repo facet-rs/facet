@@ -21,13 +21,27 @@ pub struct SchemaField {
     pub schema: Schema,
 }
 
-/// Reference to a schema.
-#[derive(Debug)]
+/// Reference to a schema (before resolution).
+#[derive(Debug, Clone)]
 pub enum SchemaRef {
     /// External schema file path: @schema path/to/schema.styx
     External(String),
     /// Embedded schema from binary: @schema {id ..., cli <binary>}
     Embedded { cli: String },
+}
+
+/// A fully resolved schema with source text and location.
+///
+/// This is the single source of truth for schema information in the LSP.
+/// All features (hover, completion, diagnostics, etc.) should use this.
+#[derive(Debug, Clone)]
+pub struct ResolvedSchema {
+    /// The raw source text (for doc comments, field lookup, parsing)
+    pub source: String,
+    /// URI for the schema location:
+    /// - `file://` for external schema files
+    /// - `styx-embedded://<cli>/schema.styx` for embedded schemas
+    pub uri: Url,
 }
 
 /// Find the schema declaration in a document.
@@ -165,6 +179,46 @@ pub fn load_schema_source(schema_ref: &SchemaRef, document_uri: &Url) -> Result<
         }
         SchemaRef::Embedded { cli } => extract_embedded_schema_source(cli),
     }
+}
+
+/// The URI scheme for embedded schemas exposed as virtual documents.
+pub const EMBEDDED_SCHEMA_SCHEME: &str = "styx-embedded";
+
+/// Get embedded schema source by CLI name.
+///
+/// Used to serve virtual documents for `styx-embedded://` URIs.
+pub fn get_embedded_schema_source(cli_name: &str) -> Result<String, String> {
+    extract_embedded_schema_source(cli_name)
+}
+
+/// Resolve a schema reference to a fully loaded ResolvedSchema.
+///
+/// This is the single entry point for getting schema information.
+/// All LSP features should use this instead of handling SchemaRef variants directly.
+pub fn resolve_schema(value: &Value, document_uri: &Url) -> Result<ResolvedSchema, String> {
+    let schema_ref =
+        find_schema_declaration(value).ok_or_else(|| "no schema declaration found".to_string())?;
+
+    let source = load_schema_source(&schema_ref, document_uri)?;
+
+    // Validate that the source is a valid schema (parse it but don't keep the result)
+    let _: SchemaFile = facet_styx::from_str(&source)
+        .map_err(|e| format!("failed to parse schema: {}", e))?;
+
+    let uri = match &schema_ref {
+        SchemaRef::External(path) => {
+            let resolved = resolve_schema_path(path, document_uri)
+                .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
+            Url::from_file_path(&resolved)
+                .map_err(|_| format!("could not create URI for '{}'", resolved.display()))?
+        }
+        SchemaRef::Embedded { cli } => {
+            Url::parse(&format!("{}://{}/schema.styx", EMBEDDED_SCHEMA_SCHEME, cli))
+                .map_err(|e| format!("could not create embedded schema URI: {}", e))?
+        }
+    };
+
+    Ok(ResolvedSchema { source, uri })
 }
 
 /// Load and validate a document against its declared schema.

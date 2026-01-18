@@ -11,9 +11,9 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use crate::schema_validation::{
-    SchemaRef, find_object_at_offset, get_document_fields, get_error_span, get_schema_fields,
-    get_schema_fields_at_path, load_document_schema, load_schema_source, resolve_schema_path,
-    validate_against_schema,
+    EMBEDDED_SCHEMA_SCHEME, find_object_at_offset, get_document_fields, get_embedded_schema_source,
+    get_error_span, get_schema_fields, get_schema_fields_at_path, load_document_schema,
+    resolve_schema, validate_against_schema,
 };
 use crate::semantic_tokens::{compute_semantic_tokens, semantic_token_legend};
 
@@ -38,6 +38,9 @@ pub struct StyxLanguageServer {
     client: Client,
     /// Open documents
     documents: Arc<RwLock<HashMap<Url, DocumentState>>>,
+    /// Cache of embedded schema sources (for virtual documents)
+    /// Key is the CLI name, value is the schema source
+    embedded_schemas: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl StyxLanguageServer {
@@ -45,7 +48,38 @@ impl StyxLanguageServer {
         Self {
             client,
             documents: Arc::new(RwLock::new(HashMap::new())),
+            embedded_schemas: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Get or load an embedded schema source by CLI name
+    async fn get_or_load_embedded_schema(&self, cli_name: &str) -> Option<String> {
+        // Check cache first
+        {
+            let cache = self.embedded_schemas.read().await;
+            if let Some(source) = cache.get(cli_name) {
+                return Some(source.clone());
+            }
+        }
+
+        // Load and cache
+        if let Ok(source) = get_embedded_schema_source(cli_name) {
+            let mut cache = self.embedded_schemas.write().await;
+            cache.insert(cli_name.to_string(), source.clone());
+            Some(source)
+        } else {
+            None
+        }
+    }
+
+    /// Get content for a virtual document (styx-embedded:// URI)
+    pub async fn get_virtual_document_content(&self, uri: &Url) -> Option<String> {
+        if uri.scheme() != EMBEDDED_SCHEMA_SCHEME {
+            return None;
+        }
+        // URI format: styx-embedded://cli-name/schema.styx
+        let cli_name = uri.host_str()?;
+        self.get_or_load_embedded_schema(cli_name).await
     }
 
     /// Publish diagnostics for a document
@@ -123,23 +157,15 @@ impl StyxLanguageServer {
         // Phase 3: Schema validation
         if let Some(tree) = tree {
             // Only validate if there's a schema declaration
-            if let Some((schema_ref, _)) = find_schema_declaration_with_range(tree, content) {
-                // Try to resolve schema for related_information
-                let schema_location = if let SchemaRef::External(ref path) = schema_ref {
-                    resolve_schema_path(path, uri).and_then(|resolved| {
-                        Url::from_file_path(&resolved).ok().map(|schema_uri| {
-                            DiagnosticRelatedInformation {
-                                location: Location {
-                                    uri: schema_uri,
-                                    range: Range::default(),
-                                },
-                                message: format!("schema defined in {}", path),
-                            }
-                        })
-                    })
-                } else {
-                    None
-                };
+            if let Ok(schema) = resolve_schema(tree, uri) {
+                // Create related_information linking to schema
+                let schema_location = Some(DiagnosticRelatedInformation {
+                    location: Location {
+                        uri: schema.uri.clone(),
+                        range: Range::default(),
+                    },
+                    message: format!("schema: {}", schema.uri),
+                });
 
                 match validate_against_schema(tree, uri) {
                     Ok(result) => {
@@ -410,15 +436,13 @@ impl LanguageServer for StyxLanguageServer {
         let mut links = Vec::new();
 
         // Find schema declaration and create a link for it
-        if let Some((schema_ref, range)) = find_schema_declaration_with_range(tree, &doc.content)
-            && let SchemaRef::External(path) = schema_ref
-            && let Some(resolved) = resolve_schema_path(&path, &uri)
-            && let Ok(target_uri) = Url::from_file_path(&resolved)
+        if let Some(range) = find_schema_declaration_range(tree, &doc.content)
+            && let Ok(schema) = resolve_schema(tree, &uri)
         {
             links.push(DocumentLink {
                 range,
-                target: Some(target_uri),
-                tooltip: Some(format!("Open schema: {}", path)),
+                target: Some(schema.uri.clone()),
+                tooltip: Some(format!("Open schema: {}", schema.uri)),
                 data: None,
             });
         }
@@ -444,38 +468,30 @@ impl LanguageServer for StyxLanguageServer {
 
         let offset = position_to_offset(&doc.content, position);
 
+        // Try to resolve the schema for this document
+        let resolved = resolve_schema(tree, &uri).ok();
+
         // Case 1: On the schema declaration line - jump to schema file
-        if let Some((schema_ref, range)) = find_schema_declaration_with_range(tree, &doc.content) {
-            // Check if cursor is within the schema declaration range
-            if position >= range.start
-                && position <= range.end
-                && let SchemaRef::External(path) = schema_ref
-                && let Some(resolved) = resolve_schema_path(&path, &uri)
-                && let Ok(target_uri) = Url::from_file_path(&resolved)
-            {
-                return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                    uri: target_uri,
-                    range: Range::default(),
-                })));
-            }
+        if let Some(range) = find_schema_declaration_range(tree, &doc.content)
+            && position >= range.start
+            && position <= range.end
+            && let Some(ref schema) = resolved
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: schema.uri.clone(),
+                range: Range::default(),
+            })));
         }
 
         // Case 2: On a field name in a doc - jump to schema definition
-        if let Some(field_name) = find_field_key_at_offset(tree, offset) {
-            // Load the schema file
-            let schema_decl = find_schema_declaration_with_range(tree, &doc.content);
-
-            if let Some((SchemaRef::External(schema_path), _)) = schema_decl
-                && let Some(resolved) = resolve_schema_path(&schema_path, &uri)
-                && let Ok(schema_source) = std::fs::read_to_string(&resolved)
-                && let Some(field_range) = find_field_in_schema_source(&schema_source, &field_name)
-                && let Ok(target_uri) = Url::from_file_path(&resolved)
-            {
-                return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                    uri: target_uri,
-                    range: field_range,
-                })));
-            }
+        if let Some(field_name) = find_field_key_at_offset(tree, offset)
+            && let Some(ref schema) = resolved
+            && let Some(field_range) = find_field_in_schema_source(&schema.source, &field_name)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: schema.uri.clone(),
+                range: field_range,
+            })));
         }
 
         // Case 3: In a schema file - jump to first open doc that uses this field
@@ -490,11 +506,8 @@ impl LanguageServer for StyxLanguageServer {
                 }
                 if let Some(ref doc_tree) = doc_state.tree {
                     // Check if this doc references our schema
-                    if let Some((SchemaRef::External(schema_path), _)) =
-                        find_schema_declaration_with_range(doc_tree, &doc_state.content)
-                        && let Some(resolved) = resolve_schema_path(&schema_path, doc_uri)
-                        && let Ok(schema_uri) = Url::from_file_path(&resolved)
-                        && schema_uri == uri
+                    if let Ok(doc_schema) = resolve_schema(doc_tree, doc_uri)
+                        && doc_schema.uri == uri
                     {
                         // This doc uses our schema - find the field
                         if let Some(field_range) =
@@ -528,13 +541,19 @@ impl LanguageServer for StyxLanguageServer {
 
         let offset = position_to_offset(&doc.content, position);
 
+        // Try to resolve the schema for this document
+        let resolved = resolve_schema(tree, &uri).ok();
+
         // Case 1: Hover on schema declaration
-        if let Some((schema_ref, range)) = find_schema_declaration_with_range(tree, &doc.content)
+        if let Some(range) = find_schema_declaration_range(tree, &doc.content)
             && position >= range.start
             && position <= range.end
-            && let SchemaRef::External(path) = schema_ref
+            && let Some(ref schema) = resolved
         {
-            let content = format!("**Schema**: `{}`\n\nClick to open schema file.", path);
+            let content = format!(
+                "**Schema**: `{}`\n\nClick to open schema.",
+                schema.uri.as_str()
+            );
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -546,35 +565,28 @@ impl LanguageServer for StyxLanguageServer {
 
         // Case 2: Hover on field name
         if let Some(field_path) = find_field_path_at_offset(tree, offset)
-            && let Some((schema_ref, _)) = find_schema_declaration_with_range(tree, &doc.content)
-            && let Ok(schema_source) = load_schema_source(&schema_ref, &uri)
+            && let Some(ref schema) = resolved
         {
-            // Convert path to &[&str] for the lookup
             let path_refs: Vec<&str> = field_path.iter().map(|s| s.as_str()).collect();
 
-            if let Some(field_info) = get_field_info_from_schema(&schema_source, &path_refs) {
-                // For external schemas, create a link to the schema file
-                let (schema_display, schema_link) = match &schema_ref {
-                    SchemaRef::External(path) => {
-                        let field_name = field_path.last().map(|s| s.as_str()).unwrap_or("");
-                        let field_range = find_field_in_schema_source(&schema_source, field_name);
-                        let link = resolve_schema_path(path, &uri).and_then(|resolved| {
-                            let mut schema_uri = Url::from_file_path(&resolved).ok()?;
-                            if let Some(range) = field_range {
-                                let line = range.start.line + 1;
-                                let col = range.start.character + 1;
-                                schema_uri.set_fragment(Some(&format!("L{}:{}", line, col)));
-                            }
-                            Some(schema_uri)
-                        });
-                        (path.clone(), link)
+            if let Some(field_info) = get_field_info_from_schema(&schema.source, &path_refs) {
+                // Create a link to the field in the schema
+                let field_name = field_path.last().map(|s| s.as_str()).unwrap_or("");
+                let field_range = find_field_in_schema_source(&schema.source, field_name);
+                let schema_link = {
+                    let mut link_uri = schema.uri.clone();
+                    if let Some(range) = field_range {
+                        let line = range.start.line + 1;
+                        let col = range.start.character + 1;
+                        link_uri.set_fragment(Some(&format!("L{}:{}", line, col)));
                     }
-                    SchemaRef::Embedded { cli } => (format!("embedded:{}", cli), None),
+                    Some(link_uri)
                 };
+
                 let content = format_field_hover(
                     &field_path,
                     &field_info,
-                    &schema_display,
+                    schema.uri.as_str(),
                     schema_link.as_ref(),
                 );
                 return Ok(Some(Hover {
@@ -603,16 +615,12 @@ impl LanguageServer for StyxLanguageServer {
             return Ok(None);
         };
 
-        // Get schema fields
-        let Some((schema_ref, _)) = find_schema_declaration_with_range(tree, &doc.content) else {
+        // Get resolved schema
+        let Ok(schema) = resolve_schema(tree, &uri) else {
             return Ok(None);
         };
 
-        let Ok(schema_source) = load_schema_source(&schema_ref, &uri) else {
-            return Ok(None);
-        };
-
-        let schema_fields = get_schema_fields_from_source(&schema_source);
+        let schema_fields = get_schema_fields_from_source(&schema.source);
         let existing_fields = get_existing_fields(tree);
 
         // Get current word being typed for fuzzy matching
@@ -1032,11 +1040,8 @@ impl LanguageServer for StyxLanguageServer {
                 }
                 if let Some(ref doc_tree) = doc_state.tree {
                     // Check if this doc references our schema
-                    if let Some((SchemaRef::External(schema_path), _)) =
-                        find_schema_declaration_with_range(doc_tree, &doc_state.content)
-                        && let Some(resolved) = resolve_schema_path(&schema_path, doc_uri)
-                        && let Ok(schema_uri) = Url::from_file_path(&resolved)
-                        && schema_uri == uri
+                    if let Ok(doc_schema) = resolve_schema(doc_tree, doc_uri)
+                        && doc_schema.uri == uri
                     {
                         // This doc uses our schema - find the field usage
                         if let Some(range) =
@@ -1052,31 +1057,20 @@ impl LanguageServer for StyxLanguageServer {
             }
         } else {
             // We're in a doc - find the schema definition and other docs using this field
-            let schema_decl = find_schema_declaration_with_range(tree, &doc.content);
-
-            if let Some((SchemaRef::External(schema_path), _)) = schema_decl
-                && let Some(resolved) = resolve_schema_path(&schema_path, &uri)
-            {
+            if let Ok(schema) = resolve_schema(tree, &uri) {
                 // Add the schema definition location
-                if let Ok(schema_source) = std::fs::read_to_string(&resolved)
-                    && let Some(field_range) =
-                        find_field_in_schema_source(&schema_source, &field_name)
-                    && let Ok(schema_uri) = Url::from_file_path(&resolved)
+                if let Some(field_range) = find_field_in_schema_source(&schema.source, &field_name)
                 {
                     locations.push(Location {
-                        uri: schema_uri.clone(),
+                        uri: schema.uri.clone(),
                         range: field_range,
                     });
 
                     // Find other docs using the same schema
                     for (doc_uri, doc_state) in docs.iter() {
                         if let Some(ref doc_tree) = doc_state.tree
-                            && let Some((SchemaRef::External(other_schema), _)) =
-                                find_schema_declaration_with_range(doc_tree, &doc_state.content)
-                            && let Some(other_resolved) =
-                                resolve_schema_path(&other_schema, doc_uri)
-                            && let Ok(other_uri) = Url::from_file_path(&other_resolved)
-                            && other_uri == schema_uri
+                            && let Ok(doc_schema) = resolve_schema(doc_tree, doc_uri)
+                            && doc_schema.uri == schema.uri
                         {
                             // This doc uses the same schema
                             if let Some(range) =
@@ -1115,13 +1109,11 @@ impl LanguageServer for StyxLanguageServer {
         let mut hints = Vec::new();
 
         // Check for schema declaration
-        if let Some((SchemaRef::External(schema_path), range)) =
-            find_schema_declaration_with_range(tree, &doc.content)
-            && let Some(resolved) = resolve_schema_path(&schema_path, &uri)
-            && let Ok(schema_source) = std::fs::read_to_string(&resolved)
+        if let Some(range) = find_schema_declaration_range(tree, &doc.content)
+            && let Ok(schema) = resolve_schema(tree, &uri)
         {
             // Extract meta info from schema
-            if let Some(meta) = get_schema_meta(&schema_source) {
+            if let Some(meta) = get_schema_meta(&schema.source) {
                 // Show schema name/description as inlay hint after the schema path
                 // First line of description is the short desc
                 let short_desc = meta
@@ -1342,31 +1334,17 @@ fn collect_document_symbols(value: &Value, content: &str) -> Vec<DocumentSymbol>
     symbols
 }
 
-/// Find the schema declaration and its range in the source
-fn find_schema_declaration_with_range(tree: &Value, content: &str) -> Option<(SchemaRef, Range)> {
+/// Find the schema declaration range in the source
+fn find_schema_declaration_range(tree: &Value, content: &str) -> Option<Range> {
     let obj = tree.as_object()?;
 
     for entry in &obj.entries {
         if entry.key.is_schema_tag() {
             let span = entry.value.span?;
-            let range = Range {
+            return Some(Range {
                 start: offset_to_position(content, span.start as usize),
                 end: offset_to_position(content, span.end as usize),
-            };
-
-            // @schema path/to/schema.styx
-            if let Some(path) = entry.value.as_str() {
-                return Some((SchemaRef::External(path.to_string()), range));
-            }
-
-            // @schema {id crate:..., cli ...}
-            if let Some(schema_obj) = entry.value.as_object() {
-                if let Some(cli_value) = schema_obj.get("cli") {
-                    if let Some(cli_name) = cli_value.as_str() {
-                        return Some((SchemaRef::Embedded { cli: cli_name.to_string() }, range));
-                    }
-                }
-            }
+            });
         }
     }
 
