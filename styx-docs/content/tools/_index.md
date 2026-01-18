@@ -25,4 +25,4 @@ Tools for working with Styx.
 
 ## Distribution
 
-- [Schema Distribution](schema-distribution) — Sharing and discovering schemas
+- [Schema Distribution](schema-distribution) — Embed, publish, and discover schemas

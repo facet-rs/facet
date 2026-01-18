@@ -87,6 +87,7 @@ FILE MODE OPTIONS:
 SUBCOMMANDS:
     @tree [--format sexp|debug] <file>  Show parse tree (styx_tree)
     @cst <file>                     Show CST structure (styx_cst)
+    @extract <binary>               Extract embedded schemas from a binary
     @diff <schema> --crate <name> [--baseline <ver>]
                                     Compare schema against published version
     @lsp                            Start language server (stdio)
@@ -472,6 +473,7 @@ fn run_subcommand(cmd: &str, args: &[String]) -> Result<(), CliError> {
     match cmd {
         "tree" => run_tree(args),
         "cst" => run_cst(args),
+        "extract" => run_extract(args),
         "diff" => run_diff(args),
         "lsp" => run_lsp(args),
         "skill" => run_skill(args),
@@ -569,6 +571,34 @@ fn run_cst(args: &[String]) -> Result<(), CliError> {
         for err in parsed.errors() {
             println!("  {:?}", err);
         }
+    }
+
+    Ok(())
+}
+
+fn run_extract(args: &[String]) -> Result<(), CliError> {
+    let file = args
+        .first()
+        .ok_or_else(|| CliError::Usage("@extract requires a binary file".into()))?;
+
+    let schemas = styx_embed::extract_schemas_from_file(Path::new(file)).map_err(|e| {
+        CliError::Io(io::Error::new(
+            io::ErrorKind::Other,
+            format!("{file}: {e}"),
+        ))
+    })?;
+
+    if schemas.is_empty() {
+        return Err(CliError::Usage(format!(
+            "no embedded schemas found in {file}"
+        )));
+    }
+
+    for (i, schema) in schemas.iter().enumerate() {
+        if schemas.len() > 1 {
+            eprintln!("--- schema {} ---", i + 1);
+        }
+        println!("{schema}");
     }
 
     Ok(())

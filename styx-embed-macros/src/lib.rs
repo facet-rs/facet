@@ -135,7 +135,7 @@ fn generate_static(blob: Vec<u8>) -> TokenStream {
 /// ```
 #[proc_macro]
 pub fn embed_inline(input: TokenStream) -> TokenStream {
-    let mut tokens = TokenIter::new(input);
+    let mut tokens = TokenIter::new(proc_macro2::TokenStream::from(input));
 
     // Parse comma-separated literals
     let literals: DelimitedVec<unsynn::Literal, Comma> = match Parse::parse(&mut tokens) {
@@ -188,7 +188,7 @@ pub fn embed_inline(input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro]
 pub fn embed_file(input: TokenStream) -> TokenStream {
-    let mut tokens = TokenIter::new(input);
+    let mut tokens = TokenIter::new(proc_macro2::TokenStream::from(input));
 
     // Parse a single literal (the path)
     let literal: unsynn::Literal = match Parse::parse(&mut tokens) {
@@ -234,7 +234,7 @@ pub fn embed_file(input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro]
 pub fn embed_files(input: TokenStream) -> TokenStream {
-    let mut tokens = TokenIter::new(input);
+    let mut tokens = TokenIter::new(proc_macro2::TokenStream::from(input));
 
     // Parse comma-separated literals
     let literals: DelimitedVec<unsynn::Literal, Comma> = match Parse::parse(&mut tokens) {

@@ -12,4 +12,5 @@ proc-macro = true
 [dependencies]
 lz4_flex = "0.11"
 blake3 = "1"
-unsynn = { version = "0.3", default-features = false }
+unsynn = "0.3"
+proc-macro2 = "1"
