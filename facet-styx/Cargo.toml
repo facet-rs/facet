@@ -19,6 +19,7 @@ facet.workspace = true
 tracing.workspace = true
 facet-testhelpers.workspace = true
 insta.workspace = true
+styx-schema = { path = "../styx-schema" }
 
 [features]
 tracing = ["dep:tracing", "facet-format/tracing", "facet-reflect/tracing"]

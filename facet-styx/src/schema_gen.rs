@@ -4,6 +4,7 @@
 //! that implement `Facet`.
 
 use facet_core::{Def, NumericType, PrimitiveType, Shape, TextualType, Type, UserType};
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::marker::PhantomData;
 use std::path::Path;
@@ -147,6 +148,8 @@ struct SchemaGenerator {
     cli: Option<String>,
     /// Named type definitions to emit after the main schema
     type_defs: String,
+    /// Types currently being generated (for cycle detection)
+    generating: HashSet<&'static str>,
 }
 
 impl SchemaGenerator {
@@ -155,6 +158,7 @@ impl SchemaGenerator {
             id,
             cli,
             type_defs: String::new(),
+            generating: HashSet::new(),
         }
     }
 
@@ -163,6 +167,7 @@ impl SchemaGenerator {
             id: shape.type_identifier.to_string(),
             cli: None,
             type_defs: String::new(),
+            generating: HashSet::new(),
         }
     }
 
@@ -327,12 +332,28 @@ impl SchemaGenerator {
         shape: &'static Shape,
         depth: usize,
     ) -> String {
+        let type_id = shape.type_identifier;
+
+        // Cycle detection: if we're already generating this type, emit a reference
+        // to break the cycle and prevent stack overflow
+        if self.generating.contains(type_id) {
+            return format!("@{type_id}");
+        }
+
         match user {
             UserType::Struct(struct_type) => {
-                self.struct_to_schema(struct_type, shape, depth)
+                // Track that we're generating this type
+                self.generating.insert(type_id);
+                let result = self.struct_to_schema(struct_type, shape, depth);
+                self.generating.remove(type_id);
+                result
             }
             UserType::Enum(enum_type) => {
-                self.enum_to_schema(enum_type, shape, depth)
+                // Track that we're generating this type
+                self.generating.insert(type_id);
+                let result = self.enum_to_schema(enum_type, shape, depth);
+                self.generating.remove(type_id);
+                result
             }
             UserType::Union(_) => {
                 // Unions are tricky - treat as any for now
@@ -587,5 +608,71 @@ mod tests {
         assert!(schema.contains("Active @unit"));
         assert!(schema.contains("Inactive @unit"));
         assert!(schema.contains("Pending @string"));
+    }
+
+    #[test]
+    fn test_recursive_type_no_stack_overflow() {
+        // Test that recursive types don't cause a stack overflow.
+        // The generator should detect cycles and emit type references.
+        use std::collections::HashMap;
+
+        #[derive(Facet)]
+        #[repr(u8)]
+        #[allow(dead_code)]
+        enum RecursiveSchema {
+            String,
+            Int,
+            Object(HashMap<String, Box<RecursiveSchema>>),
+            Seq(Box<RecursiveSchema>),
+        }
+
+        // This should complete without stack overflow
+        let schema = schema_from_type::<RecursiveSchema>();
+        tracing::debug!("Recursive schema:\n{schema}");
+
+        // Verify the schema was generated
+        assert!(schema.contains("@enum{"));
+        assert!(schema.contains("String @unit"));
+        assert!(schema.contains("Int @unit"));
+        // The recursive reference should be broken with a type reference
+        assert!(
+            schema.contains("@RecursiveSchema") || schema.contains("Object @map"),
+            "schema should contain type reference or map"
+        );
+    }
+
+    #[test]
+    fn test_direct_self_reference() {
+        // Test a type that directly references itself
+        use std::collections::HashMap;
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct TreeNode {
+            value: String,
+            children: Option<HashMap<String, Box<TreeNode>>>,
+        }
+
+        // This should complete without stack overflow
+        let schema = schema_from_type::<TreeNode>();
+        tracing::debug!("TreeNode schema:\n{schema}");
+
+        assert!(schema.contains("value @string"));
+        assert!(schema.contains("children @optional"));
+    }
+
+    #[test]
+    fn test_styx_schema_schema_type() {
+        // Test the actual styx_schema::Schema type from issue #5
+        // This was causing stack overflow before the fix
+        use styx_schema::Schema;
+
+        // This should complete without stack overflow
+        let schema = schema_from_type::<Schema>();
+        tracing::debug!("styx_schema::Schema schema:\n{schema}");
+
+        // Just verify it generated something - the exact output depends on Schema's definition
+        assert!(schema.contains("@enum{"));
+        assert!(schema.len() > 100, "schema should have substantial content");
     }
 }
