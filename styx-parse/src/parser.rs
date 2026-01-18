@@ -762,10 +762,12 @@ impl<'src> Parser<'src> {
             },
             TokenKind::HeredocStart => {
                 // Collect heredoc content
+                // parser[impl scalar.heredoc.syntax]
                 let start_span = token.span;
                 let mut content = String::new();
                 let mut end_span = start_span;
                 let mut is_error = false;
+                let mut end_token_text = "";
 
                 loop {
                     let Some(token) = self.advance() else {
@@ -777,6 +779,7 @@ impl<'src> Parser<'src> {
                         }
                         TokenKind::HeredocEnd => {
                             end_span = token.span;
+                            end_token_text = token.text;
                             break;
                         }
                         TokenKind::Error => {
@@ -787,6 +790,17 @@ impl<'src> Parser<'src> {
                         }
                         _ => break,
                     }
+                }
+
+                // If the closing delimiter was indented, strip that indentation from content lines
+                // Per parser[scalar.heredoc.syntax]: The closing delimiter line MAY be indented;
+                // that indentation is stripped from content lines.
+                let indent_len = end_token_text
+                    .chars()
+                    .take_while(|c| *c == ' ' || *c == '\t')
+                    .count();
+                if indent_len > 0 && !content.is_empty() {
+                    content = Self::dedent_heredoc_content(&content, indent_len);
                 }
 
                 if is_error {
@@ -1640,6 +1654,32 @@ impl<'src> Parser<'src> {
         }
 
         errors
+    }
+
+    /// Dedent heredoc content by stripping `indent_len` characters from the start of each line.
+    /// Per parser[scalar.heredoc.syntax]: when the closing delimiter is indented,
+    /// that indentation is stripped from content lines.
+    fn dedent_heredoc_content(content: &str, indent_len: usize) -> String {
+        content
+            .lines()
+            .map(|line| {
+                // Strip up to indent_len whitespace characters from the start of each line
+                let mut chars = line.chars();
+                let mut stripped = 0;
+                while stripped < indent_len {
+                    match chars.clone().next() {
+                        Some(' ') | Some('\t') => {
+                            chars.next();
+                            stripped += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                chars.as_str()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + if content.ends_with('\n') { "\n" } else { "" }
     }
 
     /// Strip the r#*"..."#* delimiters from a raw string, returning just the content.

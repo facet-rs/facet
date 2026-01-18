@@ -157,21 +157,20 @@ json_heredoc <<JSON,json
 JSON
 
 // Heredoc with indented closing delimiter (dedents content)
-// NOTE: This feature is specified but has a parser bug - see parser.md r[scalar.heredoc.syntax]
-// When working, the indented delimiter strips that indentation from all content lines:
-//   indented_heredoc <<CODE
-//       fn main() {
-//           println!("Hello!");
-//       }
-//       CODE
-// Would produce content with "fn main() {" etc. (4 spaces stripped)
+// Per parser[scalar.heredoc.syntax]: closing delimiter MAY be indented,
+// and that indentation is stripped from content lines
+indented_heredoc <<CODE
+    fn main() {
+        println!("Hello!");
+    }
+    CODE
 
-// Heredoc inside objects
+// Heredoc inside objects (with indented end for clean formatting)
 config_with_heredoc {
     script <<BASH
-echo "hello"
-echo "world"
-BASH
+        echo "hello"
+        echo "world"
+        BASH
     other value
 }
 

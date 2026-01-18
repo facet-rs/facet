@@ -1,0 +1,5 @@
+// Heredoc with indented closing delimiter strips that indentation from content
+key <<DOC
+  line one
+  line two
+  DOC

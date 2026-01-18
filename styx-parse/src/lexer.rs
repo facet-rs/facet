@@ -351,26 +351,46 @@ impl<'src> Lexer<'src> {
         self.token(TokenKind::HeredocStart, start)
     }
 
-    /// Lex heredoc content until we find the closing delimiter.
-    fn lex_heredoc_content(&mut self, delimiter: &str) -> Token<'src> {
-        let start = self.pos;
+    /// Check if the remaining input starts with the heredoc delimiter (possibly indented).
+    /// Returns Some(indent_len) if found, where indent_len is the number of leading spaces/tabs.
+    /// The delimiter must be followed by newline or EOF to be valid.
+    fn find_heredoc_delimiter(&self, delimiter: &str) -> Option<usize> {
+        // Count leading whitespace
+        let indent_len = self
+            .remaining
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .count();
 
-        // Check if we're at the delimiter (end of heredoc)
-        if self.remaining.starts_with(delimiter) {
-            // Check that delimiter is followed by newline or EOF
-            let after_delim = &self.remaining[delimiter.len()..];
+        // Check if delimiter follows the whitespace
+        let after_indent = &self.remaining[indent_len..];
+        if after_indent.starts_with(delimiter) {
+            let after_delim = &after_indent[delimiter.len()..];
             if after_delim.is_empty()
                 || after_delim.starts_with('\n')
                 || after_delim.starts_with("\r\n")
             {
-                // This is the end delimiter
-                self.advance_by(delimiter.len());
-                self.heredoc_state = None;
-                return self.token(TokenKind::HeredocEnd, start);
+                return Some(indent_len);
             }
         }
+        None
+    }
 
-        // Consume content until we find the delimiter at start of a line
+    /// Lex heredoc content until we find the closing delimiter.
+    /// Per parser[scalar.heredoc.syntax]: The closing delimiter line MAY be indented;
+    /// that indentation is stripped from content lines.
+    fn lex_heredoc_content(&mut self, delimiter: &str) -> Token<'src> {
+        let start = self.pos;
+
+        // Check if we're at the delimiter (possibly indented) - end of heredoc
+        if let Some(indent_len) = self.find_heredoc_delimiter(delimiter) {
+            // This is the end delimiter - consume indent + delimiter
+            self.advance_by(indent_len + delimiter.len());
+            self.heredoc_state = None;
+            return self.token(TokenKind::HeredocEnd, start);
+        }
+
+        // Consume content until we find the delimiter at start of a line (possibly indented)
         let mut found_end = false;
         while !self.is_eof() {
             // Consume the current line
@@ -386,16 +406,10 @@ impl<'src> Lexer<'src> {
                 self.advance();
             }
 
-            // Check if next line starts with delimiter
-            if self.remaining.starts_with(delimiter) {
-                let after_delim = &self.remaining[delimiter.len()..];
-                if after_delim.is_empty()
-                    || after_delim.starts_with('\n')
-                    || after_delim.starts_with("\r\n")
-                {
-                    found_end = true;
-                    break;
-                }
+            // Check if next line starts with delimiter (possibly indented)
+            if self.find_heredoc_delimiter(delimiter).is_some() {
+                found_end = true;
+                break;
             }
 
             if self.is_eof() {
@@ -406,9 +420,11 @@ impl<'src> Lexer<'src> {
         if start == self.pos {
             // No content, return the end delimiter
             if found_end {
-                self.advance_by(delimiter.len());
-                self.heredoc_state = None;
-                return self.token(TokenKind::HeredocEnd, start);
+                if let Some(indent_len) = self.find_heredoc_delimiter(delimiter) {
+                    self.advance_by(indent_len + delimiter.len());
+                    self.heredoc_state = None;
+                    return self.token(TokenKind::HeredocEnd, start);
+                }
             }
         }
 
