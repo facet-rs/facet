@@ -240,15 +240,138 @@ fn find_magic_from(data: &[u8], start: usize) -> Option<usize> {
         .map(|pos| start + pos)
 }
 
+/// Section names used for embedding schemas in different object formats.
+mod section_names {
+    /// ELF section name (Linux)
+    pub const ELF: &str = ".styx_schemas";
+    /// Mach-O segment name (macOS)
+    pub const MACHO_SEGMENT: &str = "__DATA";
+    /// Mach-O section name (macOS)
+    pub const MACHO_SECTION: &str = "__styx_schemas";
+    /// PE/COFF section name (Windows)
+    pub const PE: &str = ".styx";
+}
+
+/// Extract schemas from binary data using object format parsing.
+///
+/// Parses ELF, Mach-O, or PE headers to locate the embedded schema section
+/// directly, avoiding a full binary scan. Falls back to magic byte scanning
+/// if the object format is unknown or section not found.
+pub fn extract_schemas_from_object(data: &[u8]) -> Result<Vec<String>, ExtractError> {
+    use goblin::Object;
+
+    // Try to parse as a known object format
+    if let Ok(object) = Object::parse(data)
+        && let Some(section_data) = find_schema_section(&object, data) {
+            // Found the section - extract directly from it
+            return extract_schemas(section_data);
+        }
+
+    // Fall back to magic byte scanning for unknown formats or missing section
+    extract_schemas(data)
+}
+
+/// Find the schema section in a parsed object file.
+fn find_schema_section<'a>(object: &goblin::Object, data: &'a [u8]) -> Option<&'a [u8]> {
+    use goblin::Object;
+
+    match object {
+        Object::Elf(elf) => find_elf_section(elf, data),
+        Object::Mach(mach) => find_macho_section(mach, data),
+        Object::PE(pe) => find_pe_section(pe, data),
+        _ => None,
+    }
+}
+
+/// Find the .styx_schemas section in an ELF binary.
+fn find_elf_section<'a>(elf: &goblin::elf::Elf, data: &'a [u8]) -> Option<&'a [u8]> {
+    for section in &elf.section_headers {
+        if let Some(name) = elf.shdr_strtab.get_at(section.sh_name)
+            && name == section_names::ELF {
+                let start = section.sh_offset as usize;
+                let size = section.sh_size as usize;
+                if start + size <= data.len() {
+                    return Some(&data[start..start + size]);
+                }
+            }
+    }
+    None
+}
+
+/// Find the __DATA,__styx_schemas section in a Mach-O binary.
+fn find_macho_section<'a>(mach: &goblin::mach::Mach, data: &'a [u8]) -> Option<&'a [u8]> {
+    use goblin::mach::Mach;
+
+    match mach {
+        Mach::Binary(macho) => find_macho_section_in_binary(macho, data),
+        Mach::Fat(fat) => {
+            // For fat binaries, try each architecture
+            for arch in fat.iter_arches().flatten() {
+                let start = arch.offset as usize;
+                let size = arch.size as usize;
+                if start + size <= data.len() {
+                    let arch_data = &data[start..start + size];
+                    if let Ok(goblin::Object::Mach(Mach::Binary(macho))) =
+                        goblin::Object::parse(arch_data)
+                        && let Some(section) = find_macho_section_in_binary(&macho, arch_data) {
+                            return Some(section);
+                        }
+                }
+            }
+            None
+        }
+    }
+}
+
+/// Find the section in a single Mach-O binary (not fat).
+fn find_macho_section_in_binary<'a>(
+    macho: &goblin::mach::MachO,
+    data: &'a [u8],
+) -> Option<&'a [u8]> {
+    for segment in &macho.segments {
+        if let Ok(name) = segment.name()
+            && name == section_names::MACHO_SEGMENT {
+                for (section, _section_data) in segment.sections().ok()? {
+                    if let Ok(sect_name) = section.name()
+                        && sect_name == section_names::MACHO_SECTION {
+                            let start = section.offset as usize;
+                            let size = section.size as usize;
+                            if start + size <= data.len() {
+                                return Some(&data[start..start + size]);
+                            }
+                        }
+                }
+            }
+    }
+    None
+}
+
+/// Find the .styx section in a PE binary.
+fn find_pe_section<'a>(pe: &goblin::pe::PE, data: &'a [u8]) -> Option<&'a [u8]> {
+    for section in &pe.sections {
+        if let Ok(name) = section.name()
+            && name == section_names::PE {
+                let start = section.pointer_to_raw_data as usize;
+                let size = section.size_of_raw_data as usize;
+                if start + size <= data.len() {
+                    return Some(&data[start..start + size]);
+                }
+            }
+    }
+    None
+}
+
 /// Extract schemas from a file by memory-mapping it.
-#[cfg(feature = "mmap")]
+///
+/// Uses object format parsing to locate the schema section directly.
+/// Falls back to magic byte scanning if the format is unknown.
 pub fn extract_schemas_from_file(
     path: &std::path::Path,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     use std::fs::File;
     let file = File::open(path)?;
     let mmap = unsafe { memmap2::Mmap::map(&file) }?;
-    Ok(extract_schemas(&mmap)?)
+    Ok(extract_schemas_from_object(&mmap)?)
 }
 
 #[cfg(test)]

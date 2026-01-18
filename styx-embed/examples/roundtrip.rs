@@ -1,6 +1,6 @@
 //! Example demonstrating embedding a schema and extracting it from the binary.
 //!
-//! Run with: cargo run -p styx-embed --example roundtrip --features mmap
+//! Run with: cargo run -p styx-embed --example roundtrip
 
 use styx_embed::extract_schemas_from_file;
 

@@ -1,6 +1,6 @@
 //! Example demonstrating embedding a schema from a file.
 //!
-//! Run with: cargo run -p styx-embed --example from_file --features mmap
+//! Run with: cargo run -p styx-embed --example from_file
 
 use styx_embed::extract_schemas_from_file;
 

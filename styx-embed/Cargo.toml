@@ -9,9 +9,6 @@ repository.workspace = true
 [dependencies]
 lz4_flex = "0.11"
 blake3 = "1"
-memmap2 = { version = "0.9", optional = true }
+memmap2 = "0.9"
+goblin = "0.9"
 styx-embed-macros = { path = "../styx-embed-macros" }
-
-[features]
-default = []
-mmap = ["dep:memmap2"]
