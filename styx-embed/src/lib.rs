@@ -36,7 +36,7 @@
 //! }
 //!
 //! // src/main.rs
-//! styx_embed::embed_file!(concat!(env!("OUT_DIR"), "/schema.styx"));
+//! styx_embed::embed_outdir_file!("schema.styx");
 //! ```
 //!
 //! This keeps the schema in sync with your types automatically.
@@ -66,7 +66,9 @@
 //! ```
 
 // Re-export the proc macros
-pub use styx_embed_macros::{embed_file, embed_files, embed_inline, embed_schema, embed_schemas};
+pub use styx_embed_macros::{
+    embed_file, embed_files, embed_inline, embed_outdir_file, embed_schema, embed_schemas,
+};
 
 /// Magic bytes that identify embedded Styx schemas.
 /// 16 bytes: "STYX_SCHEMAS_V1\0"

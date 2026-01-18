@@ -33,7 +33,7 @@ fn main() {
 
 ```rust
 // src/main.rs
-styx_embed::embed_file!(concat!(env!("OUT_DIR"), "/schema.styx"));
+styx_embed::embed_outdir_file!("schema.styx");
 ```
 
 This lets tooling discover your schema by scanning the binary—no execution needed.

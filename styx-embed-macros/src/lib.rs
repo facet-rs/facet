@@ -277,6 +277,70 @@ pub fn embed_files(input: TokenStream) -> TokenStream {
     generate_static(build_embedded_blob(&schemas))
 }
 
+/// Embed a schema file from OUT_DIR (for build script output).
+///
+/// This macro reads `OUT_DIR` from the environment at compile time
+/// and joins it with the provided filename.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // In build.rs:
+/// // facet_styx::generate_schema::<Config>("schema.styx");
+///
+/// // In src/main.rs:
+/// styx_embed::embed_outdir_file!("schema.styx");
+/// ```
+#[proc_macro]
+pub fn embed_outdir_file(input: TokenStream) -> TokenStream {
+    let mut tokens = TokenIter::new(proc_macro2::TokenStream::from(input));
+
+    // Parse a single literal (the filename)
+    let literal: unsynn::Literal = match Parse::parse(&mut tokens) {
+        Ok(l) => l,
+        Err(e) => {
+            return format!("compile_error!(\"expected filename string: {e}\")")
+                .parse()
+                .unwrap()
+        }
+    };
+
+    let filename = match parse_string_literal(&literal) {
+        Some(s) => s,
+        None => {
+            return "compile_error!(\"expected string literal for filename\")"
+                .parse()
+                .unwrap()
+        }
+    };
+
+    // Get OUT_DIR from environment
+    let out_dir = match std::env::var("OUT_DIR") {
+        Ok(dir) => dir,
+        Err(_) => {
+            return "compile_error!(\"OUT_DIR not set - this macro must be used in a crate with a build script\")"
+                .parse()
+                .unwrap()
+        }
+    };
+
+    // Build full path
+    let path = std::path::Path::new(&out_dir).join(&filename);
+    let path_str = path.display().to_string();
+
+    // Read the file
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            return format!("compile_error!(\"failed to read {}: {}\")", path_str, e)
+                .parse()
+                .unwrap()
+        }
+    };
+
+    generate_static(build_embedded_blob(&[content]))
+}
+
 // Keep the old names as aliases for compatibility
 #[proc_macro]
 pub fn embed_schema(input: TokenStream) -> TokenStream {
