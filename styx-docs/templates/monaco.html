@@ -117,10 +117,54 @@
         height: calc(100vh - 150px);
     }
 }
+
+.playground-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    font-size: 0.9rem;
+    color: #888;
+}
+
+.playground-nav a {
+    color: #89b4fa;
+    text-decoration: none;
+}
+
+.playground-nav a:hover {
+    text-decoration: underline;
+}
+
+.playground-nav .separator {
+    color: #45475a;
+}
+
+.playground-nav .current {
+    color: #cdd6f4;
+}
+
+.playground-nav .switch {
+    margin-left: auto;
+}
+
+.playground-nav .switch a {
+    color: #a6e3a1;
+}
 </style>
 {% endblock head %}
 
 {% block content %}
+<nav class="playground-nav">
+    <a href="/tools">← Tools</a>
+    <span class="separator">/</span>
+    <a href="/tools/playgrounds">Playgrounds</a>
+    <span class="separator">/</span>
+    <span class="current">Monaco</span>
+    <span class="switch">
+        <a href="/tools/playgrounds/codemirror">Switch to CodeMirror</a>
+    </span>
+</nav>
 <h1>{{ page.title }}</h1>
 
 <div class="playground-container">
