@@ -11,10 +11,12 @@ categories = ["database"]
 
 [dependencies]
 tokio-postgres = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 inventory = "0.3"
 thiserror = "2"
 facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
 dibs-macros = { path = "../dibs-macros" }
+dibs-proto = { path = "../dibs-proto" }
 roam = { git = "https://github.com/bearcove/roam", branch = "main" }
 
 [dev-dependencies]

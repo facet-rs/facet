@@ -40,6 +40,10 @@ pub use diff::{Change, SchemaDiff, TableDiff};
 pub use error::Error;
 pub use meta::{create_meta_tables_sql, record_migration_sql, sync_tables_sql};
 pub use migrate::{Migration, MigrationContext, MigrationRunner, MigrationStatus};
+pub use service::DibsServiceImpl;
+
+// Re-export proto types for convenience
+pub use dibs_proto::*;
 pub use schema::{
     Attr, Column, CompositeIndex, ForeignKey, Index, PgType, Schema, SourceLocation, Table,
     TableDef,

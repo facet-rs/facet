@@ -1,0 +1,12 @@
+[package]
+name = "dibs-proto"
+version = "0.1.0"
+edition = "2024"
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+description = "Protocol definitions for dibs CLI-to-service communication"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/dibs"
+
+[dependencies]
+facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
+roam = { git = "https://github.com/bearcove/roam", branch = "main" }
