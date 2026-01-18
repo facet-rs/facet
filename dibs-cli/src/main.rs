@@ -151,12 +151,25 @@ fn run(cli: Cli) {
             }
         }
         None => {
-            let config = args::HelpConfig {
-                program_name: Some("dibs".to_string()),
-                version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                ..Default::default()
-            };
-            print!("{}", args::generate_help::<Cli>(&config));
+            // No subcommand: launch TUI (the default human interface)
+            let schema = dibs::Schema::collect();
+
+            if schema.tables.is_empty() {
+                println!("No tables registered.");
+                println!();
+                println!("Define tables using #[facet(dibs::table = \"name\")] on Facet structs.");
+                return;
+            }
+
+            if stdout().is_terminal() {
+                if let Err(e) = run_schema_tui(&schema) {
+                    eprintln!("TUI error: {}", e);
+                    std::process::exit(1);
+                }
+            } else {
+                // Not a TTY, print plain text
+                print_schema_plain(&schema);
+            }
         }
     }
 }
