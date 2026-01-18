@@ -1317,8 +1317,11 @@ fn generate_migration(name: &str) {
     let now = Zoned::now();
     let timestamp = now.strftime("%Y%m%d%H%M%S");
 
+    // Convert name to snake_case for the module name
+    let module_name = name.replace('-', "_").to_lowercase();
+
     // Create migrations directory if it doesn't exist
-    let migrations_dir = Path::new("migrations");
+    let migrations_dir = Path::new("src/migrations");
     if !migrations_dir.exists()
         && let Err(e) = fs::create_dir_all(migrations_dir)
     {
@@ -1326,8 +1329,8 @@ fn generate_migration(name: &str) {
         std::process::exit(1);
     }
 
-    // Generate filename: YYYYMMDDHHMMSS_name.sql
-    let filename = format!("{}_{}.sql", timestamp, name);
+    // Generate filename: m<timestamp>_<name>.rs
+    let filename = format!("m{}_{}.rs", timestamp, module_name);
     let filepath = migrations_dir.join(&filename);
 
     if filepath.exists() {
@@ -1335,20 +1338,27 @@ fn generate_migration(name: &str) {
         std::process::exit(1);
     }
 
-    // Generate migration content
+    // Generate the version string (matches the format expected by #[dibs::migration])
+    let version = format!("{}-{}", timestamp, name);
+
+    // Generate Rust migration content
     let content = format!(
-        r#"-- Migration: {name}
--- Created: {timestamp}
+        r#"//! Migration: {name}
+//! Created: {created}
 
--- Up migration
--- Add your SQL statements here
+use dibs::{{MigrationContext, Result}};
 
+#[dibs::migration("{version}")]
+pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
+    // Add your migration SQL here
+    // ctx.execute("CREATE TABLE ...").await?;
 
--- Down migration (commented out, uncomment if needed)
--- DROP TABLE IF EXISTS ...;
+    Ok(())
+}}
 "#,
         name = name,
-        timestamp = now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        created = now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        version = version,
     );
 
     let mut file = match fs::File::create(&filepath) {
@@ -1365,4 +1375,7 @@ fn generate_migration(name: &str) {
     }
 
     println!("Created migration: {}", filepath.display());
+    println!();
+    println!("Don't forget to add the module to your migrations/mod.rs:");
+    println!("  mod {};", filename.trim_end_matches(".rs"));
 }
