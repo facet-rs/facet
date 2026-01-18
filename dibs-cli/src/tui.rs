@@ -745,7 +745,8 @@ impl App {
         use std::io::Write;
 
         let now = jiff::Zoned::now();
-        let timestamp = now.strftime("%Y%m%d%H%M%S");
+        // Human-readable timestamp: m_2026_01_18_173711
+        let timestamp = now.strftime("%Y_%m_%d_%H%M%S");
 
         // Convert name to snake_case for the module name
         let module_name = name.replace('-', "_").to_lowercase();
