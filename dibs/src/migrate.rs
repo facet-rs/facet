@@ -1,5 +1,5 @@
 use crate::{MigrationFn, Result};
-use tokio_postgres::Client;
+use tokio_postgres::{Client, Transaction};
 
 /// A registered migration.
 pub struct Migration {
@@ -66,18 +66,20 @@ impl Migration {
 }
 
 /// Context passed to migration functions.
+///
+/// Wraps a database transaction, ensuring all migration operations are atomic.
 pub struct MigrationContext<'a> {
-    client: &'a Client,
+    tx: &'a Transaction<'a>,
 }
 
 impl<'a> MigrationContext<'a> {
-    pub fn new(client: &'a Client) -> Self {
-        Self { client }
+    pub fn new(tx: &'a Transaction<'a>) -> Self {
+        Self { tx }
     }
 
     /// Execute a SQL statement.
     pub async fn execute(&self, sql: &str) -> Result<u64> {
-        Ok(self.client.execute(sql, &[]).await?)
+        Ok(self.tx.execute(sql, &[]).await?)
     }
 
     /// Execute a SQL statement with parameters.
@@ -86,18 +88,22 @@ impl<'a> MigrationContext<'a> {
         sql: &str,
         params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
     ) -> Result<u64> {
-        Ok(self.client.execute(sql, params).await?)
+        Ok(self.tx.execute(sql, params).await?)
     }
 
     /// Run a backfill operation in batches until it returns 0 rows affected.
+    ///
+    /// Note: Since we're in a transaction, all batches are part of the same
+    /// atomic operation. For very large backfills that need to commit
+    /// incrementally, consider breaking into multiple migrations.
     pub async fn backfill<F, Fut>(&self, mut f: F) -> Result<u64>
     where
-        F: FnMut(&Client) -> Fut,
+        F: FnMut(&Transaction<'a>) -> Fut,
         Fut: std::future::Future<Output = Result<u64>>,
     {
         let mut total = 0u64;
         loop {
-            let affected = f(self.client).await?;
+            let affected = f(self.tx).await?;
             if affected == 0 {
                 break;
             }
@@ -106,19 +112,19 @@ impl<'a> MigrationContext<'a> {
         Ok(total)
     }
 
-    /// Get the underlying client for complex operations.
-    pub fn client(&self) -> &Client {
-        self.client
+    /// Get the underlying transaction for complex operations.
+    pub fn transaction(&self) -> &Transaction<'a> {
+        self.tx
     }
 }
 
 /// Runs migrations against a database.
 pub struct MigrationRunner<'a> {
-    client: &'a Client,
+    client: &'a mut Client,
 }
 
 impl<'a> MigrationRunner<'a> {
-    pub fn new(client: &'a Client) -> Self {
+    pub fn new(client: &'a mut Client) -> Self {
         Self { client }
     }
 
@@ -156,22 +162,31 @@ impl<'a> MigrationRunner<'a> {
     }
 
     /// Run all pending migrations.
-    pub async fn migrate(&self) -> Result<Vec<&'static str>> {
+    ///
+    /// Each migration runs in its own transaction. If a migration fails,
+    /// all its changes are rolled back and subsequent migrations are skipped.
+    pub async fn migrate(&mut self) -> Result<Vec<&'static str>> {
         self.init().await?;
         let applied = self.applied().await?;
         let pending = self.pending(&applied);
 
         let mut ran = Vec::new();
         for migration in pending {
-            let mut ctx = MigrationContext::new(self.client);
+            // Each migration runs in its own transaction
+            let tx = self.client.transaction().await?;
+
+            let mut ctx = MigrationContext::new(&tx);
             (migration.run)(&mut ctx).await?;
 
-            self.client
-                .execute(
-                    "INSERT INTO _dibs_migrations (version) VALUES ($1)",
-                    &[&migration.version],
-                )
-                .await?;
+            // Record the migration as applied (inside the same transaction)
+            tx.execute(
+                "INSERT INTO _dibs_migrations (version) VALUES ($1)",
+                &[&migration.version],
+            )
+            .await?;
+
+            // Commit the transaction
+            tx.commit().await?;
 
             ran.push(migration.version);
         }

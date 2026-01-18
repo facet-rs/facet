@@ -945,7 +945,7 @@ async fn run_migrate_local(database_url: &str) {
     use owo_colors::OwoColorize as _;
 
     // Connect to database
-    let (client, connection) =
+    let (mut client, connection) =
         match tokio_postgres::connect(database_url, tokio_postgres::NoTls).await {
             Ok(c) => c,
             Err(e) => {
@@ -962,7 +962,7 @@ async fn run_migrate_local(database_url: &str) {
     });
 
     // Run migrations
-    let runner = dibs::MigrationRunner::new(&client);
+    let mut runner = dibs::MigrationRunner::new(&mut client);
 
     match runner.migrate().await {
         Ok(applied) => {
@@ -1075,7 +1075,7 @@ async fn run_status_local(database_url: &str) {
     use owo_colors::OwoColorize as _;
 
     // Connect to database
-    let (client, connection) =
+    let (mut client, connection) =
         match tokio_postgres::connect(database_url, tokio_postgres::NoTls).await {
             Ok(c) => c,
             Err(e) => {
@@ -1092,7 +1092,7 @@ async fn run_status_local(database_url: &str) {
     });
 
     // Get migration status
-    let runner = dibs::MigrationRunner::new(&client);
+    let runner = dibs::MigrationRunner::new(&mut client);
 
     match runner.status().await {
         Ok(migrations) => {

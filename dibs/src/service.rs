@@ -143,7 +143,7 @@ impl DibsService for DibsServiceImpl {
         request: MigrationStatusRequest,
     ) -> Result<Vec<MigrationInfo>, DibsError> {
         // Connect to database
-        let (client, connection) =
+        let (mut client, connection) =
             tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
                 .await
                 .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
@@ -156,7 +156,7 @@ impl DibsService for DibsServiceImpl {
         });
 
         // Get migration status
-        let runner = crate::MigrationRunner::new(&client);
+        let runner = crate::MigrationRunner::new(&mut client);
         let status = runner
             .status()
             .await
@@ -184,7 +184,7 @@ impl DibsService for DibsServiceImpl {
         logs: roam::Tx<MigrationLog>,
     ) -> Result<MigrateResult, DibsError> {
         // Connect to database
-        let (client, connection) =
+        let (mut client, connection) =
             tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
                 .await
                 .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
@@ -199,7 +199,7 @@ impl DibsService for DibsServiceImpl {
         let start = std::time::Instant::now();
 
         // Run migrations
-        let runner = crate::MigrationRunner::new(&client);
+        let mut runner = crate::MigrationRunner::new(&mut client);
 
         // Log start
         let _ = logs
