@@ -21,10 +21,7 @@ Tools for working with Styx.
 
 ## Playgrounds
 
-Try Styx in the browser:
-
-- [Monaco Playground](monaco) — VS Code-style editor
-- [CodeMirror Playground](codemirror) — Lightweight editor
+- [Playgrounds](playgrounds) — Try Styx in the browser
 
 ## Distribution
 
