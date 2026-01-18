@@ -1,0 +1,13 @@
+meta {
+  id example-config
+  version 1.0.0
+  description "Example schema for testing embedding"
+}
+
+schema {
+  @ @object{
+    host @string
+    port @int{ min 1, max 65535 }
+    debug @optional(@bool)
+  }
+}

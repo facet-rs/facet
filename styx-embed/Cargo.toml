@@ -1,0 +1,17 @@
+[package]
+name = "styx-embed"
+version = "0.1.0"
+edition.workspace = true
+description = "Embed Styx schemas in binaries for zero-execution discovery"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+lz4_flex = "0.11"
+blake3 = "1"
+memmap2 = { version = "0.9", optional = true }
+styx-embed-macros = { path = "../styx-embed-macros" }
+
+[features]
+default = []
+mmap = ["dep:memmap2"]

@@ -43,6 +43,7 @@ mod error;
 #[cfg(test)]
 mod other_variant_test;
 mod parser;
+mod schema_gen;
 mod serializer;
 #[cfg(test)]
 mod tag_events_test;
@@ -52,6 +53,7 @@ pub use error::{StyxError, StyxErrorKind};
 pub use facet_format::DeserializeError;
 pub use facet_format::SerializeError;
 pub use parser::StyxParser;
+pub use schema_gen::{generate_schema, schema_from_type};
 pub use serializer::{
     SerializeOptions, StyxSerializeError, StyxSerializer, peek_to_string,
     peek_to_string_with_options, to_string, to_string_compact, to_string_with_options,

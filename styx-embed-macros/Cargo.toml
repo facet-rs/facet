@@ -1,0 +1,15 @@
+[package]
+name = "styx-embed-macros"
+version = "0.1.0"
+edition.workspace = true
+description = "Proc macros for embedding Styx schemas in binaries"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+lz4_flex = "0.11"
+blake3 = "1"
+unsynn = { version = "0.3", default-features = false }
