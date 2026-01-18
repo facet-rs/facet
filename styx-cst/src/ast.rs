@@ -314,6 +314,11 @@ impl Sequence {
         })
     }
 
+    /// Iterate over entries in this sequence (ENTRY nodes).
+    pub fn entries(&self) -> impl Iterator<Item = Entry> {
+        self.0.children().filter_map(Entry::cast)
+    }
+
     /// Get the number of elements.
     pub fn len(&self) -> usize {
         self.elements().count()
@@ -322,6 +327,19 @@ impl Sequence {
     /// Check if empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Check if the sequence is multiline (contains newlines or comments).
+    pub fn is_multiline(&self) -> bool {
+        self.0
+            .children_with_tokens()
+            .filter_map(|el| el.into_token())
+            .any(|t| {
+                matches!(
+                    t.kind(),
+                    SyntaxKind::NEWLINE | SyntaxKind::LINE_COMMENT | SyntaxKind::DOC_COMMENT
+                )
+            })
     }
 }
 

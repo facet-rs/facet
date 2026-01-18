@@ -223,8 +223,8 @@ impl<'src> Lexer<'src> {
         loop {
             match self.peek() {
                 None => {
-                    // Unterminated string - return as error? or partial token?
-                    break;
+                    // Unterminated string - return error
+                    return self.token(TokenKind::Error, start);
                 }
                 Some('"') => {
                     self.advance();
@@ -415,8 +415,9 @@ impl<'src> Lexer<'src> {
         // CRITICAL: If we hit EOF without finding the closing delimiter,
         // we must clear the heredoc state to avoid an infinite loop.
         // The next call would otherwise re-enter lex_heredoc_content forever.
-        if self.is_eof() {
+        if self.is_eof() && !found_end {
             self.heredoc_state = None;
+            return self.token(TokenKind::Error, start);
         }
 
         self.token(TokenKind::HeredocContent, start)
@@ -450,8 +451,8 @@ impl<'src> Lexer<'src> {
         loop {
             match self.peek() {
                 None => {
-                    // Unterminated raw string
-                    break;
+                    // Unterminated raw string - return error
+                    return self.token(TokenKind::Error, start);
                 }
                 Some('"') => {
                     // Check for closing sequence
@@ -484,9 +485,6 @@ impl<'src> Lexer<'src> {
                 }
             }
         }
-
-        // Unterminated - return what we have
-        self.token(TokenKind::RawScalar, start)
     }
 }
 
