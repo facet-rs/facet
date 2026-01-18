@@ -1,16 +1,19 @@
 /**
  * Example usage of the Styx C API.
  *
- * Compile with:
- *   cc -o example example.c -L../target/release -lstyx_ffi -Wl,-rpath,../target/release
+ * Compile with (from the examples directory):
+ *   cc -o example example.c -I../include -L../../../target/release -lstyx_ffi
  *
- * Or on macOS:
- *   cc -o example example.c -L../../../target/release -lstyx_ffi
+ * Run with:
+ *   # macOS
+ *   DYLD_LIBRARY_PATH=../../../target/release ./example
+ *   # Linux
+ *   LD_LIBRARY_PATH=../../../target/release ./example
  */
 
 #include <stdio.h>
 #include <stdlib.h>
-#include "../styx.h"
+#include <styx.h>
 
 int main(void) {
     const char *source =
