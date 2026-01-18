@@ -1,14 +1,15 @@
-//! CellTracing service definition.
+//! Tracing service definitions.
 //!
-//! Defines the RPC service for cell-to-host tracing.
+//! Defines RPC services for cross-cell tracing:
+//! - `HostTracing`: Host implements, cell calls (push records, query config)
+//! - `CellTracing`: Cell implements, host calls (push config updates)
 
 use facet::Facet;
 use roam::service;
-use roam::session::Tx;
 
 use crate::record::{Level, TracingRecord};
 
-/// Configuration sent from host to cell.
+/// Configuration for tracing.
 #[derive(Debug, Clone, PartialEq, Facet)]
 pub struct TracingConfig {
     /// Minimum level to emit (records below this are dropped).
@@ -40,31 +41,49 @@ pub enum ConfigResult {
     InvalidFilter(String) = 1,
 }
 
-/// Service implemented by the CELL to receive config and provide tracing stream.
+// ============================================================================
+// HostTracing - Host implements, Cell calls
+// ============================================================================
+
+/// Service implemented by the HOST to receive tracing from cells.
 ///
-/// The host calls this service on the cell to:
-/// 1. Push configuration updates
-/// 2. Establish the tracing stream (cell sends records to host)
+/// Cells call this service to:
+/// 1. Query the tracing configuration on startup
+/// 2. Push batches of tracing records
 ///
 /// # Protocol Flow
 ///
-/// 1. Host spawns cell and establishes connection
-/// 2. Host calls `subscribe(tx)` with a `Tx<TracingRecord>`
-/// 3. Cell stores the Tx and spawns a background task to forward records
-/// 4. Host receives records on the corresponding `Rx<TracingRecord>`
-/// 5. Optionally, host calls `configure(...)` to adjust filters/levels
+/// 1. Cell starts up and establishes connection to host
+/// 2. Cell calls `get_tracing_config()` to get initial filter settings
+/// 3. Cell's tracing layer captures events into a buffer
+/// 4. Cell periodically calls `emit_tracing(batch)` to push records to host
+/// 5. Host receives records and forwards to TUI/logs/subscribers
+#[service]
+pub trait HostTracing {
+    /// Get the current tracing configuration.
+    ///
+    /// Called by cell on startup to get initial filter/level settings.
+    async fn get_tracing_config(&self) -> TracingConfig;
+
+    /// Push a batch of tracing records to the host.
+    ///
+    /// Called periodically by the cell to forward captured events/spans.
+    /// Fire-and-forget: cell doesn't wait for processing, just delivery.
+    async fn emit_tracing(&self, records: Vec<TracingRecord>);
+}
+
+// ============================================================================
+// CellTracing - Cell implements, Host calls
+// ============================================================================
+
+/// Service implemented by the CELL to receive configuration updates.
+///
+/// The host calls this service to push configuration changes after startup.
+/// For the initial config, cells query `HostTracing::get_tracing_config()`.
 #[service]
 pub trait CellTracing {
     /// Update the tracing configuration.
     ///
-    /// Called by host to change filters, levels, etc.
+    /// Called by host to change filters, levels, etc. after startup.
     async fn configure(&self, config: TracingConfig) -> ConfigResult;
-
-    /// Establish the tracing stream.
-    ///
-    /// The cell sends `TracingRecord` values to the host via the `Tx` channel.
-    /// This is a long-lived stream that persists for the cell's lifetime.
-    ///
-    /// The host keeps the corresponding `Rx` end and receives records.
-    async fn subscribe(&self, sink: Tx<TracingRecord>);
 }

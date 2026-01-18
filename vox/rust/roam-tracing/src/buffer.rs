@@ -50,6 +50,7 @@ impl<T> LossyBuffer<T> {
     ///
     /// Returns `None` only if the buffer is permanently closed (which
     /// doesn't happen in this implementation - it waits forever).
+    #[allow(dead_code)]
     pub async fn pop(&self) -> Option<T> {
         loop {
             {
@@ -65,7 +66,6 @@ impl<T> LossyBuffer<T> {
     /// Try to pop without waiting.
     ///
     /// Returns `None` if the buffer is empty.
-    #[allow(dead_code)]
     pub fn try_pop(&self) -> Option<T> {
         self.inner.lock().unwrap().pop_front()
     }

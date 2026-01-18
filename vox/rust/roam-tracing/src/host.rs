@@ -1,15 +1,13 @@
-//! Host-side tracing collector.
+//! Host-side tracing receiver.
 //!
-//! Manages tracing subscriptions for multiple cells and provides
-//! a unified stream of tagged records.
+//! Implements `HostTracing` service to receive tracing records from cells.
 
-use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
-use roam::session::ConnectionHandle;
 use tokio::sync::mpsc;
 
 use crate::record::TracingRecord;
-use crate::service::{CellTracingClient, TracingConfig};
+use crate::service::{HostTracing, TracingConfig};
 
 /// Identifies a peer/cell.
 pub type PeerId = u64;
@@ -25,226 +23,175 @@ pub struct TaggedRecord {
     pub record: TracingRecord,
 }
 
-/// Error registering a peer for tracing.
-#[derive(Debug)]
-pub enum RegisterError {
-    /// RPC call failed.
-    Call(String),
-}
-
-impl std::fmt::Display for RegisterError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RegisterError::Call(msg) => write!(f, "RPC call failed: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for RegisterError {}
-
-/// Error configuring a peer's tracing.
-#[derive(Debug)]
-pub enum ConfigureError {
-    /// Peer not found.
-    PeerNotFound,
-    /// RPC call failed.
-    Call(String),
-}
-
-impl std::fmt::Display for ConfigureError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConfigureError::PeerNotFound => write!(f, "peer not found"),
-            ConfigureError::Call(msg) => write!(f, "RPC call failed: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for ConfigureError {}
-
-/// State for a registered peer.
-struct PeerState {
-    #[allow(dead_code)]
-    name: Option<String>,
-    handle: ConnectionHandle,
-    /// Dropping this signals the receiver task to stop.
-    _cancel: tokio::sync::oneshot::Sender<()>,
-}
-
-/// Host-side tracing collector.
+/// Shared state for the host tracing service.
 ///
-/// Manages tracing subscriptions for multiple cells and provides
-/// a unified stream of tagged records.
-///
-/// # Example
-///
-/// ```ignore
-/// use roam_tracing::{TracingHost, TracingConfig};
-///
-/// // Create the host collector
-/// let mut tracing_host = TracingHost::new(4096);
-///
-/// // Take the receiver (do this once)
-/// let mut records = tracing_host.take_receiver().unwrap();
-///
-/// // When spawning a cell:
-/// tracing_host.register_peer(peer_id, Some("my-cell".into()), &handle).await?;
-///
-/// // Consume records
-/// while let Some(tagged) = records.recv().await {
-///     println!("[{}] {:?}", tagged.peer_name.unwrap_or_default(), tagged.record);
-/// }
-/// ```
-pub struct TracingHost {
-    /// Channel for receiving tagged records from all peers.
+/// This is the core state that can be shared across multiple `HostTracingService`
+/// instances (one per cell connection).
+pub struct HostTracingState {
+    /// Channel for sending tagged records to consumers.
     record_tx: mpsc::Sender<TaggedRecord>,
     /// Receiver end (taken by consumer).
-    record_rx: Option<mpsc::Receiver<TaggedRecord>>,
-    /// Active peer subscriptions.
-    peers: HashMap<PeerId, PeerState>,
-    /// Default config for new peers.
-    default_config: TracingConfig,
+    record_rx: std::sync::Mutex<Option<mpsc::Receiver<TaggedRecord>>>,
+    /// Current tracing configuration (shared across all cells).
+    config: RwLock<TracingConfig>,
 }
 
-impl TracingHost {
-    /// Create a new tracing host with the given buffer size.
+impl HostTracingState {
+    /// Create new host tracing state.
     ///
-    /// `buffer_size` is the capacity of the aggregated record channel.
-    /// If the consumer is slow, newest records are dropped (backpressure).
-    pub fn new(buffer_size: usize) -> Self {
+    /// `buffer_size` is the capacity of the record channel.
+    /// If the consumer is slow, newest records are dropped.
+    pub fn new(buffer_size: usize) -> Arc<Self> {
         let (record_tx, record_rx) = mpsc::channel(buffer_size);
-        Self {
+        Arc::new(Self {
             record_tx,
-            record_rx: Some(record_rx),
-            peers: HashMap::new(),
-            default_config: TracingConfig::default(),
-        }
-    }
-
-    /// Set the default configuration for new peers.
-    pub fn set_default_config(&mut self, config: TracingConfig) {
-        self.default_config = config;
-    }
-
-    /// Get the default configuration.
-    pub fn default_config(&self) -> &TracingConfig {
-        &self.default_config
+            record_rx: std::sync::Mutex::new(Some(record_rx)),
+            config: RwLock::new(TracingConfig::default()),
+        })
     }
 
     /// Take the record receiver.
     ///
-    /// Call this once to get the stream of tagged records from all peers.
+    /// Call this once to get the stream of tagged records from all cells.
     /// Returns `None` if already taken.
-    pub fn take_receiver(&mut self) -> Option<mpsc::Receiver<TaggedRecord>> {
-        self.record_rx.take()
+    pub fn take_receiver(&self) -> Option<mpsc::Receiver<TaggedRecord>> {
+        self.record_rx.lock().unwrap().take()
     }
 
-    /// Register a peer and establish tracing subscription.
+    /// Set the tracing configuration.
     ///
-    /// This calls the cell's `CellTracing::subscribe` method to establish
-    /// the tracing stream, then spawns a task to forward records.
+    /// This affects what `get_tracing_config()` returns to cells.
+    /// Existing cells won't see this until you call `CellTracingClient::configure()`
+    /// on their handles.
+    pub fn set_config(&self, config: TracingConfig) {
+        *self.config.write().unwrap() = config;
+    }
+
+    /// Get the current tracing configuration.
+    pub fn config(&self) -> TracingConfig {
+        self.config.read().unwrap().clone()
+    }
+
+    /// Create a service instance for a specific peer.
     ///
-    /// # Arguments
-    ///
-    /// * `peer_id` - Unique identifier for this peer
-    /// * `peer_name` - Optional human-readable name
-    /// * `handle` - Connection handle to the cell
-    pub async fn register_peer(
-        &mut self,
+    /// Each cell connection gets its own `HostTracingService` that tags
+    /// records with the peer's identity.
+    pub fn service_for_peer(
+        self: &Arc<Self>,
         peer_id: PeerId,
         peer_name: Option<String>,
-        handle: &ConnectionHandle,
-    ) -> Result<(), RegisterError> {
-        let client = CellTracingClient::new(handle.clone());
+    ) -> HostTracingService {
+        HostTracingService {
+            state: self.clone(),
+            peer_id,
+            peer_name,
+        }
+    }
+}
 
-        // Create channel for cell to send records
-        let (tx, rx) = roam::channel::<TracingRecord>();
+/// Host-side tracing service for a single cell.
+///
+/// Implements the `HostTracing` trait. Each cell connection gets its own
+/// instance, configured with the peer's identity for tagging records.
+///
+/// Create via `HostTracingState::service_for_peer()`.
+#[derive(Clone)]
+pub struct HostTracingService {
+    state: Arc<HostTracingState>,
+    peer_id: PeerId,
+    peer_name: Option<String>,
+}
 
-        // Call subscribe - cell keeps the Tx, we keep the Rx
-        client
-            .subscribe(tx)
-            .await
-            .map_err(|e| RegisterError::Call(format!("{e:?}")))?;
+impl HostTracing for HostTracingService {
+    async fn get_tracing_config(&self) -> TracingConfig {
+        self.state.config()
+    }
 
-        // Optionally configure with defaults
-        let _ = client.configure(self.default_config.clone()).await;
+    async fn emit_tracing(&self, records: Vec<TracingRecord>) {
+        for record in records {
+            let tagged = TaggedRecord {
+                peer_id: self.peer_id,
+                peer_name: self.peer_name.clone(),
+                record,
+            };
+            // Non-blocking send - drop if channel is full (backpressure)
+            let _ = self.state.record_tx.try_send(tagged);
+        }
+    }
+}
 
-        // Spawn task to forward records with peer tagging
-        let record_tx = self.record_tx.clone();
-        let peer_name_clone = peer_name.clone();
-        let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::record::Level;
 
-        tokio::spawn(async move {
-            let mut rx = rx;
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = &mut cancel_rx => break,
-                    result = rx.recv() => {
-                        match result {
-                            Ok(Some(record)) => {
-                                let tagged = TaggedRecord {
-                                    peer_id,
-                                    peer_name: peer_name_clone.clone(),
-                                    record,
-                                };
-                                // If host channel is full, drop newest (backpressure)
-                                let _ = record_tx.try_send(tagged);
-                            }
-                            Ok(None) => break, // Stream closed
-                            Err(_) => break,   // Deserialize error
-                        }
-                    }
-                }
-            }
+    #[tokio::test]
+    async fn test_host_tracing_service() {
+        let state = HostTracingState::new(100);
+        let mut rx = state.take_receiver().unwrap();
+
+        let service = state.service_for_peer(1, Some("test-cell".to_string()));
+
+        // Emit some records
+        let records = vec![
+            TracingRecord::Event {
+                parent: None,
+                target: "test".to_string(),
+                level: Level::Info,
+                message: Some("hello".to_string()),
+                fields: vec![],
+                timestamp_ns: 0,
+            },
+            TracingRecord::Event {
+                parent: None,
+                target: "test".to_string(),
+                level: Level::Warn,
+                message: Some("warning".to_string()),
+                fields: vec![],
+                timestamp_ns: 1000,
+            },
+        ];
+
+        service.emit_tracing(records).await;
+
+        // Receive and verify
+        let tagged1 = rx.recv().await.unwrap();
+        assert_eq!(tagged1.peer_id, 1);
+        assert_eq!(tagged1.peer_name, Some("test-cell".to_string()));
+        if let TracingRecord::Event { message, .. } = tagged1.record {
+            assert_eq!(message, Some("hello".to_string()));
+        } else {
+            panic!("expected Event");
+        }
+
+        let tagged2 = rx.recv().await.unwrap();
+        if let TracingRecord::Event { message, .. } = tagged2.record {
+            assert_eq!(message, Some("warning".to_string()));
+        } else {
+            panic!("expected Event");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_config_query() {
+        let state = HostTracingState::new(100);
+        let service = state.service_for_peer(1, None);
+
+        // Default config
+        let config = service.get_tracing_config().await;
+        assert_eq!(config.min_level, Level::Info);
+
+        // Update config
+        state.set_config(TracingConfig {
+            min_level: Level::Debug,
+            filters: vec!["mymodule".to_string()],
+            include_span_events: true,
         });
 
-        self.peers.insert(
-            peer_id,
-            PeerState {
-                name: peer_name,
-                handle: handle.clone(),
-                _cancel: cancel_tx,
-            },
-        );
-
-        Ok(())
-    }
-
-    /// Unregister a peer (stops receiving records).
-    ///
-    /// Returns `true` if the peer was found and removed.
-    pub fn unregister_peer(&mut self, peer_id: PeerId) -> bool {
-        // Dropping PeerState drops cancel_tx, which signals the task to stop
-        self.peers.remove(&peer_id).is_some()
-    }
-
-    /// Update configuration for a specific peer.
-    pub async fn configure_peer(
-        &self,
-        peer_id: PeerId,
-        config: TracingConfig,
-    ) -> Result<(), ConfigureError> {
-        let peer = self
-            .peers
-            .get(&peer_id)
-            .ok_or(ConfigureError::PeerNotFound)?;
-        let client = CellTracingClient::new(peer.handle.clone());
-        // The inner Result has Never as error type, so we can ignore it.
-        let _ = client
-            .configure(config)
-            .await
-            .map_err(|e| ConfigureError::Call(format!("{e:?}")))?;
-        Ok(())
-    }
-
-    /// Returns the number of registered peers.
-    pub fn peer_count(&self) -> usize {
-        self.peers.len()
-    }
-
-    /// Check if a peer is registered.
-    pub fn has_peer(&self, peer_id: PeerId) -> bool {
-        self.peers.contains_key(&peer_id)
+        // Query again
+        let config = service.get_tracing_config().await;
+        assert_eq!(config.min_level, Level::Debug);
+        assert_eq!(config.filters, vec!["mymodule".to_string()]);
+        assert!(config.include_span_events);
     }
 }

@@ -1,37 +1,40 @@
 //! Cross-cell tracing for roam RPC framework.
 //!
 //! This crate provides tracing infrastructure for cells (sandboxed processes)
-//! to emit tracing events/spans that the host can collect over roam streams.
+//! to emit tracing events/spans that the host can collect via RPC.
 //!
 //! # Architecture
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────┐
 //! │  HOST                                                       │
-//! │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
-//! │  │ TracingHost │◄───│  Rx<Record> │◄───│  Rx<Record> │     │
-//! │  │             │    │  (cell A)   │    │  (cell B)   │     │
-//! │  └─────────────┘    └─────────────┘    └─────────────┘     │
-//! │         │                  ▲                  ▲             │
-//! │         ▼                  │                  │             │
-//! │  ┌──────────────────────────────────────────────────────┐  │
-//! │  │      TaggedRecord stream → subscriber/TUI/logs       │  │
-//! │  └──────────────────────────────────────────────────────┘  │
+//! │  ┌──────────────────┐    ┌──────────────────────────────┐  │
+//! │  │ HostTracingState │◄───│  mpsc::Receiver<TaggedRecord>│  │
+//! │  │                  │    │  (consumer: TUI/logs/etc.)   │  │
+//! │  └──────────────────┘    └──────────────────────────────┘  │
+//! │         │                                                   │
+//! │         ▼ service_for_peer(id, name)                       │
+//! │  ┌──────────────────┐                                      │
+//! │  │HostTracingService│  ◄── implements HostTracing trait    │
+//! │  │  (one per cell)  │      get_tracing_config()            │
+//! │  └──────────────────┘      emit_tracing(records)           │
 //! └─────────────────────────────────────────────────────────────┘
-//!                              │roam RPC (stream/SHM)
+//!                              ▲
+//!                              │ RPC calls
+//!                              │
 //! ┌─────────────────────────────────────────────────────────────┐
 //! │  CELL                                                       │
 //! │  ┌─────────────────┐    ┌──────────────┐    ┌───────────┐  │
-//! │  │ CellTracingLayer│───►│ LossyBuffer  │───►│ Tx<Record>│  │
-//! │  │   (Layer<S>)    │    │  (bounded)   │    │           │  │
+//! │  │ CellTracingLayer│───►│ LossyBuffer  │───►│drain task │  │
+//! │  │   (Layer<S>)    │    │  (bounded)   │    │(RPC calls)│  │
 //! │  └─────────────────┘    └──────────────┘    └───────────┘  │
-//! │         ▲                                                   │
-//! │  ┌──────┴──────┐                                           │
-//! │  │ tracing::{  │                                           │
-//! │  │  info!(),   │                                           │
-//! │  │  #[instrument]                                          │
-//! │  │ }           │                                           │
-//! │  └─────────────┘                                           │
+//! │         ▲                                         │         │
+//! │  ┌──────┴──────┐                                  │         │
+//! │  │ tracing::{  │                                  ▼         │
+//! │  │  info!(),   │                     HostTracingClient      │
+//! │  │  #[instrument]                    .emit_tracing(batch)   │
+//! │  │ }           │                                            │
+//! │  └─────────────┘                                            │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 //!
@@ -49,24 +52,32 @@
 //!     .with(layer)
 //!     .init();
 //!
-//! // Register the service with your dispatcher
-//! let tracing_dispatcher = CellTracingDispatcher::new(service);
-//! // ... combine with your other dispatchers
+//! // Create dispatcher for the CellTracing service (host can push config)
+//! let tracing_dispatcher = CellTracingDispatcher::new(service.clone());
+//!
+//! // ... establish_guest() ...
+//!
+//! // Spawn the drain task (after getting handle)
+//! service.spawn_drain(handle.clone());
 //! ```
 //!
 //! # Host-side Usage
 //!
 //! ```ignore
-//! use roam_tracing::TracingHost;
+//! use roam_tracing::{HostTracingState, HostTracingDispatcher};
 //!
-//! // Create the host collector
-//! let mut tracing_host = TracingHost::new(4096);
+//! // Create shared state for all cells
+//! let tracing_state = HostTracingState::new(4096);
 //!
 //! // Take the receiver (do this once)
-//! let mut records = tracing_host.take_receiver().unwrap();
+//! let mut records = tracing_state.take_receiver().unwrap();
 //!
-//! // When spawning a cell:
-//! tracing_host.register_peer(peer_id, Some("my-cell".into()), &handle).await?;
+//! // For each cell, create a service and dispatcher:
+//! let tracing_service = tracing_state.service_for_peer(peer_id, Some("cell-name".into()));
+//! let tracing_dispatcher = HostTracingDispatcher::new(tracing_service);
+//!
+//! // Compose with your other host services using RoutedDispatcher
+//! let combined = RoutedDispatcher::new(tracing_dispatcher, host_service_dispatcher);
 //!
 //! // Consume records in a separate task
 //! tokio::spawn(async move {
@@ -89,15 +100,26 @@ pub use record::{FieldValue, Level, SpanId, TracingRecord};
 
 // Re-export service types
 pub use service::{
-    CellTracing, CellTracingClient, CellTracingDispatcher, ConfigResult, TracingConfig,
+    // CellTracing - cell implements, host calls (for config updates)
+    CellTracing,
+    CellTracingClient,
+    CellTracingDispatcher,
     cell_tracing_service_detail,
+    // HostTracing - host implements, cell calls (emit records, query config)
+    HostTracing,
+    HostTracingClient,
+    HostTracingDispatcher,
+    host_tracing_service_detail,
+    // Config types
+    ConfigResult,
+    TracingConfig,
 };
 
 // Re-export cell-side types
 pub use cell::{CellTracingLayer, CellTracingService};
 
 // Re-export host-side types
-pub use host::{ConfigureError, PeerId, RegisterError, TaggedRecord, TracingHost};
+pub use host::{HostTracingService, HostTracingState, PeerId, TaggedRecord};
 
 /// Initialize cell-side tracing.
 ///
@@ -105,7 +127,8 @@ pub use host::{ConfigureError, PeerId, RegisterError, TaggedRecord, TracingHost}
 ///
 /// Returns a tuple of:
 /// - `CellTracingLayer`: Install this as a layer in your tracing subscriber
-/// - `CellTracingService`: Register this with your cell's dispatcher
+/// - `CellTracingService`: Register this with your cell's dispatcher, and call
+///   `spawn_drain(handle)` after establishing the connection
 ///
 /// # Arguments
 ///
@@ -124,7 +147,10 @@ pub use host::{ConfigureError, PeerId, RegisterError, TaggedRecord, TracingHost}
 ///     .init();
 ///
 /// // Create dispatcher for the tracing service
-/// let tracing_dispatcher = CellTracingDispatcher::new(service);
+/// let tracing_dispatcher = CellTracingDispatcher::new(service.clone());
+///
+/// // ... later, after establish_guest() returns handle:
+/// service.spawn_drain(handle);
 /// ```
 pub fn init_cell_tracing(buffer_size: usize) -> (CellTracingLayer, CellTracingService) {
     let layer = CellTracingLayer::new(buffer_size);

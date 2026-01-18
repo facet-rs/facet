@@ -38,6 +38,7 @@ libc = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 roam-session.workspace = true
 roam.workspace = true
+roam-tracing.workspace = true
 tracing-subscriber = { workspace = true }
 
 [[bin]]

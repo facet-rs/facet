@@ -1,13 +1,13 @@
 //! Cell-side tracing layer and service implementation.
 //!
 //! Provides a `tracing_subscriber::Layer` that captures events and spans,
-//! buffers them, and forwards to the host via roam RPC.
+//! buffers them, and forwards to the host via RPC calls.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use roam::session::Tx;
+use roam::session::ConnectionHandle;
 use tracing::span::{Attributes, Id};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::Layer;
@@ -16,7 +16,7 @@ use tracing_subscriber::registry::LookupSpan;
 
 use crate::buffer::LossyBuffer;
 use crate::record::{FieldValue, Level, SpanId, TracingRecord};
-use crate::service::{CellTracing, ConfigResult, TracingConfig};
+use crate::service::{CellTracing, ConfigResult, HostTracingClient, TracingConfig};
 
 /// Extension stored in span extensions to track our span ID.
 struct SpanIdExt(SpanId);
@@ -25,7 +25,7 @@ struct SpanIdExt(SpanId);
 ///
 /// This layer captures tracing events and spans, converts them to
 /// `TracingRecord` values, and pushes them to a bounded buffer.
-/// A separate async task drains the buffer to the host via `Tx`.
+/// A separate async task drains the buffer to the host via RPC.
 pub struct CellTracingLayer {
     /// Bounded buffer for outgoing records.
     pub(crate) buffer: Arc<LossyBuffer<TracingRecord>>,
@@ -218,31 +218,133 @@ where
 
 /// Service implementation for cell-side tracing.
 ///
-/// Implements the `CellTracing` service trait.
+/// Implements the `CellTracing` service trait (for host-pushed config updates)
+/// and provides a method to start the drain task.
 #[derive(Clone)]
 pub struct CellTracingService {
     buffer: Arc<LossyBuffer<TracingRecord>>,
     config: Arc<RwLock<TracingConfig>>,
 }
 
+impl CellTracingService {
+    /// Returns a future that drains the buffer and forwards records to the host.
+    ///
+    /// This is an infinite loop that:
+    /// 1. Queries the tracing config from the host on startup
+    /// 2. Periodically drains the buffer and calls `emit_tracing()` on the host
+    ///
+    /// Call this after `establish_guest()` returns a handle.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Option 1: Use spawn_drain() for automatic panic handling
+    /// service.spawn_drain(handle);
+    ///
+    /// // Option 2: Spawn manually if you need control
+    /// tokio::spawn(service.drain(handle));
+    /// ```
+    pub fn drain(
+        &self,
+        handle: ConnectionHandle,
+    ) -> impl std::future::Future<Output = ()> + Send + 'static {
+        self.drain_with_options(handle, 64, Duration::from_millis(50))
+    }
+
+    /// Returns a drain future with custom options.
+    ///
+    /// See [`drain`](Self::drain) for details.
+    pub fn drain_with_options(
+        &self,
+        handle: ConnectionHandle,
+        batch_size: usize,
+        flush_interval: Duration,
+    ) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let buffer = self.buffer.clone();
+        let config = self.config.clone();
+
+        async move {
+            let client = HostTracingClient::new(handle);
+
+            // Query initial config from host
+            match client.get_tracing_config().await {
+                Ok(host_config) => {
+                    *config.write().unwrap() = host_config;
+                }
+                Err(_) => {
+                    // Use default config if query fails
+                }
+            }
+
+            // Drain loop - runs forever
+            loop {
+                // Collect batch from buffer
+                let mut batch = Vec::with_capacity(batch_size);
+                while batch.len() < batch_size {
+                    if let Some(record) = buffer.try_pop() {
+                        batch.push(record);
+                    } else {
+                        break;
+                    }
+                }
+
+                // Send batch if non-empty
+                if !batch.is_empty() {
+                    // Fire and forget - don't block on result
+                    let _ = client.emit_tracing(batch).await;
+                }
+
+                tokio::time::sleep(flush_interval).await;
+            }
+        }
+    }
+
+    /// Spawn the drain task with automatic panic handling.
+    ///
+    /// This is the recommended way to start the drain. If the task exits
+    /// unexpectedly (which should never happen), it will panic loudly so
+    /// you know tracing stopped working.
+    ///
+    /// # Panics
+    ///
+    /// The spawned task will panic if:
+    /// - The drain loop exits (shouldn't happen - it's infinite)
+    /// - The drain loop panics internally
+    ///
+    /// This is intentional - silent tracing failures are hard to debug.
+    pub fn spawn_drain(&self, handle: ConnectionHandle) {
+        self.spawn_drain_with_options(handle, 64, Duration::from_millis(50));
+    }
+
+    /// Spawn the drain task with custom options.
+    ///
+    /// See [`spawn_drain`](Self::spawn_drain) for details.
+    pub fn spawn_drain_with_options(
+        &self,
+        handle: ConnectionHandle,
+        batch_size: usize,
+        flush_interval: Duration,
+    ) {
+        let drain_fut = self.drain_with_options(handle, batch_size, flush_interval);
+
+        tokio::spawn(async move {
+            // The drain loop is infinite - if we get here, something is very wrong
+            drain_fut.await;
+
+            // If we reach this point, the infinite loop exited somehow
+            panic!(
+                "roam-tracing: drain task exited unexpectedly! \
+                 Tracing from this cell will no longer be forwarded to host. \
+                 This is a bug in roam-tracing."
+            );
+        });
+    }
+}
+
 impl CellTracing for CellTracingService {
     async fn configure(&self, config: TracingConfig) -> ConfigResult {
         *self.config.write().unwrap() = config;
         ConfigResult::Ok
-    }
-
-    async fn subscribe(&self, sink: Tx<TracingRecord>) {
-        // Spawn background task to drain buffer to sink
-        let buffer = self.buffer.clone();
-        tokio::spawn(async move {
-            loop {
-                if let Some(record) = buffer.pop().await
-                    && sink.send(&record).await.is_err()
-                {
-                    break; // Sink closed
-                }
-            }
-        });
     }
 }
 
