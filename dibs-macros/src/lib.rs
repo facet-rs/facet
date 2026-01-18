@@ -49,8 +49,10 @@ pub fn migration(attr: TokenStream, item: TokenStream) -> TokenStream {
                 version: #version_lit,
                 name: stringify!(#fn_ident),
                 run: |ctx| Box::pin(#fn_ident(ctx)),
-                // Combine CARGO_MANIFEST_DIR with file!() to get absolute path
-                source_file: concat!(env!("CARGO_MANIFEST_DIR"), "/", file!()),
+                // Use CARGO_MANIFEST_DIR for the crate root, file!() gives path from there
+                // But file!() already includes the full path from workspace root in workspaces
+                // So we just use file!() and resolve it at runtime relative to the manifest dir
+                source_file: (env!("CARGO_MANIFEST_DIR"), file!()),
             }
         }
     }

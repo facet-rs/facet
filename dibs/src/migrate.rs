@@ -9,8 +9,60 @@ pub struct Migration {
     pub name: &'static str,
     /// The migration function
     pub run: MigrationFn,
-    /// Source file path (from file!())
-    pub source_file: &'static str,
+    /// Source file path (CARGO_MANIFEST_DIR, file!())
+    pub source_file: (&'static str, &'static str),
+}
+
+impl Migration {
+    /// Get the resolved source file path.
+    ///
+    /// This handles the complexity of `file!()` in workspace members, where
+    /// `file!()` returns a path relative to the workspace root (e.g.,
+    /// `examples/my-app-db/src/...`) while `CARGO_MANIFEST_DIR` is the
+    /// absolute path to the crate (e.g., `/path/to/workspace/examples/my-app-db`).
+    pub fn source_path(&self) -> std::path::PathBuf {
+        let (manifest_dir, file_path) = self.source_file;
+        let file_path = std::path::Path::new(file_path);
+
+        if file_path.is_absolute() {
+            return file_path.to_path_buf();
+        }
+
+        // Try manifest_dir + file_path first (works for non-workspace crates)
+        let full = std::path::Path::new(manifest_dir).join(file_path);
+        if full.exists() {
+            return full;
+        }
+
+        // file!() in workspace members includes the path from workspace root
+        // e.g., file!() = "examples/my-app-db/src/..." and manifest_dir ends with "examples/my-app-db"
+        // Strip the duplicated crate path portion
+        if let Some(crate_name) = std::path::Path::new(manifest_dir).file_name() {
+            let crate_name = crate_name.to_string_lossy();
+            let file_str = file_path.to_string_lossy();
+            if let Some(pos) = file_str.find(&*crate_name) {
+                let relative = &file_str[pos + crate_name.len()..];
+                let relative = relative.trim_start_matches('/');
+                let full = std::path::Path::new(manifest_dir).join(relative);
+                if full.exists() {
+                    return full;
+                }
+            }
+        }
+
+        // Try walking up to workspace root
+        let mut workspace = std::path::Path::new(manifest_dir);
+        while let Some(parent) = workspace.parent() {
+            let candidate = parent.join(file_path);
+            if candidate.exists() {
+                return candidate;
+            }
+            workspace = parent;
+        }
+
+        // Last resort: return the combined path even if it doesn't exist
+        std::path::Path::new(manifest_dir).join(file_path)
+    }
 }
 
 /// Context passed to migration functions.
@@ -138,7 +190,7 @@ impl<'a> MigrationRunner<'a> {
                 version: m.version,
                 name: m.name,
                 applied: applied.contains(&m.version.to_string()),
-                source_file: m.source_file,
+                source_path: m.source_path(),
             })
             .collect();
         all.sort_by_key(|m| m.version);
@@ -151,5 +203,5 @@ pub struct MigrationStatus {
     pub version: &'static str,
     pub name: &'static str,
     pub applied: bool,
-    pub source_file: &'static str,
+    pub source_path: std::path::PathBuf,
 }

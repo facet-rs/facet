@@ -1,8 +1,8 @@
 //! Syntax highlighting for the TUI using arborium.
 
 use arborium::Highlighter;
-use arborium_highlight::Span as ArboriumSpan;
-use arborium_theme::{Theme, capture_to_slot, slot_to_highlight_index};
+use arborium_highlight::spans_to_themed;
+use arborium_theme::Theme;
 use ratatui::prelude::*;
 use ratatui::text::{Line, Span as RatatuiSpan};
 
@@ -42,7 +42,7 @@ pub fn highlight_to_lines(
     source: &str,
 ) -> Vec<Line<'static>> {
     // Get spans from arborium
-    let spans = match highlighter.highlight_spans(language, source) {
+    let raw_spans = match highlighter.highlight_spans(language, source) {
         Ok(spans) => spans,
         Err(_) => {
             // Fallback: return unhighlighted lines
@@ -53,54 +53,91 @@ pub fn highlight_to_lines(
         }
     };
 
-    // Convert to themed spans with style indices
-    let themed = spans_to_styled(source, spans, theme);
+    // Use arborium's spans_to_themed which handles deduplication and coalescing
+    let themed_spans = spans_to_themed(raw_spans);
 
-    // Build lines
+    if themed_spans.is_empty() {
+        // No highlighting - return plain lines
+        return source
+            .lines()
+            .map(|line| Line::from(line.to_string()))
+            .collect();
+    }
+
+    // Build events from spans: (position, is_start, span_index)
+    let mut events: Vec<(u32, bool, usize)> = Vec::new();
+    for (i, span) in themed_spans.iter().enumerate() {
+        events.push((span.start, true, i));
+        events.push((span.end, false, i));
+    }
+
+    // Sort events: by position, then ends before starts at same position
+    events.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+    // Process events with a stack to handle overlapping spans
     let mut lines = Vec::new();
     let mut current_line_spans: Vec<RatatuiSpan<'static>> = Vec::new();
-    let mut last_end = 0usize;
+    let mut last_pos: usize = 0;
+    let mut stack: Vec<usize> = Vec::new(); // indices into themed_spans
 
-    for (start, end, style) in themed {
-        let start = start as usize;
-        let end = end as usize;
+    for (pos, is_start, span_idx) in events {
+        let pos = pos as usize;
 
-        // Add any unstyled text before this span
-        if start > last_end {
-            let unstyled = &source[last_end..start];
-            for (i, part) in unstyled.split('\n').enumerate() {
+        // Emit any source text before this position
+        if pos > last_pos && pos <= source.len() {
+            let text = &source[last_pos..pos];
+            let style = if let Some(&top_idx) = stack.last() {
+                let theme_idx = themed_spans[top_idx].theme_index;
+                theme
+                    .style(theme_idx)
+                    .map(to_ratatui_style)
+                    .unwrap_or_default()
+            } else {
+                Style::default()
+            };
+
+            // Split by newlines and add to lines
+            for (i, part) in text.split('\n').enumerate() {
                 if i > 0 {
                     lines.push(Line::from(std::mem::take(&mut current_line_spans)));
                 }
                 if !part.is_empty() {
-                    current_line_spans.push(RatatuiSpan::raw(part.to_string()));
+                    current_line_spans.push(RatatuiSpan::styled(part.to_string(), style));
                 }
             }
+            last_pos = pos;
         }
 
-        // Add the styled span
-        let text = &source[start..end];
+        // Update the stack
+        if is_start {
+            stack.push(span_idx);
+        } else {
+            // Remove this span from stack
+            if let Some(idx) = stack.iter().rposition(|&x| x == span_idx) {
+                stack.remove(idx);
+            }
+        }
+    }
+
+    // Emit remaining text after last event
+    if last_pos < source.len() {
+        let text = &source[last_pos..];
+        let style = if let Some(&top_idx) = stack.last() {
+            let theme_idx = themed_spans[top_idx].theme_index;
+            theme
+                .style(theme_idx)
+                .map(to_ratatui_style)
+                .unwrap_or_default()
+        } else {
+            Style::default()
+        };
+
         for (i, part) in text.split('\n').enumerate() {
             if i > 0 {
                 lines.push(Line::from(std::mem::take(&mut current_line_spans)));
             }
             if !part.is_empty() {
                 current_line_spans.push(RatatuiSpan::styled(part.to_string(), style));
-            }
-        }
-
-        last_end = end;
-    }
-
-    // Add any remaining unstyled text
-    if last_end < source.len() {
-        let unstyled = &source[last_end..];
-        for (i, part) in unstyled.split('\n').enumerate() {
-            if i > 0 {
-                lines.push(Line::from(std::mem::take(&mut current_line_spans)));
-            }
-            if !part.is_empty() {
-                current_line_spans.push(RatatuiSpan::raw(part.to_string()));
             }
         }
     }
@@ -110,40 +147,10 @@ pub fn highlight_to_lines(
         lines.push(Line::from(current_line_spans));
     }
 
-    // Handle case where source ends with newline
-    if source.ends_with('\n') && !lines.is_empty() {
-        lines.push(Line::from(""));
-    }
-
     // If we got no lines, return at least one empty line
     if lines.is_empty() {
         lines.push(Line::from(""));
     }
 
     lines
-}
-
-/// Convert arborium spans to (start, end, ratatui::Style) tuples.
-fn spans_to_styled(
-    _source: &str,
-    spans: Vec<ArboriumSpan>,
-    theme: &Theme,
-) -> Vec<(u32, u32, Style)> {
-    let mut result = Vec::new();
-
-    // Sort spans by start position
-    let mut spans = spans;
-    spans.sort_by_key(|s| s.start);
-
-    for span in spans {
-        let slot = capture_to_slot(&span.capture);
-        if let Some(theme_idx) = slot_to_highlight_index(slot) {
-            if let Some(style) = theme.style(theme_idx) {
-                let ratatui_style = to_ratatui_style(style);
-                result.push((span.start, span.end, ratatui_style));
-            }
-        }
-    }
-
-    result
 }
