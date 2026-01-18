@@ -347,13 +347,16 @@ public struct Parser {
         var entries: [Entry] = []
         var separator: ObjectSeparator? = nil
 
+        // Track if first entry comes after newline (for mixed separator detection)
+        let firstEntryAfterNewline = current.hadNewlineBefore && !check(.rBrace, .eof)
+
         while !check(.rBrace, .eof) {
             // Check for newline at start of iteration (indicating newline-separated format)
             if current.hadNewlineBefore && !entries.isEmpty {
                 if separator == nil {
                     separator = .newline
                 } else if separator == .comma {
-                    throw ParseError(message: "mixed separators in object", span: current.span)
+                    throw ParseError(message: "mixed separators (use either commas or newlines)", span: current.span)
                 }
             }
 
@@ -363,10 +366,14 @@ public struct Parser {
 
             // Check for comma separator
             if check(.comma) {
+                // If first entry came after newline, mixing with comma is an error
+                if firstEntryAfterNewline && entries.count == 1 {
+                    throw ParseError(message: "mixed separators (use either commas or newlines)", span: current.span)
+                }
                 if separator == nil {
                     separator = .comma
                 } else if separator != .comma {
-                    throw ParseError(message: "mixed separators in object", span: current.span)
+                    throw ParseError(message: "mixed separators (use either commas or newlines)", span: current.span)
                 }
                 _ = advance() // consume comma
             }
