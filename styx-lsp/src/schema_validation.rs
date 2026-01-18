@@ -136,6 +136,37 @@ fn extract_embedded_schema(cli_name: &str) -> Result<SchemaFile, String> {
         .map_err(|e| format!("failed to parse embedded schema: {}", e))
 }
 
+/// Extract schema source text from a binary with embedded styx schemas.
+fn extract_embedded_schema_source(cli_name: &str) -> Result<String, String> {
+    let binary_path = which::which(cli_name)
+        .map_err(|_| format!("binary '{}' not found in PATH", cli_name))?;
+
+    let schemas = styx_embed::extract_schemas_from_file(&binary_path)
+        .map_err(|e| format!("failed to extract schema from '{}': {}", binary_path.display(), e))?;
+
+    if schemas.is_empty() {
+        return Err(format!("no embedded schemas found in '{}'", binary_path.display()));
+    }
+
+    Ok(schemas.into_iter().next().unwrap())
+}
+
+/// Load schema source text for a schema reference.
+///
+/// For External schemas, reads the file from disk.
+/// For Embedded schemas, extracts from the binary.
+pub fn load_schema_source(schema_ref: &SchemaRef, document_uri: &Url) -> Result<String, String> {
+    match schema_ref {
+        SchemaRef::External(path) => {
+            let resolved = resolve_schema_path(path, document_uri)
+                .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
+            std::fs::read_to_string(&resolved)
+                .map_err(|e| format!("failed to read schema file '{}': {}", resolved.display(), e))
+        }
+        SchemaRef::Embedded { cli } => extract_embedded_schema_source(cli),
+    }
+}
+
 /// Load and validate a document against its declared schema.
 ///
 /// Returns validation errors, or a schema loading error message.

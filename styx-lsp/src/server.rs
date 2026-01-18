@@ -12,7 +12,8 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use crate::schema_validation::{
     SchemaRef, find_object_at_offset, get_document_fields, get_error_span, get_schema_fields,
-    get_schema_fields_at_path, load_document_schema, resolve_schema_path, validate_against_schema,
+    get_schema_fields_at_path, load_document_schema, load_schema_source, resolve_schema_path,
+    validate_against_schema,
 };
 use crate::semantic_tokens::{compute_semantic_tokens, semantic_token_legend};
 
@@ -545,35 +546,35 @@ impl LanguageServer for StyxLanguageServer {
 
         // Case 2: Hover on field name
         if let Some(field_path) = find_field_path_at_offset(tree, offset)
-            && let Some((SchemaRef::External(schema_path), _)) =
-                find_schema_declaration_with_range(tree, &doc.content)
-            && let Some(resolved) = resolve_schema_path(&schema_path, &uri)
-            && let Ok(schema_source) = std::fs::read_to_string(&resolved)
+            && let Some((schema_ref, _)) = find_schema_declaration_with_range(tree, &doc.content)
+            && let Ok(schema_source) = load_schema_source(&schema_ref, &uri)
         {
             // Convert path to &[&str] for the lookup
             let path_refs: Vec<&str> = field_path.iter().map(|s| s.as_str()).collect();
 
             if let Some(field_info) = get_field_info_from_schema(&schema_source, &path_refs) {
-                // Create a file:// URI for the schema link with line number
-                // Use the last field in the path for finding the definition location
-                let field_name = field_path.last().map(|s| s.as_str()).unwrap_or("");
-                let field_range = find_field_in_schema_source(&schema_source, field_name);
-                let schema_link = if let Ok(mut schema_uri) = Url::from_file_path(&resolved) {
-                    // Add line/column fragment for jumping to the field definition
-                    if let Some(range) = field_range {
-                        // LSP positions are 0-based, but URI fragments are typically 1-based
-                        let line = range.start.line + 1;
-                        let col = range.start.character + 1;
-                        schema_uri.set_fragment(Some(&format!("L{}:{}", line, col)));
+                // For external schemas, create a link to the schema file
+                let (schema_display, schema_link) = match &schema_ref {
+                    SchemaRef::External(path) => {
+                        let field_name = field_path.last().map(|s| s.as_str()).unwrap_or("");
+                        let field_range = find_field_in_schema_source(&schema_source, field_name);
+                        let link = resolve_schema_path(path, &uri).and_then(|resolved| {
+                            let mut schema_uri = Url::from_file_path(&resolved).ok()?;
+                            if let Some(range) = field_range {
+                                let line = range.start.line + 1;
+                                let col = range.start.character + 1;
+                                schema_uri.set_fragment(Some(&format!("L{}:{}", line, col)));
+                            }
+                            Some(schema_uri)
+                        });
+                        (path.clone(), link)
                     }
-                    Some(schema_uri)
-                } else {
-                    None
+                    SchemaRef::Embedded { cli } => (format!("embedded:{}", cli), None),
                 };
                 let content = format_field_hover(
                     &field_path,
                     &field_info,
-                    &schema_path,
+                    &schema_display,
                     schema_link.as_ref(),
                 );
                 return Ok(Some(Hover {
@@ -603,17 +604,11 @@ impl LanguageServer for StyxLanguageServer {
         };
 
         // Get schema fields
-        let Some((SchemaRef::External(schema_path), _)) =
-            find_schema_declaration_with_range(tree, &doc.content)
-        else {
+        let Some((schema_ref, _)) = find_schema_declaration_with_range(tree, &doc.content) else {
             return Ok(None);
         };
 
-        let Some(resolved) = resolve_schema_path(&schema_path, &uri) else {
-            return Ok(None);
-        };
-
-        let Ok(schema_source) = std::fs::read_to_string(&resolved) else {
+        let Ok(schema_source) = load_schema_source(&schema_ref, &uri) else {
             return Ok(None);
         };
 
