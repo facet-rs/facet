@@ -18,6 +18,7 @@ use ratatui::{
 mod config;
 mod service;
 mod tables;
+mod tui;
 
 /// Postgres toolkit for Rust, powered by facet reflection.
 #[derive(Facet, Debug)]
@@ -60,6 +61,9 @@ enum Commands {
 }
 
 fn main() {
+    // Load .env file if present (silently ignore if not found)
+    let _ = dotenvy::dotenv();
+
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
@@ -120,24 +124,21 @@ fn run(cli: Cli) {
             }
         }
         None => {
-            // No subcommand: launch TUI (the default human interface)
-            let schema = dibs::Schema::collect();
-
-            if schema.tables.is_empty() {
-                println!("No tables registered.");
-                println!();
-                println!("Define tables using #[facet(dibs::table = \"name\")] on Facet structs.");
-                return;
-            }
-
+            // No subcommand: launch unified TUI (the default human interface)
             if stdout().is_terminal() {
-                if let Err(e) = run_schema_tui(&schema) {
+                // Try to load config for roam connection
+                let config = config::Config::load().ok();
+                let app = tui::App::new();
+                if let Err(e) = app.run(config.as_ref().map(|(c, _)| c)) {
                     eprintln!("TUI error: {}", e);
                     std::process::exit(1);
                 }
             } else {
-                // Not a TTY, print plain text
-                print_schema_plain(&schema);
+                // Not a TTY - just show help
+                println!("dibs - Postgres toolkit for Rust");
+                println!();
+                println!("Run `dibs --help` for usage information.");
+                println!("Run in a terminal for the interactive TUI.");
             }
         }
     }
