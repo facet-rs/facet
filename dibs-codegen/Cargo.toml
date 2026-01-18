@@ -1,0 +1,13 @@
+[package]
+name = "dibs-codegen"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "dibs-codegen"
+path = "src/main.rs"
+
+[dependencies]
+dibs-proto = { path = "../dibs-proto" }
+roam-codegen = { git = "https://github.com/bearcove/roam", branch = "main" }
+clap = { version = "4", features = ["derive"] }
