@@ -29,7 +29,7 @@
 ; Keys in entries - any scalar in the key position (overrides @string above)
 (entry
   key: (expr
-    payload: (scalar) @property))
+    payload: (scalar (_) @property)))
 
 ; Sequence items are values, not keys (must come AFTER entry key rule to override)
 (sequence
