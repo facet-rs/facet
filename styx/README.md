@@ -57,7 +57,7 @@ than `https://example.org/` is.
 
 Types matter at exactly two times:
 
-- Validation via [schemas](https://styx.bearcove.eu/spec/schema/) (which are also Styx documents)
+- Validation via [schemas](https://styx.bearcove.eu/reference/spec/schema/) (which are also Styx documents)
 - Deserialization, in either flavor (dynamic or static typing)
 
 In dynamic typing flavor, your Styx document gets parsed into a tree,
