@@ -22,6 +22,8 @@ export default defineConfig({
         chunkFileNames: "chunks/[name]-[hash].js",
         assetFileNames: "assets/[name][extname]",
       },
+      // Preserve all exports from entry points - they're imported dynamically by HTML templates
+      preserveEntrySignatures: "exports-only",
     },
     outDir: "dist",
     emptyOutDir: true,

@@ -179,6 +179,16 @@
 {% endblock head %}
 
 {% block content %}
+<nav class="playground-nav">
+    <a href="/tools">← Tools</a>
+    <span class="separator">/</span>
+    <a href="/tools/playgrounds">Playgrounds</a>
+    <span class="separator">/</span>
+    <span class="current">CodeMirror</span>
+    <span class="switch">
+        <a href="/tools/playgrounds/monaco">Switch to Monaco</a>
+    </span>
+</nav>
 <h1>{{ page.title }}</h1>
 
 <div class="playground-container">
