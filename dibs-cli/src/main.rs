@@ -508,23 +508,38 @@ impl<'a> SchemaApp<'a> {
         disable_raw_mode()?;
         stdout().execute(LeaveAlternateScreen)?;
 
-        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+        // Check if we're in Zed's integrated terminal
+        let in_zed = std::env::var("TERM_PROGRAM")
+            .map(|v| v == "zed")
+            .unwrap_or(false);
 
-        // Try editor-specific line number syntax
-        let status = match editor.as_str() {
-            "code" | "code-insiders" => std::process::Command::new(&editor)
-                .arg("--goto")
+        let status = if in_zed {
+            // Use Zed CLI to open in the current workspace
+            std::process::Command::new("zed")
                 .arg(format!("{}:{}", file, line))
-                .status(),
-            "subl" | "sublime" => std::process::Command::new(&editor)
-                .arg(format!("{}:{}", file, line))
-                .status(),
-            _ => {
-                // vim/nvim/nano/emacs style: +line
-                std::process::Command::new(&editor)
-                    .arg(format!("+{}", line))
-                    .arg(file)
-                    .status()
+                .status()
+        } else {
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+
+            // Try editor-specific line number syntax
+            match editor.as_str() {
+                "code" | "code-insiders" => std::process::Command::new(&editor)
+                    .arg("--goto")
+                    .arg(format!("{}:{}", file, line))
+                    .status(),
+                "subl" | "sublime" => std::process::Command::new(&editor)
+                    .arg(format!("{}:{}", file, line))
+                    .status(),
+                "zed" => std::process::Command::new(&editor)
+                    .arg(format!("{}:{}", file, line))
+                    .status(),
+                _ => {
+                    // vim/nvim/nano/emacs style: +line
+                    std::process::Command::new(&editor)
+                        .arg(format!("+{}", line))
+                        .arg(file)
+                        .status()
+                }
             }
         };
 
