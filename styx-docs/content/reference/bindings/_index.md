@@ -1,13 +1,12 @@
 +++
-title = "Bindings"
+title = "Type Mappings"
 weight = 4
 sort_by = "weight"
 insert_anchor_links = "heading"
 +++
 
-Language bindings for Styx. All implementations are tested against a shared [compliance corpus](https://github.com/bearcove/styx/tree/main/compliance/corpus) to ensure consistent behavior.
+How language types map to Styx syntax.
 
-- [Rust](rust) — Reference implementation with Facet integration
-- [Python](python) — Native Python 3.12+ implementation
-- [Go](go) — Native Go implementation
-- [JavaScript / TypeScript](javascript) — Native TypeScript implementation
+- [Rust](rust) — How Rust types (structs, enums, Option, Vec, HashMap) correspond to Styx syntax
+
+For installation and usage guides, see the [Guide](/guide) section.

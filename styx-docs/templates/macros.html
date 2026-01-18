@@ -7,7 +7,7 @@
     <ul>
         {% for page in pages %}
         <li>
-            <a href="{{ page.permalink }}" {% if current_path == page.path %}class="active"{% endif %}>
+            <a href="{{ page.permalink }}" {% if current_path == page.permalink %}class="active"{% endif %}>
                 {{ page.title or page.path }}
             </a>
         </li>
@@ -15,8 +15,8 @@
 
         {% for subsection_path in subsections %}
             {% set subsection = get_section(path=subsection_path) %}
-        <li class="has-children{% if current_path is starting_with(subsection.path) %} expanded{% endif %}">
-            <a href="{{ subsection.permalink }}" {% if current_path is starting_with(subsection.path) %}class="active"{% endif %}>
+        <li class="has-children{% if current_path is starting_with(subsection.permalink) %} expanded{% endif %}">
+            <a href="{{ subsection.permalink }}" {% if current_path is starting_with(subsection.permalink) %}class="active"{% endif %}>
                 {{ subsection.title or subsection.path }}
             </a>
             {{ self::render_section_tree(section=subsection, current_path=current_path, depth=depth+1) }}
@@ -45,7 +45,7 @@
     {% if pages | length > 1 %}
     <nav class="page-switcher">
         {% for page in pages %}
-            <a href="{{ page.permalink }}" {% if current_path == page.path %}class="active"{% endif %}>
+            <a href="{{ page.permalink }}" {% if current_path == page.permalink %}class="active"{% endif %}>
                 {{ page.title }}
             </a>
         {% endfor %}

@@ -19,7 +19,7 @@
 
 {% if has_sidebar %}
 <div class="docs">
-    {{ macros::sidebar(root_section_path=root_section_path, current_path=page.path) }}
+    {{ macros::sidebar(root_section_path=root_section_path, current_path=page.permalink) }}
 
     <main class="docs-content">
         <article class="article">
@@ -53,14 +53,14 @@
 {% else %}
 <main class="main">
     {% if show_switcher %}
-    {{ macros::page_switcher(section=root_section, current_path=page.path) }}
+    {{ macros::page_switcher(section=root_section, current_path=page.permalink) }}
     {% endif %}
     <article class="article standalone">
         <h1>{{ page.title }}</h1>
         {{ page.content | safe }}
     </article>
     {% if show_switcher %}
-    {{ macros::page_switcher(section=root_section, current_path=page.path) }}
+    {{ macros::page_switcher(section=root_section, current_path=page.permalink) }}
     {% endif %}
 </main>
 {% endif %}
