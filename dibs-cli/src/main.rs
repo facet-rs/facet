@@ -840,13 +840,292 @@ fn mask_password(url: &str) -> String {
 }
 
 fn run_migrate() {
-    eprintln!("TODO: Wire up roam service for migrations");
-    std::process::exit(1);
+    let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        eprintln!("Error: DATABASE_URL environment variable not set.");
+        eprintln!();
+        eprintln!("Set it via:");
+        eprintln!("  export DATABASE_URL=postgres://user:pass@host/db");
+        std::process::exit(1);
+    });
+
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+
+    // Try to load dibs.toml - if present, use roam
+    if let Ok((cfg, config_path)) = config::Config::load() {
+        rt.block_on(run_migrate_via_roam(&cfg, &config_path, &url));
+    } else {
+        // No dibs.toml - use local migration runner
+        rt.block_on(run_migrate_local(&url));
+    }
+}
+
+async fn run_migrate_via_roam(cfg: &config::Config, config_path: &Path, database_url: &str) {
+    use dibs_proto::{LogLevel, MigrateRequest};
+    use owo_colors::OwoColorize as _;
+
+    println!(
+        "{}",
+        format!("Using config: {}", config_path.display())
+            .as_str()
+            .dimmed()
+    );
+
+    // Connect to the db crate via roam
+    let conn = match service::connect_to_service(cfg).await {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("Failed to connect to db service: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let client = conn.client();
+
+    // Create a channel for receiving log messages
+    let (log_tx, mut log_rx) = roam::channel::<dibs_proto::MigrationLog>();
+
+    // Spawn a task to print log messages as they arrive
+    let log_printer = tokio::spawn(async move {
+        while let Ok(Some(log)) = log_rx.recv().await {
+            let prefix = match log.level {
+                LogLevel::Debug => "DEBUG".dimmed().to_string(),
+                LogLevel::Info => "INFO".blue().to_string(),
+                LogLevel::Warn => "WARN".yellow().to_string(),
+                LogLevel::Error => "ERROR".red().to_string(),
+            };
+            if let Some(migration) = &log.migration {
+                println!("[{}] [{}] {}", prefix, migration.cyan(), log.message);
+            } else {
+                println!("[{}] {}", prefix, log.message);
+            }
+        }
+    });
+
+    // Call the migrate method
+    let result = client
+        .migrate(
+            MigrateRequest {
+                database_url: database_url.to_string(),
+                migration: None, // Run all pending
+            },
+            log_tx,
+        )
+        .await;
+
+    // Wait for log printer to finish
+    let _ = log_printer.await;
+
+    match result {
+        Ok(res) => {
+            if res.applied.is_empty() {
+                println!("{}", "No pending migrations.".green());
+            } else {
+                println!(
+                    "{}",
+                    format!(
+                        "Applied {} migration(s) in {}ms",
+                        res.applied.len(),
+                        res.total_time_ms
+                    )
+                    .green()
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("Migration failed: {:?}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn run_migrate_local(database_url: &str) {
+    #[allow(unused_imports)]
+    use owo_colors::OwoColorize as _;
+
+    // Connect to database
+    let (client, connection) =
+        match tokio_postgres::connect(database_url, tokio_postgres::NoTls).await {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to connect to database: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+    // Spawn connection handler
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Database connection error: {}", e);
+        }
+    });
+
+    // Run migrations
+    let runner = dibs::MigrationRunner::new(&client);
+
+    match runner.migrate().await {
+        Ok(applied) => {
+            if applied.is_empty() {
+                println!("{}", "No pending migrations.".green());
+            } else {
+                for version in &applied {
+                    println!("  {} {}", "Applied".green(), version);
+                }
+                println!(
+                    "{}",
+                    format!("Applied {} migration(s)", applied.len()).green()
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("Migration failed: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 fn run_status() {
-    eprintln!("TODO: Wire up roam service for migration status");
-    std::process::exit(1);
+    let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        eprintln!("Error: DATABASE_URL environment variable not set.");
+        eprintln!();
+        eprintln!("Set it via:");
+        eprintln!("  export DATABASE_URL=postgres://user:pass@host/db");
+        std::process::exit(1);
+    });
+
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+
+    // Try to load dibs.toml - if present, use roam
+    if let Ok((cfg, config_path)) = config::Config::load() {
+        rt.block_on(run_status_via_roam(&cfg, &config_path, &url));
+    } else {
+        // No dibs.toml - use local migration status
+        rt.block_on(run_status_local(&url));
+    }
+}
+
+async fn run_status_via_roam(cfg: &config::Config, config_path: &Path, database_url: &str) {
+    use dibs_proto::MigrationStatusRequest;
+    use owo_colors::OwoColorize as _;
+
+    println!(
+        "{}",
+        format!("Using config: {}", config_path.display())
+            .as_str()
+            .dimmed()
+    );
+
+    // Connect to the db crate via roam
+    let conn = match service::connect_to_service(cfg).await {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("Failed to connect to db service: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let client = conn.client();
+
+    // Call the migration_status method
+    let result = client
+        .migration_status(MigrationStatusRequest {
+            database_url: database_url.to_string(),
+        })
+        .await;
+
+    match result {
+        Ok(migrations) => {
+            if migrations.is_empty() {
+                println!("No migrations registered.");
+            } else {
+                println!("Migration status:");
+                println!();
+                for m in &migrations {
+                    let status = if m.applied {
+                        "✓".green().to_string()
+                    } else {
+                        "○".yellow().to_string()
+                    };
+                    println!("  {} {} - {}", status, m.version, m.name);
+                }
+                println!();
+                let applied = migrations.iter().filter(|m| m.applied).count();
+                let pending = migrations.len() - applied;
+                println!(
+                    "{} applied, {} pending",
+                    applied.to_string().green(),
+                    if pending > 0 {
+                        pending.to_string().yellow().to_string()
+                    } else {
+                        pending.to_string()
+                    }
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to get migration status: {:?}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn run_status_local(database_url: &str) {
+    #[allow(unused_imports)]
+    use owo_colors::OwoColorize as _;
+
+    // Connect to database
+    let (client, connection) =
+        match tokio_postgres::connect(database_url, tokio_postgres::NoTls).await {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to connect to database: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+    // Spawn connection handler
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Database connection error: {}", e);
+        }
+    });
+
+    // Get migration status
+    let runner = dibs::MigrationRunner::new(&client);
+
+    match runner.status().await {
+        Ok(migrations) => {
+            if migrations.is_empty() {
+                println!("No migrations registered.");
+            } else {
+                println!("Migration status:");
+                println!();
+                for m in &migrations {
+                    let status = if m.applied {
+                        "✓".green().to_string()
+                    } else {
+                        "○".yellow().to_string()
+                    };
+                    println!("  {} {} - {}", status, m.version, m.name);
+                }
+                println!();
+                let applied = migrations.iter().filter(|m| m.applied).count();
+                let pending = migrations.len() - applied;
+                println!(
+                    "{} applied, {} pending",
+                    applied.to_string().green(),
+                    if pending > 0 {
+                        pending.to_string().yellow().to_string()
+                    } else {
+                        pending.to_string()
+                    }
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to get migration status: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 fn run_diff() {
