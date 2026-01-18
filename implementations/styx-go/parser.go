@@ -336,65 +336,6 @@ func (p *parser) validateKey(key *Value) error {
 	return nil
 }
 
-func (p *parser) expandDottedPath(pathText string, span Span, seenKeys map[string]Span) (*Entry, error) {
-	segments := strings.Split(pathText, ".")
-
-	for _, s := range segments {
-		if s == "" {
-			return nil, &ParseError{Message: "invalid key", Span: span}
-		}
-	}
-
-	firstSegment := segments[0]
-	if _, exists := seenKeys[firstSegment]; exists {
-		return nil, &ParseError{Message: "duplicate key", Span: span}
-	}
-	seenKeys[firstSegment] = span
-
-	// Calculate spans for each segment
-	segmentSpans := make([]Span, len(segments))
-	offset := span.Start
-	for i, segment := range segments {
-		segmentBytes := len(segment)
-		segmentSpans[i] = Span{offset, offset + segmentBytes}
-		offset += segmentBytes + 1 // +1 for the dot
-	}
-
-	value, err := p.parseValue()
-	if err != nil {
-		return nil, err
-	}
-
-	// Build nested structure from inside out
-	result := value
-	for i := len(segments) - 1; i > 0; i-- {
-		segSpan := segmentSpans[i]
-		segmentKey := &Value{
-			Span:        segSpan,
-			PayloadKind: PayloadScalar,
-			Scalar:      &Scalar{Text: segments[i], Kind: ScalarBare, Span: segSpan},
-		}
-		result = &Value{
-			Span:        span,
-			PayloadKind: PayloadObject,
-			Object: &Object{
-				Entries:   []*Entry{{Key: segmentKey, Value: result}},
-				Separator: SeparatorNewline,
-				Span:      span,
-			},
-		}
-	}
-
-	firstSpan := segmentSpans[0]
-	outerKey := &Value{
-		Span:        firstSpan,
-		PayloadKind: PayloadScalar,
-		Scalar:      &Scalar{Text: firstSegment, Kind: ScalarBare, Span: firstSpan},
-	}
-
-	return &Entry{Key: outerKey, Value: result}, nil
-}
-
 func (p *parser) expandDottedPathWithState(pathText string, span Span, ps *pathState) (*Entry, error) {
 	segments := strings.Split(pathText, ".")
 
@@ -613,65 +554,6 @@ func (p *parser) parseValue() (*Value, error) {
 		return nil, err
 	}
 	return &Value{Span: scalar.Span, PayloadKind: PayloadScalar, Scalar: scalar}, nil
-}
-
-func (p *parser) parseAttributesStartingWith(firstKeyToken *Token) (*Value, error) {
-	attrs := []*Entry{}
-	startSpan := firstKeyToken.Span
-
-	p.expect(TokenGT)
-	firstKey := &Value{
-		Span:        firstKeyToken.Span,
-		PayloadKind: PayloadScalar,
-		Scalar: &Scalar{
-			Text: firstKeyToken.Text,
-			Kind: ScalarBare,
-			Span: firstKeyToken.Span,
-		},
-	}
-	firstValue, err := p.parseAttributeValue()
-	if err != nil {
-		return nil, err
-	}
-	attrs = append(attrs, &Entry{Key: firstKey, Value: firstValue})
-
-	endSpan := firstValue.Span
-
-	for p.check(TokenScalar) && !p.current.HadNewlineBefore {
-		keyToken := p.current
-		nextToken := p.peek()
-		if nextToken.Type != TokenGT || nextToken.HadWhitespaceBefore {
-			break
-		}
-
-		p.advance()
-		p.advance()
-
-		attrKey := &Value{
-			Span:        keyToken.Span,
-			PayloadKind: PayloadScalar,
-			Scalar: &Scalar{
-				Text: keyToken.Text,
-				Kind: ScalarBare,
-				Span: keyToken.Span,
-			},
-		}
-
-		attrValue, err := p.parseAttributeValue()
-		if err != nil {
-			return nil, err
-		}
-		attrs = append(attrs, &Entry{Key: attrKey, Value: attrValue})
-		endSpan = attrValue.Span
-	}
-
-	obj := &Object{
-		Entries:   attrs,
-		Separator: SeparatorComma,
-		Span:      Span{startSpan.Start, endSpan.End},
-	}
-
-	return &Value{Span: obj.Span, PayloadKind: PayloadObject, Object: obj}, nil
 }
 
 func (p *parser) parseAttributesAfterGT(firstKeyToken *Token) (*Value, error) {

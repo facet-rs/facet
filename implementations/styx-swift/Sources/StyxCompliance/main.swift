@@ -16,12 +16,22 @@ func main() {
         exit(1)
     }
 
+    // Extract relative path for comment (compliance/corpus/...)
+    let relativePath: String
+    if let corpusRange = filePath.range(of: "compliance/corpus/") {
+        relativePath = String(filePath[corpusRange.lowerBound...])
+    } else {
+        relativePath = filePath
+    }
+
     var parser = Parser(source: content)
 
     do {
         let doc = try parser.parse()
+        print("; file: \(relativePath)")
         print(doc.toSexp())
     } catch let error as ParseError {
+        print("; file: \(relativePath)")
         print(error.toSexp())
     } catch {
         fputs("Error: \(error)\n", stderr)
