@@ -623,6 +623,18 @@ impl FormatSuite for TomlSlice {
         CaseSpec::from_str("inner = [1, 2, 3, 4]")
     }
 
+    // -- Yoke cases --
+
+    #[cfg(feature = "yoke")]
+    fn yoke_cow_str() -> CaseSpec {
+        CaseSpec::from_str(r#"value = "hello yoke""#).with_partial_eq()
+    }
+
+    #[cfg(feature = "yoke")]
+    fn yoke_custom() -> CaseSpec {
+        CaseSpec::from_str(r#"value = "hello|yoke""#).with_partial_eq()
+    }
+
     // -- Extended NonZero cases --
 
     fn nonzero_integers_extended() -> CaseSpec {

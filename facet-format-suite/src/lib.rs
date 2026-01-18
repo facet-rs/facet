@@ -294,6 +294,16 @@ pub trait FormatSuite {
     /// Case: `Arc<[T]>` unsized slice smart pointer.
     fn arc_slice() -> CaseSpec;
 
+    // ── Yoke tests ──
+
+    /// Case: `Yoke<Cow<'static, str>, Arc<str>>` zero-copy smart pointer.
+    #[cfg(feature = "yoke")]
+    fn yoke_cow_str() -> CaseSpec;
+
+    /// Case: Custom type deriving Yokeable and using #[facet(try_from_ref)].
+    #[cfg(feature = "yoke")]
+    fn yoke_custom() -> CaseSpec;
+
     // ── Set tests ──
 
     /// Case: `BTreeSet<T>`.
@@ -717,6 +727,11 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, ArcStrWrapper>(&CASE_ARC_STR, S::arc_str),
         SuiteCase::new::<S, RcStrWrapper>(&CASE_RC_STR, S::rc_str),
         SuiteCase::new::<S, ArcSliceWrapper>(&CASE_ARC_SLICE, S::arc_slice),
+        // Yoke cases
+        #[cfg(feature = "yoke")]
+        SuiteCase::new::<S, YokeWrapper>(&CASE_YOKE_COW_STR, S::yoke_cow_str),
+        #[cfg(feature = "yoke")]
+        SuiteCase::new::<S, YokingWrapper>(&CASE_YOKE_CUSTOM, S::yoke_custom),
         // Set cases
         SuiteCase::new::<S, SetWrapper>(&CASE_SET_BTREE, S::set_btree),
         // Extended numeric cases
@@ -2156,6 +2171,32 @@ const CASE_ARC_SLICE: CaseDescriptor<ArcSliceWrapper> = CaseDescriptor {
     },
 };
 
+// ── Yoke case descriptors ──
+
+#[cfg(feature = "yoke")]
+const CASE_YOKE_COW_STR: CaseDescriptor<YokeWrapper> = CaseDescriptor {
+    id: "pointer::yoke_cow_str",
+    description: "Yoke<Cow<'static, str>, Arc<str>> zero-copy smart pointer",
+    expected: || YokeWrapper {
+        value: yoke::Yoke::<std::borrow::Cow<'static, str>, std::sync::Arc<str>>::attach_to_cart(
+            std::sync::Arc::from("hello yoke"),
+            |s| std::borrow::Cow::Borrowed(s),
+        ),
+    },
+};
+
+#[cfg(feature = "yoke")]
+const CASE_YOKE_CUSTOM: CaseDescriptor<YokingWrapper> = CaseDescriptor {
+    id: "pointer::yoke_custom",
+    description: "Custom type deriving Yokeable and using #[facet(try_from_ref)]",
+    expected: || YokingWrapper {
+        value: yoke::Yoke::<SplittingYoker<'static>, std::sync::Arc<str>>::attach_to_cart(
+            std::sync::Arc::from("hello|yoke"),
+            |s| SplittingYoker::try_from_ref(s).unwrap(),
+        ),
+    },
+};
+
 // ── Set case descriptors ──
 
 const CASE_SET_BTREE: CaseDescriptor<SetWrapper> = CaseDescriptor {
@@ -3207,6 +3248,55 @@ pub struct RcStrWrapper {
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ArcSliceWrapper {
     pub inner: std::sync::Arc<[i32]>,
+}
+
+// ── Yoke test fixtures ──
+
+/// Fixture for `Yoke<Cow<'static, str>, Arc<str>>` test.
+#[cfg(feature = "yoke")]
+#[derive(Facet, Debug)]
+pub struct YokeWrapper {
+    pub value: yoke::Yoke<std::borrow::Cow<'static, str>, std::sync::Arc<str>>,
+}
+
+#[cfg(feature = "yoke")]
+impl PartialEq for YokeWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.value.get() == other.value.get()
+    }
+}
+
+/// Fixture for `YokingWrapper` test.
+#[cfg(feature = "yoke")]
+#[derive(Facet, Debug)]
+pub struct YokingWrapper {
+    pub value: yoke::Yoke<SplittingYoker<'static>, std::sync::Arc<str>>,
+}
+
+#[cfg(feature = "yoke")]
+impl PartialEq for YokingWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.value.get() == other.value.get()
+    }
+}
+
+#[cfg(feature = "yoke")]
+#[derive(Facet, Debug, PartialEq, yoke::Yokeable)]
+#[facet(try_from_ref = SplittingYoker::try_from_ref)]
+pub struct SplittingYoker<'a> {
+    left: &'a str,
+    right: &'a str,
+}
+
+#[cfg(feature = "yoke")]
+impl<'a> SplittingYoker<'a> {
+    pub fn try_from_ref(value: &'a str) -> Result<Self, &'static str> {
+        if let Some((left, right)) = value.split_once('|') {
+            Ok(SplittingYoker { left, right })
+        } else {
+            Err("Invalid format")
+        }
+    }
 }
 
 // ── Set test fixtures ──

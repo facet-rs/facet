@@ -168,6 +168,22 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let trait_sources = TraitSources::from_attrs(&pe.container.attrs);
     let bgp_for_vtable = pe.container.bgp.display_without_bounds();
     let enum_type_for_vtable = quote! { #enum_name #bgp_for_vtable };
+
+    // Check if from_ref or try_from_ref attribute is present (for gen_vtable)
+    let has_from_ref =
+        pe.container.attrs.facet.iter().any(|a| {
+            a.is_builtin() && (a.key_str() == "from_ref" || a.key_str() == "try_from_ref")
+        });
+    let (try_from_fn_direct, try_from_fn_indirect): (Option<TokenStream>, Option<TokenStream>) =
+        if has_from_ref {
+            (
+                Some(quote! { <Self>::__facet_try_from_ref }),
+                Some(quote! { <Self>::__facet_try_from_ref_indirect }),
+            )
+        } else {
+            (None, None)
+        };
+
     let vtable_code = gen_vtable(
         &facet_crate,
         &type_name_fn,
@@ -176,6 +192,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         &enum_type_for_vtable,
         None,  // enums don't support container-level invariants yet
         false, // enums don't need inherent borrow_inner (not transparent)
+        try_from_fn_direct.as_ref(),
+        try_from_fn_indirect.as_ref(),
     );
     // Note: vtable_code already contains &const { ... } for the VTableDirect,
     // no need for an extra const { } wrapper around VTableErased
@@ -200,7 +218,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 
     let bgp = pe.container.bgp.clone();
     // Use the AST directly for where clauses and generics, as PContainer/PEnum doesn't store them
-    let where_clauses_tokens = build_where_clauses(
+    let where_clauses = build_where_clauses(
         parsed.clauses.as_ref(),
         parsed.generics.as_ref(),
         opaque,
@@ -453,7 +471,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             shadow_defs.push(quote! {
                 #[repr(C)]
                 #[allow(non_snake_case, dead_code)]
-                union #shadow_union_name #bgp_with_bounds #where_clauses_tokens { #(#all_union_fields),* }
+                union #shadow_union_name #bgp_with_bounds #where_clauses { #(#all_union_fields),* }
             });
 
             // Shadow repr struct for enum as a whole
@@ -462,7 +480,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 #[repr(C)]
                 #[allow(non_snake_case)]
                 #[allow(dead_code)]
-                struct #shadow_repr_name #bgp_with_bounds #where_clauses_tokens {
+                struct #shadow_repr_name #bgp_with_bounds #where_clauses {
                     _discriminant: #shadow_discriminant_name,
                     _phantom: #phantom_data,
                     _fields: #shadow_union_name #bgp_without_bounds,
@@ -540,7 +558,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         shadow_defs.push(quote! {
                             #[repr(C)]
                             #[allow(non_snake_case, dead_code)]
-                            struct #shadow_struct_name #bgp_with_bounds #where_clauses_tokens { _phantom: #phantom_data }
+                            struct #shadow_struct_name #bgp_with_bounds #where_clauses { _phantom: #phantom_data }
                         });
                         let variant = gen_unit_variant(
                             &name_token,
@@ -565,7 +583,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         shadow_defs.push(quote! {
                             #[repr(C)]
                             #[allow(non_snake_case, dead_code)]
-                            struct #shadow_struct_name #bgp_with_bounds #where_clauses_tokens {
+                            struct #shadow_struct_name #bgp_with_bounds #where_clauses {
                                 #(#fields_with_types),* ,
                                 _phantom: #phantom_data
                             }
@@ -631,7 +649,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         shadow_defs.push(quote! {
                             #[repr(C)]
                             #[allow(non_snake_case, dead_code)]
-                            struct #shadow_struct_name #bgp_with_bounds #where_clauses_tokens {
+                            struct #shadow_struct_name #bgp_with_bounds #where_clauses {
                                 #struct_fields
                             }
                         });
@@ -781,7 +799,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         shadow_defs.push(quote! {
                             #[repr(C)] // Layout variants like C structs
                             #[allow(non_snake_case, dead_code)]
-                            struct #shadow_struct_name #bgp_with_bounds #where_clauses_tokens {
+                            struct #shadow_struct_name #bgp_with_bounds #where_clauses {
                                 _discriminant: #discriminant_rust_type,
                                 _phantom: #phantom_data,
                                 #(#fields_with_types),*
@@ -848,7 +866,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         shadow_defs.push(quote! {
                             #[repr(C)] // Layout variants like C structs
                             #[allow(non_snake_case, dead_code)]
-                            struct #shadow_struct_name #bgp_with_bounds #where_clauses_tokens {
+                            struct #shadow_struct_name #bgp_with_bounds #where_clauses {
                                 _discriminant: #discriminant_rust_type,
                                 _phantom: #phantom_data,
                                 #(#fields_with_types),*
@@ -1019,6 +1037,117 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         quote! {}
     };
 
+    // from_ref / try_from_ref handling - generates try_from function
+    // Similar to proxy, we define helper functions in an inherent impl
+    let from_ref_inherent_impl = {
+        // Look for from_ref or try_from_ref attribute
+        let from_ref_attr = pe
+            .container
+            .attrs
+            .facet
+            .iter()
+            .find(|a| a.is_builtin() && a.key_str() == "from_ref");
+        let try_from_ref_attr = pe
+            .container
+            .attrs
+            .facet
+            .iter()
+            .find(|a| a.is_builtin() && a.key_str() == "try_from_ref");
+
+        if let Some(func_attr) = from_ref_attr.or(try_from_ref_attr) {
+            let is_fallible = try_from_ref_attr.is_some();
+
+            // Use raw tokens directly (like proxy does)
+            let func_path = &func_attr.args;
+
+            let enum_type = enum_name;
+            let helper_bgp = pe
+                .container
+                .bgp
+                .with_lifetime(LifetimeName(format_ident!("ʄ")));
+            let bgp_def_for_helper = helper_bgp.display_with_bounds();
+
+            let (helper_fn, helper_call, unwrap_val) = if is_fallible {
+                (
+                    quote! {
+                        #[inline]
+                        const fn __facet_get_src_ref_shape<'f, F, Ref: #facet_crate::Facet<'f> + 'f, Out, Err>(_fn: &F) -> &'static #facet_crate::Shape
+                        where
+                            F: Fn(Ref) -> ::core::result::Result<Out, Err>,
+                        {
+                            Ref::SHAPE
+                        }
+                    },
+                    quote! { __facet_get_src_ref_shape::<_, _, Self, _>(&#func_path) },
+                    quote! {
+                       match value {
+                            ::core::result::Result::Ok(v) => v,
+                            ::core::result::Result::Err(e) => { return #facet_crate::TryFromOutcome::Failed(__alloc::string::ToString::to_string(&e).into()) }
+                       }
+                    },
+                )
+            } else {
+                (
+                    quote! {
+                        #[inline]
+                        const fn __facet_get_src_ref_shape<'f, F, Ref: #facet_crate::Facet<'f> + 'f, Out>(_fn: &F) -> &'static #facet_crate::Shape
+                        where
+                            F: Fn(Ref) -> Out,
+                        {
+                            Ref::SHAPE
+                        }
+                    },
+                    quote! { __facet_get_src_ref_shape::<_, _, Self>(&#func_path) },
+                    quote! { value },
+                )
+            };
+
+            quote! {
+                #[doc(hidden)]
+                impl #bgp_def_for_helper #enum_type #bgp_without_bounds
+                #where_clauses
+                {
+                    /// try_from function for VTableDirect (raw pointer signature)
+                    #[doc(hidden)]
+                    unsafe fn __facet_try_from_ref(
+                        dst: *mut Self,
+                        src_shape: &'static #facet_crate::Shape,
+                        src: #facet_crate::PtrConst,
+                    ) -> #facet_crate::TryFromOutcome {
+                        extern crate alloc as __alloc;
+
+                        #helper_fn
+
+                        // Ensure source shape matches the expected reference type
+                        if src_shape.id != #helper_call.id {
+                            return #facet_crate::TryFromOutcome::Unsupported;
+                        }
+                        let value = #func_path(unsafe { src.get() });
+                        unsafe { dst.write(#unwrap_val) };
+                        #facet_crate::TryFromOutcome::Converted
+                    }
+
+                    /// try_from wrapper for VTableIndirect (OxPtrMut signature)
+                    #[doc(hidden)]
+                    unsafe fn __facet_try_from_ref_indirect(
+                        dst: #facet_crate::OxPtrMut,
+                        src_shape: &'static #facet_crate::Shape,
+                        src: #facet_crate::PtrConst,
+                    ) -> #facet_crate::TryFromOutcome {
+                        Self::__facet_try_from_ref(
+                            dst.ptr().as_ptr::<Self>() as *mut Self,
+                            src_shape,
+                            src,
+                        )
+                    }
+                }
+            }
+        } else {
+            // No from_ref/try_from_ref attribute, or missing ref_type (validated earlier)
+            quote! {}
+        }
+    };
+
     // Static declaration for release builds (pre-evaluates SHAPE)
     let static_decl =
         crate::derive::generate_static_decl(enum_name, &facet_crate, has_type_or_const_generics);
@@ -1041,7 +1170,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         // See: https://github.com/facet-rs/facet/issues/996
         const _: () = {
             #[allow(dead_code, unreachable_code, clippy::multiple_bound_locations, clippy::diverging_sub_expression)]
-            fn __facet_construct_all_variants #bgp_def () -> #enum_name #bgp_without_bounds #where_clauses_tokens {
+            fn __facet_construct_all_variants #bgp_def () -> #enum_name #bgp_without_bounds #where_clauses {
                 loop {
                     #(#variant_constructors;)*
                 }
@@ -1052,7 +1181,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 
         #[automatically_derived]
         #[allow(non_camel_case_types)]
-        unsafe impl #bgp_def #facet_crate::Facet<'ʄ> for #enum_name #bgp_without_bounds #where_clauses_tokens {
+        unsafe impl #bgp_def #facet_crate::Facet<'ʄ> for #enum_name #bgp_without_bounds #where_clauses {
             const SHAPE: &'static #facet_crate::Shape = &const {
                 use #facet_crate::𝟋::*;
                 #(#shadow_struct_defs)*
@@ -1082,5 +1211,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         }
 
         #static_decl
+
+        // from_ref inherent impl
+        #from_ref_inherent_impl
     }
 }

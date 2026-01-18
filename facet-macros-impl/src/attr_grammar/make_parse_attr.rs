@@ -35,6 +35,8 @@ keyword! {
     KValidator = "validator";
     KFnPtr = "fn_ptr";
     KShapeType = "shape_type";
+    KArbitrary = "arbitrary";
+    KPassthrough = "passthrough";
 }
 
 operator! {
@@ -193,6 +195,11 @@ unsynn! {
         _kw: KShapeType,
     }
 
+    /// `arbitrary` payload (just the keyword)
+    struct ArbitraryPayload {
+        _kw: KArbitrary,
+    }
+
     /// A struct definition: `pub struct Column { ... }`
     struct StructDef {
         attrs: Vec<OuterAttr>,
@@ -344,6 +351,10 @@ enum VariantKind {
     /// The user's type is converted to `<Type as Facet>::SHAPE`.
     /// Grammar syntax: `Proxy(shape_type)`
     ShapeType,
+    /// Arbitrary value - accepts any tokens without validation.
+    /// Used for compile-time-only attributes where the value is read from raw tokens.
+    /// Grammar syntax: `FromRef(arbitrary)`
+    Arbitrary,
     /// Optional `&'static str` - can be used with or without a value.
     /// Grammar syntax: `Children(Option<&'static str>)`
     /// - `#[facet(xml::children)]` → None
@@ -664,6 +675,14 @@ fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantK
         }
     }
 
+    // arbitrary → Arbitrary
+    {
+        let mut iter = token_stream.clone().to_token_iter();
+        if iter.parse::<ArbitraryPayload>().is_ok() && iter.next().is_none() {
+            return Ok(VariantKind::Arbitrary);
+        }
+    }
+
     // i64 → NewtypeI64 (for numeric bounds like min, max)
     {
         let mut iter = token_stream.clone().to_token_iter();
@@ -862,6 +881,12 @@ impl ParsedGrammar {
                         };
                         quote! { #(#attrs)* #name(&'static #shape_path) }
                     }
+                    VariantKind::Arbitrary => {
+                        // Arbitrary variants are compile-time only - they don't store runtime data.
+                        // The value is read from raw tokens by the derive macro.
+                        // We use a unit variant since nothing is stored.
+                        quote! { #(#attrs)* #name }
+                    }
                     VariantKind::OptionalStr => {
                         quote! { #(#attrs)* #name(Option<&'static str>) }
                     }
@@ -965,6 +990,12 @@ impl ParsedGrammar {
                     VariantKind::ShapeType => {
                         quote! {
                             (Self::#variant_name(a), Self::#variant_name(b)) => ::core::ptr::eq(*a, *b)
+                        }
+                    }
+                    // Arbitrary: unit variant, simple equality
+                    VariantKind::Arbitrary => {
+                        quote! {
+                            (Self::#variant_name, Self::#variant_name) => true
                         }
                     }
                     // Function pointer variants: always return false
@@ -1078,6 +1109,7 @@ impl ParsedGrammar {
                     VariantKind::Validator(_) => quote! { #name: validator },
                     VariantKind::FnPtr(_) => quote! { #name: fn_ptr },
                     VariantKind::ShapeType => quote! { #name: shape_type },
+                    VariantKind::Arbitrary => quote! { #name: arbitrary },
                     VariantKind::OptionalStr => quote! { #name: opt_str },
                 }
             })
@@ -1652,6 +1684,45 @@ impl ParsedGrammar {
                             // Container-level with just expr
                             (@ns { $ns:path } #key_ident { | $val:expr }) => {{
                                 ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
+                            }};
+                        }
+                    }
+                    VariantKind::Arbitrary => {
+                        // Arbitrary variants are compile-time only - they don't store runtime data.
+                        // The derive macro reads the raw tokens from the attribute directly.
+                        // At runtime we just store a unit marker so the attribute exists.
+                        // Pre-compute the full attribute name for error messages
+                        let full_attr_name = if ns_str.is_empty() {
+                            key_str.clone()
+                        } else {
+                            format!("{ns_str}::{key_str}")
+                        };
+                        quote! {
+                            // Field-level: no args is an error (arbitrary needs a value)
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                compile_error!(concat!(
+                                    "Attribute `",
+                                    #full_attr_name,
+                                    "` requires a value"
+                                ))
+                            }};
+                            // Field-level with args: store unit marker, derive macro reads raw tokens
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
+                                static __UNIT: () = ();
+                                ::facet::Attr::new(#ns_expr, #key_str, &__UNIT)
+                            }};
+                            // Container-level: no args is an error (arbitrary needs a value)
+                            (@ns { $ns:path } #key_ident { }) => {{
+                                compile_error!(concat!(
+                                    "Attribute `",
+                                    #full_attr_name,
+                                    "` requires a value"
+                                ))
+                            }};
+                            // Container-level with args: store unit marker, derive macro reads raw tokens
+                            (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
+                                static __UNIT: () = ();
+                                ::facet::Attr::new(#ns_expr, #key_str, &__UNIT)
                             }};
                         }
                     }

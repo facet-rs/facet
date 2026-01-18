@@ -66,6 +66,8 @@ lock_api = ["alloc", "dep:lock_api"]
 # Provide Facet trait implementations for iddqd collection types (IdHashMap, BiHashMap, etc.)
 # Note: IdOrdMap requires std, so it's only available when both iddqd and std features are enabled
 iddqd = ["alloc", "dep:iddqd"]
+# Provide Facet trait implementations for yoke::Yoke
+yoke = ["alloc", "dep:yoke", "dep:stable_deref_trait"]
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.
@@ -103,6 +105,8 @@ uuid = { workspace = true, optional = true }
 rust_decimal = { workspace = true, optional = true }
 lock_api = { version = "0.4", optional = true, default-features = false }
 iddqd = { workspace = true, optional = true }
+yoke = { version = "0.8.1", optional = true }
+stable_deref_trait = { version = "1.2.1", optional = true }
 
 
 [dev-dependencies]

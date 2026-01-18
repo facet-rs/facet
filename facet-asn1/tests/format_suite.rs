@@ -427,6 +427,16 @@ impl FormatSuite for Asn1Slice {
         CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
     }
 
+    #[cfg(feature = "yoke")]
+    fn yoke_cow_str() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    #[cfg(feature = "yoke")]
+    fn yoke_custom() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
     fn nonzero_integers_extended() -> CaseSpec {
         CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
     }
