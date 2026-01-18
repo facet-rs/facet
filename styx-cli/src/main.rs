@@ -87,11 +87,13 @@ FILE MODE OPTIONS:
 SUBCOMMANDS:
     @tree [--format sexp|debug] <file>  Show parse tree (styx_tree)
     @cst <file>                     Show CST structure (styx_cst)
-    @diff <old> <new>               Structural diff (not yet implemented)
+    @diff <schema> --crate <name> [--baseline <ver>]
+                                    Compare schema against published version
     @lsp                            Start language server (stdio)
     @skill                          Output Claude Code skill for AI assistance
     @package <schema> --name <n> --version <v> [--output <dir>]
                                     Generate publishable crate from schema
+    @publish <schema> [-y]          Diff, bump, publish to staging (needs STYX_STAGING_TOKEN)
 
 EXAMPLES:
     styx config.styx                Format and print to stdout
@@ -470,10 +472,11 @@ fn run_subcommand(cmd: &str, args: &[String]) -> Result<(), CliError> {
     match cmd {
         "tree" => run_tree(args),
         "cst" => run_cst(args),
-        "diff" => Err(CliError::Usage("@diff is not yet implemented".into())),
+        "diff" => run_diff(args),
         "lsp" => run_lsp(args),
         "skill" => run_skill(args),
         "package" => run_package(args),
+        "publish" => run_publish(args),
         _ => Err(CliError::Usage(format!("unknown subcommand: @{cmd}"))),
     }
 }
@@ -1014,6 +1017,10 @@ fn run_package(args: &[String]) -> Result<(), CliError> {
     let lib_rs = generate_lib_rs(&name);
     std::fs::write(output_path.join("src/lib.rs"), lib_rs)?;
 
+    // Write README.md
+    let readme = generate_readme(&name);
+    std::fs::write(output_path.join("README.md"), readme)?;
+
     // Copy schema file
     std::fs::write(output_path.join("schema.styx"), &schema_content)?;
 
@@ -1036,10 +1043,47 @@ version = "{version}"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Styx schema for {name}"
+readme = "README.md"
 categories = ["config"]
 keywords = ["styx", "schema"]
 
 # No dependencies - pure data crate
+"#
+    )
+}
+
+fn generate_readme(name: &str) -> String {
+    let crate_name_snake = name.replace('-', "_");
+    format!(
+        r#"# {name}
+
+A [Styx](https://styx.bearcove.eu) schema crate for configuration validation.
+
+## Usage
+
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+{name} = "VERSION"
+```
+
+Then use the schema:
+
+```rust
+use {crate_name_snake}::SCHEMA;
+
+// SCHEMA contains the raw styx schema text
+// Pass it to styx validation APIs
+```
+
+## Schema
+
+See [`schema.styx`](./schema.styx) for the full schema definition.
+
+## License
+
+MIT OR Apache-2.0
 "#
     )
 }
@@ -1062,4 +1106,590 @@ fn generate_lib_rs(name: &str) -> String {
 pub const SCHEMA: &str = include_str!("../schema.styx");
 "#
     )
+}
+
+// ============================================================================
+// Publish command - package and publish to staging.crates.io
+// ============================================================================
+
+const STAGING_INDEX: &str = "sparse+https://index.staging.crates.io/";
+
+fn run_publish(args: &[String]) -> Result<(), CliError> {
+    let mut schema_file: Option<String> = None;
+    let mut yes = false;
+    let mut i = 0;
+
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-y" || arg == "--yes" {
+            yes = true;
+        } else if arg.starts_with('-') {
+            return Err(CliError::Usage(format!("unknown option: {arg}")));
+        } else if schema_file.is_none() {
+            schema_file = Some(arg.clone());
+        } else {
+            return Err(CliError::Usage(format!("unexpected argument: {arg}")));
+        }
+        i += 1;
+    }
+
+    let schema_file =
+        schema_file.ok_or_else(|| CliError::Usage("@publish requires a schema file".into()))?;
+
+    // Get token from environment
+    let token = std::env::var("STYX_STAGING_TOKEN").ok();
+    if token.is_none() {
+        return Err(CliError::Usage(
+            "STYX_STAGING_TOKEN environment variable not set".into(),
+        ));
+    }
+
+    // Read and validate the schema file
+    let schema_content = std::fs::read_to_string(&schema_file)
+        .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("{schema_file}: {e}"))))?;
+
+    // Parse to validate it's valid styx
+    let local_tree = styx_tree::parse(&schema_content)
+        .map_err(|e| CliError::Parse(format!("invalid schema: {e}")))?;
+
+    // Extract crate name from meta.crate
+    let name = extract_meta_field(&local_tree, "crate")
+        .ok_or_else(|| CliError::Usage("schema must have meta.crate field for publishing".into()))?;
+
+    // Try to fetch latest published version
+    let (version, _changes) = match fetch_latest_version(&name) {
+        Ok(latest_version) => {
+            eprintln!("Found {name}@{latest_version} on staging.crates.io");
+            eprintln!();
+
+            // Fetch and diff
+            let baseline_content = fetch_crate_schema(&name, &latest_version)?;
+            let baseline_tree = styx_tree::parse(&baseline_content)
+                .map_err(|e| CliError::Parse(format!("invalid baseline schema: {e}")))?;
+
+            let changes = compare_schemas(&baseline_tree, &local_tree);
+
+            // Show changes
+            if changes.breaking.is_empty() && changes.additive.is_empty() && changes.patch.is_empty() {
+                eprintln!("No changes detected from {latest_version}.");
+                return Err(CliError::Usage("nothing to publish".into()));
+            }
+
+            if !changes.breaking.is_empty() {
+                eprintln!("Breaking changes:");
+                for change in &changes.breaking {
+                    eprintln!("  - {change}");
+                }
+            }
+
+            if !changes.additive.is_empty() {
+                eprintln!("Additive changes:");
+                for change in &changes.additive {
+                    eprintln!("  + {change}");
+                }
+            }
+
+            if !changes.patch.is_empty() {
+                eprintln!("Patch changes:");
+                for change in &changes.patch {
+                    eprintln!("  ~ {change}");
+                }
+            }
+
+            // Calculate next version
+            let next_version = calculate_next_version(&latest_version, &changes)?;
+            eprintln!();
+            eprintln!("Version bump: {latest_version} -> {next_version}");
+
+            (next_version, Some(changes))
+        }
+        Err(_) => {
+            // First publish
+            eprintln!("No existing version found - this will be the first publish.");
+            ("0.1.0".to_string(), None)
+        }
+    };
+
+    eprintln!();
+
+    // Ask for confirmation unless -y was passed
+    if !yes {
+        eprint!("Publish {name}@{version} to staging.crates.io? [y/N] ");
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            eprintln!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    // Create temp directory for the crate
+    let temp_dir = std::env::temp_dir().join(format!("styx-publish-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(temp_dir.join("src"))?;
+    std::fs::create_dir_all(temp_dir.join(".cargo"))?;
+
+    // Write crate files
+    let cargo_toml = generate_cargo_toml(&name, &version);
+    std::fs::write(temp_dir.join("Cargo.toml"), cargo_toml)?;
+
+    let lib_rs = generate_lib_rs(&name);
+    std::fs::write(temp_dir.join("src/lib.rs"), lib_rs)?;
+
+    let readme = generate_readme(&name);
+    std::fs::write(temp_dir.join("README.md"), readme)?;
+
+    std::fs::write(temp_dir.join("schema.styx"), &schema_content)?;
+
+    // Configure staging registry
+    let cargo_config = format!(
+        r#"[registries.staging]
+index = "{STAGING_INDEX}"
+"#
+    );
+    std::fs::write(temp_dir.join(".cargo/config.toml"), cargo_config)?;
+
+    eprintln!("Publishing {name}@{version}...");
+
+    // Build cargo publish command
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.arg("publish")
+        .arg("--registry")
+        .arg("staging")
+        .current_dir(&temp_dir);
+
+    // Pass token via environment variable
+    if let Some(token) = token {
+        cmd.env("CARGO_REGISTRIES_STAGING_TOKEN", token);
+    }
+
+    let status = cmd.status().map_err(|e| {
+        CliError::Io(io::Error::new(e.kind(), format!("failed to run cargo publish: {e}")))
+    })?;
+
+    // Clean up temp directory
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    if status.success() {
+        eprintln!("Published {name}@{version} to staging.crates.io");
+        Ok(())
+    } else {
+        Err(CliError::Usage(format!(
+            "cargo publish failed with exit code: {}",
+            status.code().unwrap_or(-1)
+        )))
+    }
+}
+
+fn extract_meta_field(value: &Value, field: &str) -> Option<String> {
+    // Look for meta.field in the root object
+    if let Some(Payload::Object(obj)) = &value.payload {
+        for entry in &obj.entries {
+            if entry.key.as_str() == Some("meta") {
+                if let Some(Payload::Object(meta_obj)) = &entry.value.payload {
+                    for meta_entry in &meta_obj.entries {
+                        if meta_entry.key.as_str() == Some(field) {
+                            if let Some(Payload::Scalar(s)) = &meta_entry.value.payload {
+                                return Some(s.text.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn calculate_next_version(current: &str, changes: &SchemaChanges) -> Result<String, CliError> {
+    let parts: Vec<&str> = current.split('.').collect();
+    if parts.len() != 3 {
+        return Err(CliError::Parse(format!("invalid version: {current}")));
+    }
+
+    let major: u64 = parts[0].parse().map_err(|_| CliError::Parse(format!("invalid major: {}", parts[0])))?;
+    let minor: u64 = parts[1].parse().map_err(|_| CliError::Parse(format!("invalid minor: {}", parts[1])))?;
+    let patch: u64 = parts[2].parse().map_err(|_| CliError::Parse(format!("invalid patch: {}", parts[2])))?;
+
+    let (new_major, new_minor, new_patch) = if !changes.breaking.is_empty() {
+        // Breaking change -> major bump (or 1.0.0 if pre-1.0)
+        if major == 0 {
+            (0, minor + 1, 0)  // 0.x stays 0.x but bumps minor for breaking
+        } else {
+            (major + 1, 0, 0)
+        }
+    } else if !changes.additive.is_empty() {
+        // Additive change -> minor bump
+        (major, minor + 1, 0)
+    } else {
+        // Patch change
+        (major, minor, patch + 1)
+    };
+
+    Ok(format!("{new_major}.{new_minor}.{new_patch}"))
+}
+
+// ============================================================================
+// Diff command - compare local schema against published version
+// ============================================================================
+
+const STAGING_API: &str = "https://staging.crates.io/api/v1/crates";
+const STAGING_DOWNLOAD: &str = "https://static.staging.crates.io/crates";
+
+fn run_diff(args: &[String]) -> Result<(), CliError> {
+    let mut crate_name: Option<String> = None;
+    let mut baseline: Option<String> = None;
+    let mut schema_file: Option<String> = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--crate" {
+            i += 1;
+            crate_name = Some(
+                args.get(i)
+                    .ok_or_else(|| CliError::Usage("--crate requires an argument".into()))?
+                    .clone(),
+            );
+        } else if arg == "--baseline" {
+            i += 1;
+            baseline = Some(
+                args.get(i)
+                    .ok_or_else(|| CliError::Usage("--baseline requires an argument".into()))?
+                    .clone(),
+            );
+        } else if arg.starts_with('-') {
+            return Err(CliError::Usage(format!("unknown option: {arg}")));
+        } else if schema_file.is_none() {
+            schema_file = Some(arg.clone());
+        } else {
+            return Err(CliError::Usage(format!("unexpected argument: {arg}")));
+        }
+        i += 1;
+    }
+
+    let schema_file =
+        schema_file.ok_or_else(|| CliError::Usage("@diff requires a schema file".into()))?;
+    let crate_name =
+        crate_name.ok_or_else(|| CliError::Usage("@diff requires --crate <name>".into()))?;
+
+    // Read local schema
+    let local_content = std::fs::read_to_string(&schema_file)
+        .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("{schema_file}: {e}"))))?;
+
+    // Parse local schema
+    let local_tree = styx_tree::parse(&local_content)
+        .map_err(|e| CliError::Parse(format!("invalid schema: {e}")))?;
+
+    // Fetch baseline version if not specified
+    let version = match baseline {
+        Some(v) => v,
+        None => fetch_latest_version(&crate_name)?,
+    };
+
+    eprintln!("Comparing against {crate_name}@{version}...");
+
+    // Fetch and extract baseline schema
+    let baseline_content = fetch_crate_schema(&crate_name, &version)?;
+
+    // Parse baseline schema
+    let baseline_tree = styx_tree::parse(&baseline_content)
+        .map_err(|e| CliError::Parse(format!("invalid baseline schema: {e}")))?;
+
+    // Compare schemas
+    let changes = compare_schemas(&baseline_tree, &local_tree);
+
+    // Report changes
+    if changes.breaking.is_empty() && changes.additive.is_empty() && changes.patch.is_empty() {
+        eprintln!("No changes detected.");
+        return Ok(());
+    }
+
+    if !changes.breaking.is_empty() {
+        eprintln!("\nBreaking changes (require major bump):");
+        for change in &changes.breaking {
+            eprintln!("  - {change}");
+        }
+    }
+
+    if !changes.additive.is_empty() {
+        eprintln!("\nAdditive changes (require minor bump):");
+        for change in &changes.additive {
+            eprintln!("  + {change}");
+        }
+    }
+
+    if !changes.patch.is_empty() {
+        eprintln!("\nPatch changes:");
+        for change in &changes.patch {
+            eprintln!("  ~ {change}");
+        }
+    }
+
+    // Suggest version bump
+    let bump = if !changes.breaking.is_empty() {
+        "major"
+    } else if !changes.additive.is_empty() {
+        "minor"
+    } else {
+        "patch"
+    };
+    eprintln!("\nSuggested bump: {bump}");
+
+    Ok(())
+}
+
+fn fetch_latest_version(crate_name: &str) -> Result<String, CliError> {
+    let url = format!("{STAGING_API}/{crate_name}");
+
+    let output = std::process::Command::new("curl")
+        .args(["-sfL", &url])
+        .output()
+        .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("curl failed: {e}"))))?;
+
+    if !output.status.success() {
+        return Err(CliError::Usage(format!(
+            "crate {crate_name} not found on staging.crates.io"
+        )));
+    }
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| CliError::Parse(format!("invalid JSON from crates.io: {e}")))?;
+
+    json["crate"]["max_version"]
+        .as_str()
+        .map(String::from)
+        .ok_or_else(|| CliError::Parse("could not find max_version in response".into()))
+}
+
+fn fetch_crate_schema(crate_name: &str, version: &str) -> Result<String, CliError> {
+    let url = format!("{STAGING_DOWNLOAD}/{crate_name}/{version}/download");
+    let temp_dir = std::env::temp_dir().join(format!("styx-diff-{}-{}", crate_name, std::process::id()));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    // Download and extract in one pipeline
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "curl -sfL '{}' | tar xzf - -C '{}'",
+            url,
+            temp_dir.display()
+        ))
+        .status()
+        .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("download failed: {e}"))))?;
+
+    if !status.success() {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return Err(CliError::Usage(format!(
+            "failed to download {crate_name}@{version}"
+        )));
+    }
+
+    // Find schema.styx in extracted crate
+    let schema_path = temp_dir.join(format!("{crate_name}-{version}/schema.styx"));
+    let content = std::fs::read_to_string(&schema_path).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        CliError::Io(io::Error::new(
+            e.kind(),
+            format!("schema.styx not found in crate: {e}"),
+        ))
+    })?;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(content)
+}
+
+#[derive(Default)]
+struct SchemaChanges {
+    breaking: Vec<String>,
+    additive: Vec<String>,
+    patch: Vec<String>,
+}
+
+fn compare_schemas(baseline: &Value, local: &Value) -> SchemaChanges {
+    let mut changes = SchemaChanges::default();
+
+    // Extract schema objects from both
+    let baseline_schema = extract_schema_map(baseline);
+    let local_schema = extract_schema_map(local);
+
+    // Check for removed types (breaking)
+    for name in baseline_schema.keys() {
+        if !local_schema.contains_key(name) {
+            let type_name = name.as_deref().unwrap_or("(root)");
+            changes.breaking.push(format!("removed type `{type_name}`"));
+        }
+    }
+
+    // Check for added types (additive)
+    for name in local_schema.keys() {
+        if !baseline_schema.contains_key(name) {
+            let type_name = name.as_deref().unwrap_or("(root)");
+            changes.additive.push(format!("added type `{type_name}`"));
+        }
+    }
+
+    // Check for modified types
+    for (name, baseline_type) in &baseline_schema {
+        if let Some(local_type) = local_schema.get(name) {
+            let type_name = name.as_deref().unwrap_or("(root)");
+            compare_type_definitions(type_name, baseline_type, local_type, &mut changes);
+        }
+    }
+
+    changes
+}
+
+fn extract_schema_map(value: &Value) -> std::collections::HashMap<Option<String>, &Value> {
+    let mut map = std::collections::HashMap::new();
+
+    // Look for "schema" entry in the root object
+    if let Some(Payload::Object(obj)) = &value.payload {
+        for entry in &obj.entries {
+            if entry.key.as_str() == Some("schema") {
+                if let Some(Payload::Object(schema_obj)) = &entry.value.payload {
+                    for schema_entry in &schema_obj.entries {
+                        let key = if schema_entry.key.is_unit() {
+                            None
+                        } else {
+                            schema_entry.key.as_str().map(String::from)
+                        };
+                        map.insert(key, &schema_entry.value);
+                    }
+                }
+            }
+        }
+    }
+
+    map
+}
+
+fn compare_type_definitions(
+    type_name: &str,
+    baseline: &Value,
+    local: &Value,
+    changes: &mut SchemaChanges,
+) {
+    // Compare tags
+    let baseline_tag = baseline.tag.as_ref().map(|t| t.name.as_str());
+    let local_tag = local.tag.as_ref().map(|t| t.name.as_str());
+
+    if baseline_tag != local_tag {
+        changes.breaking.push(format!(
+            "type `{type_name}` changed from @{} to @{}",
+            baseline_tag.unwrap_or("(none)"),
+            local_tag.unwrap_or("(none)")
+        ));
+        return;
+    }
+
+    // For @object types, compare fields
+    if baseline_tag == Some("object") {
+        compare_object_fields(type_name, baseline, local, changes);
+    }
+
+    // For @enum types, compare variants
+    if baseline_tag == Some("enum") {
+        compare_enum_variants(type_name, baseline, local, changes);
+    }
+}
+
+fn compare_object_fields(
+    type_name: &str,
+    baseline: &Value,
+    local: &Value,
+    changes: &mut SchemaChanges,
+) {
+    let baseline_fields = extract_object_fields(baseline);
+    let local_fields = extract_object_fields(local);
+
+    // Removed fields are breaking
+    for (field_name, _) in &baseline_fields {
+        if !local_fields.contains_key(field_name) {
+            changes.breaking.push(format!(
+                "removed field `{field_name}` from `{type_name}`"
+            ));
+        }
+    }
+
+    // Added fields
+    for (field_name, field_type) in &local_fields {
+        if !baseline_fields.contains_key(field_name) {
+            let is_optional = is_optional_field(field_type);
+            if is_optional {
+                changes.additive.push(format!(
+                    "added optional field `{field_name}` to `{type_name}`"
+                ));
+            } else {
+                changes.breaking.push(format!(
+                    "added required field `{field_name}` to `{type_name}`"
+                ));
+            }
+        }
+    }
+}
+
+fn extract_object_fields(value: &Value) -> std::collections::HashMap<String, &Value> {
+    let mut fields = std::collections::HashMap::new();
+
+    // Object fields are in the value's payload (for @object{...})
+    if let Some(Payload::Object(obj)) = &value.payload {
+        for entry in &obj.entries {
+            if let Some(name) = entry.key.as_str() {
+                fields.insert(name.to_string(), &entry.value);
+            }
+        }
+    }
+
+    fields
+}
+
+fn is_optional_field(value: &Value) -> bool {
+    value
+        .tag
+        .as_ref()
+        .map(|t| t.name == "optional" || t.name == "default")
+        .unwrap_or(false)
+}
+
+fn compare_enum_variants(
+    type_name: &str,
+    baseline: &Value,
+    local: &Value,
+    changes: &mut SchemaChanges,
+) {
+    let baseline_variants = extract_enum_variants(baseline);
+    let local_variants = extract_enum_variants(local);
+
+    // Removed variants are breaking
+    for variant in &baseline_variants {
+        if !local_variants.contains(variant) {
+            changes.breaking.push(format!(
+                "removed variant `{variant}` from `{type_name}`"
+            ));
+        }
+    }
+
+    // Added variants are additive
+    for variant in &local_variants {
+        if !baseline_variants.contains(variant) {
+            changes.additive.push(format!(
+                "added variant `{variant}` to `{type_name}`"
+            ));
+        }
+    }
+}
+
+fn extract_enum_variants(value: &Value) -> Vec<String> {
+    let mut variants = Vec::new();
+
+    // Enum variants are in the value's payload (for @enum{...})
+    if let Some(Payload::Object(obj)) = &value.payload {
+        for entry in &obj.entries {
+            if let Some(name) = entry.key.as_str() {
+                variants.push(name.to_string());
+            }
+        }
+    }
+
+    variants
 }
