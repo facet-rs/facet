@@ -1,0 +1,8 @@
+extends (
+    "@eslint/js:recommended"
+    typescript-eslint:strictTypeChecked
+    // don't fold
+)
+foo bar
+bar baz
+

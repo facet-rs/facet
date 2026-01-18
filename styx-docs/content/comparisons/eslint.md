@@ -49,12 +49,12 @@ export default [
 ];
 /// styx
 extends (
-  @eslint/js:recommended
+  "@eslint/js:recommended"
   typescript-eslint:strictTypeChecked
 )
 
 config {
-  files (**/*.{ts,tsx})
+  files "**/*.{ts,tsx}"
   plugins react>eslint-plugin-react
 
   languageOptions parserOptions>{
@@ -63,19 +63,19 @@ config {
   }
 
   rules {
-    @typescript-eslint/no-unused-vars (error {
+    "@typescript-eslint/no-unused-vars" (error {
       argsIgnorePattern "^_"
       varsIgnorePattern "^_"
     })
-    @typescript-eslint/consistent-type-imports error
-    @typescript-eslint/no-floating-promises error
+    "@typescript-eslint/consistent-type-imports" error
+    "@typescript-eslint/no-floating-promises" error
     react/jsx-uses-react off
     react/react-in-jsx-scope off
     react/prop-types off
   }
 }
 
-ignores (dist/ node_modules/ *.config.js)
+ignores (dist/ node_modules/ "*.config.js")
 
 extends eslint-config-prettier
 ```
