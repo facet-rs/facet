@@ -312,3 +312,124 @@ async fn test_insert_and_query_data() {
     assert_eq!(title, "First Post");
     assert_eq!(author, "Alice");
 }
+
+#[tokio::test]
+async fn test_meta_tables() {
+    let (_container, client) = create_postgres_container().await;
+
+    // Create meta tables
+    let meta_sql = dibs::create_meta_tables_sql();
+    client
+        .batch_execute(&meta_sql)
+        .await
+        .expect("Failed to create meta tables");
+
+    // Verify meta tables exist
+    let rows = client
+        .query(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE '__dibs_%' ORDER BY table_name",
+            &[],
+        )
+        .await
+        .expect("Failed to query meta tables");
+
+    let table_names: Vec<String> = rows.iter().map(|r| r.get(0)).collect();
+    assert!(table_names.contains(&"__dibs_migrations".to_string()));
+    assert!(table_names.contains(&"__dibs_tables".to_string()));
+    assert!(table_names.contains(&"__dibs_columns".to_string()));
+    assert!(table_names.contains(&"__dibs_indices".to_string()));
+
+    // Sync schema to meta tables
+    let schema = Schema::collect();
+    let sync_sql = dibs::sync_tables_sql(&schema, Some("test_migration"));
+    client
+        .batch_execute(&sync_sql)
+        .await
+        .expect("Failed to sync meta tables");
+
+    // Verify table metadata was inserted
+    let rows = client
+        .query(
+            "SELECT table_name, source_file, doc_comment, created_by_migration FROM __dibs_tables ORDER BY table_name",
+            &[],
+        )
+        .await
+        .expect("Failed to query __dibs_tables");
+
+    assert!(!rows.is_empty(), "Expected rows in __dibs_tables");
+
+    // Find a test table
+    let test_user_row = rows.iter().find(|r| {
+        let name: &str = r.get(0);
+        name == "test_users"
+    });
+    assert!(
+        test_user_row.is_some(),
+        "Expected test_users in __dibs_tables"
+    );
+
+    let row = test_user_row.unwrap();
+    let source_file: Option<&str> = row.get(1);
+    let migration: Option<&str> = row.get(3);
+
+    // Source file should be populated
+    assert!(
+        source_file.is_some(),
+        "Expected source_file to be populated"
+    );
+    assert!(source_file.unwrap().contains("postgres_integration.rs"));
+
+    // Migration should be recorded
+    assert_eq!(migration, Some("test_migration"));
+
+    // Verify column metadata
+    let rows = client
+        .query(
+            "SELECT column_name, sql_type, is_primary_key, is_unique FROM __dibs_columns WHERE table_name = 'test_users' ORDER BY column_name",
+            &[],
+        )
+        .await
+        .expect("Failed to query __dibs_columns");
+
+    assert!(!rows.is_empty(), "Expected rows in __dibs_columns");
+
+    // Check id column is marked as primary key
+    let id_row = rows.iter().find(|r| {
+        let name: &str = r.get(0);
+        name == "id"
+    });
+    assert!(id_row.is_some());
+    let is_pk: bool = id_row.unwrap().get(2);
+    assert!(is_pk, "Expected id to be primary key");
+
+    // Check email column is marked as unique
+    let email_row = rows.iter().find(|r| {
+        let name: &str = r.get(0);
+        name == "email"
+    });
+    assert!(email_row.is_some());
+    let is_unique: bool = email_row.unwrap().get(3);
+    assert!(is_unique, "Expected email to be unique");
+
+    // Record a migration
+    let record_sql = dibs::record_migration_sql("test_migration", Some("abc123"), Some(42));
+    client
+        .batch_execute(&record_sql)
+        .await
+        .expect("Failed to record migration");
+
+    // Verify migration was recorded
+    let rows = client
+        .query(
+            "SELECT name, checksum, execution_time_ms FROM __dibs_migrations WHERE name = 'test_migration'",
+            &[],
+        )
+        .await
+        .expect("Failed to query __dibs_migrations");
+
+    assert_eq!(rows.len(), 1);
+    let checksum: Option<&str> = rows[0].get(1);
+    let time_ms: Option<i32> = rows[0].get(2);
+    assert_eq!(checksum, Some("abc123"));
+    assert_eq!(time_ms, Some(42));
+}
