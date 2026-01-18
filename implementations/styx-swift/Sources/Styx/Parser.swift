@@ -47,6 +47,16 @@ public struct Parser {
     private mutating func parseEntry() throws -> Entry {
         let key = try parseValue()
 
+        // If an object appears at key position without a tag, it becomes the value
+        // with an implicit unit key (matches Rust behavior)
+        if key.tag == nil, case .object(_) = key.payload {
+            let unitKey = Value.unit(span: Span(start: -1, end: -1))
+            return Entry(key: unitKey, value: key)
+        }
+
+        // Validate key - reject heredocs and sequences as keys
+        try validateKey(key)
+
         // Check for dotted path notation (e.g., server.host localhost)
         // Only applies to plain bare scalars (no tag)
         if key.tag == nil, case .scalar(let scalar) = key.payload, scalar.kind == .bare, scalar.text.contains(".") {
@@ -60,6 +70,26 @@ public struct Parser {
 
         let value = try parseValue()
         return Entry(key: key, value: value)
+    }
+
+    private func validateKey(_ key: Value) throws {
+        switch key.payload {
+        case .scalar(let scalar):
+            // Heredocs are not valid keys
+            if scalar.kind == .heredoc {
+                throw ParseError(message: "invalid key", span: key.span)
+            }
+        case .object(_):
+            // Objects at key position are OK - they become the value of an implicit unit key
+            // This is handled elsewhere
+            break
+        case .sequence(_):
+            // Sequences are not valid keys
+            throw ParseError(message: "invalid key", span: key.span)
+        case .none:
+            // Unit value is OK as a key (e.g., @tag or just @)
+            break
+        }
     }
 
     private mutating func parseDottedPathEntry(pathText: String, pathSpan: Span) throws -> Entry {
@@ -237,11 +267,12 @@ public struct Parser {
         let startSpan = scalar.span
 
         // First entry: key is the scalar, value follows after >
-        let gtToken = advance() // consume >
+        _ = advance() // consume >
 
-        // Check for trailing > error
+        // Trailing > without value - just ignore the > and return the plain scalar
+        // This matches Rust behavior where trailing > is silently ignored
         if current.hadNewlineBefore || current.hadWhitespaceBefore || check(.eof, .rBrace, .rParen, .comma) {
-            throw ParseError(message: "expected a value", span: gtToken.span)
+            return Value.scalar(scalar)
         }
 
         let firstValue = try parseAttributeValue()
@@ -256,11 +287,11 @@ public struct Parser {
 
             // Check if > immediately follows (no whitespace)
             if check(.gt) && !current.hadWhitespaceBefore {
-                let gt = advance() // consume >
+                _ = advance() // consume >
 
-                // Check for trailing > error
+                // Trailing > without value - break out of attribute parsing
                 if current.hadNewlineBefore || current.hadWhitespaceBefore || check(.eof, .rBrace, .rParen, .comma) {
-                    throw ParseError(message: "expected a value", span: gt.span)
+                    break
                 }
 
                 let keyScalar = tokenToScalar(keyToken)
