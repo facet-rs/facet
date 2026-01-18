@@ -13,8 +13,9 @@ categories = ["database"]
 tokio-postgres = "0.7"
 inventory = "0.3"
 thiserror = "2"
-facet = { git = "https://github.com/facet-rs/facet" }
+facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
 dibs-macros = { path = "../dibs-macros" }
+roam = { git = "https://github.com/bearcove/roam", branch = "main" }
 
 [dev-dependencies]
 testcontainers = "0.26"

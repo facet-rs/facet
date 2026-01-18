@@ -34,6 +34,7 @@ pub mod meta;
 mod migrate;
 mod plugin;
 pub mod schema;
+pub mod service;
 
 pub use diff::{Change, SchemaDiff, TableDiff};
 pub use error::Error;

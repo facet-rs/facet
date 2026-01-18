@@ -15,8 +15,8 @@ path = "src/main.rs"
 dibs = { path = "../dibs" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tokio-postgres = "0.7"
-facet = { git = "https://github.com/facet-rs/facet" }
-facet-args = { git = "https://github.com/facet-rs/facet" }
+facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-args = { git = "https://github.com/facet-rs/facet", branch = "main" }
 jiff = "0.2"
 owo-colors = "4"
 ratatui = "0.30"
