@@ -18,17 +18,68 @@ Install via Zed's extension browser (coming soon to the extension gallery).
 
 ## VS Code
 
+Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=bearcove.styx-lang):
+
 ```bash
-cd editors/vscode-styx
-npm install
-npm run compile
-npm run package
-code --install-extension styx-0.1.0.vsix
+code --install-extension bearcove.styx-lang
 ```
 
-Configuration:
-- `styx.server.path`: Path to styx binary (default: `"styx"`)
-- `styx.trace.server`: LSP trace level
+Or search for "Styx Configuration Language" in the Extensions view.
+
+### Features
+
+- **Syntax highlighting** with key/value distinction
+- **Language server integration** via `styx @lsp` (diagnostics, hover, completions)
+- **Heredoc language injection** for 45+ languages — SQL, JavaScript, Rust, Python, HTML, YAML, and more are syntax-highlighted inside heredocs:
+
+```styx
+migration <<SQL,sql
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+SQL
+
+script <<BASH,bash
+#!/bin/bash
+echo "Hello from Styx!"
+BASH
+```
+
+- Bracket matching and auto-closing
+- Comment toggling (`Ctrl+/` / `Cmd+/`)
+
+### Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `styx.server.path` | `"styx"` | Path to the styx executable |
+| `styx.trace.server` | `"off"` | LSP trace level: `"off"`, `"messages"`, `"verbose"` |
+
+### Supported Heredoc Languages
+
+The extension provides syntax highlighting for heredocs with language hints:
+
+| Category | Languages |
+|----------|-----------|
+| Systems | `c`, `cpp`, `rust`, `go`, `zig` |
+| Shell | `bash`, `sh`, `zsh`, `fish`, `powershell` |
+| Web | `javascript`, `typescript`, `tsx`, `html`, `css`, `scss`, `svelte`, `vue` |
+| Backend | `python`, `ruby`, `java`, `kotlin`, `swift`, `php`, `elixir` |
+| Functional | `clojure`, `haskell`, `ocaml`, `scala` |
+| Data | `sql`, `graphql`, `julia`, `r` |
+| Config | `json`, `yaml`, `toml`, `xml`, `ini`, `dockerfile`, `nginx`, `hcl` |
+| Other | `markdown`, `lua`, `perl`, `diff`, `nix`, `makefile` |
+
+### Building from Source
+
+```bash
+cd editors/vscode-styx
+pnpm install
+pnpm run compile
+```
+
+Press F5 to launch the Extension Development Host.
 
 ## Neovim
 
