@@ -14,7 +14,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet.workspace = true
 facet-postcard.workspace = true
-cobs = "0.3"
+cobs.workspace = true
 
 [[bin]]
 name = "golden_vectors"
