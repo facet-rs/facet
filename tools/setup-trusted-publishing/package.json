@@ -9,7 +9,7 @@
     "tsx": "^4"
   },
   "devDependencies": {
-    "orval": "^7",
+    "orval": "^8.0.0",
     "typescript": "^5"
   }
 }
