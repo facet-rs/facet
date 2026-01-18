@@ -1,3 +1,77 @@
+/// Tracks the value kind at a path (for validation).
+private enum PathValueKind {
+    /// Path leads to an object (explicit `{}` or implicit from dotted path).
+    case object
+    /// Path leads to a terminal value (scalar, sequence, tag, unit).
+    case terminal
+}
+
+/// Error type for path validation.
+private enum PathError {
+    case duplicate(original: Span)
+    case reopened(closedPath: [String])
+    case nestIntoTerminal(terminalPath: [String])
+}
+
+/// Tracks dotted path state for validation.
+private struct PathState {
+    /// The current open path segments.
+    var currentPath: [String] = []
+    /// Paths that have been closed (sibling appeared at same level).
+    var closedPaths: Set<[String]> = []
+    /// Full paths that have been assigned, with their value kind and span.
+    var assignedPaths: [[String]: (Span, PathValueKind)] = [:]
+
+    /// Check a path and update state. Returns error if path is invalid.
+    mutating func checkAndUpdate(path: [String], span: Span, valueKind: PathValueKind) -> PathError? {
+        // 1. Check for duplicate (exact same path)
+        if let (original, _) = assignedPaths[path] {
+            return .duplicate(original: original)
+        }
+
+        // 2. Check if any proper prefix is closed or has a terminal value
+        for i in 1..<path.count {
+            let prefix = Array(path[..<i])
+            if closedPaths.contains(prefix) {
+                return .reopened(closedPath: prefix)
+            }
+            if let (_, kind) = assignedPaths[prefix], kind == .terminal {
+                return .nestIntoTerminal(terminalPath: prefix)
+            }
+        }
+
+        // 3. Find common prefix length with current path
+        var commonLen = 0
+        for i in 0..<min(currentPath.count, path.count) {
+            if currentPath[i] == path[i] {
+                commonLen += 1
+            } else {
+                break
+            }
+        }
+
+        // 4. Close paths beyond the common prefix
+        for i in commonLen..<currentPath.count {
+            let closed = Array(currentPath[...i])
+            closedPaths.insert(closed)
+        }
+
+        // 5. Record intermediate path segments as objects (if not already assigned)
+        for i in 1..<path.count {
+            let prefix = Array(path[..<i])
+            if assignedPaths[prefix] == nil {
+                assignedPaths[prefix] = (span, .object)
+            }
+        }
+
+        // 6. Update assigned paths and current path
+        assignedPaths[path] = (span, valueKind)
+        currentPath = path
+
+        return nil
+    }
+}
+
 /// Parser for Styx documents.
 public struct Parser {
     private var lexer: Lexer
@@ -13,10 +87,22 @@ public struct Parser {
 
     /// Parse the source into a Document.
     public mutating func parse() throws -> Document {
+        // If document starts with {, parse as single explicit root object
+        // (comments are already skipped by the lexer)
+        if check(.lBrace) {
+            let obj = try parseObject()
+            // Return a single entry with unit key and object value
+            return Document(entries: [
+                Entry(key: Value.unit(span: Span.invalid), value: obj)
+            ])
+        }
+
+        // Otherwise parse top-level entries (implicit object at document root)
         var entries: [Entry] = []
+        var pathState = PathState()
 
         while !check(.eof) {
-            let entry = try parseEntry()
+            let entry = try parseEntry(pathState: &pathState)
             entries.append(entry)
         }
 
@@ -44,7 +130,7 @@ public struct Parser {
 
     // MARK: - Parsing
 
-    private mutating func parseEntry() throws -> Entry {
+    private mutating func parseEntry(pathState: inout PathState) throws -> Entry {
         let key = try parseValue()
 
         // If an object appears at key position without a tag, it becomes the value
@@ -60,16 +146,68 @@ public struct Parser {
         // Check for dotted path notation (e.g., server.host localhost)
         // Only applies to plain bare scalars (no tag)
         if key.tag == nil, case .scalar(let scalar) = key.payload, scalar.kind == .bare, scalar.text.contains(".") {
-            return try parseDottedPathEntry(pathText: scalar.text, pathSpan: key.span)
+            return try parseDottedPathEntry(pathText: scalar.text, pathSpan: key.span, pathState: &pathState)
         }
+
+        // Get key text for path tracking
+        let keyText = getKeyText(key)
 
         // If next token is on a new line, or at end/closing delimiter, value is implicit unit
         if current.hadNewlineBefore || check(.eof, .rBrace) {
+            // Check path state
+            if let pathError = pathState.checkAndUpdate(path: [keyText], span: key.span, valueKind: .terminal) {
+                throw pathErrorToParseError(pathError, span: key.span)
+            }
             return Entry(key: key, value: Value.unit(span: key.span))
         }
 
         let value = try parseValue()
+
+        // Determine value kind for path tracking
+        let valueKind: PathValueKind
+        switch value.payload {
+        case .object(_):
+            valueKind = .object
+        default:
+            valueKind = .terminal
+        }
+
+        // Check path state
+        if let pathError = pathState.checkAndUpdate(path: [keyText], span: key.span, valueKind: valueKind) {
+            throw pathErrorToParseError(pathError, span: key.span)
+        }
+
         return Entry(key: key, value: value)
+    }
+
+    /// Extract text from a key for path tracking.
+    private func getKeyText(_ key: Value) -> String {
+        if let tag = key.tag {
+            if case .scalar(let scalar) = key.payload {
+                return "@\(tag.name)\(scalar.text)"
+            }
+            return "@\(tag.name)"
+        }
+        switch key.payload {
+        case .scalar(let scalar):
+            return scalar.text
+        case .none:
+            return "@"
+        default:
+            return ""
+        }
+    }
+
+    /// Convert PathError to ParseError.
+    private func pathErrorToParseError(_ pathError: PathError, span: Span) -> ParseError {
+        switch pathError {
+        case .duplicate(_):
+            return ParseError(message: "duplicate key", span: span)
+        case .reopened(let closedPath):
+            return ParseError(message: "cannot reopen path `\(closedPath.joined(separator: "."))` after sibling appeared", span: span)
+        case .nestIntoTerminal(let terminalPath):
+            return ParseError(message: "cannot nest into `\(terminalPath.joined(separator: "."))` which has a terminal value", span: span)
+        }
     }
 
     private func validateKey(_ key: Value) throws {
@@ -92,7 +230,7 @@ public struct Parser {
         }
     }
 
-    private mutating func parseDottedPathEntry(pathText: String, pathSpan: Span) throws -> Entry {
+    private mutating func parseDottedPathEntry(pathText: String, pathSpan: Span, pathState: inout PathState) throws -> Entry {
         let segments = pathText.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
 
         // Check for invalid paths (empty segments)
@@ -108,6 +246,20 @@ public struct Parser {
             value = Value.unit(span: pathSpan)
         } else {
             value = try parseValue()
+        }
+
+        // Determine value kind for path tracking
+        let valueKind: PathValueKind
+        switch value.payload {
+        case .object(_):
+            valueKind = .object
+        default:
+            valueKind = .terminal
+        }
+
+        // Check path state for duplicates, reopening, and nesting errors
+        if let pathError = pathState.checkAndUpdate(path: segments, span: pathSpan, valueKind: valueKind) {
+            throw pathErrorToParseError(pathError, span: pathSpan)
         }
 
         // Build nested structure from inside out
