@@ -179,7 +179,7 @@ window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
 </script>
 <script type="module">
 // Import from Vite-bundled CodeMirror playground
-import { EditorView, EditorState, Compartment, Prec, basicSetup, oneDark, json, sql, vim, styx } from '/codemirror/codemirror.js';
+import { EditorView, EditorState, Compartment, Prec, basicSetup, oneDark, json, sql, vim, styx } from '/src/codemirror/main.ts';
 
 // Wrap vim in highest precedence so it gets keys before basicSetup
 const vimWithPrecedence = (enabled) => enabled ? Prec.highest(vim()) : [];

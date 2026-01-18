@@ -1,4 +1,4 @@
 packages:
-  - "docs/playground"
+  - "docs"
   - "editors/codemirror-styx"
   - "editors/vscode-styx"

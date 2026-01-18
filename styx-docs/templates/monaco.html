@@ -3,7 +3,7 @@
 {% block title %}Monaco Playground - {{ config.title }}{% endblock title %}
 
 {% block head %}
-<link rel="stylesheet" href="/monaco/monaco.css">
+<link rel="stylesheet" href="/dist/assets/monaco.css" />
 <style>
 .playground-container {
     display: grid;
@@ -155,7 +155,7 @@ window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
 </script>
 <script type="module">
 // Import from Vite-bundled Monaco playground
-import { monaco, registerStyxLanguage, initVimMode } from '/monaco/monaco.js';
+import { monaco, registerStyxLanguage, initVimMode } from '/src/monaco/main.ts';
 
 // Import Styx WASM
 import init, { to_json, from_json, parse, version } from '/wasm/styx_wasm.js';

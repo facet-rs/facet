@@ -1,5 +1,5 @@
 {
-  "name": "styx-codemirror-playground",
+  "name": "styx-docs",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,7 +19,9 @@
     "@lezer/highlight": "^1.2.0",
     "@lezer/lr": "^1.4.0",
     "@replit/codemirror-vim": "^6.3.0",
-    "codemirror": "^6.0.2"
+    "codemirror": "^6.0.2",
+    "monaco-editor": "^0.52.0",
+    "monaco-vim": "^0.4.1"
   },
   "devDependencies": {
     "vite": "^7.3.1"
