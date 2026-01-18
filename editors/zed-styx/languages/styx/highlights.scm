@@ -7,27 +7,29 @@
 ; Escape sequences in quoted strings
 (escape_sequence) @string.escape
 
-; Unit value
-(unit) @constant.builtin
-
-; Tags
-(tag) @function
-
-; Attributes
-(attribute
-  key: (bare_scalar) @property
-  ">" @keyword)
-
 ; Scalars (general fallback) - must come BEFORE more specific rules
+; With tree-sitter convention, later patterns override earlier ones
 (bare_scalar) @string
 (quoted_scalar) @string
 (raw_scalar) @string
 (heredoc) @string
 
-; Keys in entries - bare scalars in the key position (overrides @string above)
+; Unit value
+(unit) @constant.builtin
+
+; Tags - more specific than bare_scalar, so comes after
+(tag) @label
+
+; Attributes - key in attribute syntax
+; Use @keyword or @punctuation.special to make > stand out
+(attribute
+  key: (bare_scalar) @property
+  ">" @keyword)
+
+; Keys in entries - any scalar in the key position (overrides @string above)
 (entry
   key: (expr
-    payload: (scalar (bare_scalar) @property)))
+    payload: (scalar) @property))
 
 ; Sequence items are values, not keys (must come AFTER entry key rule to override)
 (sequence
