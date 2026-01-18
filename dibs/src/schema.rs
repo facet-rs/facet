@@ -78,6 +78,21 @@ facet::define_attr_grammar! {
         /// - `#[facet(dibs::index(columns = "col1,col2"))]` - auto-named composite index
         /// - `#[facet(dibs::index(name = "idx_foo", columns = "col1,col2"))]` - named composite index
         CompositeIndex(CompositeIndex),
+
+        /// Marks a field as auto-generated (e.g., SERIAL, sequences).
+        ///
+        /// Usage: `#[facet(dibs::auto)]`
+        Auto,
+
+        /// Marks a text field as "long" (renders as textarea in admin UI).
+        ///
+        /// Usage: `#[facet(dibs::long)]`
+        Long,
+
+        /// Marks a field as the display label for the row (used in FK references).
+        ///
+        /// Usage: `#[facet(dibs::label)]`
+        Label,
     }
 
     /// Composite index definition for multi-column indices.
