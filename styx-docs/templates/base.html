@@ -19,10 +19,10 @@
                 <span class="logo-text">Styx</span>
             </a>
             <div class="nav-links">
-                <a href="/learn" {% if current_path is starting_with("/learn") %}class="active"{% endif %}>Learn</a>
+                <a href="/learn/primer" {% if current_path is starting_with("/learn") %}class="active"{% endif %}>Learn</a>
                 <a href="/comparisons/k8s" {% if current_path is starting_with("/comparisons") %}class="active"{% endif %}>Comparisons</a>
-                <a href="/reference" {% if current_path is starting_with("/reference") %}class="active"{% endif %}>Reference</a>
-                <a href="/tools" {% if current_path is starting_with("/tools") %}class="active"{% endif %}>Tools</a>
+                <a href="/reference/spec/parser" {% if current_path is starting_with("/reference") %}class="active"{% endif %}>Reference</a>
+                <a href="/tools/editor" {% if current_path is starting_with("/tools") %}class="active"{% endif %}>Tools</a>
                 <a href="/ecosystem" {% if current_path is starting_with("/ecosystem") %}class="active"{% endif %}>Ecosystem</a>
             </div>
             <a href="https://github.com/bearcove/styx" class="nav-github" aria-label="GitHub">
