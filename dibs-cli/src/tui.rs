@@ -690,6 +690,10 @@ impl App {
                             rt.block_on(self.generate_migration_with_name(&name));
                             self.migration_name_input.clear();
                             self.migration_name_cursor = 0;
+                            // If migration was created, needs_rebuild is set - exit to trigger rebuild
+                            if self.needs_rebuild {
+                                return Ok(());
+                            }
                         }
                         KeyCode::Backspace => {
                             if self.migration_name_cursor > 0 {
