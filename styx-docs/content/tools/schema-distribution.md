@@ -27,7 +27,11 @@ Use `styx_embed` to bake your schema into the binary:
 ```rust
 // build.rs
 fn main() {
-    facet_styx::generate_schema::<myapp::Config>("schema.styx");
+    facet_styx::GenerateSchema::<myapp::Config>::new()
+        .crate_name("myapp-config")
+        .version("1")
+        .cli("myapp")
+        .write("schema.styx");
 }
 ```
 

@@ -5,16 +5,21 @@
 
 use facet_core::{Def, NumericType, PrimitiveType, Shape, TextualType, Type, UserType};
 use std::fmt::Write as _;
+use std::marker::PhantomData;
 use std::path::Path;
 
-/// Generate a Styx schema from a Facet type and write it to `$OUT_DIR/{filename}`.
+/// Builder for generating Styx schemas from Facet types.
 ///
-/// This is intended for use in build scripts:
+/// Use in build scripts to generate schema files:
 ///
 /// ```rust,ignore
 /// // build.rs
 /// fn main() {
-///     facet_styx::generate_schema::<MyConfig>("schema.styx");
+///     facet_styx::GenerateSchema::<MyConfig>::new()
+///         .crate_name("myapp-config")
+///         .version("1")
+///         .cli("myapp")
+///         .write("schema.styx");
 /// }
 /// ```
 ///
@@ -22,8 +27,100 @@ use std::path::Path;
 ///
 /// ```rust,ignore
 /// // src/main.rs
-/// styx_embed::embed_file!(concat!(env!("OUT_DIR"), "/schema.styx"));
+/// styx_embed::embed_outdir_file!("schema.styx");
 /// ```
+pub struct GenerateSchema<T: facet_core::Facet<'static>> {
+    crate_name: Option<String>,
+    version: Option<String>,
+    cli: Option<String>,
+    _marker: PhantomData<T>,
+}
+
+impl<T: facet_core::Facet<'static>> GenerateSchema<T> {
+    /// Create a new schema generator.
+    pub fn new() -> Self {
+        Self {
+            crate_name: None,
+            version: None,
+            cli: None,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Set the crate name for the schema ID.
+    ///
+    /// This becomes part of the `source` in config files:
+    /// `@schema {source crate:myapp-config@1, cli myapp}`
+    pub fn crate_name(mut self, name: impl Into<String>) -> Self {
+        self.crate_name = Some(name.into());
+        self
+    }
+
+    /// Set the version for the schema ID.
+    ///
+    /// This becomes part of the `source` in config files:
+    /// `@schema {source crate:myapp-config@1, cli myapp}`
+    pub fn version(mut self, version: impl Into<String>) -> Self {
+        self.version = Some(version.into());
+        self
+    }
+
+    /// Set the CLI binary name.
+    ///
+    /// When users create config files, they can reference your schema like:
+    /// `@schema {source crate:myapp-config@1, cli myapp}`
+    pub fn cli(mut self, cli: impl Into<String>) -> Self {
+        self.cli = Some(cli.into());
+        self
+    }
+
+    /// Write the schema to `$OUT_DIR/{filename}`.
+    ///
+    /// Panics if:
+    /// - `OUT_DIR` is not set (i.e., not in a build script)
+    /// - `crate_name` was not set
+    /// - `version` was not set
+    pub fn write(self, filename: &str) {
+        let out_dir =
+            std::env::var("OUT_DIR").expect("OUT_DIR not set - are you in a build script?");
+        let path = Path::new(&out_dir).join(filename);
+
+        let schema = self.generate();
+        std::fs::write(&path, schema).expect("failed to write schema");
+    }
+
+    /// Generate the schema as a string.
+    ///
+    /// Panics if `crate_name` or `version` was not set.
+    pub fn generate(self) -> String {
+        let crate_name = self
+            .crate_name
+            .expect("crate_name is required - call .crate_name(\"...\")");
+        let version = self
+            .version
+            .expect("version is required - call .version(\"...\")");
+
+        let id = format!("crate:{crate_name}@{version}");
+
+        let shape = T::SHAPE;
+        let mut generator = SchemaGenerator::new(id, self.cli);
+        generator.generate(shape)
+    }
+}
+
+impl<T: facet_core::Facet<'static>> Default for GenerateSchema<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Generate a Styx schema from a Facet type and write it to `$OUT_DIR/{filename}`.
+///
+/// **Deprecated**: Use [`GenerateSchema`] builder instead, which requires an explicit ID.
+///
+/// This function auto-generates the ID from the type name, which may not match
+/// your crate naming conventions.
+#[deprecated(since = "0.2.0", note = "use GenerateSchema::new().crate_name(...).version(...).cli(...).write(filename) instead")]
 pub fn generate_schema<T: facet_core::Facet<'static>>(filename: &str) {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set - are you in a build script?");
     let path = Path::new(&out_dir).join(filename);
@@ -35,21 +132,36 @@ pub fn generate_schema<T: facet_core::Facet<'static>>(filename: &str) {
 /// Generate a Styx schema string from a Facet type.
 ///
 /// Returns the schema as a string that can be written to a file or used directly.
+/// The ID is auto-generated from the type name.
 pub fn schema_from_type<T: facet_core::Facet<'static>>() -> String {
     let shape = T::SHAPE;
-    let mut generator = SchemaGenerator::new();
+    let mut generator = SchemaGenerator::new_auto(shape);
     generator.generate(shape)
 }
 
 /// Internal schema generator that tracks state during generation.
 struct SchemaGenerator {
+    /// Schema ID (e.g., "crate:myapp-config@1")
+    id: String,
+    /// Optional CLI binary name
+    cli: Option<String>,
     /// Named type definitions to emit after the main schema
     type_defs: String,
 }
 
 impl SchemaGenerator {
-    fn new() -> Self {
+    fn new(id: String, cli: Option<String>) -> Self {
         Self {
+            id,
+            cli,
+            type_defs: String::new(),
+        }
+    }
+
+    fn new_auto(shape: &'static Shape) -> Self {
+        Self {
+            id: shape.type_identifier.to_string(),
+            cli: None,
             type_defs: String::new(),
         }
     }
@@ -58,10 +170,11 @@ impl SchemaGenerator {
         let mut output = String::new();
 
         // Meta block
-        let type_name = shape.type_identifier;
         writeln!(output, "meta {{").unwrap();
-        writeln!(output, "    id {type_name}").unwrap();
-        writeln!(output, "    version 1.0.0").unwrap();
+        writeln!(output, "    id {}", self.id).unwrap();
+        if let Some(cli) = &self.cli {
+            writeln!(output, "    cli {cli}").unwrap();
+        }
 
         // Add description from doc comments if present
         if !shape.doc.is_empty() {

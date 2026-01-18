@@ -32,7 +32,11 @@
 //! ```rust,ignore
 //! // build.rs
 //! fn main() {
-//!     facet_styx::generate_schema::<MyConfig>("schema.styx");
+//!     facet_styx::GenerateSchema::<MyConfig>::new()
+//!         .crate_name("myapp-config")
+//!         .version("1")
+//!         .cli("myapp")
+//!         .write("schema.styx");
 //! }
 //!
 //! // src/main.rs
