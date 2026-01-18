@@ -2,4 +2,4 @@
 source: facet-python/src/lib.rs
 expression: py
 ---
-Status = Literal["Active"] | Literal["Inactive"] | Literal["Pending"]
+Status = Union[Literal["Active"], Literal["Inactive"], Literal["Pending"]]

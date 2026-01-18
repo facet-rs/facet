@@ -9,7 +9,7 @@ class DataData(TypedDict, total=False):
     name: Required[str]
     value: Required[float]
 
-Event = Literal["Empty"] | Id | Data
+Event = Union[Literal["Empty"], "Id", "Data"]
 
 class Id(TypedDict, total=False):
     Id: Required[int]

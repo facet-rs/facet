@@ -2,4 +2,4 @@
 source: facet-python/src/lib.rs
 expression: py
 ---
-GitStatus = Literal["dirty"] | Literal["staged"] | Literal["clean"]
+GitStatus = Union[Literal["dirty"], Literal["staged"], Literal["clean"]]

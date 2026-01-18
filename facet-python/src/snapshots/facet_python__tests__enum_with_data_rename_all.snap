@@ -9,7 +9,7 @@ class ImageUploadData(TypedDict, total=False):
     url: Required[str]
     width: Required[int]
 
-Message = TextMessage | ImageUpload
+Message = Union["TextMessage", "ImageUpload"]
 
 class TextMessage(TypedDict, total=False):
     text_message: Required[TextMessageData]

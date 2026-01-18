@@ -1,0 +1,7 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+from typing import Literal, Union
+
+Status = Union[Literal["Active"], Literal["Inactive"]]

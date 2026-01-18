@@ -245,6 +245,7 @@ impl PythonGenerator {
         if all_unit {
             // Simple Literal union
             self.imports.insert("Literal");
+            self.imports.insert("Union");
             let variants: Vec<String> = enum_type
                 .variants
                 .iter()
@@ -253,9 +254,9 @@ impl PythonGenerator {
             write_doc_comment(output, shape.doc);
             writeln!(
                 output,
-                "{} = {}",
+                "{} = Union[{}]",
                 shape.type_identifier,
-                variants.join(" | ")
+                variants.join(", ")
             )
             .unwrap();
         } else {
@@ -294,7 +295,7 @@ impl PythonGenerator {
                         variant_output.push('\n');
                         self.generated
                             .insert(pascal_variant_name.clone(), variant_output);
-                        variant_class_names.push(pascal_variant_name);
+                        variant_class_names.push(format!("\"{}\"", pascal_variant_name));
                     }
                     _ => {
                         // Struct variant - generate data class and wrapper class
@@ -346,18 +347,19 @@ impl PythonGenerator {
                         self.generated
                             .insert(pascal_variant_name.clone(), variant_output);
 
-                        variant_class_names.push(pascal_variant_name);
+                        variant_class_names.push(format!("\"{}\"", pascal_variant_name));
                     }
                 }
             }
 
             // Generate the union type alias
+            self.imports.insert("Union");
             write_doc_comment(output, shape.doc);
             writeln!(
                 output,
-                "{} = {}",
+                "{} = Union[{}]",
                 shape.type_identifier,
-                variant_class_names.join(" | ")
+                variant_class_names.join(", ")
             )
             .unwrap();
         }
@@ -696,6 +698,19 @@ mod tests {
         }
 
         let py = to_python::<User>(true);
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_enum_with_imports() {
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum Status {
+            Active,
+            Inactive,
+        }
+
+        let py = to_python::<Status>(true);
         insta::assert_snapshot!(py);
     }
 }
