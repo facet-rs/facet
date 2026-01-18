@@ -51,8 +51,8 @@
 #  define STYX_EXTERN_C_END
 #endif
 
-/* Nullability annotations (Clang, GCC 11+) */
-#if defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 11)
+/* Nullability annotations (Clang only - these are not supported by GCC) */
+#if defined(__clang__)
 #  define STYX_NONNULL _Nonnull
 #  define STYX_NULLABLE _Nullable
 #else
