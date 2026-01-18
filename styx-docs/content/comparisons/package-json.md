@@ -56,7 +56,7 @@ An npm package.json in JSON vs Styx.
   "license": "MIT"
 }
 /// styx
-name @myorg/webapp
+name "@myorg/webapp"
 version 2.1.0
 description "A modern web application"
 main dist/index.js
@@ -77,13 +77,13 @@ dependencies {
   react ^18.2.0
   react-dom ^18.2.0
   react-router-dom ^6.20.0
-  @tanstack/react-query ^5.0.0
+  "@tanstack/react-query" ^5.0.0
   zod ^3.22.0
 }
 
 devDependencies {
-  @types/react ^18.2.0
-  @types/react-dom ^18.2.0
+  "@types/react" ^18.2.0
+  "@types/react-dom" ^18.2.0
   typescript ^5.3.0
   vite ^5.0.0
   vitest ^1.0.0

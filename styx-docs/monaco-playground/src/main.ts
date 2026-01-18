@@ -1,4 +1,13 @@
 import * as monaco from 'monaco-editor';
+// Import basic language contributions for heredoc language injection
+import 'monaco-editor/esm/vs/basic-languages/sql/sql.contribution';
+import 'monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution';
+import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution';
+import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution';
+import 'monaco-editor/esm/vs/basic-languages/shell/shell.contribution';
+import 'monaco-editor/esm/vs/basic-languages/python/python.contribution';
+import 'monaco-editor/esm/vs/basic-languages/rust/rust.contribution';
+import 'monaco-editor/esm/vs/basic-languages/go/go.contribution';
 import { initVimMode, VimMode } from 'monaco-vim';
 import { StyxTokensProvider } from './tokenizer';
 
