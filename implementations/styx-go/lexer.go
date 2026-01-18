@@ -377,8 +377,22 @@ func (l *Lexer) readHeredoc(start int, hadWhitespace, hadNewline bool) (*Token, 
 		}
 
 		lineStr := line.String()
+
+		// Check for exact match (no indentation)
 		if lineStr == bareDelimiter {
 			result := text.String()
+			if strings.Contains(delimStr, ",") {
+				result = delimStr[len(bareDelimiter):] + "\n" + result
+			}
+			return &Token{TokenHeredoc, result, Span{start, l.bytePos}, hadWhitespace, hadNewline}, nil
+		}
+
+		// Check for indented closing delimiter
+		stripped := strings.TrimLeft(lineStr, " \t")
+		if stripped == bareDelimiter {
+			indentLen := len(lineStr) - len(stripped)
+			// Dedent the content by stripping up to indentLen from each line
+			result := dedentHeredoc(text.String(), indentLen)
 			if strings.Contains(delimStr, ",") {
 				result = delimStr[len(bareDelimiter):] + "\n" + result
 			}
@@ -397,6 +411,27 @@ func (l *Lexer) readHeredoc(start int, hadWhitespace, hadNewline bool) (*Token, 
 		Message: "unexpected token",
 		Span:    Span{start, l.bytePos},
 	}
+}
+
+// dedentHeredoc strips up to indentLen whitespace characters from the start of each line.
+func dedentHeredoc(content string, indentLen int) string {
+	lines := strings.Split(content, "\n")
+	var result []string
+	for _, line := range lines {
+		stripped := 0
+		for _, ch := range line {
+			if stripped >= indentLen {
+				break
+			}
+			if ch == ' ' || ch == '\t' {
+				stripped++
+			} else {
+				break
+			}
+		}
+		result = append(result, line[stripped:])
+	}
+	return strings.Join(result, "\n")
 }
 
 func (l *Lexer) readBareScalar(start int, hadWhitespace, hadNewline bool) (*Token, error) {

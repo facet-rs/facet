@@ -374,9 +374,6 @@ export class Lexer {
       this.advance(); // newline
     }
 
-    // Track opener span (<<DELIM\n) for error reporting
-    const openerEnd = this.bytePos;
-
     // Read content until delimiter on its own line
     let text = "";
     const bareDelimiter = delimiter.split(",")[0];
@@ -388,7 +385,7 @@ export class Lexer {
         line += this.advance();
       }
 
-      // Check for closing delimiter
+      // Check for exact match (no indentation)
       if (line === bareDelimiter) {
         // Include language hint in text if present
         if (delimiter.includes(",")) {
@@ -397,6 +394,25 @@ export class Lexer {
         return {
           type: "heredoc",
           text,
+          span: { start, end: this.bytePos },
+          hadWhitespaceBefore: hadWhitespace,
+          hadNewlineBefore: hadNewline,
+        };
+      }
+
+      // Check for indented closing delimiter
+      const stripped = line.replace(/^[ \t]+/, "");
+      if (stripped === bareDelimiter) {
+        const indentLen = line.length - stripped.length;
+        // Dedent the content by stripping up to indentLen from each line
+        let result = this.dedentHeredoc(text, indentLen);
+        // Include language hint in text if present
+        if (delimiter.includes(",")) {
+          result = delimiter.slice(bareDelimiter.length) + "\n" + result;
+        }
+        return {
+          type: "heredoc",
+          text: result,
           span: { start, end: this.bytePos },
           hadWhitespaceBefore: hadWhitespace,
           hadNewlineBefore: hadNewline,
@@ -413,6 +429,27 @@ export class Lexer {
 
     // Heredoc without closing delimiter - error
     throw new ParseError("unexpected token", { start, end: this.bytePos });
+  }
+
+  /** Strip up to indentLen whitespace characters from the start of each line. */
+  private dedentHeredoc(content: string, indentLen: number): string {
+    const lines = content.split("\n");
+    const result: string[] = [];
+    for (const line of lines) {
+      let stripped = 0;
+      for (const ch of line) {
+        if (stripped >= indentLen) {
+          break;
+        }
+        if (ch === " " || ch === "\t") {
+          stripped++;
+        } else {
+          break;
+        }
+      }
+      result.push(line.slice(stripped));
+    }
+    return result.join("\n");
   }
 
   private readBareScalar(start: number, hadWhitespace: boolean, hadNewline: boolean): Token {

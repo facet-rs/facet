@@ -294,11 +294,24 @@ class Lexer:
             while self.pos < len(self.source) and self._peek() != "\n":
                 line += self._advance()
 
+            # Check for exact match (no indentation)
             if line == bare_delimiter:
                 if "," in delimiter:
                     text = delimiter[len(bare_delimiter) :] + "\n" + text
                 return Token(
                     TokenType.HEREDOC, text, Span(start, self.byte_pos), had_whitespace, had_newline
+                )
+
+            # Check for indented closing delimiter
+            stripped = line.lstrip(" \t")
+            if stripped == bare_delimiter:
+                indent_len = len(line) - len(stripped)
+                # Dedent the content by stripping up to indent_len from each line
+                result = self._dedent_heredoc(text, indent_len)
+                if "," in delimiter:
+                    result = delimiter[len(bare_delimiter) :] + "\n" + result
+                return Token(
+                    TokenType.HEREDOC, result, Span(start, self.byte_pos), had_whitespace, had_newline
                 )
 
             text += line
@@ -308,6 +321,22 @@ class Lexer:
 
         # EOF without closing delimiter - error
         raise ParseError("unexpected token", Span(start, self.byte_pos))
+
+    def _dedent_heredoc(self, content: str, indent_len: int) -> str:
+        """Strip up to indent_len whitespace characters from the start of each line."""
+        lines = content.split("\n")
+        result = []
+        for line in lines:
+            stripped = 0
+            for ch in line:
+                if stripped >= indent_len:
+                    break
+                if ch in (" ", "\t"):
+                    stripped += 1
+                else:
+                    break
+            result.append(line[stripped:])
+        return "\n".join(result)
 
     def _read_bare_scalar(self, start: int, had_whitespace: bool, had_newline: bool) -> Token:
         """Read a bare scalar."""
