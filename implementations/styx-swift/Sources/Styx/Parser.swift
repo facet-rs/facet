@@ -379,7 +379,11 @@ public struct Parser {
             }
         }
 
-        let closeToken = try expect(.rBrace, message: "expected }")
+        // Check for unclosed object - report at opening brace position (matches Rust)
+        guard check(.rBrace) else {
+            throw ParseError(message: "unclosed object (missing `}`)", span: openToken.span)
+        }
+        let closeToken = advance() // consume }
         return Object(
             entries: entries,
             separator: separator ?? .comma,
@@ -407,7 +411,11 @@ public struct Parser {
             }
         }
 
-        let closeToken = try expect(.rParen, message: "expected )")
+        // Check for unclosed sequence - report at opening paren position (matches Rust)
+        guard check(.rParen) else {
+            throw ParseError(message: "unclosed sequence (missing `)`)", span: openToken.span)
+        }
+        let closeToken = advance() // consume )
         return Sequence(
             items: items,
             span: Span(start: start, end: closeToken.span.end)
