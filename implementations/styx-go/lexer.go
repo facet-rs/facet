@@ -207,13 +207,18 @@ func (l *Lexer) nextToken() (*Token, error) {
 		if afterLtLt >= 'A' && afterLtLt <= 'Z' {
 			return l.readHeredoc(start, hadWhitespace, hadNewline)
 		}
-		// << not followed by uppercase - skip << and any following digits
+		// << not followed by uppercase - return error at just <<
 		l.advance() // <
 		l.advance() // <
-		for l.peek(0) >= '0' && l.peek(0) <= '9' {
+		errorEnd := l.bytePos
+		// Skip rest of line for recovery
+		for l.pos < len(l.source) && l.peek(0) != '\n' {
 			l.advance()
 		}
-		return l.nextToken()
+		return nil, &ParseError{
+			Message: "unexpected token",
+			Span:    Span{start, errorEnd},
+		}
 	}
 
 	// Bare scalar
@@ -257,21 +262,23 @@ func (l *Lexer) readQuotedString(start int, hadWhitespace, hadNewline bool) (*To
 					Span:    Span{escapeStart, l.bytePos},
 				}
 			}
-		} else if ch == '\n' {
+		} else if ch == '\n' || ch == '\r' {
+			// Unterminated string - include the newline in the span
 			l.advance()
-			return &Token{TokenQuoted, "\"" + text.String() + "\n", Span{start, l.bytePos}, hadWhitespace, hadNewline}, nil
-		} else if ch == '\r' {
-			l.advance()
-			if l.peek(0) == '\n' {
-				l.advance()
+			return nil, &ParseError{
+				Message: "unexpected token",
+				Span:    Span{start, l.bytePos},
 			}
-			return &Token{TokenQuoted, "\"" + text.String() + "\n", Span{start, l.bytePos}, hadWhitespace, hadNewline}, nil
 		} else {
 			text.WriteRune(l.advance())
 		}
 	}
 
-	return &Token{TokenQuoted, "\"" + text.String(), Span{start, l.bytePos}, hadWhitespace, hadNewline}, nil
+	// EOF without closing quote - error
+	return nil, &ParseError{
+		Message: "unexpected token",
+		Span:    Span{start, l.bytePos},
+	}
 }
 
 func (l *Lexer) readUnicodeEscape() (rune, error) {
@@ -359,7 +366,6 @@ func (l *Lexer) readHeredoc(start int, hadWhitespace, hadNewline bool) (*Token, 
 		l.advance() // newline
 	}
 
-	openerEnd := l.bytePos
 	var text strings.Builder
 	delimStr := delimiter.String()
 	bareDelimiter := strings.SplitN(delimStr, ",", 2)[0]
@@ -386,11 +392,11 @@ func (l *Lexer) readHeredoc(start int, hadWhitespace, hadNewline bool) (*Token, 
 		}
 	}
 
-	result := text.String()
-	if strings.Contains(delimStr, ",") {
-		result = delimStr[len(bareDelimiter):] + "\n" + result
+	// EOF without closing delimiter - error
+	return nil, &ParseError{
+		Message: "unexpected token",
+		Span:    Span{start, l.bytePos},
 	}
-	return &Token{TokenHeredoc, result, Span{start, openerEnd}, hadWhitespace, hadNewline}, nil
 }
 
 func (l *Lexer) readBareScalar(start int, hadWhitespace, hadNewline bool) (*Token, error) {

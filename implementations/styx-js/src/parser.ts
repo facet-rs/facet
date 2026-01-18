@@ -10,6 +10,8 @@ import {
   ParseError,
   Separator,
   ScalarKind,
+  PathState,
+  PathValueKind,
 } from "./types.js";
 
 export class Parser {
@@ -54,10 +56,10 @@ export class Parser {
   parse(): Document {
     const entries: Entry[] = [];
     const start = this.current.span.start;
-    const seenKeys = new Map<string, Span>();
+    const pathState = new PathState();
 
     while (!this.check("eof")) {
-      const entry = this.parseEntryWithDupCheck(seenKeys);
+      const entry = this.parseEntryWithPathCheck(pathState);
       if (entry) {
         entries.push(entry);
       }
@@ -69,8 +71,141 @@ export class Parser {
     };
   }
 
+  private parseEntryWithPathCheck(pathState: PathState): Entry | null {
+    while (this.check("comma")) {
+      this.advance();
+    }
+
+    // Skip stray > tokens (can happen with `value>` where > has no following value)
+    while (this.check("gt")) {
+      this.advance();
+    }
+
+    if (this.check("eof", "rbrace")) {
+      return null;
+    }
+
+    // Parse the key
+    const key = this.parseValue();
+
+    // Special case: object in key position gets implicit unit key
+    if (key.payload?.type === "object") {
+      if (!this.current.hadNewlineBefore && !this.check("eof", "rbrace", "comma")) {
+        this.parseValue(); // Drop trailing value
+      }
+      const unitKey: Value = { span: { start: -1, end: -1 } };
+      return { key: unitKey, value: key };
+    }
+
+    // Check for dotted path in bare scalar key
+    if (key.payload?.type === "scalar" && key.payload.kind === "bare") {
+      const text = key.payload.text;
+      if (text.includes(".")) {
+        return this.expandDottedPathWithState(text, key.span, pathState);
+      }
+    }
+
+    // Get key text for path state
+    const keyText = this.getKeyText(key);
+
+    // Validate key
+    this.validateKey(key);
+
+    // Check for implicit unit (key followed by newline, EOF, or closing brace)
+    if (this.current.hadNewlineBefore || this.check("eof", "rbrace")) {
+      if (keyText !== null) {
+        pathState.checkAndUpdate([keyText], key.span, "terminal");
+      }
+      const unitValue: Value = { span: key.span };
+      return { key, value: unitValue };
+    }
+
+    // Parse the value
+    const value = this.parseValue();
+
+    // Determine kind from actual value
+    if (keyText !== null) {
+      const kind: PathValueKind = value.payload?.type === "object" ? "object" : "terminal";
+      pathState.checkAndUpdate([keyText], key.span, kind);
+    }
+
+    return { key, value };
+  }
+
+  private expandDottedPathWithState(pathText: string, span: Span, pathState: PathState): Entry {
+    const segments = pathText.split(".");
+
+    if (segments.some((s) => s === "")) {
+      throw new ParseError("invalid key", span);
+    }
+
+    // Calculate byte offsets for each segment
+    const segmentSpans: Span[] = [];
+    let offset = span.start;
+    for (let i = 0; i < segments.length; i++) {
+      const segmentBytes = new TextEncoder().encode(segments[i]).length;
+      segmentSpans.push({ start: offset, end: offset + segmentBytes });
+      offset += segmentBytes + 1; // +1 for the dot
+    }
+
+    const value = this.parseValue();
+
+    // Determine value kind
+    const kind: PathValueKind = value.payload?.type === "object" ? "object" : "terminal";
+
+    // Check and update path state - use full path span for error messages
+    pathState.checkAndUpdate(segments, span, kind);
+
+    // Build nested structure from inside out
+    // Object spans start at the PREVIOUS segment's position (i-1)
+    const lastKeyEnd = segmentSpans[segments.length - 1].end;
+    let result: Value = value;
+    for (let i = segments.length - 1; i >= 1; i--) {
+      const segSpan = segmentSpans[i];
+      const segmentKey: Value = {
+        payload: {
+          type: "scalar",
+          text: segments[i],
+          kind: "bare",
+          span: segSpan,
+        },
+        span: segSpan,
+      };
+      // Object span starts at the previous segment's position
+      const objStart = segmentSpans[i - 1].start;
+      const objSpan = { start: objStart, end: lastKeyEnd };
+      result = {
+        payload: {
+          type: "object",
+          entries: [{ key: segmentKey, value: result }],
+          separator: "newline",
+          span: objSpan,
+        },
+        span: objSpan,
+      };
+    }
+
+    const firstSpan = segmentSpans[0];
+    const outerKey: Value = {
+      payload: {
+        type: "scalar",
+        text: segments[0],
+        kind: "bare",
+        span: firstSpan,
+      },
+      span: firstSpan,
+    };
+
+    return { key: outerKey, value: result };
+  }
+
   private parseEntryWithDupCheck(seenKeys: Map<string, Span>): Entry | null {
     while (this.check("comma")) {
+      this.advance();
+    }
+
+    // Skip stray > tokens (can happen with `value>` where > has no following value)
+    while (this.check("gt")) {
       this.advance();
     }
 

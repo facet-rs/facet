@@ -3235,9 +3235,13 @@ mod tests {
             "Should have exactly one error for reopening closed path"
         );
         assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, Event::Error { kind: ParseErrorKind::ReopenedPath { .. }, .. })),
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::ReopenedPath { .. },
+                    ..
+                }
+            )),
             "Error should be ReopenedPath"
         );
     }
@@ -3250,13 +3254,17 @@ mod tests {
         // Should have a reopen error for a.b
         let errors: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, Event::Error { kind: ParseErrorKind::ReopenedPath { .. }, .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    Event::Error {
+                        kind: ParseErrorKind::ReopenedPath { .. },
+                        ..
+                    }
+                )
+            })
             .collect();
-        assert_eq!(
-            errors.len(),
-            1,
-            "Should have exactly one reopen error"
-        );
+        assert_eq!(errors.len(), 1, "Should have exactly one reopen error");
     }
 
     // parser[verify entry.path.reopen]
@@ -3266,9 +3274,13 @@ mod tests {
         let events = parse("a.b value\na.b.c deep");
         // Should have a nest-into-terminal error
         assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, Event::Error { kind: ParseErrorKind::NestIntoTerminal { .. }, .. })),
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::NestIntoTerminal { .. },
+                    ..
+                }
+            )),
             "Should have NestIntoTerminal error"
         );
     }

@@ -7,6 +7,7 @@ from .types import (
     Document,
     Entry,
     ParseError,
+    PathValueKind,
     Scalar,
     ScalarKind,
     Separator,
@@ -16,6 +17,64 @@ from .types import (
     Tag,
     Value,
 )
+
+
+class PathState:
+    """Track path state for detecting reopen-path and nest-into-terminal errors."""
+
+    __slots__ = ("assigned_paths", "closed_paths", "current_path")
+
+    def __init__(self) -> None:
+        self.current_path: list[str] = []
+        self.closed_paths: set[str] = set()  # Paths that have had siblings
+        self.assigned_paths: dict[str, tuple[PathValueKind, Span]] = {}
+
+    def check_and_update(self, path: list[str], span: Span, kind: PathValueKind) -> None:
+        """Check path validity and update state. Raises ParseError if invalid."""
+        full_path = ".".join(path)
+
+        # 1. Check for duplicate
+        if full_path in self.assigned_paths:
+            existing_kind, _existing_span = self.assigned_paths[full_path]
+            if existing_kind == PathValueKind.TERMINAL:
+                raise ParseError("duplicate key", span)
+            # Both are objects - it's a reopen attempt
+            raise ParseError(f"cannot reopen path `{full_path}` after sibling appeared", span)
+
+        # 2. Check if any prefix is closed (has had siblings) or is terminal
+        for i in range(1, len(path)):
+            prefix = ".".join(path[:i])
+            if prefix in self.closed_paths:
+                raise ParseError(f"cannot reopen path `{prefix}` after sibling appeared", span)
+            if prefix in self.assigned_paths:
+                prefix_kind, _prefix_span = self.assigned_paths[prefix]
+                if prefix_kind == PathValueKind.TERMINAL:
+                    raise ParseError(
+                        f"cannot nest into `{prefix}` which has a terminal value", span
+                    )
+
+        # 3. Find common prefix length with current path
+        common_len = 0
+        for i in range(min(len(path), len(self.current_path))):
+            if path[i] == self.current_path[i]:
+                common_len += 1
+            else:
+                break
+
+        # 4. Close all divergent paths from current path
+        for i in range(common_len, len(self.current_path)):
+            divergent = ".".join(self.current_path[: i + 1])
+            self.closed_paths.add(divergent)
+
+        # 5. Record intermediate segments as objects
+        for i in range(len(path) - 1):
+            prefix = ".".join(path[: i + 1])
+            if prefix not in self.assigned_paths:
+                self.assigned_paths[prefix] = (PathValueKind.OBJECT, span)
+
+        # 6. Record the final path
+        self.assigned_paths[full_path] = (kind, span)
+        self.current_path = path.copy()
 
 
 class Parser:
@@ -61,10 +120,10 @@ class Parser:
         """Parse a complete document."""
         entries: list[Entry] = []
         start = self.current.span.start
-        seen_keys: dict[str, Span] = {}
+        path_state = PathState()
 
         while not self._check(TokenType.EOF):
-            entry = self._parse_entry_with_dup_check(seen_keys)
+            entry = self._parse_entry_with_path_check(path_state)
             if entry:
                 entries.append(entry)
 
@@ -73,9 +132,69 @@ class Parser:
             span=Span(start, self.current.span.end),
         )
 
+    def _parse_entry_with_path_check(self, path_state: PathState) -> Entry | None:
+        """Parse an entry at document level with path state checking."""
+        while self._check(TokenType.COMMA):
+            self._advance()
+
+        # Skip stray > tokens (can happen with `value>` where > has no following value)
+        while self._check(TokenType.GT):
+            self._advance()
+
+        if self._check(TokenType.EOF, TokenType.RBRACE):
+            return None
+
+        key = self._parse_value()
+
+        # Special case: object in key position gets implicit unit key
+        if key.payload is not None and isinstance(key.payload, StyxObject):
+            if not self.current.had_newline_before and not self._check(
+                TokenType.EOF, TokenType.RBRACE, TokenType.COMMA
+            ):
+                self._parse_value()  # Drop trailing value
+            unit_key = Value(span=Span(-1, -1))
+            return Entry(key=unit_key, value=key)
+
+        # Check for dotted path in bare scalar key
+        if (
+            key.payload is not None
+            and isinstance(key.payload, Scalar)
+            and key.payload.kind == ScalarKind.BARE
+        ):
+            text = key.payload.text
+            if "." in text:
+                return self._expand_dotted_path_with_state(text, key.span, path_state)
+
+        # Check key validity with path state
+        key_text = self._get_key_text(key)
+
+        self._validate_key(key)
+
+        # Check for implicit unit
+        if self.current.had_newline_before or self._check(TokenType.EOF, TokenType.RBRACE):
+            if key_text is not None:
+                path_state.check_and_update([key_text], key.span, PathValueKind.TERMINAL)
+            return Entry(key=key, value=Value(span=key.span))
+
+        value = self._parse_value()
+
+        # Determine kind from actual value
+        if key_text is not None:
+            if value.payload is not None and isinstance(value.payload, StyxObject):
+                kind = PathValueKind.OBJECT
+            else:
+                kind = PathValueKind.TERMINAL
+            path_state.check_and_update([key_text], key.span, kind)
+
+        return Entry(key=key, value=value)
+
     def _parse_entry_with_dup_check(self, seen_keys: dict[str, Span]) -> Entry | None:
         """Parse an entry with duplicate key checking."""
         while self._check(TokenType.COMMA):
+            self._advance()
+
+        # Skip stray > tokens (can happen with `value>` where > has no following value)
+        while self._check(TokenType.GT):
             self._advance()
 
         if self._check(TokenType.EOF, TokenType.RBRACE):
@@ -133,6 +252,65 @@ class Parser:
                 raise ParseError("invalid key", key.span)
             if isinstance(key.payload, Scalar) and key.payload.kind == ScalarKind.HEREDOC:
                 raise ParseError("invalid key", key.span)
+
+    def _expand_dotted_path_with_state(
+        self, path_text: str, span: Span, path_state: PathState
+    ) -> Entry:
+        """Expand a dotted path into nested objects with path state validation."""
+        segments = path_text.split(".")
+
+        if any(s == "" for s in segments):
+            raise ParseError("invalid key", span)
+
+        # Calculate spans for each segment
+        segment_spans: list[Span] = []
+        offset = span.start
+        for segment in segments:
+            segment_bytes = len(segment.encode("utf-8"))
+            segment_spans.append(Span(offset, offset + segment_bytes))
+            offset += segment_bytes + 1  # +1 for the dot
+
+        # Parse the value
+        value = self._parse_value()
+
+        # Determine value kind
+        if value.payload is not None and isinstance(value.payload, StyxObject):
+            kind = PathValueKind.OBJECT
+        else:
+            kind = PathValueKind.TERMINAL
+
+        # Check and update path state - use full path span for error messages
+        path_state.check_and_update(segments, span, kind)
+
+        # Build nested objects from inside out
+        # Object spans start at the PREVIOUS segment's position (i-1)
+        last_key_end = segment_spans[-1].end
+        result = value
+        for i in range(len(segments) - 1, 0, -1):
+            seg_span = segment_spans[i]
+            segment_key = Value(
+                span=seg_span,
+                payload=Scalar(text=segments[i], kind=ScalarKind.BARE, span=seg_span),
+            )
+            # Object span starts at the previous segment's position
+            obj_start = segment_spans[i - 1].start
+            obj_span = Span(obj_start, last_key_end)
+            result = Value(
+                span=obj_span,
+                payload=StyxObject(
+                    entries=[Entry(key=segment_key, value=result)],
+                    separator=Separator.NEWLINE,
+                    span=obj_span,
+                ),
+            )
+
+        first_span = segment_spans[0]
+        outer_key = Value(
+            span=first_span,
+            payload=Scalar(text=segments[0], kind=ScalarKind.BARE, span=first_span),
+        )
+
+        return Entry(key=outer_key, value=result)
 
     def _expand_dotted_path(self, path_text: str, span: Span, seen_keys: dict[str, Span]) -> Entry:
         """Expand a dotted path into nested objects."""
@@ -214,6 +392,15 @@ class Parser:
             if self._check(TokenType.AT):
                 at_token = self._advance()
                 return Value(span=at_token.span, tag=tag)
+            # If there's something else immediately after the tag (like /package),
+            # it's an invalid tag name. Span starts after @ (at the tag name).
+            if not self._check(
+                TokenType.EOF,
+                TokenType.RBRACE,
+                TokenType.RPAREN,
+                TokenType.COMMA,
+            ):
+                raise ParseError("invalid tag name", Span(start + 1, self.current.span.end))
 
         return Value(span=Span(start, tag_token.span.end), tag=tag)
 
@@ -247,7 +434,14 @@ class Parser:
             scalar_token = self._advance()
             next_token = self.current
 
-            if next_token.type == TokenType.GT and not next_token.had_whitespace_before:
+            # Attribute syntax: scalar>value - but only if there's actually a value after >
+            # If > is at EOF or followed by newline, just treat scalar as the value
+            if (
+                next_token.type == TokenType.GT
+                and not next_token.had_whitespace_before
+                and not self._peek().had_newline_before
+                and self._peek().type != TokenType.EOF
+            ):
                 return self._parse_attributes_starting_with(scalar_token)
 
             return Value(

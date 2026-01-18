@@ -1121,16 +1121,8 @@
 ; file: compliance/corpus/07-invalid/unclosed-brace.styx
 (error [4, 5] "parse error at 4-5: unclosed object (missing `}`)")
 ; file: compliance/corpus/07-invalid/unclosed-heredoc.styx
-(document [-1, -1]
-  (entry
-    (scalar [0, 4] bare "text")
-    (scalar [5, 11] heredoc "hello world\n"))
-)
+(error [5, 23] "parse error at 5-23: unexpected token")
 ; file: compliance/corpus/07-invalid/unclosed-paren.styx
 (error [4, 5] "parse error at 4-5: unclosed sequence (missing `)`)")
 ; file: compliance/corpus/07-invalid/unclosed-quote.styx
-(document [-1, -1]
-  (entry
-    (scalar [0, 4] bare "name")
-    (scalar [5, 12] quoted "\"hello\n"))
-)
+(error [5, 12] "parse error at 5-12: unexpected token")

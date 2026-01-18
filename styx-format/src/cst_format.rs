@@ -295,11 +295,11 @@ impl CstFormatter {
 
         // Look for comments after the last entry
         for el in children.iter().skip(last_entry_idx + 1) {
-            if let rowan::NodeOrToken::Token(t) = el {
-                if t.kind() == SyntaxKind::LINE_COMMENT || t.kind() == SyntaxKind::DOC_COMMENT {
-                    self.write_newline();
-                    self.write(t.text());
-                }
+            if let rowan::NodeOrToken::Token(t) = el
+                && (t.kind() == SyntaxKind::LINE_COMMENT || t.kind() == SyntaxKind::DOC_COMMENT)
+            {
+                self.write_newline();
+                self.write(t.text());
             }
         }
     }

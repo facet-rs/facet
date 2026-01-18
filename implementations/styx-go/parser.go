@@ -4,6 +4,92 @@ import (
 	"strings"
 )
 
+// pathValueKind tracks whether a path leads to an object or terminal value.
+type pathValueKind int
+
+const (
+	pathValueObject pathValueKind = iota
+	pathValueTerminal
+)
+
+// pathState tracks dotted path state for validation.
+type pathState struct {
+	currentPath   []string
+	closedPaths   map[string]bool                // key is joined path
+	assignedPaths map[string]struct{ kind pathValueKind; span Span }
+}
+
+func newPathState() *pathState {
+	return &pathState{
+		closedPaths:   make(map[string]bool),
+		assignedPaths: make(map[string]struct{ kind pathValueKind; span Span }),
+	}
+}
+
+func joinPath(segments []string) string {
+	return strings.Join(segments, ".")
+}
+
+// checkAndUpdate validates a path and updates the state.
+// Returns an error if the path is invalid.
+func (ps *pathState) checkAndUpdate(path []string, span Span, kind pathValueKind) error {
+	pathKey := joinPath(path)
+
+	// 1. Check for duplicate (exact same path)
+	if _, exists := ps.assignedPaths[pathKey]; exists {
+		return &ParseError{Message: "duplicate key", Span: span}
+	}
+
+	// 2. Check if any proper prefix is closed or has a terminal value
+	for i := 1; i < len(path); i++ {
+		prefix := path[:i]
+		prefixKey := joinPath(prefix)
+		if ps.closedPaths[prefixKey] {
+			return &ParseError{
+				Message: "cannot reopen path `" + prefixKey + "` after sibling appeared",
+				Span:    span,
+			}
+		}
+		if assigned, exists := ps.assignedPaths[prefixKey]; exists && assigned.kind == pathValueTerminal {
+			return &ParseError{
+				Message: "cannot nest into `" + prefixKey + "` which has a terminal value",
+				Span:    span,
+			}
+		}
+	}
+
+	// 3. Find common prefix length with current path
+	commonLen := 0
+	for i := 0; i < len(ps.currentPath) && i < len(path); i++ {
+		if ps.currentPath[i] == path[i] {
+			commonLen++
+		} else {
+			break
+		}
+	}
+
+	// 4. Close paths beyond the common prefix
+	for i := commonLen; i < len(ps.currentPath); i++ {
+		closed := joinPath(ps.currentPath[:i+1])
+		ps.closedPaths[closed] = true
+	}
+
+	// 5. Record intermediate path segments as objects (if not already assigned)
+	for i := 1; i < len(path); i++ {
+		prefix := path[:i]
+		prefixKey := joinPath(prefix)
+		if _, exists := ps.assignedPaths[prefixKey]; !exists {
+			ps.assignedPaths[prefixKey] = struct{ kind pathValueKind; span Span }{pathValueObject, span}
+		}
+	}
+
+	// 6. Update assigned paths and current path
+	ps.assignedPaths[pathKey] = struct{ kind pathValueKind; span Span }{kind, span}
+	ps.currentPath = path
+
+	return nil
+}
+
 type parser struct {
 	lexer   *Lexer
 	current *Token
@@ -79,13 +165,13 @@ func (p *parser) parse() (*Document, error) {
 
 	entries := []*Entry{}
 	start := p.current.Span.Start
-	seenKeys := make(map[string]Span)
+	ps := newPathState()
 
 	for !p.check(TokenEOF) {
 		if p.err != nil {
 			return nil, p.err
 		}
-		entry, err := p.parseEntryWithDupCheck(seenKeys)
+		entry, err := p.parseEntryWithPathCheck(ps)
 		if err != nil {
 			return nil, err
 		}
@@ -100,7 +186,7 @@ func (p *parser) parse() (*Document, error) {
 	}, nil
 }
 
-func (p *parser) parseEntryWithDupCheck(seenKeys map[string]Span) (*Entry, error) {
+func (p *parser) parseEntryWithPathCheck(ps *pathState) (*Entry, error) {
 	for p.check(TokenComma) {
 		p.advance()
 	}
@@ -134,8 +220,75 @@ func (p *parser) parseEntryWithDupCheck(seenKeys map[string]Span) (*Entry, error
 	if key.PayloadKind == PayloadScalar && key.Scalar.Kind == ScalarBare {
 		text := key.Scalar.Text
 		if strings.Contains(text, ".") {
-			return p.expandDottedPath(text, key.Span, seenKeys)
+			return p.expandDottedPathWithState(text, key.Span, ps)
 		}
+	}
+
+	if err := p.validateKey(key); err != nil {
+		return nil, err
+	}
+
+	// Get key text for path tracking
+	keyText := p.getKeyText(key)
+
+	// Check for implicit unit
+	if p.current.HadNewlineBefore || p.check(TokenEOF, TokenRBrace) {
+		// Validate path
+		if keyText != "" {
+			if err := ps.checkAndUpdate([]string{keyText}, key.Span, pathValueTerminal); err != nil {
+				return nil, err
+			}
+		}
+		return &Entry{Key: key, Value: &Value{Span: key.Span}}, nil
+	}
+
+	value, err := p.parseValue()
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine value kind and validate path
+	if keyText != "" {
+		kind := pathValueTerminal
+		if value.PayloadKind == PayloadObject {
+			kind = pathValueObject
+		}
+		if err := ps.checkAndUpdate([]string{keyText}, key.Span, kind); err != nil {
+			return nil, err
+		}
+	}
+
+	return &Entry{Key: key, Value: value}, nil
+}
+
+func (p *parser) parseEntryWithDupCheck(seenKeys map[string]Span) (*Entry, error) {
+	for p.check(TokenComma) {
+		p.advance()
+	}
+
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	if p.check(TokenEOF, TokenRBrace) {
+		return nil, nil
+	}
+
+	key, err := p.parseValue()
+	if err != nil {
+		return nil, err
+	}
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	// Special case: object in key position gets implicit unit key
+	if key.PayloadKind == PayloadObject {
+		if !p.current.HadNewlineBefore && !p.check(TokenEOF, TokenRBrace, TokenComma) {
+			p.parseValue() // Drop trailing value
+		}
+		unitKey := &Value{Span: Span{-1, -1}}
+		return &Entry{Key: unitKey, Value: key}, nil
 	}
 
 	// Check for duplicate key
@@ -237,6 +390,75 @@ func (p *parser) expandDottedPath(pathText string, span Span, seenKeys map[strin
 		Span:        firstSpan,
 		PayloadKind: PayloadScalar,
 		Scalar:      &Scalar{Text: firstSegment, Kind: ScalarBare, Span: firstSpan},
+	}
+
+	return &Entry{Key: outerKey, Value: result}, nil
+}
+
+func (p *parser) expandDottedPathWithState(pathText string, span Span, ps *pathState) (*Entry, error) {
+	segments := strings.Split(pathText, ".")
+
+	for _, s := range segments {
+		if s == "" {
+			return nil, &ParseError{Message: "invalid key", Span: span}
+		}
+	}
+
+	// Calculate spans for each segment
+	segmentSpans := make([]Span, len(segments))
+	offset := span.Start
+	for i, segment := range segments {
+		segmentBytes := len(segment)
+		segmentSpans[i] = Span{offset, offset + segmentBytes}
+		offset += segmentBytes + 1 // +1 for the dot
+	}
+
+	value, err := p.parseValue()
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine value kind for path tracking
+	kind := pathValueTerminal
+	if value.PayloadKind == PayloadObject {
+		kind = pathValueObject
+	}
+
+	// Validate path with state
+	if err := ps.checkAndUpdate(segments, span, kind); err != nil {
+		return nil, err
+	}
+
+	// Build nested structure from inside out
+	// Object spans start at the PREVIOUS segment's position (i-1)
+	lastKeyEnd := segmentSpans[len(segments)-1].End
+	result := value
+	for i := len(segments) - 1; i > 0; i-- {
+		segSpan := segmentSpans[i]
+		segmentKey := &Value{
+			Span:        segSpan,
+			PayloadKind: PayloadScalar,
+			Scalar:      &Scalar{Text: segments[i], Kind: ScalarBare, Span: segSpan},
+		}
+		// Object span starts at the previous segment's position
+		objStart := segmentSpans[i-1].Start
+		objSpan := Span{objStart, lastKeyEnd}
+		result = &Value{
+			Span:        objSpan,
+			PayloadKind: PayloadObject,
+			Object: &Object{
+				Entries:   []*Entry{{Key: segmentKey, Value: result}},
+				Separator: SeparatorNewline,
+				Span:      objSpan,
+			},
+		}
+	}
+
+	firstSpan := segmentSpans[0]
+	outerKey := &Value{
+		Span:        firstSpan,
+		PayloadKind: PayloadScalar,
+		Scalar:      &Scalar{Text: segments[0], Kind: ScalarBare, Span: firstSpan},
 	}
 
 	return &Entry{Key: outerKey, Value: result}, nil

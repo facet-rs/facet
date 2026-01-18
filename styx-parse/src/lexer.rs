@@ -688,7 +688,10 @@ mod tests {
         // Heredoc without closing delimiter should be an error
         let tokens = lex("<<EOF\nhello world\n");
         eprintln!("tokens = {:?}", tokens);
-        assert!(tokens.iter().any(|t| t.0 == TokenKind::Error), "Expected Error token for unterminated heredoc");
+        assert!(
+            tokens.iter().any(|t| t.0 == TokenKind::Error),
+            "Expected Error token for unterminated heredoc"
+        );
     }
 
     #[test]
@@ -696,6 +699,9 @@ mod tests {
         // String without closing quote should be an error
         let tokens = lex("\"hello");
         eprintln!("tokens = {:?}", tokens);
-        assert!(tokens.iter().any(|t| t.0 == TokenKind::Error), "Expected Error token for unterminated string");
+        assert!(
+            tokens.iter().any(|t| t.0 == TokenKind::Error),
+            "Expected Error token for unterminated string"
+        );
     }
 }

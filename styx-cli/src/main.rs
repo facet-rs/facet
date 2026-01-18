@@ -90,6 +90,8 @@ SUBCOMMANDS:
     @diff <old> <new>               Structural diff (not yet implemented)
     @lsp                            Start language server (stdio)
     @skill                          Output Claude Code skill for AI assistance
+    @package <schema> --name <n> --version <v> [--output <dir>]
+                                    Generate publishable crate from schema
 
 EXAMPLES:
     styx config.styx                Format and print to stdout
@@ -471,6 +473,7 @@ fn run_subcommand(cmd: &str, args: &[String]) -> Result<(), CliError> {
         "diff" => Err(CliError::Usage("@diff is not yet implemented".into())),
         "lsp" => run_lsp(args),
         "skill" => run_skill(args),
+        "package" => run_package(args),
         _ => Err(CliError::Usage(format!("unknown subcommand: @{cmd}"))),
     }
 }
@@ -935,4 +938,128 @@ fn payload_to_json(payload: &Payload) -> serde_json::Value {
             serde_json::Value::Object(obj)
         }
     }
+}
+
+// ============================================================================
+// Package command - generate a publishable crate from a schema
+// ============================================================================
+
+fn run_package(args: &[String]) -> Result<(), CliError> {
+    let mut name: Option<String> = None;
+    let mut version: Option<String> = None;
+    let mut output: Option<String> = None;
+    let mut schema_file: Option<String> = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--name" {
+            i += 1;
+            name = Some(
+                args.get(i)
+                    .ok_or_else(|| CliError::Usage("--name requires an argument".into()))?
+                    .clone(),
+            );
+        } else if arg == "--version" {
+            i += 1;
+            version = Some(
+                args.get(i)
+                    .ok_or_else(|| CliError::Usage("--version requires an argument".into()))?
+                    .clone(),
+            );
+        } else if arg == "--output" {
+            i += 1;
+            output = Some(
+                args.get(i)
+                    .ok_or_else(|| CliError::Usage("--output requires an argument".into()))?
+                    .clone(),
+            );
+        } else if arg.starts_with('-') {
+            return Err(CliError::Usage(format!("unknown option: {arg}")));
+        } else if schema_file.is_none() {
+            schema_file = Some(arg.clone());
+        } else {
+            return Err(CliError::Usage(format!("unexpected argument: {arg}")));
+        }
+        i += 1;
+    }
+
+    let schema_file =
+        schema_file.ok_or_else(|| CliError::Usage("@package requires a schema file".into()))?;
+    let name =
+        name.ok_or_else(|| CliError::Usage("@package requires --name <crate-name>".into()))?;
+    let version =
+        version.ok_or_else(|| CliError::Usage("@package requires --version <semver>".into()))?;
+
+    // Default output to ./<name>/
+    let output_dir = output.unwrap_or_else(|| name.clone());
+    let output_path = Path::new(&output_dir);
+
+    // Read and validate the schema file
+    let schema_content = std::fs::read_to_string(&schema_file)
+        .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("{schema_file}: {e}"))))?;
+
+    // Parse to validate it's valid styx
+    styx_tree::parse(&schema_content)
+        .map_err(|e| CliError::Parse(format!("invalid schema: {e}")))?;
+
+    // Create output directory structure
+    std::fs::create_dir_all(output_path.join("src"))?;
+
+    // Write Cargo.toml
+    let cargo_toml = generate_cargo_toml(&name, &version);
+    std::fs::write(output_path.join("Cargo.toml"), cargo_toml)?;
+
+    // Write src/lib.rs
+    let lib_rs = generate_lib_rs(&name);
+    std::fs::write(output_path.join("src/lib.rs"), lib_rs)?;
+
+    // Copy schema file
+    std::fs::write(output_path.join("schema.styx"), &schema_content)?;
+
+    eprintln!("Created crate in {output_dir}/");
+    eprintln!();
+    eprintln!("To publish:");
+    eprintln!("  cd {output_dir} && cargo publish");
+    eprintln!();
+    eprintln!("To publish to staging:");
+    eprintln!("  cd {output_dir} && cargo publish --index sparse+https://index.staging.crates.io/");
+
+    Ok(())
+}
+
+fn generate_cargo_toml(name: &str, version: &str) -> String {
+    format!(
+        r#"[package]
+name = "{name}"
+version = "{version}"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Styx schema for {name}"
+categories = ["config"]
+keywords = ["styx", "schema"]
+
+# No dependencies - pure data crate
+"#
+    )
+}
+
+fn generate_lib_rs(name: &str) -> String {
+    let crate_name_snake = name.replace('-', "_");
+    format!(
+        r#"//! Styx schema crate.
+//!
+//! This crate provides the schema definition for validating configuration files.
+//!
+//! ## Usage
+//!
+//! ```rust
+//! let schema = {crate_name_snake}::SCHEMA;
+//! // Pass to styx validation APIs
+//! ```
+
+/// The styx schema content.
+pub const SCHEMA: &str = include_str!("../schema.styx");
+"#
+    )
 }

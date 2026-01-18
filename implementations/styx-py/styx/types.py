@@ -39,6 +39,13 @@ class Separator(Enum):
     NEWLINE = "newline"
 
 
+class PathValueKind(Enum):
+    """The kind of value assigned to a path."""
+
+    OBJECT = "object"  # Intermediate object node or explicit object
+    TERMINAL = "terminal"  # Scalar, sequence, or tag-only value
+
+
 @dataclass(slots=True)
 class Scalar:
     """A scalar value."""

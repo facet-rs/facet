@@ -174,9 +174,19 @@ class Lexer:
         if ch == "r" and self._peek(1) in ('"', "#"):
             return self._read_raw_string(start, had_whitespace, had_newline)
 
-        # Heredoc
+        # Heredoc - only if << is followed by uppercase letter
         if ch == "<" and self._peek(1) == "<":
-            return self._read_heredoc(start, had_whitespace, had_newline)
+            after_lt_lt = self._peek(2)
+            if after_lt_lt.isupper():
+                return self._read_heredoc(start, had_whitespace, had_newline)
+            # << not followed by uppercase - return error at just <<
+            self._advance()  # <
+            self._advance()  # <
+            error_end = self.byte_pos
+            # Skip rest of line for recovery
+            while self.pos < len(self.source) and self._peek() != "\n":
+                self._advance()
+            raise ParseError("unexpected token", Span(start, error_end))
 
         # Bare scalar
         return self._read_bare_scalar(start, had_whitespace, had_newline)
@@ -215,32 +225,17 @@ class Lexer:
                             f"invalid escape sequence: \\{escaped}",
                             Span(escape_start, self.byte_pos),
                         )
-            elif ch == "\n":
+            elif ch in ("\n", "\r"):
+                # Unterminated string - include the newline in the span
                 self._advance()
-                return Token(
-                    TokenType.QUOTED,
-                    '"' + text + "\n",
-                    Span(start, self.byte_pos),
-                    had_whitespace,
-                    had_newline,
-                )
-            elif ch == "\r":
-                self._advance()
-                if self._peek() == "\n":
+                if ch == "\r" and self._peek() == "\n":
                     self._advance()
-                return Token(
-                    TokenType.QUOTED,
-                    '"' + text + "\n",
-                    Span(start, self.byte_pos),
-                    had_whitespace,
-                    had_newline,
-                )
+                raise ParseError("unexpected token", Span(start, self.byte_pos))
             else:
                 text += self._advance()
 
-        return Token(
-            TokenType.QUOTED, '"' + text, Span(start, self.byte_pos), had_whitespace, had_newline
-        )
+        # EOF without closing quote - error
+        raise ParseError("unexpected token", Span(start, self.byte_pos))
 
     def _read_unicode_escape(self) -> str:
         """Read a unicode escape sequence."""
@@ -291,7 +286,6 @@ class Lexer:
         if self.pos < len(self.source):
             self._advance()  # newline
 
-        opener_end = self.byte_pos
         text = ""
         bare_delimiter = delimiter.split(",")[0]
 
@@ -312,9 +306,8 @@ class Lexer:
                 self._advance()
                 text += "\n"
 
-        if "," in delimiter:
-            text = delimiter[len(bare_delimiter) :] + "\n" + text
-        return Token(TokenType.HEREDOC, text, Span(start, opener_end), had_whitespace, had_newline)
+        # EOF without closing delimiter - error
+        raise ParseError("unexpected token", Span(start, self.byte_pos))
 
     def _read_bare_scalar(self, start: int, had_whitespace: bool, had_newline: bool) -> Token:
         """Read a bare scalar."""

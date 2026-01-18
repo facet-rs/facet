@@ -222,13 +222,15 @@ export class Lexer {
       if (afterLtLt >= "A" && afterLtLt <= "Z") {
         return this.readHeredoc(start, hadWhitespace, hadNewline);
       }
-      // << not followed by uppercase - skip << and any following digits
+      // << not followed by uppercase - return error at just <<
       this.advance(); // <
       this.advance(); // <
-      while (this.peek() >= "0" && this.peek() <= "9") {
+      const errorEnd = this.bytePos;
+      // Skip rest of line for recovery
+      while (this.pos < this.source.length && this.peek() !== "\n") {
         this.advance();
       }
-      return this.nextToken();
+      throw new ParseError("unexpected token", { start, end: errorEnd });
     }
 
     // Bare scalar
@@ -290,43 +292,20 @@ export class Lexer {
               end: this.bytePos,
             });
         }
-      } else if (ch === "\n") {
-        // Unclosed string at newline - recover by including the raw content
-        // Include the opening quote in text to match Rust behavior
-        this.advance(); // consume newline
-        return {
-          type: "quoted",
-          text: '"' + text + "\n",
-          span: { start, end: this.bytePos },
-          hadWhitespaceBefore: hadWhitespace,
-          hadNewlineBefore: hadNewline,
-        };
-      } else if (ch === "\r") {
-        // Handle \r\n
+      } else if (ch === "\n" || ch === "\r") {
+        // Unterminated string - include the newline in the span
         this.advance();
-        if (this.peek() === "\n") {
+        if (ch === "\r" && this.peek() === "\n") {
           this.advance();
         }
-        return {
-          type: "quoted",
-          text: '"' + text + "\n",
-          span: { start, end: this.bytePos },
-          hadWhitespaceBefore: hadWhitespace,
-          hadNewlineBefore: hadNewline,
-        };
+        throw new ParseError("unexpected token", { start, end: this.bytePos });
       } else {
         text += this.advance();
       }
     }
 
-    // EOF - recover by including the raw content
-    return {
-      type: "quoted",
-      text: '"' + text,
-      span: { start, end: this.bytePos },
-      hadWhitespaceBefore: hadWhitespace,
-      hadNewlineBefore: hadNewline,
-    };
+    // EOF without closing quote - error
+    throw new ParseError("unexpected token", { start, end: this.bytePos });
   }
 
   private readUnicodeEscape(): string {
@@ -432,17 +411,8 @@ export class Lexer {
       }
     }
 
-    // Heredoc without closing delimiter - use opener span only
-    if (delimiter.includes(",")) {
-      text = delimiter.slice(delimiter.split(",")[0].length) + "\n" + text;
-    }
-    return {
-      type: "heredoc",
-      text,
-      span: { start, end: openerEnd },
-      hadWhitespaceBefore: hadWhitespace,
-      hadNewlineBefore: hadNewline,
-    };
+    // Heredoc without closing delimiter - error
+    throw new ParseError("unexpected token", { start, end: this.bytePos });
   }
 
   private readBareScalar(start: number, hadWhitespace: boolean, hadNewline: boolean): Token {
