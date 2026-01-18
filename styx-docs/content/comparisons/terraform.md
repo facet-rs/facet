@@ -79,7 +79,7 @@ output "vpc_id" {
 terraform {
   required_version ">= 1.0"
 
-  required_providers aws>{
+  required_providers.aws {
     source hashicorp/aws
     version "~> 5.0"
   }
@@ -94,7 +94,7 @@ terraform {
 provider.aws {
   region "${var.aws_region}"
 
-  default_tags tags>{
+  default_tags.tags {
     Environment "${var.environment}"
     ManagedBy terraform
   }
@@ -106,7 +106,7 @@ variable.aws_region {
   description "AWS region for resources"
 }
 
-variable.environment type>string
+variable.environment.type string
 
 resource.aws_vpc.main {
   cidr_block 10.0.0.0/16

@@ -1,15 +1,40 @@
 import * as monaco from 'monaco-editor';
-// Import basic language contributions for heredoc language injection
-import 'monaco-editor/esm/vs/basic-languages/sql/sql.contribution';
-import 'monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution';
-import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution';
-import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution';
-import 'monaco-editor/esm/vs/basic-languages/shell/shell.contribution';
-import 'monaco-editor/esm/vs/basic-languages/python/python.contribution';
-import 'monaco-editor/esm/vs/basic-languages/rust/rust.contribution';
-import 'monaco-editor/esm/vs/basic-languages/go/go.contribution';
+// Import basic language definitions directly for heredoc language injection
+// (contributions use lazy loading which doesn't work with tokenize())
+import * as sqlLang from 'monaco-editor/esm/vs/basic-languages/sql/sql';
+import * as javascriptLang from 'monaco-editor/esm/vs/basic-languages/javascript/javascript';
+import * as yamlLang from 'monaco-editor/esm/vs/basic-languages/yaml/yaml';
+import * as markdownLang from 'monaco-editor/esm/vs/basic-languages/markdown/markdown';
+import * as shellLang from 'monaco-editor/esm/vs/basic-languages/shell/shell';
+import * as pythonLang from 'monaco-editor/esm/vs/basic-languages/python/python';
+import * as rustLang from 'monaco-editor/esm/vs/basic-languages/rust/rust';
+import * as goLang from 'monaco-editor/esm/vs/basic-languages/go/go';
 import { initVimMode, VimMode } from 'monaco-vim';
 import { StyxTokensProvider } from './tokenizer';
+
+// Register embedded languages for heredoc injection
+function registerEmbeddedLanguages() {
+  const languages: Array<{ id: string; def: { conf: monaco.languages.LanguageConfiguration; language: monaco.languages.IMonarchLanguage } }> = [
+    { id: 'sql', def: sqlLang },
+    { id: 'javascript', def: javascriptLang },
+    { id: 'yaml', def: yamlLang },
+    { id: 'markdown', def: markdownLang },
+    { id: 'shell', def: shellLang },
+    { id: 'python', def: pythonLang },
+    { id: 'rust', def: rustLang },
+    { id: 'go', def: goLang },
+  ];
+
+  for (const { id, def } of languages) {
+    // Check if language is already registered
+    const existing = monaco.languages.getLanguages().find(l => l.id === id);
+    if (!existing) {
+      monaco.languages.register({ id });
+    }
+    monaco.languages.setMonarchTokensProvider(id, def.language);
+    monaco.languages.setLanguageConfiguration(id, def.conf);
+  }
+}
 
 const styxLanguageConfig: monaco.languages.LanguageConfiguration = {
   comments: { lineComment: '//' },
@@ -138,6 +163,9 @@ const catppuccinMocha: monaco.editor.IStandaloneThemeData = {
 
 // Register language with custom tokenizer
 export function registerStyxLanguage(): void {
+  // Register embedded languages first (for heredoc injection)
+  registerEmbeddedLanguages();
+
   monaco.languages.register({ id: 'styx' });
   monaco.languages.setTokensProvider('styx', new StyxTokensProvider());
   monaco.languages.setLanguageConfiguration('styx', styxLanguageConfig);

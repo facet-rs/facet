@@ -149,7 +149,7 @@ public struct Lexer {
         case "<" where peek() == "<":
             // << not followed by uppercase is an error
             _ = advance() // consume second <
-            return Token(type: .error, span: Span(start: start, end: position), text: "invalid heredoc: delimiter must start with uppercase letter", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(type: .error, span: Span(start: start, end: position), text: "unexpected token", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
         case "/" where peek() != "/":
             // Single / starts a bare scalar (e.g., /etc/config)
             // But // is a comment (handled in skipWhitespaceAndComments)
@@ -169,6 +169,7 @@ public struct Lexer {
         var closed = false
 
         while !isAtEnd {
+            let charStart = position  // Track start of each character for escape error spans
             guard let char = advance() else { break }
 
             if char == "\"" {
@@ -187,14 +188,17 @@ public struct Lexer {
                         if let unicodeChar = parseUnicodeEscape() {
                             text.append(unicodeChar)
                         } else {
-                            return Token(type: .error, span: Span(start: start, end: position), text: "invalid unicode escape", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+                            // Error span covers the \u escape sequence
+                            return Token(type: .error, span: Span(start: charStart, end: position), text: "invalid unicode escape", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
                         }
                     default:
-                        return Token(type: .error, span: Span(start: start, end: position), text: "invalid escape sequence", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+                        // Error span covers just the invalid escape sequence (e.g., \x)
+                        return Token(type: .error, span: Span(start: charStart, end: position), text: "invalid escape sequence: \\\(escaped)", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
                     }
                 }
             } else if char == "\n" {
-                return Token(type: .error, span: Span(start: start, end: position), text: "unterminated string", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+                // Rust recovery behavior: return valid token with opening quote included
+                return Token(type: .quoted, span: Span(start: start, end: position), text: "\"" + text + "\n", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
             } else {
                 text.append(char)
             }
@@ -341,7 +345,13 @@ public struct Lexer {
             return Token(type: .heredoc, span: Span(start: start, end: position), text: text, hadWhitespaceBefore: ws, hadNewlineBefore: nl)
         }
 
-        return Token(type: .error, span: Span(start: start, end: position), text: "unterminated heredoc", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+        // Rust recovery: return valid heredoc with accumulated content
+        // Include final line content if any
+        if !currentLine.isEmpty {
+            text.append(contentsOf: currentLine)
+            text.append("\n")
+        }
+        return Token(type: .heredoc, span: Span(start: start, end: position), text: text, hadWhitespaceBefore: ws, hadNewlineBefore: nl)
     }
 
     private mutating func lexBare(start: Int, firstChar: Character, ws: Bool, nl: Bool) -> Token {

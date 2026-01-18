@@ -172,7 +172,6 @@ export class StyxTokensProvider implements monaco.languages.TokensProvider {
         // Try to use Monaco's built-in tokenizer for the embedded language
         try {
           const embeddedTokens = monaco.editor.tokenize(line, lang);
-          console.log('[styx] tokenize', { line, lang, tokens: embeddedTokens[0]?.map(t => ({ offset: t.offset, type: t.type })) });
           if (embeddedTokens.length > 0 && embeddedTokens[0].length > 0) {
             // Use the embedded language's tokens
             for (const token of embeddedTokens[0]) {
@@ -183,9 +182,8 @@ export class StyxTokensProvider implements monaco.languages.TokensProvider {
             }
             return { tokens, endState: state };
           }
-        } catch (e) {
+        } catch {
           // Language not available, fall back to heredoc style
-          console.error('[styx] tokenize error', e);
         }
       }
 

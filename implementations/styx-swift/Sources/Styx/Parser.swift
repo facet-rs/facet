@@ -149,7 +149,7 @@ public struct Parser {
         // Check for lexer errors - emit them as parse errors
         if check(.error) {
             let errorToken = advance()
-            throw ParseError(message: "unexpected token", span: errorToken.span)
+            throw ParseError(message: errorToken.text, span: errorToken.span)
         }
 
         // Check for tag

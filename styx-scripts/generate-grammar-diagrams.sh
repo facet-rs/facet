@@ -15,7 +15,7 @@ rmdir diagram
 rm -f static/grammar/rr-2.6.svg
 
 # Add frontmatter and fix paths
-cat > content/spec/grammar.md << 'EOF'
+cat > content/reference/spec/grammar.md << 'EOF'
 +++
 title = "Grammar"
 weight = 3
@@ -23,9 +23,9 @@ slug = "grammar"
 insert_anchor_links = "heading"
 +++
 
-Visual grammar reference for STYX. See [Parser](@/spec/parser.md) for normative rules.
+Visual grammar reference for STYX. See [Parser](@/reference/spec/parser.md) for normative rules.
 
 EOF
 
-sed 's|diagram/|/grammar/|g' index.md >> content/spec/grammar.md
+sed 's|diagram/|/grammar/|g' index.md >> content/reference/spec/grammar.md
 rm index.md grammar-output.zip

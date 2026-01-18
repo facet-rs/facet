@@ -54,9 +54,9 @@ compilerOptions {
   moduleResolution bundler
   baseUrl .
   paths {
-    @/* (./src/*)
-    @components/* (./src/components/*)
-    @utils/* (./src/utils/*)
+    "@/*" (./src/*)
+    "@components/*" (./src/components/*)
+    "@utils/*" (./src/utils/*)
   }
 
   // Strict checks

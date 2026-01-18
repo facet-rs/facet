@@ -5,7 +5,7 @@ slug = "grammar"
 insert_anchor_links = "heading"
 +++
 
-Visual grammar reference for Styx. See [Parser](@/spec/parser.md) for normative rules.
+Visual grammar reference for STYX. See [Parser](@/reference/spec/parser.md) for normative rules.
 
 **Document:**
 
@@ -20,7 +20,7 @@ Document ::= Entry*
 ![Entry](/grammar/Entry.svg)
 
 ```
-Entry    ::= DocComment? Key Value?
+Entry    ::= DocComment? Atom+
 ```
 
 referenced by:
@@ -28,76 +28,6 @@ referenced by:
 * CommaSeparated
 * Document
 * NewlineSeparated
-
-**Key:**
-
-![Key](/grammar/Key.svg)
-
-```
-Key      ::= KeySegment ( '.' KeySegment )*
-```
-
-referenced by:
-
-* Entry
-
-**KeySegment:**
-
-![KeySegment](/grammar/KeySegment.svg)
-
-```
-KeySegment
-         ::= BareKey
-           | QuotedScalar
-           | '@'
-           | Tag
-```
-
-referenced by:
-
-* Key
-
-**BareKey:**
-
-![BareKey](/grammar/BareKey.svg)
-
-```
-BareKey  ::= BareKeyChar+
-```
-
-referenced by:
-
-* KeySegment
-
-**BareKeyChar:**
-
-![BareKeyChar](/grammar/BareKeyChar.svg)
-
-```
-BareKeyChar
-         ::= [^{}(),"=@>.#x20#x09#x0A#x0D]
-```
-
-referenced by:
-
-* BareKey
-
-**Value:**
-
-![Value](/grammar/Value.svg)
-
-```
-Value    ::= Scalar
-           | Sequence
-           | Object
-           | '@'
-           | Tag
-           | Attributes
-```
-
-referenced by:
-
-* Entry
 
 **DocComment:**
 
@@ -127,6 +57,7 @@ Atom     ::= Scalar
 
 referenced by:
 
+* Entry
 * Sequence
 
 **Scalar:**
@@ -143,8 +74,6 @@ Scalar   ::= BareScalar
 referenced by:
 
 * Atom
-* Key
-* Value
 
 **BareScalar:**
 
@@ -208,7 +137,7 @@ referenced by:
 
 ```
 EscapeSeq
-         ::= '\' ( [\"nrt] | 'u' HexDigit HexDigit HexDigit HexDigit | 'u{' HexDigit+ '}' )
+         ::= '\' ( [\"nrt0] | 'u' HexDigit HexDigit HexDigit HexDigit | 'u{' HexDigit HexDigit? HexDigit? HexDigit? HexDigit? HexDigit? '}' )
 ```
 
 referenced by:
@@ -304,15 +233,13 @@ Tag      ::= '@' TagName TagPayload?
 referenced by:
 
 * Atom
-* Key
-* Value
 
 **TagName:**
 
 ![TagName](/grammar/TagName.svg)
 
 ```
-TagName  ::= [A-Za-z_] [A-Za-z0-9_#x2D]*
+TagName  ::= [A-Za-z_] [A-Za-z0-9_.#x2D]*
 ```
 
 referenced by:
@@ -350,7 +277,6 @@ referenced by:
 * Atom
 * AttributeValue
 * TagPayload
-* Value
 
 **Object:**
 
@@ -365,7 +291,6 @@ referenced by:
 * Atom
 * AttributeValue
 * TagPayload
-* Value
 
 **ObjectBody:**
 
@@ -420,7 +345,6 @@ Attributes
 referenced by:
 
 * Atom
-* Value
 
 **Attribute:**
 
