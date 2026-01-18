@@ -16,7 +16,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install system dependencies
         run: apt-get update && apt-get install -y zlib1g-dev
@@ -52,7 +52,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -67,7 +67,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -83,7 +83,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install valgrind and nodejs
         run: apt-get update && apt-get install -y valgrind nodejs
@@ -99,7 +99,7 @@ jobs:
     runs-on: depot-ubuntu-24.04-32
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -109,7 +109,7 @@ jobs:
           cargo bench --bench unified_divan --features jit | tee divan-output.txt
 
       - name: Upload divan results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: divan-results
           path: facet-perf-shootout/divan-output.txt
@@ -119,7 +119,7 @@ jobs:
     runs-on: depot-ubuntu-24.04-32
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install valgrind (required by gungraun)
         run: sudo apt-get update && sudo apt-get install -y valgrind
@@ -135,7 +135,7 @@ jobs:
           cargo bench --bench unified_gungraun --features jit -- --nocapture | tee gungraun-output.txt
 
       - name: Upload gungraun results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gungraun-results
           path: facet-perf-shootout/gungraun-output.txt
@@ -153,20 +153,20 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0  # Need full git history
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Download divan results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: divan-results
           path: bench-reports
 
       - name: Download gungraun results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: gungraun-results
           path: bench-reports
@@ -193,7 +193,7 @@ jobs:
           version: 9
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
 
@@ -239,7 +239,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -254,7 +254,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -269,7 +269,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -286,7 +286,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -301,7 +301,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -313,7 +313,7 @@ jobs:
   test-aarch64-apple-darwin:
     runs-on: mac-arm64-oakhost
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -333,7 +333,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -345,7 +345,7 @@ jobs:
   test-x86_64-pc-windows-msvc:
     runs-on: depot-windows-2025-32
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -377,7 +377,7 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
