@@ -1,0 +1,10 @@
+---
+source: crates/dibs/src/diff.rs
+expression: table.to_create_table_sql()
+---
+CREATE TABLE post_likes (
+    user_id BIGINT NOT NULL,
+    post_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, post_id)
+);

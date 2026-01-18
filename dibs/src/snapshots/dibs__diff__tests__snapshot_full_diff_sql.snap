@@ -1,0 +1,24 @@
+---
+source: crates/dibs/src/diff.rs
+expression: diff.to_sql()
+---
+-- Table: post_likes
+CREATE TABLE post_likes (
+    user_id BIGINT NOT NULL,
+    post_id BIGINT NOT NULL,
+    PRIMARY KEY (user_id, post_id)
+);
+
+-- Table: posts
+CREATE TABLE posts (
+    id BIGINT PRIMARY KEY,
+    author_id BIGINT NOT NULL,
+    title TEXT NOT NULL
+);
+
+-- Table: users
+CREATE TABLE users (
+    id BIGINT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL
+);

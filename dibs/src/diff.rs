@@ -699,4 +699,209 @@ mod tests {
         let diff = schema.diff(&schema);
         assert!(diff.is_empty());
     }
+
+    // ===== Snapshot tests for SQL generation =====
+
+    fn make_pk_column(name: &str, pg_type: PgType) -> Column {
+        Column {
+            name: name.to_string(),
+            pg_type,
+            rust_type: None,
+            nullable: false,
+            default: None,
+            primary_key: true,
+            unique: false,
+            doc: None,
+        }
+    }
+
+    fn make_column_with_default(name: &str, pg_type: PgType, nullable: bool, default: &str) -> Column {
+        Column {
+            name: name.to_string(),
+            pg_type,
+            rust_type: None,
+            nullable,
+            default: Some(default.to_string()),
+            primary_key: false,
+            unique: false,
+            doc: None,
+        }
+    }
+
+    fn make_unique_column(name: &str, pg_type: PgType, nullable: bool) -> Column {
+        Column {
+            name: name.to_string(),
+            pg_type,
+            rust_type: None,
+            nullable,
+            default: None,
+            primary_key: false,
+            unique: true,
+            doc: None,
+        }
+    }
+
+    #[test]
+    fn snapshot_simple_table() {
+        let table = Table {
+            name: "users".to_string(),
+            columns: vec![
+                make_pk_column("id", PgType::BigInt),
+                make_unique_column("email", PgType::Text, false),
+                make_column("name", PgType::Text, false),
+                make_column("bio", PgType::Text, true),
+                make_column_with_default("created_at", PgType::Timestamptz, false, "now()"),
+            ],
+            foreign_keys: Vec::new(),
+            indices: Vec::new(),
+            source: SourceLocation::default(),
+            doc: None,
+        };
+
+        insta::assert_snapshot!(table.to_create_table_sql());
+    }
+
+    #[test]
+    fn snapshot_composite_primary_key() {
+        // This is the case that was broken - composite PK should use table constraint
+        let table = Table {
+            name: "post_likes".to_string(),
+            columns: vec![
+                make_pk_column("user_id", PgType::BigInt),
+                make_pk_column("post_id", PgType::BigInt),
+                make_column_with_default("created_at", PgType::Timestamptz, false, "now()"),
+            ],
+            foreign_keys: Vec::new(),
+            indices: Vec::new(),
+            source: SourceLocation::default(),
+            doc: None,
+        };
+
+        insta::assert_snapshot!(table.to_create_table_sql());
+    }
+
+    #[test]
+    fn snapshot_table_with_foreign_keys() {
+        let table = Table {
+            name: "posts".to_string(),
+            columns: vec![
+                make_pk_column("id", PgType::BigInt),
+                make_column("author_id", PgType::BigInt, false),
+                make_column("category_id", PgType::BigInt, true),
+                make_column("title", PgType::Text, false),
+                make_column("body", PgType::Text, false),
+            ],
+            foreign_keys: vec![
+                ForeignKey {
+                    columns: vec!["author_id".to_string()],
+                    references_table: "users".to_string(),
+                    references_columns: vec!["id".to_string()],
+                },
+                ForeignKey {
+                    columns: vec!["category_id".to_string()],
+                    references_table: "categories".to_string(),
+                    references_columns: vec!["id".to_string()],
+                },
+            ],
+            indices: Vec::new(),
+            source: SourceLocation::default(),
+            doc: None,
+        };
+
+        // Note: to_create_table_sql doesn't include FKs (they're added separately)
+        insta::assert_snapshot!(table.to_create_table_sql());
+    }
+
+    #[test]
+    fn snapshot_junction_table() {
+        // Many-to-many junction table with composite PK and FKs
+        let table = Table {
+            name: "post_tags".to_string(),
+            columns: vec![
+                make_pk_column("post_id", PgType::BigInt),
+                make_pk_column("tag_id", PgType::BigInt),
+            ],
+            foreign_keys: vec![
+                ForeignKey {
+                    columns: vec!["post_id".to_string()],
+                    references_table: "posts".to_string(),
+                    references_columns: vec!["id".to_string()],
+                },
+                ForeignKey {
+                    columns: vec!["tag_id".to_string()],
+                    references_table: "tags".to_string(),
+                    references_columns: vec!["id".to_string()],
+                },
+            ],
+            indices: Vec::new(),
+            source: SourceLocation::default(),
+            doc: None,
+        };
+
+        insta::assert_snapshot!(table.to_create_table_sql());
+    }
+
+    #[test]
+    fn snapshot_full_diff_sql() {
+        // Test the full diff SQL output
+        let desired = Schema {
+            tables: vec![
+                Table {
+                    name: "users".to_string(),
+                    columns: vec![
+                        make_pk_column("id", PgType::BigInt),
+                        make_unique_column("email", PgType::Text, false),
+                        make_column("name", PgType::Text, false),
+                    ],
+                    foreign_keys: Vec::new(),
+                    indices: Vec::new(),
+                    source: SourceLocation::default(),
+                    doc: None,
+                },
+                Table {
+                    name: "posts".to_string(),
+                    columns: vec![
+                        make_pk_column("id", PgType::BigInt),
+                        make_column("author_id", PgType::BigInt, false),
+                        make_column("title", PgType::Text, false),
+                    ],
+                    foreign_keys: vec![ForeignKey {
+                        columns: vec!["author_id".to_string()],
+                        references_table: "users".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    }],
+                    indices: Vec::new(),
+                    source: SourceLocation::default(),
+                    doc: None,
+                },
+                Table {
+                    name: "post_likes".to_string(),
+                    columns: vec![
+                        make_pk_column("user_id", PgType::BigInt),
+                        make_pk_column("post_id", PgType::BigInt),
+                    ],
+                    foreign_keys: vec![
+                        ForeignKey {
+                            columns: vec!["user_id".to_string()],
+                            references_table: "users".to_string(),
+                            references_columns: vec!["id".to_string()],
+                        },
+                        ForeignKey {
+                            columns: vec!["post_id".to_string()],
+                            references_table: "posts".to_string(),
+                            references_columns: vec!["id".to_string()],
+                        },
+                    ],
+                    indices: Vec::new(),
+                    source: SourceLocation::default(),
+                    doc: None,
+                },
+            ],
+        };
+
+        let current = Schema::new();
+        let diff = desired.diff(&current);
+
+        insta::assert_snapshot!(diff.to_sql());
+    }
 }

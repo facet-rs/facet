@@ -1,0 +1,9 @@
+---
+source: crates/dibs/src/diff.rs
+expression: table.to_create_table_sql()
+---
+CREATE TABLE post_tags (
+    post_id BIGINT NOT NULL,
+    tag_id BIGINT NOT NULL,
+    PRIMARY KEY (post_id, tag_id)
+);

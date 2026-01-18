@@ -22,6 +22,7 @@ roam = { git = "https://github.com/bearcove/roam", branch = "main" }
 roam-stream = { git = "https://github.com/bearcove/roam", branch = "main" }
 
 [dev-dependencies]
+insta = "1"
 testcontainers = "0.26"
 testcontainers-modules = { version = "0.14", features = ["postgres"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

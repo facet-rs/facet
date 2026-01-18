@@ -314,17 +314,31 @@ impl Table {
     pub fn to_create_table_sql(&self) -> String {
         let mut sql = format!("CREATE TABLE {} (\n", self.name);
 
+        // Collect primary key columns
+        let pk_columns: Vec<&str> = self
+            .columns
+            .iter()
+            .filter(|c| c.primary_key)
+            .map(|c| c.name.as_str())
+            .collect();
+
+        // If there's more than one PK column, we need a table constraint
+        let use_table_pk_constraint = pk_columns.len() > 1;
+
         let col_defs: Vec<String> = self
             .columns
             .iter()
             .map(|col| {
                 let mut def = format!("    {} {}", col.name, col.pg_type);
 
-                if col.primary_key {
+                // Only add inline PRIMARY KEY for single-column PKs
+                if col.primary_key && !use_table_pk_constraint {
                     def.push_str(" PRIMARY KEY");
                 }
 
-                if !col.nullable && !col.primary_key {
+                // NOT NULL: PK columns are implicitly NOT NULL, but for composite PKs
+                // we need to add it explicitly since we're not using inline PRIMARY KEY
+                if !col.nullable && (!col.primary_key || use_table_pk_constraint) {
                     def.push_str(" NOT NULL");
                 }
 
@@ -341,6 +355,13 @@ impl Table {
             .collect();
 
         sql.push_str(&col_defs.join(",\n"));
+
+        // Add composite primary key constraint if needed
+        if use_table_pk_constraint {
+            sql.push_str(",\n");
+            sql.push_str(&format!("    PRIMARY KEY ({})", pk_columns.join(", ")));
+        }
+
         sql.push_str("\n);");
 
         sql
