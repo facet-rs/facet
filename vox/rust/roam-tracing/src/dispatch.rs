@@ -3,14 +3,35 @@
 //! This module provides the machinery to convert `TracingRecord` from cells
 //! into proper `tracing` events that flow through the host's subscriber.
 //!
-//! The challenge is that `tracing` requires compile-time field names, but
-//! cell records have dynamic fields. We solve this by:
+//! # Design
 //!
-//! 1. Creating static callsites (one per log level) with known field names
-//! 2. Serializing dynamic fields into a "fields" string field
-//! 3. Using `Event::dispatch()` to emit events through the subscriber
+//! The challenge is that `tracing` requires compile-time field names (as `&'static str`),
+//! but cell records have dynamic fields. We solve this by:
+//!
+//! 1. **Interning field names** - Field names are interned (Box::leak) to get `'static` lifetime
+//! 2. **Caching callsites per unique field set** - Each unique combination of (level, field_names)
+//!    gets its own callsite, metadata, and field set
+//! 3. **Using `Event::dispatch()`** - Events are dispatched through the proper tracing API
+//!
+//! This means dynamic fields like `user_id=42` become real tracing fields that subscribers
+//! can filter on, format, and process individually.
+//!
+//! # Safety
+//!
+//! This module uses unsafe code for:
+//! - String interning (Box::leak to get 'static str)
+//! - Callsite creation (cyclic reference between callsite and metadata)
+//! - Cache access (returning 'static references to cached callsites)
+//!
+//! All unsafe usage is sound because:
+//! - Interned strings are never deallocated (intentional memory leak for 'static)
+//! - Callsites are never removed from the cache
+//! - The cache lives for the lifetime of the program
 
-use std::sync::OnceLock;
+#![allow(unsafe_code)]
+
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use tracing_core::callsite::Identifier;
 use tracing_core::field::{Field, FieldSet, Value};
@@ -20,153 +41,163 @@ use tracing_core::{Event, Metadata};
 use crate::{FieldValue, Level, TaggedRecord, TracingRecord};
 
 // ============================================================================
-// Field Names
+// String Interning
 // ============================================================================
 
-/// Known field names for cell events.
-/// - `message`: The log message
-/// - `cell`: The cell/peer name
-/// - `target`: The tracing target (module path)
-/// - `fields`: Serialized key=value pairs from dynamic fields
-static FIELD_NAMES: &[&str] = &["message", "cell", "target", "fields"];
+/// Global string interner for field names.
+/// Field names are interned to get `'static` lifetime required by tracing.
+static STRING_INTERNER: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+
+/// Intern a string to get a `'static` reference.
+/// If the string is already interned, returns the existing reference.
+fn intern_string(s: &str) -> &'static str {
+    let interner = STRING_INTERNER.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = interner.lock().unwrap();
+
+    if let Some(&interned) = map.get(s) {
+        return interned;
+    }
+
+    // SAFETY: We intentionally leak this string to get 'static lifetime.
+    // This is bounded because there's a finite number of unique field names.
+    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+    map.insert(s.to_string(), leaked);
+    leaked
+}
 
 // ============================================================================
-// Static Callsites (one per level)
+// Dynamic Callsite Cache
 // ============================================================================
 
-macro_rules! define_callsite {
-    ($level:expr, $cs_type:ident, $cs_static:ident, $meta:ident, $fields:ident) => {
-        struct $cs_type;
-        static $cs_static: $cs_type = $cs_type;
+/// A cached callsite for a specific set of field names at a specific level.
+struct CachedCallsite {
+    /// Static metadata for this callsite
+    metadata: &'static Metadata<'static>,
+    /// Cached field references in the same order as field names
+    fields: Vec<Field>,
+}
 
-        static $meta: Metadata<'static> = Metadata::new(
-            "cell event",
-            "roam_tracing::cell",
-            $level,
-            Some(file!()),
-            Some(line!()),
-            Some(module_path!()),
-            FieldSet::new(FIELD_NAMES, Identifier(&$cs_static)),
-            Kind::EVENT,
-        );
+/// Key for the callsite cache: (level, field names in order)
+type CallsiteKey = (Level, Vec<&'static str>);
 
-        impl tracing_core::callsite::Callsite for $cs_type {
-            fn set_interest(&self, _: tracing_core::subscriber::Interest) {}
-            fn metadata(&self) -> &'static Metadata<'static> {
-                &$meta
-            }
-        }
+/// Global cache of callsites, keyed by (level, field_names).
+static CALLSITE_CACHE: OnceLock<Mutex<HashMap<CallsiteKey, CachedCallsite>>> = OnceLock::new();
 
-        static $fields: OnceLock<Fields> = OnceLock::new();
+/// Base field names that are always present in cell events.
+const BASE_FIELD_NAMES: &[&str] = &["message", "cell", "target"];
+
+/// Create or get a cached callsite for the given level and dynamic field names.
+fn get_or_create_callsite(level: Level, dynamic_field_names: &[&str]) -> &'static CachedCallsite {
+    let cache = CALLSITE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    // Build the key: level + base fields + dynamic fields (all interned)
+    let mut all_field_names: Vec<&'static str> = BASE_FIELD_NAMES
+        .iter()
+        .map(|&s| intern_string(s))
+        .collect();
+    for name in dynamic_field_names {
+        all_field_names.push(intern_string(name));
+    }
+
+    let key = (level, all_field_names.clone());
+
+    let mut cache_guard = cache.lock().unwrap();
+
+    // Check if we already have this callsite
+    if let Some(cached) = cache_guard.get(&key) {
+        // SAFETY: We never remove entries from the cache, so this pointer
+        // remains valid for the lifetime of the program.
+        let ptr = cached as *const CachedCallsite;
+        drop(cache_guard);
+        return unsafe { &*ptr };
+    }
+
+    // Create new callsite - this requires careful construction due to cyclic references
+
+    // 1. Leak the field names slice
+    let field_names_static: &'static [&'static str] =
+        Box::leak(all_field_names.clone().into_boxed_slice());
+
+    // 2. Convert level
+    let tracing_level = match level {
+        Level::Error => tracing_core::Level::ERROR,
+        Level::Warn => tracing_core::Level::WARN,
+        Level::Info => tracing_core::Level::INFO,
+        Level::Debug => tracing_core::Level::DEBUG,
+        Level::Trace => tracing_core::Level::TRACE,
     };
-}
 
-define_callsite!(
-    tracing_core::Level::ERROR,
-    CsError,
-    CS_ERROR,
-    META_ERROR,
-    FIELDS_ERROR
-);
-define_callsite!(
-    tracing_core::Level::WARN,
-    CsWarn,
-    CS_WARN,
-    META_WARN,
-    FIELDS_WARN
-);
-define_callsite!(
-    tracing_core::Level::INFO,
-    CsInfo,
-    CS_INFO,
-    META_INFO,
-    FIELDS_INFO
-);
-define_callsite!(
-    tracing_core::Level::DEBUG,
-    CsDebug,
-    CS_DEBUG,
-    META_DEBUG,
-    FIELDS_DEBUG
-);
-define_callsite!(
-    tracing_core::Level::TRACE,
-    CsTrace,
-    CS_TRACE,
-    META_TRACE,
-    FIELDS_TRACE
-);
+    // 3. Create a placeholder callsite using UnsafeCell for interior mutability
+    // We need the callsite address before we can create the metadata,
+    // but the callsite needs the metadata pointer. We solve this by:
+    // - Creating a callsite with uninitialized metadata
+    // - Creating the metadata with the callsite's address
+    // - Writing the metadata pointer back to the callsite
+    use std::cell::UnsafeCell;
 
-/// Cached field references for a callsite.
-struct Fields {
-    message: Field,
-    cell: Field,
-    target: Field,
-    fields: Field,
-}
+    struct DynCallsiteCell {
+        metadata: UnsafeCell<*const Metadata<'static>>,
+    }
 
-impl Fields {
-    fn new(meta: &'static Metadata<'static>) -> Self {
-        let fs = meta.fields();
-        Self {
-            message: fs.field("message").expect("message field"),
-            cell: fs.field("cell").expect("cell field"),
-            target: fs.field("target").expect("target field"),
-            fields: fs.field("fields").expect("fields field"),
+    // SAFETY: We only write to the UnsafeCell once (during initialization)
+    // and only read from it after initialization is complete.
+    unsafe impl Sync for DynCallsiteCell {}
+
+    impl tracing_core::callsite::Callsite for DynCallsiteCell {
+        fn set_interest(&self, _: tracing_core::subscriber::Interest) {}
+        fn metadata(&self) -> &'static Metadata<'static> {
+            // SAFETY: metadata is always set before this is called
+            unsafe { &**self.metadata.get() }
         }
     }
-}
 
-fn get_level_components(
-    level: Level,
-) -> (
-    &'static Metadata<'static>,
-    &'static OnceLock<Fields>,
-    &'static dyn tracing_core::callsite::Callsite,
-) {
-    match level {
-        Level::Error => (&META_ERROR, &FIELDS_ERROR, &CS_ERROR),
-        Level::Warn => (&META_WARN, &FIELDS_WARN, &CS_WARN),
-        Level::Info => (&META_INFO, &FIELDS_INFO, &CS_INFO),
-        Level::Debug => (&META_DEBUG, &FIELDS_DEBUG, &CS_DEBUG),
-        Level::Trace => (&META_TRACE, &FIELDS_TRACE, &CS_TRACE),
+    let callsite_box = Box::new(DynCallsiteCell {
+        metadata: UnsafeCell::new(std::ptr::null()),
+    });
+    let callsite_ptr = Box::into_raw(callsite_box);
+    let callsite_static: &'static DynCallsiteCell = unsafe { &*callsite_ptr };
+
+    // 4. Create the FieldSet with the callsite's identifier
+    let field_set = FieldSet::new(field_names_static, Identifier(callsite_static));
+
+    // 5. Create and leak the metadata
+    let metadata: &'static Metadata<'static> = Box::leak(Box::new(Metadata::new(
+        "cell event",
+        "roam_tracing::cell",
+        tracing_level,
+        Some(file!()),
+        Some(line!()),
+        Some(module_path!()),
+        field_set,
+        Kind::EVENT,
+    )));
+
+    // 6. Update the callsite with the real metadata
+    // SAFETY: We have exclusive access to this callsite (just created it),
+    // and we're setting a valid metadata pointer. The UnsafeCell allows
+    // interior mutability.
+    unsafe {
+        *(*callsite_ptr).metadata.get() = metadata;
     }
-}
 
-// ============================================================================
-// Field Value Formatting
-// ============================================================================
+    // 7. Register the callsite with tracing
+    tracing_core::callsite::register(callsite_static);
 
-/// Formats dynamic fields as a string: `key1=value1 key2=value2`
-fn format_fields(fields: &[(String, FieldValue)]) -> String {
-    if fields.is_empty() {
-        return String::new();
-    }
+    // 8. Get field references
+    let fields: Vec<Field> = all_field_names
+        .iter()
+        .map(|name| metadata.fields().field(name).expect("field must exist"))
+        .collect();
 
-    let mut result = String::new();
-    for (i, (key, value)) in fields.iter().enumerate() {
-        if i > 0 {
-            result.push(' ');
-        }
-        result.push_str(key);
-        result.push('=');
-        match value {
-            FieldValue::Bool(v) => result.push_str(&v.to_string()),
-            FieldValue::I64(v) => result.push_str(&v.to_string()),
-            FieldValue::U64(v) => result.push_str(&v.to_string()),
-            FieldValue::Str(v) => {
-                // Quote strings that contain spaces
-                if v.contains(' ') {
-                    result.push('"');
-                    result.push_str(v);
-                    result.push('"');
-                } else {
-                    result.push_str(v);
-                }
-            }
-        }
-    }
-    result
+    // 9. Store in cache (we don't need to keep the callsite pointer - it's registered globally)
+    let cached = CachedCallsite { metadata, fields };
+    cache_guard.insert(key.clone(), cached);
+
+    // Return reference to cached entry
+    // SAFETY: Entry was just inserted and will never be removed.
+    let ptr = cache_guard.get(&key).unwrap() as *const CachedCallsite;
+    drop(cache_guard);
+    unsafe { &*ptr }
 }
 
 // ============================================================================
@@ -177,23 +208,41 @@ fn format_fields(fields: &[(String, FieldValue)]) -> String {
 ///
 /// This converts the `TaggedRecord` into a proper `tracing::Event` and
 /// dispatches it through the current subscriber, preserving:
-/// - Log level
-/// - Message
-/// - Cell/peer name
-/// - Target (module path)
-/// - Dynamic fields (serialized as key=value pairs)
+/// - Log level (as the event level)
+/// - Message (as a `message` field)
+/// - Cell/peer name (as a `cell` field)
+/// - Target (as a `target` field)
+/// - All dynamic fields with their original names and typed values
 ///
-/// # Example
+/// # Field Handling
 ///
+/// Dynamic field names are interned (leaked) to satisfy tracing's `'static`
+/// lifetime requirement. Callsites are cached per unique (level, field_names)
+/// combination.
+///
+/// For example, a cell event like:
 /// ```ignore
-/// use roam_tracing::dispatch_record;
-///
-/// // In your tracing consumer task:
-/// while let Some(tagged) = tracing_rx.recv().await {
-///     dispatch_record(&tagged);
-/// }
+/// info!(user_id = 42, action = "login", "User logged in");
 /// ```
+///
+/// Will be dispatched as a tracing event with fields:
+/// - `message = "User logged in"`
+/// - `cell = "my-cell"`
+/// - `target = "my_cell::auth"`
+/// - `user_id = 42` (as i64)
+/// - `action = "login"` (as str)
+///
+/// These are real tracing fields that subscribers can filter and format.
 pub fn dispatch_record(tagged: &TaggedRecord) {
+    let peer_fallback;
+    let cell_name = match &tagged.peer_name {
+        Some(name) => name.as_str(),
+        None => {
+            peer_fallback = format!("peer-{}", tagged.peer_id);
+            &peer_fallback
+        }
+    };
+
     match &tagged.record {
         TracingRecord::Event {
             level,
@@ -206,36 +255,23 @@ pub fn dispatch_record(tagged: &TaggedRecord) {
                 *level,
                 target,
                 message.as_deref().unwrap_or(""),
-                tagged
-                    .peer_name
-                    .as_deref()
-                    .unwrap_or(&format!("peer-{}", tagged.peer_id)),
+                cell_name,
                 fields,
             );
         }
         TracingRecord::SpanEnter { name, level, .. } => {
-            // Emit span enter as a debug event
             if *level >= Level::Debug {
                 let msg = format!("-> {}", name);
-                dispatch_event(
-                    Level::Debug,
-                    "roam_tracing::span",
-                    &msg,
-                    tagged
-                        .peer_name
-                        .as_deref()
-                        .unwrap_or(&format!("peer-{}", tagged.peer_id)),
-                    &[],
-                );
+                dispatch_event(*level, "roam_tracing::span", &msg, cell_name, &[]);
             }
         }
         TracingRecord::SpanExit { .. } | TracingRecord::SpanClose { .. } => {
-            // Usually too verbose to emit
+            // Usually too verbose
         }
     }
 }
 
-/// Dispatch an event with the given parameters through the tracing system.
+/// Dispatch an event through the tracing system.
 fn dispatch_event(
     level: Level,
     target: &str,
@@ -243,32 +279,139 @@ fn dispatch_event(
     cell: &str,
     fields: &[(String, FieldValue)],
 ) {
-    // Register callsites on first use
-    static REGISTERED: OnceLock<()> = OnceLock::new();
-    REGISTERED.get_or_init(|| {
-        tracing_core::callsite::register(&CS_ERROR);
-        tracing_core::callsite::register(&CS_WARN);
-        tracing_core::callsite::register(&CS_INFO);
-        tracing_core::callsite::register(&CS_DEBUG);
-        tracing_core::callsite::register(&CS_TRACE);
-    });
+    // Get dynamic field names
+    let dynamic_names: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
 
-    let (meta, fields_lock, _cs) = get_level_components(level);
-    let keys = fields_lock.get_or_init(|| Fields::new(meta));
+    // Get or create the callsite for this level + field combination
+    let cached = get_or_create_callsite(level, &dynamic_names);
 
-    // Format dynamic fields
-    let fields_str = format_fields(fields);
+    // Build values for base fields + dynamic fields
+    // We need to box dynamic values to keep them alive and get &dyn Value
+    let boxed_dynamic: Vec<Box<dyn Value + '_>> = fields
+        .iter()
+        .map(|(_, v)| -> Box<dyn Value + '_> {
+            match v {
+                FieldValue::I64(x) => Box::new(*x),
+                FieldValue::U64(x) => Box::new(*x),
+                FieldValue::Bool(x) => Box::new(*x),
+                FieldValue::Str(x) => Box::new(x.as_str()),
+            }
+        })
+        .collect();
 
-    // Build value set - use references to &str which implement Value
-    let values: [(&Field, Option<&dyn Value>); 4] = [
-        (&keys.message, Some(&message as &dyn Value)),
-        (&keys.cell, Some(&cell as &dyn Value)),
-        (&keys.target, Some(&target as &dyn Value)),
-        (&keys.fields, Some(&fields_str.as_str() as &dyn Value)),
-    ];
+    // Build the values array with the exact number of fields
+    let num_fields = 3 + fields.len(); // message, cell, target + dynamic
+    let mut values: Vec<(&Field, Option<&dyn Value>)> = Vec::with_capacity(num_fields);
 
-    let value_set = meta.fields().value_set(&values);
-    Event::dispatch(meta, &value_set);
+    // Base fields
+    values.push((&cached.fields[0], Some(&message as &dyn Value)));
+    values.push((&cached.fields[1], Some(&cell as &dyn Value)));
+    values.push((&cached.fields[2], Some(&target as &dyn Value)));
+
+    // Dynamic fields
+    for (i, boxed) in boxed_dynamic.iter().enumerate() {
+        values.push((&cached.fields[3 + i], Some(boxed.as_ref())));
+    }
+
+    // Dispatch the event
+    // We need to convert to a fixed-size array for value_set
+    dispatch_with_value_count(cached.metadata, &cached.fields, &values);
+}
+
+/// Dispatch with the correct number of values.
+/// Uses match on field count since value_set requires a fixed-size array.
+fn dispatch_with_value_count(
+    meta: &'static Metadata<'static>,
+    _fields: &[Field],
+    values: &[(&Field, Option<&dyn Value>)],
+) {
+    // The value_set method requires a fixed-size array type that implements ValidLen.
+    // ValidLen is implemented for arrays up to size 32.
+    // We handle up to 19 fields (3 base + 16 dynamic).
+
+    match values.len() {
+        3 => {
+            let arr: [_; 3] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        4 => {
+            let arr: [_; 4] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        5 => {
+            let arr: [_; 5] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        6 => {
+            let arr: [_; 6] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        7 => {
+            let arr: [_; 7] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        8 => {
+            let arr: [_; 8] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        9 => {
+            let arr: [_; 9] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        10 => {
+            let arr: [_; 10] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        11 => {
+            let arr: [_; 11] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        12 => {
+            let arr: [_; 12] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        13 => {
+            let arr: [_; 13] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        14 => {
+            let arr: [_; 14] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        15 => {
+            let arr: [_; 15] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        16 => {
+            let arr: [_; 16] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        17 => {
+            let arr: [_; 17] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        18 => {
+            let arr: [_; 18] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        19 => {
+            let arr: [_; 19] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        n if n > 19 => {
+            // Truncate to 19 fields (3 base + 16 dynamic)
+            let arr: [_; 19] = std::array::from_fn(|i| values[i].clone());
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+        _ => {
+            // Shouldn't happen (always have at least 3 base fields)
+            // Pad with None values
+            let arr: [(&Field, Option<&dyn Value>); 3] = std::array::from_fn(|i| {
+                values.get(i).cloned().unwrap_or((&_fields[0], None))
+            });
+            Event::dispatch(meta, &meta.fields().value_set(&arr));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -276,25 +419,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_format_fields_empty() {
-        assert_eq!(format_fields(&[]), "");
+    fn test_intern_string() {
+        let s1 = intern_string("hello");
+        let s2 = intern_string("hello");
+        let s3 = intern_string("world");
+
+        // Same string should return same pointer
+        assert!(std::ptr::eq(s1, s2));
+        // Different strings should return different pointers
+        assert!(!std::ptr::eq(s1, s3));
     }
 
     #[test]
-    fn test_format_fields_simple() {
-        let fields = vec![
-            ("key1".to_string(), FieldValue::I64(42)),
-            ("key2".to_string(), FieldValue::Str("value".to_string())),
-        ];
-        assert_eq!(format_fields(&fields), "key1=42 key2=value");
+    fn test_get_or_create_callsite() {
+        let cs1 = get_or_create_callsite(Level::Info, &["user_id", "action"]);
+        let cs2 = get_or_create_callsite(Level::Info, &["user_id", "action"]);
+        let cs3 = get_or_create_callsite(Level::Info, &["different_field"]);
+        let cs4 = get_or_create_callsite(Level::Error, &["user_id", "action"]);
+
+        // Same level + fields should return same callsite
+        assert!(std::ptr::eq(cs1, cs2));
+        // Different fields should return different callsite
+        assert!(!std::ptr::eq(cs1, cs3));
+        // Different level should return different callsite
+        assert!(!std::ptr::eq(cs1, cs4));
     }
 
     #[test]
-    fn test_format_fields_with_spaces() {
-        let fields = vec![(
-            "msg".to_string(),
-            FieldValue::Str("hello world".to_string()),
-        )];
-        assert_eq!(format_fields(&fields), "msg=\"hello world\"");
+    fn test_callsite_has_correct_fields() {
+        let cs = get_or_create_callsite(Level::Info, &["count", "name"]);
+
+        // Should have 5 fields: message, cell, target, count, name
+        assert_eq!(cs.fields.len(), 5);
+
+        // Field names should match
+        let field_names: Vec<&str> = cs.metadata.fields().iter().map(|f| f.name()).collect();
+        assert_eq!(field_names, vec!["message", "cell", "target", "count", "name"]);
     }
 }

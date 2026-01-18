@@ -12,7 +12,7 @@ pub type SpanId = u64;
 
 /// Tracing level (mirrors tracing::Level).
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Facet)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Facet)]
 pub enum Level {
     /// Very verbose tracing information.
     Trace = 0,
