@@ -1,11 +1,11 @@
 //! Configuration file handling for dibs.
 //!
-//! Looks for `dibs.toml` in the current directory or any parent directory.
+//! Looks for `dibs.styx` in the current directory or any parent directory.
 
 use facet::Facet;
 use std::path::{Path, PathBuf};
 
-/// Configuration loaded from `dibs.toml`.
+/// Configuration loaded from `dibs.styx`.
 #[derive(Debug, Clone, Facet)]
 pub struct Config {
     /// Database crate configuration
@@ -17,6 +17,7 @@ pub struct Config {
 #[derive(Debug, Clone, Facet, Default)]
 pub struct DbConfig {
     /// Name of the crate containing schema definitions (e.g., "my-app-db")
+    #[facet(rename = "crate")]
     pub crate_name: Option<String>,
 
     /// Path to a pre-built binary (for faster iteration)
@@ -25,7 +26,7 @@ pub struct DbConfig {
 }
 
 impl Config {
-    /// Load configuration from `dibs.toml`, searching up the directory tree.
+    /// Load configuration from `dibs.styx`, searching up the directory tree.
     pub fn load() -> Result<(Config, PathBuf), ConfigError> {
         let cwd = std::env::current_dir().map_err(|e| ConfigError::Io(e.to_string()))?;
         Self::load_from(&cwd)
@@ -38,17 +39,17 @@ impl Config {
             std::fs::read_to_string(&config_path).map_err(|e| ConfigError::Io(e.to_string()))?;
 
         let config: Config =
-            facet_toml::from_str(&content).map_err(|e| ConfigError::Parse(e.to_string()))?;
+            facet_styx::from_str(&content).map_err(|e| ConfigError::Parse(e.to_string()))?;
 
         Ok((config, config_path))
     }
 
-    /// Find `dibs.toml` by searching up the directory tree.
+    /// Find `dibs.styx` by searching up the directory tree.
     fn find_config_file(start: &Path) -> Result<PathBuf, ConfigError> {
         let mut current = start.to_path_buf();
 
         loop {
-            let config_path = current.join("dibs.toml");
+            let config_path = current.join("dibs.styx");
             if config_path.exists() {
                 return Ok(config_path);
             }
@@ -63,11 +64,11 @@ impl Config {
 /// Errors that can occur when loading configuration.
 #[derive(Debug)]
 pub enum ConfigError {
-    /// No `dibs.toml` found in any parent directory
+    /// No `dibs.styx` found in any parent directory
     NotFound,
     /// I/O error reading the file
     Io(String),
-    /// Parse error in the TOML file
+    /// Parse error in the Styx file
     Parse(String),
 }
 
@@ -75,10 +76,10 @@ impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConfigError::NotFound => {
-                write!(f, "No dibs.toml found in current directory or any parent")
+                write!(f, "No dibs.styx found in current directory or any parent")
             }
-            ConfigError::Io(e) => write!(f, "Failed to read dibs.toml: {}", e),
-            ConfigError::Parse(e) => write!(f, "Failed to parse dibs.toml: {}", e),
+            ConfigError::Io(e) => write!(f, "Failed to read dibs.styx: {}", e),
+            ConfigError::Parse(e) => write!(f, "Failed to parse dibs.styx: {}", e),
         }
     }
 }
