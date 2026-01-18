@@ -21,29 +21,31 @@ pub struct SchemaField {
     pub schema: Schema,
 }
 
-/// Reference to a schema - either external file or inline definition.
+/// Reference to a schema.
 #[derive(Debug)]
 pub enum SchemaRef {
-    /// External schema file path.
+    /// External schema file path: @schema path/to/schema.styx
     External(String),
-    /// Inline schema definition.
-    Inline(Value),
-    /// Embedded schema from binary: @schema {source ..., cli <binary>}
+    /// Embedded schema from binary: @schema {id ..., cli <binary>}
     Embedded { cli: String },
 }
 
 /// Find the schema declaration in a document.
 ///
 /// Looks for:
-/// - `@schema {source ..., cli <binary>}` - embedded schema from binary
-/// - `@ "path/to/schema.styx"` - external schema file
-/// - `@ { inline schema }` - inline schema definition
+/// - `@schema "path/to/schema.styx"` - external schema file
+/// - `@schema {id ..., cli <binary>}` - embedded schema from binary
 pub fn find_schema_declaration(value: &Value) -> Option<SchemaRef> {
     let obj = value.as_object()?;
 
     for entry in &obj.entries {
-        // Check for @schema {source ..., cli ...} directive
         if entry.key.is_schema_tag() {
+            // @schema path/to/schema.styx
+            if let Some(path) = entry.value.as_str() {
+                return Some(SchemaRef::External(path.to_string()));
+            }
+
+            // @schema {id ..., cli ...}
             if let Some(schema_obj) = entry.value.as_object() {
                 if let Some(cli_value) = schema_obj.get("cli") {
                     if let Some(cli_name) = cli_value.as_str() {
@@ -52,17 +54,6 @@ pub fn find_schema_declaration(value: &Value) -> Option<SchemaRef> {
                         });
                     }
                 }
-            }
-            // @schema directive without valid cli field - ignore
-            continue;
-        }
-
-        // Check for @ (unit key) with path or inline schema
-        if entry.key.is_unit() {
-            if let Some(path) = entry.value.as_str() {
-                return Some(SchemaRef::External(path.to_string()));
-            } else if entry.value.as_object().is_some() {
-                return Some(SchemaRef::Inline(entry.value.clone()));
             }
         }
     }
@@ -99,21 +90,13 @@ pub fn load_schema_file(path: &Path) -> Result<SchemaFile, String> {
         .map_err(|e| format!("failed to parse schema file '{}': {}", path.display(), e))
 }
 
-/// Parse an inline schema from a Value.
-pub fn parse_inline_schema(value: &Value) -> Result<SchemaFile, String> {
-    // Convert value back to string and re-parse as schema
-    let content = styx_format::format_value(value, styx_format::FormatOptions::default());
-    facet_styx::from_str(&content).map_err(|e| format!("failed to parse inline schema: {}", e))
-}
-
 /// Strip schema declaration keys from a document before validation.
-/// Both `@` (unit key) and `@schema` (tagged unit key) are schema metadata.
 pub fn strip_schema_declaration(value: &Value) -> Value {
     if let Some(obj) = value.as_object() {
         let filtered_entries: Vec<_> = obj
             .entries
             .iter()
-            .filter(|e| !e.key.is_unit() && !e.key.is_schema_tag())
+            .filter(|e| !e.key.is_schema_tag())
             .cloned()
             .collect();
         Value {
@@ -169,7 +152,6 @@ pub fn validate_against_schema(
                 .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
             load_schema_file(&resolved)?
         }
-        SchemaRef::Inline(schema_value) => parse_inline_schema(&schema_value)?,
         SchemaRef::Embedded { cli } => extract_embedded_schema(&cli)?,
     };
 
@@ -340,7 +322,6 @@ pub fn load_document_schema(value: &Value, document_uri: &Url) -> Result<SchemaF
                 .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
             load_schema_file(&resolved)
         }
-        SchemaRef::Inline(schema_value) => parse_inline_schema(&schema_value),
         SchemaRef::Embedded { cli } => extract_embedded_schema(&cli),
     }
 }

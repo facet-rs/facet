@@ -332,10 +332,6 @@ fn run_validation(
                 let resolved = resolve_schema_path(&path, Some(filename))?;
                 load_schema_file(&resolved)?
             }
-            SchemaRef::Inline(schema_value) => {
-                // Parse inline schema
-                parse_inline_schema(&schema_value)?
-            }
             SchemaRef::Embedded { cli } => {
                 // Extract schema from embedded binary
                 extract_embedded_schema(&cli)?
@@ -367,22 +363,19 @@ fn run_validation(
 }
 
 enum SchemaRef {
-    /// Path to external schema file
+    /// Path to external schema file: @schema path/to/schema.styx
     External(String),
-    /// Inline schema object
-    Inline(Value),
-    /// Embedded schema from binary: @schema {source ..., cli <binary>}
+    /// Embedded schema from binary: @schema {id ..., cli <binary>}
     Embedded { cli: String },
 }
 
 /// Strip schema declaration keys from a document before validation.
-/// Both `@` (unit key) and `@schema` (tagged unit key) are schema metadata.
 fn strip_schema_declaration(value: &Value) -> Value {
     if let Some(obj) = value.as_object() {
         let filtered_entries: Vec<_> = obj
             .entries
             .iter()
-            .filter(|e| !e.key.is_unit() && !e.key.is_schema_tag())
+            .filter(|e| !e.key.is_schema_tag())
             .cloned()
             .collect();
         Value {
@@ -400,16 +393,19 @@ fn strip_schema_declaration(value: &Value) -> Value {
 }
 
 fn find_schema_declaration(value: &Value) -> Result<SchemaRef, CliError> {
-    // Look for @ (unit key) or @schema (tagged unit key) in root object
     let obj = value.as_object().ok_or_else(|| {
         CliError::Validation("document root must be an object for validation".into())
     })?;
 
     for entry in &obj.entries {
-        // Check for @schema {source ..., cli ...} directive
         if entry.key.is_schema_tag() {
+            // @schema path/to/schema.styx
+            if let Some(path) = entry.value.as_str() {
+                return Ok(SchemaRef::External(path.to_string()));
+            }
+
+            // @schema {id ..., cli ...}
             if let Some(schema_obj) = entry.value.as_object() {
-                // Look for 'cli' field
                 if let Some(cli_value) = schema_obj.get("cli") {
                     if let Some(cli_name) = cli_value.as_str() {
                         return Ok(SchemaRef::Embedded {
@@ -420,29 +416,16 @@ fn find_schema_declaration(value: &Value) -> Result<SchemaRef, CliError> {
                 return Err(CliError::Validation(
                     "@schema directive must have a 'cli' field with the binary name".into(),
                 ));
-            } else {
-                return Err(CliError::Validation(
-                    "@schema directive must be an object with {source ..., cli ...}".into(),
-                ));
             }
-        }
 
-        // Check for @ (unit key) with path or inline schema
-        if entry.key.is_unit() {
-            if let Some(path) = entry.value.as_str() {
-                return Ok(SchemaRef::External(path.to_string()));
-            } else if entry.value.as_object().is_some() {
-                return Ok(SchemaRef::Inline(entry.value.clone()));
-            } else {
-                return Err(CliError::Validation(
-                    "schema declaration (@) must be a path string or inline schema object".into(),
-                ));
-            }
+            return Err(CliError::Validation(
+                "@schema directive must be a path or an object with {id ..., cli ...}".into(),
+            ));
         }
     }
 
     Err(CliError::Validation(
-        "no schema declaration found (@ or @schema key)\nhint: use --override-schema to specify a schema file"
+        "no schema declaration found (@schema key)\nhint: use --override-schema to specify a schema file"
             .into(),
     ))
 }
@@ -483,15 +466,6 @@ fn load_schema_file(path: &str) -> Result<SchemaFile, CliError> {
 
     facet_styx::from_str(&source)
         .map_err(|e| CliError::Parse(format!("failed to parse schema '{}': {}", path, e)))
-}
-
-fn parse_inline_schema(value: &Value) -> Result<SchemaFile, CliError> {
-    // Inline schemas have simplified form - just the schema block is required
-    // For now, serialize back to string and re-parse as SchemaFile
-    // This is inefficient but correct - we can optimize later
-    let source = styx_format::format_value(value, FormatOptions::default());
-    facet_styx::from_str(&source)
-        .map_err(|e| CliError::Parse(format!("failed to parse inline schema: {}", e)))
 }
 
 /// Extract schema from a binary with embedded styx schemas.

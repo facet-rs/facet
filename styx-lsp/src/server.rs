@@ -1352,21 +1352,25 @@ fn find_schema_declaration_with_range(tree: &Value, content: &str) -> Option<(Sc
     let obj = tree.as_object()?;
 
     for entry in &obj.entries {
-        if entry.key.is_unit() {
+        if entry.key.is_schema_tag() {
+            let span = entry.value.span?;
+            let range = Range {
+                start: offset_to_position(content, span.start as usize),
+                end: offset_to_position(content, span.end as usize),
+            };
+
+            // @schema path/to/schema.styx
             if let Some(path) = entry.value.as_str() {
-                let span = entry.value.span?;
-                let range = Range {
-                    start: offset_to_position(content, span.start as usize),
-                    end: offset_to_position(content, span.end as usize),
-                };
                 return Some((SchemaRef::External(path.to_string()), range));
-            } else if entry.value.as_object().is_some() {
-                let span = entry.value.span?;
-                let range = Range {
-                    start: offset_to_position(content, span.start as usize),
-                    end: offset_to_position(content, span.end as usize),
-                };
-                return Some((SchemaRef::Inline(entry.value.clone()), range));
+            }
+
+            // @schema {id crate:..., cli ...}
+            if let Some(schema_obj) = entry.value.as_object() {
+                if let Some(cli_value) = schema_obj.get("cli") {
+                    if let Some(cli_name) = cli_value.as_str() {
+                        return Some((SchemaRef::Embedded { cli: cli_name.to_string() }, range));
+                    }
+                }
             }
         }
     }
