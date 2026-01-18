@@ -195,6 +195,188 @@ pub enum DibsError {
     MigrationFailed(String) = 1,
     /// Invalid request
     InvalidRequest(String) = 2,
+    /// Unknown table
+    UnknownTable(String) = 3,
+    /// Unknown column
+    UnknownColumn(String) = 4,
+    /// Query error
+    QueryError(String) = 5,
+}
+
+// =============================================================================
+// Backoffice types
+// =============================================================================
+
+/// A runtime value for backoffice queries.
+///
+/// Mirrors the internal dibs::query::Value type for wire transmission.
+#[derive(Debug, Clone, Facet)]
+#[repr(u8)]
+pub enum Value {
+    /// NULL
+    Null = 0,
+    /// Boolean
+    Bool(bool) = 1,
+    /// 16-bit integer
+    I16(i16) = 2,
+    /// 32-bit integer
+    I32(i32) = 3,
+    /// 64-bit integer
+    I64(i64) = 4,
+    /// 32-bit float
+    F32(f32) = 5,
+    /// 64-bit float
+    F64(f64) = 6,
+    /// String
+    String(String) = 7,
+    /// Binary data
+    Bytes(Vec<u8>) = 8,
+}
+
+/// A row of data as field name → value pairs.
+#[derive(Debug, Clone, Facet)]
+pub struct Row {
+    /// Fields in the row
+    pub fields: Vec<RowField>,
+}
+
+/// A single field in a row.
+#[derive(Debug, Clone, Facet)]
+pub struct RowField {
+    /// Field name
+    pub name: String,
+    /// Field value
+    pub value: Value,
+}
+
+/// Filter operator for backoffice queries.
+#[derive(Debug, Clone, Copy, Facet)]
+#[repr(u8)]
+pub enum FilterOp {
+    /// Equal (=)
+    Eq = 0,
+    /// Not equal (!=)
+    Ne = 1,
+    /// Less than (<)
+    Lt = 2,
+    /// Less than or equal (<=)
+    Lte = 3,
+    /// Greater than (>)
+    Gt = 4,
+    /// Greater than or equal (>=)
+    Gte = 5,
+    /// LIKE pattern match
+    Like = 6,
+    /// Case-insensitive LIKE
+    ILike = 7,
+    /// IS NULL
+    IsNull = 8,
+    /// IS NOT NULL
+    IsNotNull = 9,
+}
+
+/// A single filter condition.
+#[derive(Debug, Clone, Facet)]
+pub struct Filter {
+    /// Column name
+    pub field: String,
+    /// Operator
+    pub op: FilterOp,
+    /// Value to compare (ignored for IsNull/IsNotNull)
+    pub value: Value,
+}
+
+/// Sort direction.
+#[derive(Debug, Clone, Copy, Facet)]
+#[repr(u8)]
+pub enum SortDir {
+    /// Ascending
+    Asc = 0,
+    /// Descending
+    Desc = 1,
+}
+
+/// A sort clause.
+#[derive(Debug, Clone, Facet)]
+pub struct Sort {
+    /// Column name
+    pub field: String,
+    /// Direction
+    pub dir: SortDir,
+}
+
+/// Request to list rows from a table.
+#[derive(Debug, Clone, Facet)]
+pub struct ListRequest {
+    /// Database connection URL
+    pub database_url: String,
+    /// Table name
+    pub table: String,
+    /// Filter conditions (ANDed together)
+    pub filters: Vec<Filter>,
+    /// Sort order
+    pub sort: Vec<Sort>,
+    /// Maximum rows to return
+    pub limit: Option<u32>,
+    /// Offset for pagination
+    pub offset: Option<u32>,
+    /// Columns to select (empty = all)
+    pub select: Vec<String>,
+}
+
+/// Response from listing rows.
+#[derive(Debug, Clone, Facet)]
+pub struct ListResponse {
+    /// The rows
+    pub rows: Vec<Row>,
+    /// Total count (if requested)
+    pub total: Option<u64>,
+}
+
+/// Request to get a single row by primary key.
+#[derive(Debug, Clone, Facet)]
+pub struct GetRequest {
+    /// Database connection URL
+    pub database_url: String,
+    /// Table name
+    pub table: String,
+    /// Primary key value
+    pub pk: Value,
+}
+
+/// Request to create a new row.
+#[derive(Debug, Clone, Facet)]
+pub struct CreateRequest {
+    /// Database connection URL
+    pub database_url: String,
+    /// Table name
+    pub table: String,
+    /// Row data
+    pub data: Row,
+}
+
+/// Request to update a row.
+#[derive(Debug, Clone, Facet)]
+pub struct UpdateRequest {
+    /// Database connection URL
+    pub database_url: String,
+    /// Table name
+    pub table: String,
+    /// Primary key value
+    pub pk: Value,
+    /// Fields to update
+    pub data: Row,
+}
+
+/// Request to delete a row.
+#[derive(Debug, Clone, Facet)]
+pub struct DeleteRequest {
+    /// Database connection URL
+    pub database_url: String,
+    /// Table name
+    pub table: String,
+    /// Primary key value
+    pub pk: Value,
 }
 
 /// The dibs service trait.
@@ -220,4 +402,31 @@ pub trait DibsService {
         request: MigrateRequest,
         logs: roam::Tx<MigrationLog>,
     ) -> Result<MigrateResult, DibsError>;
+}
+
+/// The Squel service trait - the data plane.
+///
+/// Provides generic CRUD operations for any registered table.
+/// Used by admin UIs that dynamically discover and interact with the schema.
+///
+/// Named "Squel" as a cute play on SQL.
+#[service]
+pub trait SquelService {
+    /// Get the schema for all registered tables.
+    async fn schema(&self) -> SchemaInfo;
+
+    /// List rows from a table with filtering, sorting, and pagination.
+    async fn list(&self, request: ListRequest) -> Result<ListResponse, DibsError>;
+
+    /// Get a single row by primary key.
+    async fn get(&self, request: GetRequest) -> Result<Option<Row>, DibsError>;
+
+    /// Create a new row.
+    async fn create(&self, request: CreateRequest) -> Result<Row, DibsError>;
+
+    /// Update an existing row.
+    async fn update(&self, request: UpdateRequest) -> Result<Row, DibsError>;
+
+    /// Delete a row.
+    async fn delete(&self, request: DeleteRequest) -> Result<u64, DibsError>;
 }

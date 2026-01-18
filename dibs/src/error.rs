@@ -13,4 +13,13 @@ pub enum Error {
 
     #[error("schema mismatch: {0}")]
     SchemaMismatch(String),
+
+    #[error("unsupported type: {0}")]
+    UnsupportedType(String),
+
+    #[error("unknown table: {0}")]
+    UnknownTable(String),
+
+    #[error("unknown column: {table}.{column}")]
+    UnknownColumn { table: String, column: String },
 }

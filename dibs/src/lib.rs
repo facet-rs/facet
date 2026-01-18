@@ -27,15 +27,18 @@
 use std::future::Future;
 use std::pin::Pin;
 
+mod backoffice;
 mod diff;
 mod error;
 mod introspect;
 pub mod meta;
 mod migrate;
 mod plugin;
+pub mod query;
 pub mod schema;
 pub mod service;
 
+pub use backoffice::SquelServiceImpl;
 pub use diff::{Change, SchemaDiff, TableDiff};
 pub use error::Error;
 pub use meta::{create_meta_tables_sql, record_migration_sql, sync_tables_sql};
