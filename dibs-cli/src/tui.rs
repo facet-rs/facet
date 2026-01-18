@@ -757,21 +757,19 @@ impl App {
             fs::create_dir_all(migrations_dir)?;
         }
 
-        // Generate filename
+        // Generate filename: m_2026_01_18_173711_name.rs
         let filename = format!("m{}_{}.rs", timestamp, module_name);
         let filepath = migrations_dir.join(&filename);
 
-        // Generate version string
-        let version = format!("{}-{}", timestamp, name);
-
         // Generate Rust migration content
+        // Version is derived from filename automatically by the macro
         let content = format!(
             r#"//! Migration: {name}
 //! Created: {created}
 
 use dibs::{{MigrationContext, Result}};
 
-#[dibs::migration("{version}")]
+#[dibs::migration]
 pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
 {sql_calls}
     Ok(())
@@ -779,7 +777,6 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
 "#,
             name = name,
             created = now.strftime("%Y-%m-%d %H:%M:%S %Z"),
-            version = version,
             sql_calls = sql.lines()
                 .filter(|line| !line.is_empty())
                 .map(|line| {
