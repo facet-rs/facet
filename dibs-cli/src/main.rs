@@ -15,6 +15,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
+mod config;
+mod service;
 mod tables;
 
 /// Postgres toolkit for Rust, powered by facet reflection.
@@ -34,23 +36,11 @@ struct Cli {
 #[repr(u8)]
 enum Commands {
     /// Run pending migrations
-    Migrate {
-        /// Database connection URL
-        #[facet(default, args::named)]
-        database_url: Option<String>,
-    },
+    Migrate,
     /// Show migration status
-    Status {
-        /// Database connection URL
-        #[facet(default, args::named)]
-        database_url: Option<String>,
-    },
+    Status,
     /// Compare schema to database
-    Diff {
-        /// Database connection URL
-        #[facet(default, args::named)]
-        database_url: Option<String>,
-    },
+    Diff,
     /// Generate a migration skeleton
     Generate {
         /// Migration name (e.g., "add-users-table")
@@ -59,11 +49,6 @@ enum Commands {
     },
     /// Browse the current schema
     Schema {
-        /// Database connection URL (not yet used)
-        #[facet(default, args::named)]
-        #[allow(dead_code)]
-        database_url: Option<String>,
-
         /// Output as plain text (default when not a TTY)
         #[facet(default, args::named)]
         plain: bool,
@@ -99,31 +84,19 @@ fn run(cli: Cli) {
     }
 
     match cli.command {
-        Some(Commands::Migrate { database_url }) => {
-            println!("dibs migrate");
-            if let Some(url) = database_url {
-                println!("  database: {}", mask_password(&url));
-            }
-            println!("  (not yet implemented)");
+        Some(Commands::Migrate) => {
+            run_migrate();
         }
-        Some(Commands::Status { database_url }) => {
-            println!("dibs status");
-            if let Some(url) = database_url {
-                println!("  database: {}", mask_password(&url));
-            }
-            println!("  (not yet implemented)");
+        Some(Commands::Status) => {
+            run_status();
         }
-        Some(Commands::Diff { database_url }) => {
-            run_diff(database_url);
+        Some(Commands::Diff) => {
+            run_diff();
         }
         Some(Commands::Generate { name }) => {
             generate_migration(&name);
         }
-        Some(Commands::Schema {
-            database_url: _,
-            plain,
-            sql,
-        }) => {
+        Some(Commands::Schema { plain, sql }) => {
             let schema = dibs::Schema::collect();
 
             if schema.tables.is_empty() {
@@ -850,6 +823,7 @@ impl<'a> SchemaApp<'a> {
 }
 
 /// Mask password in database URL for display
+#[allow(dead_code)]
 fn mask_password(url: &str) -> String {
     // Simple masking: replace password between :// and @
     if let Some(start) = url.find("://")
@@ -865,18 +839,112 @@ fn mask_password(url: &str) -> String {
     url.to_string()
 }
 
-fn run_diff(database_url: Option<String>) {
-    let url = database_url
-        .or_else(|| std::env::var("DATABASE_URL").ok())
-        .unwrap_or_else(|| {
-            eprintln!("Error: No database URL provided.");
-            eprintln!();
-            eprintln!("Provide one via:");
-            eprintln!("  --database-url <url>");
-            eprintln!("  DATABASE_URL environment variable");
-            std::process::exit(1);
-        });
+fn run_migrate() {
+    eprintln!("TODO: Wire up roam service for migrations");
+    std::process::exit(1);
+}
 
+fn run_status() {
+    eprintln!("TODO: Wire up roam service for migration status");
+    std::process::exit(1);
+}
+
+fn run_diff() {
+    let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        eprintln!("Error: DATABASE_URL environment variable not set.");
+        eprintln!();
+        eprintln!("Set it via:");
+        eprintln!("  export DATABASE_URL=postgres://user:pass@host/db");
+        std::process::exit(1);
+    });
+
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+
+    // Try to load dibs.toml - if present, use roam to call the db crate
+    if let Ok((cfg, config_path)) = config::Config::load() {
+        rt.block_on(run_diff_via_roam(&cfg, &config_path, &url));
+    } else {
+        // No dibs.toml - use local schema collection (legacy mode)
+        rt.block_on(run_diff_local(&url));
+    }
+}
+
+async fn run_diff_via_roam(cfg: &config::Config, config_path: &Path, database_url: &str) {
+    use dibs_proto::DiffRequest;
+    use owo_colors::OwoColorize as _;
+
+    println!(
+        "{}",
+        format!("Using config: {}", config_path.display())
+            .as_str()
+            .dimmed()
+    );
+
+    // Connect to the db crate via roam
+    let conn = match service::connect_to_service(cfg).await {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("Failed to connect to db service: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let client = conn.client();
+
+    // Call the diff method
+    let result = client
+        .diff(DiffRequest {
+            database_url: database_url.to_string(),
+        })
+        .await;
+
+    match result {
+        Ok(diff) => {
+            if diff.table_diffs.is_empty() {
+                println!("{}", "No changes detected.".green());
+            } else {
+                print_diff_result(&diff);
+            }
+        }
+        Err(e) => {
+            eprintln!("Diff failed: {:?}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn print_diff_result(diff: &dibs_proto::DiffResult) {
+    use dibs_proto::ChangeKind;
+    #[allow(unused_imports)]
+    use owo_colors::OwoColorize as _;
+
+    println!(
+        "{}",
+        format!(
+            "Changes detected ({} tables affected):",
+            diff.table_diffs.len()
+        )
+        .as_str()
+        .yellow()
+    );
+    println!();
+
+    for table_diff in &diff.table_diffs {
+        println!("  {}:", table_diff.table.as_str().cyan().bold());
+
+        for change in &table_diff.changes {
+            let colored = match change.kind {
+                ChangeKind::Add => format!("+ {}", change.description).green().to_string(),
+                ChangeKind::Drop => format!("- {}", change.description).red().to_string(),
+                ChangeKind::Alter => format!("~ {}", change.description).yellow().to_string(),
+            };
+            println!("    {}", colored);
+        }
+        println!();
+    }
+}
+
+async fn run_diff_local(database_url: &str) {
     // Collect Rust schema
     let rust_schema = dibs::Schema::collect();
 
@@ -888,9 +956,9 @@ fn run_diff(database_url: Option<String>) {
     }
 
     // Connect to database and introspect
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    let result = rt.block_on(async {
-        let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls).await?;
+    let result = async {
+        let (client, connection) =
+            tokio_postgres::connect(database_url, tokio_postgres::NoTls).await?;
 
         // Spawn connection handler
         tokio::spawn(async move {
@@ -903,7 +971,8 @@ fn run_diff(database_url: Option<String>) {
         let db_schema = dibs::Schema::from_database(&client).await?;
 
         Ok::<_, dibs::Error>(db_schema)
-    });
+    }
+    .await;
 
     let db_schema = match result {
         Ok(schema) => schema,

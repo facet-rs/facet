@@ -13,10 +13,14 @@ path = "src/main.rs"
 
 [dependencies]
 dibs = { path = "../dibs" }
+dibs-proto = { path = "../dibs-proto" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tokio-postgres = "0.7"
 facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-args = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-toml = { git = "https://github.com/facet-rs/facet", branch = "main" }
+roam = { git = "https://github.com/bearcove/roam", branch = "main" }
+roam-stream = { git = "https://github.com/bearcove/roam", branch = "main" }
 jiff = "0.2"
 owo-colors = "4"
 ratatui = "0.30"

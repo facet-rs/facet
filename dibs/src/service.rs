@@ -8,19 +8,89 @@
 //! In your `my-app-db` crate's `main.rs`:
 //!
 //! ```ignore
-//! #[tokio::main]
-//! async fn main() {
-//!     dibs::run_service().await;
+//! fn main() {
+//!     dibs::run_service();
 //! }
 //! ```
 
 use crate::{Change, Schema};
 use dibs_proto::*;
+use roam_stream::{HandshakeConfig, connect};
+use std::io;
+use std::net::SocketAddr;
+use tokio::net::TcpStream;
+
+/// Connector that connects to the CLI's address (from DIBS_CLI_ADDR env var).
+struct CliConnector {
+    addr: SocketAddr,
+}
+
+impl roam_stream::Connector for CliConnector {
+    type Transport = TcpStream;
+
+    async fn connect(&self) -> io::Result<TcpStream> {
+        TcpStream::connect(self.addr).await
+    }
+}
+
+/// Run the dibs service, connecting back to the CLI.
+///
+/// This function reads `DIBS_CLI_ADDR` from the environment, connects to
+/// the dibs CLI, and serves requests until the connection is closed.
+///
+/// # Panics
+///
+/// Panics if `DIBS_CLI_ADDR` is not set or is invalid.
+pub fn run_service() {
+    let addr_str = std::env::var("DIBS_CLI_ADDR").unwrap_or_else(|_| {
+        eprintln!("DIBS_CLI_ADDR not set - this binary should be spawned by the dibs CLI");
+        std::process::exit(1);
+    });
+
+    let addr: SocketAddr = addr_str.parse().unwrap_or_else(|e| {
+        eprintln!("Invalid DIBS_CLI_ADDR '{}': {}", addr_str, e);
+        std::process::exit(1);
+    });
+
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    rt.block_on(run_service_async(addr));
+}
+
+async fn run_service_async(addr: SocketAddr) {
+    let connector = CliConnector { addr };
+    let dispatcher = DibsServiceDispatcher::new(DibsServiceImpl::new());
+
+    let client = connect(connector, HandshakeConfig::default(), dispatcher);
+
+    // Wait for the connection to be established
+    match client.handle().await {
+        Ok(handle) => {
+            // Keep the connection alive until the CLI disconnects
+            // The handle going out of scope would close the connection,
+            // so we need to hold onto it
+            let _ = handle;
+
+            // Wait for the client to disconnect (driver task ends)
+            // This happens when the CLI closes the connection
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if client.handle().await.is_err() {
+                    break;
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to connect to dibs CLI: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
 
 /// Default implementation of the DibsService trait.
 ///
 /// This struct implements the service by using dibs's Schema::collect()
 /// and Schema::from_database() to handle schema and diff requests.
+#[derive(Clone)]
 pub struct DibsServiceImpl;
 
 impl DibsServiceImpl {
