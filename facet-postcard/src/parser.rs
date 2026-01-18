@@ -1033,14 +1033,15 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
     }
 
     fn hint_dynamic_value(&mut self) {
+        // Clear any peeked OrderedField placeholder (it's just a "not done yet" signal)
+        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+            self.peeked = None;
+        }
+        // If something else is peeked, don't override it
         if self.peeked.is_some() {
             return;
         }
         self.pending_dynamic = true;
-        // Clear any peeked OrderedField placeholder
-        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
-            self.peeked = None;
-        }
     }
 
     fn hint_opaque_scalar(

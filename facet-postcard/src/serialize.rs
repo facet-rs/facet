@@ -1280,4 +1280,92 @@ mod tests {
         let roundtrip: Config = crate::from_slice(&value_bytes).unwrap();
         assert_eq!(roundtrip, original);
     }
+
+    #[test]
+    fn test_value_in_tuple() {
+        facet_testhelpers::setup();
+
+        // Test that Value can be serialized/deserialized as part of a tuple
+        // This tests the hint_dynamic_value() fix for struct fields
+        let tuple: (u64, alloc::string::String, Value) = (
+            42,
+            "hello".into(),
+            Value::from(VNumber::from_i64(123)),
+        );
+
+        let bytes = to_vec(&tuple).unwrap();
+        let decoded: (u64, alloc::string::String, Value) = crate::from_slice(&bytes).unwrap();
+
+        assert_eq!(decoded.0, 42);
+        assert_eq!(decoded.1, "hello");
+        assert_eq!(decoded.2, Value::from(VNumber::from_i64(123)));
+    }
+
+    #[test]
+    fn test_value_in_struct() {
+        facet_testhelpers::setup();
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct WithValue {
+            id: u64,
+            name: alloc::string::String,
+            data: Value,
+        }
+
+        let original = WithValue {
+            id: 1,
+            name: "test".into(),
+            data: Value::from(VObject::from_iter([
+                ("key".to_string(), Value::from(VString::new("value"))),
+            ])),
+        };
+
+        let bytes = to_vec(&original).unwrap();
+        let decoded: WithValue = crate::from_slice(&bytes).unwrap();
+
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_value_nested_in_struct() {
+        facet_testhelpers::setup();
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct Outer {
+            before: u32,
+            value: Value,
+            after: u32,
+        }
+
+        // Test with object value
+        let mut obj = VObject::new();
+        obj.insert("nested", Value::from(VNumber::from_i64(99)));
+        obj.insert("str", Value::from(VString::new("test")));
+
+        let original = Outer {
+            before: 10,
+            value: Value::from(obj),
+            after: 20,
+        };
+
+        let bytes = to_vec(&original).unwrap();
+        let decoded: Outer = crate::from_slice(&bytes).unwrap();
+        assert_eq!(decoded, original);
+
+        // Test with array value
+        let mut arr = VArray::new();
+        arr.push(Value::from(VNumber::from_i64(1)));
+        arr.push(Value::from(VString::new("two")));
+        arr.push(Value::TRUE);
+
+        let original = Outer {
+            before: 100,
+            value: Value::from(arr),
+            after: 200,
+        };
+
+        let bytes = to_vec(&original).unwrap();
+        let decoded: Outer = crate::from_slice(&bytes).unwrap();
+        assert_eq!(decoded, original);
+    }
 }
