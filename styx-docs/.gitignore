@@ -4,3 +4,4 @@ public/
 .cache/
 node_modules/
 static/dist/
+dist

@@ -23,8 +23,8 @@ Tools for working with Styx.
 
 Try Styx in the browser:
 
-- [Monaco Playground](/monaco) — VS Code-style editor
-- [CodeMirror Playground](/codemirror) — Lightweight editor
+- [Monaco Playground](monaco) — VS Code-style editor
+- [CodeMirror Playground](codemirror) — Lightweight editor
 
 ## Distribution
 
