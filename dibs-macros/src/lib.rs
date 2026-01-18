@@ -40,21 +40,17 @@ pub fn migration(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
     let fn_ident = quote::format_ident!("{}", fn_name);
-    let registration_ident = quote::format_ident!(
-        "__DIBS_MIGRATION_{}",
-        fn_name.to_uppercase().replace('-', "_")
-    );
 
     quote! {
         #item
 
-        #[allow(non_upper_case_globals)]
-        #[::dibs::inventory::collect]
-        static #registration_ident: ::dibs::Migration = ::dibs::Migration {
-            version: #version_lit,
-            name: stringify!(#fn_ident),
-            run: |ctx| Box::pin(#fn_ident(ctx)),
-        };
+        ::dibs::inventory::submit! {
+            ::dibs::Migration {
+                version: #version_lit,
+                name: stringify!(#fn_ident),
+                run: |ctx| Box::pin(#fn_ident(ctx)),
+            }
+        }
     }
     .into()
 }
