@@ -499,6 +499,10 @@ impl App {
                         // Refresh
                         rt.block_on(self.refresh());
                     }
+                    KeyCode::Char('g') if self.tab == Tab::Diff && !self.show_migration_source => {
+                        // Generate migration from diff
+                        rt.block_on(self.generate_migration());
+                    }
                     _ => {}
                 }
             }
@@ -525,6 +529,103 @@ impl App {
             }
             self.loading = None;
         }
+    }
+
+    async fn generate_migration(&mut self) {
+        // Check if there are any changes
+        if let Some(diff) = &self.diff {
+            if diff.table_diffs.is_empty() {
+                self.error = Some("No changes to migrate".to_string());
+                return;
+            }
+        } else {
+            self.error = Some("No diff computed yet".to_string());
+            return;
+        }
+
+        if let (Some(conn), Some(url)) = (&self.conn, &self.database_url) {
+            self.loading = Some("Generating migration...".to_string());
+
+            // Get migration SQL from service
+            match conn
+                .client()
+                .generate_migration_sql(DiffRequest {
+                    database_url: url.clone(),
+                })
+                .await
+            {
+                Ok(sql) => {
+                    // Generate migration file
+                    match self.create_migration_file(&sql) {
+                        Ok(path) => {
+                            self.error = Some(format!("Created: {}", path));
+                            // Refresh migrations list
+                            self.refresh_migrations().await;
+                        }
+                        Err(e) => {
+                            self.error = Some(format!("Failed to create migration: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.error = Some(format!("Failed to generate SQL: {:?}", e));
+                }
+            }
+            self.loading = None;
+        }
+    }
+
+    fn create_migration_file(&self, sql: &str) -> Result<String, std::io::Error> {
+        use std::fs;
+        use std::io::Write;
+
+        let now = jiff::Zoned::now();
+        let timestamp = now.strftime("%Y%m%d%H%M%S");
+
+        // Create migrations directory if it doesn't exist
+        let migrations_dir = std::path::Path::new("src/migrations");
+        if !migrations_dir.exists() {
+            fs::create_dir_all(migrations_dir)?;
+        }
+
+        // Generate filename
+        let filename = format!("m{}_auto.rs", timestamp);
+        let filepath = migrations_dir.join(&filename);
+
+        // Generate version string
+        let version = format!("{}-auto", timestamp);
+
+        // Generate Rust migration content
+        let content = format!(
+            r#"//! Auto-generated migration
+//! Created: {}
+
+use dibs::{{MigrationContext, Result}};
+
+#[dibs::migration("{}")]
+pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
+{}
+    Ok(())
+}}
+"#,
+            now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            version,
+            sql.lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| {
+                    if line.starts_with("--") {
+                        format!("    // {}\n", &line[3..])
+                    } else {
+                        format!("    ctx.execute(\"{}\").await?;\n", line.replace('"', "\\\""))
+                    }
+                })
+                .collect::<String>()
+        );
+
+        let mut file = fs::File::create(&filepath)?;
+        file.write_all(content.as_bytes())?;
+
+        Ok(filepath.display().to_string())
     }
 
     async fn run_migrations(&mut self) {
@@ -1201,6 +1302,11 @@ impl App {
                 spans.push(Span::raw("view  "));
                 spans.push(Span::styled("m ", Style::default().fg(Color::Yellow)));
                 spans.push(Span::raw("migrate  "));
+            }
+
+            if self.tab == Tab::Diff {
+                spans.push(Span::styled("g ", Style::default().fg(Color::Yellow)));
+                spans.push(Span::raw("generate  "));
             }
 
             spans.push(Span::styled("q ", Style::default().fg(Color::Yellow)));

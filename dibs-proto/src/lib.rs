@@ -394,6 +394,9 @@ pub trait DibsService {
     /// Diff the Rust schema against a live database.
     async fn diff(&self, request: DiffRequest) -> Result<DiffResult, DibsError>;
 
+    /// Generate migration SQL from a diff against the database.
+    async fn generate_migration_sql(&self, request: DiffRequest) -> Result<String, DibsError>;
+
     /// Get migration status (applied vs pending).
     async fn migration_status(
         &self,

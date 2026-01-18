@@ -23,6 +23,20 @@ impl SchemaDiff {
     pub fn change_count(&self) -> usize {
         self.table_diffs.iter().map(|t| t.changes.len()).sum()
     }
+
+    /// Generate SQL statements for all changes in this diff.
+    pub fn to_sql(&self) -> String {
+        let mut sql = String::new();
+        for table_diff in &self.table_diffs {
+            sql.push_str(&format!("-- Table: {}\n", table_diff.table));
+            for change in &table_diff.changes {
+                sql.push_str(&change.to_sql(&table_diff.table));
+                sql.push('\n');
+            }
+            sql.push('\n');
+        }
+        sql
+    }
 }
 
 /// Changes for a single table.
@@ -75,6 +89,126 @@ pub enum Change {
     AddUnique(String),
     /// Drop a unique constraint.
     DropUnique(String),
+}
+
+impl Change {
+    /// Generate SQL statement for this change.
+    ///
+    /// The `table_name` is required for column-level changes.
+    pub fn to_sql(&self, table_name: &str) -> String {
+        match self {
+            Change::AddTable(t) => t.to_create_table_sql(),
+            Change::DropTable(name) => format!("DROP TABLE {};", name),
+            Change::AddColumn(col) => {
+                let not_null = if col.nullable { "" } else { " NOT NULL" };
+                let default = col
+                    .default
+                    .as_ref()
+                    .map(|d| format!(" DEFAULT {}", d))
+                    .unwrap_or_default();
+                format!(
+                    "ALTER TABLE {} ADD COLUMN {} {}{}{};",
+                    table_name, col.name, col.pg_type, not_null, default
+                )
+            }
+            Change::DropColumn(name) => {
+                format!("ALTER TABLE {} DROP COLUMN {};", table_name, name)
+            }
+            Change::AlterColumnType { name, to, .. } => {
+                format!(
+                    "ALTER TABLE {} ALTER COLUMN {} TYPE {} USING {}::{};",
+                    table_name, name, to, name, to
+                )
+            }
+            Change::AlterColumnNullable { name, to, .. } => {
+                if *to {
+                    format!(
+                        "ALTER TABLE {} ALTER COLUMN {} DROP NOT NULL;",
+                        table_name, name
+                    )
+                } else {
+                    format!(
+                        "ALTER TABLE {} ALTER COLUMN {} SET NOT NULL;",
+                        table_name, name
+                    )
+                }
+            }
+            Change::AlterColumnDefault { name, to, .. } => {
+                if let Some(default) = to {
+                    format!(
+                        "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {};",
+                        table_name, name, default
+                    )
+                } else {
+                    format!(
+                        "ALTER TABLE {} ALTER COLUMN {} DROP DEFAULT;",
+                        table_name, name
+                    )
+                }
+            }
+            Change::AddPrimaryKey(cols) => {
+                format!(
+                    "ALTER TABLE {} ADD PRIMARY KEY ({});",
+                    table_name,
+                    cols.join(", ")
+                )
+            }
+            Change::DropPrimaryKey => {
+                format!("ALTER TABLE {} DROP CONSTRAINT {}_pkey;", table_name, table_name)
+            }
+            Change::AddForeignKey(fk) => {
+                let constraint_name = format!(
+                    "{}_{}_fkey",
+                    table_name,
+                    fk.columns.join("_")
+                );
+                format!(
+                    "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({});",
+                    table_name,
+                    constraint_name,
+                    fk.columns.join(", "),
+                    fk.references_table,
+                    fk.references_columns.join(", ")
+                )
+            }
+            Change::DropForeignKey(fk) => {
+                let constraint_name = format!(
+                    "{}_{}_fkey",
+                    table_name,
+                    fk.columns.join("_")
+                );
+                format!(
+                    "ALTER TABLE {} DROP CONSTRAINT {};",
+                    table_name, constraint_name
+                )
+            }
+            Change::AddIndex(idx) => {
+                let unique = if idx.unique { "UNIQUE " } else { "" };
+                format!(
+                    "CREATE {}INDEX {} ON {} ({});",
+                    unique,
+                    idx.name,
+                    table_name,
+                    idx.columns.join(", ")
+                )
+            }
+            Change::DropIndex(name) => {
+                format!("DROP INDEX {};", name)
+            }
+            Change::AddUnique(col) => {
+                format!(
+                    "ALTER TABLE {} ADD CONSTRAINT {}_{}_key UNIQUE ({});",
+                    table_name, table_name, col, col
+                )
+            }
+            Change::DropUnique(col) => {
+                format!(
+                    "ALTER TABLE {} DROP CONSTRAINT {}_{}_key;",
+                    table_name, table_name, col
+                )
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for Change {

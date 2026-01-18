@@ -106,16 +106,12 @@ impl Default for DibsServiceImpl {
     }
 }
 
-impl DibsService for DibsServiceImpl {
-    async fn schema(&self) -> SchemaInfo {
-        let schema = Schema::collect();
-        schema_to_info(&schema)
-    }
-
-    async fn diff(&self, request: DiffRequest) -> Result<DiffResult, DibsError> {
+impl DibsServiceImpl {
+    /// Connect to database and compute schema diff.
+    async fn compute_diff(&self, database_url: &str) -> Result<crate::SchemaDiff, DibsError> {
         // Connect to database
         let (client, connection) =
-            tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
+            tokio_postgres::connect(database_url, tokio_postgres::NoTls)
                 .await
                 .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
 
@@ -133,9 +129,24 @@ impl DibsService for DibsServiceImpl {
             .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
 
         // Compute diff
-        let diff = rust_schema.diff(&db_schema);
+        Ok(rust_schema.diff(&db_schema))
+    }
+}
 
+impl DibsService for DibsServiceImpl {
+    async fn schema(&self) -> SchemaInfo {
+        let schema = Schema::collect();
+        schema_to_info(&schema)
+    }
+
+    async fn diff(&self, request: DiffRequest) -> Result<DiffResult, DibsError> {
+        let diff = self.compute_diff(&request.database_url).await?;
         Ok(diff_to_result(&diff))
+    }
+
+    async fn generate_migration_sql(&self, request: DiffRequest) -> Result<String, DibsError> {
+        let diff = self.compute_diff(&request.database_url).await?;
+        Ok(diff.to_sql())
     }
 
     async fn migration_status(
