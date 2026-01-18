@@ -17,6 +17,7 @@ use ratatui::{
 
 // Example table definitions for testing
 
+/// Multi-tenant organization or workspace.
 #[derive(Facet)]
 #[facet(derive(dibs::Table), dibs::table = "tenants")]
 struct Tenant {
@@ -33,6 +34,7 @@ struct Tenant {
     created_at: i64,
 }
 
+/// User accounts in the system.
 #[derive(Facet)]
 #[facet(derive(dibs::Table), dibs::table = "users")]
 #[facet(dibs::composite_index(columns = "tenant_id,email"))]
@@ -662,17 +664,35 @@ impl<'a> SchemaApp<'a> {
 
         // Right pane: selected table details with selectable items
         if let Some(table) = self.schema.tables.get(self.selected_table) {
-            let mut lines = vec![
-                Line::from(vec![
-                    Span::styled("Table: ", Style::default().fg(Color::Gray)),
-                    Span::styled(&table.name, Style::default().fg(Color::Cyan).bold()),
-                ]),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "Columns:",
-                    Style::default().fg(Color::Yellow).bold(),
-                )),
-            ];
+            let mut lines = vec![Line::from(vec![
+                Span::styled("Table: ", Style::default().fg(Color::Gray)),
+                Span::styled(&table.name, Style::default().fg(Color::Cyan).bold()),
+            ])];
+
+            // Show source location if available
+            if table.source.is_known() {
+                lines.push(Line::from(vec![
+                    Span::styled("Source: ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        table.source.to_string(),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+            }
+
+            // Show doc comment if available
+            if let Some(doc) = &table.doc {
+                lines.push(Line::from(vec![
+                    Span::styled("/// ", Style::default().fg(Color::Green)),
+                    Span::styled(doc, Style::default().fg(Color::Green).italic()),
+                ]));
+            }
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Columns:",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
 
             for (i, col) in table.columns.iter().enumerate() {
                 let is_selected = self.focus == Focus::Details && self.detail_selection == i;

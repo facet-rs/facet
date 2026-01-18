@@ -179,6 +179,43 @@ pub struct Index {
     pub unique: bool,
 }
 
+/// Source location of a schema element.
+#[derive(Debug, Clone, Default)]
+pub struct SourceLocation {
+    /// Source file path
+    pub file: Option<String>,
+    /// Line number (1-indexed)
+    pub line: Option<u32>,
+    /// Column number (1-indexed)
+    pub column: Option<u32>,
+}
+
+impl SourceLocation {
+    /// Check if we have any source location info.
+    pub fn is_known(&self) -> bool {
+        self.file.is_some()
+    }
+
+    /// Format as "file:line" or "file:line:column"
+    pub fn to_string_short(&self) -> Option<String> {
+        let file = self.file.as_ref()?;
+        match (self.line, self.column) {
+            (Some(line), Some(col)) => Some(format!("{}:{}:{}", file, line, col)),
+            (Some(line), None) => Some(format!("{}:{}", file, line)),
+            _ => Some(file.clone()),
+        }
+    }
+}
+
+impl std::fmt::Display for SourceLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.to_string_short() {
+            Some(s) => write!(f, "{}", s),
+            None => write!(f, "<unknown>"),
+        }
+    }
+}
+
 /// A database table definition.
 #[derive(Debug, Clone)]
 pub struct Table {
@@ -190,6 +227,10 @@ pub struct Table {
     pub foreign_keys: Vec<ForeignKey>,
     /// Indices
     pub indices: Vec<Index>,
+    /// Source location of the Rust struct
+    pub source: SourceLocation,
+    /// Doc comment from the Rust struct
+    pub doc: Option<String>,
 }
 
 /// A complete database schema.
@@ -482,11 +523,27 @@ impl TableDef {
             }
         }
 
+        // Extract source location from Shape
+        let source = SourceLocation {
+            file: self.shape.source_file.map(|s| s.to_string()),
+            line: self.shape.source_line,
+            column: self.shape.source_column,
+        };
+
+        // Extract doc comment from Shape
+        let doc = if self.shape.doc.is_empty() {
+            None
+        } else {
+            Some(self.shape.doc.join("\n"))
+        };
+
         Some(Table {
             name: table_name,
             columns,
             foreign_keys,
             indices,
+            source,
+            doc,
         })
     }
 }
