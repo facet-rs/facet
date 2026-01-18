@@ -364,14 +364,12 @@ impl<'src> Lexer<'src> {
 
         // Check if delimiter follows the whitespace
         let after_indent = &self.remaining[indent_len..];
-        if after_indent.starts_with(delimiter) {
-            let after_delim = &after_indent[delimiter.len()..];
-            if after_delim.is_empty()
+        if let Some(after_delim) = after_indent.strip_prefix(delimiter)
+            && (after_delim.is_empty()
                 || after_delim.starts_with('\n')
-                || after_delim.starts_with("\r\n")
-            {
-                return Some(indent_len);
-            }
+                || after_delim.starts_with("\r\n"))
+        {
+            return Some(indent_len);
         }
         None
     }
@@ -417,15 +415,14 @@ impl<'src> Lexer<'src> {
             }
         }
 
-        if start == self.pos {
+        if start == self.pos
+            && found_end
+            && let Some(indent_len) = self.find_heredoc_delimiter(delimiter)
+        {
             // No content, return the end delimiter
-            if found_end {
-                if let Some(indent_len) = self.find_heredoc_delimiter(delimiter) {
-                    self.advance_by(indent_len + delimiter.len());
-                    self.heredoc_state = None;
-                    return self.token(TokenKind::HeredocEnd, start);
-                }
-            }
+            self.advance_by(indent_len + delimiter.len());
+            self.heredoc_state = None;
+            return self.token(TokenKind::HeredocEnd, start);
         }
 
         // CRITICAL: If we hit EOF without finding the closing delimiter,
