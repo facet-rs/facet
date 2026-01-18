@@ -18,6 +18,9 @@ default = ["std"]
 std = ["facet-core/std", "facet-reflect/std"]
 iddqd = ["facet/iddqd"]
 
+# yoke support
+yoke = ["facet/yoke", "facet-format-suite/yoke"]
+
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.42.0", default-features = false, features = ["alloc"] }
 facet-format = { path = "../facet-format", version = "0.42.0", default-features = false }

@@ -52,5 +52,8 @@ tracing = ["dep:tracing", "facet-dom/tracing", "facet-reflect/tracing"]
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
+# yoke support
+yoke = ["facet/yoke"]
+
 [lints]
 workspace = true

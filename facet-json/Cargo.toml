@@ -85,5 +85,8 @@ compact_str = ["facet/compact_str", "facet-format/compact_str"]
 # iddqd support
 iddqd = ["facet/iddqd"]
 
+# yoke support
+yoke = ["facet/yoke", "facet-format-suite/yoke"]
+
 [lints]
 workspace = true

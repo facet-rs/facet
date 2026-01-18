@@ -41,6 +41,7 @@ ulid = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 rust_decimal = { workspace = true, optional = true }
 iddqd = { workspace = true, optional = true }
+yoke = { version = "0.8.1", optional = true }
 
 [dev-dependencies]
 
@@ -71,6 +72,7 @@ third-party = ["uuid", "ulid", "camino", "ordered-float", "time", "jiff02", "chr
 
 # Binary format reference implementations
 msgpack = ["dep:rmp-serde", "dep:serde"]
+yoke = ["dep:yoke", "facet/yoke"]
 
 [lints]
 workspace = true

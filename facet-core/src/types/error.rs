@@ -90,7 +90,7 @@ impl core::error::Error for ParseError {}
 ///
 /// This enum encodes both the result and whether the source value was consumed,
 /// which is critical for correct memory management.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TryFromOutcome {
     /// Conversion succeeded. The source value was consumed.
     Converted,

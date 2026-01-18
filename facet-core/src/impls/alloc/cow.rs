@@ -3,6 +3,7 @@ use crate::{
     PtrConst, Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam,
     UserType, VTableIndirect,
 };
+use crate::{PtrMut, PtrUninit};
 use alloc::borrow::Cow;
 use alloc::borrow::ToOwned;
 
@@ -138,6 +139,14 @@ where
         unsafe { &*(this.as_byte_ptr() as *const alloc::borrow::Cow<'_, T>) };
     let inner_ref: &T = cow_ref.as_ref();
     PtrConst::new(inner_ref as *const T)
+}
+
+/// Create a new `Cow<T>` from a borrowed value
+unsafe fn cow_new_into<T: ?Sized + ToOwned + 'static>(this: PtrUninit, ptr: PtrMut) -> PtrMut
+where
+    T::Owned: 'static,
+{
+    unsafe { this.put(Cow::<'_, T>::Borrowed(ptr.read())) }
 }
 
 unsafe impl<'a, T> Facet<'a> for Cow<'a, T>
@@ -290,6 +299,7 @@ where
                 vtable: &const {
                     PointerVTable {
                         borrow_fn: Some(cow_borrow::<T>),
+                        new_into_fn: Some(cow_new_into::<T>),
                         ..PointerVTable::new()
                     }
                 },
@@ -314,4 +324,75 @@ where
             .type_ops_indirect(&const { build_cow_type_ops::<'a, T>() })
             .build()
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use core::{mem::ManuallyDrop, ptr::NonNull};
+
+    use alloc::string::String;
+
+    use super::*;
+
+    #[test]
+    fn test_cow_type_params() {
+        let [type_param_1, type_param_2] = <Cow<'_, str>>::SHAPE.type_params else {
+            panic!("Cow<'_, T> should only have 2 type params")
+        };
+        assert_eq!(type_param_1.shape(), str::SHAPE);
+        assert_eq!(type_param_2.shape(), String::SHAPE);
+    }
+
+    #[test]
+    fn test_cow_vtable_1_new_borrow_drop() {
+        facet_testhelpers::setup();
+
+        let cow_shape = <Cow<'_, str>>::SHAPE;
+        let cow_def = cow_shape
+            .def
+            .into_pointer()
+            .expect("Cow<'_, T> should have a smart pointer definition");
+
+        // Allocate memory for the Cow
+        let cow_uninit_ptr = cow_shape.allocate().unwrap();
+
+        // Get the function pointer for creating a new Cow from a value
+        let new_into_fn = cow_def
+            .vtable
+            .new_into_fn
+            .expect("Cow<'_, T> should have new_into_fn");
+
+        // Create the value and initialize the Cow
+        let mut value = ManuallyDrop::new("example");
+        let cow_ptr = unsafe {
+            new_into_fn(
+                cow_uninit_ptr,
+                PtrMut::new(NonNull::from(&mut value).as_ptr()),
+            )
+        };
+        // The value now belongs to the Cow, prevent its drop
+
+        // Get the function pointer for borrowing the inner value
+        let borrow_fn = cow_def
+            .vtable
+            .borrow_fn
+            .expect("Cow<'_, T> should have borrow_fn");
+
+        // Borrow the inner value and check it
+        let borrowed_ptr = unsafe { borrow_fn(cow_ptr.as_const()) };
+        // SAFETY: borrowed_ptr points to a valid String within the Cow
+        assert_eq!(unsafe { borrowed_ptr.get::<str>() }, "example");
+
+        // Drop the value in place
+        // SAFETY: value_ptr points to a valid String
+        unsafe {
+            cow_shape
+                .call_drop_in_place(cow_ptr)
+                .expect("Cow<'_, T> should have drop_in_place");
+        }
+
+        // Deallocate the memory
+        // SAFETY: cow_ptr was allocated by cow_shape and is now dropped (but memory is still valid)
+        unsafe { cow_shape.deallocate_mut(cow_ptr).unwrap() };
+    }
 }

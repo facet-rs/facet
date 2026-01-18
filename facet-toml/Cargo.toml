@@ -55,6 +55,9 @@ iddqd = ["facet/iddqd"]
 # Axum HTTP integration
 axum = ["std", "serialize", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
+# yoke support
+yoke = ["facet/yoke", "facet-format-suite/yoke"]
+
 [[test]]
 name = "format_suite"
 harness = false

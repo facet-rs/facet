@@ -629,6 +629,18 @@ impl FormatSuite for YamlSlice {
         CaseSpec::from_str("inner:\n  - 1\n  - 2\n  - 3\n  - 4")
     }
 
+    // -- Yoke cases --
+
+    #[cfg(feature = "yoke")]
+    fn yoke_cow_str() -> CaseSpec {
+        CaseSpec::from_str("value: hello yoke").with_partial_eq()
+    }
+
+    #[cfg(feature = "yoke")]
+    fn yoke_custom() -> CaseSpec {
+        CaseSpec::from_str("value: hello|yoke").with_partial_eq()
+    }
+
     // -- Extended NonZero cases --
 
     fn nonzero_integers_extended() -> CaseSpec {

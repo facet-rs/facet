@@ -1699,10 +1699,12 @@ dependencies = [
  "rust_decimal",
  "smartstring",
  "smol_str",
+ "stable_deref_trait",
  "time",
  "ulid",
  "url",
  "uuid",
+ "yoke",
 ]
 
 [[package]]
@@ -1839,6 +1841,7 @@ dependencies = [
  "tracing",
  "ulid",
  "uuid",
+ "yoke",
 ]
 
 [[package]]

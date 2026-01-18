@@ -136,6 +136,7 @@ pub(crate) fn phantom_attr_use(
 /// When `use_inherent_borrow_inner` is true, references `<Self>::__facet_try_borrow_inner`
 /// instead of defining an inline function. This is needed for generic types where the
 /// inner function can't access type parameters from the outer scope.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn gen_vtable(
     facet_crate: &TokenStream,
     type_name_fn: &TokenStream,
@@ -144,6 +145,8 @@ pub(crate) fn gen_vtable(
     struct_type: &TokenStream,
     invariants_fn: Option<&TokenStream>,
     use_inherent_borrow_inner: bool,
+    try_from_fn_direct: Option<&TokenStream>,
+    try_from_fn_indirect: Option<&TokenStream>,
 ) -> TokenStream {
     // If auto_traits is enabled, use VTableIndirect with runtime trait detection.
     if sources.auto_traits {
@@ -153,6 +156,7 @@ pub(crate) fn gen_vtable(
             sources,
             struct_type,
             invariants_fn,
+            try_from_fn_indirect,
         );
     }
 
@@ -165,6 +169,7 @@ pub(crate) fn gen_vtable(
         struct_type,
         invariants_fn,
         use_inherent_borrow_inner,
+        try_from_fn_direct,
     )
 }
 
@@ -175,6 +180,7 @@ pub(crate) fn gen_vtable(
 ///
 /// When `use_inherent_borrow_inner` is true, references `<Self>::__facet_try_borrow_inner`
 /// instead of generating an inline function (needed for generic types).
+#[allow(clippy::too_many_arguments)]
 fn gen_vtable_direct(
     facet_crate: &TokenStream,
     _type_name_fn: &TokenStream,
@@ -183,6 +189,7 @@ fn gen_vtable_direct(
     struct_type: &TokenStream,
     invariants_fn: Option<&TokenStream>,
     use_inherent_borrow_inner: bool,
+    try_from_fn: Option<&TokenStream>,
 ) -> TokenStream {
     // Display: check declared
     let display_call = if sources.has_declared(|d| d.display) {
@@ -273,6 +280,13 @@ fn gen_vtable_direct(
         quote! {}
     };
 
+    // try_from: for from_ref/try_from_ref attribute support
+    let try_from_call = if let Some(try_from_fn) = try_from_fn {
+        quote! { .try_from(#try_from_fn) }
+    } else {
+        quote! {}
+    };
+
     // Generate VTableErased::Direct with a static VTableDirect
     // Uses prelude aliases for compact output (𝟋VtE, 𝟋VtD)
     // NOTE: drop_in_place, default_in_place, clone_into are now in TypeOps, not VTable
@@ -287,6 +301,7 @@ fn gen_vtable_direct(
                 #hash_call
                 #invariants_call
                 #try_borrow_inner_call
+                #try_from_call
                 .build()
         })
     }
@@ -303,6 +318,7 @@ fn gen_vtable_indirect(
     sources: &TraitSources<'_>,
     struct_type: &TokenStream,
     invariants_fn: Option<&TokenStream>,
+    try_from_fn: Option<&TokenStream>,
 ) -> TokenStream {
     // For VTableIndirect, functions take OxRef/OxMut and return Option<T>
     // The Option layer allows returning None when trait is not implemented
@@ -527,6 +543,13 @@ fn gen_vtable_indirect(
         quote! { invariants: 𝟋None, }
     };
 
+    // try_from: for from_ref/try_from_ref attribute support
+    let try_from_field = if let Some(try_from_fn) = try_from_fn {
+        quote! { try_from: ::core::option::Option::Some(#try_from_fn), }
+    } else {
+        quote! { try_from: ::core::option::Option::None, }
+    };
+
     // Return VTableErased::Indirect wrapping a VTableIndirect using struct literal syntax
     // Uses prelude aliases for compact output (𝟋VtE)
     // NOTE: drop_in_place, default_in_place, clone_into are now in TypeOps, not VTable
@@ -539,7 +562,7 @@ fn gen_vtable_indirect(
                 #invariants_field
                 #parse_field
                 parse_bytes: 𝟋None,
-                try_from: 𝟋None,
+                #try_from_field
                 try_into_inner: 𝟋None,
                 try_borrow_inner: 𝟋None,
                 #partial_eq_field
@@ -1530,6 +1553,24 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         }
     };
 
+    // Check if from_ref or try_from_ref attribute is present (early detection for gen_vtable)
+    // The inherent impl is generated later, but we need to know if try_from_fn should be set
+    let has_from_ref =
+        ps.container.attrs.facet.iter().any(|a| {
+            a.is_builtin() && (a.key_str() == "from_ref" || a.key_str() == "try_from_ref")
+        });
+    // Generate references to both Direct and Indirect functions
+    // VTableDirect uses *mut T, VTableIndirect uses OxPtrMut
+    let (try_from_fn_direct, try_from_fn_indirect): (Option<TokenStream>, Option<TokenStream>) =
+        if has_from_ref {
+            (
+                Some(quote! { <Self>::__facet_try_from_ref }),
+                Some(quote! { <Self>::__facet_try_from_ref_indirect }),
+            )
+        } else {
+            (None, None)
+        };
+
     let vtable_code = gen_vtable(
         &facet_crate,
         &type_name_fn,
@@ -1538,6 +1579,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         &struct_type_for_vtable,
         invariants_wrapper.as_ref(),
         needs_inherent_borrow_inner,
+        try_from_fn_direct.as_ref(),
+        try_from_fn_indirect.as_ref(),
     );
     // Note: vtable_code already contains &const { ... } for the VTableDirect,
     // no need for an extra const { } wrapper around VTableErased
@@ -1872,6 +1915,118 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         }
     };
 
+    // from_ref / try_from_ref handling - generates try_from function
+    // Similar to proxy, we define helper functions in an inherent impl
+    let from_ref_inherent_impl = {
+        // Look for from_ref or try_from_ref attribute
+        let from_ref_attr = ps
+            .container
+            .attrs
+            .facet
+            .iter()
+            .find(|a| a.is_builtin() && a.key_str() == "from_ref");
+        let try_from_ref_attr = ps
+            .container
+            .attrs
+            .facet
+            .iter()
+            .find(|a| a.is_builtin() && a.key_str() == "try_from_ref");
+
+        if let Some(func_attr) = from_ref_attr.or(try_from_ref_attr) {
+            let is_fallible = try_from_ref_attr.is_some();
+
+            // Use raw tokens directly (like proxy does)
+            let func_path = &func_attr.args;
+
+            let struct_type = &struct_name_ident;
+            let bgp_display = ps.container.bgp.display_without_bounds();
+            let helper_bgp = ps
+                .container
+                .bgp
+                .with_lifetime(LifetimeName(format_ident!("ʄ")));
+            let bgp_def_for_helper = helper_bgp.display_with_bounds();
+
+            let (helper_fn, helper_call, unwrap_val) = if is_fallible {
+                (
+                    quote! {
+                        #[inline]
+                        const fn __facet_get_src_ref_shape<'f, F, Ref: #facet_crate::Facet<'f> + 'f, Out, Err>(_fn: &F) -> &'static #facet_crate::Shape
+                        where
+                            F: Fn(Ref) -> ::core::result::Result<Out, Err>,
+                        {
+                            Ref::SHAPE
+                        }
+                    },
+                    quote! { __facet_get_src_ref_shape::<_, _, Self, _>(&#func_path) },
+                    quote! {
+                       match value {
+                            ::core::result::Result::Ok(v) => v,
+                            ::core::result::Result::Err(e) => { return #facet_crate::TryFromOutcome::Failed(__alloc::string::ToString::to_string(&e).into()) }
+                       }
+                    },
+                )
+            } else {
+                (
+                    quote! {
+                        #[inline]
+                        const fn __facet_get_src_ref_shape<'f, F, Ref: #facet_crate::Facet<'f> + 'f, Out>(_fn: &F) -> &'static #facet_crate::Shape
+                        where
+                            F: Fn(Ref) -> Out,
+                        {
+                            Ref::SHAPE
+                        }
+                    },
+                    quote! { __facet_get_src_ref_shape::<_, _, Self>(&#func_path) },
+                    quote! { value },
+                )
+            };
+
+            quote! {
+                #[doc(hidden)]
+                impl #bgp_def_for_helper #struct_type #bgp_display
+                #where_clauses
+                {
+                    /// try_from function for VTableDirect (raw pointer signature)
+                    #[doc(hidden)]
+                    unsafe fn __facet_try_from_ref(
+                        dst: *mut Self,
+                        src_shape: &'static #facet_crate::Shape,
+                        src: #facet_crate::PtrConst,
+                    ) -> #facet_crate::TryFromOutcome {
+                        extern crate alloc as __alloc;
+
+                        #helper_fn
+
+                        // Ensure source shape matches the expected reference type
+                        if src_shape.id != #helper_call.id {
+                            return #facet_crate::TryFromOutcome::Unsupported;
+                        }
+                        let value = #func_path(unsafe { src.get() });
+                        unsafe { dst.write(#unwrap_val) };
+                        #facet_crate::TryFromOutcome::Converted
+                    }
+
+                    /// try_from wrapper for VTableIndirect (OxPtrMut signature)
+                    #[doc(hidden)]
+                    unsafe fn __facet_try_from_ref_indirect(
+                        dst: #facet_crate::OxPtrMut,
+                        src_shape: &'static #facet_crate::Shape,
+                        src: #facet_crate::PtrConst,
+                    ) -> #facet_crate::TryFromOutcome {
+                        Self::__facet_try_from_ref(
+                            dst.ptr().as_ptr::<Self>() as *mut Self,
+                            src_shape,
+                            src,
+                        )
+                    }
+                }
+            }
+        } else {
+            // No from_ref/try_from_ref attribute, or missing ref_type (validated earlier)
+            quote! {}
+        }
+    };
+
     // Generate the inner shape field value for transparent types
     // inner call - only emit for transparent types
     let inner_call = if use_transparent_semantics {
@@ -2046,6 +2201,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
         // Proxy inherent impl (outside the Facet impl so generic params are in scope)
         #proxy_inherent_impl
+
+        // from_ref inherent impl
+        #from_ref_inherent_impl
 
         // Transparent inherent impl for try_borrow_inner (for generic transparent types)
         #transparent_inherent_impl
