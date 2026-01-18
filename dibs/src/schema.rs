@@ -157,6 +157,8 @@ pub struct Column {
     pub primary_key: bool,
     /// Whether this has a unique constraint
     pub unique: bool,
+    /// Whether this column is auto-generated (serial, identity, uuid default, etc.)
+    pub auto_generated: bool,
     /// Doc comment (if any)
     pub doc: Option<String>,
 }
@@ -440,6 +442,32 @@ fn field_get_dibs_attr_str(field: &facet::Field, key: &str) -> Option<&'static s
     })
 }
 
+/// Check if a default value indicates an auto-generated column.
+fn is_auto_generated_default(default: &Option<String>) -> bool {
+    let Some(def) = default else {
+        return false;
+    };
+
+    let lower = def.to_lowercase();
+
+    // Serial/identity columns use nextval
+    if lower.contains("nextval(") {
+        return true;
+    }
+
+    // UUID generation functions
+    if lower.contains("gen_random_uuid()") || lower.contains("uuid_generate_v") {
+        return true;
+    }
+
+    // Timestamp defaults
+    if lower.contains("now()") || lower.contains("current_timestamp") {
+        return true;
+    }
+
+    false
+}
+
 // =============================================================================
 // Table definition registration
 // =============================================================================
@@ -530,6 +558,10 @@ impl TableDef {
                 Some(field.doc.join("\n"))
             };
 
+            // Detect auto-generated columns from default or annotation
+            let auto_generated = is_auto_generated_default(&default)
+                || field_has_dibs_attr(field, "auto");
+
             columns.push(Column {
                 name: col_name.clone(),
                 pg_type,
@@ -538,6 +570,7 @@ impl TableDef {
                 default,
                 primary_key,
                 unique,
+                auto_generated,
                 doc,
             });
 

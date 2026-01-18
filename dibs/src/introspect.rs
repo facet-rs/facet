@@ -115,15 +115,19 @@ async fn introspect_columns(client: &Client, table_name: &str) -> Result<Vec<Col
         // Clean up default value (remove type casts like ::text)
         let default = column_default.map(|d| clean_default_value(&d));
 
+        // Detect auto-generated columns (serial, identity, uuid default, etc.)
+        let auto_generated = is_auto_generated(&default);
+
         columns.push(Column {
             name,
             pg_type,
             rust_type: None, // Not available from introspection
             nullable,
             default,
-            primary_key: false, // Set later
-            unique: false,      // Set later
-            doc: None,          // Not available from introspection
+            primary_key: false,   // Set later
+            unique: false,        // Set later
+            auto_generated,
+            doc: None,            // Not available from introspection
         });
     }
 
@@ -179,9 +183,11 @@ async fn introspect_foreign_keys(client: &Client, table_name: &str) -> Result<Ve
         .query(
             r#"
             SELECT
+                tc.constraint_name,
                 kcu.column_name,
                 ccu.table_name AS foreign_table,
-                ccu.column_name AS foreign_column
+                ccu.column_name AS foreign_column,
+                kcu.ordinal_position
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
                 ON tc.constraint_name = kcu.constraint_name
@@ -192,33 +198,53 @@ async fn introspect_foreign_keys(client: &Client, table_name: &str) -> Result<Ve
             WHERE tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_schema = 'public'
                 AND tc.table_name = $1
+            ORDER BY tc.constraint_name, kcu.ordinal_position
             "#,
             &[&table_name],
         )
         .await?;
 
-    // Group by foreign table (handles composite FKs)
-    let mut fk_map: std::collections::HashMap<String, ForeignKey> =
+    // Group by constraint name (handles composite FKs correctly)
+    let mut fk_map: std::collections::HashMap<String, (ForeignKey, Vec<(i32, String, String)>)> =
         std::collections::HashMap::new();
 
     for row in rows {
-        let column: String = row.get(0);
-        let foreign_table: String = row.get(1);
-        let foreign_column: String = row.get(2);
+        let constraint_name: String = row.get(0);
+        let column: String = row.get(1);
+        let foreign_table: String = row.get(2);
+        let foreign_column: String = row.get(3);
+        let ordinal: i32 = row.get(4);
 
-        let key = format!("{}:{}", foreign_table, foreign_column);
         fk_map
-            .entry(key)
-            .or_insert_with(|| ForeignKey {
-                columns: Vec::new(),
-                references_table: foreign_table,
-                references_columns: vec![foreign_column],
+            .entry(constraint_name)
+            .or_insert_with(|| {
+                (
+                    ForeignKey {
+                        columns: Vec::new(),
+                        references_table: foreign_table,
+                        references_columns: Vec::new(),
+                    },
+                    Vec::new(),
+                )
             })
-            .columns
-            .push(column);
+            .1
+            .push((ordinal, column, foreign_column));
     }
 
-    Ok(fk_map.into_values().collect())
+    // Sort columns by ordinal position and build final FK
+    Ok(fk_map
+        .into_values()
+        .map(|(mut fk, mut cols)| {
+            cols.sort_by_key(|(ord, _, _)| *ord);
+            for (_, col, ref_col) in cols {
+                fk.columns.push(col);
+                if !fk.references_columns.contains(&ref_col) {
+                    fk.references_columns.push(ref_col);
+                }
+            }
+            fk
+        })
+        .collect())
 }
 
 /// Introspect indices for a table.
@@ -342,6 +368,37 @@ fn clean_default_value(default: &str) -> String {
     }
 
     s.to_string()
+}
+
+/// Check if a default value indicates an auto-generated column.
+///
+/// Detects:
+/// - Serial/BigSerial/SmallSerial: `nextval('table_column_seq'::regclass)`
+/// - UUID generation: `gen_random_uuid()`, `uuid_generate_v4()`
+/// - Timestamps: `now()`, `CURRENT_TIMESTAMP`
+fn is_auto_generated(default: &Option<String>) -> bool {
+    let Some(def) = default else {
+        return false;
+    };
+
+    let lower = def.to_lowercase();
+
+    // Serial/identity columns use nextval
+    if lower.contains("nextval(") {
+        return true;
+    }
+
+    // UUID generation functions
+    if lower.contains("gen_random_uuid()") || lower.contains("uuid_generate_v") {
+        return true;
+    }
+
+    // Timestamp defaults
+    if lower.contains("now()") || lower.contains("current_timestamp") {
+        return true;
+    }
+
+    false
 }
 
 #[cfg(test)]

@@ -45,6 +45,8 @@ pub struct ColumnInfo {
     pub primary_key: bool,
     /// Whether this has a unique constraint
     pub unique: bool,
+    /// Whether this column is auto-generated (serial, uuid default, etc.)
+    pub auto_generated: bool,
     /// Doc comment (if any)
     pub doc: Option<String>,
 }
@@ -292,6 +294,8 @@ pub enum FilterOp {
     IsNull = 8,
     /// IS NOT NULL
     IsNotNull = 9,
+    /// IN (value1, value2, ...) - uses `values` field instead of `value`
+    In = 10,
 }
 
 /// A single filter condition.
@@ -301,8 +305,10 @@ pub struct Filter {
     pub field: String,
     /// Operator
     pub op: FilterOp,
-    /// Value to compare (ignored for IsNull/IsNotNull)
+    /// Value to compare (ignored for IsNull/IsNotNull/In)
     pub value: Value,
+    /// Values for IN operator
+    pub values: Vec<Value>,
 }
 
 /// Sort direction.

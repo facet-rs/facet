@@ -104,6 +104,14 @@ fn filter_to_expr(filter: &Filter) -> Expr {
         }
         FilterOp::IsNull => Expr::IsNull(col),
         FilterOp::IsNotNull => Expr::IsNotNull(col),
+        FilterOp::In => {
+            let values: Vec<QueryValue> = filter
+                .values
+                .iter()
+                .map(proto_value_to_query)
+                .collect();
+            Expr::In(col, values)
+        }
     }
 }
 
@@ -134,6 +142,7 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
                         default: c.default.clone(),
                         primary_key: c.primary_key,
                         unique: c.unique,
+                        auto_generated: c.auto_generated,
                         doc: c.doc.clone(),
                     })
                     .collect(),

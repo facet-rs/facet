@@ -306,6 +306,7 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
                         default: c.default.clone(),
                         primary_key: c.primary_key,
                         unique: c.unique,
+                        auto_generated: c.auto_generated,
                         doc: c.doc.clone(),
                     })
                     .collect(),

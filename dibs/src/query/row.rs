@@ -63,7 +63,35 @@ fn pg_value_to_value(
             let v: Option<Vec<u8>> = row.get(idx);
             Ok(v.map(Value::Bytes).unwrap_or(Value::Null))
         }
-        // TODO: Handle Timestamptz, Date, Time, Uuid, Jsonb
+        PgType::Timestamptz => {
+            // Get as SystemTime and format as RFC 3339 string
+            let v: Option<std::time::SystemTime> = row.get(idx);
+            match v {
+                Some(st) => {
+                    // Convert SystemTime to RFC 3339 string
+                    let datetime: chrono::DateTime<chrono::Utc> = st.into();
+                    Ok(Value::String(datetime.to_rfc3339()))
+                }
+                None => Ok(Value::Null),
+            }
+        }
+        PgType::Date => {
+            // Get as NaiveDate and format as ISO string
+            let v: Option<chrono::NaiveDate> = row.get(idx);
+            match v {
+                Some(d) => Ok(Value::String(d.to_string())),
+                None => Ok(Value::Null),
+            }
+        }
+        PgType::Time => {
+            // Get as NaiveTime and format as ISO string
+            let v: Option<chrono::NaiveTime> = row.get(idx);
+            match v {
+                Some(t) => Ok(Value::String(t.to_string())),
+                None => Ok(Value::Null),
+            }
+        }
+        // TODO: Handle Uuid, Jsonb
         _ => Err(crate::Error::UnsupportedType(format!("{:?}", pg_type))),
     }
 }

@@ -527,6 +527,7 @@ mod tests {
             default: None,
             primary_key: false,
             unique: false,
+            auto_generated: false,
             doc: None,
         }
     }
@@ -711,6 +712,7 @@ mod tests {
             default: None,
             primary_key: true,
             unique: false,
+            auto_generated: false,
             doc: None,
         }
     }
@@ -724,6 +726,7 @@ mod tests {
             default: Some(default.to_string()),
             primary_key: false,
             unique: false,
+            auto_generated: false,
             doc: None,
         }
     }
@@ -737,6 +740,7 @@ mod tests {
             default: None,
             primary_key: false,
             unique: true,
+            auto_generated: false,
             doc: None,
         }
     }

@@ -95,11 +95,33 @@ impl<'a> Db<'a> {
 
         let rows = self.client.query(&query.sql, &params_ref).await?;
 
-        let columns: Vec<_> = table
-            .columns
-            .iter()
-            .map(|c| (c.name.clone(), c.pg_type))
-            .collect();
+        // Get columns in the order they appear in the query result
+        // This is important because SELECT * returns columns in database order,
+        // not necessarily in schema order
+        let columns: Vec<_> = if rows.is_empty() {
+            // No rows, use schema order
+            table
+                .columns
+                .iter()
+                .map(|c| (c.name.clone(), c.pg_type))
+                .collect()
+        } else {
+            // Match column names from the result to schema types
+            rows[0]
+                .columns()
+                .iter()
+                .map(|pg_col| {
+                    let name = pg_col.name().to_string();
+                    let pg_type = table
+                        .columns
+                        .iter()
+                        .find(|c| c.name == name)
+                        .map(|c| c.pg_type)
+                        .unwrap_or(crate::schema::PgType::Text); // fallback to text
+                    (name, pg_type)
+                })
+                .collect()
+        };
 
         rows.iter()
             .map(|row| pg_row_to_row(row, &columns))
@@ -136,10 +158,20 @@ impl<'a> Db<'a> {
             return Ok(None);
         }
 
-        let columns: Vec<_> = table
-            .columns
+        // Match column names from the result to schema types
+        let columns: Vec<_> = rows[0]
+            .columns()
             .iter()
-            .map(|c| (c.name.clone(), c.pg_type))
+            .map(|pg_col| {
+                let name = pg_col.name().to_string();
+                let pg_type = table
+                    .columns
+                    .iter()
+                    .find(|c| c.name == name)
+                    .map(|c| c.pg_type)
+                    .unwrap_or(crate::schema::PgType::Text);
+                (name, pg_type)
+            })
             .collect();
 
         Ok(Some(pg_row_to_row(&rows[0], &columns)?))
