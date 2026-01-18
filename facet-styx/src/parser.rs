@@ -596,18 +596,24 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
 
     fn skip_value(&mut self) -> Result<(), Self::Error> {
         // Consume the next value, handling nested structures
-        let mut depth = 0;
+        let mut depth = 0i32;
         loop {
             let event = self.next_event()?;
+            trace!(?event, depth, "skip_value");
             match event {
                 Some(ParseEvent::StructStart(_)) | Some(ParseEvent::SequenceStart(_)) => {
                     depth += 1;
                 }
                 Some(ParseEvent::StructEnd) | Some(ParseEvent::SequenceEnd) => {
                     if depth == 0 {
+                        // Safety: unexpected End at depth 0 (malformed input or bug)
                         break;
                     }
                     depth -= 1;
+                    if depth == 0 {
+                        // Normal case: matched the opening container
+                        break;
+                    }
                 }
                 Some(ParseEvent::Scalar(_)) => {
                     if depth == 0 {

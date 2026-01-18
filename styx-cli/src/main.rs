@@ -324,7 +324,7 @@ fn run_validation(
         // Use override schema
         load_schema_file(schema_path)?
     } else {
-        // Look for @ key in document root for schema declaration
+        // Look for @ or @schema key in document root for schema declaration
         let schema_ref = find_schema_declaration(value)?;
         match schema_ref {
             SchemaRef::External(path) => {
@@ -335,6 +335,10 @@ fn run_validation(
             SchemaRef::Inline(schema_value) => {
                 // Parse inline schema
                 parse_inline_schema(&schema_value)?
+            }
+            SchemaRef::Embedded { cli } => {
+                // Extract schema from embedded binary
+                extract_embedded_schema(&cli)?
             }
         }
     };
@@ -363,18 +367,22 @@ fn run_validation(
 }
 
 enum SchemaRef {
+    /// Path to external schema file
     External(String),
+    /// Inline schema object
     Inline(Value),
+    /// Embedded schema from binary: @schema {source ..., cli <binary>}
+    Embedded { cli: String },
 }
 
-/// Strip the @ key (schema declaration) from a document before validation.
-/// The @ key is metadata that references the schema, not actual data.
+/// Strip schema declaration keys from a document before validation.
+/// Both `@` (unit key) and `@schema` (tagged unit key) are schema metadata.
 fn strip_schema_declaration(value: &Value) -> Value {
     if let Some(obj) = value.as_object() {
         let filtered_entries: Vec<_> = obj
             .entries
             .iter()
-            .filter(|e| !e.key.is_unit())
+            .filter(|e| !e.key.is_unit() && !e.key.is_schema_tag())
             .cloned()
             .collect();
         Value {
@@ -392,14 +400,35 @@ fn strip_schema_declaration(value: &Value) -> Value {
 }
 
 fn find_schema_declaration(value: &Value) -> Result<SchemaRef, CliError> {
-    // Look for @ key (unit key) in root object
+    // Look for @ (unit key) or @schema (tagged unit key) in root object
     let obj = value.as_object().ok_or_else(|| {
         CliError::Validation("document root must be an object for validation".into())
     })?;
 
     for entry in &obj.entries {
+        // Check for @schema {source ..., cli ...} directive
+        if entry.key.is_schema_tag() {
+            if let Some(schema_obj) = entry.value.as_object() {
+                // Look for 'cli' field
+                if let Some(cli_value) = schema_obj.get("cli") {
+                    if let Some(cli_name) = cli_value.as_str() {
+                        return Ok(SchemaRef::Embedded {
+                            cli: cli_name.to_string(),
+                        });
+                    }
+                }
+                return Err(CliError::Validation(
+                    "@schema directive must have a 'cli' field with the binary name".into(),
+                ));
+            } else {
+                return Err(CliError::Validation(
+                    "@schema directive must be an object with {source ..., cli ...}".into(),
+                ));
+            }
+        }
+
+        // Check for @ (unit key) with path or inline schema
         if entry.key.is_unit() {
-            // Found @ key - check if it's a string (external) or object (inline)
             if let Some(path) = entry.value.as_str() {
                 return Ok(SchemaRef::External(path.to_string()));
             } else if entry.value.as_object().is_some() {
@@ -413,7 +442,7 @@ fn find_schema_declaration(value: &Value) -> Result<SchemaRef, CliError> {
     }
 
     Err(CliError::Validation(
-        "no schema declaration found (@ key)\nhint: use --override-schema to specify a schema file"
+        "no schema declaration found (@ or @schema key)\nhint: use --override-schema to specify a schema file"
             .into(),
     ))
 }
@@ -463,6 +492,47 @@ fn parse_inline_schema(value: &Value) -> Result<SchemaFile, CliError> {
     let source = styx_format::format_value(value, FormatOptions::default());
     facet_styx::from_str(&source)
         .map_err(|e| CliError::Parse(format!("failed to parse inline schema: {}", e)))
+}
+
+/// Extract schema from a binary with embedded styx schemas.
+///
+/// Uses the `which` crate to find the binary in PATH, then extracts
+/// embedded schemas using `styx_embed::extract_schemas_from_file`.
+fn extract_embedded_schema(cli_name: &str) -> Result<SchemaFile, CliError> {
+    // Find the binary in PATH
+    let binary_path = which::which(cli_name).map_err(|_| {
+        CliError::Validation(format!(
+            "binary '{}' not found in PATH\nhint: ensure the binary is installed and in your PATH",
+            cli_name
+        ))
+    })?;
+
+    // Extract schemas from the binary (zero-execution, memory-mapped scan)
+    let schemas = styx_embed::extract_schemas_from_file(&binary_path).map_err(|e| {
+        CliError::Validation(format!(
+            "failed to extract schema from '{}': {}\nhint: the binary may not have embedded schemas (use styx_embed macros to embed)",
+            binary_path.display(),
+            e
+        ))
+    })?;
+
+    // We expect exactly one schema for now
+    if schemas.is_empty() {
+        return Err(CliError::Validation(format!(
+            "no embedded schemas found in '{}'\nhint: use styx_embed::embed_schema! or similar to embed schemas",
+            binary_path.display()
+        )));
+    }
+
+    // Parse the first schema
+    let schema_source = &schemas[0];
+    facet_styx::from_str(schema_source).map_err(|e| {
+        CliError::Parse(format!(
+            "failed to parse embedded schema from '{}': {}",
+            binary_path.display(),
+            e
+        ))
+    })
 }
 
 // ============================================================================

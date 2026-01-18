@@ -68,8 +68,9 @@ The generated config declares its schema, so editors and the CLI can validate it
 
 Given `@schema {source crate:myapp-config@1, cli myapp}`:
 
-1. **Scan binary** — extract embedded schema (no execution)
-2. **Run CLI** — `myapp @dump-styx-schema` (if embedded not found)
-3. **Fetch crate** — download from crates.io (future, when you publish)
+1. **Scan binary** — extract embedded schema from `myapp` (zero-execution, memory-mapped)
+2. **Fetch crate** — download from crates.io (future, when you publish)
+
+The binary is located via `PATH` and scanned for the magic `STYX_SCHEMAS_V1` marker. No code is executed—this is safe even with untrusted binaries.
 
 Users get instant validation. You get a path to versioned distribution later.

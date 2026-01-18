@@ -14,7 +14,11 @@ styx-cst = { path = "../styx-cst" }
 styx-tree = { path = "../styx-tree" }
 styx-schema = { path = "../styx-schema" }
 styx-format = { path = "../styx-format" }
+styx-embed = { path = "../styx-embed", features = ["mmap"] }
 facet-styx = { path = "../facet-styx" }
+
+# Binary lookup
+which = "7"
 
 # Error handling
 eyre = "0.6"

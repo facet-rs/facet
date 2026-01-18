@@ -28,19 +28,37 @@ pub enum SchemaRef {
     External(String),
     /// Inline schema definition.
     Inline(Value),
+    /// Embedded schema from binary: @schema {source ..., cli <binary>}
+    Embedded { cli: String },
 }
 
 /// Find the schema declaration in a document.
 ///
-/// Looks for a unit key (`@`) in the root object with either:
-/// - A string value (external schema path)
-/// - An object value (inline schema)
+/// Looks for:
+/// - `@schema {source ..., cli <binary>}` - embedded schema from binary
+/// - `@ "path/to/schema.styx"` - external schema file
+/// - `@ { inline schema }` - inline schema definition
 pub fn find_schema_declaration(value: &Value) -> Option<SchemaRef> {
     let obj = value.as_object()?;
 
     for entry in &obj.entries {
+        // Check for @schema {source ..., cli ...} directive
+        if entry.key.is_schema_tag() {
+            if let Some(schema_obj) = entry.value.as_object() {
+                if let Some(cli_value) = schema_obj.get("cli") {
+                    if let Some(cli_name) = cli_value.as_str() {
+                        return Some(SchemaRef::Embedded {
+                            cli: cli_name.to_string(),
+                        });
+                    }
+                }
+            }
+            // @schema directive without valid cli field - ignore
+            continue;
+        }
+
+        // Check for @ (unit key) with path or inline schema
         if entry.key.is_unit() {
-            // Found @ key
             if let Some(path) = entry.value.as_str() {
                 return Some(SchemaRef::External(path.to_string()));
             } else if entry.value.as_object().is_some() {
@@ -88,13 +106,14 @@ pub fn parse_inline_schema(value: &Value) -> Result<SchemaFile, String> {
     facet_styx::from_str(&content).map_err(|e| format!("failed to parse inline schema: {}", e))
 }
 
-/// Strip the schema declaration (@ key) from a document before validation.
+/// Strip schema declaration keys from a document before validation.
+/// Both `@` (unit key) and `@schema` (tagged unit key) are schema metadata.
 pub fn strip_schema_declaration(value: &Value) -> Value {
     if let Some(obj) = value.as_object() {
         let filtered_entries: Vec<_> = obj
             .entries
             .iter()
-            .filter(|e| !e.key.is_unit())
+            .filter(|e| !e.key.is_unit() && !e.key.is_schema_tag())
             .cloned()
             .collect();
         Value {
@@ -109,6 +128,29 @@ pub fn strip_schema_declaration(value: &Value) -> Value {
     } else {
         value.clone()
     }
+}
+
+/// Extract schema from a binary with embedded styx schemas.
+///
+/// Uses the `which` crate to find the binary in PATH, then extracts
+/// embedded schemas using `styx_embed::extract_schemas_from_file`.
+fn extract_embedded_schema(cli_name: &str) -> Result<SchemaFile, String> {
+    // Find the binary in PATH
+    let binary_path = which::which(cli_name)
+        .map_err(|_| format!("binary '{}' not found in PATH", cli_name))?;
+
+    // Extract schemas from the binary (zero-execution, memory-mapped scan)
+    let schemas = styx_embed::extract_schemas_from_file(&binary_path)
+        .map_err(|e| format!("failed to extract schema from '{}': {}", binary_path.display(), e))?;
+
+    // We expect at least one schema
+    if schemas.is_empty() {
+        return Err(format!("no embedded schemas found in '{}'", binary_path.display()));
+    }
+
+    // Parse the first schema
+    facet_styx::from_str(&schemas[0])
+        .map_err(|e| format!("failed to parse embedded schema: {}", e))
 }
 
 /// Load and validate a document against its declared schema.
@@ -128,6 +170,7 @@ pub fn validate_against_schema(
             load_schema_file(&resolved)?
         }
         SchemaRef::Inline(schema_value) => parse_inline_schema(&schema_value)?,
+        SchemaRef::Embedded { cli } => extract_embedded_schema(&cli)?,
     };
 
     // Strip schema declaration before validation
@@ -298,6 +341,7 @@ pub fn load_document_schema(value: &Value, document_uri: &Url) -> Result<SchemaF
             load_schema_file(&resolved)
         }
         SchemaRef::Inline(schema_value) => parse_inline_schema(&schema_value),
+        SchemaRef::Embedded { cli } => extract_embedded_schema(&cli),
     }
 }
 
