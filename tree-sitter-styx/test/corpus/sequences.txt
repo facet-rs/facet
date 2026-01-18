@@ -114,3 +114,217 @@ Sequence with objects
               value: (expr
                 payload: (scalar
                   (bare_scalar))))))))))
+
+================================================================================
+Multiline sequence
+================================================================================
+
+(
+    a
+    b
+    c
+)
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))))))
+
+================================================================================
+Sequence as value on same line
+================================================================================
+
+items (a b c)
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (scalar
+        (bare_scalar)))
+    value: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))))))
+
+================================================================================
+Multiline sequence as value
+================================================================================
+
+items (
+    first
+    second
+    third
+)
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (scalar
+        (bare_scalar)))
+    value: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))))))
+
+================================================================================
+Sequence with line comments
+================================================================================
+
+(
+    a
+    // comment between elements
+    b
+)
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (line_comment)
+        (expr
+          payload: (scalar
+            (bare_scalar)))))))
+
+================================================================================
+Sequence with trailing comment
+================================================================================
+
+(
+    a
+    b
+    // trailing comment
+)
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (line_comment)))))
+
+================================================================================
+Deeply nested multiline sequences
+================================================================================
+
+outer (
+    (
+        inner-a
+        inner-b
+    )
+    (
+        inner-c
+        inner-d
+    )
+)
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (scalar
+        (bare_scalar)))
+    value: (expr
+      payload: (sequence
+        (expr
+          payload: (sequence
+            (expr
+              payload: (scalar
+                (bare_scalar)))
+            (expr
+              payload: (scalar
+                (bare_scalar)))))
+        (expr
+          payload: (sequence
+            (expr
+              payload: (scalar
+                (bare_scalar)))
+            (expr
+              payload: (scalar
+                (bare_scalar)))))))))
+
+================================================================================
+Sequence with mixed whitespace
+================================================================================
+
+(a    b		c)
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))))))
+
+================================================================================
+Empty lines in sequence
+================================================================================
+
+(
+    a
+
+    b
+)
+
+--------------------------------------------------------------------------------
+
+(document
+  (entry
+    key: (expr
+      payload: (sequence
+        (expr
+          payload: (scalar
+            (bare_scalar)))
+        (expr
+          payload: (scalar
+            (bare_scalar)))))))

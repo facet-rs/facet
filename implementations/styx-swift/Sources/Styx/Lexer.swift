@@ -197,15 +197,15 @@ public struct Lexer {
                     }
                 }
             } else if char == "\n" {
-                // Rust recovery behavior: return valid token with opening quote included
-                return Token(type: .quoted, span: Span(start: start, end: position), text: "\"" + text + "\n", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+                // Unterminated string - return error
+                return Token(type: .error, span: Span(start: start, end: position), text: "unexpected token", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
             } else {
                 text.append(char)
             }
         }
 
         if !closed {
-            return Token(type: .error, span: Span(start: start, end: position), text: "unterminated string", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(type: .error, span: Span(start: start, end: position), text: "unexpected token", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
         }
 
         return Token(type: .quoted, span: Span(start: start, end: position), text: text, hadWhitespaceBefore: ws, hadNewlineBefore: nl)
@@ -280,7 +280,7 @@ public struct Lexer {
             }
         }
 
-        return Token(type: .error, span: Span(start: start, end: position), text: "unterminated raw string", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+        return Token(type: .error, span: Span(start: start, end: position), text: "unexpected token", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
     }
 
     private mutating func lexHeredoc(start: Int, ws: Bool, nl: Bool) -> Token {
@@ -345,13 +345,8 @@ public struct Lexer {
             return Token(type: .heredoc, span: Span(start: start, end: position), text: text, hadWhitespaceBefore: ws, hadNewlineBefore: nl)
         }
 
-        // Rust recovery: return valid heredoc with accumulated content
-        // Include final line content if any
-        if !currentLine.isEmpty {
-            text.append(contentsOf: currentLine)
-            text.append("\n")
-        }
-        return Token(type: .heredoc, span: Span(start: start, end: position), text: text, hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+        // Unterminated heredoc - return error
+        return Token(type: .error, span: Span(start: start, end: position), text: "unexpected token", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
     }
 
     private mutating func lexBare(start: Int, firstChar: Character, ws: Bool, nl: Bool) -> Token {

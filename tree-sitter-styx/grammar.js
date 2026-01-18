@@ -119,7 +119,8 @@ module.exports = grammar({
         $.raw_scalar,
       ),
 
-    immediate_sequence: ($) => seq(token.immediate("("), repeat(seq($.expr, optional($._ws))), ")"),
+    immediate_sequence: ($) =>
+      seq(token.immediate("("), repeat($._seq_ws), repeat(seq($.expr, repeat($._seq_ws))), ")"),
     immediate_object: ($) => seq(token.immediate("{"), optional($._object_body), "}"),
     immediate_unit: ($) => $._immediate_unit_at,
 
@@ -153,7 +154,8 @@ module.exports = grammar({
     unit: ($) => $._unit_at,
 
     // Sequence: (expr expr ...)
-    sequence: ($) => seq("(", repeat(seq($.expr, optional($._ws))), ")"),
+    // Per spec, WS includes newlines inside sequences
+    sequence: ($) => seq("(", repeat($._seq_ws), repeat(seq($.expr, repeat($._seq_ws))), ")"),
 
     // Object: { entries }
     object: ($) => seq("{", optional($._object_body), "}"),
@@ -194,5 +196,7 @@ module.exports = grammar({
     // Whitespace helpers
     _ws: ($) => /[ \t]+/,
     _newline: ($) => /\r?\n/,
+    // Whitespace inside sequences (includes newlines and comments per spec)
+    _seq_ws: ($) => choice(/[ \t]+/, $._newline, $.line_comment),
   },
 });

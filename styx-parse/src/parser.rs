@@ -765,6 +765,7 @@ impl<'src> Parser<'src> {
                 let start_span = token.span;
                 let mut content = String::new();
                 let mut end_span = start_span;
+                let mut is_error = false;
 
                 loop {
                     let Some(token) = self.advance() else {
@@ -778,17 +779,34 @@ impl<'src> Parser<'src> {
                             end_span = token.span;
                             break;
                         }
+                        TokenKind::Error => {
+                            // Unterminated heredoc
+                            end_span = token.span;
+                            is_error = true;
+                            break;
+                        }
                         _ => break,
                     }
                 }
 
-                Atom {
-                    span: Span {
-                        start: start_span.start,
-                        end: end_span.end,
-                    },
-                    kind: ScalarKind::Heredoc,
-                    content: AtomContent::Heredoc(content),
+                if is_error {
+                    Atom {
+                        span: Span {
+                            start: start_span.start,
+                            end: end_span.end,
+                        },
+                        kind: ScalarKind::Heredoc,
+                        content: AtomContent::Error,
+                    }
+                } else {
+                    Atom {
+                        span: Span {
+                            start: start_span.start,
+                            end: end_span.end,
+                        },
+                        kind: ScalarKind::Heredoc,
+                        content: AtomContent::Heredoc(content),
+                    }
                 }
             }
             _ => unreachable!(),

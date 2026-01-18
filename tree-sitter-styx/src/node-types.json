@@ -247,6 +247,10 @@
         {
           "type": "expr",
           "named": true
+        },
+        {
+          "type": "line_comment",
+          "named": true
         }
       ]
     }
