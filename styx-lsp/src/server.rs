@@ -620,8 +620,27 @@ impl LanguageServer for StyxLanguageServer {
             return Ok(None);
         };
 
-        let schema_fields = get_schema_fields_from_source(&schema.source);
-        let existing_fields = get_existing_fields(tree);
+        // Find the object context at cursor position for context-aware completion
+        let offset = position_to_offset(&doc.content, position);
+        let context = find_object_at_offset(tree, offset);
+        let path = context.as_ref().map(|c| c.path.as_slice()).unwrap_or(&[]);
+
+        tracing::debug!(
+            ?offset,
+            ?path,
+            "completion: finding fields at path"
+        );
+
+        let schema_fields = get_schema_fields_from_source_at_path(&schema.source, path);
+        let existing_fields = context
+            .map(|c| {
+                c.object
+                    .entries
+                    .iter()
+                    .filter_map(|e| e.key.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_else(|| get_existing_fields(tree));
 
         // Get current word being typed for fuzzy matching
         let current_word = get_word_at_position(&doc.content, position);
@@ -1795,8 +1814,8 @@ fn format_field_hover(
     content
 }
 
-/// Get all fields defined in a schema
-fn get_schema_fields_from_source(schema_source: &str) -> Vec<(String, String)> {
+/// Get schema fields at a specific path (for nested object completion)
+fn get_schema_fields_from_source_at_path(schema_source: &str, path: &[String]) -> Vec<(String, String)> {
     let mut fields = Vec::new();
 
     let Ok(tree) = styx_tree::parse(schema_source) else {
@@ -1807,13 +1826,86 @@ fn get_schema_fields_from_source(schema_source: &str) -> Vec<(String, String)> {
         return fields;
     };
 
+    // Find the "schema" entry
+    let schema_entry = obj.entries.iter().find(|e| e.key.as_str() == Some("schema"));
+    let Some(schema_entry) = schema_entry else {
+        return fields;
+    };
+
+    // Navigate to the object at the given path
+    let target_value = if path.is_empty() {
+        // Root level - use the schema root
+        &schema_entry.value
+    } else {
+        // Navigate into nested object
+        match navigate_schema_path(&schema_entry.value, path) {
+            Some(v) => v,
+            None => return fields,
+        }
+    };
+
+    collect_fields_from_object(target_value, schema_source, &mut fields);
+    fields
+}
+
+/// Navigate to a field in a schema tree by path, returning the field's type value
+fn navigate_schema_path<'a>(value: &'a Value, path: &[String]) -> Option<&'a Value> {
+    if path.is_empty() {
+        return Some(value);
+    }
+
+    let field_name = &path[0];
+    let remaining = &path[1..];
+
+    // Get the object (unwrapping @object{...} if needed)
+    let obj = extract_object_from_value(value)?;
+
     for entry in &obj.entries {
-        if entry.key.as_str() == Some("schema") {
-            collect_fields_from_object(&entry.value, schema_source, &mut fields);
+        // Check named fields
+        if entry.key.as_str() == Some(field_name.as_str()) {
+            // Found the field - unwrap any wrappers like @optional to get to the inner type
+            let inner = unwrap_type_wrappers(&entry.value);
+            return navigate_schema_path(inner, remaining);
+        }
+
+        // Check unit key (root definition)
+        if entry.key.is_unit() {
+            if let Some(result) = navigate_schema_path(&entry.value, path) {
+                return Some(result);
+            }
         }
     }
 
-    fields
+    None
+}
+
+/// Unwrap type wrappers like @optional(...) to get to the inner type
+fn unwrap_type_wrappers(value: &Value) -> &Value {
+    // Check for @optional, @default, etc. which wrap the actual type
+    if let Some(tag) = value.tag_name() {
+        if matches!(tag, "optional" | "default" | "deprecated") {
+            // The inner type is in the payload
+            match &value.payload {
+                // @optional(@object{...}) - parenthesized, so it's a sequence with one item
+                Some(styx_tree::Payload::Sequence(seq)) => {
+                    if let Some(first) = seq.items.first() {
+                        return unwrap_type_wrappers(first);
+                    }
+                }
+                // @optional @object{...} - the object is the payload directly
+                Some(styx_tree::Payload::Object(obj)) => {
+                    // Check for unit entry pattern
+                    for entry in &obj.entries {
+                        if entry.key.is_unit() {
+                            return unwrap_type_wrappers(&entry.value);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    value
 }
 
 /// Collect fields from an object schema
@@ -2526,6 +2618,120 @@ schema {
             info.doc_comment,
             Some("The server name".to_string()),
             "Doc comment should be extracted"
+        );
+    }
+
+    #[test]
+    fn test_get_completion_fields_at_path() {
+        // Schema with nested objects
+        let schema_source = r#"meta { id test }
+schema {
+    @ @object{
+        content @string
+        output @string
+        syntax_highlight @optional(@object{
+            light_theme @string
+            dark_theme @string
+        })
+    }
+}"#;
+
+        // At root level, should get root fields
+        let root_fields = get_schema_fields_from_source_at_path(schema_source, &[]);
+        let root_names: Vec<_> = root_fields.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(
+            root_names.contains(&"content"),
+            "Root should have 'content', got: {:?}",
+            root_names
+        );
+        assert!(
+            root_names.contains(&"output"),
+            "Root should have 'output'"
+        );
+        assert!(
+            root_names.contains(&"syntax_highlight"),
+            "Root should have 'syntax_highlight'"
+        );
+        assert!(
+            !root_names.contains(&"light_theme"),
+            "Root should NOT have 'light_theme' (it's nested)"
+        );
+
+        // Inside syntax_highlight, should get its fields
+        // Debug: trace the schema structure
+        let tree = styx_tree::parse(schema_source).unwrap();
+        let obj = tree.as_object().unwrap();
+        let schema_entry = obj.entries.iter().find(|e| e.key.as_str() == Some("schema")).unwrap();
+        tracing::debug!("schema_entry.value.tag: {:?}", schema_entry.value.tag_name());
+
+        // Look for syntax_highlight in the schema
+        if let Some(inner_obj) = extract_object_from_value(&schema_entry.value) {
+            for entry in &inner_obj.entries {
+                tracing::debug!(
+                    key = ?entry.key.as_str(),
+                    tag = ?entry.key.tag_name(),
+                    is_unit = entry.key.is_unit(),
+                    "L1 entry"
+                );
+
+                // If unit entry, go deeper
+                if entry.key.is_unit() {
+                    tracing::debug!(tag = ?entry.value.tag_name(), "unit value");
+                    if let Some(l2_obj) = extract_object_from_value(&entry.value) {
+                        for l2_entry in &l2_obj.entries {
+                            tracing::debug!(
+                                key = ?l2_entry.key.as_str(),
+                                tag = ?l2_entry.key.tag_name(),
+                                "L2 entry"
+                            );
+                            if l2_entry.key.as_str() == Some("syntax_highlight") {
+                                tracing::debug!("found syntax_highlight!");
+                                tracing::debug!(tag = ?l2_entry.value.tag_name(), "value");
+                                let unwrapped = unwrap_type_wrappers(&l2_entry.value);
+                                tracing::debug!(tag = ?unwrapped.tag_name(), "unwrapped");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let nested_fields =
+            get_schema_fields_from_source_at_path(schema_source, &["syntax_highlight".to_string()]);
+        let nested_names: Vec<_> = nested_fields.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(
+            nested_names.contains(&"light_theme"),
+            "syntax_highlight should have 'light_theme', got: {:?}",
+            nested_names
+        );
+        assert!(
+            nested_names.contains(&"dark_theme"),
+            "syntax_highlight should have 'dark_theme'"
+        );
+        assert!(
+            !nested_names.contains(&"content"),
+            "syntax_highlight should NOT have 'content' (it's at root)"
+        );
+    }
+
+    #[test]
+    fn test_find_object_context_at_cursor() {
+        // Document with cursor inside nested object
+        let content = "syntax_highlight {\n    light_theme foo\n    \n}";
+        //                                                    ^ cursor here (line 2, after light_theme)
+        let tree = styx_tree::parse(content).unwrap();
+
+        // Find offset for the empty line inside the object
+        let cursor_offset = content.find("    \n}").unwrap() + 4; // just before the newline
+
+        let ctx = find_object_at_offset(&tree, cursor_offset);
+        assert!(ctx.is_some(), "Should find object context at cursor");
+        let ctx = ctx.unwrap();
+        assert_eq!(
+            ctx.path,
+            vec!["syntax_highlight".to_string()],
+            "Path should be ['syntax_highlight'], got: {:?}",
+            ctx.path
         );
     }
 }
