@@ -865,6 +865,106 @@ fn mask_password(url: &str) -> String {
     url.to_string()
 }
 
+fn run_diff(database_url: Option<String>) {
+    let url = database_url
+        .or_else(|| std::env::var("DATABASE_URL").ok())
+        .unwrap_or_else(|| {
+            eprintln!("Error: No database URL provided.");
+            eprintln!();
+            eprintln!("Provide one via:");
+            eprintln!("  --database-url <url>");
+            eprintln!("  DATABASE_URL environment variable");
+            std::process::exit(1);
+        });
+
+    // Collect Rust schema
+    let rust_schema = dibs::Schema::collect();
+
+    if rust_schema.tables.is_empty() {
+        eprintln!("No tables registered in Rust schema.");
+        eprintln!();
+        eprintln!("Define tables using #[facet(dibs::table = \"name\")] on Facet structs.");
+        std::process::exit(1);
+    }
+
+    // Connect to database and introspect
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    let result = rt.block_on(async {
+        let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls).await?;
+
+        // Spawn connection handler
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Database connection error: {}", e);
+            }
+        });
+
+        // Introspect database schema
+        let db_schema = dibs::Schema::from_database(&client).await?;
+
+        Ok::<_, dibs::Error>(db_schema)
+    });
+
+    let db_schema = match result {
+        Ok(schema) => schema,
+        Err(e) => {
+            eprintln!("Failed to introspect database: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Compute diff
+    let diff = rust_schema.diff(&db_schema);
+
+    if diff.is_empty() {
+        #[allow(unused_imports)]
+        use owo_colors::OwoColorize as _;
+        println!("{}", "No changes detected.".green());
+        println!();
+        println!(
+            "Rust schema ({} tables) matches database.",
+            rust_schema.tables.len()
+        );
+    } else {
+        print_diff(&diff);
+    }
+}
+
+fn print_diff(diff: &dibs::SchemaDiff) {
+    #[allow(unused_imports)]
+    use owo_colors::OwoColorize as _;
+
+    println!(
+        "{}",
+        format!(
+            "Changes detected ({} tables affected):",
+            diff.table_diffs.len()
+        )
+        .as_str()
+        .yellow()
+    );
+    println!();
+
+    for table_diff in &diff.table_diffs {
+        println!("  {}:", table_diff.table.as_str().cyan().bold());
+
+        for change in &table_diff.changes {
+            let formatted = format!("{}", change);
+            let colored = if formatted.starts_with('+') {
+                formatted.as_str().green().to_string()
+            } else if formatted.starts_with('-') {
+                formatted.as_str().red().to_string()
+            } else if formatted.starts_with('~') {
+                formatted.as_str().yellow().to_string()
+            } else {
+                formatted
+            };
+            println!("    {}", colored);
+        }
+        println!();
+    }
+}
+
 fn generate_migration(name: &str) {
     let now = Zoned::now();
     let timestamp = now.strftime("%Y%m%d%H%M%S");

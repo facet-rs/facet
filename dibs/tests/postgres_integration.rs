@@ -314,6 +314,132 @@ async fn test_insert_and_query_data() {
 }
 
 #[tokio::test]
+async fn test_diff_rust_vs_database() {
+    let (_container, client) = create_postgres_container().await;
+
+    // Create a database schema that differs from our Rust schema
+    // Our Rust schema has test_users with: id, email (unique), name (indexed), bio (nullable), created_at
+    // Let's create a DB schema that's missing the 'bio' column and has an extra 'legacy_field'
+    client
+        .batch_execute(
+            r#"
+            CREATE TABLE test_users (
+                id BIGINT PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                created_at BIGINT NOT NULL DEFAULT 0,
+                legacy_field TEXT
+            );
+
+            CREATE INDEX idx_test_users_name ON test_users(name);
+            "#,
+        )
+        .await
+        .expect("Failed to create tables");
+
+    // Introspect the database
+    let db_schema = dibs::Schema::from_database(&client)
+        .await
+        .expect("Failed to introspect schema");
+
+    // Get the Rust schema (collected from test structs in this file)
+    let rust_schema = dibs::Schema::collect();
+
+    // Find just the test_users table in the Rust schema
+    let rust_test_users = rust_schema
+        .tables
+        .iter()
+        .find(|t| t.name == "test_users")
+        .expect("test_users should be in Rust schema");
+
+    // Create a schema with just test_users for comparison
+    let rust_schema_subset = dibs::Schema {
+        tables: vec![rust_test_users.clone()],
+    };
+
+    // Diff: what changes are needed to make DB match Rust?
+    let diff = rust_schema_subset.diff(&db_schema);
+
+    assert!(!diff.is_empty(), "Should detect differences");
+
+    // Find the test_users diff
+    let users_diff = diff
+        .table_diffs
+        .iter()
+        .find(|d| d.table == "test_users")
+        .expect("Should have diff for test_users");
+
+    // Should detect:
+    // 1. Add column 'bio' (in Rust, not in DB)
+    // 2. Drop column 'legacy_field' (in DB, not in Rust)
+    let has_add_bio = users_diff
+        .changes
+        .iter()
+        .any(|c| matches!(c, dibs::Change::AddColumn(col) if col.name == "bio"));
+    let has_drop_legacy = users_diff
+        .changes
+        .iter()
+        .any(|c| matches!(c, dibs::Change::DropColumn(name) if name == "legacy_field"));
+
+    assert!(has_add_bio, "Should detect need to add 'bio' column");
+    assert!(
+        has_drop_legacy,
+        "Should detect need to drop 'legacy_field' column"
+    );
+
+    // Print the diff for debugging
+    println!("Diff detected:");
+    println!("{}", diff);
+}
+
+#[tokio::test]
+async fn test_diff_no_changes() {
+    let (_container, client) = create_postgres_container().await;
+
+    // Create a table that exactly matches our Rust definition
+    client
+        .batch_execute(
+            r#"
+            CREATE TABLE test_users (
+                id BIGINT PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                bio TEXT,
+                created_at BIGINT NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX idx_test_users_name ON test_users(name);
+            "#,
+        )
+        .await
+        .expect("Failed to create tables");
+
+    let db_schema = dibs::Schema::from_database(&client)
+        .await
+        .expect("Failed to introspect schema");
+
+    let rust_schema = dibs::Schema::collect();
+    let rust_test_users = rust_schema
+        .tables
+        .iter()
+        .find(|t| t.name == "test_users")
+        .expect("test_users should be in Rust schema");
+
+    let rust_schema_subset = dibs::Schema {
+        tables: vec![rust_test_users.clone()],
+    };
+
+    let diff = rust_schema_subset.diff(&db_schema);
+
+    // The schemas should match (no changes needed)
+    assert!(
+        diff.is_empty(),
+        "Should detect no changes when schemas match. Got: {}",
+        diff
+    );
+}
+
+#[tokio::test]
 async fn test_introspect_schema_from_database() {
     let (_container, client) = create_postgres_container().await;
 
