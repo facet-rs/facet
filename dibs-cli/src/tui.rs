@@ -596,43 +596,113 @@ impl App {
 
     /// Suggest a migration name based on the current diff.
     fn suggest_migration_name(&self) -> String {
-        if let Some(diff) = &self.diff {
-            // Try to create a meaningful name from the changes
-            let mut parts = Vec::new();
-            for td in &diff.table_diffs {
-                for change in &td.changes {
-                    let desc = &change.description;
-                    if desc.starts_with("+ table") {
-                        parts.push(format!("create-{}", td.table));
-                    } else if desc.starts_with("- table") {
-                        parts.push(format!("drop-{}", td.table));
-                    } else if desc.starts_with('+') {
-                        // Adding something
-                        if parts.iter().all(|p| !p.starts_with(&format!("alter-{}", td.table))) {
-                            parts.push(format!("alter-{}", td.table));
-                        }
-                    } else if desc.starts_with('-') {
-                        if parts.iter().all(|p| !p.starts_with(&format!("alter-{}", td.table))) {
-                            parts.push(format!("alter-{}", td.table));
-                        }
-                    } else if desc.starts_with('~') {
-                        if parts.iter().all(|p| !p.starts_with(&format!("alter-{}", td.table))) {
-                            parts.push(format!("alter-{}", td.table));
+        let Some(diff) = &self.diff else {
+            return "schema-update".to_string();
+        };
+
+        // Collect all changes by type
+        let mut new_tables: Vec<&str> = Vec::new();
+        let mut dropped_tables: Vec<&str> = Vec::new();
+        let mut new_columns: Vec<(&str, &str)> = Vec::new(); // (table, column)
+        let mut dropped_columns: Vec<(&str, &str)> = Vec::new();
+        let mut type_changes: Vec<(&str, &str, &str)> = Vec::new(); // (table, column, new_type)
+        let mut other_changes = false;
+
+        for td in &diff.table_diffs {
+            for change in &td.changes {
+                let desc = &change.description;
+                if desc.starts_with("+ table") {
+                    new_tables.push(&td.table);
+                } else if desc.starts_with("- table") {
+                    dropped_tables.push(&td.table);
+                } else if desc.starts_with("+ ") {
+                    // Adding a column: "+ column_name: TYPE"
+                    if let Some(col) = desc.strip_prefix("+ ").and_then(|s| s.split(':').next()) {
+                        new_columns.push((&td.table, col.trim()));
+                    }
+                } else if desc.starts_with("- ") {
+                    // Dropping a column
+                    if let Some(col) = desc.strip_prefix("- ") {
+                        dropped_columns.push((&td.table, col.trim()));
+                    }
+                } else if desc.starts_with("~ ") {
+                    // Type or other change: "~ column: OLD -> NEW"
+                    if let Some(rest) = desc.strip_prefix("~ ") {
+                        if let Some((col, change_desc)) = rest.split_once(':') {
+                            if let Some((_, new_type)) = change_desc.split_once(" -> ") {
+                                type_changes.push((&td.table, col.trim(), new_type.trim()));
+                            } else {
+                                other_changes = true;
+                            }
                         }
                     }
+                } else {
+                    other_changes = true;
                 }
             }
-            if parts.is_empty() {
-                "schema-update".to_string()
-            } else if parts.len() == 1 {
-                parts[0].clone()
-            } else {
-                // Multiple changes, use generic name
-                "schema-update".to_string()
-            }
-        } else {
-            "schema-update".to_string()
         }
+
+        // Generate name based on what we found
+        if !new_tables.is_empty() && dropped_tables.is_empty() && new_columns.is_empty() && type_changes.is_empty() {
+            if new_tables.len() == 1 {
+                return format!("create-{}", new_tables[0]);
+            } else {
+                return format!("create-tables");
+            }
+        }
+
+        if !dropped_tables.is_empty() && new_tables.is_empty() && dropped_columns.is_empty() && type_changes.is_empty() {
+            if dropped_tables.len() == 1 {
+                return format!("drop-{}", dropped_tables[0]);
+            } else {
+                return format!("drop-tables");
+            }
+        }
+
+        if !new_columns.is_empty() && type_changes.is_empty() && dropped_columns.is_empty() {
+            // Check if all columns have the same name
+            let col_names: std::collections::HashSet<&str> = new_columns.iter().map(|(_, c)| *c).collect();
+            if col_names.len() == 1 {
+                let col = col_names.into_iter().next().unwrap();
+                return format!("add-{}", col.replace('_', "-"));
+            } else if new_columns.len() == 1 {
+                return format!("add-{}-to-{}", new_columns[0].1.replace('_', "-"), new_columns[0].0);
+            }
+        }
+
+        if !type_changes.is_empty() && new_columns.is_empty() && dropped_columns.is_empty() && new_tables.is_empty() {
+            // Check if all type changes are for the same column name
+            let col_names: std::collections::HashSet<&str> = type_changes.iter().map(|(_, c, _)| *c).collect();
+            let new_types: std::collections::HashSet<&str> = type_changes.iter().map(|(_, _, t)| *t).collect();
+
+            if col_names.len() == 1 && new_types.len() == 1 {
+                let col = col_names.into_iter().next().unwrap();
+                let new_type = new_types.into_iter().next().unwrap()
+                    .to_lowercase()
+                    .replace(' ', "-");
+                return format!("{}-to-{}", col.replace('_', "-"), new_type);
+            } else if col_names.len() == 1 {
+                let col = col_names.into_iter().next().unwrap();
+                return format!("change-{}-type", col.replace('_', "-"));
+            }
+        }
+
+        if !dropped_columns.is_empty() && new_columns.is_empty() && type_changes.is_empty() {
+            let col_names: std::collections::HashSet<&str> = dropped_columns.iter().map(|(_, c)| *c).collect();
+            if col_names.len() == 1 {
+                let col = col_names.into_iter().next().unwrap();
+                return format!("drop-{}", col.replace('_', "-"));
+            }
+        }
+
+        // Fallback: describe what tables are affected
+        let affected_tables: std::collections::HashSet<&str> = diff.table_diffs.iter().map(|td| td.table.as_str()).collect();
+        if affected_tables.len() == 1 {
+            let table = affected_tables.into_iter().next().unwrap();
+            return format!("alter-{}", table);
+        }
+
+        "schema-update".to_string()
     }
 
     async fn generate_migration_with_name(&mut self, name: &str) {
