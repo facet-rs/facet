@@ -1153,8 +1153,9 @@ fn run_publish(args: &[String]) -> Result<(), CliError> {
         .map_err(|e| CliError::Parse(format!("invalid schema: {e}")))?;
 
     // Extract crate name from meta.crate
-    let name = extract_meta_field(&local_tree, "crate")
-        .ok_or_else(|| CliError::Usage("schema must have meta.crate field for publishing".into()))?;
+    let name = extract_meta_field(&local_tree, "crate").ok_or_else(|| {
+        CliError::Usage("schema must have meta.crate field for publishing".into())
+    })?;
 
     // Try to fetch latest published version
     let (version, _changes) = match fetch_latest_version(&name) {
@@ -1170,7 +1171,10 @@ fn run_publish(args: &[String]) -> Result<(), CliError> {
             let changes = compare_schemas(&baseline_tree, &local_tree);
 
             // Show changes
-            if changes.breaking.is_empty() && changes.additive.is_empty() && changes.patch.is_empty() {
+            if changes.breaking.is_empty()
+                && changes.additive.is_empty()
+                && changes.patch.is_empty()
+            {
                 eprintln!("No changes detected from {latest_version}.");
                 return Err(CliError::Usage("nothing to publish".into()));
             }
@@ -1263,7 +1267,10 @@ index = "{STAGING_INDEX}"
     }
 
     let status = cmd.status().map_err(|e| {
-        CliError::Io(io::Error::new(e.kind(), format!("failed to run cargo publish: {e}")))
+        CliError::Io(io::Error::new(
+            e.kind(),
+            format!("failed to run cargo publish: {e}"),
+        ))
     })?;
 
     // Clean up temp directory
@@ -1284,14 +1291,14 @@ fn extract_meta_field(value: &Value, field: &str) -> Option<String> {
     // Look for meta.field in the root object
     if let Some(Payload::Object(obj)) = &value.payload {
         for entry in &obj.entries {
-            if entry.key.as_str() == Some("meta") {
-                if let Some(Payload::Object(meta_obj)) = &entry.value.payload {
-                    for meta_entry in &meta_obj.entries {
-                        if meta_entry.key.as_str() == Some(field) {
-                            if let Some(Payload::Scalar(s)) = &meta_entry.value.payload {
-                                return Some(s.text.clone());
-                            }
-                        }
+            if entry.key.as_str() == Some("meta")
+                && let Some(Payload::Object(meta_obj)) = &entry.value.payload
+            {
+                for meta_entry in &meta_obj.entries {
+                    if meta_entry.key.as_str() == Some(field)
+                        && let Some(Payload::Scalar(s)) = &meta_entry.value.payload
+                    {
+                        return Some(s.text.clone());
                     }
                 }
             }
@@ -1306,14 +1313,20 @@ fn calculate_next_version(current: &str, changes: &SchemaChanges) -> Result<Stri
         return Err(CliError::Parse(format!("invalid version: {current}")));
     }
 
-    let major: u64 = parts[0].parse().map_err(|_| CliError::Parse(format!("invalid major: {}", parts[0])))?;
-    let minor: u64 = parts[1].parse().map_err(|_| CliError::Parse(format!("invalid minor: {}", parts[1])))?;
-    let patch: u64 = parts[2].parse().map_err(|_| CliError::Parse(format!("invalid patch: {}", parts[2])))?;
+    let major: u64 = parts[0]
+        .parse()
+        .map_err(|_| CliError::Parse(format!("invalid major: {}", parts[0])))?;
+    let minor: u64 = parts[1]
+        .parse()
+        .map_err(|_| CliError::Parse(format!("invalid minor: {}", parts[1])))?;
+    let patch: u64 = parts[2]
+        .parse()
+        .map_err(|_| CliError::Parse(format!("invalid patch: {}", parts[2])))?;
 
     let (new_major, new_minor, new_patch) = if !changes.breaking.is_empty() {
         // Breaking change -> major bump (or 1.0.0 if pre-1.0)
         if major == 0 {
-            (0, minor + 1, 0)  // 0.x stays 0.x but bumps minor for breaking
+            (0, minor + 1, 0) // 0.x stays 0.x but bumps minor for breaking
         } else {
             (major + 1, 0, 0)
         }
@@ -1463,7 +1476,8 @@ fn fetch_latest_version(crate_name: &str) -> Result<String, CliError> {
 
 fn fetch_crate_schema(crate_name: &str, version: &str) -> Result<String, CliError> {
     let url = format!("{STAGING_DOWNLOAD}/{crate_name}/{version}/download");
-    let temp_dir = std::env::temp_dir().join(format!("styx-diff-{}-{}", crate_name, std::process::id()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("styx-diff-{}-{}", crate_name, std::process::id()));
     std::fs::create_dir_all(&temp_dir)?;
 
     // Download and extract in one pipeline
@@ -1545,16 +1559,16 @@ fn extract_schema_map(value: &Value) -> std::collections::HashMap<Option<String>
     // Look for "schema" entry in the root object
     if let Some(Payload::Object(obj)) = &value.payload {
         for entry in &obj.entries {
-            if entry.key.as_str() == Some("schema") {
-                if let Some(Payload::Object(schema_obj)) = &entry.value.payload {
-                    for schema_entry in &schema_obj.entries {
-                        let key = if schema_entry.key.is_unit() {
-                            None
-                        } else {
-                            schema_entry.key.as_str().map(String::from)
-                        };
-                        map.insert(key, &schema_entry.value);
-                    }
+            if entry.key.as_str() == Some("schema")
+                && let Some(Payload::Object(schema_obj)) = &entry.value.payload
+            {
+                for schema_entry in &schema_obj.entries {
+                    let key = if schema_entry.key.is_unit() {
+                        None
+                    } else {
+                        schema_entry.key.as_str().map(String::from)
+                    };
+                    map.insert(key, &schema_entry.value);
                 }
             }
         }
@@ -1603,11 +1617,11 @@ fn compare_object_fields(
     let local_fields = extract_object_fields(local);
 
     // Removed fields are breaking
-    for (field_name, _) in &baseline_fields {
+    for field_name in baseline_fields.keys() {
         if !local_fields.contains_key(field_name) {
-            changes.breaking.push(format!(
-                "removed field `{field_name}` from `{type_name}`"
-            ));
+            changes
+                .breaking
+                .push(format!("removed field `{field_name}` from `{type_name}`"));
         }
     }
 
@@ -1663,18 +1677,18 @@ fn compare_enum_variants(
     // Removed variants are breaking
     for variant in &baseline_variants {
         if !local_variants.contains(variant) {
-            changes.breaking.push(format!(
-                "removed variant `{variant}` from `{type_name}`"
-            ));
+            changes
+                .breaking
+                .push(format!("removed variant `{variant}` from `{type_name}`"));
         }
     }
 
     // Added variants are additive
     for variant in &local_variants {
         if !baseline_variants.contains(variant) {
-            changes.additive.push(format!(
-                "added variant `{variant}` to `{type_name}`"
-            ));
+            changes
+                .additive
+                .push(format!("added variant `{variant}` to `{type_name}`"));
         }
     }
 }
