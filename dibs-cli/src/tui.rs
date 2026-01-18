@@ -772,7 +772,14 @@ impl App {
                             self.next_tab();
                         }
                     }
-                    KeyCode::BackTab if !self.show_migration_source => self.prev_tab(),
+                    KeyCode::BackTab if !self.show_migration_source => {
+                        // In Schema tab, Shift+Tab cycles between panes in reverse
+                        if self.tab == Tab::Schema {
+                            self.schema_focus = (self.schema_focus + 1) % 2;
+                        } else {
+                            self.prev_tab();
+                        }
+                    }
                     // Navigation
                     KeyCode::Up | KeyCode::Char('k') => {
                         if self.show_migration_source {
