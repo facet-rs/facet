@@ -129,10 +129,12 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
                     .map(|c| ColumnInfo {
                         name: c.name.clone(),
                         sql_type: c.pg_type.to_string(),
+                        rust_type: c.rust_type.clone(),
                         nullable: c.nullable,
                         default: c.default.clone(),
                         primary_key: c.primary_key,
                         unique: c.unique,
+                        doc: c.doc.clone(),
                     })
                     .collect(),
                 foreign_keys: t

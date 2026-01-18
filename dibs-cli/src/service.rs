@@ -15,7 +15,9 @@ use crate::config::Config;
 use dibs_proto::DibsServiceClient;
 use roam_stream::{ConnectionHandle, Driver, HandshakeConfig, NoDispatcher, accept};
 use std::process::{Child, Command, Stdio};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
+use tokio::process::Command as TokioCommand;
 
 /// A connection to the dibs service.
 pub struct ServiceConnection {
@@ -23,8 +25,8 @@ pub struct ServiceConnection {
     handle: ConnectionHandle,
     /// The driver task handle (keeps connection alive)
     _driver: tokio::task::JoinHandle<()>,
-    /// The spawned child process
-    _child: Child,
+    /// The spawned child process (if held)
+    _child: Option<Child>,
 }
 
 impl ServiceConnection {
@@ -95,7 +97,7 @@ pub async fn connect_to_service(config: &Config) -> Result<ServiceConnection, Se
     Ok(ServiceConnection {
         handle,
         _driver: driver_handle,
-        _child: child,
+        _child: Some(child),
     })
 }
 
@@ -121,3 +123,184 @@ impl std::fmt::Display for ServiceError {
 }
 
 impl std::error::Error for ServiceError {}
+
+/// A line of output from the build process.
+#[derive(Debug, Clone)]
+pub struct BuildOutput {
+    /// The text content
+    pub text: String,
+    /// Whether this came from stderr (vs stdout)
+    pub is_stderr: bool,
+}
+
+/// A build process that captures output and eventually yields a connection.
+pub struct BuildProcess {
+    /// Receiver for output lines from background tasks
+    output_rx: tokio::sync::mpsc::UnboundedReceiver<BuildOutput>,
+    /// The TCP listener waiting for the service to connect back
+    listener: TcpListener,
+    /// Handle to the child process (to check exit status)
+    child_handle: tokio::task::JoinHandle<Option<std::process::ExitStatus>>,
+    /// Cached exit status
+    exit_status: Option<std::process::ExitStatus>,
+}
+
+impl BuildProcess {
+    /// Poll for the next line of output (non-blocking).
+    pub fn try_read_line(&mut self) -> Option<BuildOutput> {
+        self.output_rx.try_recv().ok()
+    }
+
+    /// Check if the child process has exited (async version).
+    pub async fn check_exit(&mut self) -> Option<std::process::ExitStatus> {
+        if self.exit_status.is_some() {
+            return self.exit_status;
+        }
+        // Check if the background task completed
+        if self.child_handle.is_finished() {
+            // Poll it to get the result
+            use tokio::time::{Duration, timeout};
+            if let Ok(Ok(status)) = timeout(Duration::from_millis(1), &mut self.child_handle).await {
+                self.exit_status = status;
+                return status;
+            }
+        }
+        None
+    }
+
+    /// Try to accept a connection from the service.
+    ///
+    /// Returns `None` if no connection is ready yet.
+    pub async fn try_accept(&mut self) -> Result<Option<ServiceConnection>, ServiceError> {
+        use tokio::time::{Duration, timeout};
+
+        // Try to accept with a very short timeout (non-blocking feel)
+        match timeout(Duration::from_millis(10), self.listener.accept()).await {
+            Ok(Ok((stream, _peer_addr))) => {
+                // Establish roam session
+                let (handle, driver): (ConnectionHandle, Driver<_, NoDispatcher>) =
+                    accept(stream, HandshakeConfig::default(), NoDispatcher)
+                        .await
+                        .map_err(|e| {
+                            ServiceError::Connection(format!("Roam handshake failed: {}", e))
+                        })?;
+
+                // Spawn the driver
+                let driver_handle = tokio::spawn(async move {
+                    if let Err(e) = driver.run().await {
+                        eprintln!("Roam driver error: {}", e);
+                    }
+                });
+
+                Ok(Some(ServiceConnection {
+                    handle,
+                    _driver: driver_handle,
+                    _child: None,
+                }))
+            }
+            Ok(Err(e)) => Err(ServiceError::Connection(format!(
+                "Accept failed: {}",
+                e
+            ))),
+            Err(_) => Ok(None), // Timeout - no connection yet
+        }
+    }
+}
+
+/// Start building/running the service, returning a BuildProcess that can be polled.
+pub async fn start_service(config: &Config) -> Result<BuildProcess, ServiceError> {
+    // Bind to a random available port
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| ServiceError::Spawn(format!("Failed to bind to port: {}", e)))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| ServiceError::Spawn(format!("Failed to get local address: {}", e)))?;
+
+    // Build the command
+    let mut cmd = if let Some(binary) = &config.db.binary {
+        TokioCommand::new(binary)
+    } else if let Some(crate_name) = &config.db.crate_name {
+        let mut cmd = TokioCommand::new("cargo");
+        cmd.args(["run", "-p", crate_name, "--"]);
+        cmd
+    } else {
+        return Err(ServiceError::Config(
+            "No db.crate_name or db.binary specified in dibs.toml".to_string(),
+        ));
+    };
+
+    // Tell the service where to connect
+    cmd.env("DIBS_CLI_ADDR", addr.to_string());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    // Spawn the service
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| ServiceError::Spawn(format!("Failed to spawn db service: {}", e)))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ServiceError::Spawn("Failed to capture stdout".to_string()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ServiceError::Spawn("Failed to capture stderr".to_string()))?;
+
+    // Create channel for output
+    let (output_tx, output_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    // Spawn background task to read stdout
+    let tx_stdout = output_tx.clone();
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    let _ = tx_stdout.send(BuildOutput {
+                        text: line.trim_end().to_string(),
+                        is_stderr: false,
+                    });
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Spawn background task to read stderr
+    let tx_stderr = output_tx;
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    let _ = tx_stderr.send(BuildOutput {
+                        text: line.trim_end().to_string(),
+                        is_stderr: true,
+                    });
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Spawn background task to wait for child exit
+    let child_handle = tokio::spawn(async move {
+        child.wait().await.ok()
+    });
+
+    Ok(BuildProcess {
+        output_rx,
+        listener,
+        child_handle,
+        exit_status: None,
+    })
+}

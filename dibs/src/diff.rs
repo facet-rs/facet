@@ -388,10 +388,12 @@ mod tests {
         Column {
             name: name.to_string(),
             pg_type,
+            rust_type: None,
             nullable,
             default: None,
             primary_key: false,
             unique: false,
+            doc: None,
         }
     }
 

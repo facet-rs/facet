@@ -118,10 +118,12 @@ async fn introspect_columns(client: &Client, table_name: &str) -> Result<Vec<Col
         columns.push(Column {
             name,
             pg_type,
+            rust_type: None, // Not available from introspection
             nullable,
             default,
             primary_key: false, // Set later
             unique: false,      // Set later
+            doc: None,          // Not available from introspection
         });
     }
 
@@ -289,7 +291,7 @@ fn pg_type_from_info_schema(data_type: &str, udt_name: &str) -> PgType {
         "BYTEA" => PgType::Bytea,
         "DATE" => PgType::Date,
         "TIME WITHOUT TIME ZONE" | "TIME" => PgType::Time,
-        "TIMESTAMP WITH TIME ZONE" => PgType::Timestamptz,
+        "TIMESTAMP WITH TIME ZONE" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP" => PgType::Timestamptz,
         "UUID" => PgType::Uuid,
         "JSONB" => PgType::Jsonb,
         "USER-DEFINED" => {
@@ -316,7 +318,7 @@ fn pg_type_from_info_schema(data_type: &str, udt_name: &str) -> PgType {
                 "bool" => PgType::Boolean,
                 "text" | "varchar" | "bpchar" => PgType::Text,
                 "bytea" => PgType::Bytea,
-                "timestamptz" => PgType::Timestamptz,
+                "timestamptz" | "timestamp" => PgType::Timestamptz,
                 "date" => PgType::Date,
                 "time" => PgType::Time,
                 "uuid" => PgType::Uuid,

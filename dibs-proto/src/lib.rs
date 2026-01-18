@@ -35,6 +35,8 @@ pub struct ColumnInfo {
     pub name: String,
     /// SQL type (e.g., "BIGINT", "TEXT")
     pub sql_type: String,
+    /// Rust type name (e.g., "i64", "String", "jiff::Timestamp")
+    pub rust_type: Option<String>,
     /// Whether the column is nullable
     pub nullable: bool,
     /// Default value expression (if any)
@@ -43,6 +45,8 @@ pub struct ColumnInfo {
     pub primary_key: bool,
     /// Whether this has a unique constraint
     pub unique: bool,
+    /// Doc comment (if any)
+    pub doc: Option<String>,
 }
 
 /// Foreign key information.

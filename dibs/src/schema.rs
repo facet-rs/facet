@@ -147,6 +147,8 @@ pub struct Column {
     pub name: String,
     /// Postgres type
     pub pg_type: PgType,
+    /// Rust type name (if known, e.g., from reflection)
+    pub rust_type: Option<String>,
     /// Whether the column allows NULL
     pub nullable: bool,
     /// Default value expression (if any)
@@ -155,6 +157,8 @@ pub struct Column {
     pub primary_key: bool,
     /// Whether this has a unique constraint
     pub unique: bool,
+    /// Doc comment (if any)
+    pub doc: Option<String>,
 }
 
 /// A foreign key constraint.
@@ -366,7 +370,17 @@ pub fn rust_type_to_pg(type_name: &str) -> Option<PgType> {
         "bool" => Some(PgType::Boolean),
         "String" | "&str" => Some(PgType::Text),
         "Vec<u8>" | "&[u8]" => Some(PgType::Bytea),
-        // TODO: Add jiff types, uuid, etc.
+        // Datetime types
+        "Timestamp" | "jiff::Timestamp" | "jiff::tz::Timestamp" => Some(PgType::Timestamptz),
+        "Zoned" | "jiff::Zoned" | "jiff::tz::Zoned" => Some(PgType::Timestamptz),
+        "DateTime" | "chrono::DateTime" | "chrono::DateTime<Utc>" | "chrono::DateTime<Local>" => {
+            Some(PgType::Timestamptz)
+        }
+        "NaiveDateTime" | "chrono::NaiveDateTime" => Some(PgType::Timestamptz),
+        "Date" | "jiff::civil::Date" | "chrono::NaiveDate" => Some(PgType::Date),
+        "Time" | "jiff::civil::Time" | "chrono::NaiveTime" => Some(PgType::Time),
+        // UUID
+        "Uuid" | "uuid::Uuid" => Some(PgType::Uuid),
         _ => None,
     }
 }
@@ -488,13 +502,22 @@ impl TableDef {
             // Check for default
             let default = field_get_dibs_attr_str(field, "default").map(|s| s.to_string());
 
+            // Extract doc comment from field
+            let doc = if field.doc.is_empty() {
+                None
+            } else {
+                Some(field.doc.join("\n"))
+            };
+
             columns.push(Column {
                 name: col_name.clone(),
                 pg_type,
+                rust_type: Some(inner_shape.type_identifier.to_string()),
                 nullable,
                 default,
                 primary_key,
                 unique,
+                doc,
             });
 
             // Check for foreign key

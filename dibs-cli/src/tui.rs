@@ -1,6 +1,7 @@
 //! Unified TUI for dibs - shows schema, diff, and migrations in one interface.
 
 use std::io::{self, stdout};
+use std::time::Duration;
 
 use arborium::Highlighter;
 use arborium_theme::builtin;
@@ -12,16 +13,18 @@ use crossterm::{
 use dibs_proto::{DiffRequest, DiffResult, MigrationInfo, MigrationStatusRequest, SchemaInfo};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs},
 };
 
 use crate::config::Config;
 use crate::highlight::highlight_to_lines;
-use crate::service::{self, ServiceConnection};
+use crate::service::{self, BuildOutput, ServiceConnection};
 
 /// The main unified TUI application
 pub struct App {
-    /// Current tab
+    /// Current phase of the app
+    phase: AppPhase,
+    /// Current tab (when in Connected phase)
     tab: Tab,
     /// Service connection (if available)
     conn: Option<ServiceConnection>,
@@ -53,6 +56,22 @@ pub struct App {
     highlighter: Highlighter,
     /// Theme for syntax highlighting
     theme: arborium_theme::Theme,
+    /// Build output lines (during build phase)
+    build_output: Vec<BuildOutput>,
+    /// Scroll position in build output
+    build_scroll: usize,
+    /// Auto-scroll build output
+    build_auto_scroll: bool,
+}
+
+/// The current phase of the application.
+enum AppPhase {
+    /// Building/starting the service
+    Building,
+    /// Connected and ready
+    Connected,
+    /// Failed to connect
+    Failed(String),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -100,6 +119,7 @@ impl App {
         migration_state.select(Some(0));
 
         Self {
+            phase: AppPhase::Building,
             tab: Tab::Schema,
             conn: None,
             database_url: std::env::var("DATABASE_URL").ok(),
@@ -117,6 +137,9 @@ impl App {
             source_scroll: 0,
             highlighter: Highlighter::new(),
             theme: builtin::catppuccin_mocha().clone(),
+            build_output: Vec::new(),
+            build_scroll: 0,
+            build_auto_scroll: true,
         }
     }
 
@@ -130,11 +153,13 @@ impl App {
         // Create a tokio runtime for async operations
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
-        // Connect to service and fetch initial data
-        rt.block_on(self.initialize(config));
-
-        // Main loop
-        let result = self.main_loop(&mut terminal, &rt);
+        // If we have config, start building with TUI visible
+        let result = if let Some(cfg) = config {
+            self.run_with_build(&mut terminal, &rt, cfg)
+        } else {
+            self.phase = AppPhase::Failed("No dibs.styx config found".to_string());
+            self.main_loop(&mut terminal, &rt)
+        };
 
         // Restore terminal
         disable_raw_mode()?;
@@ -143,49 +168,232 @@ impl App {
         result
     }
 
-    async fn initialize(&mut self, config: Option<&Config>) {
-        self.loading = Some("Connecting to service...".to_string());
+    /// Run the TUI with build phase, then main loop.
+    fn run_with_build(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        rt: &tokio::runtime::Runtime,
+        config: &Config,
+    ) -> io::Result<()> {
+        // Start the build process
+        let mut build_process = match rt.block_on(service::start_service(config)) {
+            Ok(bp) => bp,
+            Err(e) => {
+                self.phase = AppPhase::Failed(format!("Failed to start service: {}", e));
+                return self.main_loop(terminal, rt);
+            }
+        };
 
-        if let Some(cfg) = config {
-            match service::connect_to_service(cfg).await {
-                Ok(conn) => {
-                    self.conn = Some(conn);
-                    self.loading = Some("Fetching schema...".to_string());
+        // Build phase loop - show cargo output while waiting for connection
+        loop {
+            // Draw the build UI
+            terminal.draw(|frame| self.render_build_phase(frame))?;
 
-                    // Fetch schema
-                    if let Some(conn) = &self.conn {
-                        match conn.client().schema().await {
-                            Ok(schema) => self.schema = Some(schema),
-                            Err(e) => self.error = Some(format!("Schema fetch: {:?}", e)),
-                        }
-                    }
-
-                    // Fetch migrations if we have a database URL
-                    if let (Some(conn), Some(url)) = (&self.conn, &self.database_url) {
-                        self.loading = Some("Fetching migration status...".to_string());
-                        match conn
-                            .client()
-                            .migration_status(MigrationStatusRequest {
-                                database_url: url.clone(),
-                            })
-                            .await
-                        {
-                            Ok(migrations) => self.migrations = Some(migrations),
-                            Err(e) => self.error = Some(format!("Migration status: {:?}", e)),
-                        }
-                    }
-
-                    self.loading = None;
-                }
-                Err(e) => {
-                    self.error = Some(format!("Failed to connect: {}", e));
-                    self.loading = None;
+            // Poll for build output (non-blocking)
+            while let Some(line) = build_process.try_read_line() {
+                self.build_output.push(line);
+                if self.build_auto_scroll {
+                    self.build_scroll = self.build_output.len().saturating_sub(1);
                 }
             }
-        } else {
-            self.error = Some("No dibs.styx config found".to_string());
-            self.loading = None;
+
+            // Check if the child process exited with an error
+            if let Some(status) = rt.block_on(build_process.check_exit()) {
+                if !status.success() {
+                    self.phase = AppPhase::Failed(format!(
+                        "Build failed with exit code: {}",
+                        status.code().unwrap_or(-1)
+                    ));
+                    return self.main_loop(terminal, rt);
+                }
+            }
+
+            // Try to accept a connection
+            match rt.block_on(build_process.try_accept()) {
+                Ok(Some(conn)) => {
+                    // Connected! Transition to main phase
+                    self.conn = Some(conn);
+                    self.phase = AppPhase::Connected;
+                    self.loading = Some("Fetching schema...".to_string());
+
+                    // Fetch initial data
+                    rt.block_on(self.fetch_initial_data());
+
+                    return self.main_loop(terminal, rt);
+                }
+                Ok(None) => {
+                    // No connection yet, continue
+                }
+                Err(e) => {
+                    self.phase = AppPhase::Failed(format!("Connection failed: {}", e));
+                    return self.main_loop(terminal, rt);
+                }
+            }
+
+            // Handle input (with short timeout for responsiveness)
+            if event::poll(Duration::from_millis(50))? {
+                if let Event::Key(key) = event::read()?
+                    && key.kind == KeyEventKind::Press
+                {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            self.build_auto_scroll = false;
+                            self.build_scroll = self.build_scroll.saturating_sub(1);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if self.build_scroll < self.build_output.len().saturating_sub(1) {
+                                self.build_scroll += 1;
+                            } else {
+                                self.build_auto_scroll = true;
+                            }
+                        }
+                        KeyCode::Char('G') => {
+                            self.build_scroll = self.build_output.len().saturating_sub(1);
+                            self.build_auto_scroll = true;
+                        }
+                        KeyCode::Char('g') => {
+                            self.build_scroll = 0;
+                            self.build_auto_scroll = false;
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
+    }
+
+    /// Fetch initial data after connection is established.
+    async fn fetch_initial_data(&mut self) {
+        if let Some(conn) = &self.conn {
+            // Fetch schema
+            match conn.client().schema().await {
+                Ok(schema) => self.schema = Some(schema),
+                Err(e) => self.error = Some(format!("Schema fetch: {:?}", e)),
+            }
+
+            // Fetch migrations if we have a database URL
+            if let Some(url) = &self.database_url {
+                self.loading = Some("Fetching migration status...".to_string());
+                match conn
+                    .client()
+                    .migration_status(MigrationStatusRequest {
+                        database_url: url.clone(),
+                    })
+                    .await
+                {
+                    Ok(migrations) => self.migrations = Some(migrations),
+                    Err(e) => self.error = Some(format!("Migration status: {:?}", e)),
+                }
+            }
+        }
+        self.loading = None;
+    }
+
+    /// Render the build phase UI.
+    fn render_build_phase(&self, frame: &mut Frame) {
+        let area = frame.area();
+
+        // Layout: header + build output + status bar
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Header
+                Constraint::Min(0),    // Build output
+                Constraint::Length(1), // Status bar
+            ])
+            .split(area);
+
+        // Header
+        let header = Paragraph::new(Line::from(vec![
+            Span::styled(" dibs ", Style::default().fg(Color::Cyan).bold()),
+            Span::styled("Building...", Style::default().fg(Color::Yellow)),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
+        frame.render_widget(header, chunks[0]);
+
+        // Build output
+        let visible_height = chunks[1].height.saturating_sub(2) as usize; // -2 for borders
+        let start = self.build_scroll.saturating_sub(visible_height / 2);
+        let lines: Vec<Line> = self
+            .build_output
+            .iter()
+            .skip(start)
+            .take(visible_height)
+            .map(|output| {
+                let style = if output.is_stderr {
+                    // Cargo uses stderr for most output, color based on content
+                    if output.text.contains("Compiling") {
+                        Style::default().fg(Color::Green)
+                    } else if output.text.contains("warning") {
+                        Style::default().fg(Color::Yellow)
+                    } else if output.text.contains("error") {
+                        Style::default().fg(Color::Red)
+                    } else if output.text.contains("Finished") {
+                        Style::default().fg(Color::Cyan)
+                    } else if output.text.contains("Running") {
+                        Style::default().fg(Color::Magenta)
+                    } else {
+                        Style::default().fg(Color::White)
+                    }
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                Line::from(Span::styled(&output.text, style))
+            })
+            .collect();
+
+        let output_block = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(" Build Output ")
+                .title_style(Style::default().fg(Color::Cyan)),
+        );
+        frame.render_widget(output_block, chunks[1]);
+
+        // Scrollbar
+        if self.build_output.len() > visible_height {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None);
+            let mut scrollbar_state = ScrollbarState::new(self.build_output.len())
+                .position(self.build_scroll);
+            frame.render_stateful_widget(
+                scrollbar,
+                chunks[1].inner(Margin {
+                    vertical: 1,
+                    horizontal: 0,
+                }),
+                &mut scrollbar_state,
+            );
+        }
+
+        // Status bar
+        let status = Paragraph::new(Line::from(vec![
+            Span::styled(" j/k ", Style::default().fg(Color::Yellow)),
+            Span::raw("scroll  "),
+            Span::styled("g/G ", Style::default().fg(Color::Yellow)),
+            Span::raw("top/bottom  "),
+            Span::styled("q ", Style::default().fg(Color::Yellow)),
+            Span::raw("quit  "),
+            Span::raw("│  "),
+            Span::styled(
+                format!("{} lines", self.build_output.len()),
+                Style::default().fg(Color::DarkGray),
+            ),
+            if self.build_auto_scroll {
+                Span::styled("  [auto-scroll]", Style::default().fg(Color::DarkGray))
+            } else {
+                Span::raw("")
+            },
+        ]))
+        .style(Style::default().bg(Color::DarkGray));
+        frame.render_widget(status, chunks[2]);
     }
 
     fn main_loop(
@@ -497,6 +705,12 @@ impl App {
     }
 
     fn ui(&mut self, frame: &mut Frame) {
+        // Handle failed phase - show build output with error
+        if let AppPhase::Failed(ref msg) = self.phase {
+            self.render_failed_phase(frame, msg.clone());
+            return;
+        }
+
         let area = frame.area();
 
         // Layout: tabs (1) + main content + status bar (1)
@@ -546,6 +760,87 @@ impl App {
         // Status bar
         let status = self.build_status_bar();
         frame.render_widget(status, chunks[2]);
+    }
+
+    /// Render the failed phase - shows build output with error message.
+    fn render_failed_phase(&self, frame: &mut Frame, error_msg: String) {
+        let area = frame.area();
+
+        // Layout: header + error + build output + status bar
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Header
+                Constraint::Length(3), // Error
+                Constraint::Min(0),    // Build output
+                Constraint::Length(1), // Status bar
+            ])
+            .split(area);
+
+        // Header
+        let header = Paragraph::new(Line::from(vec![
+            Span::styled(" dibs ", Style::default().fg(Color::Cyan).bold()),
+            Span::styled("Build Failed", Style::default().fg(Color::Red).bold()),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red)),
+        );
+        frame.render_widget(header, chunks[0]);
+
+        // Error message
+        let error = Paragraph::new(error_msg)
+            .style(Style::default().fg(Color::Red))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::DarkGray))
+                    .title(" Error ")
+                    .title_style(Style::default().fg(Color::Red)),
+            );
+        frame.render_widget(error, chunks[1]);
+
+        // Build output (scrollable, show last lines)
+        let visible_height = chunks[2].height.saturating_sub(2) as usize;
+        let start = self.build_output.len().saturating_sub(visible_height);
+        let lines: Vec<Line> = self
+            .build_output
+            .iter()
+            .skip(start)
+            .take(visible_height)
+            .map(|output| {
+                let style = if output.is_stderr {
+                    if output.text.contains("error") {
+                        Style::default().fg(Color::Red)
+                    } else if output.text.contains("warning") {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::White)
+                    }
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                Line::from(Span::styled(&output.text, style))
+            })
+            .collect();
+
+        let output_block = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(" Build Output ")
+                .title_style(Style::default().fg(Color::Cyan)),
+        );
+        frame.render_widget(output_block, chunks[2]);
+
+        // Status bar
+        let status = Paragraph::new(Line::from(vec![
+            Span::styled(" q ", Style::default().fg(Color::Yellow)),
+            Span::raw("quit"),
+        ]))
+        .style(Style::default().bg(Color::DarkGray));
+        frame.render_widget(status, chunks[3]);
     }
 
     fn render_schema(&mut self, frame: &mut Frame, area: Rect) {

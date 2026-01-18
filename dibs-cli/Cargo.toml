@@ -14,7 +14,7 @@ path = "src/main.rs"
 [dependencies]
 dibs = { path = "../dibs" }
 dibs-proto = { path = "../dibs-proto" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util"] }
 tokio-postgres = "0.7"
 facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-args = { git = "https://github.com/facet-rs/facet", branch = "main" }
