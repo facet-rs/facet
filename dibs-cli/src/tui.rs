@@ -536,6 +536,21 @@ impl App {
                             self.move_down();
                         }
                     }
+                    KeyCode::Char('g') if self.tab == Tab::Diff && !self.show_migration_source => {
+                        // Show migration name dialog
+                        if let Some(diff) = &self.diff {
+                            if !diff.table_diffs.is_empty() {
+                                let suggested = self.suggest_migration_name();
+                                self.migration_name_input = suggested;
+                                self.migration_name_cursor = self.migration_name_input.len();
+                                self.show_migration_dialog = true;
+                            } else {
+                                self.error = Some("No changes to migrate".to_string());
+                            }
+                        } else {
+                            self.error = Some("No diff computed yet".to_string());
+                        }
+                    }
                     KeyCode::Char('g') if !self.show_migration_source => self.pending_g = true,
                     KeyCode::Char('G') if !self.show_migration_source => self.go_to_last(),
                     KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -572,22 +587,6 @@ impl App {
                     KeyCode::Char('r') if !self.show_migration_source => {
                         // Refresh
                         rt.block_on(self.refresh());
-                    }
-                    KeyCode::Char('g') if self.tab == Tab::Diff && !self.show_migration_source => {
-                        // Show migration name dialog
-                        if let Some(diff) = &self.diff {
-                            if !diff.table_diffs.is_empty() {
-                                // Generate a suggested name based on the diff
-                                let suggested = self.suggest_migration_name();
-                                self.migration_name_input = suggested;
-                                self.migration_name_cursor = self.migration_name_input.len();
-                                self.show_migration_dialog = true;
-                            } else {
-                                self.error = Some("No changes to migrate".to_string());
-                            }
-                        } else {
-                            self.error = Some("No diff computed yet".to_string());
-                        }
                     }
                     _ => {}
                 }
