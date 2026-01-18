@@ -606,7 +606,7 @@ impl App {
         let mut new_columns: Vec<(&str, &str)> = Vec::new(); // (table, column)
         let mut dropped_columns: Vec<(&str, &str)> = Vec::new();
         let mut type_changes: Vec<(&str, &str, &str)> = Vec::new(); // (table, column, new_type)
-        let mut other_changes = false;
+        let mut _other_changes = false;
 
         for td in &diff.table_diffs {
             for change in &td.changes {
@@ -632,12 +632,12 @@ impl App {
                             if let Some((_, new_type)) = change_desc.split_once(" -> ") {
                                 type_changes.push((&td.table, col.trim(), new_type.trim()));
                             } else {
-                                other_changes = true;
+                                _other_changes = true;
                             }
                         }
                     }
                 } else {
-                    other_changes = true;
+                    _other_changes = true;
                 }
             }
         }
