@@ -1,0 +1,9 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+items (
+  /// Documentation for first
+  a
+  b
+)

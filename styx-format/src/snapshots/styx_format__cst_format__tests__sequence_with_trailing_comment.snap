@@ -1,0 +1,9 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+extends (
+    "@eslint/js:recommended"
+    typescript-eslint:strictTypeChecked
+    // don't fold
+)

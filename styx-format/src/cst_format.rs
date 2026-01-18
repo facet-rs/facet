@@ -3,7 +3,7 @@
 //! This formatter works directly with the lossless CST (Concrete Syntax Tree),
 //! preserving all comments and producing properly indented output.
 
-use styx_cst::ast::{AstNode, Document, Entry, Object, Separator};
+use styx_cst::ast::{AstNode, Document, Entry, Object, Separator, Sequence};
 use styx_cst::{SyntaxKind, SyntaxNode};
 
 use crate::FormatOptions;
@@ -216,28 +216,92 @@ impl CstFormatter {
     }
 
     fn format_sequence(&mut self, node: &SyntaxNode) {
+        let seq = Sequence::cast(node.clone()).unwrap();
+        let entries: Vec<_> = seq.entries().collect();
+
         self.write("(");
 
-        // Get all elements (which are wrapped in ENTRY/KEY nodes)
-        let elements: Vec<_> = node
-            .children()
-            .filter(|n| n.kind() == SyntaxKind::ENTRY)
-            .collect();
+        if entries.is_empty() {
+            self.write(")");
+            return;
+        }
 
-        for (i, entry) in elements.iter().enumerate() {
-            // Get the actual value from the entry's key
-            if let Some(key) = entry.children().find(|n| n.kind() == SyntaxKind::KEY) {
-                for child in key.children() {
-                    self.format_node(&child);
+        if seq.is_multiline() {
+            // Multiline format - preserve newlines and comments
+            self.write_newline();
+            self.indent_level += 1;
+
+            for (i, entry) in entries.iter().enumerate() {
+                // Write preceding comments for this entry
+                self.write_preceding_comments(entry.syntax());
+
+                // Get the actual value from the entry's key
+                if let Some(key) = entry
+                    .syntax()
+                    .children()
+                    .find(|n| n.kind() == SyntaxKind::KEY)
+                {
+                    for child in key.children() {
+                        self.format_node(&child);
+                    }
+                }
+
+                if i < entries.len() - 1 {
+                    self.write_newline();
                 }
             }
 
-            if i < elements.len() - 1 {
-                self.write(" ");
+            // Check for trailing comments (comments after the last entry but before `)`)
+            self.write_trailing_sequence_comments(node);
+
+            self.write_newline();
+            self.indent_level -= 1;
+            self.write(")");
+        } else {
+            // Inline format - single line with spaces
+            for (i, entry) in entries.iter().enumerate() {
+                // Get the actual value from the entry's key
+                if let Some(key) = entry
+                    .syntax()
+                    .children()
+                    .find(|n| n.kind() == SyntaxKind::KEY)
+                {
+                    for child in key.children() {
+                        self.format_node(&child);
+                    }
+                }
+
+                if i < entries.len() - 1 {
+                    self.write(" ");
+                }
+            }
+            self.write(")");
+        }
+    }
+
+    /// Write trailing comments in a sequence (comments after the last entry but before `)`).
+    fn write_trailing_sequence_comments(&mut self, node: &SyntaxNode) {
+        // Collect all children to find where the last entry ends
+        let children: Vec<_> = node.children_with_tokens().collect();
+
+        // Find the position of the last ENTRY
+        let last_entry_idx = children.iter().rposition(
+            |el| matches!(el, rowan::NodeOrToken::Node(n) if n.kind() == SyntaxKind::ENTRY),
+        );
+
+        let Some(last_entry_idx) = last_entry_idx else {
+            return;
+        };
+
+        // Look for comments after the last entry
+        for el in children.iter().skip(last_entry_idx + 1) {
+            if let rowan::NodeOrToken::Token(t) = el {
+                if t.kind() == SyntaxKind::LINE_COMMENT || t.kind() == SyntaxKind::DOC_COMMENT {
+                    self.write_newline();
+                    self.write(t.text());
+                }
             }
         }
-
-        self.write(")");
     }
 
     fn format_key(&mut self, node: &SyntaxNode) {
@@ -541,6 +605,97 @@ schema {
         let input = "@a()";
         let output = format(input);
         assert_eq!(output.trim(), "@a()");
+    }
+
+    // === Sequence comment tests ===
+
+    #[test]
+    fn test_multiline_sequence_preserves_structure() {
+        let input = r#"items (
+  a
+  b
+  c
+)"#;
+        let output = format(input);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_sequence_with_trailing_comment() {
+        let input = r#"extends (
+  "@eslint/js:recommended"
+  typescript-eslint:strictTypeChecked
+  // don't fold
+)"#;
+        let output = format(input);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_sequence_with_inline_comments() {
+        let input = r#"items (
+  // first item
+  a
+  // second item
+  b
+)"#;
+        let output = format(input);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_sequence_comment_idempotent() {
+        let input = r#"extends (
+  "@eslint/js:recommended"
+  typescript-eslint:strictTypeChecked
+  // don't fold
+)"#;
+        let once = format(input);
+        let twice = format(&once);
+        assert_eq!(once, twice, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_inline_sequence_stays_inline() {
+        // No newlines or comments = stays inline
+        let input = "items (a b c)";
+        let output = format(input);
+        assert_eq!(output.trim(), "items (a b c)");
+    }
+
+    #[test]
+    fn test_sequence_with_doc_comment() {
+        let input = r#"items (
+  /// Documentation for first
+  a
+  b
+)"#;
+        let output = format(input);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_nested_multiline_sequence() {
+        let input = r#"outer (
+  (a b)
+  // between
+  (c d)
+)"#;
+        let output = format(input);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_sequence_in_object_with_comment() {
+        let input = r#"config {
+  items (
+    a
+    // comment
+    b
+  )
+}"#;
+        let output = format(input);
+        insta::assert_snapshot!(output);
     }
 }
 

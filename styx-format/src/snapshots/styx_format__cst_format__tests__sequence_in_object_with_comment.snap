@@ -1,0 +1,11 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+config {
+    items (
+        a
+        // comment
+        b
+    )
+}
