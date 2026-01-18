@@ -281,7 +281,7 @@ impl App {
                 Err(e) => self.error = Some(format!("Schema fetch: {:?}", e)),
             }
 
-            // Fetch migrations if we have a database URL
+            // Fetch migrations and diff if we have a database URL
             if let Some(url) = &self.database_url {
                 self.loading = Some("Fetching migration status...".to_string());
                 match conn
@@ -293,6 +293,19 @@ impl App {
                 {
                     Ok(migrations) => self.migrations = Some(migrations),
                     Err(e) => self.error = Some(format!("Migration status: {:?}", e)),
+                }
+
+                // Also fetch diff
+                self.loading = Some("Computing diff...".to_string());
+                match conn
+                    .client()
+                    .diff(DiffRequest {
+                        database_url: url.clone(),
+                    })
+                    .await
+                {
+                    Ok(diff) => self.diff = Some(diff),
+                    Err(e) => self.error = Some(format!("Diff failed: {:?}", e)),
                 }
             }
         }
@@ -504,10 +517,6 @@ impl App {
                     KeyCode::Char('1') if !self.show_migration_source => self.tab = Tab::Schema,
                     KeyCode::Char('2') if !self.show_migration_source => {
                         self.tab = Tab::Diff;
-                        // Fetch diff if not already fetched
-                        if self.diff.is_none() && self.conn.is_some() {
-                            rt.block_on(self.fetch_diff());
-                        }
                     }
                     KeyCode::Char('3') if !self.show_migration_source => self.tab = Tab::Migrations,
                     KeyCode::Tab if !self.show_migration_source => self.next_tab(),
@@ -583,28 +592,6 @@ impl App {
                     _ => {}
                 }
             }
-        }
-    }
-
-    async fn fetch_diff(&mut self) {
-        if let (Some(conn), Some(url)) = (&self.conn, &self.database_url) {
-            self.loading = Some("Computing diff...".to_string());
-            match conn
-                .client()
-                .diff(DiffRequest {
-                    database_url: url.clone(),
-                })
-                .await
-            {
-                Ok(diff) => {
-                    self.diff = Some(diff);
-                    self.error = None;
-                }
-                Err(e) => {
-                    self.error = Some(format!("Diff failed: {:?}", e));
-                }
-            }
-            self.loading = None;
         }
     }
 
@@ -810,23 +797,35 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
 
     async fn refresh(&mut self) {
         self.error = None;
-        if let Some(conn) = &self.conn {
-            self.loading = Some("Refreshing...".to_string());
+        let Some(conn) = &self.conn else { return };
+        let client = conn.client().clone();
 
-            // Refresh schema
-            match conn.client().schema().await {
-                Ok(schema) => self.schema = Some(schema),
-                Err(e) => self.error = Some(format!("Schema fetch: {:?}", e)),
-            }
+        self.loading = Some("Refreshing...".to_string());
 
-            // Refresh migrations
+        // Refresh schema
+        match client.schema().await {
+            Ok(schema) => self.schema = Some(schema),
+            Err(e) => self.error = Some(format!("Schema fetch: {:?}", e)),
+        }
+
+        // Refresh migrations and diff if we have a database URL
+        if let Some(url) = self.database_url.clone() {
             self.refresh_migrations().await;
 
-            // Clear cached diff
-            self.diff = None;
-
-            self.loading = None;
+            // Refresh diff
+            self.loading = Some("Computing diff...".to_string());
+            match client
+                .diff(DiffRequest {
+                    database_url: url,
+                })
+                .await
+            {
+                Ok(diff) => self.diff = Some(diff),
+                Err(e) => self.error = Some(format!("Diff failed: {:?}", e)),
+            }
         }
+
+        self.loading = None;
     }
 
     async fn refresh_migrations(&mut self) {
@@ -1314,6 +1313,14 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
                 Style::default().fg(Color::Green),
             )));
         } else {
+            // Prominent call-to-action
+            lines.push(Line::from(vec![
+                Span::styled("  Press ", Style::default().fg(Color::White)),
+                Span::styled(" g ", Style::default().fg(Color::Black).bg(Color::Yellow).bold()),
+                Span::styled(" to generate a migration", Style::default().fg(Color::White)),
+            ]));
+            lines.push(Line::from(""));
+
             lines.push(Line::from(Span::styled(
                 format!(
                     "Changes detected ({} tables affected):",
