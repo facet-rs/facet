@@ -77,20 +77,29 @@ struct CachedCallsite {
     fields: Vec<Field>,
 }
 
-/// Key for the callsite cache: (level, field names in order)
-type CallsiteKey = (Level, Vec<&'static str>);
+/// Key for the callsite cache: (level, target, field names in order)
+type CallsiteKey = (Level, &'static str, Vec<&'static str>);
 
-/// Global cache of callsites, keyed by (level, field_names).
+/// Global cache of callsites, keyed by (level, target, field_names).
 static CALLSITE_CACHE: OnceLock<Mutex<HashMap<CallsiteKey, CachedCallsite>>> = OnceLock::new();
 
 /// Base field names that are always present in cell events.
-const BASE_FIELD_NAMES: &[&str] = &["message", "cell", "target"];
+/// Note: "target" is part of event metadata, not a field.
+/// Note: "cell" is redundant - the target already identifies the source.
+const BASE_FIELD_NAMES: &[&str] = &["message"];
 
-/// Create or get a cached callsite for the given level and dynamic field names.
-fn get_or_create_callsite(level: Level, dynamic_field_names: &[&str]) -> &'static CachedCallsite {
+/// Create or get a cached callsite for the given level, target, and dynamic field names.
+fn get_or_create_callsite(
+    level: Level,
+    target: &str,
+    dynamic_field_names: &[&str],
+) -> &'static CachedCallsite {
     let cache = CALLSITE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
-    // Build the key: level + base fields + dynamic fields (all interned)
+    // Intern the target for use in metadata and cache key
+    let target_static = intern_string(target);
+
+    // Build the key: level + target + base fields + dynamic fields (all interned)
     let mut all_field_names: Vec<&'static str> = BASE_FIELD_NAMES
         .iter()
         .map(|&s| intern_string(s))
@@ -99,7 +108,7 @@ fn get_or_create_callsite(level: Level, dynamic_field_names: &[&str]) -> &'stati
         all_field_names.push(intern_string(name));
     }
 
-    let key = (level, all_field_names.clone());
+    let key = (level, target_static, all_field_names.clone());
 
     let mut cache_guard = cache.lock().unwrap();
 
@@ -163,11 +172,11 @@ fn get_or_create_callsite(level: Level, dynamic_field_names: &[&str]) -> &'stati
     // 5. Create and leak the metadata
     let metadata: &'static Metadata<'static> = Box::leak(Box::new(Metadata::new(
         "cell event",
-        "roam_tracing::cell",
+        target_static,
         tracing_level,
-        Some(file!()),
-        Some(line!()),
-        Some(module_path!()),
+        None, // file - not meaningful for remote events
+        None, // line - not meaningful for remote events
+        None, // module_path - not meaningful for remote events
         field_set,
         Kind::EVENT,
     )));
@@ -209,15 +218,14 @@ fn get_or_create_callsite(level: Level, dynamic_field_names: &[&str]) -> &'stati
 /// This converts the `TaggedRecord` into a proper `tracing::Event` and
 /// dispatches it through the current subscriber, preserving:
 /// - Log level (as the event level)
+/// - Target (as the event's metadata target - enables filtering by cell)
 /// - Message (as a `message` field)
-/// - Cell/peer name (as a `cell` field)
-/// - Target (as a `target` field)
 /// - All dynamic fields with their original names and typed values
 ///
 /// # Field Handling
 ///
 /// Dynamic field names are interned (leaked) to satisfy tracing's `'static`
-/// lifetime requirement. Callsites are cached per unique (level, field_names)
+/// lifetime requirement. Callsites are cached per unique (level, target, field_names)
 /// combination.
 ///
 /// For example, a cell event like:
@@ -225,24 +233,14 @@ fn get_or_create_callsite(level: Level, dynamic_field_names: &[&str]) -> &'stati
 /// info!(user_id = 42, action = "login", "User logged in");
 /// ```
 ///
-/// Will be dispatched as a tracing event with fields:
+/// Will be dispatched as a tracing event with:
+/// - target = "my_cell::auth" (in metadata, for filtering)
 /// - `message = "User logged in"`
-/// - `cell = "my-cell"`
-/// - `target = "my_cell::auth"`
 /// - `user_id = 42` (as i64)
 /// - `action = "login"` (as str)
 ///
 /// These are real tracing fields that subscribers can filter and format.
 pub fn dispatch_record(tagged: &TaggedRecord) {
-    let peer_fallback;
-    let cell_name = match &tagged.peer_name {
-        Some(name) => name.as_str(),
-        None => {
-            peer_fallback = format!("peer-{}", tagged.peer_id);
-            &peer_fallback
-        }
-    };
-
     match &tagged.record {
         TracingRecord::Event {
             level,
@@ -251,18 +249,17 @@ pub fn dispatch_record(tagged: &TaggedRecord) {
             fields,
             ..
         } => {
-            dispatch_event(
-                *level,
-                target,
-                message.as_deref().unwrap_or(""),
-                cell_name,
-                fields,
-            );
+            dispatch_event(*level, target, message.as_deref().unwrap_or(""), fields);
         }
-        TracingRecord::SpanEnter { name, level, .. } => {
+        TracingRecord::SpanEnter {
+            name,
+            level,
+            target,
+            ..
+        } => {
             if *level >= Level::Debug {
                 let msg = format!("-> {}", name);
-                dispatch_event(*level, "roam_tracing::span", &msg, cell_name, &[]);
+                dispatch_event(*level, target, &msg, &[]);
             }
         }
         TracingRecord::SpanExit { .. } | TracingRecord::SpanClose { .. } => {
@@ -272,18 +269,12 @@ pub fn dispatch_record(tagged: &TaggedRecord) {
 }
 
 /// Dispatch an event through the tracing system.
-fn dispatch_event(
-    level: Level,
-    target: &str,
-    message: &str,
-    cell: &str,
-    fields: &[(String, FieldValue)],
-) {
+fn dispatch_event(level: Level, target: &str, message: &str, fields: &[(String, FieldValue)]) {
     // Get dynamic field names
     let dynamic_names: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
 
-    // Get or create the callsite for this level + field combination
-    let cached = get_or_create_callsite(level, &dynamic_names);
+    // Get or create the callsite for this level + target + field combination
+    let cached = get_or_create_callsite(level, target, &dynamic_names);
 
     // Build values for base fields + dynamic fields
     // We need to box dynamic values to keep them alive and get &dyn Value
@@ -300,21 +291,18 @@ fn dispatch_event(
         .collect();
 
     // Build the values array with the exact number of fields
-    let num_fields = 3 + fields.len(); // message, cell, target + dynamic
+    let num_fields = 1 + fields.len(); // message + dynamic
     let mut values: Vec<(&Field, Option<&dyn Value>)> = Vec::with_capacity(num_fields);
 
-    // Base fields
+    // Base field: message
     values.push((&cached.fields[0], Some(&message as &dyn Value)));
-    values.push((&cached.fields[1], Some(&cell as &dyn Value)));
-    values.push((&cached.fields[2], Some(&target as &dyn Value)));
 
     // Dynamic fields
     for (i, boxed) in boxed_dynamic.iter().enumerate() {
-        values.push((&cached.fields[3 + i], Some(boxed.as_ref())));
+        values.push((&cached.fields[1 + i], Some(boxed.as_ref())));
     }
 
     // Dispatch the event
-    // We need to convert to a fixed-size array for value_set
     dispatch_with_value_count(cached.metadata, &cached.fields, &values);
 }
 
@@ -432,28 +420,34 @@ mod tests {
 
     #[test]
     fn test_get_or_create_callsite() {
-        let cs1 = get_or_create_callsite(Level::Info, &["user_id", "action"]);
-        let cs2 = get_or_create_callsite(Level::Info, &["user_id", "action"]);
-        let cs3 = get_or_create_callsite(Level::Info, &["different_field"]);
-        let cs4 = get_or_create_callsite(Level::Error, &["user_id", "action"]);
+        let cs1 = get_or_create_callsite(Level::Info, "my_cell::auth", &["user_id", "action"]);
+        let cs2 = get_or_create_callsite(Level::Info, "my_cell::auth", &["user_id", "action"]);
+        let cs3 = get_or_create_callsite(Level::Info, "my_cell::auth", &["different_field"]);
+        let cs4 = get_or_create_callsite(Level::Error, "my_cell::auth", &["user_id", "action"]);
+        let cs5 = get_or_create_callsite(Level::Info, "other_cell", &["user_id", "action"]);
 
-        // Same level + fields should return same callsite
+        // Same level + target + fields should return same callsite
         assert!(std::ptr::eq(cs1, cs2));
         // Different fields should return different callsite
         assert!(!std::ptr::eq(cs1, cs3));
         // Different level should return different callsite
         assert!(!std::ptr::eq(cs1, cs4));
+        // Different target should return different callsite
+        assert!(!std::ptr::eq(cs1, cs5));
     }
 
     #[test]
     fn test_callsite_has_correct_fields() {
-        let cs = get_or_create_callsite(Level::Info, &["count", "name"]);
+        let cs = get_or_create_callsite(Level::Info, "test_target", &["count", "name"]);
 
-        // Should have 5 fields: message, cell, target, count, name
-        assert_eq!(cs.fields.len(), 5);
+        // Should have 3 fields: message, count, name
+        assert_eq!(cs.fields.len(), 3);
 
         // Field names should match
         let field_names: Vec<&str> = cs.metadata.fields().iter().map(|f| f.name()).collect();
-        assert_eq!(field_names, vec!["message", "cell", "target", "count", "name"]);
+        assert_eq!(field_names, vec!["message", "count", "name"]);
+
+        // Target should be in metadata, not fields
+        assert_eq!(cs.metadata.target(), "test_target");
     }
 }
