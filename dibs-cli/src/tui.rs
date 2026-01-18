@@ -62,6 +62,12 @@ pub struct App {
     build_scroll: usize,
     /// Auto-scroll build output
     build_auto_scroll: bool,
+    /// Whether showing migration name input dialog
+    show_migration_dialog: bool,
+    /// Migration name being entered
+    migration_name_input: String,
+    /// Cursor position in migration name input
+    migration_name_cursor: usize,
 }
 
 /// The current phase of the application.
@@ -140,6 +146,9 @@ impl App {
             build_output: Vec::new(),
             build_scroll: 0,
             build_auto_scroll: true,
+            show_migration_dialog: false,
+            migration_name_input: String::new(),
+            migration_name_cursor: 0,
         }
     }
 
@@ -408,6 +417,62 @@ impl App {
                 && key.kind == KeyEventKind::Press
             {
                 // Handle 'g' prefix for gg
+                // Handle migration name dialog input
+                if self.show_migration_dialog {
+                    match key.code {
+                        KeyCode::Esc => {
+                            self.show_migration_dialog = false;
+                            self.migration_name_input.clear();
+                            self.migration_name_cursor = 0;
+                        }
+                        KeyCode::Enter => {
+                            let name = if self.migration_name_input.is_empty() {
+                                "auto".to_string()
+                            } else {
+                                self.migration_name_input.clone()
+                            };
+                            self.show_migration_dialog = false;
+                            rt.block_on(self.generate_migration_with_name(&name));
+                            self.migration_name_input.clear();
+                            self.migration_name_cursor = 0;
+                        }
+                        KeyCode::Backspace => {
+                            if self.migration_name_cursor > 0 {
+                                self.migration_name_cursor -= 1;
+                                self.migration_name_input.remove(self.migration_name_cursor);
+                            }
+                        }
+                        KeyCode::Delete => {
+                            if self.migration_name_cursor < self.migration_name_input.len() {
+                                self.migration_name_input.remove(self.migration_name_cursor);
+                            }
+                        }
+                        KeyCode::Left => {
+                            self.migration_name_cursor = self.migration_name_cursor.saturating_sub(1);
+                        }
+                        KeyCode::Right => {
+                            if self.migration_name_cursor < self.migration_name_input.len() {
+                                self.migration_name_cursor += 1;
+                            }
+                        }
+                        KeyCode::Home => {
+                            self.migration_name_cursor = 0;
+                        }
+                        KeyCode::End => {
+                            self.migration_name_cursor = self.migration_name_input.len();
+                        }
+                        KeyCode::Char(c) => {
+                            // Only allow valid migration name chars
+                            if c.is_alphanumeric() || c == '-' || c == '_' {
+                                self.migration_name_input.insert(self.migration_name_cursor, c);
+                                self.migration_name_cursor += 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 if self.pending_g {
                     self.pending_g = false;
                     if key.code == KeyCode::Char('g') {
@@ -500,8 +565,20 @@ impl App {
                         rt.block_on(self.refresh());
                     }
                     KeyCode::Char('g') if self.tab == Tab::Diff && !self.show_migration_source => {
-                        // Generate migration from diff
-                        rt.block_on(self.generate_migration());
+                        // Show migration name dialog
+                        if let Some(diff) = &self.diff {
+                            if !diff.table_diffs.is_empty() {
+                                // Generate a suggested name based on the diff
+                                let suggested = self.suggest_migration_name();
+                                self.migration_name_input = suggested;
+                                self.migration_name_cursor = self.migration_name_input.len();
+                                self.show_migration_dialog = true;
+                            } else {
+                                self.error = Some("No changes to migrate".to_string());
+                            }
+                        } else {
+                            self.error = Some("No diff computed yet".to_string());
+                        }
                     }
                     _ => {}
                 }
@@ -531,18 +608,48 @@ impl App {
         }
     }
 
-    async fn generate_migration(&mut self) {
-        // Check if there are any changes
+    /// Suggest a migration name based on the current diff.
+    fn suggest_migration_name(&self) -> String {
         if let Some(diff) = &self.diff {
-            if diff.table_diffs.is_empty() {
-                self.error = Some("No changes to migrate".to_string());
-                return;
+            // Try to create a meaningful name from the changes
+            let mut parts = Vec::new();
+            for td in &diff.table_diffs {
+                for change in &td.changes {
+                    let desc = &change.description;
+                    if desc.starts_with("+ table") {
+                        parts.push(format!("create-{}", td.table));
+                    } else if desc.starts_with("- table") {
+                        parts.push(format!("drop-{}", td.table));
+                    } else if desc.starts_with('+') {
+                        // Adding something
+                        if parts.iter().all(|p| !p.starts_with(&format!("alter-{}", td.table))) {
+                            parts.push(format!("alter-{}", td.table));
+                        }
+                    } else if desc.starts_with('-') {
+                        if parts.iter().all(|p| !p.starts_with(&format!("alter-{}", td.table))) {
+                            parts.push(format!("alter-{}", td.table));
+                        }
+                    } else if desc.starts_with('~') {
+                        if parts.iter().all(|p| !p.starts_with(&format!("alter-{}", td.table))) {
+                            parts.push(format!("alter-{}", td.table));
+                        }
+                    }
+                }
+            }
+            if parts.is_empty() {
+                "schema-update".to_string()
+            } else if parts.len() == 1 {
+                parts[0].clone()
+            } else {
+                // Multiple changes, use generic name
+                "schema-update".to_string()
             }
         } else {
-            self.error = Some("No diff computed yet".to_string());
-            return;
+            "schema-update".to_string()
         }
+    }
 
+    async fn generate_migration_with_name(&mut self, name: &str) {
         if let (Some(conn), Some(url)) = (&self.conn, &self.database_url) {
             self.loading = Some("Generating migration...".to_string());
 
@@ -556,11 +663,13 @@ impl App {
             {
                 Ok(sql) => {
                     // Generate migration file
-                    match self.create_migration_file(&sql) {
+                    match self.create_migration_file(name, &sql) {
                         Ok(path) => {
                             self.error = Some(format!("Created: {}", path));
                             // Refresh migrations list
                             self.refresh_migrations().await;
+                            // Clear diff since we've handled these changes
+                            self.diff = None;
                         }
                         Err(e) => {
                             self.error = Some(format!("Failed to create migration: {}", e));
@@ -575,12 +684,15 @@ impl App {
         }
     }
 
-    fn create_migration_file(&self, sql: &str) -> Result<String, std::io::Error> {
+    fn create_migration_file(&self, name: &str, sql: &str) -> Result<String, std::io::Error> {
         use std::fs;
         use std::io::Write;
 
         let now = jiff::Zoned::now();
         let timestamp = now.strftime("%Y%m%d%H%M%S");
+
+        // Convert name to snake_case for the module name
+        let module_name = name.replace('-', "_").to_lowercase();
 
         // Create migrations directory if it doesn't exist
         let migrations_dir = std::path::Path::new("src/migrations");
@@ -589,32 +701,33 @@ impl App {
         }
 
         // Generate filename
-        let filename = format!("m{}_auto.rs", timestamp);
+        let filename = format!("m{}_{}.rs", timestamp, module_name);
         let filepath = migrations_dir.join(&filename);
 
         // Generate version string
-        let version = format!("{}-auto", timestamp);
+        let version = format!("{}-{}", timestamp, name);
 
         // Generate Rust migration content
         let content = format!(
-            r#"//! Auto-generated migration
-//! Created: {}
+            r#"//! Migration: {name}
+//! Created: {created}
 
 use dibs::{{MigrationContext, Result}};
 
-#[dibs::migration("{}")]
+#[dibs::migration("{version}")]
 pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
-{}
+{sql_calls}
     Ok(())
 }}
 "#,
-            now.strftime("%Y-%m-%d %H:%M:%S %Z"),
-            version,
-            sql.lines()
+            name = name,
+            created = now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            version = version,
+            sql_calls = sql.lines()
                 .filter(|line| !line.is_empty())
                 .map(|line| {
                     if line.starts_with("--") {
-                        format!("    // {}\n", &line[3..])
+                        format!("    // {}\n", line.trim_start_matches("--").trim())
                     } else {
                         format!("    ctx.execute(\"{}\").await?;\n", line.replace('"', "\\\""))
                     }
@@ -624,6 +737,27 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
 
         let mut file = fs::File::create(&filepath)?;
         file.write_all(content.as_bytes())?;
+
+        // Add to mod.rs
+        let mod_rs_path = migrations_dir.join("mod.rs");
+        let module_line = format!("mod m{}_{};", timestamp, module_name);
+
+        if mod_rs_path.exists() {
+            // Read existing mod.rs and append
+            let existing = fs::read_to_string(&mod_rs_path)?;
+            if !existing.contains(&module_line) {
+                let mut mod_file = fs::OpenOptions::new()
+                    .append(true)
+                    .open(&mod_rs_path)?;
+                writeln!(mod_file, "{}", module_line)?;
+            }
+        } else {
+            // Create new mod.rs
+            let mut mod_file = fs::File::create(&mod_rs_path)?;
+            writeln!(mod_file, "//! Database migrations.")?;
+            writeln!(mod_file)?;
+            writeln!(mod_file, "{}", module_line)?;
+        }
 
         Ok(filepath.display().to_string())
     }
@@ -861,6 +995,78 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
         // Status bar
         let status = self.build_status_bar();
         frame.render_widget(status, chunks[2]);
+
+        // Render migration name dialog as overlay
+        if self.show_migration_dialog {
+            self.render_migration_dialog(frame, area);
+        }
+    }
+
+    /// Render the migration name input dialog as a centered overlay.
+    fn render_migration_dialog(&self, frame: &mut Frame, area: Rect) {
+        use ratatui::widgets::Clear;
+
+        // Center a dialog box
+        let dialog_width = 50u16.min(area.width.saturating_sub(4));
+        let dialog_height = 7u16;
+
+        let x = (area.width.saturating_sub(dialog_width)) / 2;
+        let y = (area.height.saturating_sub(dialog_height)) / 2;
+
+        let dialog_area = Rect::new(x, y, dialog_width, dialog_height);
+
+        // Clear the background
+        frame.render_widget(Clear, dialog_area);
+
+        // Dialog content
+        let inner_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([
+                Constraint::Length(1), // Label
+                Constraint::Length(1), // Spacing
+                Constraint::Length(1), // Input
+                Constraint::Length(1), // Help
+            ])
+            .split(dialog_area);
+
+        // Dialog box
+        let dialog = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Generate Migration ")
+            .title_style(Style::default().fg(Color::Cyan).bold());
+        frame.render_widget(dialog, dialog_area);
+
+        // Label
+        let label = Paragraph::new("Migration name:")
+            .style(Style::default().fg(Color::White));
+        frame.render_widget(label, inner_chunks[0]);
+
+        // Input field with cursor
+        let input_text = if self.migration_name_input.is_empty() {
+            Span::styled("(press Enter for default)", Style::default().fg(Color::DarkGray))
+        } else {
+            Span::styled(&self.migration_name_input, Style::default().fg(Color::White))
+        };
+        let input = Paragraph::new(Line::from(vec![
+            Span::styled("> ", Style::default().fg(Color::Yellow)),
+            input_text,
+        ]));
+        frame.render_widget(input, inner_chunks[2]);
+
+        // Set cursor position
+        if !self.migration_name_input.is_empty() || self.show_migration_dialog {
+            frame.set_cursor_position((
+                inner_chunks[2].x + 2 + self.migration_name_cursor as u16,
+                inner_chunks[2].y,
+            ));
+        }
+
+        // Help text
+        let help = Paragraph::new("Enter: confirm  Esc: cancel")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(help, inner_chunks[3]);
     }
 
     /// Render the failed phase - shows build output with error message.
