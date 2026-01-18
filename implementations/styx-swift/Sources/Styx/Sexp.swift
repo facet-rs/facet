@@ -72,14 +72,15 @@ extension Value {
 
 func escapeString(_ s: String) -> String {
     var result = ""
-    for char in s {
-        switch char {
+    // Use unicodeScalars to avoid CRLF grapheme clustering
+    for scalar in s.unicodeScalars {
+        switch scalar {
         case "\\": result += "\\\\"
         case "\"": result += "\\\""
         case "\n": result += "\\n"
         case "\r": result += "\\r"
         case "\t": result += "\\t"
-        default: result.append(char)
+        default: result.unicodeScalars.append(scalar)
         }
     }
     return result

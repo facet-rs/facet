@@ -77,8 +77,9 @@ public struct Lexer {
     private mutating func advance() -> Character? {
         guard !isAtEnd else { return nil }
         let char = source[index]
+        // Track byte position for UTF-8 compatibility
+        position += char.utf8.count
         index = source.index(after: index)
-        position += 1
         return char
     }
 
@@ -176,9 +177,10 @@ public struct Lexer {
             } else if char == "\\" {
                 if let escaped = advance() {
                     switch escaped {
-                    case "n": text.append("\n")
-                    case "r": text.append("\r")
-                    case "t": text.append("\t")
+                    // Use unicodeScalars to avoid CRLF grapheme clustering
+                    case "n": text.unicodeScalars.append(Unicode.Scalar(0x0A))
+                    case "r": text.unicodeScalars.append(Unicode.Scalar(0x0D))
+                    case "t": text.unicodeScalars.append(Unicode.Scalar(0x09))
                     case "\\": text.append("\\")
                     case "\"": text.append("\"")
                     case "u":

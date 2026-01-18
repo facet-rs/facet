@@ -87,18 +87,26 @@ public struct Parser {
         var segmentSpans: [(String, Span)] = []
 
         for seg in segments {
-            let segSpan = Span(start: currentOffset, end: currentOffset + seg.count)
+            // Use UTF-8 byte count for span calculation
+            let segSpan = Span(start: currentOffset, end: currentOffset + seg.utf8.count)
             segmentSpans.append((seg, segSpan))
             currentOffset = segSpan.end + 1 // +1 for the dot
         }
 
         // Build from innermost to outermost
+        // Each nested object's span starts at the PREVIOUS segment (the one whose value this object is)
+        // and ends at the LAST segment key
+        let lastKeyEnd = segmentSpans.last!.1.end
         for i in stride(from: segments.count - 1, to: 0, by: -1) {
             let (seg, segSpan) = segmentSpans[i]
             let keyValue = Value.scalar(Scalar(text: seg, kind: .bare, span: segSpan))
             let entry = Entry(key: keyValue, value: result)
-            let obj = Object(entries: [entry], separator: .newline, span: pathSpan)
-            result = Value(span: pathSpan, payload: .object(obj))
+            // Object span: starts at the PREVIOUS segment (i-1), ends at last key in path
+            // This object is the VALUE of segment[i-1]
+            let objStart = segmentSpans[i - 1].1.start
+            let objSpan = Span(start: objStart, end: lastKeyEnd)
+            let obj = Object(entries: [entry], separator: .newline, span: objSpan)
+            result = Value(span: objSpan, payload: .object(obj))
         }
 
         // Return the outermost entry
