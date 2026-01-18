@@ -1,0 +1,569 @@
+// Comprehensive Styx Edge Cases
+// This file demonstrates ALL possible syntax features and edge cases
+// Use this as a reference for parser testing and syntax exploration
+
+// ============================================================================
+// SECTION 1: SCHEMA DECLARATION
+// ============================================================================
+
+// Schema declarations use @schema tag as first entry (optional)
+// @schema examples/showcase.schema.styx
+
+// ============================================================================
+// SECTION 2: COMMENTS
+// ============================================================================
+
+// Line comment (single slash pair)
+/// Doc comment (triple slash) - attached to next entry
+/// Multi-line doc comments
+/// are supported too
+documented_entry value
+
+// Inline comments after entries
+inline_comment value // this is an inline comment
+
+// ============================================================================
+// SECTION 3: BARE SCALARS
+// ============================================================================
+
+// Simple identifiers
+simple_bare hello
+with_underscore foo_bar
+with_dash foo-bar
+with_numbers abc123
+starts_with_underscore _private
+
+// Special characters allowed in bare scalars
+with_dot foo.bar.baz
+with_colon foo:bar
+with_slash foo/bar/baz
+with_plus 1+2+3
+with_minus a-b-c
+with_equals foo=bar=baz
+less_than foo<bar
+arrow_left <--
+at_in_middle user@example.com
+crate_spec crate:myapp@2.0.0
+
+// Numeric-looking bare scalars
+integer 42
+negative -17
+float 3.14
+negative_float -2.718
+scientific 1e10
+scientific_neg 1e-5
+hex 0xff
+hex_upper 0xFF
+octal 0o755
+binary 0b1010
+
+// URLs as bare scalars (the :// prevents comment interpretation)
+url_http https://example.com
+url_ftp ftp://files.example.com/pub
+url_file file:///home/user/doc.txt
+url_complex https://user:pass@example.com:8080/path?q=1&r=2#anchor
+
+// Booleans
+bool_true true
+bool_false false
+
+// Values that look like heredocs but aren't
+single_lt <value
+double_lt_space "<< DELIM"
+lt_in_middle foo<<bar
+
+// ============================================================================
+// SECTION 4: QUOTED STRINGS
+// ============================================================================
+
+// Simple quoted strings
+simple_quoted "hello world"
+empty_quoted ""
+single_char "x"
+
+// Escape sequences
+escape_newline "line1\nline2"
+escape_tab "col1\tcol2"
+escape_carriage "line1\r\nline2"
+escape_quote "say \"hello\""
+escape_backslash "path\\to\\file"
+escape_unicode_null "with\u0000null"
+
+// Unicode escapes
+unicode_short "\u0041"
+unicode_long "\u{1F600}"
+unicode_mixed "Emoji: \u{1F600} and \u0041"
+
+// @ in quoted strings (not tags)
+quoted_email "user@example.com"
+quoted_mention "@username"
+quoted_at "contains @ symbol"
+
+// ============================================================================
+// SECTION 5: RAW STRINGS
+// ============================================================================
+
+// Raw strings preserve content literally (no escape processing)
+raw_simple r"no escapes here: \n \t \\"
+raw_windows_path r"C:\Users\amos\Documents"
+
+// Raw strings with hash delimiters for quotes
+raw_one_hash r#"has "quotes" inside"#
+raw_two_hash r##"has "# in it"##
+raw_three_hash r###"has "## in it"###
+
+// Raw strings as keys
+r#"raw key"# value
+r##"key with "# in it"## another_value
+
+// Regex patterns
+regex_simple r#"^[a-z]+$"#
+regex_complex r#"^[a-z]+\d{2,4}$"#
+regex_groups r##"(\w+)"#(\d+)"##
+
+// ============================================================================
+// SECTION 6: HEREDOCS
+// ============================================================================
+
+// Simple heredoc (delimiter must be UPPERCASE)
+simple_heredoc <<TEXT
+This is a multi-line string.
+It preserves all whitespace.
+TEXT
+
+// Empty heredoc
+empty_heredoc <<EOF
+EOF
+
+// Heredoc with language hint (lowercase after comma)
+sql_heredoc <<SQL,sql
+SELECT * FROM users
+WHERE active = true
+SQL
+
+rust_heredoc <<CODE,rust
+fn main() {
+    println!("Hello!");
+}
+CODE
+
+bash_heredoc <<SCRIPT,bash
+#!/bin/bash
+echo "Hello"
+SCRIPT
+
+json_heredoc <<JSON,json
+{"key": "value"}
+JSON
+
+// Heredoc with indented closing delimiter (dedents content)
+// NOTE: This feature is specified but has a parser bug - see parser.md r[scalar.heredoc.syntax]
+// When working, the indented delimiter strips that indentation from all content lines:
+//   indented_heredoc <<CODE
+//       fn main() {
+//           println!("Hello!");
+//       }
+//       CODE
+// Would produce content with "fn main() {" etc. (4 spaces stripped)
+
+// Heredoc inside objects
+config_with_heredoc {
+    script <<BASH
+echo "hello"
+echo "world"
+BASH
+    other value
+}
+
+// ============================================================================
+// SECTION 7: SEQUENCES (TUPLES)
+// ============================================================================
+
+// Empty sequence
+empty_seq ()
+
+// Simple sequences
+numbers (1 2 3 4 5)
+strings ("a" "b" "c")
+mixed (42 "hello" true)
+
+// Nested sequences
+matrix ((1 2 3) (4 5 6) (7 8 9))
+deep_nested (((a)))
+
+// Sequences with objects
+seq_with_objects ({a 1} {b 2})
+
+// Sequences with tags
+seq_with_tags (@ok @err @none)
+seq_tagged_payloads (@ok{value 1} @ok{value 2} @err{msg "failed"})
+seq_mixed (plain @tagged "quoted")
+
+// Multiline sequence
+multiline_seq (
+    first
+    second
+    third
+)
+
+// ============================================================================
+// SECTION 8: OBJECTS
+// ============================================================================
+
+// Empty object
+empty_obj {}
+
+// Newline-separated entries
+newline_obj {
+    a 1
+    b 2
+    c 3
+}
+
+// Comma-separated entries (inline style)
+comma_obj {a 1, b 2, c 3}
+
+// Trailing comma allowed
+trailing_comma {a 1, b 2, c 3,}
+
+// Single entry
+single_entry_obj {key value}
+
+// Nested objects
+nested_obj {
+    outer {
+        inner {
+            deep value
+        }
+    }
+}
+
+// Deeply nested (stress test)
+deep_nesting {a {b {c {d {e {f {g value}}}}}}}
+
+// Objects with various value types
+mixed_obj {
+    bare_val identifier
+    quoted_val "string"
+    num_val 42
+    bool_val true
+    seq_val (1 2 3)
+    nested_val {x 1}
+    tag_val @some(42)
+    unit_val @
+}
+
+// ============================================================================
+// SECTION 9: UNIT VALUES
+// ============================================================================
+
+// Explicit unit value
+explicit_unit @
+
+// Implicit unit (key with no value)
+implicit_unit_key
+
+// Multiple implicit units
+flags {
+    verbose
+    dry_run
+    force
+}
+
+// Unit in schema definitions
+schema_example {
+    @ @object{name @string}
+    User @object{id @int}
+}
+
+// ============================================================================
+// SECTION 10: TAGS
+// ============================================================================
+
+// Simple tags (implicit unit payload)
+tag_simple @ok
+tag_another @none
+
+// Explicit unit payload
+tag_explicit_unit @ok@
+tag_none_explicit @none@
+
+// Tags with object payload
+tag_object @error{code 500, message "Internal Server Error"}
+tag_multiline @config{
+    host localhost
+    port 8080
+}
+
+// Tags with sequence payload
+tag_sequence @rgb(255 128 0)
+tag_point @point(10 20)
+
+// Tags with string payload
+tag_string @env"HOME"
+tag_quoted @message"Hello, World!"
+
+// Nested tags
+nested_tag @ok{data @some(42)}
+deeply_nested_tag @optional(@default(0 @int))
+
+// Tag names with various characters
+tag_underscore @foo_bar
+tag_dash @foo-bar
+tag_mixed @foo_bar_baz-qux
+tag_version @v2_0_0-beta_1
+tag_namespaced @com_example_my_type-v1
+
+// Tags as keys
+@string "hello"
+@int 42
+@root @object{name @string}
+
+// Tags in sequences (consecutive)
+consecutive_tags (@ok @err @none)
+
+// ============================================================================
+// SECTION 11: ATTRIBUTES (key>value SYNTAX)
+// ============================================================================
+
+// Single attribute
+attr_single host>localhost
+
+// Multiple attributes
+attr_multi host>localhost port>8080
+
+// Attributes with different value types
+attr_quoted name>"quoted value"
+attr_number count>42
+attr_seq tags>(a b c)
+attr_obj opts>{x 1, y 2}
+
+// Attribute chains
+attr_chain foo<bar>baz
+
+// ============================================================================
+// SECTION 12: DOTTED PATHS
+// ============================================================================
+
+// Simple dotted path
+server.host localhost
+server.port 8080
+
+// Deeper paths
+database.connection.host db.example.com
+database.connection.port 5432
+
+// Sibling paths under common prefix
+app.config.debug true
+app.config.verbose false
+app.name "MyApp"
+
+// ============================================================================
+// SECTION 13: QUOTED AND RAW KEYS
+// ============================================================================
+
+// Quoted string keys
+"key with spaces" value
+"123" numeric_looking_key
+"" empty_key
+"key\nwith\nnewlines" special_key
+
+// ============================================================================
+// SECTION 14: UNICODE
+// ============================================================================
+
+// Unicode in keys
+日本語 "Japanese"
+émoji "French with accent"
+中文 "Chinese"
+العربية "Arabic"
+हिन्दी "Hindi"
+
+// Unicode in values
+greeting "Hello, 世界!"
+emoji_value "🎉🚀💻"
+
+// ============================================================================
+// SECTION 15: WHITESPACE VARIATIONS
+// ============================================================================
+
+// Various amounts of whitespace
+tight{a 1}
+spaced { a 1 }
+extra_space    value_with_spaces
+
+// Whitespace in sequences
+tight_seq(a b c)
+spaced_seq ( a b c )
+
+// ============================================================================
+// SECTION 16: COMPLEX REAL-WORLD EXAMPLES
+// ============================================================================
+
+// Server configuration
+production_server {
+    host 0.0.0.0
+    port 443
+    tls {
+        enabled true
+        cert /etc/ssl/cert.pem
+        key /etc/ssl/key.pem
+        min_version TLS1.2
+    }
+    limits {
+        max_connections 10000
+        timeout_ms 30000
+        body_size_limit 10mb
+    }
+}
+
+// API routes with tagged unions
+api_routes (
+    @route{method GET, path /, handler index}
+    @route{method GET, path /api/users, handler list_users}
+    @route{method POST, path /api/users, handler create_user}
+    @route{method GET, path /api/users/:id, handler get_user}
+    @route{method DELETE, path /api/users/:id, handler delete_user}
+)
+
+// Result types
+success_result @ok{
+    data {
+        users (
+            {id 1, name Alice, email alice@example.com}
+            {id 2, name Bob, email bob@example.com}
+        )
+    }
+    meta {
+        total 2
+        page 1
+        per_page 10
+    }
+}
+
+error_result @err{
+    code 404
+    message "Not found"
+    details @none
+}
+
+// Optional/nullable pattern
+maybe_number @some(42)
+no_number @none
+
+// Environment variable references
+env_vars {
+    home @env"HOME"
+    path @env"PATH"
+    custom @env"MY_CUSTOM_VAR"
+}
+
+// Complex heredoc example
+deployment_script <<DEPLOY,bash
+#!/bin/bash
+set -euo pipefail
+
+# Deploy the application
+echo "Deploying version $VERSION..."
+
+docker build -t myapp:$VERSION .
+docker push registry.example.com/myapp:$VERSION
+kubectl set image deployment/myapp myapp=registry.example.com/myapp:$VERSION
+
+echo "Deployment complete!"
+DEPLOY
+
+// SQL migration
+migration <<SQL,sql
+-- Create users table
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create index on email
+CREATE INDEX idx_users_email ON users(email);
+
+-- Insert default admin user
+INSERT INTO users (name, email) VALUES ('Admin', 'admin@example.com')
+ON CONFLICT (email) DO NOTHING;
+SQL
+
+// GraphQL schema
+graphql_schema <<GQL,graphql
+type Query {
+    user(id: ID!): User
+    users(limit: Int, offset: Int): [User!]!
+}
+
+type Mutation {
+    createUser(input: CreateUserInput!): User!
+    updateUser(id: ID!, input: UpdateUserInput!): User
+    deleteUser(id: ID!): Boolean!
+}
+
+type User {
+    id: ID!
+    name: String!
+    email: String!
+    posts: [Post!]!
+    createdAt: DateTime!
+}
+GQL
+
+// ============================================================================
+// SECTION 17: EDGE CASE COMBINATIONS
+// ============================================================================
+
+// Tag with heredoc in object payload
+tag_with_heredoc @template{
+    content <<HTML,html
+<div>Hello</div>
+HTML
+    type "snippet"
+}
+
+// Nested tags with sequences
+complex_nested @result{
+    status @ok
+    data @list(@item(1) @item(2) @item(3))
+    meta @some{count 3}
+}
+
+// Object with all value types
+kitchen_sink {
+    bare identifier
+    quoted "string"
+    raw r#"raw"#
+    heredoc <<TEXT
+multi
+line
+TEXT
+    number 42
+    float 3.14
+    bool true
+    unit @
+    tag @some(value)
+    seq (a b c)
+    obj {nested true}
+    "path.dotted" works
+}
+
+// Sequence containing all types
+all_types_seq (
+    bare
+    "quoted"
+    r#"raw"#
+    42
+    3.14
+    true
+    false
+    @tag
+    @tag{with payload}
+    @tag(seq payload)
+    {obj_key obj_value}
+    (nested seq)
+)

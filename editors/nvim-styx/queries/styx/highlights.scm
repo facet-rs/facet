@@ -16,8 +16,8 @@
 ; Unit value
 (unit) @constant.builtin
 
-; Tags
-(tag) @label
+; Tags - styled same as unit since @ is the tag sigil
+(tag) @constant.builtin
 
 ; Attributes - key in attribute syntax
 (attribute

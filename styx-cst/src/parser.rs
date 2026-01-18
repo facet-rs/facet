@@ -172,6 +172,7 @@ impl<'src> CstParser<'src> {
         let kind = self.peek();
         kind == TokenKind::Eof
             || kind == TokenKind::Newline
+            || kind == TokenKind::LineComment
             || kind == TokenKind::Comma
             || closing.is_some_and(|c| kind == c)
     }

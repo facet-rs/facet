@@ -17,8 +17,8 @@
 ; Unit value
 (unit) @constant.builtin
 
-; Tags - more specific than bare_scalar, so comes after
-(tag) @label
+; Tags - styled same as unit since @ is the tag sigil
+(tag) @constant.builtin
 
 ; Attributes - key in attribute syntax
 ; Use @keyword or @punctuation.special to make > stand out
