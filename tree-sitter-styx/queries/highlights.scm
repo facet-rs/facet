@@ -26,10 +26,10 @@
   key: (bare_scalar) @property
   ">" @keyword)
 
-; Keys in entries - bare scalars in the key position (overrides @string above)
+; Keys in entries - any scalar in the key position (overrides @string above)
 (entry
   key: (expr
-    payload: (scalar (bare_scalar) @property)))
+    payload: (scalar) @property))
 
 ; Sequence items are values, not keys (must come AFTER entry key rule to override)
 (sequence
