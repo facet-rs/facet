@@ -11,6 +11,7 @@ export default defineConfig({
     },
   },
   build: {
+    manifest: true,
     rollupOptions: {
       input: {
         monaco: resolve(__dirname, "src/monaco/main.ts"),
@@ -22,7 +23,7 @@ export default defineConfig({
         assetFileNames: "assets/[name][extname]",
       },
     },
-    outDir: "static/dist",
+    outDir: "dist",
     emptyOutDir: true,
   },
 });
