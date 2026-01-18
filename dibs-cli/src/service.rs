@@ -27,12 +27,45 @@ pub struct ServiceConnection {
     _driver: tokio::task::JoinHandle<()>,
     /// The spawned child process (if held)
     _child: Option<Child>,
+    /// The binary mtime (for staleness checks)
+    pub binary_mtime: Option<std::time::SystemTime>,
+    /// The migrations directory path
+    pub migrations_dir: Option<std::path::PathBuf>,
 }
 
 impl ServiceConnection {
     /// Get a typed client for calling service methods.
     pub fn client(&self) -> DibsServiceClient<ConnectionHandle> {
         DibsServiceClient::new(self.handle.clone())
+    }
+
+    /// Check if any migration files are newer than the binary.
+    ///
+    /// Returns `Some(path)` with the path of a stale file, or `None` if all files are fresh.
+    pub fn check_migrations_stale(&self) -> Option<std::path::PathBuf> {
+        let binary_mtime = self.binary_mtime?;
+        let migrations_dir = self.migrations_dir.as_ref()?;
+
+        if !migrations_dir.exists() {
+            return None;
+        }
+
+        // Check all .rs files in the migrations directory
+        let entries = std::fs::read_dir(migrations_dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                if let Ok(meta) = path.metadata() {
+                    if let Ok(mtime) = meta.modified() {
+                        if mtime > binary_mtime {
+                            return Some(path);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -98,6 +131,8 @@ pub async fn connect_to_service(config: &Config) -> Result<ServiceConnection, Se
         handle,
         _driver: driver_handle,
         _child: Some(child),
+        binary_mtime: None,
+        migrations_dir: None,
     })
 }
 
@@ -143,6 +178,10 @@ pub struct BuildProcess {
     child_handle: tokio::task::JoinHandle<Option<std::process::ExitStatus>>,
     /// Cached exit status
     exit_status: Option<std::process::ExitStatus>,
+    /// The binary path (for mtime checks)
+    binary_path: Option<std::path::PathBuf>,
+    /// The migrations directory path
+    migrations_dir: Option<std::path::PathBuf>,
 }
 
 impl BuildProcess {
@@ -192,10 +231,17 @@ impl BuildProcess {
                     }
                 });
 
+                // Get binary mtime
+                let binary_mtime = self.binary_path.as_ref().and_then(|p| {
+                    p.metadata().ok().and_then(|m| m.modified().ok())
+                });
+
                 Ok(Some(ServiceConnection {
                     handle,
                     _driver: driver_handle,
                     _child: None,
+                    binary_mtime,
+                    migrations_dir: self.migrations_dir.clone(),
                 }))
             }
             Ok(Err(e)) => Err(ServiceError::Connection(format!(
@@ -297,10 +343,25 @@ pub async fn start_service(config: &Config) -> Result<BuildProcess, ServiceError
         child.wait().await.ok()
     });
 
+    // Determine binary path for mtime checks
+    let binary_path = if let Some(crate_name) = &config.db.crate_name {
+        // For cargo run, the binary is in target/debug/<crate_name>
+        let target_dir = std::env::var("CARGO_TARGET_DIR")
+            .unwrap_or_else(|_| "target".to_string());
+        Some(std::path::PathBuf::from(format!("{}/debug/{}", target_dir, crate_name)))
+    } else {
+        config.db.binary.as_ref().map(std::path::PathBuf::from)
+    };
+
+    // Migrations directory is relative to current working directory
+    let migrations_dir = Some(std::path::PathBuf::from("src/migrations"));
+
     Ok(BuildProcess {
         output_rx,
         listener,
         child_handle,
         exit_status: None,
+        binary_path,
+        migrations_dir,
     })
 }

@@ -189,14 +189,29 @@ pub enum LogLevel {
     Error = 3,
 }
 
+/// SQL error with context for rich error display.
+#[derive(Debug, Clone, Facet)]
+pub struct SqlError {
+    /// The error message
+    pub message: String,
+    /// The SQL that caused the error (if available)
+    pub sql: Option<String>,
+    /// Position in the SQL where the error occurred (1-indexed byte offset)
+    pub position: Option<u32>,
+    /// Hint from postgres (if any)
+    pub hint: Option<String>,
+    /// Detail from postgres (if any)
+    pub detail: Option<String>,
+}
+
 /// Error from the dibs service.
 #[derive(Debug, Clone, Facet)]
 #[repr(u8)]
 pub enum DibsError {
     /// Database connection failed
     ConnectionFailed(String) = 0,
-    /// Migration failed
-    MigrationFailed(String) = 1,
+    /// Migration failed with SQL context
+    MigrationFailed(SqlError) = 1,
     /// Invalid request
     InvalidRequest(String) = 2,
     /// Unknown table

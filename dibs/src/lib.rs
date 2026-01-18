@@ -42,7 +42,7 @@ pub mod service;
 
 pub use backoffice::SquelServiceImpl;
 pub use diff::{Change, SchemaDiff, TableDiff};
-pub use error::Error;
+pub use error::{Error, SqlErrorContext};
 pub use meta::{create_meta_tables_sql, record_migration_sql, sync_tables_sql};
 pub use migrate::{Migration, MigrationContext, MigrationRunner, MigrationStatus};
 pub use service::{DibsServiceImpl, run_service};

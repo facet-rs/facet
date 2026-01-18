@@ -79,7 +79,10 @@ impl<'a> MigrationContext<'a> {
 
     /// Execute a SQL statement.
     pub async fn execute(&self, sql: &str) -> Result<u64> {
-        Ok(self.tx.execute(sql, &[]).await?)
+        self.tx
+            .execute(sql, &[])
+            .await
+            .map_err(|e| crate::Error::from_postgres_with_sql(e, sql))
     }
 
     /// Execute a SQL statement with parameters.
@@ -88,7 +91,10 @@ impl<'a> MigrationContext<'a> {
         sql: &str,
         params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
     ) -> Result<u64> {
-        Ok(self.tx.execute(sql, params).await?)
+        self.tx
+            .execute(sql, params)
+            .await
+            .map_err(|e| crate::Error::from_postgres_with_sql(e, sql))
     }
 
     /// Run a backfill operation in batches until it returns 0 rows affected.

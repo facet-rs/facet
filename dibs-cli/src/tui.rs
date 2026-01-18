@@ -10,15 +10,161 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use dibs_proto::{DiffRequest, DiffResult, MigrationInfo, MigrationStatusRequest, SchemaInfo};
+use dibs_proto::{DibsError, DiffRequest, DiffResult, MigrationInfo, MigrationStatusRequest, SchemaInfo, SqlError};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs},
 };
+use roam::session::{CallError, RoamError};
 
 use crate::config::Config;
 use crate::highlight::highlight_to_lines;
 use crate::service::{self, BuildOutput, ServiceConnection};
+
+/// Parse SQL into migration function calls.
+///
+/// Splits SQL by statements (semicolons) and generates appropriate
+/// ctx.execute() calls. Multi-line statements use raw string literals.
+fn parse_sql_to_calls(sql: &str) -> String {
+    let mut result = String::new();
+    let mut current_statement = String::new();
+
+    for line in sql.lines() {
+        let trimmed = line.trim();
+
+        // Handle SQL comments - convert to Rust comments
+        if trimmed.starts_with("--") {
+            // Flush any pending statement first
+            if !current_statement.trim().is_empty() {
+                result.push_str(&format_sql_call(&current_statement));
+                current_statement.clear();
+            }
+            // Add as Rust comment
+            result.push_str(&format!(
+                "    // {}\n",
+                trimmed.trim_start_matches("--").trim()
+            ));
+            continue;
+        }
+
+        // Skip empty lines between statements
+        if trimmed.is_empty() && current_statement.trim().is_empty() {
+            continue;
+        }
+
+        // Add line to current statement
+        if !current_statement.is_empty() {
+            current_statement.push('\n');
+        }
+        current_statement.push_str(line);
+
+        // Check if statement is complete (ends with semicolon)
+        if trimmed.ends_with(';') {
+            result.push_str(&format_sql_call(&current_statement));
+            current_statement.clear();
+        }
+    }
+
+    // Handle any remaining statement without trailing semicolon
+    if !current_statement.trim().is_empty() {
+        result.push_str(&format_sql_call(&current_statement));
+    }
+
+    result
+}
+
+/// Format a single SQL statement as a ctx.execute() call.
+fn format_sql_call(sql: &str) -> String {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // Remove trailing semicolon for the execute call (postgres doesn't need it)
+    let sql_clean = trimmed.trim_end_matches(';').trim();
+
+    // Check if it's a single line or multi-line
+    if sql_clean.contains('\n') {
+        // Multi-line: use raw string literal
+        format!(
+            "    ctx.execute(r#\"\n{}\n\"#).await?;\n",
+            sql_clean
+        )
+    } else {
+        // Single line: use regular string
+        format!(
+            "    ctx.execute(\"{}\").await?;\n",
+            sql_clean.replace('"', "\\\"")
+        )
+    }
+}
+
+/// Format a migration error with rich SQL context using ariadne.
+fn format_migration_error(err: &CallError<DibsError>) -> String {
+    // Try to extract SqlError from the nested error
+    if let CallError::Roam(RoamError::User(DibsError::MigrationFailed(sql_err))) = err {
+        format_sql_error(sql_err)
+    } else {
+        // Fallback for other errors
+        format!("{}", err)
+    }
+}
+
+/// Format a SqlError with ariadne for nice display.
+fn format_sql_error(err: &SqlError) -> String {
+    use ariadne::{Config, Label, Report, ReportKind, Source};
+
+    // If we have SQL and position, render with ariadne
+    if let (Some(sql), Some(pos)) = (&err.sql, err.position) {
+        let pos = pos as usize;
+        // ariadne uses 0-indexed byte offsets, postgres gives 1-indexed
+        let pos = pos.saturating_sub(1);
+
+        // Clamp position to valid range
+        let pos = pos.min(sql.len().saturating_sub(1));
+
+        let mut output = Vec::new();
+
+        let mut builder = Report::build(ReportKind::Error, ("sql", pos..pos.saturating_add(1)))
+            .with_message(&err.message)
+            .with_config(Config::default().with_color(false));
+
+        // Add label at the error position
+        builder = builder.with_label(
+            Label::new(("sql", pos..pos.saturating_add(1)))
+                .with_message(&err.message),
+        );
+
+        // Add hint if available
+        if let Some(hint) = &err.hint {
+            builder = builder.with_help(hint);
+        }
+
+        // Add detail as a note if available
+        if let Some(detail) = &err.detail {
+            builder = builder.with_note(detail);
+        }
+
+        let report = builder.finish();
+
+        // Write to string
+        report
+            .write(("sql", Source::from(sql)), &mut output)
+            .ok();
+
+        String::from_utf8_lossy(&output).into_owned()
+    } else {
+        // No SQL context, just format the message
+        let mut msg = err.message.clone();
+        if let Some(detail) = &err.detail {
+            msg.push_str(&format!("\nDetail: {}", detail));
+        }
+        if let Some(hint) = &err.hint {
+            msg.push_str(&format!("\nHint: {}", hint));
+        }
+        msg
+    }
+}
 
 /// The main unified TUI application
 pub struct App {
@@ -32,11 +178,11 @@ pub struct App {
     database_url: Option<String>,
     /// Schema info (fetched from service)
     schema: Option<SchemaInfo>,
-    /// Diff result (fetched on demand)
-    diff: Option<DiffResult>,
+    /// Diff state
+    diff: DiffState,
     /// Migration status (fetched on demand)
     migrations: Option<Vec<MigrationInfo>>,
-    /// Loading state
+    /// Loading state (for schema/migrations)
     loading: Option<String>,
     /// Error message
     error: Option<String>,
@@ -68,6 +214,18 @@ pub struct App {
     migration_name_input: String,
     /// Cursor position in migration name input
     migration_name_cursor: usize,
+    /// Whether showing error modal (for long errors)
+    show_error_modal: bool,
+    /// Error message for modal display
+    error_modal_text: String,
+    /// Which pane has focus in schema view (0 = table list, 1 = details)
+    schema_focus: usize,
+    /// Selected item index in details pane (columns then foreign keys)
+    details_selection: usize,
+    /// Scroll position in schema details pane
+    details_scroll: u16,
+    /// Flag to trigger a rebuild
+    needs_rebuild: bool,
 }
 
 /// The current phase of the application.
@@ -78,6 +236,20 @@ enum AppPhase {
     Connected,
     /// Failed to connect
     Failed(String),
+}
+
+/// State of the diff computation.
+enum DiffState {
+    /// No DATABASE_URL configured
+    NoDatabaseUrl,
+    /// Not yet loaded
+    NotLoaded,
+    /// Currently loading
+    Loading,
+    /// Successfully loaded
+    Loaded(DiffResult),
+    /// Failed to load
+    Error(String),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -124,13 +296,20 @@ impl App {
         let mut migration_state = ListState::default();
         migration_state.select(Some(0));
 
+        let database_url = std::env::var("DATABASE_URL").ok();
+        let diff = if database_url.is_some() {
+            DiffState::NotLoaded
+        } else {
+            DiffState::NoDatabaseUrl
+        };
+
         Self {
             phase: AppPhase::Building,
             tab: Tab::Schema,
             conn: None,
-            database_url: std::env::var("DATABASE_URL").ok(),
+            database_url,
             schema: None,
-            diff: None,
+            diff,
             migrations: None,
             loading: Some("Connecting...".to_string()),
             error: None,
@@ -149,6 +328,12 @@ impl App {
             show_migration_dialog: false,
             migration_name_input: String::new(),
             migration_name_cursor: 0,
+            show_error_modal: false,
+            error_modal_text: String::new(),
+            schema_focus: 0,
+            details_selection: 0,
+            details_scroll: 0,
+            needs_rebuild: false,
         }
     }
 
@@ -178,22 +363,65 @@ impl App {
     }
 
     /// Run the TUI with build phase, then main loop.
+    /// Supports rebuilding via the 'R' key.
     fn run_with_build(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         rt: &tokio::runtime::Runtime,
         config: &Config,
     ) -> io::Result<()> {
-        // Start the build process
-        let mut build_process = match rt.block_on(service::start_service(config)) {
-            Ok(bp) => bp,
-            Err(e) => {
-                self.phase = AppPhase::Failed(format!("Failed to start service: {}", e));
-                return self.main_loop(terminal, rt);
-            }
-        };
+        loop {
+            // Reset state for fresh build
+            self.phase = AppPhase::Building;
+            self.conn = None;
+            self.build_output.clear();
+            self.build_scroll = 0;
+            self.build_auto_scroll = true;
+            self.needs_rebuild = false;
+            self.error = None;
 
-        // Build phase loop - show cargo output while waiting for connection
+            // Start the build process
+            let mut build_process = match rt.block_on(service::start_service(config)) {
+                Ok(bp) => bp,
+                Err(e) => {
+                    self.phase = AppPhase::Failed(format!("Failed to start service: {}", e));
+                    self.main_loop(terminal, rt)?;
+                    if self.needs_rebuild {
+                        continue;
+                    }
+                    return Ok(());
+                }
+            };
+
+            // Build phase loop - show cargo output while waiting for connection
+            let build_result = self.build_loop(terminal, rt, &mut build_process);
+
+            match build_result {
+                Ok(true) => {
+                    // Connected, run main loop
+                    let result = self.main_loop(terminal, rt);
+                    if self.needs_rebuild {
+                        // User requested rebuild, loop again
+                        continue;
+                    }
+                    return result;
+                }
+                Ok(false) => {
+                    // User quit during build
+                    return Ok(());
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// Build phase loop - returns Ok(true) if connected, Ok(false) if user quit.
+    fn build_loop(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        rt: &tokio::runtime::Runtime,
+        build_process: &mut service::BuildProcess,
+    ) -> io::Result<bool> {
         loop {
             // Draw the build UI
             terminal.draw(|frame| self.render_build_phase(frame))?;
@@ -213,7 +441,8 @@ impl App {
                         "Build failed with exit code: {}",
                         status.code().unwrap_or(-1)
                     ));
-                    return self.main_loop(terminal, rt);
+                    // Stay in failed state, let main_loop handle it
+                    return Ok(true);
                 }
             }
 
@@ -228,14 +457,14 @@ impl App {
                     // Fetch initial data
                     rt.block_on(self.fetch_initial_data());
 
-                    return self.main_loop(terminal, rt);
+                    return Ok(true);
                 }
                 Ok(None) => {
                     // No connection yet, continue
                 }
                 Err(e) => {
                     self.phase = AppPhase::Failed(format!("Connection failed: {}", e));
-                    return self.main_loop(terminal, rt);
+                    return Ok(true);
                 }
             }
 
@@ -245,7 +474,7 @@ impl App {
                     && key.kind == KeyEventKind::Press
                 {
                     match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                        KeyCode::Char('q') | KeyCode::Esc => return Ok(false),
                         KeyCode::Up | KeyCode::Char('k') => {
                             self.build_auto_scroll = false;
                             self.build_scroll = self.build_scroll.saturating_sub(1);
@@ -274,39 +503,40 @@ impl App {
 
     /// Fetch initial data after connection is established.
     async fn fetch_initial_data(&mut self) {
-        if let Some(conn) = &self.conn {
-            // Fetch schema
-            match conn.client().schema().await {
-                Ok(schema) => self.schema = Some(schema),
-                Err(e) => self.error = Some(format!("Schema fetch: {:?}", e)),
+        // Clone what we need to avoid borrow conflicts
+        let Some(conn) = &self.conn else { return };
+        let client = conn.client().clone();
+        let database_url = self.database_url.clone();
+
+        // Fetch schema
+        match client.schema().await {
+            Ok(schema) => self.schema = Some(schema),
+            Err(e) => self.show_error(format!("Schema fetch: {:?}", e)),
+        }
+
+        // Fetch migrations and diff if we have a database URL
+        if let Some(url) = database_url {
+            self.loading = Some("Fetching migration status...".to_string());
+            match client
+                .migration_status(MigrationStatusRequest {
+                    database_url: url.clone(),
+                })
+                .await
+            {
+                Ok(migrations) => self.migrations = Some(migrations),
+                Err(e) => self.show_error(format!("Migration status: {:?}", e)),
             }
 
-            // Fetch migrations and diff if we have a database URL
-            if let Some(url) = &self.database_url {
-                self.loading = Some("Fetching migration status...".to_string());
-                match conn
-                    .client()
-                    .migration_status(MigrationStatusRequest {
-                        database_url: url.clone(),
-                    })
-                    .await
-                {
-                    Ok(migrations) => self.migrations = Some(migrations),
-                    Err(e) => self.error = Some(format!("Migration status: {:?}", e)),
-                }
-
-                // Also fetch diff
-                self.loading = Some("Computing diff...".to_string());
-                match conn
-                    .client()
-                    .diff(DiffRequest {
-                        database_url: url.clone(),
-                    })
-                    .await
-                {
-                    Ok(diff) => self.diff = Some(diff),
-                    Err(e) => self.error = Some(format!("Diff failed: {:?}", e)),
-                }
+            // Also fetch diff
+            self.diff = DiffState::Loading;
+            match client
+                .diff(DiffRequest {
+                    database_url: url,
+                })
+                .await
+            {
+                Ok(diff) => self.diff = DiffState::Loaded(diff),
+                Err(e) => self.diff = DiffState::Error(format!("{:?}", e)),
             }
         }
         self.loading = None;
@@ -430,6 +660,18 @@ impl App {
                 && key.kind == KeyEventKind::Press
             {
                 // Handle 'g' prefix for gg
+                // Handle error modal
+                if self.show_error_modal {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                            self.show_error_modal = false;
+                            self.error_modal_text.clear();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Handle migration name dialog input
                 if self.show_migration_dialog {
                     match key.code {
@@ -514,17 +756,29 @@ impl App {
                         }
                     }
                     // Tab switching (only when not viewing source)
-                    KeyCode::Char('1') if !self.show_migration_source => self.tab = Tab::Schema,
+                    KeyCode::Char('1') if !self.show_migration_source => {
+                        self.tab = Tab::Schema;
+                        self.schema_focus = 0;
+                    }
                     KeyCode::Char('2') if !self.show_migration_source => {
                         self.tab = Tab::Diff;
                     }
                     KeyCode::Char('3') if !self.show_migration_source => self.tab = Tab::Migrations,
-                    KeyCode::Tab if !self.show_migration_source => self.next_tab(),
+                    KeyCode::Tab if !self.show_migration_source => {
+                        // In Schema tab, Tab cycles between panes
+                        if self.tab == Tab::Schema {
+                            self.schema_focus = (self.schema_focus + 1) % 2;
+                        } else {
+                            self.next_tab();
+                        }
+                    }
                     KeyCode::BackTab if !self.show_migration_source => self.prev_tab(),
                     // Navigation
                     KeyCode::Up | KeyCode::Char('k') => {
                         if self.show_migration_source {
                             self.source_scroll = self.source_scroll.saturating_sub(1);
+                        } else if self.tab == Tab::Schema && self.schema_focus == 1 {
+                            self.details_selection_up();
                         } else {
                             self.move_up();
                         }
@@ -532,13 +786,24 @@ impl App {
                     KeyCode::Down | KeyCode::Char('j') => {
                         if self.show_migration_source {
                             self.source_scroll = self.source_scroll.saturating_add(1);
+                        } else if self.tab == Tab::Schema && self.schema_focus == 1 {
+                            self.details_selection_down();
                         } else {
                             self.move_down();
                         }
                     }
                     KeyCode::Char('g') if self.tab == Tab::Diff && !self.show_migration_source => {
-                        // Show migration name dialog
-                        if let Some(diff) = &self.diff {
+                        // Check for pending migrations first
+                        let pending_count = self.migrations.as_ref()
+                            .map(|m| m.iter().filter(|m| !m.applied).count())
+                            .unwrap_or(0);
+
+                        if pending_count > 0 {
+                            self.error = Some(format!(
+                                "Apply {} pending migration(s) first! Press 3, then m",
+                                pending_count
+                            ));
+                        } else if let DiffState::Loaded(diff) = &self.diff {
                             if !diff.table_diffs.is_empty() {
                                 let suggested = self.suggest_migration_name();
                                 self.migration_name_input = suggested;
@@ -548,7 +813,7 @@ impl App {
                                 self.error = Some("No changes to migrate".to_string());
                             }
                         } else {
-                            self.error = Some("No diff computed yet".to_string());
+                            self.error = Some("No diff computed yet - press 'r' to refresh".to_string());
                         }
                     }
                     KeyCode::Char('g') if !self.show_migration_source => self.pending_g = true,
@@ -567,9 +832,11 @@ impl App {
                             self.half_page_up();
                         }
                     }
-                    // Enter to view migration source
+                    // Enter to view migration source or follow FK
                     KeyCode::Enter => {
-                        if self.tab == Tab::Migrations && !self.show_migration_source {
+                        if self.tab == Tab::Schema && self.schema_focus == 1 {
+                            self.follow_foreign_key();
+                        } else if self.tab == Tab::Migrations && !self.show_migration_source {
                             self.show_migration_source = true;
                             self.source_scroll = 0;
                         } else if self.show_migration_source {
@@ -588,15 +855,32 @@ impl App {
                         // Refresh
                         rt.block_on(self.refresh());
                     }
+                    KeyCode::Char('R') if !self.show_migration_source => {
+                        // Rebuild - restart the service
+                        self.needs_rebuild = true;
+                        return Ok(());
+                    }
                     _ => {}
                 }
             }
         }
     }
 
+    /// Show an error - uses modal for long errors, status bar for short ones.
+    fn show_error(&mut self, msg: String) {
+        // Use modal for multi-line errors or errors longer than 60 chars
+        if msg.contains('\n') || msg.len() > 60 {
+            self.error_modal_text = msg;
+            self.show_error_modal = true;
+            self.error = Some("Error occurred - see details".to_string());
+        } else {
+            self.error = Some(msg);
+        }
+    }
+
     /// Suggest a migration name based on the current diff.
     fn suggest_migration_name(&self) -> String {
-        let Some(diff) = &self.diff else {
+        let DiffState::Loaded(diff) = &self.diff else {
             return "schema-update".to_string();
         };
 
@@ -722,18 +1006,16 @@ impl App {
                     match self.create_migration_file(name, &sql) {
                         Ok(path) => {
                             self.error = Some(format!("Created: {}", path));
-                            // Refresh migrations list
-                            self.refresh_migrations().await;
-                            // Clear diff since we've handled these changes
-                            self.diff = None;
+                            // Automatically rebuild to pick up the new migration
+                            self.needs_rebuild = true;
                         }
                         Err(e) => {
-                            self.error = Some(format!("Failed to create migration: {}", e));
+                            self.show_error(format!("Failed to create migration: {}", e));
                         }
                     }
                 }
                 Err(e) => {
-                    self.error = Some(format!("Failed to generate SQL: {:?}", e));
+                    self.show_error(format!("Failed to generate SQL: {:?}", e));
                 }
             }
             self.loading = None;
@@ -763,6 +1045,9 @@ impl App {
 
         // Generate Rust migration content
         // Version is derived from filename automatically by the macro
+        // Split SQL by statements (semicolons), not by lines
+        let sql_calls = parse_sql_to_calls(sql);
+
         let content = format!(
             r#"//! Migration: {name}
 //! Created: {created}
@@ -777,16 +1062,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
 "#,
             name = name,
             created = now.strftime("%Y-%m-%d %H:%M:%S %Z"),
-            sql_calls = sql.lines()
-                .filter(|line| !line.is_empty())
-                .map(|line| {
-                    if line.starts_with("--") {
-                        format!("    // {}\n", line.trim_start_matches("--").trim())
-                    } else {
-                        format!("    ctx.execute(\"{}\").await?;\n", line.replace('"', "\\\""))
-                    }
-                })
-                .collect::<String>()
+            sql_calls = sql_calls,
         );
 
         let mut file = fs::File::create(&filepath)?;
@@ -820,6 +1096,17 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
         if let (Some(conn), Some(url)) = (&self.conn, &self.database_url) {
             use dibs_proto::MigrateRequest;
 
+            // Safety check: refuse to run if migration files are newer than the binary
+            if let Some(stale_file) = conn.check_migrations_stale() {
+                self.show_error(format!(
+                    "Migration files changed since build!\n\n\
+                     Stale file: {}\n\n\
+                     Press R to rebuild.",
+                    stale_file.display()
+                ));
+                return;
+            }
+
             self.loading = Some("Running migrations...".to_string());
 
             let (log_tx, mut log_rx) = roam::channel::<dibs_proto::MigrationLog>();
@@ -849,13 +1136,12 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
                     } else {
                         self.error = Some(format!("Applied {} migration(s)", res.applied.len()));
                     }
-                    // Refresh migrations list
+                    // Refresh migrations list and diff
                     self.refresh_migrations().await;
-                    // Clear diff cache
-                    self.diff = None;
+                    self.refresh_diff().await;
                 }
                 Err(e) => {
-                    self.error = Some(format!("Migration failed: {:?}", e));
+                    self.show_error(format_migration_error(&e));
                 }
             }
             self.loading = None;
@@ -872,7 +1158,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
         // Refresh schema
         match client.schema().await {
             Ok(schema) => self.schema = Some(schema),
-            Err(e) => self.error = Some(format!("Schema fetch: {:?}", e)),
+            Err(e) => self.show_error(format!("Schema fetch: {:?}", e)),
         }
 
         // Refresh migrations and diff if we have a database URL
@@ -880,15 +1166,15 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
             self.refresh_migrations().await;
 
             // Refresh diff
-            self.loading = Some("Computing diff...".to_string());
+            self.diff = DiffState::Loading;
             match client
                 .diff(DiffRequest {
                     database_url: url,
                 })
                 .await
             {
-                Ok(diff) => self.diff = Some(diff),
-                Err(e) => self.error = Some(format!("Diff failed: {:?}", e)),
+                Ok(diff) => self.diff = DiffState::Loaded(diff),
+                Err(e) => self.diff = DiffState::Error(format!("{:?}", e)),
             }
         }
 
@@ -905,7 +1191,23 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
                 .await
             {
                 Ok(migrations) => self.migrations = Some(migrations),
-                Err(e) => self.error = Some(format!("Migration status: {:?}", e)),
+                Err(e) => self.show_error(format!("Migration status: {:?}", e)),
+            }
+        }
+    }
+
+    async fn refresh_diff(&mut self) {
+        if let (Some(conn), Some(url)) = (&self.conn, &self.database_url) {
+            self.diff = DiffState::Loading;
+            match conn
+                .client()
+                .diff(DiffRequest {
+                    database_url: url.clone(),
+                })
+                .await
+            {
+                Ok(diff) => self.diff = DiffState::Loaded(diff),
+                Err(e) => self.diff = DiffState::Error(format!("{:?}", e)),
             }
         }
     }
@@ -926,6 +1228,8 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
                 if self.schema.is_some() && self.selected_table > 0 {
                     self.selected_table -= 1;
                     self.table_state.select(Some(self.selected_table));
+                    self.details_selection = 0;
+                    self.details_scroll = 0;
                 }
             }
             Tab::Migrations => {
@@ -945,6 +1249,8 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
                     if self.selected_table < schema.tables.len().saturating_sub(1) {
                         self.selected_table += 1;
                         self.table_state.select(Some(self.selected_table));
+                        self.details_selection = 0;
+                        self.details_scroll = 0;
                     }
                 }
             }
@@ -1005,6 +1311,66 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
         }
     }
 
+    /// Get the total number of selectable items in the details pane.
+    /// This is columns + foreign keys for the current table.
+    fn details_item_count(&self) -> usize {
+        let Some(schema) = &self.schema else { return 0 };
+        let Some(table) = schema.tables.get(self.selected_table) else { return 0 };
+        table.columns.len() + table.foreign_keys.len()
+    }
+
+    fn details_selection_up(&mut self) {
+        if self.details_selection > 0 {
+            self.details_selection -= 1;
+            // Auto-scroll to keep selection visible
+            // Each item takes roughly 1-2 lines, selection line ~ details_selection + header_lines
+            let header_lines = 6; // approx lines before columns
+            let selection_line = header_lines + self.details_selection;
+            if (selection_line as u16) < self.details_scroll {
+                self.details_scroll = selection_line as u16;
+            }
+        }
+    }
+
+    fn details_selection_down(&mut self) {
+        let max = self.details_item_count().saturating_sub(1);
+        if self.details_selection < max {
+            self.details_selection += 1;
+            // Auto-scroll to keep selection visible (rough estimate)
+            let header_lines = 6;
+            let selection_line = (header_lines + self.details_selection) as u16;
+            // Assume ~20 visible lines in details pane
+            if selection_line > self.details_scroll + 15 {
+                self.details_scroll = selection_line.saturating_sub(15);
+            }
+        }
+    }
+
+    /// Follow a foreign key reference - jump to the referenced table.
+    fn follow_foreign_key(&mut self) {
+        let Some(schema) = &self.schema else { return };
+        let Some(table) = schema.tables.get(self.selected_table) else { return };
+
+        let col_count = table.columns.len();
+
+        // Check if selection is on a foreign key
+        if self.details_selection >= col_count {
+            let fk_idx = self.details_selection - col_count;
+            if let Some(fk) = table.foreign_keys.get(fk_idx) {
+                // Find the referenced table
+                let target_table = &fk.references_table;
+                if let Some(idx) = schema.tables.iter().position(|t| &t.name == target_table) {
+                    self.selected_table = idx;
+                    self.table_state.select(Some(idx));
+                    self.details_selection = 0;
+                    self.details_scroll = 0;
+                    // Switch focus back to table list briefly, then to details
+                    // to give feedback that we jumped
+                }
+            }
+        }
+    }
+
     fn ui(&mut self, frame: &mut Frame) {
         // Handle failed phase - show build output with error
         if let AppPhase::Failed(ref msg) = self.phase {
@@ -1024,17 +1390,46 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
             ])
             .split(area);
 
+        // Count indicators for tabs
+        let diff_count = if let DiffState::Loaded(diff) = &self.diff {
+            diff.table_diffs.iter().map(|td| td.changes.len()).sum::<usize>()
+        } else {
+            0
+        };
+        let pending_migrations = self.migrations.as_ref()
+            .map(|m| m.iter().filter(|m| !m.applied).count())
+            .unwrap_or(0);
+
         // Tabs
         let tab_titles: Vec<Line> = Tab::all()
             .iter()
             .enumerate()
             .map(|(i, t)| {
                 let num = format!("{}", i + 1);
-                Line::from(vec![
+                let mut spans = vec![
                     Span::styled(num, Style::default().fg(Color::Yellow)),
                     Span::raw(":"),
                     Span::raw(t.name()),
-                ])
+                ];
+
+                // Add count indicators
+                match t {
+                    Tab::Diff if diff_count > 0 => {
+                        spans.push(Span::styled(
+                            format!(" ({})", diff_count),
+                            Style::default().fg(Color::Magenta),
+                        ));
+                    }
+                    Tab::Migrations if pending_migrations > 0 => {
+                        spans.push(Span::styled(
+                            format!(" ({})", pending_migrations),
+                            Style::default().fg(Color::Red),
+                        ));
+                    }
+                    _ => {}
+                }
+
+                Line::from(spans)
             })
             .collect();
 
@@ -1066,6 +1461,64 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
         if self.show_migration_dialog {
             self.render_migration_dialog(frame, area);
         }
+
+        // Render error modal as overlay
+        if self.show_error_modal {
+            self.render_error_modal(frame, area);
+        }
+    }
+
+    /// Render the error modal as a centered overlay.
+    fn render_error_modal(&self, frame: &mut Frame, area: Rect) {
+        use ratatui::widgets::Clear;
+
+        // Calculate dialog size based on content
+        let lines: Vec<&str> = self.error_modal_text.lines().collect();
+        let max_line_len = lines.iter().map(|l| l.len()).max().unwrap_or(20);
+        let dialog_width = (max_line_len as u16 + 4).min(area.width.saturating_sub(4)).max(40);
+        let dialog_height = (lines.len() as u16 + 5).min(area.height.saturating_sub(4));
+
+        let x = (area.width.saturating_sub(dialog_width)) / 2;
+        let y = (area.height.saturating_sub(dialog_height)) / 2;
+
+        let dialog_area = Rect::new(x, y, dialog_width, dialog_height);
+
+        // Clear the background
+        frame.render_widget(Clear, dialog_area);
+
+        // Dialog box with error styling
+        let dialog = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Red))
+            .title(" Error ")
+            .title_style(Style::default().fg(Color::Red).bold());
+        frame.render_widget(dialog, dialog_area);
+
+        // Inner area for content
+        let inner = dialog_area.inner(Margin { vertical: 1, horizontal: 1 });
+
+        // Error text (scrollable if needed)
+        let content_height = inner.height.saturating_sub(2); // Reserve space for help
+        let error_lines: Vec<Line> = self.error_modal_text
+            .lines()
+            .take(content_height as usize)
+            .map(|l| Line::from(Span::styled(l, Style::default().fg(Color::White))))
+            .collect();
+
+        let content_area = Rect::new(inner.x, inner.y, inner.width, content_height);
+        let error_text = Paragraph::new(error_lines);
+        frame.render_widget(error_text, content_area);
+
+        // Help text at bottom
+        let help_area = Rect::new(inner.x, inner.y + content_height + 1, inner.width, 1);
+        let help = Paragraph::new(Line::from(vec![
+            Span::styled("Press ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Enter", Style::default().fg(Color::Yellow)),
+            Span::styled(" or ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::styled(" to close", Style::default().fg(Color::DarkGray)),
+        ]));
+        frame.render_widget(help, help_area);
     }
 
     /// Render the migration name input dialog as a centered overlay.
@@ -1237,6 +1690,18 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
             .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
             .split(area);
 
+        // Border styles based on focus
+        let list_border = if self.schema_focus == 0 {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let details_border = if self.schema_focus == 1 {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
         // Table list
         let items: Vec<ListItem> = schema
             .tables
@@ -1248,6 +1713,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_style(list_border)
                     .title(" Tables ")
                     .title_style(Style::default().fg(Color::Cyan)),
             )
@@ -1291,31 +1757,51 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
                 Style::default().fg(Color::Yellow).bold(),
             )));
 
-            for col in &table.columns {
+            let is_focused = self.schema_focus == 1;
+
+            for (col_idx, col) in table.columns.iter().enumerate() {
+                let is_selected = is_focused && self.details_selection == col_idx;
+
+                // Column doc comment (if any)
+                if let Some(doc) = &col.doc {
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled("/// ", Style::default().fg(Color::Green)),
+                        Span::styled(doc, Style::default().fg(Color::Green).italic()),
+                    ]));
+                }
+
+                let highlight_style = if is_selected {
+                    Style::default().bg(Color::DarkGray)
+                } else {
+                    Style::default()
+                };
+
+                let prefix = if is_selected { "› " } else { "  " };
                 let mut spans = vec![
-                    Span::raw("  "),
-                    Span::styled(&col.name, Style::default().fg(Color::White)),
-                    Span::raw(": "),
-                    Span::styled(&col.sql_type, Style::default().fg(Color::Blue)),
+                    Span::styled(prefix, highlight_style),
+                    Span::styled(&col.name, highlight_style.fg(Color::White)),
+                    Span::styled(": ", highlight_style),
+                    Span::styled(&col.sql_type, highlight_style.fg(Color::Blue)),
                 ];
 
                 if col.primary_key {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled("PK", Style::default().fg(Color::Yellow)));
+                    spans.push(Span::styled(" ", highlight_style));
+                    spans.push(Span::styled("PK", highlight_style.fg(Color::Yellow)));
                 }
                 if col.unique {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled("UNIQUE", Style::default().fg(Color::Magenta)));
+                    spans.push(Span::styled(" ", highlight_style));
+                    spans.push(Span::styled("UNIQUE", highlight_style.fg(Color::Magenta)));
                 }
                 if !col.nullable {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled("NOT NULL", Style::default().fg(Color::Red)));
+                    spans.push(Span::styled(" ", highlight_style));
+                    spans.push(Span::styled("NOT NULL", highlight_style.fg(Color::Red)));
                 }
                 if let Some(default) = &col.default {
-                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(" ", highlight_style));
                     spans.push(Span::styled(
                         format!("DEFAULT {}", default),
-                        Style::default().fg(Color::Gray),
+                        highlight_style.fg(Color::Gray),
                     ));
                 }
 
@@ -1329,50 +1815,97 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
                     Style::default().fg(Color::Green).bold(),
                 )));
 
-                for fk in &table.foreign_keys {
+                let col_count = table.columns.len();
+                for (fk_idx, fk) in table.foreign_keys.iter().enumerate() {
+                    let is_selected = is_focused && self.details_selection == col_count + fk_idx;
+                    let highlight_style = if is_selected {
+                        Style::default().bg(Color::DarkGray)
+                    } else {
+                        Style::default()
+                    };
+                    let prefix = if is_selected { "› " } else { "  " };
+
                     lines.push(Line::from(vec![
-                        Span::raw("  "),
-                        Span::styled(fk.columns.join(", "), Style::default().fg(Color::White)),
-                        Span::styled(" → ", Style::default().fg(Color::Gray)),
-                        Span::styled(&fk.references_table, Style::default().fg(Color::Cyan)),
-                        Span::raw("."),
-                        Span::raw(fk.references_columns.join(", ")),
+                        Span::styled(prefix, highlight_style),
+                        Span::styled(fk.columns.join(", "), highlight_style.fg(Color::White)),
+                        Span::styled(" → ", highlight_style.fg(Color::Gray)),
+                        Span::styled(&fk.references_table, highlight_style.fg(Color::Cyan)),
+                        Span::styled(".", highlight_style),
+                        Span::styled(fk.references_columns.join(", "), highlight_style),
                     ]));
                 }
             }
 
-            let details = Paragraph::new(lines).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Details ")
-                    .title_style(Style::default().fg(Color::Cyan)),
-            );
+            let details = Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(details_border)
+                        .title(" Details ")
+                        .title_style(Style::default().fg(Color::Cyan)),
+                )
+                .scroll((self.details_scroll, 0));
 
             frame.render_widget(details, chunks[1]);
         }
     }
 
     fn render_diff(&self, frame: &mut Frame, area: Rect) {
-        if let Some(loading) = &self.loading {
-            let p = Paragraph::new(loading.as_str())
-                .block(Block::default().borders(Borders::ALL).title(" Diff "));
-            frame.render_widget(p, area);
-            return;
-        }
-
-        let Some(diff) = &self.diff else {
-            let msg = if self.database_url.is_none() {
-                "No DATABASE_URL set. Set it in .env or environment."
-            } else {
-                "Press '2' to load diff..."
-            };
-            let p =
-                Paragraph::new(msg).block(Block::default().borders(Borders::ALL).title(" Diff "));
-            frame.render_widget(p, area);
-            return;
+        // Handle non-loaded states
+        let diff = match &self.diff {
+            DiffState::NoDatabaseUrl => {
+                let p = Paragraph::new("No DATABASE_URL set. Set it in .env or environment.")
+                    .block(Block::default().borders(Borders::ALL).title(" Diff "));
+                frame.render_widget(p, area);
+                return;
+            }
+            DiffState::NotLoaded => {
+                let p = Paragraph::new("Press 'r' to load diff")
+                    .block(Block::default().borders(Borders::ALL).title(" Diff "));
+                frame.render_widget(p, area);
+                return;
+            }
+            DiffState::Loading => {
+                let p = Paragraph::new("Computing diff...")
+                    .block(Block::default().borders(Borders::ALL).title(" Diff "));
+                frame.render_widget(p, area);
+                return;
+            }
+            DiffState::Error(err) => {
+                let p = Paragraph::new(format!("Error: {}\n\nPress 'r' to retry", err))
+                    .style(Style::default().fg(Color::Red))
+                    .block(Block::default().borders(Borders::ALL).title(" Diff "));
+                frame.render_widget(p, area);
+                return;
+            }
+            DiffState::Loaded(diff) => diff,
         };
 
         let mut lines = vec![];
+
+        // Check for pending migrations
+        let pending_count = self.migrations.as_ref()
+            .map(|m| m.iter().filter(|m| !m.applied).count())
+            .unwrap_or(0);
+
+        if pending_count > 0 {
+            // Warning: pending migrations exist
+            lines.push(Line::from(vec![
+                Span::styled("  ⚠ ", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{} pending migration(s) - apply them first!", pending_count),
+                    Style::default().fg(Color::Yellow).bold(),
+                ),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("    Press ", Style::default().fg(Color::DarkGray)),
+                Span::styled("3", Style::default().fg(Color::Yellow)),
+                Span::styled(" to go to Migrations, then ", Style::default().fg(Color::DarkGray)),
+                Span::styled("m", Style::default().fg(Color::Yellow)),
+                Span::styled(" to apply", Style::default().fg(Color::DarkGray)),
+            ]));
+            lines.push(Line::from(""));
+        }
 
         if diff.table_diffs.is_empty() {
             lines.push(Line::from(Span::styled(
@@ -1380,13 +1913,15 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
                 Style::default().fg(Color::Green),
             )));
         } else {
-            // Prominent call-to-action
-            lines.push(Line::from(vec![
-                Span::styled("  Press ", Style::default().fg(Color::White)),
-                Span::styled(" g ", Style::default().fg(Color::Black).bg(Color::Yellow).bold()),
-                Span::styled(" to generate a migration", Style::default().fg(Color::White)),
-            ]));
-            lines.push(Line::from(""));
+            // Prominent call-to-action (only if no pending migrations)
+            if pending_count == 0 {
+                lines.push(Line::from(vec![
+                    Span::styled("  Press ", Style::default().fg(Color::White)),
+                    Span::styled(" g ", Style::default().fg(Color::Black).bg(Color::Yellow).bold()),
+                    Span::styled(" to generate a migration", Style::default().fg(Color::White)),
+                ]));
+                lines.push(Line::from(""));
+            }
 
             lines.push(Line::from(Span::styled(
                 format!(
@@ -1576,6 +2111,8 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
             spans.push(Span::raw("nav  "));
             spans.push(Span::styled("r ", Style::default().fg(Color::Yellow)));
             spans.push(Span::raw("refresh  "));
+            spans.push(Span::styled("R ", Style::default().fg(Color::Yellow)));
+            spans.push(Span::raw("rebuild  "));
 
             if self.tab == Tab::Migrations {
                 spans.push(Span::styled("Enter ", Style::default().fg(Color::Yellow)));

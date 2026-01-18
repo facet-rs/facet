@@ -20,6 +20,27 @@ use std::io;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 
+/// Convert a dibs Error to a DibsError for the protocol.
+fn to_migration_error(err: crate::Error) -> DibsError {
+    if let Some(ctx) = err.sql_context() {
+        DibsError::MigrationFailed(SqlError {
+            message: ctx.message.clone(),
+            sql: Some(ctx.sql.clone()),
+            position: ctx.position.map(|p| p as u32),
+            hint: ctx.hint.clone(),
+            detail: ctx.detail.clone(),
+        })
+    } else {
+        DibsError::MigrationFailed(SqlError {
+            message: err.to_string(),
+            sql: None,
+            position: None,
+            hint: None,
+            detail: None,
+        })
+    }
+}
+
 /// Connector that connects to the CLI's address (from DIBS_CLI_ADDR env var).
 struct CliConnector {
     addr: SocketAddr,
@@ -171,7 +192,7 @@ impl DibsService for DibsServiceImpl {
         let status = runner
             .status()
             .await
-            .map_err(|e| DibsError::MigrationFailed(e.to_string()))?;
+            .map_err(to_migration_error)?;
 
         Ok(status
             .into_iter()
@@ -232,7 +253,7 @@ impl DibsService for DibsServiceImpl {
             runner
                 .migrate()
                 .await
-                .map_err(|e| DibsError::MigrationFailed(e.to_string()))?
+                .map_err(to_migration_error)?
         };
 
         for version in &applied {

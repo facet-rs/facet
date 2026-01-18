@@ -29,3 +29,4 @@ dotenvy = "0.15.7"
 arborium = { path = "/Users/amos/bearcove/arborium/crates/arborium", features = ["lang-rust"] }
 arborium-highlight = { path = "/Users/amos/bearcove/arborium/crates/arborium-highlight" }
 arborium-theme = { path = "/Users/amos/bearcove/arborium/crates/arborium-theme" }
+ariadne = "0.6"
