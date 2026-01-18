@@ -311,7 +311,11 @@ class Lexer:
                 if "," in delimiter:
                     result = delimiter[len(bare_delimiter) :] + "\n" + result
                 return Token(
-                    TokenType.HEREDOC, result, Span(start, self.byte_pos), had_whitespace, had_newline
+                    TokenType.HEREDOC,
+                    result,
+                    Span(start, self.byte_pos),
+                    had_whitespace,
+                    had_newline,
                 )
 
             text += line
