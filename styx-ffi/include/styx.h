@@ -60,13 +60,11 @@
 #  define STYX_NULLABLE
 #endif
 
-/* Nodiscard attribute (C23, C++17, or compiler extension)
- * Note: __has_c_attribute may succeed even in older C modes, so we also
- * check __STDC_VERSION__ to ensure we're in C23+ before using [[nodiscard]].
+/* Nodiscard attribute (C++17, or compiler extension)
+ * We use __attribute__ on GCC/Clang even in C23 mode because mixing GNU-style
+ * attributes (STYX_API) with C23 [[nodiscard]] can cause issues in some cases.
  */
 #if defined(__cplusplus) && __cplusplus >= 201703L
-#  define STYX_NODISCARD [[nodiscard]]
-#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
 #  define STYX_NODISCARD [[nodiscard]]
 #elif defined(__GNUC__) || defined(__clang__)
 #  define STYX_NODISCARD __attribute__((warn_unused_result))
