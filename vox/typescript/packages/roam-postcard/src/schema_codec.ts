@@ -57,6 +57,109 @@ import {
 } from "./index.ts";
 
 // ============================================================================
+// Decode Context - tracks path and buffer for error reporting
+// ============================================================================
+
+/**
+ * Context for decode operations - tracks the path through the schema
+ * and provides rich error messages when decoding fails.
+ */
+class DecodeContext {
+  private path: string[] = [];
+
+  constructor(
+    public readonly buf: Uint8Array,
+    public readonly rootSchema: Schema,
+  ) {}
+
+  /** Push a path segment (entering a field, element, or variant) */
+  push(segment: string): void {
+    this.path.push(segment);
+  }
+
+  /** Pop a path segment (leaving a field, element, or variant) */
+  pop(): void {
+    this.path.pop();
+  }
+
+  /** Get the current path as a string */
+  currentPath(): string {
+    return this.path.length === 0 ? "<root>" : this.path.join(".");
+  }
+
+  /** Create a rich error with context */
+  error(message: string, offset: number, schema: Schema): Error {
+    const hexDump = this.hexDumpAround(offset, 32);
+    const schemaStr = this.schemaToString(schema);
+
+    const details = [
+      `Error: ${message}`,
+      `Path: ${this.currentPath()}`,
+      `Offset: ${offset} (0x${offset.toString(16)})`,
+      `Buffer length: ${this.buf.length}`,
+      `Schema: ${schemaStr}`,
+      `Bytes around offset:`,
+      hexDump,
+    ].join("\n  ");
+
+    return new Error(`Decode error:\n  ${details}`);
+  }
+
+  /** Hex dump of buffer around an offset */
+  private hexDumpAround(offset: number, windowSize: number): string {
+    const start = Math.max(0, offset - 8);
+    const end = Math.min(this.buf.length, offset + windowSize - 8);
+
+    const lines: string[] = [];
+    for (let i = start; i < end; i += 16) {
+      const lineEnd = Math.min(i + 16, end);
+      const bytes: string[] = [];
+      const chars: string[] = [];
+
+      for (let j = i; j < lineEnd; j++) {
+        const byte = this.buf[j];
+        // Highlight the error offset
+        if (j === offset) {
+          bytes.push(`[${byte.toString(16).padStart(2, "0")}]`);
+        } else {
+          bytes.push(byte.toString(16).padStart(2, "0"));
+        }
+        chars.push(byte >= 32 && byte < 127 ? String.fromCharCode(byte) : ".");
+      }
+
+      const addr = i.toString(16).padStart(4, "0");
+      lines.push(`    ${addr}: ${bytes.join(" ").padEnd(52)} ${chars.join("")}`);
+    }
+
+    return lines.join("\n");
+  }
+
+  /** Convert schema to a readable string (abbreviated) */
+  private schemaToString(schema: Schema): string {
+    switch (schema.kind) {
+      case "enum": {
+        const variants = schema.variants.map((v) => v.name).join(" | ");
+        return `enum { ${variants} }`;
+      }
+      case "struct": {
+        const fields = Object.keys(schema.fields).join(", ");
+        return `struct { ${fields} }`;
+      }
+      case "vec":
+        return `vec<${this.schemaToString(schema.element)}>`;
+      case "option":
+        return `option<${this.schemaToString(schema.inner)}>`;
+      case "map":
+        return `map<${this.schemaToString(schema.key)}, ${this.schemaToString(schema.value)}>`;
+      case "tuple":
+        return `tuple(${schema.elements.length} elements)`;
+      default:
+        return schema.kind;
+    }
+  }
+}
+
+// ============================================================================
 // Schema-driven Encoding
 // ============================================================================
 
@@ -71,7 +174,7 @@ import {
 export function encodeWithSchema(
   value: unknown,
   schema: Schema,
-  registry?: SchemaRegistry
+  registry?: SchemaRegistry,
 ): Uint8Array {
   // Resolve refs
   const resolved = registry ? resolveSchema(schema, registry) : schema;
@@ -119,7 +222,11 @@ export function encodeWithSchema(
     case "tuple":
       return encodeTupleWithSchema(value as unknown[], resolved, registry);
     case "enum":
-      return encodeEnumWithSchema(value as { tag: string; [key: string]: unknown }, resolved, registry);
+      return encodeEnumWithSchema(
+        value as { tag: string; [key: string]: unknown },
+        resolved,
+        registry,
+      );
 
     // Streaming types encode as channel IDs (u64)
     case "tx":
@@ -140,7 +247,7 @@ export function encodeWithSchema(
 function encodeVecWithSchema(
   values: unknown[],
   schema: VecSchema,
-  registry?: SchemaRegistry
+  registry?: SchemaRegistry,
 ): Uint8Array {
   const parts: Uint8Array[] = [encodeVarint(values.length)];
   for (const item of values) {
@@ -152,7 +259,7 @@ function encodeVecWithSchema(
 function encodeOptionWithSchema(
   value: unknown,
   schema: OptionSchema,
-  registry?: SchemaRegistry
+  registry?: SchemaRegistry,
 ): Uint8Array {
   if (value === null || value === undefined) {
     return Uint8Array.of(0);
@@ -163,7 +270,7 @@ function encodeOptionWithSchema(
 function encodeMapWithSchema(
   map: Map<unknown, unknown>,
   schema: MapSchema,
-  registry?: SchemaRegistry
+  registry?: SchemaRegistry,
 ): Uint8Array {
   const parts: Uint8Array[] = [encodeVarint(map.size)];
   for (const [k, v] of map) {
@@ -176,7 +283,7 @@ function encodeMapWithSchema(
 function encodeStructWithSchema(
   obj: Record<string, unknown>,
   schema: StructSchema,
-  registry?: SchemaRegistry
+  registry?: SchemaRegistry,
 ): Uint8Array {
   const parts: Uint8Array[] = [];
   // Encode fields in schema order (Object.keys preserves insertion order)
@@ -189,10 +296,12 @@ function encodeStructWithSchema(
 function encodeTupleWithSchema(
   values: unknown[],
   schema: TupleSchema,
-  registry?: SchemaRegistry
+  registry?: SchemaRegistry,
 ): Uint8Array {
   if (values.length !== schema.elements.length) {
-    throw new Error(`Tuple length mismatch: got ${values.length}, expected ${schema.elements.length}`);
+    throw new Error(
+      `Tuple length mismatch: got ${values.length}, expected ${schema.elements.length}`,
+    );
   }
   const parts: Uint8Array[] = [];
   for (let i = 0; i < values.length; i++) {
@@ -204,7 +313,7 @@ function encodeTupleWithSchema(
 function encodeEnumWithSchema(
   value: { tag: string; [key: string]: unknown },
   schema: EnumSchema,
-  registry?: SchemaRegistry
+  registry?: SchemaRegistry,
 ): Uint8Array {
   const variant = findVariantByName(schema, value.tag);
   if (!variant) {
@@ -255,169 +364,217 @@ export function decodeWithSchema(
   buf: Uint8Array,
   offset: number,
   schema: Schema,
-  registry?: SchemaRegistry
+  registry?: SchemaRegistry,
+): DecodeResult<unknown> {
+  const ctx = new DecodeContext(buf, schema);
+  return decodeWithSchemaImpl(buf, offset, schema, registry, ctx);
+}
+
+function decodeWithSchemaImpl(
+  buf: Uint8Array,
+  offset: number,
+  schema: Schema,
+  registry: SchemaRegistry | undefined,
+  ctx: DecodeContext,
 ): DecodeResult<unknown> {
   // Resolve refs
   const resolved = registry ? resolveSchema(schema, registry) : schema;
 
-  switch (resolved.kind) {
-    // Primitives
-    case "bool":
-      return decodeBool(buf, offset);
-    case "u8":
-      return decodeU8(buf, offset);
-    case "i8":
-      return decodeI8(buf, offset);
-    case "u16":
-      return decodeU16(buf, offset);
-    case "i16":
-      return decodeI16(buf, offset);
-    case "u32":
-      return decodeU32(buf, offset);
-    case "i32":
-      return decodeI32(buf, offset);
-    case "u64":
-      return decodeU64(buf, offset);
-    case "i64":
-      return decodeI64(buf, offset);
-    case "f32":
-      return decodeF32(buf, offset);
-    case "f64":
-      return decodeF64(buf, offset);
-    case "string":
-      return decodeString(buf, offset);
-    case "bytes":
-      return decodeBytes(buf, offset);
+  try {
+    switch (resolved.kind) {
+      // Primitives
+      case "bool":
+        return decodeBool(buf, offset);
+      case "u8":
+        return decodeU8(buf, offset);
+      case "i8":
+        return decodeI8(buf, offset);
+      case "u16":
+        return decodeU16(buf, offset);
+      case "i16":
+        return decodeI16(buf, offset);
+      case "u32":
+        return decodeU32(buf, offset);
+      case "i32":
+        return decodeI32(buf, offset);
+      case "u64":
+        return decodeU64(buf, offset);
+      case "i64":
+        return decodeI64(buf, offset);
+      case "f32":
+        return decodeF32(buf, offset);
+      case "f64":
+        return decodeF64(buf, offset);
+      case "string":
+        return decodeString(buf, offset);
+      case "bytes":
+        return decodeBytes(buf, offset);
 
-    // Containers
-    case "vec":
-      return decodeVecWithSchema(buf, offset, resolved, registry);
-    case "option":
-      return decodeOptionWithSchema(buf, offset, resolved, registry);
-    case "map":
-      return decodeMapWithSchema(buf, offset, resolved, registry);
+      // Containers
+      case "vec":
+        return decodeVecWithSchemaImpl(buf, offset, resolved, registry, ctx);
+      case "option":
+        return decodeOptionWithSchemaImpl(buf, offset, resolved, registry, ctx);
+      case "map":
+        return decodeMapWithSchemaImpl(buf, offset, resolved, registry, ctx);
 
-    // Composites
-    case "struct":
-      return decodeStructWithSchema(buf, offset, resolved, registry);
-    case "tuple":
-      return decodeTupleWithSchema(buf, offset, resolved, registry);
-    case "enum":
-      return decodeEnumWithSchema(buf, offset, resolved, registry);
+      // Composites
+      case "struct":
+        return decodeStructWithSchemaImpl(buf, offset, resolved, registry, ctx);
+      case "tuple":
+        return decodeTupleWithSchemaImpl(buf, offset, resolved, registry, ctx);
+      case "enum":
+        return decodeEnumWithSchemaImpl(buf, offset, resolved, registry, ctx);
 
-    // Streaming types decode as channel IDs (u64)
-    case "tx":
-    case "rx": {
-      const result = decodeU64(buf, offset);
-      return { value: { channelId: result.value }, next: result.next };
+      // Streaming types decode as channel IDs (u64)
+      case "tx":
+      case "rx": {
+        const result = decodeU64(buf, offset);
+        return { value: { channelId: result.value }, next: result.next };
+      }
+
+      // Ref should have been resolved above
+      case "ref":
+        throw new Error(
+          `Unresolved ref: ${(schema as { name: string }).name} - provide a registry`,
+        );
+
+      default:
+        throw new Error(`Unknown schema kind: ${(resolved as { kind: string }).kind}`);
     }
-
-    // Ref should have been resolved above
-    case "ref":
-      throw new Error(`Unresolved ref: ${(schema as { name: string }).name} - provide a registry`);
-
-    default:
-      throw new Error(`Unknown schema kind: ${(resolved as { kind: string }).kind}`);
+  } catch (e) {
+    // If it's already a decode error with context, re-throw
+    if (e instanceof Error && e.message.startsWith("Decode error:")) {
+      throw e;
+    }
+    // Otherwise wrap it with context
+    throw ctx.error(e instanceof Error ? e.message : String(e), offset, resolved);
   }
 }
 
-function decodeVecWithSchema(
+function decodeVecWithSchemaImpl(
   buf: Uint8Array,
   offset: number,
   schema: VecSchema,
-  registry?: SchemaRegistry
+  registry: SchemaRegistry | undefined,
+  ctx: DecodeContext,
 ): DecodeResult<unknown[]> {
   const len = decodeVarintNumber(buf, offset);
   let pos = len.next;
   const items: unknown[] = [];
   for (let i = 0; i < len.value; i++) {
-    const item = decodeWithSchema(buf, pos, schema.element, registry);
+    ctx.push(`[${i}]`);
+    const item = decodeWithSchemaImpl(buf, pos, schema.element, registry, ctx);
     items.push(item.value);
     pos = item.next;
+    ctx.pop();
   }
   return { value: items, next: pos };
 }
 
-function decodeOptionWithSchema(
+function decodeOptionWithSchemaImpl(
   buf: Uint8Array,
   offset: number,
   schema: OptionSchema,
-  registry?: SchemaRegistry
+  registry: SchemaRegistry | undefined,
+  ctx: DecodeContext,
 ): DecodeResult<unknown | null> {
-  if (offset >= buf.length) throw new Error("option: eof");
+  if (offset >= buf.length) {
+    throw ctx.error("unexpected end of buffer reading option discriminant", offset, schema);
+  }
   const variant = buf[offset];
   if (variant === 0) {
     return { value: null, next: offset + 1 };
   } else if (variant === 1) {
-    const inner = decodeWithSchema(buf, offset + 1, schema.inner, registry);
+    ctx.push("Some");
+    const inner = decodeWithSchemaImpl(buf, offset + 1, schema.inner, registry, ctx);
+    ctx.pop();
     return { value: inner.value, next: inner.next };
   } else {
-    throw new Error(`option: invalid variant ${variant}`);
+    throw ctx.error(`invalid option discriminant: ${variant} (expected 0 or 1)`, offset, schema);
   }
 }
 
-function decodeMapWithSchema(
+function decodeMapWithSchemaImpl(
   buf: Uint8Array,
   offset: number,
   schema: MapSchema,
-  registry?: SchemaRegistry
+  registry: SchemaRegistry | undefined,
+  ctx: DecodeContext,
 ): DecodeResult<Map<unknown, unknown>> {
   const len = decodeVarintNumber(buf, offset);
   let pos = len.next;
   const map = new Map<unknown, unknown>();
   for (let i = 0; i < len.value; i++) {
-    const k = decodeWithSchema(buf, pos, schema.key, registry);
-    const v = decodeWithSchema(buf, k.next, schema.value, registry);
+    ctx.push(`{key ${i}}`);
+    const k = decodeWithSchemaImpl(buf, pos, schema.key, registry, ctx);
+    ctx.pop();
+    ctx.push(`{value ${i}}`);
+    const v = decodeWithSchemaImpl(buf, k.next, schema.value, registry, ctx);
+    ctx.pop();
     map.set(k.value, v.value);
     pos = v.next;
   }
   return { value: map, next: pos };
 }
 
-function decodeStructWithSchema(
+function decodeStructWithSchemaImpl(
   buf: Uint8Array,
   offset: number,
   schema: StructSchema,
-  registry?: SchemaRegistry
+  registry: SchemaRegistry | undefined,
+  ctx: DecodeContext,
 ): DecodeResult<Record<string, unknown>> {
   const obj: Record<string, unknown> = {};
   let pos = offset;
   for (const [fieldName, fieldSchema] of Object.entries(schema.fields)) {
-    const field = decodeWithSchema(buf, pos, fieldSchema, registry);
+    ctx.push(fieldName);
+    const field = decodeWithSchemaImpl(buf, pos, fieldSchema, registry, ctx);
     obj[fieldName] = field.value;
     pos = field.next;
+    ctx.pop();
   }
   return { value: obj, next: pos };
 }
 
-function decodeTupleWithSchema(
+function decodeTupleWithSchemaImpl(
   buf: Uint8Array,
   offset: number,
   schema: TupleSchema,
-  registry?: SchemaRegistry
+  registry: SchemaRegistry | undefined,
+  ctx: DecodeContext,
 ): DecodeResult<unknown[]> {
   const values: unknown[] = [];
   let pos = offset;
-  for (const elementSchema of schema.elements) {
-    const element = decodeWithSchema(buf, pos, elementSchema, registry);
+  for (let i = 0; i < schema.elements.length; i++) {
+    ctx.push(`${i}`);
+    const element = decodeWithSchemaImpl(buf, pos, schema.elements[i], registry, ctx);
     values.push(element.value);
     pos = element.next;
+    ctx.pop();
   }
   return { value: values, next: pos };
 }
 
-function decodeEnumWithSchema(
+function decodeEnumWithSchemaImpl(
   buf: Uint8Array,
   offset: number,
   schema: EnumSchema,
-  registry?: SchemaRegistry
+  registry: SchemaRegistry | undefined,
+  ctx: DecodeContext,
 ): DecodeResult<{ tag: string; [key: string]: unknown }> {
   const disc = decodeVarintNumber(buf, offset);
   const variant = findVariantByDiscriminant(schema, disc.value);
   if (!variant) {
-    throw new Error(`Unknown discriminant: ${disc.value}`);
+    const validVariants = schema.variants.map((v, i) => `${i}=${v.name}`).join(", ");
+    throw ctx.error(
+      `unknown enum discriminant: ${disc.value} (valid: ${validVariants})`,
+      offset,
+      schema,
+    );
   }
 
+  ctx.push(variant.name);
   let pos = disc.next;
   const result: { tag: string; [key: string]: unknown } = { tag: variant.name };
 
@@ -429,24 +586,31 @@ function decodeEnumWithSchema(
     // Unit variant - no fields
   } else if (isNewtypeVariant(variant)) {
     // Newtype variant - store in `value` field
-    const field = decodeWithSchema(buf, pos, fieldSchemas[0], registry);
+    ctx.push("value");
+    const field = decodeWithSchemaImpl(buf, pos, fieldSchemas[0], registry, ctx);
     result.value = field.value;
     pos = field.next;
+    ctx.pop();
   } else if (fieldNames === null) {
     // Tuple variant - store indexed (0, 1, 2, ...)
     for (let i = 0; i < fieldSchemas.length; i++) {
-      const field = decodeWithSchema(buf, pos, fieldSchemas[i], registry);
+      ctx.push(`${i}`);
+      const field = decodeWithSchemaImpl(buf, pos, fieldSchemas[i], registry, ctx);
       result[i.toString()] = field.value;
       pos = field.next;
+      ctx.pop();
     }
   } else {
     // Struct variant - store by field name
     for (let i = 0; i < fieldNames.length; i++) {
-      const field = decodeWithSchema(buf, pos, fieldSchemas[i], registry);
+      ctx.push(fieldNames[i]);
+      const field = decodeWithSchemaImpl(buf, pos, fieldSchemas[i], registry, ctx);
       result[fieldNames[i]] = field.value;
       pos = field.next;
+      ctx.pop();
     }
   }
 
+  ctx.pop();
   return { value: result, next: pos };
 }

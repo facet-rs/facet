@@ -313,8 +313,23 @@ export function isRefSchema(schema: Schema): schema is RefSchema {
 // Method Schema (for service methods)
 // ============================================================================
 
-/** Schema for a method's arguments and return type. */
+/**
+ * Schema for a method's arguments and return type.
+ *
+ * For methods returning `Result<T, E>`:
+ * - `returns` is the schema for `T` (success type)
+ * - `error` is the schema for `E` (user error type)
+ *
+ * For infallible methods returning `T`:
+ * - `returns` is the schema for `T`
+ * - `error` is null
+ *
+ * Note: The outer `Result<T, RoamError<E>>` wrapper is handled by `decodeRpcResult`.
+ * After that call succeeds, you decode with `returns`. If it throws a USER error,
+ * you decode the error payload with `error`.
+ */
 export interface MethodSchema {
   args: Schema[];
   returns: Schema;
+  error: Schema | null;
 }

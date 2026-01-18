@@ -3,7 +3,7 @@
 //! Generates client interface and implementation for making RPC calls.
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
-use roam_schema::{ServiceDetail, is_rx, is_tx};
+use roam_schema::{ServiceDetail, ShapeKind, classify_shape, is_rx, is_tx};
 
 use super::types::{ts_type_client_arg, ts_type_client_return};
 
@@ -148,12 +148,38 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
             ));
         }
 
-        // Decode the response using schema
-        out.push_str("    const offset = decodeRpcResult(response, 0);\n");
-        out.push_str(
-            "    const result = decodeWithSchema(response, offset, schema.returns).value;\n",
-        );
-        out.push_str(&format!("    return result as {ret_ty};\n"));
+        // Check if this method returns Result<T, E>
+        let is_fallible = matches!(classify_shape(method.return_type), ShapeKind::Result { .. });
+
+        if is_fallible {
+            // Fallible method: handle both success and user error
+            out.push_str("    try {\n");
+            out.push_str("      const offset = decodeRpcResult(response, 0);\n");
+            out.push_str(
+                "      const value = decodeWithSchema(response, offset, schema.returns).value;\n",
+            );
+            out.push_str(&format!(
+                "      return {{ ok: true, value }} as {ret_ty};\n"
+            ));
+            out.push_str("    } catch (e) {\n");
+            out.push_str("      if (e instanceof RpcError && e.isUserError() && e.payload && schema.error) {\n");
+            out.push_str(
+                "        const error = decodeWithSchema(e.payload, 0, schema.error).value;\n",
+            );
+            out.push_str(&format!(
+                "        return {{ ok: false, error }} as {ret_ty};\n"
+            ));
+            out.push_str("      }\n");
+            out.push_str("      throw e;\n");
+            out.push_str("    }\n");
+        } else {
+            // Infallible method: just decode success
+            out.push_str("    const offset = decodeRpcResult(response, 0);\n");
+            out.push_str(
+                "    const result = decodeWithSchema(response, offset, schema.returns).value;\n",
+            );
+            out.push_str(&format!("    return result as {ret_ty};\n"));
+        }
 
         out.push_str("  }\n\n");
     }

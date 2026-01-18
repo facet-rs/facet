@@ -160,6 +160,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0x9aabc4ba61fd5df3, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let result = try decodeString(from: response, offset: &offset)
         return result
     }
@@ -170,6 +171,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0xcba154600f640175, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let result = try decodeString(from: response, offset: &offset)
         return result
     }
@@ -181,28 +183,27 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0xc3964cbee4b1d590, payload: payload)
         var offset = 0
-        let _result_disc = try decodeU8(from: response, offset: &offset)
-        let result: Result<Int64, MathError>
-        switch _result_disc {
-        case 0:
-            let _result_ok = try decodeI64(from: response, offset: &offset)
-            result = .success(_result_ok)
-        case 1:
-            let __result_err_disc = try decodeU8(from: response, offset: &offset)
-            let _result_err: MathError
-            switch __result_err_disc {
+        do {
+            try decodeRpcResult(from: response, offset: &offset)
+            let value = try decodeI64(from: response, offset: &offset)
+            return .success(value)
+        } catch let e as RpcCallError where e.isUserError {
+            guard let errorPayload = e.payload else {
+                throw RoamError.decodeError("user error without payload")
+            }
+            var offset = 0
+            let _userError_disc = try decodeU8(from: errorPayload, offset: &offset)
+            let userError: MathError
+            switch _userError_disc {
             case 0:
-                _result_err = .divisionByZero
+                userError = .divisionByZero
             case 1:
-                _result_err = .overflow
+                userError = .overflow
             default:
                 throw RoamError.decodeError("unknown enum variant")
             }
-            result = .failure(_result_err)
-        default:
-            throw RoamError.decodeError("invalid Result discriminant")
+            return .failure(userError)
         }
-        return result
     }
 
     public func lookup(id: UInt32) async throws -> Result<Person, LookupError> {
@@ -211,31 +212,30 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0xe71a0faedd014e59, payload: payload)
         var offset = 0
-        let _result_disc = try decodeU8(from: response, offset: &offset)
-        let result: Result<Person, LookupError>
-        switch _result_disc {
-        case 0:
-            let __result_ok_name = try decodeString(from: response, offset: &offset)
-            let __result_ok_age = try decodeU8(from: response, offset: &offset)
-            let __result_ok_email = try decodeOption(from: response, offset: &offset, decoder: { data, off in try decodeString(from: data, offset: &off) })
-            let _result_ok = Person(name: __result_ok_name, age: __result_ok_age, email: __result_ok_email)
-            result = .success(_result_ok)
-        case 1:
-            let __result_err_disc = try decodeU8(from: response, offset: &offset)
-            let _result_err: LookupError
-            switch __result_err_disc {
+        do {
+            try decodeRpcResult(from: response, offset: &offset)
+            let _value_name = try decodeString(from: response, offset: &offset)
+            let _value_age = try decodeU8(from: response, offset: &offset)
+            let _value_email = try decodeOption(from: response, offset: &offset, decoder: { data, off in try decodeString(from: data, offset: &off) })
+            let value = Person(name: _value_name, age: _value_age, email: _value_email)
+            return .success(value)
+        } catch let e as RpcCallError where e.isUserError {
+            guard let errorPayload = e.payload else {
+                throw RoamError.decodeError("user error without payload")
+            }
+            var offset = 0
+            let _userError_disc = try decodeU8(from: errorPayload, offset: &offset)
+            let userError: LookupError
+            switch _userError_disc {
             case 0:
-                _result_err = .notFound
+                userError = .notFound
             case 1:
-                _result_err = .accessDenied
+                userError = .accessDenied
             default:
                 throw RoamError.decodeError("unknown enum variant")
             }
-            result = .failure(_result_err)
-        default:
-            throw RoamError.decodeError("invalid Result discriminant")
+            return .failure(userError)
         }
-        return result
     }
 
     public func sum(numbers: UnboundRx<Int32>) async throws -> Int64 {
@@ -256,6 +256,7 @@ public final class TestbedClient: TestbedCaller {
 
         let response = try await connection.call(methodId: 0x855b3a25d97bfefd, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let result = try decodeI64(from: response, offset: &offset)
         return result
     }
@@ -277,7 +278,9 @@ public final class TestbedClient: TestbedCaller {
         payloadBytes += encodeVarint(output.channelId)
         let payload = Data(payloadBytes)
 
-        _ = try await connection.call(methodId: 0x54d2273d8cdb9c38, payload: payload)
+        let response = try await connection.call(methodId: 0x54d2273d8cdb9c38, payload: payload)
+        var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
     }
 
     public func transform(input: UnboundRx<String>, output: UnboundTx<String>) async throws {
@@ -297,7 +300,9 @@ public final class TestbedClient: TestbedCaller {
         payloadBytes += encodeVarint(output.channelId)
         let payload = Data(payloadBytes)
 
-        _ = try await connection.call(methodId: 0x5d9895604eb18b19, payload: payload)
+        let response = try await connection.call(methodId: 0x5d9895604eb18b19, payload: payload)
+        var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
     }
 
     public func echoPoint(point: Point) async throws -> Point {
@@ -306,6 +311,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0x453fa9bf6932528c, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let _result_x = try decodeI32(from: response, offset: &offset)
         let _result_y = try decodeI32(from: response, offset: &offset)
         let result = Point(x: _result_x, y: _result_y)
@@ -320,6 +326,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0x3dd231f57b1bca21, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let _result_name = try decodeString(from: response, offset: &offset)
         let _result_age = try decodeU8(from: response, offset: &offset)
         let _result_email = try decodeOption(from: response, offset: &offset, decoder: { data, off in try decodeString(from: data, offset: &off) })
@@ -333,6 +340,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0xba75c48683f1d9e6, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let result = try decodeF64(from: response, offset: &offset)
         return result
     }
@@ -343,6 +351,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0xe285f31c6dfffbfc, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let result = try decodeOption(from: response, offset: &offset, decoder: { data, off in
             let disc = try decodeU8(from: data, offset: &off)
             let result: Color
@@ -367,6 +376,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0x6e706354167c00c2, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let result = try decodeF64(from: response, offset: &offset)
         return result
     }
@@ -388,6 +398,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0xa914982e7d3c7b55, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let _result_name = try decodeString(from: response, offset: &offset)
         let _result_shapes = try decodeVec(from: response, offset: &offset, decoder: { data, off in
             let disc = try decodeU8(from: data, offset: &off)
@@ -429,6 +440,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0xed1dc0c625889d30, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let _result_disc = try decodeU8(from: response, offset: &offset)
         let result: Message
         switch _result_disc {
@@ -453,6 +465,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0x5c8707f5ae4ccbcc, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let result = try decodeVec(from: response, offset: &offset, decoder: { data, off in
             let _x = try decodeI32(from: data, offset: &off)
             let _y = try decodeI32(from: data, offset: &off)
@@ -467,6 +480,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0xacd19a29fe0d470c, payload: payload)
         var offset = 0
+        try decodeRpcResult(from: response, offset: &offset)
         let result = try decodeTuple2(from: response, offset: &offset, decoderA: { data, off in try decodeString(from: data, offset: &off) }, decoderB: { data, off in try decodeI32(from: data, offset: &off) })
         return result
     }

@@ -105,7 +105,7 @@ pub fn generate_service(service: &ServiceDetail) -> String {
 /// Generate imports from @bearcove/roam-core
 fn generate_imports(service: &ServiceDetail, w: &mut CodeWriter<&mut String>) {
     use crate::cw_writeln;
-    use roam_schema::{is_rx, is_tx};
+    use roam_schema::{ShapeKind, classify_shape, is_rx, is_tx};
 
     // Check if any method uses streaming
     let has_streaming = service.methods.iter().any(|m| {
@@ -113,6 +113,12 @@ fn generate_imports(service: &ServiceDetail, w: &mut CodeWriter<&mut String>) {
             || is_tx(m.return_type)
             || is_rx(m.return_type)
     });
+
+    // Check if any method returns Result<T, E> (fallible methods)
+    let has_fallible = service
+        .methods
+        .iter()
+        .any(|m| matches!(classify_shape(m.return_type), ShapeKind::Result { .. }));
 
     // Type imports
     cw_writeln!(w, "import type {{ MethodHandler, Connection, MessageTransport, DecodeResult, MethodSchema }} from \"@bearcove/roam-core\";").unwrap();
@@ -150,6 +156,11 @@ fn generate_imports(service: &ServiceDetail, w: &mut CodeWriter<&mut String>) {
         "import {{ connectWs, type WsTransport }} from \"@bearcove/roam-ws\";"
     )
     .unwrap();
+
+    // RpcError for fallible methods (methods returning Result<T, E>)
+    if has_fallible {
+        cw_writeln!(w, "import {{ RpcError }} from \"@bearcove/roam-core\";").unwrap();
+    }
 
     if has_streaming {
         cw_writeln!(

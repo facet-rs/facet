@@ -3,7 +3,7 @@
 //! Generates caller protocol and client implementation for making RPC calls.
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
-use roam_schema::{MethodDetail, ServiceDetail, is_rx, is_tx};
+use roam_schema::{MethodDetail, ServiceDetail, ShapeKind, classify_shape, is_rx, is_tx};
 
 use super::decode::generate_decode_stmt_from;
 use super::encode::generate_encode_expr;
@@ -157,10 +157,13 @@ fn generate_client_method(
             if ret_type == "Void" {
                 cw_writeln!(
                     w,
-                    "_ = try await connection.call(methodId: {}, payload: payload)",
+                    "let response = try await connection.call(methodId: {}, payload: payload)",
                     hex_u64(method_id)
                 )
                 .unwrap();
+                w.writeln("var offset = 0").unwrap();
+                w.writeln("try decodeRpcResult(from: response, offset: &offset)")
+                    .unwrap();
             } else {
                 cw_writeln!(
                     w,
@@ -168,14 +171,67 @@ fn generate_client_method(
                     hex_u64(method_id)
                 )
                 .unwrap();
-                // Decode return value
-                w.writeln("var offset = 0").unwrap();
-                let decode_stmt =
-                    generate_decode_stmt_from(method.return_type, "result", "", "response");
-                for line in decode_stmt.lines() {
-                    w.writeln(line).unwrap();
+
+                // Check if this method returns Result<T, E>
+                let is_fallible =
+                    matches!(classify_shape(method.return_type), ShapeKind::Result { .. });
+
+                if is_fallible {
+                    // Fallible method: handle both success and user error
+                    let ShapeKind::Result { ok, err } = classify_shape(method.return_type) else {
+                        unreachable!()
+                    };
+
+                    w.writeln("var offset = 0").unwrap();
+                    w.writeln("do {").unwrap();
+                    {
+                        let _indent = w.indent();
+                        w.writeln("try decodeRpcResult(from: response, offset: &offset)")
+                            .unwrap();
+                        // Decode success value (just T, not Result<T, E>)
+                        let decode_ok = generate_decode_stmt_from(ok, "value", "", "response");
+                        for line in decode_ok.lines() {
+                            w.writeln(line).unwrap();
+                        }
+                        w.writeln("return .success(value)").unwrap();
+                    }
+                    w.writeln("} catch let e as RpcCallError where e.isUserError {")
+                        .unwrap();
+                    {
+                        let _indent = w.indent();
+                        w.writeln("guard let errorPayload = e.payload else {")
+                            .unwrap();
+                        {
+                            let _indent = w.indent();
+                            cw_writeln!(
+                                w,
+                                "throw RoamError.decodeError(\"user error without payload\")"
+                            )
+                            .unwrap();
+                        }
+                        w.writeln("}").unwrap();
+                        w.writeln("var offset = 0").unwrap();
+                        // Decode error value (just E)
+                        let decode_err =
+                            generate_decode_stmt_from(err, "userError", "", "errorPayload");
+                        for line in decode_err.lines() {
+                            w.writeln(line).unwrap();
+                        }
+                        w.writeln("return .failure(userError)").unwrap();
+                    }
+                    w.writeln("}").unwrap();
+                } else {
+                    // Infallible method: just decode success
+                    w.writeln("var offset = 0").unwrap();
+                    w.writeln("try decodeRpcResult(from: response, offset: &offset)")
+                        .unwrap();
+                    let decode_stmt =
+                        generate_decode_stmt_from(method.return_type, "result", "", "response");
+                    for line in decode_stmt.lines() {
+                        w.writeln(line).unwrap();
+                    }
+                    w.writeln("return result").unwrap();
                 }
-                w.writeln("return result").unwrap();
             }
         }
     }
@@ -255,10 +311,13 @@ fn generate_streaming_client_body(
     if ret_type == "Void" {
         cw_writeln!(
             w,
-            "_ = try await connection.call(methodId: {}, payload: payload)",
+            "let response = try await connection.call(methodId: {}, payload: payload)",
             hex_u64(method_id)
         )
         .unwrap();
+        w.writeln("var offset = 0").unwrap();
+        w.writeln("try decodeRpcResult(from: response, offset: &offset)")
+            .unwrap();
     } else {
         cw_writeln!(
             w,
@@ -266,12 +325,63 @@ fn generate_streaming_client_body(
             hex_u64(method_id)
         )
         .unwrap();
-        w.writeln("var offset = 0").unwrap();
-        let decode_stmt = generate_decode_stmt_from(method.return_type, "result", "", "response");
-        for line in decode_stmt.lines() {
-            w.writeln(line).unwrap();
+
+        // Check if this method returns Result<T, E>
+        let is_fallible = matches!(classify_shape(method.return_type), ShapeKind::Result { .. });
+
+        if is_fallible {
+            // Fallible method: handle both success and user error
+            let ShapeKind::Result { ok, err } = classify_shape(method.return_type) else {
+                unreachable!()
+            };
+
+            w.writeln("var offset = 0").unwrap();
+            w.writeln("do {").unwrap();
+            {
+                let _indent = w.indent();
+                w.writeln("try decodeRpcResult(from: response, offset: &offset)")
+                    .unwrap();
+                let decode_ok = generate_decode_stmt_from(ok, "value", "", "response");
+                for line in decode_ok.lines() {
+                    w.writeln(line).unwrap();
+                }
+                w.writeln("return .success(value)").unwrap();
+            }
+            w.writeln("} catch let e as RpcCallError where e.isUserError {")
+                .unwrap();
+            {
+                let _indent = w.indent();
+                w.writeln("guard let errorPayload = e.payload else {")
+                    .unwrap();
+                {
+                    let _indent = w.indent();
+                    cw_writeln!(
+                        w,
+                        "throw RoamError.decodeError(\"user error without payload\")"
+                    )
+                    .unwrap();
+                }
+                w.writeln("}").unwrap();
+                w.writeln("var offset = 0").unwrap();
+                let decode_err = generate_decode_stmt_from(err, "userError", "", "errorPayload");
+                for line in decode_err.lines() {
+                    w.writeln(line).unwrap();
+                }
+                w.writeln("return .failure(userError)").unwrap();
+            }
+            w.writeln("}").unwrap();
+        } else {
+            // Infallible method: just decode success
+            w.writeln("var offset = 0").unwrap();
+            w.writeln("try decodeRpcResult(from: response, offset: &offset)")
+                .unwrap();
+            let decode_stmt =
+                generate_decode_stmt_from(method.return_type, "result", "", "response");
+            for line in decode_stmt.lines() {
+                w.writeln(line).unwrap();
+            }
+            w.writeln("return result").unwrap();
         }
-        w.writeln("return result").unwrap();
     }
 }
 

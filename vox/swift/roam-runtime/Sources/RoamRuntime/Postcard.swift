@@ -217,3 +217,86 @@ public enum PostcardError: Error {
     case unknownVariant
     case overflow
 }
+
+// MARK: - RPC Result Decoding
+
+/// RPC error codes matching the Roam spec.
+/// r[impl core.error.roam-error] - RoamError wraps call results.
+/// r[impl call.error.protocol] - Protocol errors use discriminants 1-3.
+public enum RpcErrorCode: UInt8, Sendable {
+    /// User-defined application error
+    case user = 0
+    /// r[impl call.error.unknown-method] - Method ID not recognized
+    case unknownMethod = 1
+    /// r[impl call.error.invalid-payload] - Request payload deserialization failed
+    case invalidPayload = 2
+    /// Call was cancelled
+    case cancelled = 3
+}
+
+/// RPC call error with structured error information.
+/// r[impl core.error.call-vs-connection] - Call errors affect only this call, not the connection.
+public struct RpcCallError: Error {
+    /// The error code discriminant
+    public let code: RpcErrorCode
+    /// Raw error payload bytes (for user errors)
+    public let payload: Data?
+
+    public init(code: RpcErrorCode, payload: Data? = nil) {
+        self.code = code
+        self.payload = payload
+    }
+
+    /// Check if this is a user-defined error
+    public var isUserError: Bool { code == .user }
+
+    /// Check if this is a protocol error
+    public var isProtocolError: Bool { code != .user }
+}
+
+/// Decode the outer Result<T, RoamError> wrapper from an RPC response.
+///
+/// Returns the offset after the result discriminant if Ok,
+/// or throws RpcCallError if Err.
+///
+/// - Parameters:
+///   - data: The response buffer
+///   - offset: Starting offset (modified to point past the discriminant on success)
+/// - Returns: Void on success (offset is updated)
+/// - Throws: RpcCallError if the response is an error
+public func decodeRpcResult(from data: Data, offset: inout Int) throws {
+    guard offset < data.count else {
+        throw PostcardError.truncated
+    }
+
+    // Decode outer Result discriminant: 0 = Ok, 1 = Err
+    let outerResult = try decodeU8(from: data, offset: &offset)
+
+    if outerResult == 0 {
+        // Ok - offset is now pointing to success payload
+        return
+    }
+
+    guard outerResult == 1 else {
+        throw RoamError.decodeError("invalid outer Result discriminant: \(outerResult)")
+    }
+
+    // Err - decode the RoamError discriminant
+    guard offset < data.count else {
+        throw PostcardError.truncated
+    }
+    let errorCode = try decodeU8(from: data, offset: &offset)
+
+    guard let code = RpcErrorCode(rawValue: errorCode) else {
+        throw RoamError.decodeError("invalid RoamError discriminant: \(errorCode)")
+    }
+
+    if code == .user {
+        // User error - payload follows from current offset
+        let payload = data.subdata(in: (data.startIndex + offset)..<data.endIndex)
+        throw RpcCallError(code: code, payload: payload)
+    }
+
+    // Protocol error - no additional payload
+    throw RpcCallError(code: code)
+}

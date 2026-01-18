@@ -158,6 +158,14 @@ fn generate_scalar_schema(scalar: ScalarType) -> String {
 }
 
 /// Generate method schemas for runtime channel binding and encoding/decoding.
+///
+/// For methods returning `Result<T, E>`:
+/// - `returns` is the schema for `T` (success type, used after decodeRpcResult succeeds)
+/// - `error` is the schema for `E` (user error type, used when decodeRpcResult throws USER error)
+///
+/// For infallible methods returning `T`:
+/// - `returns` is the schema for `T`
+/// - `error` is null
 pub fn generate_method_schemas(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name_lower = service.name.to_lower_camel_case();
@@ -170,12 +178,24 @@ pub fn generate_method_schemas(service: &ServiceDetail) -> String {
     for method in &service.methods {
         let method_name = method.method_name.to_lower_camel_case();
         let arg_schemas: Vec<_> = method.args.iter().map(|a| generate_schema(a.ty)).collect();
-        let return_schema = generate_schema(method.return_type);
+
+        // Check if return type is Result<T, E>
+        let (return_schema, error_schema) = match classify_shape(method.return_type) {
+            ShapeKind::Result { ok, err } => {
+                // For Result<T, E>: returns is T, error is E
+                (generate_schema(ok), generate_schema(err))
+            }
+            _ => {
+                // Infallible method: returns is the full type, no error schema
+                (generate_schema(method.return_type), "null".to_string())
+            }
+        };
 
         out.push_str(&format!(
-            "  {method_name}: {{ args: [{}], returns: {} }},\n",
+            "  {method_name}: {{ args: [{}], returns: {}, error: {} }},\n",
             arg_schemas.join(", "),
-            return_schema
+            return_schema,
+            error_schema
         ));
     }
 

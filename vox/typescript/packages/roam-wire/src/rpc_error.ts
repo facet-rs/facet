@@ -75,6 +75,10 @@ export class RpcError extends Error {
  * @throws RpcError if the response is an error
  */
 export function decodeRpcResult(buf: Uint8Array, offset: number): number {
+  if (buf.length === 0) {
+    throw new Error(`decodeRpcResult: empty buffer (length=0), cannot decode Result discriminant`);
+  }
+
   // Decode outer Result discriminant: 0 = Ok, 1 = Err
   const outerResult = decodeVarintNumber(buf, offset);
 
@@ -83,9 +87,28 @@ export function decodeRpcResult(buf: Uint8Array, offset: number): number {
     return outerResult.next;
   }
 
+  if (outerResult.value !== 1) {
+    // Invalid Result discriminant - provide context
+    throw new Error(
+      `decodeRpcResult: invalid outer Result discriminant: ${outerResult.value} ` +
+        `(expected 0=Ok or 1=Err) at offset ${offset}\n` +
+        `  Buffer (${buf.length} bytes): ${hexDump(buf, offset, 32)}`,
+    );
+  }
+
   // Err - decode the RoamError discriminant
   const errorDiscrim = decodeVarintNumber(buf, outerResult.next);
-  const errorCode = errorDiscrim.value as RpcErrorCode;
+  const errorCode = errorDiscrim.value;
+
+  // Validate RoamError discriminant
+  if (errorCode < 0 || errorCode > 3) {
+    throw new Error(
+      `decodeRpcResult: invalid RoamError discriminant: ${errorCode} ` +
+        `(expected 0=USER, 1=UNKNOWN_METHOD, 2=INVALID_PAYLOAD, 3=CANCELLED) ` +
+        `at offset ${outerResult.next}\n` +
+        `  Buffer (${buf.length} bytes): ${hexDump(buf, outerResult.next, 32)}`,
+    );
+  }
 
   if (errorCode === RpcErrorCode.USER) {
     // User error - payload follows
@@ -94,7 +117,22 @@ export function decodeRpcResult(buf: Uint8Array, offset: number): number {
   }
 
   // Protocol error - no additional payload
-  throw new RpcError(errorCode);
+  throw new RpcError(errorCode as RpcErrorCode);
+}
+
+/** Helper to create a hex dump of buffer bytes for error messages */
+function hexDump(buf: Uint8Array, offset: number, length: number): string {
+  const start = Math.max(0, offset);
+  const end = Math.min(buf.length, start + length);
+  const bytes: string[] = [];
+  for (let i = start; i < end; i++) {
+    if (i === offset) {
+      bytes.push(`[${buf[i].toString(16).padStart(2, "0")}]`);
+    } else {
+      bytes.push(buf[i].toString(16).padStart(2, "0"));
+    }
+  }
+  return bytes.join(" ");
 }
 
 /**

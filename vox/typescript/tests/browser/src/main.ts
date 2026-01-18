@@ -218,6 +218,69 @@ async function testComplex(client: TestbedClient): Promise<void> {
   addResult("createCanvas", true);
 }
 
+async function testFallible(client: TestbedClient): Promise<void> {
+  // Test: divide - successful division
+  log("Testing divide (success)...");
+  const divideResult = await client.divide(10n, 2n);
+  if (!divideResult.ok) {
+    throw new Error(`divide (success) expected Ok, got Err: ${JSON.stringify(divideResult.error)}`);
+  }
+  if (divideResult.value !== 5n) {
+    throw new Error(`divide (success) mismatch: expected 5n, got ${divideResult.value}`);
+  }
+  addResult("divide (success)", true);
+
+  // Test: divide - division by zero error
+  log("Testing divide (error)...");
+  const divideError = await client.divide(10n, 0n);
+  if (divideError.ok) {
+    throw new Error(`divide (error) expected Err, got Ok: ${divideError.value}`);
+  }
+  if (divideError.error.tag !== "DivisionByZero") {
+    throw new Error(
+      `divide (error) mismatch: expected DivisionByZero, got ${JSON.stringify(divideError.error)}`,
+    );
+  }
+  addResult("divide (error)", true);
+
+  // Test: lookup - successful lookup (id 1 = Alice)
+  log("Testing lookup (success)...");
+  const lookupResult = await client.lookup(1);
+  if (!lookupResult.ok) {
+    throw new Error(`lookup (success) expected Ok, got Err: ${JSON.stringify(lookupResult.error)}`);
+  }
+  const alice = lookupResult.value;
+  if (alice.name !== "Alice" || alice.age !== 30 || alice.email !== "alice@example.com") {
+    throw new Error(`lookup (success) mismatch: got ${JSON.stringify(alice)}`);
+  }
+  addResult("lookup (success)", true);
+
+  // Test: lookup - not found error (id 999 doesn't exist)
+  log("Testing lookup (error)...");
+  const lookupError = await client.lookup(999);
+  if (lookupError.ok) {
+    throw new Error(`lookup (error) expected Err, got Ok: ${JSON.stringify(lookupError.value)}`);
+  }
+  if (lookupError.error.tag !== "NotFound") {
+    throw new Error(
+      `lookup (error) mismatch: expected NotFound, got ${JSON.stringify(lookupError.error)}`,
+    );
+  }
+  addResult("lookup (error)", true);
+
+  // Test: lookup with null email (id 2 = Bob who has no email)
+  log("Testing lookup (null email)...");
+  const bobResult = await client.lookup(2);
+  if (!bobResult.ok) {
+    throw new Error(`lookup (null email) expected Ok, got Err: ${JSON.stringify(bobResult.error)}`);
+  }
+  const bob = bobResult.value;
+  if (bob.name !== "Bob" || bob.age !== 25 || bob.email !== null) {
+    throw new Error(`lookup (null email) mismatch: got ${JSON.stringify(bob)}`);
+  }
+  addResult("lookup (null email)", true);
+}
+
 async function testStreaming(client: TestbedClient): Promise<void> {
   // Test: sum - client-to-server streaming
   // Client sends numbers via Tx, server returns their sum
@@ -328,6 +391,9 @@ async function runTests(wsUrl: string): Promise<void> {
 
     // Run Complex tests
     await testComplex(client);
+
+    // Run Fallible tests (methods returning Result<T, E>)
+    await testFallible(client);
 
     // Run Streaming tests
     await testStreaming(client);

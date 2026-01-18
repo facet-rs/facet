@@ -5,6 +5,7 @@ import type { MethodHandler, Connection, MessageTransport, DecodeResult, MethodS
 import {
   encodeResultOk, encodeResultErr, encodeInvalidPayload,
   concat, encodeVarint, decodeVarintNumber, decodeRpcResult,
+  encodeWithSchema, decodeWithSchema,
   encodeBool, decodeBool,
   encodeU8, decodeU8, encodeI8, decodeI8,
   encodeU16, decodeU16, encodeI16, decodeI16,
@@ -17,7 +18,10 @@ import {
   encodeVec, decodeVec,
   encodeTuple2, decodeTuple2, encodeTuple3, decodeTuple3,
   encodeEnumVariant, decodeEnumVariant,
+  helloExchangeInitiator, defaultHello,
 } from "@bearcove/roam-core";
+import { connectWs, type WsTransport } from "@bearcove/roam-ws";
+import { RpcError } from "@bearcove/roam-core";
 import { Tx, Rx, createServerTx, createServerRx, bindChannels } from "@bearcove/roam-core";
 import type { ChannelId, ChannelRegistry, TaskSender, BindingSerializers, Schema } from "@bearcove/roam-core";
 
@@ -87,7 +91,7 @@ export type Message =
   | { tag: 'Number'; value: bigint }
   | { tag: 'Data'; value: Uint8Array };
 
-// Type definitions
+// Request/Response type aliases
 export type EchoRequest = [string];
 export type EchoResponse = string;
 
@@ -205,272 +209,221 @@ export class TestbedClient<T extends MessageTransport = MessageTransport> implem
 
   /**  Echoes the message back. */
   async echo(message: string): Promise<string> {
-    const payload = encodeString(message);
+    const schema = testbed_schemas.echo;
+    const payload = encodeWithSchema(message, schema.args[0]);
     const response = await this.conn.call(0x9aabc4ba61fd5df3n, payload);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_r = decodeString(buf, offset); const result = _result_r.value; offset = _result_r.next;
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as string;
   }
 
   /**  Returns the message reversed. */
   async reverse(message: string): Promise<string> {
-    const payload = encodeString(message);
+    const schema = testbed_schemas.reverse;
+    const payload = encodeWithSchema(message, schema.args[0]);
     const response = await this.conn.call(0xcba154600f640175n, payload);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_r = decodeString(buf, offset); const result = _result_r.value; offset = _result_r.next;
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as string;
   }
 
   /**  Divides two numbers, returning an error if divisor is zero. */
   async divide(dividend: bigint, divisor: bigint): Promise<{ ok: true; value: bigint } | { ok: false; error: MathError }> {
-    throw new Error("Not yet implemented: encoding/decoding for this method");
+    const schema = testbed_schemas.divide;
+    const payload = encodeWithSchema([dividend, divisor], { kind: 'tuple', elements: schema.args });
+    const response = await this.conn.call(0xc3964cbee4b1d590n, payload);
+    try {
+      const offset = decodeRpcResult(response, 0);
+      const value = decodeWithSchema(response, offset, schema.returns).value;
+      return { ok: true, value } as { ok: true; value: bigint } | { ok: false; error: MathError };
+    } catch (e) {
+      if (e instanceof RpcError && e.isUserError() && e.payload && schema.error) {
+        const error = decodeWithSchema(e.payload, 0, schema.error).value;
+        return { ok: false, error } as { ok: true; value: bigint } | { ok: false; error: MathError };
+      }
+      throw e;
+    }
   }
 
   /**  Looks up a user by ID, returning an error if not found. */
   async lookup(id: number): Promise<{ ok: true; value: Person } | { ok: false; error: LookupError }> {
-    throw new Error("Not yet implemented: encoding/decoding for this method");
+    const schema = testbed_schemas.lookup;
+    const payload = encodeWithSchema(id, schema.args[0]);
+    const response = await this.conn.call(0xe71a0faedd014e59n, payload);
+    try {
+      const offset = decodeRpcResult(response, 0);
+      const value = decodeWithSchema(response, offset, schema.returns).value;
+      return { ok: true, value } as { ok: true; value: Person } | { ok: false; error: LookupError };
+    } catch (e) {
+      if (e instanceof RpcError && e.isUserError() && e.payload && schema.error) {
+        const error = decodeWithSchema(e.payload, 0, schema.error).value;
+        return { ok: false, error } as { ok: true; value: Person } | { ok: false; error: LookupError };
+      }
+      throw e;
+    }
   }
 
   /**  Client sends numbers, server returns their sum.
 
  Tests: client→server streaming. Server receives via `Rx<T>`, returns scalar. */
   async sum(numbers: Rx<number>): Promise<bigint> {
+    const schema = testbed_schemas.sum;
     // Bind any Tx/Rx channels in arguments and collect channel IDs
     const channels = bindChannels(
-      testbed_schemas.sum.args,
+      schema.args,
       [numbers],
       this.conn.getChannelAllocator(),
       this.conn.getChannelRegistry(),
       testbed_serializers,
     );
-    const payload = encodeU64(numbers.channelId);
+    const payload = encodeWithSchema(numbers, schema.args[0]);
     const response = await this.conn.call(0x855b3a25d97bfefdn, payload, 30000, channels);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_r = decodeI64(buf, offset); const result = _result_r.value; offset = _result_r.next;
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as bigint;
   }
 
   /**  Server streams numbers back to client.
 
  Tests: server→client streaming. Server sends via `Tx<T>`. */
   async generate(count: number, output: Tx<number>): Promise<void> {
+    const schema = testbed_schemas.generate;
     // Bind any Tx/Rx channels in arguments and collect channel IDs
     const channels = bindChannels(
-      testbed_schemas.generate.args,
+      schema.args,
       [count, output],
       this.conn.getChannelAllocator(),
       this.conn.getChannelRegistry(),
       testbed_serializers,
     );
-    const payload = concat(encodeU32(count), encodeU64(output.channelId));
+    const payload = encodeWithSchema([count, output], { kind: 'tuple', elements: schema.args });
     const response = await this.conn.call(0x54d2273d8cdb9c38n, payload, 30000, channels);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const result = undefined;
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as void;
   }
 
   /**  Bidirectional: client sends strings, server echoes each back.
 
  Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`. */
   async transform(input: Rx<string>, output: Tx<string>): Promise<void> {
+    const schema = testbed_schemas.transform;
     // Bind any Tx/Rx channels in arguments and collect channel IDs
     const channels = bindChannels(
-      testbed_schemas.transform.args,
+      schema.args,
       [input, output],
       this.conn.getChannelAllocator(),
       this.conn.getChannelRegistry(),
       testbed_serializers,
     );
-    const payload = concat(encodeU64(input.channelId), encodeU64(output.channelId));
+    const payload = encodeWithSchema([input, output], { kind: 'tuple', elements: schema.args });
     const response = await this.conn.call(0x5d9895604eb18b19n, payload, 30000, channels);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const result = undefined;
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as void;
   }
 
   /**  Echo a point back. */
   async echoPoint(point: Point): Promise<Point> {
-    const payload = concat(encodeI32(point.x), encodeI32(point.y));
+    const schema = testbed_schemas.echoPoint;
+    const payload = encodeWithSchema(point, schema.args[0]);
     const response = await this.conn.call(0x453fa9bf6932528cn, payload);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_f0_r = decodeI32(buf, offset); const result_f0 = _result_f0_r.value; offset = _result_f0_r.next;
-const _result_f1_r = decodeI32(buf, offset); const result_f1 = _result_f1_r.value; offset = _result_f1_r.next;
-const result = { x: result_f0, y: result_f1 };
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as Point;
   }
 
   /**  Create a person and return it. */
   async createPerson(name: string, age: number, email: string | null): Promise<Person> {
-    const payload = concat(encodeString(name), encodeU8(age), encodeOption(email, (v) => encodeString(v)));
+    const schema = testbed_schemas.createPerson;
+    const payload = encodeWithSchema([name, age, email], { kind: 'tuple', elements: schema.args });
     const response = await this.conn.call(0x3dd231f57b1bca21n, payload);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_f0_r = decodeString(buf, offset); const result_f0 = _result_f0_r.value; offset = _result_f0_r.next;
-const _result_f1_r = decodeU8(buf, offset); const result_f1 = _result_f1_r.value; offset = _result_f1_r.next;
-const _result_f2_r = decodeOption(buf, offset, (buf, off) => decodeString(buf, off)); const result_f2 = _result_f2_r.value; offset = _result_f2_r.next;
-const result = { name: result_f0, age: result_f1, email: result_f2 };
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as Person;
   }
 
   /**  Calculate the area of a rectangle. */
   async rectangleArea(rect: Rectangle): Promise<number> {
-    const payload = concat(concat(encodeI32(rect.top_left.x), encodeI32(rect.top_left.y)), concat(encodeI32(rect.bottom_right.x), encodeI32(rect.bottom_right.y)), encodeOption(rect.label, (v) => encodeString(v)));
+    const schema = testbed_schemas.rectangleArea;
+    const payload = encodeWithSchema(rect, schema.args[0]);
     const response = await this.conn.call(0xba75c48683f1d9e6n, payload);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_r = decodeF64(buf, offset); const result = _result_r.value; offset = _result_r.next;
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as number;
   }
 
   /**  Get a color by name. */
   async parseColor(name: string): Promise<Color | null> {
-    const payload = encodeString(name);
+    const schema = testbed_schemas.parseColor;
+    const payload = encodeWithSchema(name, schema.args[0]);
     const response = await this.conn.call(0xe285f31c6dfffbfcn, payload);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_r = decodeOption(buf, offset, (buf: Uint8Array, off: number): DecodeResult<any> => { let o = off;
-  const disc = decodeEnumVariant(buf, o); o = disc.next;
-  switch (disc.value) {
-    case 0: return { value: { tag: 'Red' }, next: o };
-    case 1: return { value: { tag: 'Green' }, next: o };
-    case 2: return { value: { tag: 'Blue' }, next: o };
-    default: throw new Error(`unknown enum variant: ${disc.value}`);
-  }
-}); const result = _result_r.value; offset = _result_r.next;
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as Color | null;
   }
 
   /**  Calculate the area of a shape. */
   async shapeArea(shape: Shape): Promise<number> {
-    const payload = (() => { switch (shape.tag) {
-      case 'Circle': return concat(encodeEnumVariant(0), encodeF64(shape.radius));
-      case 'Rectangle': return concat(encodeEnumVariant(1), encodeF64(shape.width), encodeF64(shape.height));
-      case 'Point': return encodeEnumVariant(2);
-      default: throw new Error('unknown enum variant'); } })();
+    const schema = testbed_schemas.shapeArea;
+    const payload = encodeWithSchema(shape, schema.args[0]);
     const response = await this.conn.call(0x6e706354167c00c2n, payload);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_r = decodeF64(buf, offset); const result = _result_r.value; offset = _result_r.next;
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as number;
   }
 
   /**  Create a canvas with given shapes. */
   async createCanvas(name: string, shapes: Shape[], background: Color): Promise<Canvas> {
-    const payload = concat(encodeString(name), encodeVec(shapes, (item) => (() => { switch (item.tag) {
-      case 'Circle': return concat(encodeEnumVariant(0), encodeF64(item.radius));
-      case 'Rectangle': return concat(encodeEnumVariant(1), encodeF64(item.width), encodeF64(item.height));
-      case 'Point': return encodeEnumVariant(2);
-      default: throw new Error('unknown enum variant'); } })()), (() => { switch (background.tag) {
-      case 'Red': return encodeEnumVariant(0);
-      case 'Green': return encodeEnumVariant(1);
-      case 'Blue': return encodeEnumVariant(2);
-      default: throw new Error('unknown enum variant'); } })());
+    const schema = testbed_schemas.createCanvas;
+    const payload = encodeWithSchema([name, shapes, background], { kind: 'tuple', elements: schema.args });
     const response = await this.conn.call(0xa914982e7d3c7b55n, payload);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_f0_r = decodeString(buf, offset); const result_f0 = _result_f0_r.value; offset = _result_f0_r.next;
-const _result_f1_r = decodeVec(buf, offset, (buf: Uint8Array, off: number): DecodeResult<any> => { let o = off;
-  const disc = decodeEnumVariant(buf, o); o = disc.next;
-  switch (disc.value) {
-    case 0: {
-      const _f0_r = decodeF64(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
-      return { value: { tag: 'Circle', radius: f0 }, next: o };
-    }
-    case 1: {
-      const _f0_r = decodeF64(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
-      const _f1_r = decodeF64(buf, o); const f1 = _f1_r.value; o = _f1_r.next;
-      return { value: { tag: 'Rectangle', width: f0, height: f1 }, next: o };
-    }
-    case 2: return { value: { tag: 'Point' }, next: o };
-    default: throw new Error(`unknown enum variant: ${disc.value}`);
-  }
-}); const result_f1 = _result_f1_r.value; offset = _result_f1_r.next;
-const _result_f2_disc = decodeEnumVariant(buf, offset); offset = _result_f2_disc.next;
-let result_f2: Color;
-switch (_result_f2_disc.value) {
-  case 0: {
-    result_f2 = { tag: 'Red' };
-    break;
-  }
-  case 1: {
-    result_f2 = { tag: 'Green' };
-    break;
-  }
-  case 2: {
-    result_f2 = { tag: 'Blue' };
-    break;
-  }
-  default: throw new Error(`unknown enum variant ${_result_f2_disc.value}`);
-}
-const result = { name: result_f0, shapes: result_f1, background: result_f2 };
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as Canvas;
   }
 
   /**  Process a message and return a response. */
   async processMessage(msg: Message): Promise<Message> {
-    const payload = (() => { switch (msg.tag) {
-      case 'Text': return concat(encodeEnumVariant(0), encodeString(msg.value));
-      case 'Number': return concat(encodeEnumVariant(1), encodeI64(msg.value));
-      case 'Data': return concat(encodeEnumVariant(2), encodeBytes(msg.value));
-      default: throw new Error('unknown enum variant'); } })();
+    const schema = testbed_schemas.processMessage;
+    const payload = encodeWithSchema(msg, schema.args[0]);
     const response = await this.conn.call(0xed1dc0c625889d30n, payload);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_disc = decodeEnumVariant(buf, offset); offset = _result_disc.next;
-let result: Message;
-switch (_result_disc.value) {
-  case 0: {
-    const _result_inner_r = decodeString(buf, offset); const result_inner = _result_inner_r.value; offset = _result_inner_r.next;
-    result = { tag: 'Text', value: result_inner };
-    break;
-  }
-  case 1: {
-    const _result_inner_r = decodeI64(buf, offset); const result_inner = _result_inner_r.value; offset = _result_inner_r.next;
-    result = { tag: 'Number', value: result_inner };
-    break;
-  }
-  case 2: {
-    const _result_inner_r = decodeBytes(buf, offset); const result_inner = _result_inner_r.value; offset = _result_inner_r.next;
-    result = { tag: 'Data', value: result_inner };
-    break;
-  }
-  default: throw new Error(`unknown enum variant ${_result_disc.value}`);
-}
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as Message;
   }
 
   /**  Return multiple points. */
   async getPoints(count: number): Promise<Point[]> {
-    const payload = encodeU32(count);
+    const schema = testbed_schemas.getPoints;
+    const payload = encodeWithSchema(count, schema.args[0]);
     const response = await this.conn.call(0x5c8707f5ae4ccbccn, payload);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_r = decodeVec(buf, offset, (buf: Uint8Array, off: number) => { let o = off;
-  const _f0_r = decodeI32(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
-  const _f1_r = decodeI32(buf, o); const f1 = _f1_r.value; o = _f1_r.next;
-  return { value: { x: f0, y: f1 }, next: o };
-}); const result = _result_r.value; offset = _result_r.next;
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as Point[];
   }
 
   /**  Test tuple types. */
   async swapPair(pair: [number, string]): Promise<[string, number]> {
-    const payload = concat(encodeI32(pair[0]), encodeString(pair[1]));
+    const schema = testbed_schemas.swapPair;
+    const payload = encodeWithSchema(pair, schema.args[0]);
     const response = await this.conn.call(0xacd19a29fe0d470cn, payload);
-    const buf = response;
-    let offset = decodeRpcResult(buf, 0);
-    const _result_0_r = decodeString(buf, offset); const result_0 = _result_0_r.value; offset = _result_0_r.next;
-const _result_1_r = decodeI32(buf, offset); const result_1 = _result_1_r.value; offset = _result_1_r.next;
-const result = [result_0, result_1] as [string, number];
-    return result;
+    const offset = decodeRpcResult(response, 0);
+    const result = decodeWithSchema(response, offset, schema.returns).value;
+    return result as [string, number];
   }
 
+}
+
+/**
+ * Connect to a Testbed server over WebSocket.
+ * @param url - WebSocket URL (e.g., "ws://localhost:9000")
+ * @returns A connected TestbedClient instance
+ */
+export async function connectTestbed(url: string): Promise<TestbedClient<WsTransport>> {
+  const transport = await connectWs(url);
+  const connection = await helloExchangeInitiator(transport, defaultHello());
+  return new TestbedClient(connection);
 }
 
 // Handler interface for Testbed
@@ -1093,24 +1046,24 @@ const pair = [pair_0, pair_1] as [number, string];
   }],
 ]);
 
-// Method schemas for runtime channel binding
+// Method schemas for runtime encoding/decoding and channel binding
 export const testbed_schemas: Record<string, MethodSchema> = {
-  echo: { args: [{ kind: 'string' }] },
-  reverse: { args: [{ kind: 'string' }] },
-  divide: { args: [{ kind: 'i64' }, { kind: 'i64' }] },
-  lookup: { args: [{ kind: 'u32' }] },
-  sum: { args: [{ kind: 'rx', element: { kind: 'i32' } }] },
-  generate: { args: [{ kind: 'u32' }, { kind: 'tx', element: { kind: 'i32' } }] },
-  transform: { args: [{ kind: 'rx', element: { kind: 'string' } }, { kind: 'tx', element: { kind: 'string' } }] },
-  echoPoint: { args: [{ kind: 'struct', fields: { 'x': { kind: 'i32' }, 'y': { kind: 'i32' } } }] },
-  createPerson: { args: [{ kind: 'string' }, { kind: 'u8' }, { kind: 'option', inner: { kind: 'string' } }] },
-  rectangleArea: { args: [{ kind: 'struct', fields: { 'top_left': { kind: 'struct', fields: { 'x': { kind: 'i32' }, 'y': { kind: 'i32' } } }, 'bottom_right': { kind: 'struct', fields: { 'x': { kind: 'i32' }, 'y': { kind: 'i32' } } }, 'label': { kind: 'option', inner: { kind: 'string' } } } }] },
-  parseColor: { args: [{ kind: 'string' }] },
-  shapeArea: { args: [{ kind: 'enum', variants: [{ name: 'Circle', fields: { 'radius': { kind: 'f64' } } }, { name: 'Rectangle', fields: { 'width': { kind: 'f64' }, 'height': { kind: 'f64' } } }, { name: 'Point', fields: null }] }] },
-  createCanvas: { args: [{ kind: 'string' }, { kind: 'vec', element: { kind: 'enum', variants: [{ name: 'Circle', fields: { 'radius': { kind: 'f64' } } }, { name: 'Rectangle', fields: { 'width': { kind: 'f64' }, 'height': { kind: 'f64' } } }, { name: 'Point', fields: null }] } }, { kind: 'enum', variants: [{ name: 'Red', fields: null }, { name: 'Green', fields: null }, { name: 'Blue', fields: null }] }] },
-  processMessage: { args: [{ kind: 'enum', variants: [{ name: 'Text', fields: { kind: 'string' } }, { name: 'Number', fields: { kind: 'i64' } }, { name: 'Data', fields: { kind: 'bytes' } }] }] },
-  getPoints: { args: [{ kind: 'u32' }] },
-  swapPair: { args: [{ kind: 'tuple', elements: [{ kind: 'i32' }, { kind: 'string' }] }] },
+  echo: { args: [{ kind: 'string' }], returns: { kind: 'string' }, error: null },
+  reverse: { args: [{ kind: 'string' }], returns: { kind: 'string' }, error: null },
+  divide: { args: [{ kind: 'i64' }, { kind: 'i64' }], returns: { kind: 'i64' }, error: { kind: 'enum', variants: [{ name: 'DivisionByZero', fields: null }, { name: 'Overflow', fields: null }] } },
+  lookup: { args: [{ kind: 'u32' }], returns: { kind: 'struct', fields: { 'name': { kind: 'string' }, 'age': { kind: 'u8' }, 'email': { kind: 'option', inner: { kind: 'string' } } } }, error: { kind: 'enum', variants: [{ name: 'NotFound', fields: null }, { name: 'AccessDenied', fields: null }] } },
+  sum: { args: [{ kind: 'rx', element: { kind: 'i32' } }], returns: { kind: 'i64' }, error: null },
+  generate: { args: [{ kind: 'u32' }, { kind: 'tx', element: { kind: 'i32' } }], returns: { kind: 'struct', fields: {} }, error: null },
+  transform: { args: [{ kind: 'rx', element: { kind: 'string' } }, { kind: 'tx', element: { kind: 'string' } }], returns: { kind: 'struct', fields: {} }, error: null },
+  echoPoint: { args: [{ kind: 'struct', fields: { 'x': { kind: 'i32' }, 'y': { kind: 'i32' } } }], returns: { kind: 'struct', fields: { 'x': { kind: 'i32' }, 'y': { kind: 'i32' } } }, error: null },
+  createPerson: { args: [{ kind: 'string' }, { kind: 'u8' }, { kind: 'option', inner: { kind: 'string' } }], returns: { kind: 'struct', fields: { 'name': { kind: 'string' }, 'age': { kind: 'u8' }, 'email': { kind: 'option', inner: { kind: 'string' } } } }, error: null },
+  rectangleArea: { args: [{ kind: 'struct', fields: { 'top_left': { kind: 'struct', fields: { 'x': { kind: 'i32' }, 'y': { kind: 'i32' } } }, 'bottom_right': { kind: 'struct', fields: { 'x': { kind: 'i32' }, 'y': { kind: 'i32' } } }, 'label': { kind: 'option', inner: { kind: 'string' } } } }], returns: { kind: 'f64' }, error: null },
+  parseColor: { args: [{ kind: 'string' }], returns: { kind: 'option', inner: { kind: 'enum', variants: [{ name: 'Red', fields: null }, { name: 'Green', fields: null }, { name: 'Blue', fields: null }] } }, error: null },
+  shapeArea: { args: [{ kind: 'enum', variants: [{ name: 'Circle', fields: { 'radius': { kind: 'f64' } } }, { name: 'Rectangle', fields: { 'width': { kind: 'f64' }, 'height': { kind: 'f64' } } }, { name: 'Point', fields: null }] }], returns: { kind: 'f64' }, error: null },
+  createCanvas: { args: [{ kind: 'string' }, { kind: 'vec', element: { kind: 'enum', variants: [{ name: 'Circle', fields: { 'radius': { kind: 'f64' } } }, { name: 'Rectangle', fields: { 'width': { kind: 'f64' }, 'height': { kind: 'f64' } } }, { name: 'Point', fields: null }] } }, { kind: 'enum', variants: [{ name: 'Red', fields: null }, { name: 'Green', fields: null }, { name: 'Blue', fields: null }] }], returns: { kind: 'struct', fields: { 'name': { kind: 'string' }, 'shapes': { kind: 'vec', element: { kind: 'enum', variants: [{ name: 'Circle', fields: { 'radius': { kind: 'f64' } } }, { name: 'Rectangle', fields: { 'width': { kind: 'f64' }, 'height': { kind: 'f64' } } }, { name: 'Point', fields: null }] } }, 'background': { kind: 'enum', variants: [{ name: 'Red', fields: null }, { name: 'Green', fields: null }, { name: 'Blue', fields: null }] } } }, error: null },
+  processMessage: { args: [{ kind: 'enum', variants: [{ name: 'Text', fields: { kind: 'string' } }, { name: 'Number', fields: { kind: 'i64' } }, { name: 'Data', fields: { kind: 'bytes' } }] }], returns: { kind: 'enum', variants: [{ name: 'Text', fields: { kind: 'string' } }, { name: 'Number', fields: { kind: 'i64' } }, { name: 'Data', fields: { kind: 'bytes' } }] }, error: null },
+  getPoints: { args: [{ kind: 'u32' }], returns: { kind: 'vec', element: { kind: 'struct', fields: { 'x': { kind: 'i32' }, 'y': { kind: 'i32' } } } }, error: null },
+  swapPair: { args: [{ kind: 'tuple', elements: [{ kind: 'i32' }, { kind: 'string' }] }], returns: { kind: 'tuple', elements: [{ kind: 'string' }, { kind: 'i32' }] }, error: null },
 };
 
 // Serializers for runtime channel binding
