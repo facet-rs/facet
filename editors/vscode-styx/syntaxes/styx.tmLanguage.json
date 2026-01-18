@@ -1,0 +1,270 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Styx",
+  "scopeName": "source.styx",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#entry" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "comment": "Doc comment - only at start of line",
+          "name": "comment.block.documentation.styx",
+          "match": "^\\s*///.*$"
+        },
+        {
+          "comment": "Line comment - only at start of line",
+          "name": "comment.line.double-slash.styx",
+          "match": "^\\s*//(?!/)[^\n]*"
+        },
+        {
+          "comment": "Inline comment after whitespace",
+          "name": "comment.line.double-slash.styx",
+          "match": "(?<=\\s)//(?!/)[^\n]*"
+        }
+      ]
+    },
+    "entry": {
+      "patterns": [
+        {
+          "comment": "Entry: bare key followed by value",
+          "begin": "^(\\s*)(?!//)([^\\s{}(),\"=@>][^\\s{}(),\">]*)(?=\\s|$|\\{|\\()",
+          "beginCaptures": {
+            "1": { "name": "punctuation.whitespace.styx" },
+            "2": { "name": "entity.name.tag.styx" }
+          },
+          "end": "$",
+          "contentName": "meta.value.styx",
+          "patterns": [
+            { "include": "#inline-comment" },
+            { "include": "#value-content" }
+          ]
+        },
+        {
+          "comment": "Entry starting with @ (tag as key)",
+          "begin": "^(\\s*)(@[A-Za-z_][A-Za-z0-9_\\-]*|@)(?=\\s|$|\\{|\\()",
+          "beginCaptures": {
+            "1": { "name": "punctuation.whitespace.styx" },
+            "2": { "name": "entity.name.tag.styx" }
+          },
+          "end": "$",
+          "contentName": "meta.value.styx",
+          "patterns": [
+            { "include": "#inline-comment" },
+            { "include": "#value-content" }
+          ]
+        },
+        {
+          "comment": "Entry starting with quoted string as key",
+          "begin": "^(\\s*)(\"[^\"]*\")(?=\\s|$|\\{|\\()",
+          "beginCaptures": {
+            "1": { "name": "punctuation.whitespace.styx" },
+            "2": { "name": "entity.name.tag.styx" }
+          },
+          "end": "$",
+          "contentName": "meta.value.styx",
+          "patterns": [
+            { "include": "#inline-comment" },
+            { "include": "#value-content" }
+          ]
+        },
+        { "include": "#value-content" }
+      ]
+    },
+    "block-entry": {
+      "patterns": [
+        {
+          "comment": "Inline entry: key value (ends at comma or closing brace)",
+          "begin": "(?!//)([^\\s{}(),\"=@>][^\\s{}(),\">]*)(?=\\s)",
+          "beginCaptures": {
+            "1": { "name": "entity.name.tag.styx" }
+          },
+          "end": "(?=,|\\})|$",
+          "contentName": "meta.value.styx",
+          "patterns": [
+            { "include": "#value-content" }
+          ]
+        },
+        {
+          "comment": "Entry with @ key",
+          "begin": "(@[A-Za-z_][A-Za-z0-9_\\-]*|@)(?=\\s|\\{|\\()",
+          "beginCaptures": {
+            "1": { "name": "entity.name.tag.styx" }
+          },
+          "end": "(?=,|\\})|$",
+          "contentName": "meta.value.styx",
+          "patterns": [
+            { "include": "#value-content" }
+          ]
+        },
+        {
+          "comment": "Entry with quoted key",
+          "begin": "(\"[^\"]*\")(?=\\s|\\{|\\()",
+          "beginCaptures": {
+            "1": { "name": "entity.name.tag.styx" }
+          },
+          "end": "(?=,|\\})|$",
+          "contentName": "meta.value.styx",
+          "patterns": [
+            { "include": "#value-content" }
+          ]
+        },
+        { "include": "#value-content" }
+      ]
+    },
+    "inline-comment": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.styx",
+          "match": "(?<=\\s)//(?!/)[^\n]*"
+        }
+      ]
+    },
+    "value-content": {
+      "patterns": [
+        { "include": "#strings" },
+        { "include": "#heredoc" },
+        { "include": "#builtin-tags" },
+        { "include": "#custom-tags" },
+        { "include": "#unit" },
+        { "include": "#blocks" },
+        { "include": "#sequences" },
+        { "include": "#bare-value" },
+        { "include": "#punctuation" }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.styx",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.styx",
+              "match": "\\\\(?:[\\\\\"nrt]|u[0-9A-Fa-f]{4}|u\\{[0-9A-Fa-f]{1,6}\\})"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.raw.styx",
+          "begin": "r(#+)\"",
+          "end": "\"\\1"
+        }
+      ]
+    },
+    "heredoc": {
+      "patterns": [
+        { "comment": "C", "begin": "<<([A-Z][A-Z0-9_]*),c\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.c", "patterns": [{ "include": "source.c" }] },
+        { "comment": "C++", "begin": "<<([A-Z][A-Z0-9_]*),(?:cpp|c\\+\\+|cxx)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.cpp", "patterns": [{ "include": "source.cpp" }] },
+        { "comment": "Rust", "begin": "<<([A-Z][A-Z0-9_]*),(?:rust|rs)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.rust", "patterns": [{ "include": "source.rust" }] },
+        { "comment": "Go", "begin": "<<([A-Z][A-Z0-9_]*),(?:go|golang)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.go", "patterns": [{ "include": "source.go" }] },
+        { "comment": "Zig", "begin": "<<([A-Z][A-Z0-9_]*),zig\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.zig", "patterns": [{ "include": "source.zig" }] },
+        { "comment": "Bash/Shell", "begin": "<<([A-Z][A-Z0-9_]*),(?:bash|sh|shell)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.shellscript", "patterns": [{ "include": "source.shell" }] },
+        { "comment": "Zsh", "begin": "<<([A-Z][A-Z0-9_]*),zsh\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.shellscript", "patterns": [{ "include": "source.shell" }] },
+        { "comment": "Fish", "begin": "<<([A-Z][A-Z0-9_]*),fish\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.fish", "patterns": [{ "include": "source.fish" }] },
+        { "comment": "PowerShell", "begin": "<<([A-Z][A-Z0-9_]*),(?:powershell|ps1)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.powershell", "patterns": [{ "include": "source.powershell" }] },
+        { "comment": "JavaScript", "begin": "<<([A-Z][A-Z0-9_]*),(?:javascript|js)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.javascript", "patterns": [{ "include": "source.js" }] },
+        { "comment": "TypeScript", "begin": "<<([A-Z][A-Z0-9_]*),(?:typescript|ts)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.typescript", "patterns": [{ "include": "source.ts" }] },
+        { "comment": "TSX", "begin": "<<([A-Z][A-Z0-9_]*),tsx\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.typescriptreact", "patterns": [{ "include": "source.tsx" }] },
+        { "comment": "HTML", "begin": "<<([A-Z][A-Z0-9_]*),html\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.html", "patterns": [{ "include": "text.html.basic" }] },
+        { "comment": "CSS", "begin": "<<([A-Z][A-Z0-9_]*),css\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.css", "patterns": [{ "include": "source.css" }] },
+        { "comment": "SCSS", "begin": "<<([A-Z][A-Z0-9_]*),scss\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.scss", "patterns": [{ "include": "source.css.scss" }] },
+        { "comment": "Svelte", "begin": "<<([A-Z][A-Z0-9_]*),svelte\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.svelte", "patterns": [{ "include": "source.svelte" }] },
+        { "comment": "Vue", "begin": "<<([A-Z][A-Z0-9_]*),vue\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.vue", "patterns": [{ "include": "source.vue" }] },
+        { "comment": "Python", "begin": "<<([A-Z][A-Z0-9_]*),(?:python|py)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.python", "patterns": [{ "include": "source.python" }] },
+        { "comment": "Ruby", "begin": "<<([A-Z][A-Z0-9_]*),(?:ruby|rb)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.ruby", "patterns": [{ "include": "source.ruby" }] },
+        { "comment": "Java", "begin": "<<([A-Z][A-Z0-9_]*),java\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.java", "patterns": [{ "include": "source.java" }] },
+        { "comment": "Kotlin", "begin": "<<([A-Z][A-Z0-9_]*),(?:kotlin|kt)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.kotlin", "patterns": [{ "include": "source.kotlin" }] },
+        { "comment": "Swift", "begin": "<<([A-Z][A-Z0-9_]*),swift\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.swift", "patterns": [{ "include": "source.swift" }] },
+        { "comment": "PHP", "begin": "<<([A-Z][A-Z0-9_]*),php\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.php", "patterns": [{ "include": "source.php" }] },
+        { "comment": "Elixir", "begin": "<<([A-Z][A-Z0-9_]*),(?:elixir|ex)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.elixir", "patterns": [{ "include": "source.elixir" }] },
+        { "comment": "Clojure", "begin": "<<([A-Z][A-Z0-9_]*),(?:clojure|clj)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.clojure", "patterns": [{ "include": "source.clojure" }] },
+        { "comment": "Haskell", "begin": "<<([A-Z][A-Z0-9_]*),(?:haskell|hs)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.haskell", "patterns": [{ "include": "source.haskell" }] },
+        { "comment": "OCaml", "begin": "<<([A-Z][A-Z0-9_]*),(?:ocaml|ml)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.ocaml", "patterns": [{ "include": "source.ocaml" }] },
+        { "comment": "Scala", "begin": "<<([A-Z][A-Z0-9_]*),scala\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.scala", "patterns": [{ "include": "source.scala" }] },
+        { "comment": "Julia", "begin": "<<([A-Z][A-Z0-9_]*),(?:julia|jl)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.julia", "patterns": [{ "include": "source.julia" }] },
+        { "comment": "R", "begin": "<<([A-Z][A-Z0-9_]*),r\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.r", "patterns": [{ "include": "source.r" }] },
+        { "comment": "SQL", "begin": "<<([A-Z][A-Z0-9_]*),sql\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.sql", "patterns": [{ "include": "source.sql" }] },
+        { "comment": "GraphQL", "begin": "<<([A-Z][A-Z0-9_]*),(?:graphql|gql)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.graphql", "patterns": [{ "include": "source.graphql" }] },
+        { "comment": "JSON", "begin": "<<([A-Z][A-Z0-9_]*),json\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.json", "patterns": [{ "include": "source.json" }] },
+        { "comment": "YAML", "begin": "<<([A-Z][A-Z0-9_]*),(?:yaml|yml)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.yaml", "patterns": [{ "include": "source.yaml" }] },
+        { "comment": "TOML", "begin": "<<([A-Z][A-Z0-9_]*),toml\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.toml", "patterns": [{ "include": "source.toml" }] },
+        { "comment": "XML", "begin": "<<([A-Z][A-Z0-9_]*),xml\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.xml", "patterns": [{ "include": "text.xml" }] },
+        { "comment": "INI", "begin": "<<([A-Z][A-Z0-9_]*),ini\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.ini", "patterns": [{ "include": "source.ini" }] },
+        { "comment": "Markdown", "begin": "<<([A-Z][A-Z0-9_]*),(?:markdown|md)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.markdown", "patterns": [{ "include": "text.html.markdown" }] },
+        { "comment": "Dockerfile", "begin": "<<([A-Z][A-Z0-9_]*),(?:dockerfile|docker)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.dockerfile", "patterns": [{ "include": "source.dockerfile" }] },
+        { "comment": "Makefile", "begin": "<<([A-Z][A-Z0-9_]*),(?:makefile|make)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.makefile", "patterns": [{ "include": "source.makefile" }] },
+        { "comment": "Nginx", "begin": "<<([A-Z][A-Z0-9_]*),nginx\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.nginx", "patterns": [{ "include": "source.nginx" }] },
+        { "comment": "Lua", "begin": "<<([A-Z][A-Z0-9_]*),lua\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.lua", "patterns": [{ "include": "source.lua" }] },
+        { "comment": "Perl", "begin": "<<([A-Z][A-Z0-9_]*),(?:perl|pl)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.perl", "patterns": [{ "include": "source.perl" }] },
+        { "comment": "Diff", "begin": "<<([A-Z][A-Z0-9_]*),(?:diff|patch)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.diff", "patterns": [{ "include": "source.diff" }] },
+        { "comment": "Nix", "begin": "<<([A-Z][A-Z0-9_]*),nix\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.nix", "patterns": [{ "include": "source.nix" }] },
+        { "comment": "HCL/Terraform", "begin": "<<([A-Z][A-Z0-9_]*),(?:hcl|terraform|tf)\\b", "end": "^(\\s*)\\1\\s*$", "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } }, "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }, "contentName": "meta.embedded.block.hcl", "patterns": [{ "include": "source.hcl" }] },
+        {
+          "comment": "Generic heredoc (no language hint or unknown)",
+          "name": "string.heredoc.styx",
+          "begin": "<<([A-Z][A-Z0-9_]*)(?:,[a-z][a-z0-9_.\\-]*)?",
+          "end": "^(\\s*)\\1\\s*$",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.styx" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.styx" } }
+        }
+      ]
+    },
+    "builtin-tags": {
+      "name": "support.type.styx",
+      "match": "@(string|int|float|bool|unit|optional|seq|map|union|enum|object|default|flatten)\\b"
+    },
+    "custom-tags": {
+      "name": "entity.name.type.styx",
+      "match": "@[A-Za-z_][A-Za-z0-9_\\-]*"
+    },
+    "unit": {
+      "name": "constant.language.unit.styx",
+      "match": "@(?![A-Za-z_])"
+    },
+    "blocks": {
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.block.begin.styx" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.block.end.styx" }
+      },
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#block-entry" }
+      ]
+    },
+    "sequences": {
+      "begin": "\\(",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.sequence.begin.styx" }
+      },
+      "end": "\\)",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.sequence.end.styx" }
+      },
+      "patterns": [
+        { "include": "#inline-comment" },
+        { "include": "#value-content" }
+      ]
+    },
+    "bare-value": {
+      "comment": "Bare scalar: starts with non-special char (/ allowed but not //), continues until structural char or whitespace",
+      "name": "string.unquoted.styx",
+      "match": "(?!//)[^\\s{}(),\"=@>][^\\s{}(),\">]*"
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.styx",
+          "match": ","
+        }
+      ]
+    }
+  }
+}
