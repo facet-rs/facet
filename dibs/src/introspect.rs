@@ -121,12 +121,15 @@ async fn introspect_columns(client: &Client, table_name: &str) -> Result<Vec<Col
         columns.push(Column {
             name,
             pg_type,
-            rust_type: None, // Not available from introspection
+            rust_type: None,      // Not available from introspection
             nullable,
             default,
             primary_key: false,   // Set later
             unique: false,        // Set later
             auto_generated,
+            long: false,          // Not available from introspection
+            label: false,         // Not available from introspection
+            enum_variants: vec![], // TODO: fetch from pg_enum if pg_type is USER-DEFINED
             doc: None,            // Not available from introspection
         });
     }

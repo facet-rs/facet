@@ -307,6 +307,9 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
                         primary_key: c.primary_key,
                         unique: c.unique,
                         auto_generated: c.auto_generated,
+                        long: c.long,
+                        label: c.label,
+                        enum_variants: c.enum_variants.clone(),
                         doc: c.doc.clone(),
                     })
                     .collect(),

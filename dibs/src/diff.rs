@@ -528,6 +528,9 @@ mod tests {
             primary_key: false,
             unique: false,
             auto_generated: false,
+            long: false,
+            label: false,
+            enum_variants: vec![],
             doc: None,
         }
     }
@@ -713,6 +716,9 @@ mod tests {
             primary_key: true,
             unique: false,
             auto_generated: false,
+            long: false,
+            label: false,
+            enum_variants: vec![],
             doc: None,
         }
     }
@@ -727,6 +733,9 @@ mod tests {
             primary_key: false,
             unique: false,
             auto_generated: false,
+            long: false,
+            label: false,
+            enum_variants: vec![],
             doc: None,
         }
     }
@@ -741,6 +750,9 @@ mod tests {
             primary_key: false,
             unique: true,
             auto_generated: false,
+            long: false,
+            label: false,
+            enum_variants: vec![],
             doc: None,
         }
     }

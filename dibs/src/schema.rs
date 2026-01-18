@@ -159,6 +159,12 @@ pub struct Column {
     pub unique: bool,
     /// Whether this column is auto-generated (serial, identity, uuid default, etc.)
     pub auto_generated: bool,
+    /// Whether this is a long text field (use textarea)
+    pub long: bool,
+    /// Whether this column should be used as the display label
+    pub label: bool,
+    /// Enum variants (if this is an enum type)
+    pub enum_variants: Vec<String>,
     /// Doc comment (if any)
     pub doc: Option<String>,
 }
@@ -468,6 +474,18 @@ fn is_auto_generated_default(default: &Option<String>) -> bool {
     false
 }
 
+/// Extract enum variants from a shape if it's an enum type.
+///
+/// Currently returns empty vec - enum support requires either:
+/// 1. Facet enum reflection (when available)
+/// 2. PostgreSQL enum introspection
+/// 3. Manual #[facet(dibs::enum_variants = "A,B,C")] annotation
+fn extract_enum_variants(_shape: &'static Shape) -> Vec<String> {
+    // TODO: Implement when facet adds enum variant reflection
+    // For now, enums are stored as TEXT and variants can be added via annotation
+    Vec::new()
+}
+
 // =============================================================================
 // Table definition registration
 // =============================================================================
@@ -562,6 +580,15 @@ impl TableDef {
             let auto_generated = is_auto_generated_default(&default)
                 || field_has_dibs_attr(field, "auto");
 
+            // Check for long text annotation
+            let long = field_has_dibs_attr(field, "long");
+
+            // Check for label annotation
+            let label = field_has_dibs_attr(field, "label");
+
+            // Check for enum variants
+            let enum_variants = extract_enum_variants(inner_shape);
+
             columns.push(Column {
                 name: col_name.clone(),
                 pg_type,
@@ -571,6 +598,9 @@ impl TableDef {
                 primary_key,
                 unique,
                 auto_generated,
+                long,
+                label,
+                enum_variants,
                 doc,
             });
 

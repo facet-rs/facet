@@ -47,6 +47,12 @@ pub struct ColumnInfo {
     pub unique: bool,
     /// Whether this column is auto-generated (serial, uuid default, etc.)
     pub auto_generated: bool,
+    /// Whether this is a long text field (use textarea instead of input)
+    pub long: bool,
+    /// Whether this column should be used as the display label for the row
+    pub label: bool,
+    /// Enum variants (if this is an enum type)
+    pub enum_variants: Vec<String>,
     /// Doc comment (if any)
     pub doc: Option<String>,
 }
