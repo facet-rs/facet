@@ -122,6 +122,10 @@ pub struct MigrationInfo {
     pub applied: bool,
     /// When it was applied (if applied)
     pub applied_at: Option<String>,
+    /// Source file path (if known)
+    pub source_file: Option<String>,
+    /// Source code (if available)
+    pub source: Option<String>,
 }
 
 /// Request to diff schema against a database.

@@ -2,6 +2,8 @@
 
 use std::io::{self, stdout};
 
+use arborium::Highlighter;
+use arborium_theme::builtin;
 use crossterm::{
     ExecutableCommand,
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -14,6 +16,7 @@ use ratatui::{
 };
 
 use crate::config::Config;
+use crate::highlight::highlight_to_lines;
 use crate::service::{self, ServiceConnection};
 
 /// The main unified TUI application
@@ -42,6 +45,14 @@ pub struct App {
     selected_migration: usize,
     /// Pending 'g' for gg
     pending_g: bool,
+    /// Whether to show migration source viewer
+    show_migration_source: bool,
+    /// Scroll position in migration source viewer
+    source_scroll: u16,
+    /// Syntax highlighter
+    highlighter: Highlighter,
+    /// Theme for syntax highlighting
+    theme: arborium_theme::Theme,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -102,6 +113,10 @@ impl App {
             migration_state,
             selected_migration: 0,
             pending_g: false,
+            show_migration_source: false,
+            source_scroll: 0,
+            highlighter: Highlighter::new(),
+            theme: builtin::catppuccin_mocha().clone(),
         }
     }
 
@@ -194,38 +209,85 @@ impl App {
                 }
 
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                    // Tab switching
-                    KeyCode::Char('1') => self.tab = Tab::Schema,
-                    KeyCode::Char('2') => {
+                    KeyCode::Char('q') => {
+                        // Close source viewer first, or quit
+                        if self.show_migration_source {
+                            self.show_migration_source = false;
+                            self.source_scroll = 0;
+                        } else {
+                            return Ok(());
+                        }
+                    }
+                    KeyCode::Esc => {
+                        // Close source viewer or quit
+                        if self.show_migration_source {
+                            self.show_migration_source = false;
+                            self.source_scroll = 0;
+                        } else {
+                            return Ok(());
+                        }
+                    }
+                    // Tab switching (only when not viewing source)
+                    KeyCode::Char('1') if !self.show_migration_source => self.tab = Tab::Schema,
+                    KeyCode::Char('2') if !self.show_migration_source => {
                         self.tab = Tab::Diff;
                         // Fetch diff if not already fetched
                         if self.diff.is_none() && self.conn.is_some() {
                             rt.block_on(self.fetch_diff());
                         }
                     }
-                    KeyCode::Char('3') => self.tab = Tab::Migrations,
-                    KeyCode::Tab => self.next_tab(),
-                    KeyCode::BackTab => self.prev_tab(),
+                    KeyCode::Char('3') if !self.show_migration_source => self.tab = Tab::Migrations,
+                    KeyCode::Tab if !self.show_migration_source => self.next_tab(),
+                    KeyCode::BackTab if !self.show_migration_source => self.prev_tab(),
                     // Navigation
-                    KeyCode::Up | KeyCode::Char('k') => self.move_up(),
-                    KeyCode::Down | KeyCode::Char('j') => self.move_down(),
-                    KeyCode::Char('g') => self.pending_g = true,
-                    KeyCode::Char('G') => self.go_to_last(),
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if self.show_migration_source {
+                            self.source_scroll = self.source_scroll.saturating_sub(1);
+                        } else {
+                            self.move_up();
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if self.show_migration_source {
+                            self.source_scroll = self.source_scroll.saturating_add(1);
+                        } else {
+                            self.move_down();
+                        }
+                    }
+                    KeyCode::Char('g') if !self.show_migration_source => self.pending_g = true,
+                    KeyCode::Char('G') if !self.show_migration_source => self.go_to_last(),
                     KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        self.half_page_down()
+                        if self.show_migration_source {
+                            self.source_scroll = self.source_scroll.saturating_add(10);
+                        } else {
+                            self.half_page_down();
+                        }
                     }
                     KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        self.half_page_up()
+                        if self.show_migration_source {
+                            self.source_scroll = self.source_scroll.saturating_sub(10);
+                        } else {
+                            self.half_page_up();
+                        }
+                    }
+                    // Enter to view migration source
+                    KeyCode::Enter => {
+                        if self.tab == Tab::Migrations && !self.show_migration_source {
+                            self.show_migration_source = true;
+                            self.source_scroll = 0;
+                        } else if self.show_migration_source {
+                            self.show_migration_source = false;
+                            self.source_scroll = 0;
+                        }
                     }
                     // Actions
-                    KeyCode::Char('m') => {
+                    KeyCode::Char('m') if !self.show_migration_source => {
                         // Run migrations
                         if self.tab == Tab::Migrations {
                             rt.block_on(self.run_migrations());
                         }
                     }
-                    KeyCode::Char('r') => {
+                    KeyCode::Char('r') if !self.show_migration_source => {
                         // Refresh
                         rt.block_on(self.refresh());
                     }
@@ -716,6 +778,33 @@ impl App {
             return;
         }
 
+        // Clone migrations to avoid borrow issues
+        let migrations = migrations.clone();
+
+        // If showing source, split the view
+        if self.show_migration_source {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+                .split(area);
+
+            // Render migration list on left
+            self.render_migration_list(frame, chunks[0], &migrations);
+
+            // Render source on right
+            self.render_migration_source(frame, chunks[1], &migrations);
+        } else {
+            // Just render the list
+            self.render_migration_list(frame, area, &migrations);
+        }
+    }
+
+    fn render_migration_list(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        migrations: &[MigrationInfo],
+    ) {
         let items: Vec<ListItem> = migrations
             .iter()
             .map(|m| {
@@ -753,23 +842,75 @@ impl App {
         frame.render_stateful_widget(list, area, &mut self.migration_state);
     }
 
+    fn render_migration_source(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        migrations: &[MigrationInfo],
+    ) {
+        let Some(migration) = migrations.get(self.selected_migration) else {
+            let p = Paragraph::new("No migration selected")
+                .block(Block::default().borders(Borders::ALL).title(" Source "));
+            frame.render_widget(p, area);
+            return;
+        };
+
+        let title = format!(" {} ", migration.version);
+
+        let lines: Vec<Line<'static>> = if let Some(source) = &migration.source {
+            // Highlight the Rust source
+            highlight_to_lines(&mut self.highlighter, &self.theme, "rust", source)
+        } else {
+            vec![Line::from(Span::styled(
+                "Source not available",
+                Style::default().fg(Color::DarkGray),
+            ))]
+        };
+
+        let p = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .title_style(Style::default().fg(Color::Cyan)),
+            )
+            .scroll((self.source_scroll, 0));
+
+        frame.render_widget(p, area);
+    }
+
     fn build_status_bar(&self) -> Paragraph<'static> {
-        let mut spans = vec![
-            Span::styled(" Tab ", Style::default().fg(Color::Yellow)),
-            Span::raw("switch  "),
-            Span::styled("j/k ", Style::default().fg(Color::Yellow)),
-            Span::raw("nav  "),
-            Span::styled("r ", Style::default().fg(Color::Yellow)),
-            Span::raw("refresh  "),
-        ];
+        let mut spans = vec![];
 
-        if self.tab == Tab::Migrations {
-            spans.push(Span::styled("m ", Style::default().fg(Color::Yellow)));
-            spans.push(Span::raw("migrate  "));
+        if self.show_migration_source {
+            // Source viewer mode
+            spans.push(Span::styled(" j/k ", Style::default().fg(Color::Yellow)));
+            spans.push(Span::raw("scroll  "));
+            spans.push(Span::styled("^D/^U ", Style::default().fg(Color::Yellow)));
+            spans.push(Span::raw("½page  "));
+            spans.push(Span::styled(
+                "Enter/Esc ",
+                Style::default().fg(Color::Yellow),
+            ));
+            spans.push(Span::raw("close  "));
+        } else {
+            spans.push(Span::styled(" Tab ", Style::default().fg(Color::Yellow)));
+            spans.push(Span::raw("switch  "));
+            spans.push(Span::styled("j/k ", Style::default().fg(Color::Yellow)));
+            spans.push(Span::raw("nav  "));
+            spans.push(Span::styled("r ", Style::default().fg(Color::Yellow)));
+            spans.push(Span::raw("refresh  "));
+
+            if self.tab == Tab::Migrations {
+                spans.push(Span::styled("Enter ", Style::default().fg(Color::Yellow)));
+                spans.push(Span::raw("view  "));
+                spans.push(Span::styled("m ", Style::default().fg(Color::Yellow)));
+                spans.push(Span::raw("migrate  "));
+            }
+
+            spans.push(Span::styled("q ", Style::default().fg(Color::Yellow)));
+            spans.push(Span::raw("quit"));
         }
-
-        spans.push(Span::styled("q ", Style::default().fg(Color::Yellow)));
-        spans.push(Span::raw("quit"));
 
         // Show error or db url
         if let Some(err) = &self.error {

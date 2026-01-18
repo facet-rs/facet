@@ -9,6 +9,8 @@ pub struct Migration {
     pub name: &'static str,
     /// The migration function
     pub run: MigrationFn,
+    /// Source file path (from file!())
+    pub source_file: &'static str,
 }
 
 /// Context passed to migration functions.
@@ -136,6 +138,7 @@ impl<'a> MigrationRunner<'a> {
                 version: m.version,
                 name: m.name,
                 applied: applied.contains(&m.version.to_string()),
+                source_file: m.source_file,
             })
             .collect();
         all.sort_by_key(|m| m.version);
@@ -148,4 +151,5 @@ pub struct MigrationStatus {
     pub version: &'static str,
     pub name: &'static str,
     pub applied: bool,
+    pub source_file: &'static str,
 }

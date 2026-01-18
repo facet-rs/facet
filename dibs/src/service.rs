@@ -164,11 +164,17 @@ impl DibsService for DibsServiceImpl {
 
         Ok(status
             .into_iter()
-            .map(|s| MigrationInfo {
-                version: s.version.to_string(),
-                name: s.name.to_string(),
-                applied: s.applied,
-                applied_at: None, // TODO: track this
+            .map(|s| {
+                // Try to read the source file
+                let source = std::fs::read_to_string(s.source_file).ok();
+                MigrationInfo {
+                    version: s.version.to_string(),
+                    name: s.name.to_string(),
+                    applied: s.applied,
+                    applied_at: None, // TODO: track this
+                    source_file: Some(s.source_file.to_string()),
+                    source,
+                }
             })
             .collect())
     }

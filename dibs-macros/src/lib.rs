@@ -49,6 +49,7 @@ pub fn migration(attr: TokenStream, item: TokenStream) -> TokenStream {
                 version: #version_lit,
                 name: stringify!(#fn_ident),
                 run: |ctx| Box::pin(#fn_ident(ctx)),
+                source_file: file!(),
             }
         }
     }

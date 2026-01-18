@@ -16,6 +16,7 @@ use ratatui::{
 };
 
 mod config;
+mod highlight;
 mod service;
 mod tables;
 mod tui;
