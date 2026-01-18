@@ -1,0 +1,9 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+from typing import Required, TypedDict
+
+class User(TypedDict, total=False):
+    name: Required[str]
+    age: Required[int]

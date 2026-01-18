@@ -1,0 +1,6 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class Data(TypedDict, total=False):
+    items: Required[list[str]]

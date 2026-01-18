@@ -1,0 +1,7 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class UserProfile(TypedDict, total=False):
+    userName: Required[str]
+    emailAddress: Required[str]

@@ -85,6 +85,7 @@ members = [
     "facet-singularize",
     "facet-json-schema",
     "facet-typescript",
+    "facet-python",
     "facet-tokio-postgres",
 ]
 exclude = [
