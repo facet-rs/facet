@@ -116,57 +116,64 @@ questions {
     }
     basics-sequence-syntax {
         question <<DOC,markdown
-            Is this valid Styx?
+            Are these equivalent?
 
-            ```styx
-            colors [red, green, blue]
+            ```compare
+            /// json
+            {"key": ["value"]}
+            /// styx
+            key [value]
             ```
             DOC
         options (
-            {text "Valid", help "Styx uses parentheses for sequences, not square brackets"}
-            {text "Invalid", correct true}
+            {text "Yes", help "Square brackets aren't special in Styx"}
+            {text "No", correct true}
         )
         explanation <<DOC,markdown
-            Sequences use parentheses, not square brackets. And they're whitespace-separated, not comma-separated:
+            Square brackets have no special meaning in Styx. The value is literally `[value]`.
 
-            ```styx
-            colors (red green blue)
-            ```
+            Sequences use parentheses: `key (value)`
             DOC
     }
     basics-comma-sequence {
         question <<DOC,markdown
-            Is this valid Styx?
+            Are these equivalent?
 
-            ```styx
+            ```compare
+            /// json
+            {"items": ["a", "b", "c"]}
+            /// styx
             items (a, b, c)
             ```
             DOC
         options (
-            {text "Valid", help "Sequences don't use commas"}
-            {text "Invalid", correct true}
+            {text "Yes", help "Sequences don't use commas"}
+            {text "No", correct true}
         )
         explanation <<DOC,markdown
-            Sequences are whitespace-separated only. Commas are a parse error.
+            Sequences are whitespace-separated. Commas are a parse error.
 
-            The valid form is: `items (a b c)`
+            The equivalent Styx is: `items (a b c)`
             DOC
     }
     basics-mixing-separators {
         question <<DOC,markdown
-            Is this valid Styx?
+            Are these equivalent?
 
-            ```styx
+            ```compare
+            /// json
+            {"a": 1, "b": 2, "c": 3}
+            /// styx
             {a 1, b 2
             c 3}
             ```
             DOC
         options (
-            {text "Valid", help "Objects must use one separator style consistently"}
-            {text "Invalid", correct true}
+            {text "Yes", help "Objects must use one separator style consistently"}
+            {text "No", correct true}
         )
         explanation <<DOC,markdown
-            Objects must use either commas OR newlines as separators, not both.
+            Objects must use either commas OR newlines, not both. The Styx is a parse error.
 
             Valid alternatives:
             ```styx
