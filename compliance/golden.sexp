@@ -1132,11 +1132,7 @@
       (object [145, 147] comma)))
 )
 ; file: compliance/corpus/07-invalid/trailing-gt.styx
-(document [-1, -1]
-  (entry
-    (scalar [38, 41] bare "key")
-    (scalar [42, 47] bare "value"))
-)
+(error [47, 48] "parse error at 47-48: expected a value")
 ; file: compliance/corpus/07-invalid/unclosed-brace.styx
 (error [4, 5] "parse error at 4-5: unclosed object (missing `}`)")
 ; file: compliance/corpus/07-invalid/unclosed-heredoc.styx

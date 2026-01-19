@@ -15,14 +15,20 @@ const (
 // pathState tracks dotted path state for validation.
 type pathState struct {
 	currentPath   []string
-	closedPaths   map[string]bool                // key is joined path
-	assignedPaths map[string]struct{ kind pathValueKind; span Span }
+	closedPaths   map[string]bool // key is joined path
+	assignedPaths map[string]struct {
+		kind pathValueKind
+		span Span
+	}
 }
 
 func newPathState() *pathState {
 	return &pathState{
-		closedPaths:   make(map[string]bool),
-		assignedPaths: make(map[string]struct{ kind pathValueKind; span Span }),
+		closedPaths: make(map[string]bool),
+		assignedPaths: make(map[string]struct {
+			kind pathValueKind
+			span Span
+		}),
 	}
 }
 
@@ -79,12 +85,18 @@ func (ps *pathState) checkAndUpdate(path []string, span Span, kind pathValueKind
 		prefix := path[:i]
 		prefixKey := joinPath(prefix)
 		if _, exists := ps.assignedPaths[prefixKey]; !exists {
-			ps.assignedPaths[prefixKey] = struct{ kind pathValueKind; span Span }{pathValueObject, span}
+			ps.assignedPaths[prefixKey] = struct {
+				kind pathValueKind
+				span Span
+			}{pathValueObject, span}
 		}
 	}
 
 	// 6. Update assigned paths and current path
-	ps.assignedPaths[pathKey] = struct{ kind pathValueKind; span Span }{kind, span}
+	ps.assignedPaths[pathKey] = struct {
+		kind pathValueKind
+		span Span
+	}{kind, span}
 	ps.currentPath = path
 
 	return nil
@@ -518,23 +530,18 @@ func (p *parser) parseValue() (*Value, error) {
 		nextToken := p.current
 
 		if nextToken.Type == TokenGT && !nextToken.HadWhitespaceBefore {
-			// Peek ahead: if > is followed by newline/EOF, just consume the > and return scalar
-			// Otherwise, parse as attributes
-			p.advance() // consume >
+			gtToken := p.advance() // consume >
 			afterGT := p.current
-			if afterGT.HadNewlineBefore || p.check(TokenEOF, TokenRBrace, TokenRParen) {
-				// > at end of line - return just the scalar
-				return &Value{
-					Span:        scalarToken.Span,
-					PayloadKind: PayloadScalar,
-					Scalar: &Scalar{
-						Text: scalarToken.Text,
-						Kind: ScalarBare,
-						Span: scalarToken.Span,
-					},
-				}, nil
+
+			// Check if > is followed by something that can't be an attribute value
+			if afterGT.HadNewlineBefore || afterGT.HadWhitespaceBefore || p.check(TokenEOF, TokenRBrace, TokenRParen, TokenComma) {
+				// Error: trailing > without a value
+				return nil, &ParseError{
+					Message: "expected a value",
+					Span:    gtToken.Span,
+				}
 			}
-			// Not end of line - parse as attributes (we already consumed >)
+			// Valid attribute - parse value (we already consumed >)
 			return p.parseAttributesAfterGT(scalarToken)
 		}
 
@@ -585,8 +592,17 @@ func (p *parser) parseAttributesAfterGT(firstKeyToken *Token) (*Value, error) {
 			break
 		}
 
-		p.advance()
-		p.advance()
+		p.advance()            // consume key
+		gtToken := p.advance() // consume >
+
+		// Check if > is followed by something that can't be an attribute value
+		afterGT := p.current
+		if afterGT.HadNewlineBefore || afterGT.HadWhitespaceBefore || p.check(TokenEOF, TokenRBrace, TokenRParen, TokenComma) {
+			return nil, &ParseError{
+				Message: "expected a value",
+				Span:    gtToken.Span,
+			}
+		}
 
 		attrKey := &Value{
 			Span:        keyToken.Span,
