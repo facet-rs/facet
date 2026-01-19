@@ -364,14 +364,15 @@ The hint (`,rust`) is metadata — it doesn't affect the content.
 
 If the closing delimiter is indented, that indentation is stripped from all content lines:
 
-```styx
+```compare
+/// styx
 script <<BASH
     echo "hello"
     echo "world"
     BASH
+/// styx
+script "echo \"hello\"\necho \"world\"\n"
 ```
-
-The content is `echo "hello"\necho "world"\n` — the leading spaces are removed.
 
 ### Recap
 
