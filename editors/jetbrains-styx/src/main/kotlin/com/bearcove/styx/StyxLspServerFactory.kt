@@ -9,7 +9,7 @@ import java.io.File
 class StyxLanguageServer : ProcessStreamConnectionProvider() {
     init {
         val styxPath = findStyx()
-        commands = listOf(styxPath, "@lsp")
+        commands = listOf(styxPath, "lsp")
     }
 
     private fun findStyx(): String {

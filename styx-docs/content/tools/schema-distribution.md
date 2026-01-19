@@ -145,25 +145,25 @@ Tooling should handle missing cache gracefully by re-extracting or re-fetching.
 
 ### CLI commands
 
-**`styx @cache`** — Show cache configuration and statistics:
+**`styx cache`** — Show cache configuration and statistics:
 
 ```bash
-$ styx @cache
+$ styx cache
 Cache directory: /home/user/.cache/styx/schemas/
 Embedded schemas: 3 (12 KB)
 Crate schemas: 5 (48 KB)
 ```
 
-**`styx @cache --open`** — Open the cache directory in the system file explorer:
+**`styx cache --open`** — Open the cache directory in the system file explorer:
 
 ```bash
-$ styx @cache --open
+$ styx cache --open
 # Opens ~/.cache/styx/schemas/ in Finder/Nautilus/Explorer
 ```
 
-**`styx @cache --clear`** — Remove all cached schemas:
+**`styx cache --clear`** — Remove all cached schemas:
 
 ```bash
-$ styx @cache --clear
+$ styx cache --clear
 Cleared 8 cached schemas (60 KB)
 ```

@@ -13,7 +13,7 @@ A skill for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that t
 
 ```bash
 mkdir -p ~/.claude/skills/styx
-styx @skill > ~/.claude/skills/styx/SKILL.md
+styx skill > ~/.claude/skills/styx/SKILL.md
 ```
 
 ### Option 2: One-liner from GitHub
@@ -365,13 +365,13 @@ styx config.styx --validate
 styx config.styx --json-out -
 
 # Use different schema
-styx config.styx --validate --override-schema other.schema.styx
+styx config.styx --validate --schema other.schema.styx
 
 # Show parse tree (debugging)
-styx @tree config.styx
+styx tree config.styx
 
 # Start language server
-styx @lsp
+styx lsp
 ```
 
 ## Common Mistakes
@@ -424,5 +424,5 @@ ports (80 443 8080)
 
 - **Zed**: Built-in support via tree-sitter grammar
 - **VS Code**: Extension available
-- **LSP**: Run `styx @lsp` for any editor with LSP support
+- **LSP**: Run `styx lsp` for any editor with LSP support
 ````

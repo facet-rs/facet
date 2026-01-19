@@ -19,7 +19,7 @@ impl zed::Extension for StyxExtension {
 
         Ok(Command {
             command: path,
-            args: vec!["@lsp".to_string()],
+            args: vec!["lsp".to_string()],
             env: vec![],
         })
     }

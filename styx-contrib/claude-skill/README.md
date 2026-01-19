@@ -15,7 +15,7 @@ cp SKILL.md ~/.claude/skills/styx/
 
 ```bash
 mkdir -p ~/.claude/skills/styx
-styx @skill > ~/.claude/skills/styx/SKILL.md
+styx skill > ~/.claude/skills/styx/SKILL.md
 ```
 
 ### Option 3: One-liner from repo

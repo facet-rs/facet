@@ -111,14 +111,14 @@
 ;; LSP integration (eglot)
 (with-eval-after-load 'eglot
   (add-to-list 'eglot-server-programs
-               '(styx-mode . ("styx" "@lsp"))))
+               '(styx-mode . ("styx" "lsp"))))
 
 ;; LSP integration (lsp-mode)
 (with-eval-after-load 'lsp-mode
   (add-to-list 'lsp-language-id-configuration '(styx-mode . "styx"))
   (lsp-register-client
    (make-lsp-client
-    :new-connection (lsp-stdio-connection '("styx" "@lsp"))
+    :new-connection (lsp-stdio-connection '("styx" "lsp"))
     :activation-fn (lsp-activate-on "styx")
     :server-id 'styx-lsp)))
 

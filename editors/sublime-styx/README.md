@@ -33,7 +33,7 @@ For LSP support, install [LSP](https://packagecontrol.io/packages/LSP) and confi
   "clients": {
     "styx": {
       "enabled": true,
-      "command": ["styx", "@lsp"],
+      "command": ["styx", "lsp"],
       "selector": "source.styx"
     }
   }

@@ -31,7 +31,7 @@ Add to your `kak-lsp.toml`:
 filetypes = ["styx"]
 roots = [".git", "*.styx"]
 command = "styx"
-args = ["@lsp"]
+args = ["lsp"]
 ```
 
 Then in your `kakrc`:

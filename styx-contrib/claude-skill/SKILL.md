@@ -295,6 +295,8 @@ Config @object{
 
 ## CLI Usage
 
+Files are detected by `.` or `/` in the name (or `-` for stdin). Bare words are subcommands.
+
 ```bash
 # Format and print to stdout
 styx config.styx
@@ -302,20 +304,25 @@ styx config.styx
 # Format in place
 styx config.styx --in-place
 
-# Validate against declared schema
+# Validate against declared schema (no output on success)
 styx config.styx --validate
 
 # Convert to JSON
 styx config.styx --json-out -
 
 # Use different schema
-styx config.styx --validate --override-schema other.schema.styx
+styx config.styx --validate --schema other.schema.styx
 
 # Show parse tree (debugging)
-styx @tree config.styx
+styx tree config.styx
 
 # Start language server
-styx @lsp
+styx lsp
+
+# Generate shell completions
+styx completions bash
+styx completions zsh
+styx completions fish
 ```
 
 ## Common Mistakes
@@ -366,4 +373,4 @@ ports (80 443 8080)
 
 - **Zed**: Built-in support via tree-sitter grammar
 - **VS Code**: Extension available
-- **LSP**: Run `styx @lsp` for any editor with LSP support
+- **LSP**: Run `styx lsp` for any editor with LSP support

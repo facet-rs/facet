@@ -68,32 +68,32 @@ Benefits:
 
 ## CLI Subcommands
 
-### `styx @package` - Generate a publishable crate
+### `styx package` - Generate a publishable crate
 
 ```bash
 # Generate crate in ./myapp-schema/
-styx @package schema.styx --name myapp-schema --version 1.0.0
+styx package schema.styx --name myapp-schema --version 1.0.0
 
 # Custom output directory
-styx @package schema.styx --name myapp-schema --version 1.0.0 --output ./dist/myapp-schema
+styx package schema.styx --name myapp-schema --version 1.0.0 --output ./dist/myapp-schema
 
 # Then user runs cargo publish themselves
 cd myapp-schema && cargo publish
 ```
 
-### `styx @diff` - Compare schemas for semver
+### `styx diff` - Compare schemas for semver
 
 Fetches the latest published version and compares against local schema:
 
 ```bash
 # Compare local schema against latest published version
-styx @diff schema.styx --crate myapp-schema
+styx diff schema.styx --crate myapp-schema
 
 # Compare against specific version
-styx @diff schema.styx --crate myapp-schema --baseline 1.3.0
+styx diff schema.styx --crate myapp-schema --baseline 1.3.0
 
 # Use staging registry
-styx @diff schema.styx --crate myapp-schema --registry staging
+styx diff schema.styx --crate myapp-schema --registry staging
 ```
 
 Output:
@@ -158,7 +158,7 @@ Suggested: 2.0.0
 For determining if type A can be replaced with type B:
 
 ```
-A → B compatible if:
+A -> B compatible if:
   - A == B (identical)
   - B is @any (widens to accept anything)
   - B is @union containing A (widens)
@@ -185,8 +185,8 @@ Or use `cargo download` / parse the sparse index to find latest version.
 
 - **lib.rs format**: `include_str!("../schema.styx")` - keeps schema visible on crates.io/docs.rs
 - **Schema file**: Included in crate root as `schema.styx`
-- **Versioning**: Yes, via `styx @diff` command
-- **Two-step publish**: `styx @package` generates crate, user runs `cargo publish`
+- **Versioning**: Yes, via `styx diff` command
+- **Two-step publish**: `styx package` generates crate, user runs `cargo publish`
 
 ## Open Questions
 

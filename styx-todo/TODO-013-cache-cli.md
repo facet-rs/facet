@@ -1,4 +1,4 @@
-# TODO-013: `styx @cache` CLI Command
+# TODO-013: `styx cache` CLI Command
 
 ## Status
 TODO
@@ -8,19 +8,19 @@ Add CLI commands for managing the schema cache.
 
 ## Commands
 
-### `styx @cache`
+### `styx cache`
 Show cache configuration and statistics:
 ```bash
-$ styx @cache
+$ styx cache
 Cache directory: /home/user/.cache/styx/schemas/
 Embedded schemas: 3 (12 KB)
 Crate schemas: 5 (48 KB)
 ```
 
-### `styx @cache --open`
+### `styx cache --open`
 Open the cache directory in the system file explorer:
 ```bash
-$ styx @cache --open
+$ styx cache --open
 # Opens ~/.cache/styx/schemas/ in Finder/Nautilus/Explorer
 ```
 
@@ -29,10 +29,10 @@ Platform commands:
 - Linux: `xdg-open <path>`
 - Windows: `explorer <path>`
 
-### `styx @cache --clear`
+### `styx cache --clear`
 Remove all cached schemas:
 ```bash
-$ styx @cache --clear
+$ styx cache --clear
 Cleared 8 cached schemas (60 KB)
 ```
 

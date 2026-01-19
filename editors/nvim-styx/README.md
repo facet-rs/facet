@@ -64,7 +64,7 @@ local configs = require("lspconfig.configs")
 if not configs.styx then
   configs.styx = {
     default_config = {
-      cmd = { "styx", "@lsp" },
+      cmd = { "styx", "lsp" },
       filetypes = { "styx" },
       root_dir = lspconfig.util.root_pattern(".git", "*.styx"),
       settings = {},

@@ -6,7 +6,7 @@
 |-----|------|------|
 | 011 | Fix hover display order | [TODO-011](TODO-011-lsp-hover-order.md) |
 | 012 | Implement schema cache | [TODO-012](TODO-012-schema-cache.md) |
-| 013 | `styx @cache` CLI command | [TODO-013](TODO-013-cache-cli.md) |
+| 013 | `styx cache` CLI command | [TODO-013](TODO-013-cache-cli.md) |
 | 014 | Hover on map keys | [TODO-014](TODO-014-hover-map-keys.md) |
 
 ## Parser

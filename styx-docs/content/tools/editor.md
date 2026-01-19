@@ -29,7 +29,7 @@ Or search for "Styx Configuration Language" in the Extensions view.
 ### Features
 
 - **Syntax highlighting** with key/value distinction
-- **Language server integration** via `styx @lsp` (diagnostics, hover, completions)
+- **Language server integration** via `styx lsp` (diagnostics, hover, completions)
 - **Heredoc language injection** for 45+ languages — SQL, JavaScript, Rust, Python, HTML, YAML, and more are syntax-highlighted inside heredocs:
 
 ```styx
@@ -102,7 +102,7 @@ Configure LSP:
 local configs = require("lspconfig.configs")
 configs.styx = {
   default_config = {
-    cmd = { "styx", "@lsp" },
+    cmd = { "styx", "lsp" },
     filetypes = { "styx" },
     root_dir = require("lspconfig").util.root_pattern(".git"),
   },
@@ -128,7 +128,7 @@ source = { git = "https://github.com/bearcove/styx", subpath = "crates/tree-sitt
 
 [language-server.styx-lsp]
 command = "styx"
-args = ["@lsp"]
+args = ["lsp"]
 ```
 
 Then fetch and build:
@@ -160,7 +160,7 @@ Add to `kak-lsp.toml`:
 [language.styx]
 filetypes = ["styx"]
 command = "styx"
-args = ["@lsp"]
+args = ["lsp"]
 ```
 
 ## Sublime Text
@@ -180,7 +180,7 @@ For LSP, install the [LSP package](https://packagecontrol.io/packages/LSP) and c
   "clients": {
     "styx": {
       "enabled": true,
-      "command": ["styx", "@lsp"],
+      "command": ["styx", "lsp"],
       "selector": "source.styx"
     }
   }
@@ -202,7 +202,7 @@ Configure LSP in Settings → Configure Kate → LSP Client → User Server Sett
 {
   "servers": {
     "styx": {
-      "command": ["styx", "@lsp"],
+      "command": ["styx", "lsp"],
       "highlightingModeRegex": "^Styx$"
     }
   }
@@ -235,7 +235,7 @@ Note: nano doesn't support LSP, only syntax highlighting.
 Any editor with LSP support can use:
 
 ```bash
-styx @lsp
+styx lsp
 ```
 
 The server communicates over stdio using the standard Language Server Protocol.

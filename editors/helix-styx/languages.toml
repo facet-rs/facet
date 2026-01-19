@@ -23,4 +23,4 @@ source = { git = "https://github.com/bearcove/styx", subpath = "crates/tree-sitt
 
 [language-server.styx-lsp]
 command = "styx"
-args = ["@lsp"]
+args = ["lsp"]

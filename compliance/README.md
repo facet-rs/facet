@@ -32,7 +32,7 @@ Each implementation provides its own compliance runner. The runner:
 ```bash
 # Generate output
 find compliance/corpus -name "*.styx" | sort | while read f; do
-  styx @tree --format sexp "$f"
+  styx tree --format sexp "$f"
 done > output.sexp
 
 # Compare
@@ -50,7 +50,7 @@ If you change the reference implementation:
 ```bash
 cd /path/to/styx
 find compliance/corpus -name "*.styx" | sort | while read f; do
-  cargo run --quiet --bin styx -- @tree --format sexp "$f"
+  cargo run --quiet --bin styx -- tree --format sexp "$f"
 done > compliance/golden.sexp
 ```
 

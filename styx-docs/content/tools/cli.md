@@ -13,11 +13,17 @@ cargo install styx-cli
 
 ## Usage
 
-Styx uses a **file-first** design:
+Styx uses a simple disambiguation rule:
+
+- If the first argument contains `.` or `/`, or is `-` → **file mode**
+- Otherwise → **subcommand mode**
 
 ```bash
-styx <file> [options]         # Process a file
-styx @<command> [args]        # Run a subcommand
+styx config.styx [options]    # File mode (has '.')
+styx ./config [options]       # File mode (has '/')
+styx -                        # Stdin (file mode)
+styx lsp                      # Subcommand (bare word)
+styx tree config.styx         # Subcommand with file arg
 ```
 
 ## File Mode
@@ -51,15 +57,17 @@ cat input.styx | styx -
 | `--json-out <file>` | Output as JSON (`-` for stdout) |
 | `--in-place` | Modify input file in place |
 | `--compact` | Single-line formatting |
-| `--validate` | Validate against declared schema |
-| `--override-schema <file>` | Use this schema instead of declared |
+| `--validate` | Validate against declared schema (no output) |
+| `--schema <file>` | Use this schema instead of declared |
+
+Note: `--in-place` intentionally has no short form — destructive operations should require the full flag.
 
 ### Validation
 
-Styx files can declare their schema with a `@` key:
+Styx files can declare their schema with a `@schema` key:
 
 ```styx
-@ ./schema.styx
+@schema ./schema.styx
 
 host localhost
 port 8080
@@ -71,48 +79,111 @@ Then validate:
 styx config.styx --validate
 ```
 
-Or override the schema:
+This validates and exits with code 0 (success) or 2 (validation error). No output is printed on success — use exit codes in scripts.
+
+To validate and also output:
 
 ```bash
-styx config.styx --validate --override-schema ./other-schema.styx
+styx config.styx --validate -o -
+```
+
+Override the schema:
+
+```bash
+styx config.styx --validate --schema ./other-schema.styx
 ```
 
 ## Subcommands
 
-Subcommands use `@` prefix to distinguish from file paths.
-
-### @tree
+### tree
 
 Show the parse tree:
 
 ```bash
-styx @tree config.styx
-styx @tree --format sexp config.styx   # S-expression format
-styx @tree --format debug config.styx  # Debug format (default)
+styx tree config.styx
+styx tree --format sexp config.styx   # S-expression format
+styx tree --format debug config.styx  # Debug format (default)
 ```
 
-### @lsp
+### cst
+
+Show the concrete syntax tree (CST) structure:
+
+```bash
+styx cst config.styx
+```
+
+### lsp
 
 Start the language server (stdio transport):
 
 ```bash
-styx @lsp
+styx lsp
 ```
 
-### @skill
+### extract
+
+Extract embedded schemas from a binary:
+
+```bash
+styx extract ./my-binary
+```
+
+### diff
+
+Compare a local schema against a published version:
+
+```bash
+styx diff schema.styx --crate my-schema
+styx diff schema.styx --crate my-schema --baseline 0.1.0
+```
+
+### package
+
+Generate a publishable crate from a schema:
+
+```bash
+styx package schema.styx --name my-schema --version 0.1.0
+styx package schema.styx --name my-schema --version 0.1.0 --output ./out
+```
+
+### publish
+
+Publish a schema to staging.crates.io:
+
+```bash
+styx publish schema.styx
+styx publish schema.styx -y  # Skip confirmation
+```
+
+Requires `STYX_STAGING_TOKEN` environment variable.
+
+### cache
+
+Manage the schema cache:
+
+```bash
+styx cache              # Show cache info
+styx cache --open       # Open cache directory
+styx cache --clear      # Clear all cached schemas
+```
+
+### skill
 
 Output Claude Code skill for AI assistance:
 
 ```bash
-styx @skill
+styx skill
 ```
 
-### @diff
+### completions
 
-Structural diff between two files (not yet implemented):
+Generate shell completions:
 
 ```bash
-styx @diff old.styx new.styx
+styx completions bash > ~/.local/share/bash-completion/completions/styx
+styx completions zsh > ~/.zfunc/_styx
+styx completions fish > ~/.config/fish/completions/styx.fish
 ```
 
 ## Exit Codes

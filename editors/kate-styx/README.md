@@ -29,7 +29,7 @@ Kate has built-in LSP support. Configure it in Settings → Configure Kate → L
 {
   "servers": {
     "styx": {
-      "command": ["styx", "@lsp"],
+      "command": ["styx", "lsp"],
       "rootIndicationFileNames": [".git", "*.styx"],
       "highlightingModeRegex": "^Styx$"
     }
