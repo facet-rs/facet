@@ -661,6 +661,13 @@ export class Parser {
     const items: Value[] = [];
 
     while (!this.check("rparen", "eof")) {
+      // Check for comma - not allowed in sequences
+      if (this.check("comma")) {
+        throw new ParseError(
+          "unexpected `,` in sequence (sequences are whitespace-separated, not comma-separated)",
+          this.current.span,
+        );
+      }
       items.push(this.parseValue());
     }
 

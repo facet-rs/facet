@@ -23,7 +23,8 @@ private struct PathState {
     var assignedPaths: [[String]: (Span, PathValueKind)] = [:]
 
     /// Check a path and update state. Returns error if path is invalid.
-    mutating func checkAndUpdate(path: [String], span: Span, valueKind: PathValueKind) -> PathError? {
+    mutating func checkAndUpdate(path: [String], span: Span, valueKind: PathValueKind) -> PathError?
+    {
         // 1. Check for duplicate (exact same path)
         if let (original, _) = assignedPaths[path] {
             return .duplicate(original: original)
@@ -145,8 +146,11 @@ public struct Parser {
 
         // Check for dotted path notation (e.g., server.host localhost)
         // Only applies to plain bare scalars (no tag)
-        if key.tag == nil, case .scalar(let scalar) = key.payload, scalar.kind == .bare, scalar.text.contains(".") {
-            return try parseDottedPathEntry(pathText: scalar.text, pathSpan: key.span, pathState: &pathState)
+        if key.tag == nil, case .scalar(let scalar) = key.payload, scalar.kind == .bare,
+            scalar.text.contains(".")
+        {
+            return try parseDottedPathEntry(
+                pathText: scalar.text, pathSpan: key.span, pathState: &pathState)
         }
 
         // Get key text for path tracking
@@ -155,7 +159,9 @@ public struct Parser {
         // If next token is on a new line, or at end/closing delimiter, value is implicit unit
         if current.hadNewlineBefore || check(.eof, .rBrace) {
             // Check path state
-            if let pathError = pathState.checkAndUpdate(path: [keyText], span: key.span, valueKind: .terminal) {
+            if let pathError = pathState.checkAndUpdate(
+                path: [keyText], span: key.span, valueKind: .terminal)
+            {
                 throw pathErrorToParseError(pathError, span: key.span)
             }
             return Entry(key: key, value: Value.unit(span: key.span))
@@ -173,7 +179,9 @@ public struct Parser {
         }
 
         // Check path state
-        if let pathError = pathState.checkAndUpdate(path: [keyText], span: key.span, valueKind: valueKind) {
+        if let pathError = pathState.checkAndUpdate(
+            path: [keyText], span: key.span, valueKind: valueKind)
+        {
             throw pathErrorToParseError(pathError, span: key.span)
         }
 
@@ -204,9 +212,15 @@ public struct Parser {
         case .duplicate(_):
             return ParseError(message: "duplicate key", span: span)
         case .reopened(let closedPath):
-            return ParseError(message: "cannot reopen path `\(closedPath.joined(separator: "."))` after sibling appeared", span: span)
+            return ParseError(
+                message:
+                    "cannot reopen path `\(closedPath.joined(separator: "."))` after sibling appeared",
+                span: span)
         case .nestIntoTerminal(let terminalPath):
-            return ParseError(message: "cannot nest into `\(terminalPath.joined(separator: "."))` which has a terminal value", span: span)
+            return ParseError(
+                message:
+                    "cannot nest into `\(terminalPath.joined(separator: "."))` which has a terminal value",
+                span: span)
         }
     }
 
@@ -230,8 +244,11 @@ public struct Parser {
         }
     }
 
-    private mutating func parseDottedPathEntry(pathText: String, pathSpan: Span, pathState: inout PathState) throws -> Entry {
-        let segments = pathText.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+    private mutating func parseDottedPathEntry(
+        pathText: String, pathSpan: Span, pathState: inout PathState
+    ) throws -> Entry {
+        let segments = pathText.split(separator: ".", omittingEmptySubsequences: false).map(
+            String.init)
 
         // Check for invalid paths (empty segments)
         for seg in segments {
@@ -258,7 +275,9 @@ public struct Parser {
         }
 
         // Check path state for duplicates, reopening, and nesting errors
-        if let pathError = pathState.checkAndUpdate(path: segments, span: pathSpan, valueKind: valueKind) {
+        if let pathError = pathState.checkAndUpdate(
+            path: segments, span: pathSpan, valueKind: valueKind)
+        {
             throw pathErrorToParseError(pathError, span: pathSpan)
         }
 
@@ -272,7 +291,7 @@ public struct Parser {
             // Use UTF-8 byte count for span calculation
             let segSpan = Span(start: currentOffset, end: currentOffset + seg.utf8.count)
             segmentSpans.append((seg, segSpan))
-            currentOffset = segSpan.end + 1 // +1 for the dot
+            currentOffset = segSpan.end + 1  // +1 for the dot
         }
 
         // Build from innermost to outermost
@@ -327,7 +346,7 @@ public struct Parser {
     }
 
     private mutating func parseTaggedValue() throws -> Value {
-        let atToken = advance() // consume @
+        let atToken = advance()  // consume @
         let start = atToken.span.start
 
         // Check if followed by a bare scalar immediately adjacent (no whitespace)
@@ -388,7 +407,9 @@ public struct Parser {
             let seq = try parseSequenceInternal()
             return Value(span: seq.span, tag: tag, payload: .sequence(seq))
         }
-        if check(.bare, .quoted, .raw, .heredoc) && !current.hadWhitespaceBefore && !current.hadNewlineBefore {
+        if check(.bare, .quoted, .raw, .heredoc) && !current.hadWhitespaceBefore
+            && !current.hadNewlineBefore
+        {
             let scalar = try parseScalarOrAttributes()
             return Value(span: scalar.span, tag: tag, payload: scalar.payload)
         }
@@ -419,12 +440,13 @@ public struct Parser {
         let startSpan = scalar.span
 
         // First entry: key is the scalar, value follows after >
-        _ = advance() // consume >
+        _ = advance()  // consume >
 
-        // Trailing > without value - just ignore the > and return the plain scalar
-        // This matches Rust behavior where trailing > is silently ignored
-        if current.hadNewlineBefore || current.hadWhitespaceBefore || check(.eof, .rBrace, .rParen, .comma) {
-            return Value.scalar(scalar)
+        // Trailing > without value - this is an error
+        if current.hadNewlineBefore || current.hadWhitespaceBefore
+            || check(.eof, .rBrace, .rParen, .comma)
+        {
+            throw ParseError(message: "expected a value", span: previous.span)
         }
 
         let firstValue = try parseAttributeValue()
@@ -439,11 +461,13 @@ public struct Parser {
 
             // Check if > immediately follows (no whitespace)
             if check(.gt) && !current.hadWhitespaceBefore {
-                _ = advance() // consume >
+                _ = advance()  // consume >
 
-                // Trailing > without value - break out of attribute parsing
-                if current.hadNewlineBefore || current.hadWhitespaceBefore || check(.eof, .rBrace, .rParen, .comma) {
-                    break
+                // Trailing > without value - this is an error
+                if current.hadNewlineBefore || current.hadWhitespaceBefore
+                    || check(.eof, .rBrace, .rParen, .comma)
+                {
+                    throw ParseError(message: "expected a value", span: previous.span)
                 }
 
                 let keyScalar = tokenToScalar(keyToken)
@@ -493,7 +517,7 @@ public struct Parser {
     }
 
     private mutating func parseObjectInternal() throws -> Object {
-        let openToken = advance() // consume {
+        let openToken = advance()  // consume {
         let start = openToken.span.start
 
         var entries: [Entry] = []
@@ -508,7 +532,9 @@ public struct Parser {
                 if separator == nil {
                     separator = .newline
                 } else if separator == .comma {
-                    throw ParseError(message: "mixed separators (use either commas or newlines)", span: current.span)
+                    throw ParseError(
+                        message: "mixed separators (use either commas or newlines)",
+                        span: current.span)
                 }
             }
 
@@ -520,14 +546,18 @@ public struct Parser {
             if check(.comma) {
                 // If first entry came after newline, mixing with comma is an error
                 if firstEntryAfterNewline && entries.count == 1 {
-                    throw ParseError(message: "mixed separators (use either commas or newlines)", span: current.span)
+                    throw ParseError(
+                        message: "mixed separators (use either commas or newlines)",
+                        span: current.span)
                 }
                 if separator == nil {
                     separator = .comma
                 } else if separator != .comma {
-                    throw ParseError(message: "mixed separators (use either commas or newlines)", span: current.span)
+                    throw ParseError(
+                        message: "mixed separators (use either commas or newlines)",
+                        span: current.span)
                 }
-                _ = advance() // consume comma
+                _ = advance()  // consume comma
             }
         }
 
@@ -542,7 +572,7 @@ public struct Parser {
         guard check(.rBrace) else {
             throw ParseError(message: "unclosed object (missing `}`)", span: openToken.span)
         }
-        let closeToken = advance() // consume }
+        let closeToken = advance()  // consume }
         return Object(
             entries: entries,
             separator: separator ?? .comma,
@@ -556,25 +586,29 @@ public struct Parser {
     }
 
     private mutating func parseSequenceInternal() throws -> Sequence {
-        let openToken = advance() // consume (
+        let openToken = advance()  // consume (
         let start = openToken.span.start
 
         var items: [Value] = []
 
         while !check(.rParen, .eof) {
+            // Check for comma - not allowed in sequences
+            if check(.comma) {
+                throw ParseError(
+                    message:
+                        "unexpected `,` in sequence (sequences are whitespace-separated, not comma-separated)",
+                    span: current.span
+                )
+            }
             let item = try parseValue()
             items.append(item)
-
-            if check(.comma) {
-                _ = advance()
-            }
         }
 
         // Check for unclosed sequence - report at opening paren position (matches Rust)
         guard check(.rParen) else {
             throw ParseError(message: "unclosed sequence (missing `)`)", span: openToken.span)
         }
-        let closeToken = advance() // consume )
+        let closeToken = advance()  // consume )
         return Sequence(
             items: items,
             span: Span(start: start, end: closeToken.span.end)

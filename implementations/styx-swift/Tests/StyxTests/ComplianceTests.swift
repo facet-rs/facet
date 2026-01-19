@@ -1,5 +1,6 @@
-import XCTest
 import Foundation
+import XCTest
+
 @testable import Styx
 
 final class ComplianceTests: XCTestCase {
@@ -30,7 +31,8 @@ final class ComplianceTests: XCTestCase {
             let path = (currentDir as NSString).appendingPathComponent(candidate)
             let standardized = (path as NSString).standardizingPath
             var isDir: ObjCBool = false
-            if fileManager.fileExists(atPath: standardized, isDirectory: &isDir) && isDir.boolValue {
+            if fileManager.fileExists(atPath: standardized, isDirectory: &isDir) && isDir.boolValue
+            {
                 return standardized
             }
         }
@@ -71,7 +73,9 @@ final class ComplianceTests: XCTestCase {
 
         if process.terminationStatus == 0 {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+            if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(
+                in: .whitespacesAndNewlines), !path.isEmpty
+            {
                 return path
             }
         }
@@ -102,7 +106,9 @@ final class ComplianceTests: XCTestCase {
         let swiftNorm = normalizeOutput(swiftOutput)
         let rustNorm = normalizeOutput(rustOutput)
 
-        XCTAssertEqual(swiftNorm, rustNorm, """
+        XCTAssertEqual(
+            swiftNorm, rustNorm,
+            """
             Mismatch in \(relPath)
             --- Swift output ---
             \(swiftOutput)
@@ -126,7 +132,7 @@ final class ComplianceTests: XCTestCase {
     private func getRustOutput(file: String, styxCLI: String) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: styxCLI)
-        process.arguments = ["@tree", "--format", "sexp", file]
+        process.arguments = ["tree", "--format", "sexp", file]
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -143,7 +149,9 @@ final class ComplianceTests: XCTestCase {
             if let stderr = String(data: stderrData, encoding: .utf8), !stderr.isEmpty {
                 return extractErrorFromStderr(stderr)
             }
-            throw NSError(domain: "ComplianceTests", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: "styx-cli failed"])
+            throw NSError(
+                domain: "ComplianceTests", code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "styx-cli failed"])
         }
 
         return String(data: stdoutData, encoding: .utf8) ?? ""
@@ -153,17 +161,22 @@ final class ComplianceTests: XCTestCase {
         // Parse error messages like "error: parse error at 9-10: expected a value"
         let pattern = #"parse error at (\d+)-(\d+): (.+)"#
         if let regex = try? NSRegularExpression(pattern: pattern),
-           let match = regex.firstMatch(in: stderr, range: NSRange(stderr.startIndex..., in: stderr)) {
+            let match = regex.firstMatch(
+                in: stderr, range: NSRange(stderr.startIndex..., in: stderr))
+        {
             if let startRange = Range(match.range(at: 1), in: stderr),
-               let endRange = Range(match.range(at: 2), in: stderr),
-               let msgRange = Range(match.range(at: 3), in: stderr) {
+                let endRange = Range(match.range(at: 2), in: stderr),
+                let msgRange = Range(match.range(at: 3), in: stderr)
+            {
                 let start = String(stderr[startRange])
                 let end = String(stderr[endRange])
                 let msg = String(stderr[msgRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-                return "(error [\(start), \(end)] \"parse error at \(start)-\(end): \(escapeString(msg))\")"
+                return
+                    "(error [\(start), \(end)] \"parse error at \(start)-\(end): \(escapeString(msg))\")"
             }
         }
-        return "(error [-1, -1] \"\(escapeString(stderr.trimmingCharacters(in: .whitespacesAndNewlines)))\")"
+        return
+            "(error [-1, -1] \"\(escapeString(stderr.trimmingCharacters(in: .whitespacesAndNewlines)))\")"
     }
 
     private func normalizeOutput(_ output: String) -> String {

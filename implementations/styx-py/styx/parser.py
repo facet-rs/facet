@@ -572,6 +572,12 @@ class Parser:
         items: list[Value] = []
 
         while not self._check(TokenType.RPAREN, TokenType.EOF):
+            # Check for comma - not allowed in sequences
+            if self._check(TokenType.COMMA):
+                raise ParseError(
+                    "unexpected `,` in sequence (sequences are whitespace-separated, not comma-separated)",
+                    self.current.span,
+                )
             items.append(self._parse_value())
 
         if self._check(TokenType.EOF):

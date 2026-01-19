@@ -2,17 +2,17 @@
 public enum TokenType: Equatable, Sendable {
     case eof
     case newline
-    case lBrace      // {
-    case rBrace      // }
-    case lParen      // (
-    case rParen      // )
-    case comma       // ,
-    case gt          // >
-    case at          // @
-    case bare        // bare identifier/scalar
-    case quoted      // "string"
-    case raw         // r#"string"#
-    case heredoc     // <<TAG...TAG
+    case lBrace  // {
+    case rBrace  // }
+    case lParen  // (
+    case rParen  // )
+    case comma  // ,
+    case gt  // >
+    case at  // @
+    case bare  // bare identifier/scalar
+    case quoted  // "string"
+    case raw  // r#"string"#
+    case heredoc  // <<TAG...TAG
     case error
 }
 
@@ -24,7 +24,10 @@ public struct Token: Equatable, Sendable {
     public var hadWhitespaceBefore: Bool
     public var hadNewlineBefore: Bool
 
-    public init(type: TokenType, span: Span, text: String = "", hadWhitespaceBefore: Bool = false, hadNewlineBefore: Bool = false) {
+    public init(
+        type: TokenType, span: Span, text: String = "", hadWhitespaceBefore: Bool = false,
+        hadNewlineBefore: Bool = false
+    ) {
         self.type = type
         self.span = span
         self.text = text
@@ -116,29 +119,47 @@ public struct Lexer {
         let nl = hadNewline
 
         guard !isAtEnd else {
-            return Token(type: .eof, span: Span(start: position, end: position), hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .eof, span: Span(start: position, end: position), hadWhitespaceBefore: ws,
+                hadNewlineBefore: nl)
         }
 
         let start = position
         guard let char = advance() else {
-            return Token(type: .eof, span: Span(start: start, end: start), hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .eof, span: Span(start: start, end: start), hadWhitespaceBefore: ws,
+                hadNewlineBefore: nl)
         }
 
         switch char {
         case "{":
-            return Token(type: .lBrace, span: Span(start: start, end: position), hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .lBrace, span: Span(start: start, end: position), hadWhitespaceBefore: ws,
+                hadNewlineBefore: nl)
         case "}":
-            return Token(type: .rBrace, span: Span(start: start, end: position), hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .rBrace, span: Span(start: start, end: position), hadWhitespaceBefore: ws,
+                hadNewlineBefore: nl)
         case "(":
-            return Token(type: .lParen, span: Span(start: start, end: position), hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .lParen, span: Span(start: start, end: position), hadWhitespaceBefore: ws,
+                hadNewlineBefore: nl)
         case ")":
-            return Token(type: .rParen, span: Span(start: start, end: position), hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .rParen, span: Span(start: start, end: position), hadWhitespaceBefore: ws,
+                hadNewlineBefore: nl)
         case ",":
-            return Token(type: .comma, span: Span(start: start, end: position), hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .comma, span: Span(start: start, end: position), hadWhitespaceBefore: ws,
+                hadNewlineBefore: nl)
         case ">":
-            return Token(type: .gt, span: Span(start: start, end: position), hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .gt, span: Span(start: start, end: position), hadWhitespaceBefore: ws,
+                hadNewlineBefore: nl)
         case "@":
-            return Token(type: .at, span: Span(start: start, end: position), hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .at, span: Span(start: start, end: position), hadWhitespaceBefore: ws,
+                hadNewlineBefore: nl)
         case "\"":
             return lexQuotedString(start: start, ws: ws, nl: nl)
         case "r" where peek() == "#" || peek() == "\"":
@@ -148,8 +169,10 @@ public struct Lexer {
             return lexHeredoc(start: start, ws: ws, nl: nl)
         case "<" where peek() == "<":
             // << not followed by uppercase is an error
-            _ = advance() // consume second <
-            return Token(type: .error, span: Span(start: start, end: position), text: "unexpected token", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            _ = advance()  // consume second <
+            return Token(
+                type: .error, span: Span(start: start, end: position), text: "unexpected token",
+                hadWhitespaceBefore: ws, hadNewlineBefore: nl)
         case "/" where peek() != "/":
             // Single / starts a bare scalar (e.g., /etc/config)
             // But // is a comment (handled in skipWhitespaceAndComments)
@@ -159,7 +182,10 @@ public struct Lexer {
                 return lexBare(start: start, firstChar: char, ws: ws, nl: nl)
             } else {
                 // Error: character can't start a value
-                return Token(type: .error, span: Span(start: start, end: position), text: "unexpected character '\(char)'", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+                return Token(
+                    type: .error, span: Span(start: start, end: position),
+                    text: "unexpected character '\(char)'", hadWhitespaceBefore: ws,
+                    hadNewlineBefore: nl)
             }
         }
     }
@@ -189,44 +215,57 @@ public struct Lexer {
                             text.append(unicodeChar)
                         } else {
                             // Error span covers the \u escape sequence
-                            return Token(type: .error, span: Span(start: charStart, end: position), text: "invalid unicode escape", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+                            return Token(
+                                type: .error, span: Span(start: charStart, end: position),
+                                text: "invalid unicode escape", hadWhitespaceBefore: ws,
+                                hadNewlineBefore: nl)
                         }
                     default:
                         // Error span covers just the invalid escape sequence (e.g., \x)
-                        return Token(type: .error, span: Span(start: charStart, end: position), text: "invalid escape sequence: \\\(escaped)", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+                        return Token(
+                            type: .error, span: Span(start: charStart, end: position),
+                            text: "invalid escape sequence: \\\(escaped)", hadWhitespaceBefore: ws,
+                            hadNewlineBefore: nl)
                     }
                 }
             } else if char == "\n" {
                 // Unterminated string - return error
-                return Token(type: .error, span: Span(start: start, end: position), text: "unexpected token", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+                return Token(
+                    type: .error, span: Span(start: start, end: position), text: "unexpected token",
+                    hadWhitespaceBefore: ws, hadNewlineBefore: nl)
             } else {
                 text.append(char)
             }
         }
 
         if !closed {
-            return Token(type: .error, span: Span(start: start, end: position), text: "unexpected token", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .error, span: Span(start: start, end: position), text: "unexpected token",
+                hadWhitespaceBefore: ws, hadNewlineBefore: nl)
         }
 
-        return Token(type: .quoted, span: Span(start: start, end: position), text: text, hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+        return Token(
+            type: .quoted, span: Span(start: start, end: position), text: text,
+            hadWhitespaceBefore: ws, hadNewlineBefore: nl)
     }
 
     private mutating func parseUnicodeEscape() -> Character? {
         guard let first = peek() else { return nil }
 
         if first == "{" {
-            _ = advance() // consume {
+            _ = advance()  // consume {
             var hex = ""
             while let c = peek(), c != "}" {
                 hex.append(c)
                 _ = advance()
             }
             guard peek() == "}" else { return nil }
-            _ = advance() // consume }
+            _ = advance()  // consume }
 
             guard hex.count >= 1 && hex.count <= 6,
-                  let codepoint = UInt32(hex, radix: 16),
-                  let scalar = Unicode.Scalar(codepoint) else { return nil }
+                let codepoint = UInt32(hex, radix: 16),
+                let scalar = Unicode.Scalar(codepoint)
+            else { return nil }
             return Character(scalar)
         } else {
             // 4-digit form
@@ -237,7 +276,8 @@ public struct Lexer {
                 _ = advance()
             }
             guard let codepoint = UInt32(hex, radix: 16),
-                  let scalar = Unicode.Scalar(codepoint) else { return nil }
+                let scalar = Unicode.Scalar(codepoint)
+            else { return nil }
             return Character(scalar)
         }
     }
@@ -251,9 +291,11 @@ public struct Lexer {
         }
 
         guard peek() == "\"" else {
-            return Token(type: .error, span: Span(start: start, end: position), text: "expected \" after r#", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .error, span: Span(start: start, end: position), text: "expected \" after r#",
+                hadWhitespaceBefore: ws, hadNewlineBefore: nl)
         }
-        _ = advance() // consume opening "
+        _ = advance()  // consume opening "
 
         var text = ""
         while !isAtEnd {
@@ -269,7 +311,9 @@ public struct Lexer {
                     closingHashes += 1
                 }
                 if closingHashes == hashCount {
-                    return Token(type: .raw, span: Span(start: start, end: position), text: text, hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+                    return Token(
+                        type: .raw, span: Span(start: start, end: position), text: text,
+                        hadWhitespaceBefore: ws, hadNewlineBefore: nl)
                 }
                 // Not the end, restore and include the quote
                 index = saveIndex
@@ -280,11 +324,13 @@ public struct Lexer {
             }
         }
 
-        return Token(type: .error, span: Span(start: start, end: position), text: "unexpected token", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+        return Token(
+            type: .error, span: Span(start: start, end: position), text: "unexpected token",
+            hadWhitespaceBefore: ws, hadNewlineBefore: nl)
     }
 
     private mutating func lexHeredoc(start: Int, ws: Bool, nl: Bool) -> Token {
-        _ = advance() // consume second <
+        _ = advance()  // consume second <
 
         // Delimiter: uppercase letters, digits, underscores
         // First char must be uppercase letter
@@ -293,7 +339,10 @@ public struct Lexer {
             while let c = peek(), c.isUppercase || c.isNumber || c == "_" {
                 _ = advance()
             }
-            return Token(type: .error, span: Span(start: start, end: position), text: "heredoc delimiter must start with uppercase letter", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .error, span: Span(start: start, end: position),
+                text: "heredoc delimiter must start with uppercase letter", hadWhitespaceBefore: ws,
+                hadNewlineBefore: nl)
         }
 
         var delimiter = ""
@@ -303,10 +352,30 @@ public struct Lexer {
         }
 
         if delimiter.count > 16 {
-            return Token(type: .error, span: Span(start: start, end: position), text: "heredoc delimiter too long", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            return Token(
+                type: .error, span: Span(start: start, end: position),
+                text: "heredoc delimiter too long", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
         }
 
-        // Consume optional \r and \n after delimiter
+        // Consume optional language hint: ,lang where lang matches [a-z][a-z0-9_.-]*
+        // The language hint is metadata and does not affect the scalar content.
+        if peek() == "," {
+            _ = advance()  // consume ','
+            // First char must be lowercase letter
+            if let c = peek(), c.isLowercase {
+                _ = advance()
+                // Rest: lowercase, digit, underscore, dot, hyphen
+                while let c = peek() {
+                    if c.isLowercase || c.isNumber || c == "_" || c == "." || c == "-" {
+                        _ = advance()
+                    } else {
+                        break
+                    }
+                }
+            }
+        }
+
+        // Consume optional \r and \n after delimiter (and optional lang hint)
         if peek() == "\r" {
             _ = advance()
         }
@@ -325,10 +394,16 @@ public struct Lexer {
                 // Check if currentLine matches the delimiter (with optional leading whitespace)
                 let trimmed = currentLine.trimmingLeadingWhitespace()
                 if trimmed == delimiter {
-                    // Found closing delimiter - span ends before the final newline
+                    // Found closing delimiter - dedent content if delimiter was indented
+                    let indentLen = currentLine.leadingWhitespaceCount()
+                    if indentLen > 0 && !text.isEmpty {
+                        text = dedentHeredocContent(text, indentLen: indentLen)
+                    }
                     // Mark that next token should have hadNewlineBefore = true
                     pendingNewline = true
-                    return Token(type: .heredoc, span: Span(start: start, end: position - 1), text: text, hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+                    return Token(
+                        type: .heredoc, span: Span(start: start, end: position - 1), text: text,
+                        hadWhitespaceBefore: ws, hadNewlineBefore: nl)
                 }
                 text.append(contentsOf: currentLine)
                 text.append("\n")
@@ -341,12 +416,57 @@ public struct Lexer {
         // Check if final line (without trailing newline) is the delimiter
         let trimmed = currentLine.trimmingLeadingWhitespace()
         if trimmed == delimiter {
-            // No trailing newline, span ends at current position
-            return Token(type: .heredoc, span: Span(start: start, end: position), text: text, hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+            // Dedent content if delimiter was indented
+            let indentLen = currentLine.leadingWhitespaceCount()
+            if indentLen > 0 && !text.isEmpty {
+                text = dedentHeredocContent(text, indentLen: indentLen)
+            }
+            return Token(
+                type: .heredoc, span: Span(start: start, end: position), text: text,
+                hadWhitespaceBefore: ws, hadNewlineBefore: nl)
         }
 
         // Unterminated heredoc - return error
-        return Token(type: .error, span: Span(start: start, end: position), text: "unexpected token", hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+        return Token(
+            type: .error, span: Span(start: start, end: position), text: "unexpected token",
+            hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+    }
+
+    /// Dedent heredoc content by stripping `indentLen` whitespace chars from the start of each line.
+    private func dedentHeredocContent(_ content: String, indentLen: Int) -> String {
+        // Use a line-by-line approach that preserves trailing newline correctly
+        var result = ""
+        var lineStart = content.startIndex
+
+        while lineStart < content.endIndex {
+            // Find end of line
+            let lineEnd = content[lineStart...].firstIndex(of: "\n") ?? content.endIndex
+            let line = content[lineStart..<lineEnd]
+
+            // Strip up to indentLen whitespace chars
+            var chars = line.startIndex
+            var stripped = 0
+            while stripped < indentLen && chars < line.endIndex {
+                let c = line[chars]
+                if c == " " || c == "\t" {
+                    chars = line.index(after: chars)
+                    stripped += 1
+                } else {
+                    break
+                }
+            }
+            result.append(contentsOf: line[chars...])
+
+            // Add newline if present
+            if lineEnd < content.endIndex {
+                result.append("\n")
+                lineStart = content.index(after: lineEnd)
+            } else {
+                break
+            }
+        }
+
+        return result
     }
 
     private mutating func lexBare(start: Int, firstChar: Character, ws: Bool, nl: Bool) -> Token {
@@ -361,7 +481,9 @@ public struct Lexer {
             }
         }
 
-        return Token(type: .bare, span: Span(start: start, end: position), text: text, hadWhitespaceBefore: ws, hadNewlineBefore: nl)
+        return Token(
+            type: .bare, span: Span(start: start, end: position), text: text,
+            hadWhitespaceBefore: ws, hadNewlineBefore: nl)
     }
 }
 
@@ -407,5 +529,17 @@ extension String {
             return ""
         }
         return String(self[firstNonWhitespace...])
+    }
+
+    func leadingWhitespaceCount() -> Int {
+        var count = 0
+        for c in self {
+            if c == " " || c == "\t" {
+                count += 1
+            } else {
+                break
+            }
+        }
+        return count
     }
 }

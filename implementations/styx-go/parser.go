@@ -729,6 +729,13 @@ func (p *parser) parseSequence() (*Sequence, error) {
 	items := []*Value{}
 
 	for !p.check(TokenRParen, TokenEOF) {
+		// Check for comma - not allowed in sequences
+		if p.check(TokenComma) {
+			return nil, &ParseError{
+				Message: "unexpected `,` in sequence (sequences are whitespace-separated, not comma-separated)",
+				Span:    p.current.Span,
+			}
+		}
 		item, err := p.parseValue()
 		if err != nil {
 			return nil, err
