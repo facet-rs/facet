@@ -563,20 +563,20 @@ where
     // Check for metadata containers - serialize transparently through the inner value
     // Metadata containers have exactly one non-metadata field that carries the actual value,
     // while other fields (like doc comments) are metadata for formats that support it.
-    if value.shape().is_metadata_container() {
-        if let Ok(struct_) = value.into_struct() {
-            // Let the format handle metadata containers if it wants to (e.g., emit doc comments)
-            if serializer
-                .serialize_metadata_container(&struct_)
-                .map_err(SerializeError::Backend)?
-            {
-                return Ok(());
-            }
-            // Default: serialize transparently through the non-metadata field
-            for (field, field_value) in struct_.fields() {
-                if !field.is_metadata() {
-                    return shared_serialize(serializer, field_value);
-                }
+    if value.shape().is_metadata_container()
+        && let Ok(struct_) = value.into_struct()
+    {
+        // Let the format handle metadata containers if it wants to (e.g., emit doc comments)
+        if serializer
+            .serialize_metadata_container(&struct_)
+            .map_err(SerializeError::Backend)?
+        {
+            return Ok(());
+        }
+        // Default: serialize transparently through the non-metadata field
+        for (field, field_value) in struct_.fields() {
+            if !field.is_metadata() {
+                return shared_serialize(serializer, field_value);
             }
         }
     }
