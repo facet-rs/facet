@@ -306,134 +306,180 @@ impl PythonGenerator {
         shape: &'static Shape,
         enum_type: &facet_core::EnumType,
     ) {
-        // Check if all variants are unit variants (simple Literal union)
         let all_unit = enum_type
             .variants
             .iter()
             .all(|v| matches!(v.data.kind, StructKind::Unit));
 
+        write_doc_comment(output, shape.doc);
+
         if all_unit {
-            // Simple Literal union
-            self.imports.insert("Literal");
-            self.imports.insert("Union");
-            let variants: Vec<String> = enum_type
-                .variants
-                .iter()
-                .map(|v| format!("Literal[\"{}\"]", v.effective_name()))
-                .collect();
-            write_doc_comment(output, shape.doc);
-            writeln!(
-                output,
-                "{} = Union[{}]",
-                shape.type_identifier,
-                variants.join(", ")
-            )
-            .unwrap();
+            self.generate_enum_unit_variants(output, shape, enum_type);
         } else {
-            // Discriminated union with data
-            // Generate TypedDict classes for each variant, then union them
-            let mut variant_class_names = Vec::new();
-
-            for variant in enum_type.variants {
-                let variant_name = variant.effective_name();
-                let pascal_variant_name = to_pascal_case(variant_name);
-
-                match variant.data.kind {
-                    StructKind::Unit => {
-                        // Unit variant - just a Literal in the union, no wrapper class needed
-                        self.imports.insert("Literal");
-                        variant_class_names.push(format!("Literal[\"{}\"]", variant_name));
-                    }
-                    StructKind::TupleStruct if variant.data.fields.len() == 1 => {
-                        // Newtype variant - wrapper class pointing to inner type
-                        self.imports.insert("TypedDict");
-                        self.imports.insert("Required");
-                        let inner_type = self.type_for_shape(variant.data.fields[0].shape.get());
-                        let mut variant_output = String::new();
-                        writeln!(
-                            variant_output,
-                            "class {}(TypedDict, total=False):",
-                            pascal_variant_name
-                        )
-                        .unwrap();
-                        writeln!(
-                            variant_output,
-                            "    {}: Required[{}]",
-                            variant_name, inner_type
-                        )
-                        .unwrap();
-                        variant_output.push('\n');
-                        self.generated
-                            .insert(pascal_variant_name.clone(), variant_output);
-                        variant_class_names.push(format!("\"{}\"", pascal_variant_name));
-                    }
-                    _ => {
-                        // Struct variant - generate data class and wrapper class
-                        self.imports.insert("TypedDict");
-                        self.imports.insert("Required");
-                        let data_class_name = format!("{}Data", pascal_variant_name);
-
-                        // Generate the data class
-                        let mut data_output = String::new();
-                        writeln!(
-                            data_output,
-                            "class {}(TypedDict, total=False):",
-                            data_class_name
-                        )
-                        .unwrap();
-
-                        if variant.data.fields.is_empty() {
-                            data_output.push_str("    pass\n");
-                        } else {
-                            for field in variant.data.fields {
-                                let field_name = field.effective_name();
-                                let field_type = self.type_for_shape(field.shape.get());
-                                writeln!(
-                                    data_output,
-                                    "    {}: Required[{}]",
-                                    field_name, field_type
-                                )
-                                .unwrap();
-                            }
-                        }
-                        data_output.push('\n');
-                        self.generated.insert(data_class_name.clone(), data_output);
-
-                        // Generate the wrapper class
-                        let mut variant_output = String::new();
-                        writeln!(
-                            variant_output,
-                            "class {}(TypedDict, total=False):",
-                            pascal_variant_name
-                        )
-                        .unwrap();
-                        writeln!(
-                            variant_output,
-                            "    {}: Required[{}]",
-                            variant_name, data_class_name
-                        )
-                        .unwrap();
-                        variant_output.push('\n');
-                        self.generated
-                            .insert(pascal_variant_name.clone(), variant_output);
-
-                        variant_class_names.push(format!("\"{}\"", pascal_variant_name));
-                    }
-                }
-            }
-
-            // Generate the union type alias
-            self.imports.insert("Union");
-            write_doc_comment(output, shape.doc);
-            writeln!(
-                output,
-                "{} = Union[{}]",
-                shape.type_identifier,
-                variant_class_names.join(", ")
-            )
-            .unwrap();
+            self.generate_enum_with_data(output, shape, enum_type);
         }
         output.push('\n');
+    }
+
+    /// Generate a simple enum where all variants are unit variants.
+    ///
+    /// Produces: `EnumName = Union[Literal["A"], Literal["B"], ...]`
+    fn generate_enum_unit_variants(
+        &mut self,
+        output: &mut String,
+        shape: &'static Shape,
+        enum_type: &facet_core::EnumType,
+    ) {
+        self.imports.insert("Literal");
+        self.imports.insert("Union");
+
+        let variants: Vec<String> = enum_type
+            .variants
+            .iter()
+            .map(|v| format!("Literal[\"{}\"]", v.effective_name()))
+            .collect();
+
+        writeln!(
+            output,
+            "{} = Union[{}]",
+            shape.type_identifier,
+            variants.join(", ")
+        )
+        .unwrap();
+    }
+
+    /// Generate an enum with data variants (discriminated union).
+    ///
+    /// Generates TypedDict wrapper classes for each variant, then unions them.
+    fn generate_enum_with_data(
+        &mut self,
+        output: &mut String,
+        shape: &'static Shape,
+        enum_type: &facet_core::EnumType,
+    ) {
+        let mut variant_class_names = Vec::new();
+
+        for variant in enum_type.variants {
+            let variant_type_name = self.generate_enum_variant(variant);
+            variant_class_names.push(variant_type_name);
+        }
+
+        self.imports.insert("Union");
+        writeln!(
+            output,
+            "{} = Union[{}]",
+            shape.type_identifier,
+            variant_class_names.join(", ")
+        )
+        .unwrap();
+    }
+
+    /// Generate a single enum variant and return its type reference.
+    ///
+    /// Returns either `Literal["name"]` for unit variants or `"ClassName"` for data variants.
+    fn generate_enum_variant(&mut self, variant: &facet_core::Variant) -> String {
+        let variant_name = variant.effective_name();
+        let pascal_variant_name = to_pascal_case(variant_name);
+
+        match variant.data.kind {
+            StructKind::Unit => {
+                self.imports.insert("Literal");
+                format!("Literal[\"{}\"]", variant_name)
+            }
+            StructKind::TupleStruct if variant.data.fields.len() == 1 => {
+                self.generate_newtype_variant(variant_name, &pascal_variant_name, variant);
+                format!("\"{}\"", pascal_variant_name)
+            }
+            _ => {
+                self.generate_struct_variant(variant_name, &pascal_variant_name, variant);
+                format!("\"{}\"", pascal_variant_name)
+            }
+        }
+    }
+
+    /// Generate a newtype variant (single-field tuple variant).
+    ///
+    /// Produces a wrapper class: `class VariantName(TypedDict): variant_name: Required[InnerType]`
+    fn generate_newtype_variant(
+        &mut self,
+        variant_name: &str,
+        pascal_variant_name: &str,
+        variant: &facet_core::Variant,
+    ) {
+        self.imports.insert("TypedDict");
+        self.imports.insert("Required");
+
+        let inner_type = self.type_for_shape(variant.data.fields[0].shape.get());
+
+        let mut output = String::new();
+        writeln!(
+            output,
+            "class {}(TypedDict, total=False):",
+            pascal_variant_name
+        )
+        .unwrap();
+        writeln!(output, "    {}: Required[{}]", variant_name, inner_type).unwrap();
+        output.push('\n');
+
+        self.generated
+            .insert(pascal_variant_name.to_string(), output);
+    }
+
+    /// Generate a struct variant (multiple fields or named fields).
+    ///
+    /// Produces a data class and a wrapper class:
+    /// - `class VariantNameData(TypedDict): field1: Type1, ...`
+    /// - `class VariantName(TypedDict): variant_name: Required[VariantNameData]`
+    fn generate_struct_variant(
+        &mut self,
+        variant_name: &str,
+        pascal_variant_name: &str,
+        variant: &facet_core::Variant,
+    ) {
+        self.imports.insert("TypedDict");
+        self.imports.insert("Required");
+
+        let data_class_name = format!("{}Data", pascal_variant_name);
+
+        // Generate the data class
+        let mut data_output = String::new();
+        writeln!(
+            data_output,
+            "class {}(TypedDict, total=False):",
+            data_class_name
+        )
+        .unwrap();
+
+        if variant.data.fields.is_empty() {
+            data_output.push_str("    pass\n");
+        } else {
+            for field in variant.data.fields {
+                let field_name = field.effective_name();
+                let field_type = self.type_for_shape(field.shape.get());
+                writeln!(data_output, "    {}: Required[{}]", field_name, field_type).unwrap();
+            }
+        }
+        data_output.push('\n');
+        self.generated.insert(data_class_name.clone(), data_output);
+
+        // Generate the wrapper class
+        let mut wrapper_output = String::new();
+        writeln!(
+            wrapper_output,
+            "class {}(TypedDict, total=False):",
+            pascal_variant_name
+        )
+        .unwrap();
+        writeln!(
+            wrapper_output,
+            "    {}: Required[{}]",
+            variant_name, data_class_name
+        )
+        .unwrap();
+        wrapper_output.push('\n');
+
+        self.generated
+            .insert(pascal_variant_name.to_string(), wrapper_output);
     }
 
     fn type_for_shape(&mut self, shape: &'static Shape) -> String {
