@@ -398,14 +398,16 @@ impl Schema {
         // Add foreign keys
         for table in &self.tables {
             for fk in &table.foreign_keys {
+                let constraint_name = format!("fk_{}_{}", table.name, fk.columns.join("_"));
+                let quoted_cols: Vec<_> = fk.columns.iter().map(|c| crate::quote_ident(c)).collect();
+                let quoted_ref_cols: Vec<_> = fk.references_columns.iter().map(|c| crate::quote_ident(c)).collect();
                 sql.push_str(&format!(
-                    "ALTER TABLE {} ADD CONSTRAINT fk_{}_{} FOREIGN KEY ({}) REFERENCES {}({});\n",
-                    table.name,
-                    table.name,
-                    fk.columns.join("_"),
-                    fk.columns.join(", "),
-                    fk.references_table,
-                    fk.references_columns.join(", ")
+                    "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {}({});\n",
+                    crate::quote_ident(&table.name),
+                    crate::quote_ident(&constraint_name),
+                    quoted_cols.join(", "),
+                    crate::quote_ident(&fk.references_table),
+                    quoted_ref_cols.join(", ")
                 ));
             }
         }
@@ -432,7 +434,7 @@ impl Table {
     /// Does not include foreign key constraints (those should be added
     /// separately to handle table creation order).
     pub fn to_create_table_sql(&self) -> String {
-        let mut sql = format!("CREATE TABLE {} (\n", self.name);
+        let mut sql = format!("CREATE TABLE {} (\n", crate::quote_ident(&self.name));
 
         // Collect primary key columns
         let pk_columns: Vec<&str> = self
@@ -449,7 +451,7 @@ impl Table {
             .columns
             .iter()
             .map(|col| {
-                let mut def = format!("    {} {}", col.name, col.pg_type);
+                let mut def = format!("    {} {}", crate::quote_ident(&col.name), col.pg_type);
 
                 // Only add inline PRIMARY KEY for single-column PKs
                 if col.primary_key && !use_table_pk_constraint {
@@ -478,8 +480,9 @@ impl Table {
 
         // Add composite primary key constraint if needed
         if use_table_pk_constraint {
+            let quoted_pk_cols: Vec<_> = pk_columns.iter().map(|c| crate::quote_ident(c)).collect();
             sql.push_str(",\n");
-            sql.push_str(&format!("    PRIMARY KEY ({})", pk_columns.join(", ")));
+            sql.push_str(&format!("    PRIMARY KEY ({})", quoted_pk_cols.join(", ")));
         }
 
         sql.push_str("\n);");
@@ -490,12 +493,13 @@ impl Table {
     /// Generate CREATE INDEX SQL statement for a given index.
     pub fn to_create_index_sql(&self, idx: &Index) -> String {
         let unique = if idx.unique { "UNIQUE " } else { "" };
+        let quoted_cols: Vec<_> = idx.columns.iter().map(|c| crate::quote_ident(c)).collect();
         format!(
             "CREATE {}INDEX {} ON {} ({});",
             unique,
-            idx.name,
-            self.name,
-            idx.columns.join(", ")
+            crate::quote_ident(&idx.name),
+            crate::quote_ident(&self.name),
+            quoted_cols.join(", ")
         )
     }
 }

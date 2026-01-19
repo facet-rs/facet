@@ -76,6 +76,14 @@ pub use inventory;
 // Re-export the proc macro
 pub use dibs_macros::migration;
 
+/// Quote a PostgreSQL identifier.
+///
+/// Always quotes identifiers to avoid issues with reserved keywords like
+/// `user`, `order`, `table`, `group`, etc. Doubles any embedded quotes.
+pub fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
 /// Derive migration version from filename.
 ///
 /// This is used internally by the `#[dibs::migration]` macro to derive the

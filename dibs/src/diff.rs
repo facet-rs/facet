@@ -38,7 +38,7 @@
 //! ALTER TABLE categories RENAME TO category;
 //! ```
 
-use crate::{Column, ForeignKey, Index, PgType, Schema, Table};
+use crate::{quote_ident, Column, ForeignKey, Index, PgType, Schema, Table};
 use std::collections::HashSet;
 
 /// A diff between two schemas.
@@ -135,10 +135,13 @@ impl Change {
     ///
     /// The `table_name` is required for column-level changes.
     pub fn to_sql(&self, table_name: &str) -> String {
+        let qt = quote_ident(table_name);
         match self {
             Change::AddTable(t) => t.to_create_table_sql(),
-            Change::DropTable(name) => format!("DROP TABLE {};", name),
-            Change::RenameTable { from, to } => format!("ALTER TABLE {} RENAME TO {};", from, to),
+            Change::DropTable(name) => format!("DROP TABLE {};", quote_ident(name)),
+            Change::RenameTable { from, to } => {
+                format!("ALTER TABLE {} RENAME TO {};", quote_ident(from), quote_ident(to))
+            }
             Change::AddColumn(col) => {
                 let not_null = if col.nullable { "" } else { " NOT NULL" };
                 let default = col
@@ -148,34 +151,34 @@ impl Change {
                     .unwrap_or_default();
                 format!(
                     "ALTER TABLE {} ADD COLUMN {} {}{}{};",
-                    table_name, col.name, col.pg_type, not_null, default
+                    qt, quote_ident(&col.name), col.pg_type, not_null, default
                 )
             }
             Change::DropColumn(name) => {
-                format!("ALTER TABLE {} DROP COLUMN {};", table_name, name)
+                format!("ALTER TABLE {} DROP COLUMN {};", qt, quote_ident(name))
             }
             Change::RenameColumn { from, to } => {
                 format!(
                     "ALTER TABLE {} RENAME COLUMN {} TO {};",
-                    table_name, from, to
+                    qt, quote_ident(from), quote_ident(to)
                 )
             }
             Change::AlterColumnType { name, to, .. } => {
                 format!(
                     "ALTER TABLE {} ALTER COLUMN {} TYPE {} USING {}::{};",
-                    table_name, name, to, name, to
+                    qt, quote_ident(name), to, quote_ident(name), to
                 )
             }
             Change::AlterColumnNullable { name, to, .. } => {
                 if *to {
                     format!(
                         "ALTER TABLE {} ALTER COLUMN {} DROP NOT NULL;",
-                        table_name, name
+                        qt, quote_ident(name)
                     )
                 } else {
                     format!(
                         "ALTER TABLE {} ALTER COLUMN {} SET NOT NULL;",
-                        table_name, name
+                        qt, quote_ident(name)
                     )
                 }
             }
@@ -183,24 +186,26 @@ impl Change {
                 if let Some(default) = to {
                     format!(
                         "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {};",
-                        table_name, name, default
+                        qt, quote_ident(name), default
                     )
                 } else {
                     format!(
                         "ALTER TABLE {} ALTER COLUMN {} DROP DEFAULT;",
-                        table_name, name
+                        qt, quote_ident(name)
                     )
                 }
             }
             Change::AddPrimaryKey(cols) => {
+                let quoted_cols: Vec<_> = cols.iter().map(|c| quote_ident(c)).collect();
                 format!(
                     "ALTER TABLE {} ADD PRIMARY KEY ({});",
-                    table_name,
-                    cols.join(", ")
+                    qt,
+                    quoted_cols.join(", ")
                 )
             }
             Change::DropPrimaryKey => {
-                format!("ALTER TABLE {} DROP CONSTRAINT {}_pkey;", table_name, table_name)
+                let constraint_name = format!("{}_pkey", table_name);
+                format!("ALTER TABLE {} DROP CONSTRAINT {};", qt, quote_ident(&constraint_name))
             }
             Change::AddForeignKey(fk) => {
                 let constraint_name = format!(
@@ -208,13 +213,15 @@ impl Change {
                     table_name,
                     fk.columns.join("_")
                 );
+                let quoted_cols: Vec<_> = fk.columns.iter().map(|c| quote_ident(c)).collect();
+                let quoted_ref_cols: Vec<_> = fk.references_columns.iter().map(|c| quote_ident(c)).collect();
                 format!(
                     "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({});",
-                    table_name,
-                    constraint_name,
-                    fk.columns.join(", "),
-                    fk.references_table,
-                    fk.references_columns.join(", ")
+                    qt,
+                    quote_ident(&constraint_name),
+                    quoted_cols.join(", "),
+                    quote_ident(&fk.references_table),
+                    quoted_ref_cols.join(", ")
                 )
             }
             Change::DropForeignKey(fk) => {
@@ -225,32 +232,35 @@ impl Change {
                 );
                 format!(
                     "ALTER TABLE {} DROP CONSTRAINT {};",
-                    table_name, constraint_name
+                    qt, quote_ident(&constraint_name)
                 )
             }
             Change::AddIndex(idx) => {
                 let unique = if idx.unique { "UNIQUE " } else { "" };
+                let quoted_cols: Vec<_> = idx.columns.iter().map(|c| quote_ident(c)).collect();
                 format!(
                     "CREATE {}INDEX {} ON {} ({});",
                     unique,
-                    idx.name,
-                    table_name,
-                    idx.columns.join(", ")
+                    quote_ident(&idx.name),
+                    qt,
+                    quoted_cols.join(", ")
                 )
             }
             Change::DropIndex(name) => {
-                format!("DROP INDEX {};", name)
+                format!("DROP INDEX {};", quote_ident(name))
             }
             Change::AddUnique(col) => {
+                let constraint_name = format!("{}_{}_key", table_name, col);
                 format!(
-                    "ALTER TABLE {} ADD CONSTRAINT {}_{}_key UNIQUE ({});",
-                    table_name, table_name, col, col
+                    "ALTER TABLE {} ADD CONSTRAINT {} UNIQUE ({});",
+                    qt, quote_ident(&constraint_name), quote_ident(col)
                 )
             }
             Change::DropUnique(col) => {
+                let constraint_name = format!("{}_{}_key", table_name, col);
                 format!(
-                    "ALTER TABLE {} DROP CONSTRAINT {}_{}_key;",
-                    table_name, table_name, col
+                    "ALTER TABLE {} DROP CONSTRAINT {};",
+                    qt, quote_ident(&constraint_name)
                 )
             }
         }

@@ -2,10 +2,10 @@
 source: crates/dibs/src/diff.rs
 expression: table.to_create_table_sql()
 ---
-CREATE TABLE posts (
-    id BIGINT PRIMARY KEY,
-    author_id BIGINT NOT NULL,
-    category_id BIGINT,
-    title TEXT NOT NULL,
-    body TEXT NOT NULL
+CREATE TABLE "posts" (
+    "id" BIGINT PRIMARY KEY,
+    "author_id" BIGINT NOT NULL,
+    "category_id" BIGINT,
+    "title" TEXT NOT NULL,
+    "body" TEXT NOT NULL
 );

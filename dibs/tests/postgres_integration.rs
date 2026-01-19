@@ -95,9 +95,9 @@ async fn test_sql_generation() {
     let schema = Schema::collect();
     let sql = schema.to_sql();
 
-    // Check that SQL contains expected statements
-    assert!(sql.contains("CREATE TABLE test_users"));
-    assert!(sql.contains("CREATE TABLE test_posts"));
+    // Check that SQL contains expected statements (identifiers are quoted)
+    assert!(sql.contains("CREATE TABLE \"test_users\""));
+    assert!(sql.contains("CREATE TABLE \"test_posts\""));
     assert!(sql.contains("PRIMARY KEY"));
     assert!(sql.contains("NOT NULL"));
     assert!(sql.contains("UNIQUE"));

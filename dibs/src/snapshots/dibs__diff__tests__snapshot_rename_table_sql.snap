@@ -3,7 +3,7 @@ source: crates/dibs/src/diff.rs
 expression: diff.to_sql()
 ---
 -- Table: category
-ALTER TABLE categories RENAME TO category;
+ALTER TABLE "categories" RENAME TO "category";
 
 -- Table: user
-ALTER TABLE users RENAME TO user;
+ALTER TABLE "users" RENAME TO "user";

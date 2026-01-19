@@ -2,10 +2,10 @@
 source: crates/dibs/src/diff.rs
 expression: table.to_create_table_sql()
 ---
-CREATE TABLE users (
-    id BIGINT PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    bio TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE "users" (
+    "id" BIGINT PRIMARY KEY,
+    "email" TEXT NOT NULL UNIQUE,
+    "name" TEXT NOT NULL,
+    "bio" TEXT,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT now()
 );
