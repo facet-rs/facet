@@ -181,47 +181,59 @@ impl FormatSerializer for StyxSerializer {
 
     fn field_metadata_with_value(
         &mut self,
-        field: &facet_reflect::FieldItem,
+        field_item: &facet_reflect::FieldItem,
         value: Peek<'_, '_>,
     ) -> Result<bool, Self::Error> {
-        // Check if the field value is a metadata container (like Documented<T>)
-        if !value.shape().is_metadata_container() {
-            return Ok(false);
-        }
-
-        // It's a metadata container - extract doc comments and write them before the key
-        let Ok(container) = value.into_struct() else {
-            return Ok(false);
-        };
-
-        // Collect doc lines first
-        let mut doc_lines: Vec<&str> = Vec::new();
-        for (f, field_value) in container.fields() {
-            if f.metadata_kind() == Some("doc") {
-                // The field type is Option<Vec<String>>
-                if let Ok(opt) = field_value.into_option() {
-                    if let Some(inner) = opt.value() {
-                        if let Ok(list) = inner.into_list_like() {
-                            for item in list.iter() {
-                                if let Some(line) = item.as_str() {
-                                    doc_lines.push(line);
+        // First, check if the field value is a metadata container (like Documented<T>)
+        // This takes precedence over Field::doc since it's runtime data
+        if value.shape().is_metadata_container() {
+            if let Ok(container) = value.into_struct() {
+                // Collect doc lines from the metadata container
+                let mut doc_lines: Vec<&str> = Vec::new();
+                for (f, field_value) in container.fields() {
+                    if f.metadata_kind() == Some("doc") {
+                        // The field type is Option<Vec<String>>
+                        if let Ok(opt) = field_value.into_option() {
+                            if let Some(inner) = opt.value() {
+                                if let Ok(list) = inner.into_list_like() {
+                                    for item in list.iter() {
+                                        if let Some(line) = item.as_str() {
+                                            doc_lines.push(line);
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
+
+                // If we have doc lines from the container, use them
+                if !doc_lines.is_empty() {
+                    let doc = doc_lines.join("\n");
+                    self.writer
+                        .write_doc_comment_and_key(&doc, field_item.effective_name());
+                    return Ok(true);
+                }
             }
         }
 
-        // If we have doc lines, write them with the key
-        if !doc_lines.is_empty() {
-            let doc = doc_lines.join("\n");
-            self.writer
-                .write_doc_comment_and_key(&doc, field.effective_name());
-            return Ok(true);
+        // Second, check Field::doc for static doc comments from Rust source
+        if let Some(field) = field_item.field {
+            if !field.doc.is_empty() {
+                // Field::doc lines have a leading space from `/// comment` format - strip exactly one
+                let doc: Vec<&str> = field
+                    .doc
+                    .iter()
+                    .map(|s| s.strip_prefix(' ').unwrap_or(s))
+                    .collect();
+                let doc = doc.join("\n");
+                self.writer
+                    .write_doc_comment_and_key(&doc, field_item.effective_name());
+                return Ok(true);
+            }
         }
 
-        // No doc comments, let normal handling proceed
+        // No doc comments found
         Ok(false)
     }
 }
@@ -730,5 +742,28 @@ mod tests {
         // Doc comments should appear before the field key
         assert!(serialized.contains("/// The application name\nname myapp"));
         assert!(serialized.contains("/// Port to listen on\nport 8080"));
+    }
+
+    #[test]
+    fn test_field_doc_comments() {
+        // Doc comments on Rust fields should be emitted in Styx output
+        #[derive(Facet, Debug)]
+        struct Server {
+            /// The hostname to bind to
+            host: String,
+            /// The port number (1-65535)
+            port: u16,
+        }
+
+        let server = Server {
+            host: "localhost".into(),
+            port: 8080,
+        };
+
+        let serialized = to_string(&server).unwrap();
+
+        // Field doc comments should appear before the field key
+        assert!(serialized.contains("/// The hostname to bind to\nhost localhost"));
+        assert!(serialized.contains("/// The port number (1-65535)\nport 8080"));
     }
 }
