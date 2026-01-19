@@ -39,10 +39,10 @@ questions {
             Are these equivalent?
 
             ```compare
+            /// json
+            {"path": "/usr/local/bin"}
             /// styx
             path /usr/local/bin
-            /// styx
-            path "/usr/local/bin"
             ```
             DOC
         options (
@@ -58,10 +58,10 @@ questions {
             Are these equivalent?
 
             ```compare
+            /// json
+            {"url": "https://example.org/path?q=1"}
             /// styx
             url https://example.org/path?q=1
-            /// styx
-            url "https://example.org/path?q=1"
             ```
             DOC
         options (
@@ -77,10 +77,10 @@ questions {
             Are these equivalent?
 
             ```compare
+            /// json
+            {"greeting": "hello world"}
             /// styx
             greeting hello world
-            /// styx
-            greeting "hello world"
             ```
             DOC
         options (
@@ -88,7 +88,7 @@ questions {
             {text "No", correct true}
         )
         explanation <<DOC,markdown
-            Spaces terminate bare scalars. The first has three atoms (`greeting`, `hello`, `world`) — that's a parse error.
+            Spaces terminate bare scalars. The Styx has three atoms (`greeting`, `hello`, `world`) — that's a parse error.
 
             Use quotes for values with spaces: `greeting "hello world"`
             DOC
@@ -98,10 +98,10 @@ questions {
             Are these equivalent?
 
             ```compare
+            /// json
+            {"list": "a,b,c"}
             /// styx
             list a,b,c
-            /// styx
-            list "a,b,c"
             ```
             DOC
         options (
@@ -109,7 +109,7 @@ questions {
             {text "No", correct true}
         )
         explanation <<DOC,markdown
-            Commas terminate bare scalars. The first parses as key `list`, value `a`, then `,b,c` — a parse error.
+            Commas terminate bare scalars. The Styx parses as key `list`, value `a`, then `,b,c` — a parse error.
 
             Use quotes: `list "a,b,c"`
             DOC
