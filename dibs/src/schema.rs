@@ -280,7 +280,7 @@ fn subtype_default_icon(subtype: &str) -> Option<&'static str> {
 }
 
 /// A foreign key constraint.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ForeignKey {
     /// Column(s) in this table
     pub columns: Vec<String>,

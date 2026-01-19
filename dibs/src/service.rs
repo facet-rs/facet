@@ -166,8 +166,10 @@ impl Default for DibsServiceImpl {
 struct DiffWithContext {
     /// The computed diff.
     diff: crate::SchemaDiff,
-    /// Names of tables that exist in the current database.
-    existing_tables: std::collections::HashSet<String>,
+    /// Virtual schema representing current database state.
+    current_schema: crate::solver::VirtualSchema,
+    /// Virtual schema representing desired state (from Rust code).
+    desired_schema: crate::solver::VirtualSchema,
 }
 
 impl DibsServiceImpl {
@@ -195,16 +197,17 @@ impl DibsServiceImpl {
             .await
             .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
 
-        // Extract existing table names from DB schema
-        let existing_tables: std::collections::HashSet<String> =
-            db_schema.tables.iter().map(|t| t.name.clone()).collect();
+        // Build VirtualSchemas for simulation-based verification
+        let current_schema = crate::solver::VirtualSchema::from_tables(&db_schema.tables);
+        let desired_schema = crate::solver::VirtualSchema::from_tables(&rust_schema.tables);
 
         // Compute diff
         let diff = rust_schema.diff(&db_schema);
 
         Ok(DiffWithContext {
             diff,
-            existing_tables,
+            current_schema,
+            desired_schema,
         })
     }
 }
@@ -222,9 +225,10 @@ impl DibsService for DibsServiceImpl {
 
     async fn generate_migration_sql(&self, request: DiffRequest) -> Result<String, DibsError> {
         let ctx = self.compute_diff_with_context(&request.database_url).await?;
-        // Use ordered SQL generation to satisfy FK dependencies
+        // Use ordered SQL generation with simulation-based verification
+        // This ensures the migration will produce the expected result
         ctx.diff
-            .to_ordered_sql(&ctx.existing_tables)
+            .to_ordered_sql(&ctx.current_schema, &ctx.desired_schema)
             .map_err(|e| DibsError::MigrationFailed(dibs_proto::SqlError {
                 message: e.to_string(),
                 sql: None,
