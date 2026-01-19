@@ -7,6 +7,9 @@
 //! ```no_run
 //! use dockside::{Container, Image};
 //!
+//! // Clean up any orphaned containers from previous crashed runs
+//! dockside::cleanup_orphans();
+//!
 //! let container = Container::run(
 //!     Image::new("postgres", "16-alpine")
 //!         .env("POSTGRES_PASSWORD", "test")
@@ -23,6 +26,31 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+/// Label used to identify dockside-managed containers.
+const DOCKSIDE_LABEL: &str = "dockside.managed=true";
+
+/// Clean up any orphaned containers from previous runs.
+///
+/// Call this at the start of your test suite to remove containers
+/// that may have been left behind if a previous test run crashed.
+pub fn cleanup_orphans() {
+    let output = Command::new("docker")
+        .args(["ps", "-q", "--filter", &format!("label={}", DOCKSIDE_LABEL)])
+        .output();
+
+    if let Ok(output) = output {
+        let ids = String::from_utf8_lossy(&output.stdout);
+        for id in ids.lines() {
+            let id = id.trim();
+            if !id.is_empty() {
+                let _ = Command::new("docker")
+                    .args(["rm", "-f", id])
+                    .output();
+            }
+        }
+    }
+}
 
 /// Error type for docker operations.
 #[derive(Debug)]
@@ -129,7 +157,8 @@ impl Container {
         let mut cmd = Command::new("docker");
         cmd.arg("run")
             .arg("-d") // detached
-            .arg("--rm"); // remove on stop
+            .arg("--rm") // remove on stop
+            .arg("--label").arg(DOCKSIDE_LABEL); // for orphan cleanup
 
         // Add environment variables
         for (key, value) in &image.env {
