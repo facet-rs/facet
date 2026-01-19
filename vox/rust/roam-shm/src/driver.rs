@@ -983,7 +983,10 @@ impl MultiPeerHostDriver {
                 // Set up doorbell for this peer (shared via Arc)
                 debug!("AddPeer: looking for doorbell for {:?}", peer_id);
                 if let Some(doorbell) = self.host.take_doorbell(peer_id) {
-                    debug!("AddPeer: found doorbell for {:?}, spawning waiter task", peer_id);
+                    debug!(
+                        "AddPeer: found doorbell for {:?}, spawning waiter task",
+                        peer_id
+                    );
                     let doorbell = Arc::new(doorbell);
                     self.doorbells.insert(peer_id, doorbell.clone());
 
@@ -997,10 +1000,7 @@ impl MultiPeerHostDriver {
                             debug!("Doorbell accept failed for peer {:?}: {:?}", peer_id, e);
                             return;
                         }
-                        debug!(
-                            "Doorbell waiter: accept() returned for peer {:?}",
-                            peer_id
-                        );
+                        debug!("Doorbell waiter: accept() returned for peer {:?}", peer_id);
                         loop {
                             debug!("Doorbell waiter: calling wait() for peer {:?}", peer_id);
                             match doorbell.wait().await {
@@ -1429,11 +1429,10 @@ impl MultiPeerHostDriver {
         }
 
         // Clean up empty queue
-        if let Some(queue) = self.pending_sends.get(&peer_id) {
-            if queue.is_empty() {
+        if let Some(queue) = self.pending_sends.get(&peer_id)
+            && queue.is_empty() {
                 self.pending_sends.remove(&peer_id);
             }
-        }
 
         if sent > 0 {
             debug!(

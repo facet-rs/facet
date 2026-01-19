@@ -100,10 +100,8 @@ fn get_or_create_callsite(
     let target_static = intern_string(target);
 
     // Build the key: level + target + base fields + dynamic fields (all interned)
-    let mut all_field_names: Vec<&'static str> = BASE_FIELD_NAMES
-        .iter()
-        .map(|&s| intern_string(s))
-        .collect();
+    let mut all_field_names: Vec<&'static str> =
+        BASE_FIELD_NAMES.iter().map(|&s| intern_string(s)).collect();
     for name in dynamic_field_names {
         all_field_names.push(intern_string(name));
     }
@@ -319,84 +317,83 @@ fn dispatch_with_value_count(
 
     match values.len() {
         3 => {
-            let arr: [_; 3] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 3] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         4 => {
-            let arr: [_; 4] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 4] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         5 => {
-            let arr: [_; 5] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 5] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         6 => {
-            let arr: [_; 6] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 6] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         7 => {
-            let arr: [_; 7] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 7] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         8 => {
-            let arr: [_; 8] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 8] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         9 => {
-            let arr: [_; 9] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 9] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         10 => {
-            let arr: [_; 10] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 10] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         11 => {
-            let arr: [_; 11] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 11] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         12 => {
-            let arr: [_; 12] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 12] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         13 => {
-            let arr: [_; 13] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 13] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         14 => {
-            let arr: [_; 14] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 14] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         15 => {
-            let arr: [_; 15] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 15] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         16 => {
-            let arr: [_; 16] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 16] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         17 => {
-            let arr: [_; 17] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 17] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         18 => {
-            let arr: [_; 18] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 18] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         19 => {
-            let arr: [_; 19] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 19] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         n if n > 19 => {
             // Truncate to 19 fields (3 base + 16 dynamic)
-            let arr: [_; 19] = std::array::from_fn(|i| values[i].clone());
+            let arr: [_; 19] = std::array::from_fn(|i| values[i]);
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
         _ => {
             // Shouldn't happen (always have at least 3 base fields)
             // Pad with None values
-            let arr: [(&Field, Option<&dyn Value>); 3] = std::array::from_fn(|i| {
-                values.get(i).cloned().unwrap_or((&_fields[0], None))
-            });
+            let arr: [(&Field, Option<&dyn Value>); 3] =
+                std::array::from_fn(|i| values.get(i).cloned().unwrap_or((&_fields[0], None)));
             Event::dispatch(meta, &meta.fields().value_set(&arr));
         }
     }

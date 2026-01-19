@@ -12,8 +12,8 @@ use roam_shm::host::ShmHost;
 use roam_shm::layout::SegmentConfig;
 use roam_shm::transport::ShmGuestTransport;
 use roam_tracing::{
-    CellTracingDispatcher, CellTracingGuard, HostTracingDispatcher, HostTracingState, Level,
-    TracingConfig, TracingRecord, init_cell_tracing, ConfigResult,
+    CellTracingDispatcher, CellTracingGuard, ConfigResult, HostTracingDispatcher, HostTracingState,
+    Level, TracingConfig, TracingRecord, init_cell_tracing,
 };
 
 /// A simple test service for the guest.

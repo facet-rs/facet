@@ -5,8 +5,8 @@ use std::time::Duration;
 
 // Re-export tokio channel types directly
 pub use tokio::sync::mpsc::{
-    Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
-    error::SendError,
+    Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, error::SendError,
+    unbounded_channel,
 };
 pub use tokio::sync::oneshot::{Receiver as OneshotReceiver, Sender as OneshotSender};
 
@@ -49,8 +49,5 @@ pub async fn timeout<F, T>(duration: Duration, future: F) -> Option<T>
 where
     F: Future<Output = T>,
 {
-    match tokio::time::timeout(duration, future).await {
-        Ok(result) => Some(result),
-        Err(_elapsed) => None,
-    }
+    (tokio::time::timeout(duration, future).await).ok()
 }

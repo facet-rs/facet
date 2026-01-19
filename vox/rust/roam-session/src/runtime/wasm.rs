@@ -70,9 +70,9 @@ impl<T> std::fmt::Debug for TrySendError<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TrySendError::Full(_) => f.debug_struct("TrySendError::Full").finish_non_exhaustive(),
-            TrySendError::Closed(_) => {
-                f.debug_struct("TrySendError::Closed").finish_non_exhaustive()
-            }
+            TrySendError::Closed(_) => f
+                .debug_struct("TrySendError::Closed")
+                .finish_non_exhaustive(),
         }
     }
 }
@@ -133,7 +133,7 @@ pub async fn timeout<F, T>(duration: Duration, future: F) -> Option<T>
 where
     F: Future<Output = T>,
 {
-    use futures_util::future::{select, Either};
+    use futures_util::future::{Either, select};
     use std::pin::pin;
 
     let sleep_fut = pin!(gloo_timers::future::sleep(duration));

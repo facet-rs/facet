@@ -105,15 +105,15 @@ pub use service::{
     CellTracing,
     CellTracingClient,
     CellTracingDispatcher,
-    cell_tracing_service_detail,
+    // Config types
+    ConfigResult,
     // HostTracing - host implements, cell calls (emit records, query config)
     HostTracing,
     HostTracingClient,
     HostTracingDispatcher,
-    host_tracing_service_detail,
-    // Config types
-    ConfigResult,
     TracingConfig,
+    cell_tracing_service_detail,
+    host_tracing_service_detail,
 };
 
 // Re-export cell-side types

@@ -13,8 +13,8 @@ use std::os::windows::io::{AsRawSocket, FromRawSocket, RawSocket};
 use std::sync::Once;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use windows_sys::Win32::Networking::WinSock::{
-    WSADuplicateSocketW, WSAGetLastError, WSASocketW, WSAStartup, INVALID_SOCKET, SOCKET,
-    WSAPROTOCOL_INFOW, WSA_FLAG_OVERLAPPED, WSADATA,
+    INVALID_SOCKET, SOCKET, WSA_FLAG_OVERLAPPED, WSADATA, WSADuplicateSocketW, WSAGetLastError,
+    WSAPROTOCOL_INFOW, WSASocketW, WSAStartup,
 };
 
 /// Ensure Winsock is initialized. This is required before calling any Winsock functions.
@@ -59,8 +59,9 @@ where
     let protocol_info = duplicate_socket(socket, target_pid)?;
 
     // Send the protocol info as raw bytes
-    let bytes =
-        unsafe { std::slice::from_raw_parts(&protocol_info as *const _ as *const u8, PROTOCOL_INFO_SIZE) };
+    let bytes = unsafe {
+        std::slice::from_raw_parts(&protocol_info as *const _ as *const u8, PROTOCOL_INFO_SIZE)
+    };
     stream.write_all(bytes).await?;
 
     Ok(())
@@ -100,8 +101,9 @@ where
     let socket = listener.as_raw_socket() as SOCKET;
     let protocol_info = duplicate_socket(socket, target_pid)?;
 
-    let bytes =
-        unsafe { std::slice::from_raw_parts(&protocol_info as *const _ as *const u8, PROTOCOL_INFO_SIZE) };
+    let bytes = unsafe {
+        std::slice::from_raw_parts(&protocol_info as *const _ as *const u8, PROTOCOL_INFO_SIZE)
+    };
     stream.write_all(bytes)?;
 
     Ok(())
@@ -129,8 +131,7 @@ fn duplicate_socket(socket: SOCKET, target_pid: u32) -> io::Result<WSAPROTOCOL_I
 
     let mut protocol_info: MaybeUninit<WSAPROTOCOL_INFOW> = MaybeUninit::uninit();
 
-    let result =
-        unsafe { WSADuplicateSocketW(socket, target_pid, protocol_info.as_mut_ptr()) };
+    let result = unsafe { WSADuplicateSocketW(socket, target_pid, protocol_info.as_mut_ptr()) };
 
     if result != 0 {
         let err = unsafe { WSAGetLastError() };

@@ -8,8 +8,8 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use roam_session::MessageTransport;
 use roam_wire::Message;
-use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 use web_sys::{BinaryType, CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
 /// WebSocket transport for roam messages (WASM implementation).

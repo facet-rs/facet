@@ -285,7 +285,8 @@ impl CellTracingGuard {
     ///
     /// Consumes the guard to prevent double-start.
     pub async fn start(self, handle: ConnectionHandle) {
-        self.started.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.started
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self.service.start(handle).await;
     }
 
@@ -296,7 +297,8 @@ impl CellTracingGuard {
         batch_size: usize,
         flush_interval: Duration,
     ) {
-        self.started.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.started
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self.service
             .start_with_options(handle, batch_size, flush_interval)
             .await;
@@ -329,7 +331,8 @@ impl CellTracingGuard {
     /// This is useful for unit tests that don't have a host to connect to.
     #[doc(hidden)]
     pub fn defuse(self) -> CellTracingService {
-        self.started.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.started
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self.service.clone()
     }
 }
@@ -408,7 +411,10 @@ impl CellTracingService {
     ///
     /// **Deprecated**: Use [`start`](Self::start) instead, which queries the host
     /// config before spawning. This method exists for backwards compatibility.
-    #[deprecated(since = "0.7.0", note = "use `start()` instead which queries config first")]
+    #[deprecated(
+        since = "0.7.0",
+        note = "use `start()` instead which queries config first"
+    )]
     pub fn spawn_drain(&self, handle: ConnectionHandle) {
         let buffer = self.buffer.clone();
         let filter = self.filter.clone();
@@ -417,11 +423,8 @@ impl CellTracingService {
             let client = HostTracingClient::new(handle);
 
             // Query config (but we're already racing with events)
-            match client.get_tracing_config().await {
-                Ok(host_config) => {
-                    *filter.write().unwrap() = FilterState::from_config(&host_config);
-                }
-                Err(_) => {}
+            if let Ok(host_config) = client.get_tracing_config().await {
+                *filter.write().unwrap() = FilterState::from_config(&host_config);
             }
 
             loop {
