@@ -14,6 +14,9 @@
 (raw_scalar) @string
 (heredoc) @string
 
+; Heredoc language hint (metadata)
+(heredoc_lang) @label
+
 ; Unit value
 (unit) @constant.builtin
 
