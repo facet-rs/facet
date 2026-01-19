@@ -43,7 +43,11 @@ mod error;
 #[cfg(test)]
 mod other_variant_test;
 mod parser;
+mod schema_error;
 mod schema_gen;
+mod schema_meta;
+mod schema_types;
+mod schema_validate;
 mod serializer;
 #[cfg(test)]
 mod tag_events_test;
@@ -53,9 +57,13 @@ pub use error::{StyxError, StyxErrorKind};
 pub use facet_format::DeserializeError;
 pub use facet_format::SerializeError;
 pub use parser::StyxParser;
+pub use schema_error::{ValidationError, ValidationErrorKind, ValidationResult, ValidationWarning};
 pub use schema_gen::{GenerateSchema, schema_from_type};
+pub use schema_meta::META_SCHEMA_SOURCE;
+pub use schema_types::*;
+pub use schema_validate::{Validator, validate, validate_as};
 pub use serializer::{
-    SerializeOptions, StyxSerializeError, StyxSerializer, peek_to_string,
+    SerializeOptions, StyxSerializeError, StyxSerializer, peek_to_string, peek_to_string_expr,
     peek_to_string_with_options, to_string, to_string_compact, to_string_with_options,
 };
 
@@ -122,6 +130,39 @@ where
     use facet_format::FormatDeserializer;
     let parser = StyxParser::new(input);
     let mut de = FormatDeserializer::new(parser);
+    de.deserialize_root()
+}
+
+/// Deserialize a single value from a Styx expression string.
+///
+/// Unlike `from_str`, this parses a single value rather than an implicit root object.
+/// Use this for parsing embedded values like default values in schemas.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_styx::from_str_expr;
+///
+/// // Parse an object expression (note the braces)
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Point { x: i32, y: i32 }
+///
+/// let point: Point = from_str_expr("{x 10, y 20}").unwrap();
+/// assert_eq!(point.x, 10);
+/// assert_eq!(point.y, 20);
+///
+/// // Parse a scalar expression
+/// let num: i32 = from_str_expr("42").unwrap();
+/// assert_eq!(num, 42);
+/// ```
+pub fn from_str_expr<T>(input: &str) -> Result<T, DeserializeError<StyxError>>
+where
+    T: facet_core::Facet<'static>,
+{
+    use facet_format::FormatDeserializer;
+    let parser = StyxParser::new_expr(input);
+    let mut de = FormatDeserializer::new_owned(parser);
     de.deserialize_root()
 }
 
@@ -224,5 +265,63 @@ port 8080"#;
         let result: Config = from_str(input).unwrap();
         assert_eq!(result.name, "myapp");
         assert_eq!(result.port, 8080);
+    }
+
+    // =========================================================================
+    // Expression mode tests
+    // =========================================================================
+
+    #[test]
+    fn test_from_str_expr_scalar() {
+        let num: i32 = from_str_expr("42").unwrap();
+        assert_eq!(num, 42);
+
+        let s: String = from_str_expr("hello").unwrap();
+        assert_eq!(s, "hello");
+
+        let b: bool = from_str_expr("true").unwrap();
+        assert!(b);
+    }
+
+    #[test]
+    fn test_from_str_expr_object() {
+        #[derive(Facet, Debug, PartialEq)]
+        struct Point {
+            x: i32,
+            y: i32,
+        }
+
+        let point: Point = from_str_expr("{x 10, y 20}").unwrap();
+        assert_eq!(point.x, 10);
+        assert_eq!(point.y, 20);
+    }
+
+    #[test]
+    fn test_from_str_expr_sequence() {
+        let items: Vec<i32> = from_str_expr("(1 2 3)").unwrap();
+        assert_eq!(items, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_expr_roundtrip() {
+        // Serialize with expr mode, deserialize with expr mode
+        #[derive(Facet, Debug, PartialEq)]
+        struct Config {
+            name: String,
+            port: u16,
+        }
+
+        let original = Config {
+            name: "test".into(),
+            port: 8080,
+        };
+
+        // Serialize as expression (with braces)
+        let serialized = to_string_compact(&original).unwrap();
+        assert!(serialized.starts_with('{'));
+
+        // Parse back as expression
+        let parsed: Config = from_str_expr(&serialized).unwrap();
+        assert_eq!(original, parsed);
     }
 }

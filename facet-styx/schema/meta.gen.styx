@@ -1,0 +1,90 @@
+/// A complete schema file.
+@ @object{
+    /// Schema metadata (required).
+    meta @Meta
+    /// External schema imports (optional).
+    /// Maps namespace prefixes to external schema locations.
+    imports @optional(@string)
+    /// Type definitions.
+    /// Keys are type names (Some) or unit (None) for the document root.
+    schema @map(@optional (@string) @Schema)
+}
+
+/// Constraints for @float type.
+FloatConstraints @object{
+    /// Minimum value (inclusive).
+    min @optional(@float)
+    /// Maximum value (inclusive).
+    max @optional(@float)
+}
+
+/// Constraints for @int type.
+IntConstraints @object{
+    /// Minimum value (inclusive).
+    min @optional(@int)
+    /// Maximum value (inclusive).
+    max @optional(@int)
+}
+
+/// Schema metadata.
+Meta @object{
+    /// Unique identifier for the schema (URL recommended).
+    id @string
+    /// Schema version (date or semver).
+    version @string
+    /// Human-readable description.
+    description @optional(@string)
+}
+
+/// A type constraint (corresponds to Schema @enum{...} in the meta-schema).
+/// 
+/// This is a tagged enum - each variant corresponds to a STYX tag like
+/// `@string`, `@int`, `@object`, `@seq`, etc.
+Schema @enum{
+    /// String type: @string or @string{minLen, maxLen, pattern}
+    string @optional(@StringConstraints)
+    /// Integer type: @int or @int{min, max}
+    int @optional(@IntConstraints)
+    /// Float type: @float or @float{min, max}
+    float @optional(@FloatConstraints)
+    /// Boolean type: @bool (no constraints)
+    bool @unit
+    /// Unit type: @unit (the value must be unit `@`)
+    unit @unit
+    /// Any type: @any (accepts any value)
+    any @unit
+    /// Object schema: @object{field @type, @ @type}
+    object @map(@optional (@string) @Schema)
+    /// Sequence schema: @seq(@type)
+    seq @Schema
+    /// Map schema: @map(@V) or @map(@K @V)
+    map @seq(@Schema)
+    /// Union: @union(@A @B ...)
+    union @seq(@Schema)
+    /// Optional: @optional(@T)
+    optional @Schema
+    /// Enum: @enum{variant @type, ...}
+    enum @map(@Schema)
+    /// Flatten: @flatten(@Type) - inline fields from another type
+    flatten @Schema
+    /// Default value: @default(value @type)
+    default @seq(@string @Schema)
+    /// Deprecated field: @deprecated("reason" @type)
+    deprecated @seq(@string @Schema)
+    /// Literal value constraint (must match exactly)
+    literal @string
+    /// User-defined type reference (fallback for unknown tags)
+    /// e.g., @MyCustomType becomes Type { name: "MyCustomType" }
+    type @object{name @optional(@string)}
+}
+
+/// Constraints for @string type.
+StringConstraints @object{
+    /// Minimum length (inclusive).
+    minLen @optional(@int)
+    /// Maximum length (inclusive).
+    maxLen @optional(@int)
+    /// Regex pattern the string must match.
+    pattern @optional(@string)
+}
+

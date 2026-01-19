@@ -1,0 +1,51 @@
+meta {
+  id https://styx-lang.org/schemas/schema
+  version 2026-01-11
+  description "Schema for STYX schema files"
+}
+
+schema {
+  /// The root structure of a schema file.
+  @ @object{
+    /// Schema metadata (required).
+    meta @Meta
+    /// External schema imports (optional).
+    imports @optional(@map(@string @string))
+    /// Type definitions: @ for document root, strings for named types.
+    schema @map(@union(@string @unit) @Schema)
+  }
+
+  /// Schema metadata.
+  Meta @object{
+    /// Unique identifier for the schema (URL recommended).
+    id @string
+    /// Schema version (date or semver).
+    version @string
+    /// Human-readable description.
+    description @optional(@string)
+    /// Crate name for publishing to crates.io.
+    crate @optional(@string)
+  }
+
+  /// A type constraint.
+  Schema @enum{
+    /// Literal value constraint (a scalar).
+    literal @string
+    /// Type reference (any tag with unit payload, e.g., @string, @MyType).
+    type @
+    /// Object schema: @object{field @type, @ @type}.
+    object @object{@ @Schema}
+    /// Sequence schema: @seq(@type).
+    seq @seq(@Schema)
+    /// Union: @union(@A @B ...).
+    union @seq(@Schema)
+    /// Optional: @optional(@T).
+    optional @seq(@Schema)
+    /// Enum: @enum{variant, variant @object{...}}.
+    enum @object{@ @union(@unit @object{@ @Schema})}
+    /// Map: @map(@V) or @map(@K @V).
+    map @seq(@Schema)
+    /// Flatten: @flatten(@Type).
+    flatten @
+  }
+}

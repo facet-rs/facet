@@ -12,7 +12,6 @@ styx-tree.workspace = true
 styx-parse.workspace = true
 styx-cst.workspace = true
 styx-format.workspace = true
-styx-schema.workspace = true
 styx-lsp.workspace = true
 styx-embed.workspace = true
 facet-styx.workspace = true

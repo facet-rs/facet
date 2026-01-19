@@ -17,8 +17,8 @@ use std::path::Path;
 
 use facet::Facet;
 use facet_args as args;
+use facet_styx::{SchemaFile, validate};
 use styx_format::{FormatOptions, format_source};
-use styx_schema::{SchemaFile, validate};
 use styx_tree::{Payload, Value};
 
 // ============================================================================

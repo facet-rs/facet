@@ -30,6 +30,8 @@ pub struct StyxParser<'de> {
     pending_key: Option<Cow<'de, str>>,
     /// Whether we're expecting a value after a key.
     expecting_value: bool,
+    /// Expression mode: parse a single value, not an implicit root object.
+    expr_mode: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -41,7 +43,7 @@ enum ContextState {
 }
 
 impl<'de> StyxParser<'de> {
-    /// Create a new parser for the given source.
+    /// Create a new parser for the given source (document mode).
     pub fn new(source: &'de str) -> Self {
         Self {
             lexer: Lexer::new(source),
@@ -53,6 +55,26 @@ impl<'de> StyxParser<'de> {
             current_span: None,
             pending_key: None,
             expecting_value: false,
+            expr_mode: false,
+        }
+    }
+
+    /// Create a new parser in expression mode.
+    ///
+    /// Expression mode parses a single value rather than an implicit root object.
+    /// Use this for parsing embedded values like default values in schemas.
+    pub fn new_expr(source: &'de str) -> Self {
+        Self {
+            lexer: Lexer::new(source),
+            stack: Vec::new(),
+            peeked_token: None,
+            peeked_events: Vec::new(),
+            root_started: false,
+            complete: false,
+            current_span: None,
+            pending_key: None,
+            expecting_value: true, // Start expecting a value immediately
+            expr_mode: true,
         }
     }
 
@@ -295,13 +317,14 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         // Skip newlines between entries
         self.skip_newlines();
 
-        // Handle root struct start
-        if !self.root_started {
+        // Handle root struct start (skip in expression mode)
+        if !self.root_started && !self.expr_mode {
             self.root_started = true;
             self.stack.push(ContextState::Object { implicit: true });
             trace!("next_event: emitting root StructStart");
             return Ok(Some(ParseEvent::StructStart(ContainerKind::Object)));
         }
+        self.root_started = true;
 
         // If we're expecting a value after a key
         if self.expecting_value {
@@ -396,6 +419,8 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                             }
                         }
                     }
+                    // In expression mode with empty stack, we're done
+                    self.complete = true;
                     return Ok(None);
                 }
                 TokenKind::RBrace => {

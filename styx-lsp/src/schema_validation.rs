@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use styx_schema::{Schema, SchemaFile, ValidationResult, validate};
+use facet_styx::{Schema, SchemaFile, ValidationResult, validate};
 use styx_tree::Value;
 use tower_lsp::lsp_types::Url;
 

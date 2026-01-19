@@ -35,6 +35,8 @@ pub struct StyxSerializer {
     writer: StyxWriter,
     /// Track if we're at root level (for struct unwrapping)
     at_root: bool,
+    /// Track if we just wrote a variant tag (to skip None payload)
+    just_wrote_tag: bool,
 }
 
 impl StyxSerializer {
@@ -48,6 +50,7 @@ impl StyxSerializer {
         Self {
             writer: StyxWriter::with_options(options),
             at_root: true,
+            just_wrote_tag: false,
         }
     }
 
@@ -93,6 +96,7 @@ impl FormatSerializer for StyxSerializer {
 
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
         self.at_root = false;
+        self.just_wrote_tag = false;
         match scalar {
             ScalarValue::Unit | ScalarValue::Null => self.writer.write_null(),
             ScalarValue::Bool(v) => self.writer.write_bool(v),
@@ -109,8 +113,32 @@ impl FormatSerializer for StyxSerializer {
     }
 
     fn serialize_none(&mut self) -> Result<(), Self::Error> {
+        // If we just wrote a tag, skip the None payload (e.g., @string instead of @string@)
+        if self.just_wrote_tag {
+            self.just_wrote_tag = false;
+            return Ok(());
+        }
         self.at_root = false;
         self.writer.write_null();
+        Ok(())
+    }
+
+    fn write_variant_tag(&mut self, variant_name: &str) -> Result<bool, Self::Error> {
+        self.at_root = false;
+        self.just_wrote_tag = true;
+        self.writer.write_tag(variant_name);
+        Ok(true)
+    }
+
+    fn begin_struct_after_tag(&mut self) -> Result<(), Self::Error> {
+        self.just_wrote_tag = false;
+        self.writer.begin_struct_after_tag(false);
+        Ok(())
+    }
+
+    fn begin_seq_after_tag(&mut self) -> Result<(), Self::Error> {
+        self.just_wrote_tag = false;
+        self.writer.begin_seq_after_tag();
         Ok(())
     }
 }
@@ -204,6 +232,20 @@ pub fn peek_to_string_with_options<'input, 'facet>(
     Ok(String::from_utf8(bytes).expect("Styx output should always be valid UTF-8"))
 }
 
+/// Serialize a `Peek` instance to a Styx expression string.
+///
+/// Unlike `peek_to_string`, this always wraps objects in braces `{}`,
+/// making it suitable for embedding as a value within a larger document.
+pub fn peek_to_string_expr<'input, 'facet>(
+    peek: Peek<'input, 'facet>,
+) -> Result<String, SerializeError<StyxSerializeError>> {
+    let options = FormatOptions::default().inline();
+    let mut serializer = CompactStyxSerializer::with_options(options);
+    serialize_root(&mut serializer, peek)?;
+    let bytes = serializer.finish();
+    Ok(String::from_utf8(bytes).expect("Styx output should always be valid UTF-8"))
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Compact serializer (always uses braces, never unwraps root)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -269,6 +311,21 @@ impl FormatSerializer for CompactStyxSerializer {
 
     fn serialize_none(&mut self) -> Result<(), Self::Error> {
         self.writer.write_null();
+        Ok(())
+    }
+
+    fn write_variant_tag(&mut self, variant_name: &str) -> Result<bool, Self::Error> {
+        self.writer.write_tag(variant_name);
+        Ok(true)
+    }
+
+    fn begin_struct_after_tag(&mut self) -> Result<(), Self::Error> {
+        self.writer.begin_struct_after_tag(false);
+        Ok(())
+    }
+
+    fn begin_seq_after_tag(&mut self) -> Result<(), Self::Error> {
+        self.writer.begin_seq_after_tag();
         Ok(())
     }
 }
@@ -517,5 +574,55 @@ mod tests {
         let parsed: Message = from_str(&serialized).unwrap();
 
         assert_eq!(original.text, parsed.text);
+    }
+
+    #[test]
+    fn test_peek_to_string_expr_wraps_objects() {
+        // Expression mode should always wrap objects in braces
+        let value = Simple {
+            name: "test".into(),
+            value: 42,
+        };
+        let peek = Peek::new(&value);
+        let result = peek_to_string_expr(peek).unwrap();
+
+        // Should have braces (unlike document mode which omits them for root)
+        assert!(
+            result.starts_with('{'),
+            "expression should start with brace: {}",
+            result
+        );
+        assert!(
+            result.ends_with('}'),
+            "expression should end with brace: {}",
+            result
+        );
+        assert!(result.contains("name test"));
+        assert!(result.contains("value 42"));
+    }
+
+    #[test]
+    fn test_peek_to_string_expr_nested() {
+        // Nested objects should also have braces
+        let value = Nested {
+            inner: Simple {
+                name: "nested".into(),
+                value: 123,
+            },
+        };
+        let peek = Peek::new(&value);
+        let result = peek_to_string_expr(peek).unwrap();
+
+        assert!(result.starts_with('{'));
+        assert!(result.contains("inner {"));
+    }
+
+    #[test]
+    fn test_peek_to_string_expr_scalar() {
+        // Scalars should just be the value
+        let value: i32 = 42;
+        let peek = Peek::new(&value);
+        let result = peek_to_string_expr(peek).unwrap();
+        assert_eq!(result, "42");
     }
 }

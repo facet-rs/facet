@@ -35,6 +35,8 @@ pub struct StyxWriter {
     out: Vec<u8>,
     stack: Vec<Context>,
     options: FormatOptions,
+    /// If true, skip the next before_value() call (used after writing a tag)
+    skip_next_before_value: bool,
 }
 
 impl StyxWriter {
@@ -48,6 +50,7 @@ impl StyxWriter {
         Self {
             out: Vec::new(),
             stack: Vec::new(),
+            skip_next_before_value: false,
             options,
         }
     }
@@ -431,6 +434,8 @@ impl StyxWriter {
         self.before_value();
         self.out.push(b'@');
         self.out.extend_from_slice(name.as_bytes());
+        // The payload should follow without spacing
+        self.skip_next_before_value = true;
     }
 
     /// Write a scalar value with appropriate quoting.
@@ -550,6 +555,16 @@ impl StyxWriter {
 
     /// Handle separator before a value in a container.
     fn before_value(&mut self) {
+        // If we just wrote a tag, skip spacing for the payload
+        if self.skip_next_before_value {
+            self.skip_next_before_value = false;
+            // Still need to update the first flag
+            if let Some(Context::Seq { first, .. }) = self.stack.last_mut() {
+                *first = false;
+            }
+            return;
+        }
+
         // Extract state first to avoid borrow conflicts
         let (is_seq, is_first) = match self.stack.last() {
             Some(Context::Seq { first, .. }) => (true, *first),

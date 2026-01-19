@@ -7,19 +7,20 @@ edition.workspace = true
 facet-core.workspace = true
 facet-format.workspace = true
 facet-reflect.workspace = true
+facet.workspace = true
 styx-format.workspace = true
 styx-parse.workspace = true
-ariadne = "0.6"
+styx-tree.workspace = true
+ariadne.workspace = true
+serde_json.workspace = true
 
 # Tracing (optional - compiles to nothing when disabled)
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
-facet.workspace = true
 tracing.workspace = true
 facet-testhelpers.workspace = true
 insta.workspace = true
-styx-schema = { path = "../styx-schema" }
 
 [features]
 tracing = ["dep:tracing", "facet-format/tracing", "facet-reflect/tracing"]
