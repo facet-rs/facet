@@ -39,6 +39,59 @@ struct TestPost {
     author_id: i64,
 }
 
+// Helper to create a minimal column for tests
+fn test_column(name: &str, pg_type: dibs::PgType, nullable: bool, primary_key: bool, unique: bool) -> dibs::Column {
+    dibs::Column {
+        name: name.to_string(),
+        pg_type,
+        rust_type: None,
+        nullable,
+        default: None,
+        primary_key,
+        unique,
+        auto_generated: false,
+        long: false,
+        label: false,
+        enum_variants: vec![],
+        doc: None,
+        lang: None,
+        icon: None,
+        subtype: None,
+    }
+}
+
+fn test_column_with_default(name: &str, pg_type: dibs::PgType, default: &str) -> dibs::Column {
+    dibs::Column {
+        name: name.to_string(),
+        pg_type,
+        rust_type: None,
+        nullable: false,
+        default: Some(default.to_string()),
+        primary_key: false,
+        unique: false,
+        auto_generated: false,
+        long: false,
+        label: false,
+        enum_variants: vec![],
+        doc: None,
+        lang: None,
+        icon: None,
+        subtype: None,
+    }
+}
+
+fn test_table(name: &str, columns: Vec<dibs::Column>, foreign_keys: Vec<dibs::ForeignKey>, indices: Vec<dibs::Index>) -> dibs::Table {
+    dibs::Table {
+        name: name.to_string(),
+        columns,
+        foreign_keys,
+        indices,
+        source: dibs::SourceLocation { file: None, line: None, column: None },
+        doc: None,
+        icon: None,
+    }
+}
+
 async fn create_postgres_container() -> (
     testcontainers::ContainerAsync<Postgres>,
     tokio_postgres::Client,
@@ -369,27 +422,19 @@ async fn test_diff_rust_vs_database() {
         .find(|d| d.table == "test_users")
         .expect("Should have diff for test_users");
 
-    // Should detect:
-    // 1. Add column 'bio' (in Rust, not in DB)
-    // 2. Drop column 'legacy_field' (in DB, not in Rust)
-    let has_add_bio = users_diff
+    // The diff algorithm uses rename heuristics: when it sees a column in DB (legacy_field)
+    // with the same type and nullability as a column in Rust (bio), it suggests a rename
+    // instead of add+drop. This is the correct behavior.
+    let has_rename = users_diff
         .changes
         .iter()
-        .any(|c| matches!(c, dibs::Change::AddColumn(col) if col.name == "bio"));
-    let has_drop_legacy = users_diff
-        .changes
-        .iter()
-        .any(|c| matches!(c, dibs::Change::DropColumn(name) if name == "legacy_field"));
+        .any(|c| matches!(c, dibs::Change::RenameColumn { from, to } if from == "legacy_field" && to == "bio"));
 
-    assert!(has_add_bio, "Should detect need to add 'bio' column");
     assert!(
-        has_drop_legacy,
-        "Should detect need to drop 'legacy_field' column"
+        has_rename,
+        "Should detect rename from 'legacy_field' to 'bio'. Got: {}",
+        diff
     );
-
-    // Print the diff for debugging
-    println!("Diff detected:");
-    println!("{}", diff);
 }
 
 #[tokio::test]
@@ -516,6 +561,298 @@ async fn test_introspect_schema_from_database() {
             .iter()
             .any(|i| i.name == "idx_posts_author_id")
     );
+}
+
+#[tokio::test]
+async fn test_table_rename_execution() {
+    let (_container, client) = create_postgres_container().await;
+
+    // Create initial schema with plural table names
+    client
+        .batch_execute(
+            r#"
+            CREATE TABLE users (
+                id BIGINT PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL
+            );
+
+            CREATE TABLE posts (
+                id BIGINT PRIMARY KEY,
+                title TEXT NOT NULL,
+                author_id BIGINT NOT NULL REFERENCES users(id)
+            );
+
+            CREATE INDEX idx_posts_author_id ON posts(author_id);
+            "#,
+        )
+        .await
+        .expect("Failed to create initial schema");
+
+    // Introspect current DB state
+    let db_schema = dibs::Schema::from_database(&client)
+        .await
+        .expect("Failed to introspect");
+
+    // Define desired schema with singular names
+    let desired = dibs::Schema {
+        tables: vec![
+            test_table(
+                "user",
+                vec![
+                    test_column("id", dibs::PgType::BigInt, false, true, false),
+                    test_column("email", dibs::PgType::Text, false, false, true),
+                    test_column("name", dibs::PgType::Text, false, false, false),
+                ],
+                vec![],
+                vec![],
+            ),
+            test_table(
+                "post",
+                vec![
+                    test_column("id", dibs::PgType::BigInt, false, true, false),
+                    test_column("title", dibs::PgType::Text, false, false, false),
+                    test_column("author_id", dibs::PgType::BigInt, false, false, false),
+                ],
+                vec![dibs::ForeignKey {
+                    columns: vec!["author_id".to_string()],
+                    references_table: "user".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+                vec![dibs::Index {
+                    name: "idx_post_author_id".to_string(),
+                    columns: vec!["author_id".to_string()],
+                    unique: false,
+                }],
+            ),
+        ],
+    };
+
+    // Generate diff
+    let diff = desired.diff(&db_schema);
+    println!("Diff:\n{}", diff);
+
+    // Should detect renames, not add/drop
+    assert!(
+        diff.table_diffs.iter().any(|td| td.changes.iter().any(|c| {
+            matches!(c, dibs::Change::RenameTable { from, to } if from == "users" && to == "user")
+        })),
+        "Should detect users -> user rename"
+    );
+    assert!(
+        diff.table_diffs.iter().any(|td| td.changes.iter().any(|c| {
+            matches!(c, dibs::Change::RenameTable { from, to } if from == "posts" && to == "post")
+        })),
+        "Should detect posts -> post rename"
+    );
+
+    // Generate and execute migration SQL using the solver
+    let sql = diff.to_sql();
+    println!("Migration SQL:\n{}", sql);
+
+    client
+        .batch_execute(&sql)
+        .await
+        .expect("Failed to execute rename migration");
+
+    // Verify tables were renamed
+    let rows = client
+        .query(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
+            &[],
+        )
+        .await
+        .expect("Failed to query tables");
+
+    let table_names: Vec<String> = rows.iter().map(|r| r.get(0)).collect();
+    assert!(
+        table_names.contains(&"user".to_string()),
+        "Expected 'user' table, got: {:?}",
+        table_names
+    );
+    assert!(
+        table_names.contains(&"post".to_string()),
+        "Expected 'post' table, got: {:?}",
+        table_names
+    );
+    assert!(
+        !table_names.contains(&"users".to_string()),
+        "Old 'users' table should not exist"
+    );
+    assert!(
+        !table_names.contains(&"posts".to_string()),
+        "Old 'posts' table should not exist"
+    );
+
+    // Verify FK still works by inserting data
+    client
+        .execute(
+            "INSERT INTO \"user\" (id, email, name) VALUES ($1, $2, $3)",
+            &[&1i64, &"alice@example.com", &"Alice"],
+        )
+        .await
+        .expect("Failed to insert user");
+
+    client
+        .execute(
+            "INSERT INTO post (id, title, author_id) VALUES ($1, $2, $3)",
+            &[&1i64, &"Hello World", &1i64],
+        )
+        .await
+        .expect("Failed to insert post");
+
+    // Verify FK constraint is enforced
+    let result = client
+        .execute(
+            "INSERT INTO post (id, title, author_id) VALUES ($1, $2, $3)",
+            &[&2i64, &"Bad Post", &999i64], // Invalid author_id
+        )
+        .await;
+    assert!(result.is_err(), "FK constraint should reject invalid author_id");
+}
+
+#[tokio::test]
+async fn test_column_type_change() {
+    let (_container, client) = create_postgres_container().await;
+
+    // Create table with INTEGER column
+    client
+        .batch_execute(
+            r#"
+            CREATE TABLE products (
+                id BIGINT PRIMARY KEY,
+                name TEXT NOT NULL,
+                price INTEGER NOT NULL
+            );
+            "#,
+        )
+        .await
+        .expect("Failed to create table");
+
+    // Insert some data
+    client
+        .execute(
+            "INSERT INTO products (id, name, price) VALUES ($1, $2, $3)",
+            &[&1i64, &"Widget", &100i32],
+        )
+        .await
+        .expect("Failed to insert");
+
+    // Introspect
+    let db_schema = dibs::Schema::from_database(&client)
+        .await
+        .expect("Failed to introspect");
+
+    // Desired schema with BIGINT price
+    let desired = dibs::Schema {
+        tables: vec![test_table(
+            "products",
+            vec![
+                test_column("id", dibs::PgType::BigInt, false, true, false),
+                test_column("name", dibs::PgType::Text, false, false, false),
+                test_column("price", dibs::PgType::BigInt, false, false, false), // Changed from Integer
+            ],
+            vec![],
+            vec![],
+        )],
+    };
+
+    let diff = desired.diff(&db_schema);
+    println!("Diff:\n{}", diff);
+
+    // Should detect type change
+    assert!(
+        diff.table_diffs.iter().any(|td| td.changes.iter().any(|c| {
+            matches!(c, dibs::Change::AlterColumnType { name, .. } if name == "price")
+        })),
+        "Should detect price type change"
+    );
+
+    // Execute migration
+    let sql = diff.to_sql();
+    println!("Migration SQL:\n{}", sql);
+
+    client
+        .batch_execute(&sql)
+        .await
+        .expect("Failed to execute type change migration");
+
+    // Verify data is preserved
+    let rows = client
+        .query("SELECT price FROM products WHERE id = $1", &[&1i64])
+        .await
+        .expect("Failed to query");
+
+    let price: i64 = rows[0].get(0);
+    assert_eq!(price, 100, "Data should be preserved after type change");
+
+    // Verify new type accepts larger values
+    client
+        .execute(
+            "INSERT INTO products (id, name, price) VALUES ($1, $2, $3)",
+            &[&2i64, &"Big Widget", &10_000_000_000i64],
+        )
+        .await
+        .expect("BIGINT should accept large values");
+}
+
+#[tokio::test]
+async fn test_add_column_with_default() {
+    let (_container, client) = create_postgres_container().await;
+
+    // Create table
+    client
+        .batch_execute(
+            r#"
+            CREATE TABLE items (
+                id BIGINT PRIMARY KEY,
+                name TEXT NOT NULL
+            );
+            INSERT INTO items (id, name) VALUES (1, 'First');
+            "#,
+        )
+        .await
+        .expect("Failed to create table");
+
+    // Introspect
+    let db_schema = dibs::Schema::from_database(&client)
+        .await
+        .expect("Failed to introspect");
+
+    // Desired schema with new column
+    let desired = dibs::Schema {
+        tables: vec![test_table(
+            "items",
+            vec![
+                test_column("id", dibs::PgType::BigInt, false, true, false),
+                test_column("name", dibs::PgType::Text, false, false, false),
+                test_column_with_default("quantity", dibs::PgType::Integer, "0"),
+            ],
+            vec![],
+            vec![],
+        )],
+    };
+
+    let diff = desired.diff(&db_schema);
+    println!("Diff:\n{}", diff);
+
+    // Execute migration
+    let sql = diff.to_sql();
+    println!("Migration SQL:\n{}", sql);
+
+    client
+        .batch_execute(&sql)
+        .await
+        .expect("Failed to execute add column migration");
+
+    // Verify existing row got default value
+    let rows = client
+        .query("SELECT quantity FROM items WHERE id = $1", &[&1i64])
+        .await
+        .expect("Failed to query");
+
+    let quantity: i32 = rows[0].get(0);
+    assert_eq!(quantity, 0, "Existing row should have default value");
 }
 
 #[tokio::test]
