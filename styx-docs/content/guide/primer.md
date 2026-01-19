@@ -5,23 +5,25 @@ slug = "primer"
 insert_anchor_links = "heading"
 +++
 
-At least it's not YAML!
+Styx is a configuration language. Compared to JSON:
+
+- **Bare scalars** — quotes only when necessary
+- **Whitespace separation** — no `:` between keys and values
+- **Flexible separators** — commas or newlines, not both
+- **Scalars are opaque** — the parser assigns no type information
+- **Two-dimensional values** — every value has a tag and a payload
 
 ## The basics
-
-If you know JSON, you know most of Styx. We just remove the ceremony.
 
 ```json
 {"name": "Alice", "age": 30}
 ```
 
-Becomes:
+In Styx:
 
 ```styx
 {name Alice, age 30}
 ```
-
-No colons. Quotes only when needed. Let's make sure that landed:
 
 <div data-quiz="basics-json-to-styx"></div>
 
@@ -32,7 +34,15 @@ name Alice
 age 30
 ```
 
-(Top-level doesn't need braces - it's implicitly an object.)
+Note that a STYX document is implicitly an object, so the above
+is equivalent to:
+
+```styx
+{
+    name Alice
+    age 30
+}
+```
 
 <div data-quiz="basics-when-quotes"></div>
 
