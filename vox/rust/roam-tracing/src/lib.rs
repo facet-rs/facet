@@ -123,7 +123,7 @@ pub use cell::{CellTracingGuard, CellTracingLayer, CellTracingService};
 pub use host::{HostTracingService, HostTracingState, PeerId, TaggedRecord};
 
 // Re-export dispatch functionality
-pub use dispatch::dispatch_record;
+pub use dispatch::{dispatch_message, dispatch_record};
 
 /// Initialize cell-side tracing.
 ///

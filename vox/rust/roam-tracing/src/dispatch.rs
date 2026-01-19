@@ -266,6 +266,22 @@ pub fn dispatch_record(tagged: &TaggedRecord) {
     }
 }
 
+/// Dispatch a simple message event with a dynamic target.
+///
+/// This is useful for logging messages from external sources (like cell stderr)
+/// where you want the tracing target to be the source name rather than the
+/// module where the log call originates.
+///
+/// # Example
+///
+/// ```ignore
+/// // Log a message as if it came from "cell-http"
+/// dispatch_message(Level::Info, "cell-http", "Connection established");
+/// ```
+pub fn dispatch_message(level: Level, target: &str, message: &str) {
+    dispatch_event(level, target, message, &[]);
+}
+
 /// Dispatch an event through the tracing system.
 fn dispatch_event(level: Level, target: &str, message: &str, fields: &[(String, FieldValue)]) {
     // Get dynamic field names
