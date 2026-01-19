@@ -199,7 +199,8 @@ impl BuildProcess {
         if self.child_handle.is_finished() {
             // Poll it to get the result
             use tokio::time::{Duration, timeout};
-            if let Ok(Ok(status)) = timeout(Duration::from_millis(1), &mut self.child_handle).await {
+            if let Ok(Ok(status)) = timeout(Duration::from_millis(1), &mut self.child_handle).await
+            {
                 self.exit_status = status;
                 return status;
             }
@@ -232,9 +233,10 @@ impl BuildProcess {
                 });
 
                 // Get binary mtime
-                let binary_mtime = self.binary_path.as_ref().and_then(|p| {
-                    p.metadata().ok().and_then(|m| m.modified().ok())
-                });
+                let binary_mtime = self
+                    .binary_path
+                    .as_ref()
+                    .and_then(|p| p.metadata().ok().and_then(|m| m.modified().ok()));
 
                 Ok(Some(ServiceConnection {
                     handle,
@@ -244,10 +246,7 @@ impl BuildProcess {
                     migrations_dir: self.migrations_dir.clone(),
                 }))
             }
-            Ok(Err(e)) => Err(ServiceError::Connection(format!(
-                "Accept failed: {}",
-                e
-            ))),
+            Ok(Err(e)) => Err(ServiceError::Connection(format!("Accept failed: {}", e))),
             Err(_) => Ok(None), // Timeout - no connection yet
         }
     }
@@ -339,16 +338,16 @@ pub async fn start_service(config: &Config) -> Result<BuildProcess, ServiceError
     });
 
     // Spawn background task to wait for child exit
-    let child_handle = tokio::spawn(async move {
-        child.wait().await.ok()
-    });
+    let child_handle = tokio::spawn(async move { child.wait().await.ok() });
 
     // Determine binary path for mtime checks
     let binary_path = if let Some(crate_name) = &config.db.crate_name {
         // For cargo run, the binary is in target/debug/<crate_name>
-        let target_dir = std::env::var("CARGO_TARGET_DIR")
-            .unwrap_or_else(|_| "target".to_string());
-        Some(std::path::PathBuf::from(format!("{}/debug/{}", target_dir, crate_name)))
+        let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
+        Some(std::path::PathBuf::from(format!(
+            "{}/debug/{}",
+            target_dir, crate_name
+        )))
     } else {
         config.db.binary.as_ref().map(std::path::PathBuf::from)
     };

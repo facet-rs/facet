@@ -174,9 +174,7 @@ impl<'a> MigrationRunner<'a> {
     ///
     /// Returns `MigrationError` on failure, which includes the exact source
     /// location where the error occurred (captured via `#[track_caller]`).
-    pub async fn migrate(
-        &mut self,
-    ) -> std::result::Result<Vec<&'static str>, MigrationError> {
+    pub async fn migrate(&mut self) -> std::result::Result<Vec<&'static str>, MigrationError> {
         self.init().await?;
         let applied = self.applied().await?;
         let pending = self.pending(&applied);

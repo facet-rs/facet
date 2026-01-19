@@ -105,11 +105,7 @@ fn filter_to_expr(filter: &Filter) -> Expr {
         FilterOp::IsNull => Expr::IsNull(col),
         FilterOp::IsNotNull => Expr::IsNotNull(col),
         FilterOp::In => {
-            let values: Vec<QueryValue> = filter
-                .values
-                .iter()
-                .map(proto_value_to_query)
-                .collect();
+            let values: Vec<QueryValue> = filter.values.iter().map(proto_value_to_query).collect();
             Expr::In(col, values)
         }
     }

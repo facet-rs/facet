@@ -97,11 +97,12 @@ pub const fn __derive_migration_version(filename: &str) -> &str {
     let len = bytes.len();
 
     // Find where .rs starts (should be at len - 3)
-    let without_ext_len = if len > 3 && bytes[len - 3] == b'.' && bytes[len - 2] == b'r' && bytes[len - 1] == b's' {
-        len - 3
-    } else {
-        len
-    };
+    let without_ext_len =
+        if len > 3 && bytes[len - 3] == b'.' && bytes[len - 2] == b'r' && bytes[len - 1] == b's' {
+            len - 3
+        } else {
+            len
+        };
 
     // Strip leading "m_" if present
     let (start, version_len) = if without_ext_len > 2 && bytes[0] == b'm' && bytes[1] == b'_' {
@@ -112,7 +113,10 @@ pub const fn __derive_migration_version(filename: &str) -> &str {
 
     // SAFETY: we're slicing at valid UTF-8 boundaries (ASCII characters)
     unsafe {
-        std::str::from_utf8_unchecked(std::slice::from_raw_parts(bytes.as_ptr().add(start), version_len))
+        std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+            bytes.as_ptr().add(start),
+            version_len,
+        ))
     }
 }
 
@@ -130,7 +134,8 @@ pub type MigrationResult<T> = std::result::Result<T, MigrationError>;
 /// location where an error occurs (via the `?` operator).
 pub type MigrationFn = for<'a> fn(
     &'a mut MigrationContext<'a>,
-) -> Pin<Box<dyn Future<Output = MigrationResult<()>> + Send + 'a>>;
+)
+    -> Pin<Box<dyn Future<Output = MigrationResult<()>> + Send + 'a>>;
 
 // Register Migration with inventory
 inventory::collect!(Migration);

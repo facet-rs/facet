@@ -38,7 +38,7 @@
 //! ALTER TABLE categories RENAME TO category;
 //! ```
 
-use crate::{quote_ident, Column, ForeignKey, Index, PgType, Schema, Table};
+use crate::{Column, ForeignKey, Index, PgType, Schema, Table, quote_ident};
 use std::collections::HashSet;
 
 /// A diff between two schemas.
@@ -140,7 +140,11 @@ impl Change {
             Change::AddTable(t) => t.to_create_table_sql(),
             Change::DropTable(name) => format!("DROP TABLE {};", quote_ident(name)),
             Change::RenameTable { from, to } => {
-                format!("ALTER TABLE {} RENAME TO {};", quote_ident(from), quote_ident(to))
+                format!(
+                    "ALTER TABLE {} RENAME TO {};",
+                    quote_ident(from),
+                    quote_ident(to)
+                )
             }
             Change::AddColumn(col) => {
                 let not_null = if col.nullable { "" } else { " NOT NULL" };
@@ -151,7 +155,11 @@ impl Change {
                     .unwrap_or_default();
                 format!(
                     "ALTER TABLE {} ADD COLUMN {} {}{}{};",
-                    qt, quote_ident(&col.name), col.pg_type, not_null, default
+                    qt,
+                    quote_ident(&col.name),
+                    col.pg_type,
+                    not_null,
+                    default
                 )
             }
             Change::DropColumn(name) => {
@@ -160,25 +168,33 @@ impl Change {
             Change::RenameColumn { from, to } => {
                 format!(
                     "ALTER TABLE {} RENAME COLUMN {} TO {};",
-                    qt, quote_ident(from), quote_ident(to)
+                    qt,
+                    quote_ident(from),
+                    quote_ident(to)
                 )
             }
             Change::AlterColumnType { name, to, .. } => {
                 format!(
                     "ALTER TABLE {} ALTER COLUMN {} TYPE {} USING {}::{};",
-                    qt, quote_ident(name), to, quote_ident(name), to
+                    qt,
+                    quote_ident(name),
+                    to,
+                    quote_ident(name),
+                    to
                 )
             }
             Change::AlterColumnNullable { name, to, .. } => {
                 if *to {
                     format!(
                         "ALTER TABLE {} ALTER COLUMN {} DROP NOT NULL;",
-                        qt, quote_ident(name)
+                        qt,
+                        quote_ident(name)
                     )
                 } else {
                     format!(
                         "ALTER TABLE {} ALTER COLUMN {} SET NOT NULL;",
-                        qt, quote_ident(name)
+                        qt,
+                        quote_ident(name)
                     )
                 }
             }
@@ -186,12 +202,15 @@ impl Change {
                 if let Some(default) = to {
                     format!(
                         "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {};",
-                        qt, quote_ident(name), default
+                        qt,
+                        quote_ident(name),
+                        default
                     )
                 } else {
                     format!(
                         "ALTER TABLE {} ALTER COLUMN {} DROP DEFAULT;",
-                        qt, quote_ident(name)
+                        qt,
+                        quote_ident(name)
                     )
                 }
             }
@@ -205,16 +224,20 @@ impl Change {
             }
             Change::DropPrimaryKey => {
                 let constraint_name = format!("{}_pkey", table_name);
-                format!("ALTER TABLE {} DROP CONSTRAINT {};", qt, quote_ident(&constraint_name))
+                format!(
+                    "ALTER TABLE {} DROP CONSTRAINT {};",
+                    qt,
+                    quote_ident(&constraint_name)
+                )
             }
             Change::AddForeignKey(fk) => {
-                let constraint_name = format!(
-                    "{}_{}_fkey",
-                    table_name,
-                    fk.columns.join("_")
-                );
+                let constraint_name = format!("{}_{}_fkey", table_name, fk.columns.join("_"));
                 let quoted_cols: Vec<_> = fk.columns.iter().map(|c| quote_ident(c)).collect();
-                let quoted_ref_cols: Vec<_> = fk.references_columns.iter().map(|c| quote_ident(c)).collect();
+                let quoted_ref_cols: Vec<_> = fk
+                    .references_columns
+                    .iter()
+                    .map(|c| quote_ident(c))
+                    .collect();
                 format!(
                     "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({});",
                     qt,
@@ -225,14 +248,11 @@ impl Change {
                 )
             }
             Change::DropForeignKey(fk) => {
-                let constraint_name = format!(
-                    "{}_{}_fkey",
-                    table_name,
-                    fk.columns.join("_")
-                );
+                let constraint_name = format!("{}_{}_fkey", table_name, fk.columns.join("_"));
                 format!(
                     "ALTER TABLE {} DROP CONSTRAINT {};",
-                    qt, quote_ident(&constraint_name)
+                    qt,
+                    quote_ident(&constraint_name)
                 )
             }
             Change::AddIndex(idx) => {
@@ -253,14 +273,17 @@ impl Change {
                 let constraint_name = format!("{}_{}_key", table_name, col);
                 format!(
                     "ALTER TABLE {} ADD CONSTRAINT {} UNIQUE ({});",
-                    qt, quote_ident(&constraint_name), quote_ident(col)
+                    qt,
+                    quote_ident(&constraint_name),
+                    quote_ident(col)
                 )
             }
             Change::DropUnique(col) => {
                 let constraint_name = format!("{}_{}_key", table_name, col);
                 format!(
                     "ALTER TABLE {} DROP CONSTRAINT {};",
-                    qt, quote_ident(&constraint_name)
+                    qt,
+                    quote_ident(&constraint_name)
                 )
             }
         }
@@ -903,7 +926,8 @@ fn diff_foreign_keys(
     };
 
     let desired_keys: HashSet<String> = desired.iter().map(fk_key).collect();
-    let transformed_current_keys: HashSet<String> = transformed_current.iter().map(fk_key).collect();
+    let transformed_current_keys: HashSet<String> =
+        transformed_current.iter().map(fk_key).collect();
 
     // FKs to add (in desired but not in transformed current)
     for fk in desired {
@@ -1195,7 +1219,12 @@ mod tests {
         }
     }
 
-    fn make_column_with_default(name: &str, pg_type: PgType, nullable: bool, default: &str) -> Column {
+    fn make_column_with_default(
+        name: &str,
+        pg_type: PgType,
+        nullable: bool,
+        default: &str,
+    ) -> Column {
         Column {
             name: name.to_string(),
             pg_type,
@@ -1421,9 +1450,15 @@ mod tests {
 
         // Compound names
         assert!(super::is_plural_singular_pair("post_tags", "post_tag"));
-        assert!(super::is_plural_singular_pair("user_follows", "user_follow"));
+        assert!(super::is_plural_singular_pair(
+            "user_follows",
+            "user_follow"
+        ));
         assert!(super::is_plural_singular_pair("post_likes", "post_like"));
-        assert!(super::is_plural_singular_pair("post_categories", "post_category"));
+        assert!(super::is_plural_singular_pair(
+            "post_categories",
+            "post_category"
+        ));
 
         // Non-matches
         assert!(!super::is_plural_singular_pair("users", "posts"));
@@ -1465,7 +1500,11 @@ mod tests {
 
         // Different tables = low similarity
         let sim_different = super::table_similarity(&users_plural, &posts);
-        assert!(sim_different < 0.5, "Expected low similarity, got {}", sim_different);
+        assert!(
+            sim_different < 0.5,
+            "Expected low similarity, got {}",
+            sim_different
+        );
     }
 
     #[test]
@@ -1596,7 +1635,11 @@ mod tests {
         let diff = desired.diff(&current);
 
         // Should only have ONE table diff with ONE change (the rename)
-        assert_eq!(diff.table_diffs.len(), 1, "Should have exactly one table diff");
+        assert_eq!(
+            diff.table_diffs.len(),
+            1,
+            "Should have exactly one table diff"
+        );
         assert_eq!(
             diff.table_diffs[0].changes.len(),
             1,
@@ -1717,14 +1760,22 @@ mod tests {
 
         // Same type + similar name = high similarity
         let sim = column_similarity(&col_a, &col_b);
-        assert!(sim > 0.65, "Expected high similarity for similar columns, got {}", sim);
+        assert!(
+            sim > 0.65,
+            "Expected high similarity for similar columns, got {}",
+            sim
+        );
 
         // Different type = 0 (disqualified)
         assert_eq!(column_similarity(&col_a, &col_c), 0.0);
 
         // Same type, same name, different nullability
         let sim_nullable = column_similarity(&col_a, &col_d);
-        assert!(sim_nullable > 0.5, "Expected medium similarity, got {}", sim_nullable);
+        assert!(
+            sim_nullable > 0.5,
+            "Expected medium similarity, got {}",
+            sim_nullable
+        );
     }
 
     #[test]
@@ -1753,10 +1804,14 @@ mod tests {
 
         // Should detect a column rename, not add + drop
         assert_eq!(diff.table_diffs.len(), 1);
-        assert!(matches!(
-            &diff.table_diffs[0].changes[0],
-            Change::RenameColumn { from, to } if from == "email" && to == "user_email"
-        ), "Expected RenameColumn, got {:?}", diff.table_diffs[0].changes);
+        assert!(
+            matches!(
+                &diff.table_diffs[0].changes[0],
+                Change::RenameColumn { from, to } if from == "email" && to == "user_email"
+            ),
+            "Expected RenameColumn, got {:?}",
+            diff.table_diffs[0].changes
+        );
     }
 
     #[test]
@@ -1788,16 +1843,24 @@ mod tests {
         let changes = &diff.table_diffs[0].changes;
 
         // First should be rename
-        assert!(matches!(
-            &changes[0],
-            Change::RenameColumn { from, to } if from == "email" && to == "user_email"
-        ), "Expected RenameColumn, got {:?}", changes[0]);
+        assert!(
+            matches!(
+                &changes[0],
+                Change::RenameColumn { from, to } if from == "email" && to == "user_email"
+            ),
+            "Expected RenameColumn, got {:?}",
+            changes[0]
+        );
 
         // Second should be nullability change
-        assert!(matches!(
-            &changes[1],
-            Change::AlterColumnNullable { name, from: false, to: true } if name == "user_email"
-        ), "Expected AlterColumnNullable, got {:?}", changes[1]);
+        assert!(
+            matches!(
+                &changes[1],
+                Change::AlterColumnNullable { name, from: false, to: true } if name == "user_email"
+            ),
+            "Expected AlterColumnNullable, got {:?}",
+            changes[1]
+        );
     }
 
     #[test]
@@ -1828,8 +1891,16 @@ mod tests {
 
         // Should NOT detect rename - types don't match
         // Should see add + drop instead
-        assert!(changes.iter().any(|c| matches!(c, Change::AddColumn(col) if col.name == "count")));
-        assert!(changes.iter().any(|c| matches!(c, Change::DropColumn(name) if name == "total")));
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, Change::AddColumn(col) if col.name == "count"))
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, Change::DropColumn(name) if name == "total"))
+        );
     }
 
     #[test]

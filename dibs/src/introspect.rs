@@ -122,19 +122,19 @@ async fn introspect_columns(client: &Client, table_name: &str) -> Result<Vec<Col
         columns.push(Column {
             name,
             pg_type,
-            rust_type: None,      // Not available from introspection
+            rust_type: None, // Not available from introspection
             nullable,
             default,
-            primary_key: false,   // Set later
-            unique: false,        // Set later
+            primary_key: false, // Set later
+            unique: false,      // Set later
             auto_generated,
-            long: false,          // Not available from introspection
-            label: false,         // Not available from introspection
+            long: false,           // Not available from introspection
+            label: false,          // Not available from introspection
             enum_variants: vec![], // TODO: fetch from pg_enum if pg_type is USER-DEFINED
-            doc: None,            // Not available from introspection
-            lang: None,           // Not available from introspection
-            icon: None,           // Not available from introspection
-            subtype: None,        // Not available from introspection
+            doc: None,             // Not available from introspection
+            lang: None,            // Not available from introspection
+            icon: None,            // Not available from introspection
+            subtype: None,         // Not available from introspection
         });
     }
 
@@ -324,7 +324,9 @@ fn pg_type_from_info_schema(data_type: &str, udt_name: &str) -> PgType {
         "BYTEA" => PgType::Bytea,
         "DATE" => PgType::Date,
         "TIME WITHOUT TIME ZONE" | "TIME" => PgType::Time,
-        "TIMESTAMP WITH TIME ZONE" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP" => PgType::Timestamptz,
+        "TIMESTAMP WITH TIME ZONE" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP" => {
+            PgType::Timestamptz
+        }
         "UUID" => PgType::Uuid,
         "JSONB" => PgType::Jsonb,
         "USER-DEFINED" => {

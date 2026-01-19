@@ -399,8 +399,13 @@ impl Schema {
         for table in &self.tables {
             for fk in &table.foreign_keys {
                 let constraint_name = format!("fk_{}_{}", table.name, fk.columns.join("_"));
-                let quoted_cols: Vec<_> = fk.columns.iter().map(|c| crate::quote_ident(c)).collect();
-                let quoted_ref_cols: Vec<_> = fk.references_columns.iter().map(|c| crate::quote_ident(c)).collect();
+                let quoted_cols: Vec<_> =
+                    fk.columns.iter().map(|c| crate::quote_ident(c)).collect();
+                let quoted_ref_cols: Vec<_> = fk
+                    .references_columns
+                    .iter()
+                    .map(|c| crate::quote_ident(c))
+                    .collect();
                 sql.push_str(&format!(
                     "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {}({});\n",
                     crate::quote_ident(&table.name),
@@ -693,8 +698,8 @@ impl TableDef {
             };
 
             // Detect auto-generated columns from default or annotation
-            let auto_generated = is_auto_generated_default(&default)
-                || field_has_dibs_attr(field, "auto");
+            let auto_generated =
+                is_auto_generated_default(&default) || field_has_dibs_attr(field, "auto");
 
             // Check for lang annotation (implies long)
             let lang = field_get_dibs_attr_str(field, "lang").map(|s| s.to_string());
@@ -711,7 +716,9 @@ impl TableDef {
             // Check for explicit icon annotation, or derive from subtype
             let explicit_icon = field_get_dibs_attr_str(field, "icon").map(|s| s.to_string());
             let icon = explicit_icon.or_else(|| {
-                subtype.as_ref().and_then(|st| subtype_default_icon(st).map(|s| s.to_string()))
+                subtype
+                    .as_ref()
+                    .and_then(|st| subtype_default_icon(st).map(|s| s.to_string()))
             });
 
             // Check for enum variants

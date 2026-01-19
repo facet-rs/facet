@@ -10,10 +10,15 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use dibs_proto::{DibsError, DiffRequest, DiffResult, MigrationInfo, MigrationStatusRequest, SchemaInfo, SqlError};
+use dibs_proto::{
+    DibsError, DiffRequest, DiffResult, MigrationInfo, MigrationStatusRequest, SchemaInfo, SqlError,
+};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs},
+    widgets::{
+        Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Tabs,
+    },
 };
 use roam::session::{CallError, RoamError};
 
@@ -86,10 +91,7 @@ fn format_sql_call(sql: &str) -> String {
     // Check if it's a single line or multi-line
     if sql_clean.contains('\n') {
         // Multi-line: use raw string literal
-        format!(
-            "    ctx.execute(r#\"\n{}\n\"#).await?;\n",
-            sql_clean
-        )
+        format!("    ctx.execute(r#\"\n{}\n\"#).await?;\n", sql_clean)
     } else {
         // Single line: use regular string
         format!(
@@ -115,13 +117,16 @@ fn format_sql_error(err: &SqlError) -> String {
                     if let Some(byte_offset) = line_to_byte_offset(&source, line) {
                         let mut output = Vec::new();
 
-                        let builder = Report::build(ReportKind::Error, (&file_path, byte_offset..byte_offset + 1))
-                            .with_message(&err.message)
-                            .with_config(Config::default().with_color(false))
-                            .with_label(
-                                Label::new((&file_path, byte_offset..byte_offset + 1))
-                                    .with_message(&err.message),
-                            );
+                        let builder = Report::build(
+                            ReportKind::Error,
+                            (&file_path, byte_offset..byte_offset + 1),
+                        )
+                        .with_message(&err.message)
+                        .with_config(Config::default().with_color(false))
+                        .with_label(
+                            Label::new((&file_path, byte_offset..byte_offset + 1))
+                                .with_message(&err.message),
+                        );
 
                         let report = builder.finish();
                         report
@@ -165,8 +170,7 @@ fn format_sql_error(err: &SqlError) -> String {
         // Add label at the error position (only if we have a specific position)
         if err.position.is_some() {
             builder = builder.with_label(
-                Label::new(("sql", pos..pos.saturating_add(1)))
-                    .with_message(&err.message),
+                Label::new(("sql", pos..pos.saturating_add(1))).with_message(&err.message),
             );
         }
 
@@ -183,9 +187,7 @@ fn format_sql_error(err: &SqlError) -> String {
         let report = builder.finish();
 
         // Write to string
-        report
-            .write(("sql", Source::from(sql)), &mut output)
-            .ok();
+        report.write(("sql", Source::from(sql)), &mut output).ok();
 
         result.push_str(&String::from_utf8_lossy(&output));
     } else {
@@ -285,7 +287,14 @@ mod tests {
     #[test]
     fn test_parse_caller_location_deep_path() {
         let result = parse_caller_location("examples/my-app-db/src/migrations/m2026_01_19.rs:14:5");
-        assert_eq!(result, Some(("examples/my-app-db/src/migrations/m2026_01_19.rs".to_string(), 14, 5)));
+        assert_eq!(
+            result,
+            Some((
+                "examples/my-app-db/src/migrations/m2026_01_19.rs".to_string(),
+                14,
+                5
+            ))
+        );
     }
 
     #[test]
@@ -298,10 +307,10 @@ mod tests {
     #[test]
     fn test_line_to_byte_offset() {
         let source = "line1\nline2\nline3\n";
-        assert_eq!(line_to_byte_offset(source, 1), Some(0));  // start of line1
-        assert_eq!(line_to_byte_offset(source, 2), Some(6));  // start of line2
+        assert_eq!(line_to_byte_offset(source, 1), Some(0)); // start of line1
+        assert_eq!(line_to_byte_offset(source, 2), Some(6)); // start of line2
         assert_eq!(line_to_byte_offset(source, 3), Some(12)); // start of line3
-        assert_eq!(line_to_byte_offset(source, 0), None);     // invalid line
+        assert_eq!(line_to_byte_offset(source, 0), None); // invalid line
     }
 
     #[test]
@@ -728,12 +737,7 @@ impl App {
 
             // Also fetch diff
             self.diff = DiffState::Loading;
-            match client
-                .diff(DiffRequest {
-                    database_url: url,
-                })
-                .await
-            {
+            match client.diff(DiffRequest { database_url: url }).await {
                 Ok(diff) => self.diff = DiffState::Loaded(diff),
                 Err(e) => self.diff = DiffState::Error(format!("{:?}", e)),
             }
@@ -812,8 +816,8 @@ impl App {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None);
-            let mut scrollbar_state = ScrollbarState::new(self.build_output.len())
-                .position(self.build_scroll);
+            let mut scrollbar_state =
+                ScrollbarState::new(self.build_output.len()).position(self.build_scroll);
             frame.render_stateful_widget(
                 scrollbar,
                 chunks[1].inner(Margin {
@@ -907,7 +911,8 @@ impl App {
                             }
                         }
                         KeyCode::Left => {
-                            self.migration_name_cursor = self.migration_name_cursor.saturating_sub(1);
+                            self.migration_name_cursor =
+                                self.migration_name_cursor.saturating_sub(1);
                         }
                         KeyCode::Right => {
                             if self.migration_name_cursor < self.migration_name_input.len() {
@@ -923,7 +928,8 @@ impl App {
                         KeyCode::Char(c) => {
                             // Only allow valid migration name chars
                             if c.is_alphanumeric() || c == '-' || c == '_' {
-                                self.migration_name_input.insert(self.migration_name_cursor, c);
+                                self.migration_name_input
+                                    .insert(self.migration_name_cursor, c);
                                 self.migration_name_cursor += 1;
                             }
                         }
@@ -1005,7 +1011,9 @@ impl App {
                     }
                     KeyCode::Char('g') if self.tab == Tab::Diff && !self.show_migration_source => {
                         // Check for pending migrations first
-                        let pending_count = self.migrations.as_ref()
+                        let pending_count = self
+                            .migrations
+                            .as_ref()
                             .map(|m| m.iter().filter(|m| !m.applied).count())
                             .unwrap_or(0);
 
@@ -1024,7 +1032,8 @@ impl App {
                                 self.error = Some("No changes to migrate".to_string());
                             }
                         } else {
-                            self.error = Some("No diff computed yet - press 'r' to refresh".to_string());
+                            self.error =
+                                Some("No diff computed yet - press 'r' to refresh".to_string());
                         }
                     }
                     KeyCode::Char('g') if !self.show_migration_source => self.pending_g = true,
@@ -1087,10 +1096,7 @@ impl App {
     fn show_error(&mut self, msg: String) {
         // Use modal for multi-line errors or errors longer than 60 chars
         if msg.contains('\n') || msg.len() > 60 {
-            self.error_modal_lines = msg
-                .lines()
-                .map(|l| Line::from(l.to_string()))
-                .collect();
+            self.error_modal_lines = msg.lines().map(|l| Line::from(l.to_string())).collect();
             self.show_error_modal = true;
             self.error = Some("Error occurred - see details".to_string());
         } else {
@@ -1144,12 +1150,8 @@ impl App {
                         lines.push(Line::from(""));
 
                         // Get highlighted source lines
-                        let highlighted = highlight_to_lines(
-                            &mut self.highlighter,
-                            &self.theme,
-                            "rust",
-                            &source,
-                        );
+                        let highlighted =
+                            highlight_to_lines(&mut self.highlighter, &self.theme, "rust", &source);
 
                         // Get the source lines for finding leading whitespace
                         let source_lines: Vec<&str> = source.lines().collect();
@@ -1175,10 +1177,7 @@ impl App {
                                         Span::styled("> ", Style::default().fg(Color::Red).bold()),
                                     );
                                 } else {
-                                    spans.insert(
-                                        0,
-                                        Span::styled("  ", Style::default()),
-                                    );
+                                    spans.insert(0, Span::styled("  ", Style::default()));
                                 }
 
                                 // Add the highlighted content
@@ -1193,16 +1192,13 @@ impl App {
                                     let effective_col = source_lines
                                         .get(line_num - 1)
                                         .map(|line| {
-                                            line.chars()
-                                                .take_while(|c| c.is_whitespace())
-                                                .count()
+                                            line.chars().take_while(|c| c.is_whitespace()).count()
                                                 + 1 // 1-indexed
                                         })
                                         .unwrap_or(col);
 
                                     // Prefix is: "> " (2) + "{:4} " line number (5) = 7 chars
-                                    let padding =
-                                        " ".repeat(7 + effective_col.saturating_sub(1));
+                                    let padding = " ".repeat(7 + effective_col.saturating_sub(1));
                                     lines.push(Line::from(vec![
                                         Span::styled(
                                             format!("{}^", padding),
@@ -1292,7 +1288,11 @@ impl App {
         }
 
         // Generate name based on what we found
-        if !new_tables.is_empty() && dropped_tables.is_empty() && new_columns.is_empty() && type_changes.is_empty() {
+        if !new_tables.is_empty()
+            && dropped_tables.is_empty()
+            && new_columns.is_empty()
+            && type_changes.is_empty()
+        {
             if new_tables.len() == 1 {
                 return format!("create-{}", new_tables[0]);
             } else {
@@ -1300,7 +1300,11 @@ impl App {
             }
         }
 
-        if !dropped_tables.is_empty() && new_tables.is_empty() && dropped_columns.is_empty() && type_changes.is_empty() {
+        if !dropped_tables.is_empty()
+            && new_tables.is_empty()
+            && dropped_columns.is_empty()
+            && type_changes.is_empty()
+        {
             if dropped_tables.len() == 1 {
                 return format!("drop-{}", dropped_tables[0]);
             } else {
@@ -1310,23 +1314,37 @@ impl App {
 
         if !new_columns.is_empty() && type_changes.is_empty() && dropped_columns.is_empty() {
             // Check if all columns have the same name
-            let col_names: std::collections::HashSet<&str> = new_columns.iter().map(|(_, c)| *c).collect();
+            let col_names: std::collections::HashSet<&str> =
+                new_columns.iter().map(|(_, c)| *c).collect();
             if col_names.len() == 1 {
                 let col = col_names.into_iter().next().unwrap();
                 return format!("add-{}", col.replace('_', "-"));
             } else if new_columns.len() == 1 {
-                return format!("add-{}-to-{}", new_columns[0].1.replace('_', "-"), new_columns[0].0);
+                return format!(
+                    "add-{}-to-{}",
+                    new_columns[0].1.replace('_', "-"),
+                    new_columns[0].0
+                );
             }
         }
 
-        if !type_changes.is_empty() && new_columns.is_empty() && dropped_columns.is_empty() && new_tables.is_empty() {
+        if !type_changes.is_empty()
+            && new_columns.is_empty()
+            && dropped_columns.is_empty()
+            && new_tables.is_empty()
+        {
             // Check if all type changes are for the same column name
-            let col_names: std::collections::HashSet<&str> = type_changes.iter().map(|(_, c, _)| *c).collect();
-            let new_types: std::collections::HashSet<&str> = type_changes.iter().map(|(_, _, t)| *t).collect();
+            let col_names: std::collections::HashSet<&str> =
+                type_changes.iter().map(|(_, c, _)| *c).collect();
+            let new_types: std::collections::HashSet<&str> =
+                type_changes.iter().map(|(_, _, t)| *t).collect();
 
             if col_names.len() == 1 && new_types.len() == 1 {
                 let col = col_names.into_iter().next().unwrap();
-                let new_type = new_types.into_iter().next().unwrap()
+                let new_type = new_types
+                    .into_iter()
+                    .next()
+                    .unwrap()
                     .to_lowercase()
                     .replace(' ', "-");
                 return format!("{}-to-{}", col.replace('_', "-"), new_type);
@@ -1337,7 +1355,8 @@ impl App {
         }
 
         if !dropped_columns.is_empty() && new_columns.is_empty() && type_changes.is_empty() {
-            let col_names: std::collections::HashSet<&str> = dropped_columns.iter().map(|(_, c)| *c).collect();
+            let col_names: std::collections::HashSet<&str> =
+                dropped_columns.iter().map(|(_, c)| *c).collect();
             if col_names.len() == 1 {
                 let col = col_names.into_iter().next().unwrap();
                 return format!("drop-{}", col.replace('_', "-"));
@@ -1345,7 +1364,11 @@ impl App {
         }
 
         // Fallback: describe what tables are affected
-        let affected_tables: std::collections::HashSet<&str> = diff.table_diffs.iter().map(|td| td.table.as_str()).collect();
+        let affected_tables: std::collections::HashSet<&str> = diff
+            .table_diffs
+            .iter()
+            .map(|td| td.table.as_str())
+            .collect();
         if affected_tables.len() == 1 {
             let table = affected_tables.into_iter().next().unwrap();
             return format!("alter-{}", table);
@@ -1441,9 +1464,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
             // Read existing mod.rs and append
             let existing = fs::read_to_string(&mod_rs_path)?;
             if !existing.contains(&module_line) {
-                let mut mod_file = fs::OpenOptions::new()
-                    .append(true)
-                    .open(&mod_rs_path)?;
+                let mut mod_file = fs::OpenOptions::new().append(true).open(&mod_rs_path)?;
                 writeln!(mod_file, "{}", module_line)?;
             }
         } else {
@@ -1553,16 +1574,18 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
         use std::fs;
 
         // Extract module name from filename (e.g., m2026_01_18_185242_name.rs -> m2026_01_18_185242_name)
-        let module_name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid filename"))?;
+        let module_name = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid filename")
+        })?;
 
         // Delete the migration file
         fs::remove_file(path)?;
 
         // Remove from mod.rs
-        let mod_rs_path = path.parent().unwrap_or(std::path::Path::new(".")).join("mod.rs");
+        let mod_rs_path = path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("mod.rs");
         if mod_rs_path.exists() {
             let content = fs::read_to_string(&mod_rs_path)?;
             let module_line = format!("mod {};", module_name);
@@ -1662,12 +1685,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
 
             // Refresh diff
             self.diff = DiffState::Loading;
-            match client
-                .diff(DiffRequest {
-                    database_url: url,
-                })
-                .await
-            {
+            match client.diff(DiffRequest { database_url: url }).await {
                 Ok(diff) => self.diff = DiffState::Loaded(diff),
                 Err(e) => self.diff = DiffState::Error(format!("{:?}", e)),
             }
@@ -1810,7 +1828,9 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
     /// This is columns + foreign keys for the current table.
     fn details_item_count(&self) -> usize {
         let Some(schema) = &self.schema else { return 0 };
-        let Some(table) = schema.tables.get(self.selected_table) else { return 0 };
+        let Some(table) = schema.tables.get(self.selected_table) else {
+            return 0;
+        };
         table.columns.len() + table.foreign_keys.len()
     }
 
@@ -1844,7 +1864,9 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
     /// Follow a foreign key reference - jump to the referenced table.
     fn follow_foreign_key(&mut self) {
         let Some(schema) = &self.schema else { return };
-        let Some(table) = schema.tables.get(self.selected_table) else { return };
+        let Some(table) = schema.tables.get(self.selected_table) else {
+            return;
+        };
 
         let col_count = table.columns.len();
 
@@ -1887,11 +1909,16 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
 
         // Count indicators for tabs
         let diff_count = if let DiffState::Loaded(diff) = &self.diff {
-            diff.table_diffs.iter().map(|td| td.changes.len()).sum::<usize>()
+            diff.table_diffs
+                .iter()
+                .map(|td| td.changes.len())
+                .sum::<usize>()
         } else {
             0
         };
-        let pending_migrations = self.migrations.as_ref()
+        let pending_migrations = self
+            .migrations
+            .as_ref()
             .map(|m| m.iter().filter(|m| !m.applied).count())
             .unwrap_or(0);
 
@@ -1977,8 +2004,8 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
         let dialog_width = (max_line_len as u16 + 4)
             .min(area.width.saturating_sub(4))
             .max(40);
-        let dialog_height = (self.error_modal_lines.len() as u16 + 5)
-            .min(area.height.saturating_sub(4));
+        let dialog_height =
+            (self.error_modal_lines.len() as u16 + 5).min(area.height.saturating_sub(4));
 
         let x = (area.width.saturating_sub(dialog_width)) / 2;
         let y = (area.height.saturating_sub(dialog_height)) / 2;
@@ -1997,7 +2024,10 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
         frame.render_widget(dialog, dialog_area);
 
         // Inner area for content
-        let inner = dialog_area.inner(Margin { vertical: 1, horizontal: 1 });
+        let inner = dialog_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
 
         // Error text (scrollable if needed)
         let content_height = inner.height.saturating_sub(2); // Reserve space for help
@@ -2061,15 +2091,20 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
         frame.render_widget(dialog, dialog_area);
 
         // Label
-        let label = Paragraph::new("Migration name:")
-            .style(Style::default().fg(Color::White));
+        let label = Paragraph::new("Migration name:").style(Style::default().fg(Color::White));
         frame.render_widget(label, inner_chunks[0]);
 
         // Input field with cursor
         let input_text = if self.migration_name_input.is_empty() {
-            Span::styled("(leave empty for autogenerated)", Style::default().fg(Color::DarkGray))
+            Span::styled(
+                "(leave empty for autogenerated)",
+                Style::default().fg(Color::DarkGray),
+            )
         } else {
-            Span::styled(&self.migration_name_input, Style::default().fg(Color::White))
+            Span::styled(
+                &self.migration_name_input,
+                Style::default().fg(Color::White),
+            )
         };
         let input = Paragraph::new(Line::from(vec![
             Span::styled("> ", Style::default().fg(Color::Yellow)),
@@ -2387,7 +2422,9 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
         let mut lines = vec![];
 
         // Check for pending migrations
-        let pending_count = self.migrations.as_ref()
+        let pending_count = self
+            .migrations
+            .as_ref()
             .map(|m| m.iter().filter(|m| !m.applied).count())
             .unwrap_or(0);
 
@@ -2403,7 +2440,10 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
             lines.push(Line::from(vec![
                 Span::styled("    Press ", Style::default().fg(Color::DarkGray)),
                 Span::styled("3", Style::default().fg(Color::Yellow)),
-                Span::styled(" to go to Migrations, then ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    " to go to Migrations, then ",
+                    Style::default().fg(Color::DarkGray),
+                ),
                 Span::styled("m", Style::default().fg(Color::Yellow)),
                 Span::styled(" to apply", Style::default().fg(Color::DarkGray)),
             ]));
@@ -2420,8 +2460,14 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
             if pending_count == 0 {
                 lines.push(Line::from(vec![
                     Span::styled("  Press ", Style::default().fg(Color::White)),
-                    Span::styled(" g ", Style::default().fg(Color::Black).bg(Color::Yellow).bold()),
-                    Span::styled(" to generate a migration", Style::default().fg(Color::White)),
+                    Span::styled(
+                        " g ",
+                        Style::default().fg(Color::Black).bg(Color::Yellow).bold(),
+                    ),
+                    Span::styled(
+                        " to generate a migration",
+                        Style::default().fg(Color::White),
+                    ),
                 ]));
                 lines.push(Line::from(""));
             }

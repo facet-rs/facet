@@ -24,15 +24,9 @@ use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, PartialEq)]
 pub enum SolverError {
     /// A change requires a table that doesn't exist.
-    TableNotFound {
-        change: String,
-        table: String,
-    },
+    TableNotFound { change: String, table: String },
     /// A change requires a table to NOT exist, but it does.
-    TableAlreadyExists {
-        change: String,
-        table: String,
-    },
+    TableAlreadyExists { change: String, table: String },
     /// A change requires a column that doesn't exist.
     ColumnNotFound {
         change: String,
@@ -58,9 +52,7 @@ pub enum SolverError {
         columns: Vec<String>,
     },
     /// Changes form a dependency cycle that cannot be resolved.
-    CycleDetected {
-        changes: Vec<String>,
-    },
+    CycleDetected { changes: Vec<String> },
     /// Conflicting operations detected (e.g., add then drop same column).
     ConflictingOperations {
         first: String,
@@ -83,20 +75,44 @@ impl std::fmt::Display for SolverError {
             SolverError::TableAlreadyExists { change, table } => {
                 write!(f, "{}: table '{}' already exists", change, table)
             }
-            SolverError::ColumnNotFound { change, table, column } => {
-                write!(f, "{}: column '{}.{}' does not exist", change, table, column)
+            SolverError::ColumnNotFound {
+                change,
+                table,
+                column,
+            } => {
+                write!(
+                    f,
+                    "{}: column '{}.{}' does not exist",
+                    change, table, column
+                )
             }
-            SolverError::ColumnAlreadyExists { change, table, column } => {
-                write!(f, "{}: column '{}.{}' already exists", change, table, column)
+            SolverError::ColumnAlreadyExists {
+                change,
+                table,
+                column,
+            } => {
+                write!(
+                    f,
+                    "{}: column '{}.{}' already exists",
+                    change, table, column
+                )
             }
-            SolverError::ForeignKeyTargetNotFound { change, source_table, target_table } => {
+            SolverError::ForeignKeyTargetNotFound {
+                change,
+                source_table,
+                target_table,
+            } => {
                 write!(
                     f,
                     "{}: foreign key from '{}' references non-existent table '{}'",
                     change, source_table, target_table
                 )
             }
-            SolverError::ForeignKeyColumnsNotFound { change, table, columns } => {
+            SolverError::ForeignKeyColumnsNotFound {
+                change,
+                table,
+                columns,
+            } => {
                 write!(
                     f,
                     "{}: foreign key columns {} not found in table '{}'",
@@ -112,8 +128,16 @@ impl std::fmt::Display for SolverError {
                     changes.join(" -> ")
                 )
             }
-            SolverError::ConflictingOperations { first, second, reason } => {
-                write!(f, "conflicting operations: '{}' and '{}': {}", first, second, reason)
+            SolverError::ConflictingOperations {
+                first,
+                second,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "conflicting operations: '{}' and '{}': {}",
+                    first, second, reason
+                )
             }
             SolverError::SimulationMismatch { diff } => {
                 write!(
@@ -775,18 +799,21 @@ mod tests {
         let mut schema = VirtualSchema::new();
 
         let table = make_table("users", vec![make_column("id", PgType::BigInt, false)]);
-        schema.apply("users", &Change::AddTable(table.clone())).unwrap();
+        schema
+            .apply("users", &Change::AddTable(table.clone()))
+            .unwrap();
 
         // Try to add again
         let result = schema.apply("users", &Change::AddTable(table));
-        assert!(matches!(result, Err(SolverError::TableAlreadyExists { .. })));
+        assert!(matches!(
+            result,
+            Err(SolverError::TableAlreadyExists { .. })
+        ));
     }
 
     #[test]
     fn test_virtual_schema_drop_table() {
-        let mut schema = VirtualSchema::from_existing(
-            &["users".to_string()].into_iter().collect(),
-        );
+        let mut schema = VirtualSchema::from_existing(&["users".to_string()].into_iter().collect());
 
         let result = schema.apply("users", &Change::DropTable("users".to_string()));
         assert!(result.is_ok());
@@ -803,9 +830,7 @@ mod tests {
 
     #[test]
     fn test_virtual_schema_rename_table() {
-        let mut schema = VirtualSchema::from_existing(
-            &["posts".to_string()].into_iter().collect(),
-        );
+        let mut schema = VirtualSchema::from_existing(&["posts".to_string()].into_iter().collect());
 
         let result = schema.apply(
             "post",
@@ -888,22 +913,34 @@ mod tests {
         // Check that the self-referential FK in category now references "category"
         let category_table = schema.tables.get("category").unwrap();
         assert!(
-            category_table.foreign_keys.iter().any(|fk| fk.references_table == "category"),
+            category_table
+                .foreign_keys
+                .iter()
+                .any(|fk| fk.references_table == "category"),
             "Self-referential FK should reference 'category' after rename"
         );
         assert!(
-            !category_table.foreign_keys.iter().any(|fk| fk.references_table == "categories"),
+            !category_table
+                .foreign_keys
+                .iter()
+                .any(|fk| fk.references_table == "categories"),
             "No FK should still reference 'categories'"
         );
 
         // Check that the FK in posts now references "category"
         let posts_table = schema.tables.get("posts").unwrap();
         assert!(
-            posts_table.foreign_keys.iter().any(|fk| fk.references_table == "category"),
+            posts_table
+                .foreign_keys
+                .iter()
+                .any(|fk| fk.references_table == "category"),
             "FK in posts should reference 'category' after rename"
         );
         assert!(
-            !posts_table.foreign_keys.iter().any(|fk| fk.references_table == "categories"),
+            !posts_table
+                .foreign_keys
+                .iter()
+                .any(|fk| fk.references_table == "categories"),
             "No FK in posts should still reference 'categories'"
         );
     }
@@ -928,9 +965,7 @@ mod tests {
 
     #[test]
     fn test_virtual_schema_add_fk_target_missing() {
-        let mut schema = VirtualSchema::from_existing(
-            &["posts".to_string()].into_iter().collect(),
-        );
+        let mut schema = VirtualSchema::from_existing(&["posts".to_string()].into_iter().collect());
 
         let fk = ForeignKey {
             columns: vec!["author_id".to_string()],
@@ -1188,13 +1223,11 @@ mod tests {
         };
 
         // Build minimal VirtualSchemas for this test
-        let current = VirtualSchema::from_existing(
-            &["posts"].iter().map(|s| s.to_string()).collect(),
-        );
+        let current =
+            VirtualSchema::from_existing(&["posts"].iter().map(|s| s.to_string()).collect());
         // Desired has the FK (but target doesn't exist)
-        let desired = VirtualSchema::from_existing(
-            &["posts"].iter().map(|s| s.to_string()).collect(),
-        );
+        let desired =
+            VirtualSchema::from_existing(&["posts"].iter().map(|s| s.to_string()).collect());
 
         let result = order_changes(&diff, &current, &desired);
         assert!(
@@ -1236,9 +1269,8 @@ mod tests {
         };
 
         // Table already exists
-        let current = VirtualSchema::from_existing(
-            &["users"].iter().map(|s| s.to_string()).collect(),
-        );
+        let current =
+            VirtualSchema::from_existing(&["users"].iter().map(|s| s.to_string()).collect());
         // Desired also has the table
         let desired = VirtualSchema::from_tables(&[table]);
 
@@ -1322,12 +1354,10 @@ mod tests {
             }],
         };
 
-        let current = VirtualSchema::from_existing(
-            &["posts"].iter().map(|s| s.to_string()).collect(),
-        );
-        let desired = VirtualSchema::from_existing(
-            &["posts"].iter().map(|s| s.to_string()).collect(),
-        );
+        let current =
+            VirtualSchema::from_existing(&["posts"].iter().map(|s| s.to_string()).collect());
+        let desired =
+            VirtualSchema::from_existing(&["posts"].iter().map(|s| s.to_string()).collect());
 
         let result = diff.to_ordered_sql(&current, &desired);
         assert!(result.is_err(), "Should fail");
@@ -1337,9 +1367,7 @@ mod tests {
 
     #[test]
     fn test_add_index_on_existing_table() {
-        let mut schema = VirtualSchema::from_existing(
-            &["users".to_string()].into_iter().collect(),
-        );
+        let mut schema = VirtualSchema::from_existing(&["users".to_string()].into_iter().collect());
 
         let idx = crate::Index {
             name: "users_email_idx".to_string(),
@@ -1375,10 +1403,13 @@ mod tests {
         let desired = Schema {
             tables: vec![
                 make_table("user", vec![make_column("id", PgType::BigInt, false)]),
-                make_table("category", vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("parent_id", PgType::BigInt, true),
-                ]),
+                make_table(
+                    "category",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("parent_id", PgType::BigInt, true),
+                    ],
+                ),
                 make_table_with_fks(
                     "post",
                     vec![
@@ -1425,10 +1456,13 @@ mod tests {
         let current = Schema {
             tables: vec![
                 make_table("users", vec![make_column("id", PgType::BigInt, false)]),
-                make_table("categories", vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("parent_id", PgType::BigInt, true),
-                ]),
+                make_table(
+                    "categories",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("parent_id", PgType::BigInt, true),
+                    ],
+                ),
                 make_table(
                     "posts",
                     vec![
@@ -1453,7 +1487,11 @@ mod tests {
         let desired_schema = VirtualSchema::from_tables(&desired.tables);
 
         let result = order_changes(&diff, &current_schema, &desired_schema);
-        assert!(result.is_ok(), "Migration should be orderable: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Migration should be orderable: {:?}",
+            result
+        );
 
         let ordered = result.unwrap();
 
@@ -1848,7 +1886,7 @@ mod proptests {
             Just("slug".to_string()),
             Just("created_at".to_string()),
             Just("updated_at".to_string()),
-            Just("parent_id".to_string()),  // self-referential
+            Just("parent_id".to_string()), // self-referential
             Just("author_id".to_string()),
             Just("user_id".to_string()),
             Just("post_id".to_string()),

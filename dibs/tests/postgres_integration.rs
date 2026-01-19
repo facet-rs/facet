@@ -40,7 +40,13 @@ struct TestPost {
 }
 
 // Helper to create a minimal column for tests
-fn test_column(name: &str, pg_type: dibs::PgType, nullable: bool, primary_key: bool, unique: bool) -> dibs::Column {
+fn test_column(
+    name: &str,
+    pg_type: dibs::PgType,
+    nullable: bool,
+    primary_key: bool,
+    unique: bool,
+) -> dibs::Column {
     dibs::Column {
         name: name.to_string(),
         pg_type,
@@ -80,13 +86,22 @@ fn test_column_with_default(name: &str, pg_type: dibs::PgType, default: &str) ->
     }
 }
 
-fn test_table(name: &str, columns: Vec<dibs::Column>, foreign_keys: Vec<dibs::ForeignKey>, indices: Vec<dibs::Index>) -> dibs::Table {
+fn test_table(
+    name: &str,
+    columns: Vec<dibs::Column>,
+    foreign_keys: Vec<dibs::ForeignKey>,
+    indices: Vec<dibs::Index>,
+) -> dibs::Table {
     dibs::Table {
         name: name.to_string(),
         columns,
         foreign_keys,
         indices,
-        source: dibs::SourceLocation { file: None, line: None, column: None },
+        source: dibs::SourceLocation {
+            file: None,
+            line: None,
+            column: None,
+        },
         doc: None,
         icon: None,
     }
@@ -708,7 +723,10 @@ async fn test_table_rename_execution() {
             &[&2i64, &"Bad Post", &999i64], // Invalid author_id
         )
         .await;
-    assert!(result.is_err(), "FK constraint should reject invalid author_id");
+    assert!(
+        result.is_err(),
+        "FK constraint should reject invalid author_id"
+    );
 }
 
 #[tokio::test]

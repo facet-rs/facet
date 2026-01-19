@@ -179,10 +179,9 @@ impl DibsServiceImpl {
         database_url: &str,
     ) -> Result<DiffWithContext, DibsError> {
         // Connect to database
-        let (client, connection) =
-            tokio_postgres::connect(database_url, tokio_postgres::NoTls)
-                .await
-                .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
+        let (client, connection) = tokio_postgres::connect(database_url, tokio_postgres::NoTls)
+            .await
+            .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
 
         // Spawn connection handler
         tokio::spawn(async move {
@@ -219,24 +218,30 @@ impl DibsService for DibsServiceImpl {
     }
 
     async fn diff(&self, request: DiffRequest) -> Result<DiffResult, DibsError> {
-        let ctx = self.compute_diff_with_context(&request.database_url).await?;
+        let ctx = self
+            .compute_diff_with_context(&request.database_url)
+            .await?;
         Ok(diff_to_result(&ctx.diff))
     }
 
     async fn generate_migration_sql(&self, request: DiffRequest) -> Result<String, DibsError> {
-        let ctx = self.compute_diff_with_context(&request.database_url).await?;
+        let ctx = self
+            .compute_diff_with_context(&request.database_url)
+            .await?;
         // Use ordered SQL generation with simulation-based verification
         // This ensures the migration will produce the expected result
         ctx.diff
             .to_ordered_sql(&ctx.current_schema, &ctx.desired_schema)
-            .map_err(|e| DibsError::MigrationFailed(dibs_proto::SqlError {
-                message: e.to_string(),
-                sql: None,
-                position: None,
-                hint: None,
-                detail: None,
-                caller: None,
-            }))
+            .map_err(|e| {
+                DibsError::MigrationFailed(dibs_proto::SqlError {
+                    message: e.to_string(),
+                    sql: None,
+                    position: None,
+                    hint: None,
+                    detail: None,
+                    caller: None,
+                })
+            })
     }
 
     async fn migration_status(
@@ -258,10 +263,7 @@ impl DibsService for DibsServiceImpl {
 
         // Get migration status
         let runner = crate::MigrationRunner::new(&mut client);
-        let status = runner
-            .status()
-            .await
-            .map_err(error_to_dibs_error)?;
+        let status = runner.status().await.map_err(error_to_dibs_error)?;
 
         Ok(status
             .into_iter()
@@ -319,10 +321,7 @@ impl DibsService for DibsServiceImpl {
             )));
         } else {
             // Run all pending
-            runner
-                .migrate()
-                .await
-                .map_err(to_migration_error)?
+            runner.migrate().await.map_err(to_migration_error)?
         };
 
         for version in &applied {
