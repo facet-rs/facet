@@ -20,6 +20,9 @@ importers:
       '@bearcove/roam-core':
         specifier: workspace:*
         version: link:../packages/roam-core
+      '@bearcove/roam-ws':
+        specifier: workspace:*
+        version: link:../packages/roam-ws
 
   typescript/packages/roam-core:
     dependencies:
