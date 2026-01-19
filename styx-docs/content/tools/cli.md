@@ -178,7 +178,24 @@ styx skill
 
 ### completions
 
-Generate shell completions:
+Generate shell completions. Add one of these to your shell config:
+
+**Bash** (`~/.bashrc`):
+```bash
+eval "$(styx completions bash)"
+```
+
+**Zsh** (`~/.zshrc`):
+```zsh
+eval "$(styx completions zsh)"
+```
+
+**Fish** (`~/.config/fish/config.fish`):
+```fish
+styx completions fish | source
+```
+
+Or write to a file for faster shell startup:
 
 ```bash
 styx completions bash > ~/.local/share/bash-completion/completions/styx
