@@ -172,7 +172,7 @@
 
     .question-text :global(code) {
         font-family: "SF Mono", Monaco, Consolas, monospace;
-        font-size: 0.85em;
+        font-size: 1em;
     }
 
     .question-text :global(p code) {
@@ -306,7 +306,7 @@
         padding: 0.1em 0.3em;
         border-radius: 3px;
         font-family: "SF Mono", Monaco, Consolas, monospace;
-        font-size: 0.85em;
+        font-size: 1em;
     }
 
     .explanation :global(ul),

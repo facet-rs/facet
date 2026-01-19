@@ -25,7 +25,7 @@ questions {
             name "Alice"
             ```
 
-            Or even just `name Alice` if you don't need the quotes.
+            Or just `name Alice` since we don't need.
             DOC
     }
     basics-when-quotes {
