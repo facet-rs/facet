@@ -1,6 +1,5 @@
 ---
 source: facet-python/src/lib.rs
-assertion_line: 952
 expression: py
 ---
 From = TypedDict(
@@ -8,7 +7,7 @@ From = TypedDict(
     {"from": Required[str]},
     total=False,
 )
-type ImportSource = "From" | "Url"
+type ImportSource = From | Url
 
 class Url(TypedDict, total=False):
     url: Required[str]

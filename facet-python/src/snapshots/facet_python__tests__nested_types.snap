@@ -6,5 +6,5 @@ class Inner(TypedDict, total=False):
     value: Required[int]
 
 class Outer(TypedDict, total=False):
-    inner: Required["Inner"]
+    inner: Required[Inner]
     name: Required[str]

@@ -5,4 +5,4 @@ expression: py
 class Inner(TypedDict, total=False):
     value: Required[int]
 
-type Wrapper = "Inner"
+type Wrapper = Inner

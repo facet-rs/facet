@@ -1,13 +1,12 @@
 ---
 source: facet-python/src/lib.rs
-assertion_line: 1047
 expression: py
 ---
 class Data(TypedDict, total=False):
-    Data: Required["DataData"]
+    Data: Required[DataData]
 
 class DataData(TypedDict, total=False):
     name: Required[str]
     value: Required[float]
 
-type Message = "Data"
+type Message = Data

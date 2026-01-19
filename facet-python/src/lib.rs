@@ -186,10 +186,16 @@ impl PythonGenerator {
         // Collect all generated code in sorted order (BTreeMap iterates in key order)
         let mut output = String::new();
 
-        // Write imports if requested and any were used
-        if write_imports && !self.imports.is_empty() {
-            let imports: Vec<&str> = self.imports.iter().copied().collect();
-            writeln!(output, "from typing import {}", imports.join(", ")).unwrap();
+        // Write imports if requested
+        if write_imports {
+            // Always emit __future__ annotations for postponed evaluation
+            // This allows forward references and | syntax without runtime issues
+            writeln!(output, "from __future__ import annotations").unwrap();
+
+            if !self.imports.is_empty() {
+                let imports: Vec<&str> = self.imports.iter().copied().collect();
+                writeln!(output, "from typing import {}", imports.join(", ")).unwrap();
+            }
             output.push('\n');
         }
 
@@ -398,15 +404,15 @@ impl PythonGenerator {
             }
             StructKind::TupleStruct if variant.data.fields.len() == 1 => {
                 self.generate_newtype_variant(variant_name, &pascal_variant_name, variant);
-                format!("\"{}\"", pascal_variant_name)
+                pascal_variant_name.to_string()
             }
             StructKind::TupleStruct => {
                 self.generate_tuple_variant(variant_name, &pascal_variant_name, variant);
-                format!("\"{}\"", pascal_variant_name)
+                pascal_variant_name.to_string()
             }
             _ => {
                 self.generate_struct_variant(variant_name, &pascal_variant_name, variant);
-                format!("\"{}\"", pascal_variant_name)
+                pascal_variant_name.to_string()
             }
         }
     }
@@ -494,10 +500,9 @@ impl PythonGenerator {
         self.generated.insert(data_class_name.clone(), data_output);
 
         // Generate the wrapper class
-        // Quote the data class name for forward reference compatibility in Python
         let wrapper_fields = [TypedDictField::new(
             variant_name,
-            format!("\"{}\"", data_class_name),
+            data_class_name.clone(),
             true,
             &[],
         )];
@@ -555,12 +560,12 @@ impl PythonGenerator {
                             format!("tuple[{}]", types.join(", "))
                         } else {
                             self.add_shape(shape);
-                            format!("\"{}\"", shape.type_identifier)
+                            shape.type_identifier.to_string()
                         }
                     }
                     Type::User(UserType::Enum(_)) => {
                         self.add_shape(shape);
-                        format!("\"{}\"", shape.type_identifier)
+                        shape.type_identifier.to_string()
                     }
                     _ => self.inner_type_or_any(shape),
                 }
