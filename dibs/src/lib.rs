@@ -82,7 +82,8 @@ pub use dibs_macros::migration;
 
 // Re-export query DSL codegen types
 pub use dibs_query_gen::{
-    ColumnInfo, GeneratedCode, QueryFile, SchemaInfo, TableInfo, generate_rust_code,
+    ColumnInfo, GeneratedCode, PlannerForeignKey, PlannerSchema, PlannerTable, QueryFile,
+    SchemaInfo, TableInfo, generate_rust_code, generate_rust_code_with_planner,
     generate_rust_code_with_schema, parse_query_file,
 };
 
