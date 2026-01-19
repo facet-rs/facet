@@ -186,51 +186,48 @@ impl FormatSerializer for StyxSerializer {
     ) -> Result<bool, Self::Error> {
         // First, check if the field value is a metadata container (like Documented<T>)
         // This takes precedence over Field::doc since it's runtime data
-        if value.shape().is_metadata_container() {
-            if let Ok(container) = value.into_struct() {
-                // Collect doc lines from the metadata container
-                let mut doc_lines: Vec<&str> = Vec::new();
-                for (f, field_value) in container.fields() {
-                    if f.metadata_kind() == Some("doc") {
-                        // The field type is Option<Vec<String>>
-                        if let Ok(opt) = field_value.into_option() {
-                            if let Some(inner) = opt.value() {
-                                if let Ok(list) = inner.into_list_like() {
-                                    for item in list.iter() {
-                                        if let Some(line) = item.as_str() {
-                                            doc_lines.push(line);
-                                        }
-                                    }
-                                }
-                            }
+        if value.shape().is_metadata_container()
+            && let Ok(container) = value.into_struct()
+        {
+            // Collect doc lines from the metadata container
+            let mut doc_lines: Vec<&str> = Vec::new();
+            for (f, field_value) in container.fields() {
+                if f.metadata_kind() == Some("doc")
+                    && let Ok(opt) = field_value.into_option()
+                    && let Some(inner) = opt.value()
+                    && let Ok(list) = inner.into_list_like()
+                {
+                    for item in list.iter() {
+                        if let Some(line) = item.as_str() {
+                            doc_lines.push(line);
                         }
                     }
                 }
-
-                // If we have doc lines from the container, use them
-                if !doc_lines.is_empty() {
-                    let doc = doc_lines.join("\n");
-                    self.writer
-                        .write_doc_comment_and_key(&doc, field_item.effective_name());
-                    return Ok(true);
-                }
             }
-        }
 
-        // Second, check Field::doc for static doc comments from Rust source
-        if let Some(field) = field_item.field {
-            if !field.doc.is_empty() {
-                // Field::doc lines have a leading space from `/// comment` format - strip exactly one
-                let doc: Vec<&str> = field
-                    .doc
-                    .iter()
-                    .map(|s| s.strip_prefix(' ').unwrap_or(s))
-                    .collect();
-                let doc = doc.join("\n");
+            // If we have doc lines from the container, use them
+            if !doc_lines.is_empty() {
+                let doc = doc_lines.join("\n");
                 self.writer
                     .write_doc_comment_and_key(&doc, field_item.effective_name());
                 return Ok(true);
             }
+        }
+
+        // Second, check Field::doc for static doc comments from Rust source
+        if let Some(field) = field_item.field
+            && !field.doc.is_empty()
+        {
+            // Field::doc lines have a leading space from `/// comment` format - strip exactly one
+            let doc: Vec<&str> = field
+                .doc
+                .iter()
+                .map(|s| s.strip_prefix(' ').unwrap_or(s))
+                .collect();
+            let doc = doc.join("\n");
+            self.writer
+                .write_doc_comment_and_key(&doc, field_item.effective_name());
+            return Ok(true);
         }
 
         // No doc comments found
