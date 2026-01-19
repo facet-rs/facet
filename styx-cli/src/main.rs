@@ -95,6 +95,7 @@ SUBCOMMANDS:
     @package <schema> --name <n> --version <v> [--output <dir>]
                                     Generate publishable crate from schema
     @publish <schema> [-y]          Diff, bump, publish to staging (needs STYX_STAGING_TOKEN)
+    @cache [--open|--clear]         Show cache info, open in explorer, or clear
 
 EXAMPLES:
     styx config.styx                Format and print to stdout
@@ -523,6 +524,7 @@ fn run_subcommand(cmd: &str, args: &[String]) -> Result<(), CliError> {
         "skill" => run_skill(args),
         "package" => run_package(args),
         "publish" => run_publish(args),
+        "cache" => run_cache(args),
         _ => Err(CliError::Usage(format!("unknown subcommand: @{cmd}"))),
     }
 }
@@ -534,6 +536,75 @@ fn run_lsp(_args: &[String]) -> Result<(), CliError> {
             .await
             .map_err(|e| CliError::Io(io::Error::other(e)))
     })
+}
+
+fn run_cache(args: &[String]) -> Result<(), CliError> {
+    use styx_lsp::cache;
+
+    let open = args.iter().any(|a| a == "--open");
+    let clear = args.iter().any(|a| a == "--clear");
+
+    if clear {
+        match cache::clear_cache() {
+            Ok((count, size)) => {
+                println!("Cleared {} cached schemas ({} bytes)", count, size);
+            }
+            Err(e) => {
+                return Err(CliError::Io(e));
+            }
+        }
+        return Ok(());
+    }
+
+    let Some(cache_dir) = cache::cache_dir() else {
+        return Err(CliError::Usage(
+            "could not determine cache directory".into(),
+        ));
+    };
+
+    if open {
+        // Open in file explorer
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg(&cache_dir)
+                .spawn()
+                .map_err(CliError::Io)?;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(&cache_dir)
+                .spawn()
+                .map_err(CliError::Io)?;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer")
+                .arg(&cache_dir)
+                .spawn()
+                .map_err(CliError::Io)?;
+        }
+        return Ok(());
+    }
+
+    // Default: show cache info
+    println!("Cache directory: {}", cache_dir.display());
+
+    if let Some(stats) = cache::cache_stats() {
+        println!(
+            "Embedded schemas: {} ({} bytes)",
+            stats.embedded_count, stats.embedded_size
+        );
+        println!(
+            "Crate schemas: {} ({} bytes)",
+            stats.crate_count, stats.crate_size
+        );
+    } else {
+        println!("(cache directory does not exist)");
+    }
+
+    Ok(())
 }
 
 fn run_tree(args: &[String]) -> Result<(), CliError> {
@@ -625,12 +696,8 @@ fn run_extract(args: &[String]) -> Result<(), CliError> {
         .first()
         .ok_or_else(|| CliError::Usage("@extract requires a binary file".into()))?;
 
-    let schemas = styx_embed::extract_schemas_from_file(Path::new(file)).map_err(|e| {
-        CliError::Io(io::Error::new(
-            io::ErrorKind::Other,
-            format!("{file}: {e}"),
-        ))
-    })?;
+    let schemas = styx_embed::extract_schemas_from_file(Path::new(file))
+        .map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, format!("{file}: {e}"))))?;
 
     if schemas.is_empty() {
         return Err(CliError::Usage(format!(

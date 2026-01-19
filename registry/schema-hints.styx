@@ -1,0 +1,39 @@
+@schema schema.styx
+
+// Schema hints registry
+//
+// This file maps file path patterns to their schemas.
+// When a .styx file matches a pattern but has no @schema declaration,
+// the editor suggests adding one.
+//
+// PRs welcome! See docs/content/tools/schema-registry.md for details.
+hints {
+    captain {
+        title "Captain"
+        description "Git hooks manager for Rust projects"
+        homepage "https://github.com/bearcove/captain"
+        patterns (
+            "{git_root}/.config/captain/config.styx"
+        )
+        schema {id crate:captain-cli@1, cli captain}
+    }
+    dodeca {
+        title "Dodeca"
+        description "Static site generator"
+        homepage "https://github.com/bearcove/home"
+        patterns (
+            "{git_root}/.config/dodeca.styx"
+        )
+        schema {id crate:dodeca-config@1, cli ddc}
+    }
+    tracey {
+        title "Tracey"
+        description "Spec coverage tracking tool"
+        homepage "https://github.com/bearcove/tracey"
+        patterns (
+            "{git_root}/.config/tracey/config.styx"
+        )
+        schema {id crate:tracey-config@1, cli tracey}
+    }
+}
+

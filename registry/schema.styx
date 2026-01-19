@@ -1,0 +1,31 @@
+meta {
+    id crate:styx-registry@1
+    version 1
+    description "Maps file path patterns to their schemas"
+}
+schema {
+    @ @object{
+        hints @map(@string @Hint)
+    }
+    /// A schema hint entry for a tool.
+    Hint @object{
+        /// Human-readable name of the tool.
+        title @optional(@string)
+        /// Brief description of what the tool does.
+        description @optional(@string)
+        /// Homepage or documentation URL.
+        homepage @optional(@string)
+        /// File path patterns that should use this schema.
+        patterns @seq(@string)
+        /// Schema reference to suggest.
+        schema @SchemaRef
+    }
+    /// Reference to a schema for the @schema declaration.
+    SchemaRef @object{
+        /// Schema identifier (e.g., "crate:myapp-config@1").
+        id @string
+        /// CLI binary name for embedded schema extraction.
+        cli @optional(@string)
+    }
+}
+

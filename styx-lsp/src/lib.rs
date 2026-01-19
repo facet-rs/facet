@@ -6,6 +6,7 @@
 //! - Completions (keys, values, tags from schema)
 //! - Hover information (type info from schema)
 
+pub mod cache;
 mod schema_validation;
 mod semantic_tokens;
 mod server;

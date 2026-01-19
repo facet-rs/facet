@@ -8,6 +8,8 @@ use styx_schema::{Schema, SchemaFile, ValidationResult, validate};
 use styx_tree::Value;
 use tower_lsp::lsp_types::Url;
 
+use crate::cache;
+
 /// A field from a schema with its name and type info.
 #[derive(Debug, Clone)]
 pub struct SchemaField {
@@ -133,33 +135,48 @@ pub fn strip_schema_declaration(value: &Value) -> Value {
 /// embedded schemas using `styx_embed::extract_schemas_from_file`.
 fn extract_embedded_schema(cli_name: &str) -> Result<SchemaFile, String> {
     // Find the binary in PATH
-    let binary_path = which::which(cli_name)
-        .map_err(|_| format!("binary '{}' not found in PATH", cli_name))?;
+    let binary_path =
+        which::which(cli_name).map_err(|_| format!("binary '{}' not found in PATH", cli_name))?;
 
     // Extract schemas from the binary (zero-execution, memory-mapped scan)
-    let schemas = styx_embed::extract_schemas_from_file(&binary_path)
-        .map_err(|e| format!("failed to extract schema from '{}': {}", binary_path.display(), e))?;
+    let schemas = styx_embed::extract_schemas_from_file(&binary_path).map_err(|e| {
+        format!(
+            "failed to extract schema from '{}': {}",
+            binary_path.display(),
+            e
+        )
+    })?;
 
     // We expect at least one schema
     if schemas.is_empty() {
-        return Err(format!("no embedded schemas found in '{}'", binary_path.display()));
+        return Err(format!(
+            "no embedded schemas found in '{}'",
+            binary_path.display()
+        ));
     }
 
     // Parse the first schema
-    facet_styx::from_str(&schemas[0])
-        .map_err(|e| format!("failed to parse embedded schema: {}", e))
+    facet_styx::from_str(&schemas[0]).map_err(|e| format!("failed to parse embedded schema: {}", e))
 }
 
 /// Extract schema source text from a binary with embedded styx schemas.
 fn extract_embedded_schema_source(cli_name: &str) -> Result<String, String> {
-    let binary_path = which::which(cli_name)
-        .map_err(|_| format!("binary '{}' not found in PATH", cli_name))?;
+    let binary_path =
+        which::which(cli_name).map_err(|_| format!("binary '{}' not found in PATH", cli_name))?;
 
-    let schemas = styx_embed::extract_schemas_from_file(&binary_path)
-        .map_err(|e| format!("failed to extract schema from '{}': {}", binary_path.display(), e))?;
+    let schemas = styx_embed::extract_schemas_from_file(&binary_path).map_err(|e| {
+        format!(
+            "failed to extract schema from '{}': {}",
+            binary_path.display(),
+            e
+        )
+    })?;
 
     if schemas.is_empty() {
-        return Err(format!("no embedded schemas found in '{}'", binary_path.display()));
+        return Err(format!(
+            "no embedded schemas found in '{}'",
+            binary_path.display()
+        ));
     }
 
     Ok(schemas.into_iter().next().unwrap())
@@ -181,20 +198,16 @@ pub fn load_schema_source(schema_ref: &SchemaRef, document_uri: &Url) -> Result<
     }
 }
 
-/// The URI scheme for embedded schemas exposed as virtual documents.
+/// The URI scheme for embedded schemas (fallback if caching fails).
 pub const EMBEDDED_SCHEMA_SCHEME: &str = "styx-embedded";
-
-/// Get embedded schema source by CLI name.
-///
-/// Used to serve virtual documents for `styx-embedded://` URIs.
-pub fn get_embedded_schema_source(cli_name: &str) -> Result<String, String> {
-    extract_embedded_schema_source(cli_name)
-}
 
 /// Resolve a schema reference to a fully loaded ResolvedSchema.
 ///
 /// This is the single entry point for getting schema information.
 /// All LSP features should use this instead of handling SchemaRef variants directly.
+///
+/// For embedded schemas, the source is cached to disk and a `file://` URI is returned
+/// pointing to the cache location. This enables go-to-definition in any editor.
 pub fn resolve_schema(value: &Value, document_uri: &Url) -> Result<ResolvedSchema, String> {
     let schema_ref =
         find_schema_declaration(value).ok_or_else(|| "no schema declaration found".to_string())?;
@@ -202,8 +215,8 @@ pub fn resolve_schema(value: &Value, document_uri: &Url) -> Result<ResolvedSchem
     let source = load_schema_source(&schema_ref, document_uri)?;
 
     // Validate that the source is a valid schema (parse it but don't keep the result)
-    let _: SchemaFile = facet_styx::from_str(&source)
-        .map_err(|e| format!("failed to parse schema: {}", e))?;
+    let _: SchemaFile =
+        facet_styx::from_str(&source).map_err(|e| format!("failed to parse schema: {}", e))?;
 
     let uri = match &schema_ref {
         SchemaRef::External(path) => {
@@ -213,8 +226,15 @@ pub fn resolve_schema(value: &Value, document_uri: &Url) -> Result<ResolvedSchem
                 .map_err(|_| format!("could not create URI for '{}'", resolved.display()))?
         }
         SchemaRef::Embedded { cli } => {
-            Url::parse(&format!("{}://{}/schema.styx", EMBEDDED_SCHEMA_SCHEME, cli))
-                .map_err(|e| format!("could not create embedded schema URI: {}", e))?
+            // Cache the schema to disk and return a file:// URI
+            if let Some(cache_path) = cache::cache_embedded_schema(cli, &source) {
+                Url::from_file_path(&cache_path)
+                    .map_err(|_| format!("could not create URI for '{}'", cache_path.display()))?
+            } else {
+                // Fallback to virtual URI if caching fails
+                Url::parse(&format!("{}://{}/schema.styx", EMBEDDED_SCHEMA_SCHEME, cli))
+                    .map_err(|e| format!("could not create embedded schema URI: {}", e))?
+            }
         }
     };
 

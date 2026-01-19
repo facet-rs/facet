@@ -11,9 +11,8 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use crate::schema_validation::{
-    EMBEDDED_SCHEMA_SCHEME, find_object_at_offset, get_document_fields, get_embedded_schema_source,
-    get_error_span, get_schema_fields, get_schema_fields_at_path, load_document_schema,
-    resolve_schema, validate_against_schema,
+    find_object_at_offset, get_document_fields, get_error_span, get_schema_fields,
+    get_schema_fields_at_path, load_document_schema, resolve_schema, validate_against_schema,
 };
 use crate::semantic_tokens::{compute_semantic_tokens, semantic_token_legend};
 
@@ -38,9 +37,6 @@ pub struct StyxLanguageServer {
     client: Client,
     /// Open documents
     documents: Arc<RwLock<HashMap<Url, DocumentState>>>,
-    /// Cache of embedded schema sources (for virtual documents)
-    /// Key is the CLI name, value is the schema source
-    embedded_schemas: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl StyxLanguageServer {
@@ -48,38 +44,7 @@ impl StyxLanguageServer {
         Self {
             client,
             documents: Arc::new(RwLock::new(HashMap::new())),
-            embedded_schemas: Arc::new(RwLock::new(HashMap::new())),
         }
-    }
-
-    /// Get or load an embedded schema source by CLI name
-    async fn get_or_load_embedded_schema(&self, cli_name: &str) -> Option<String> {
-        // Check cache first
-        {
-            let cache = self.embedded_schemas.read().await;
-            if let Some(source) = cache.get(cli_name) {
-                return Some(source.clone());
-            }
-        }
-
-        // Load and cache
-        if let Ok(source) = get_embedded_schema_source(cli_name) {
-            let mut cache = self.embedded_schemas.write().await;
-            cache.insert(cli_name.to_string(), source.clone());
-            Some(source)
-        } else {
-            None
-        }
-    }
-
-    /// Get content for a virtual document (styx-embedded:// URI)
-    pub async fn get_virtual_document_content(&self, uri: &Url) -> Option<String> {
-        if uri.scheme() != EMBEDDED_SCHEMA_SCHEME {
-            return None;
-        }
-        // URI format: styx-embedded://cli-name/schema.styx
-        let cli_name = uri.host_str()?;
-        self.get_or_load_embedded_schema(cli_name).await
     }
 
     /// Publish diagnostics for a document
@@ -625,11 +590,7 @@ impl LanguageServer for StyxLanguageServer {
         let context = find_object_at_offset(tree, offset);
         let path = context.as_ref().map(|c| c.path.as_slice()).unwrap_or(&[]);
 
-        tracing::debug!(
-            ?offset,
-            ?path,
-            "completion: finding fields at path"
-        );
+        tracing::debug!(?offset, ?path, "completion: finding fields at path");
 
         let schema_fields = get_schema_fields_from_source_at_path(&schema.source, path);
         let existing_fields = context
@@ -1647,17 +1608,38 @@ fn get_field_info_from_schema(schema_source: &str, field_path: &[&str]) -> Optio
     let tree = styx_tree::parse(schema_source).ok()?;
     let obj = tree.as_object()?;
 
-    for entry in &obj.entries {
-        if entry.key.as_str() == Some("schema") {
-            return get_field_info_in_object(&entry.value, field_path);
-        }
-    }
+    // Find the schema block
+    let schema_value = obj
+        .entries
+        .iter()
+        .find(|e| e.key.as_str() == Some("schema"))
+        .map(|e| &e.value)?;
 
-    None
+    get_field_info_in_schema(schema_value, field_path)
 }
 
-/// Recursively get field info from an object value, following a path
-fn get_field_info_in_object(value: &Value, path: &[&str]) -> Option<FieldInfo> {
+/// Recursively get field info from a schema value, following a path.
+/// The schema_block is the full "schema { ... }" block for resolving type references.
+fn get_field_info_in_schema(schema_block: &Value, path: &[&str]) -> Option<FieldInfo> {
+    let schema_obj = schema_block.as_object()?;
+
+    // Find the root schema (@ entry)
+    let root = schema_obj
+        .entries
+        .iter()
+        .find(|e| e.key.is_unit())
+        .map(|e| &e.value)?;
+
+    get_field_info_in_type(root, path, schema_obj)
+}
+
+/// Recursively get field info from a type value, following a path.
+/// schema_defs contains all type definitions for resolving references like @Hint.
+fn get_field_info_in_type(
+    value: &Value,
+    path: &[&str],
+    schema_defs: &styx_tree::Object,
+) -> Option<FieldInfo> {
     if path.is_empty() {
         return None;
     }
@@ -1665,8 +1647,24 @@ fn get_field_info_in_object(value: &Value, path: &[&str]) -> Option<FieldInfo> {
     let field_name = path[0];
     let remaining_path = &path[1..];
 
-    // Try to get the object - handle various wrappings
-    let obj = extract_object_from_value(value)?;
+    // Check if value is a @map type - if so, any key is valid and returns the value type
+    if let Some(map_value_type) = extract_map_value_type(value) {
+        if remaining_path.is_empty() {
+            // We're hovering on a map key - return the value type
+            return Some(FieldInfo {
+                type_str: format_type_concise(map_value_type),
+                doc_comment: None, // Map keys don't have individual doc comments
+            });
+        } else {
+            // Need to go deeper into the map value type
+            // If it's a type reference like @Hint, resolve it first
+            let resolved = resolve_type_reference(map_value_type, schema_defs);
+            return get_field_info_in_type(resolved, remaining_path, schema_defs);
+        }
+    }
+
+    // Try to get the object - handle various wrappings (also resolves type refs)
+    let obj = extract_object_from_value_with_defs(value, schema_defs)?;
 
     for entry in &obj.entries {
         if entry.key.as_str() == Some(field_name) {
@@ -1678,13 +1676,13 @@ fn get_field_info_in_object(value: &Value, path: &[&str]) -> Option<FieldInfo> {
                 });
             } else {
                 // Need to go deeper - unwrap wrappers like @optional
-                return get_field_info_in_object(&entry.value, remaining_path);
+                return get_field_info_in_type(&entry.value, remaining_path, schema_defs);
             }
         }
 
         // Check unit key entries (root schema)
         if entry.key.is_unit()
-            && let Some(found) = get_field_info_in_object(&entry.value, path)
+            && let Some(found) = get_field_info_in_type(&entry.value, path, schema_defs)
         {
             return Some(found);
         }
@@ -1693,7 +1691,83 @@ fn get_field_info_in_object(value: &Value, path: &[&str]) -> Option<FieldInfo> {
     None
 }
 
+/// Resolve a type reference like @Hint to its definition in the schema.
+/// Returns the original value if it's not a type reference.
+fn resolve_type_reference<'a>(value: &'a Value, schema_defs: &'a styx_tree::Object) -> &'a Value {
+    // Check if this is a type reference (tag with no payload or unit payload)
+    if let Some(tag) = &value.tag {
+        let is_type_ref = match &value.payload {
+            None => true,
+            Some(styx_tree::Payload::Scalar(s)) if s.text.is_empty() => true,
+            _ => false,
+        };
+
+        if is_type_ref {
+            // Look for a definition with this name in schema_defs
+            for entry in &schema_defs.entries {
+                if entry.key.as_str() == Some(&tag.name) {
+                    return &entry.value;
+                }
+            }
+        }
+    }
+    value
+}
+
+/// Extract the value type from a @map type.
+/// For @map(@string @Hint), returns the @Hint value.
+/// For @map(@V), returns @V (single-arg map uses value as both key and value).
+fn extract_map_value_type(value: &Value) -> Option<&Value> {
+    let tag = value.tag.as_ref()?;
+    if tag.name != "map" {
+        return None;
+    }
+
+    // @map has a sequence payload: @map(@K @V) or @map(@V)
+    let seq = value.as_sequence()?;
+    match seq.items.len() {
+        1 => Some(&seq.items[0]), // @map(@V) - single type used as value
+        2 => Some(&seq.items[1]), // @map(@K @V) - second is value type
+        _ => None,
+    }
+}
+
 /// Extract an object from a value, unwrapping wrappers like @optional, @default, etc.
+/// Also resolves type references using schema_defs.
+fn extract_object_from_value_with_defs<'a>(
+    value: &'a Value,
+    schema_defs: &'a styx_tree::Object,
+) -> Option<&'a styx_tree::Object> {
+    // First resolve if it's a type reference
+    let resolved = resolve_type_reference(value, schema_defs);
+
+    // Direct object
+    if let Some(obj) = resolved.as_object() {
+        return Some(obj);
+    }
+
+    // Tagged object like @object{...}
+    if resolved.tag.is_some() {
+        match &resolved.payload {
+            Some(styx_tree::Payload::Object(obj)) => return Some(obj),
+            // Handle @optional(@object{...}) or @optional(@TypeRef) - tag with sequence payload
+            Some(styx_tree::Payload::Sequence(seq)) => {
+                // Look for object inside the sequence (recursively resolving type refs)
+                for item in &seq.items {
+                    if let Some(obj) = extract_object_from_value_with_defs(item, schema_defs) {
+                        return Some(obj);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// Extract an object from a value, unwrapping wrappers like @optional, @default, etc.
+/// Simple version without type reference resolution.
 fn extract_object_from_value(value: &Value) -> Option<&styx_tree::Object> {
     // Direct object
     if let Some(obj) = value.as_object() {
@@ -1788,34 +1862,39 @@ fn format_field_hover(
 ) -> String {
     let mut content = String::new();
 
-    // Breadcrumb path
+    // Doc comment first (most important - what does this field do?)
+    if let Some(doc) = &field_info.doc_comment {
+        content.push_str(doc);
+        content.push_str("\n\n");
+    }
+
+    // Breadcrumb path (where am I?)
     let breadcrumb = format_breadcrumb(field_path);
     content.push_str(&format!("`{}`\n\n", breadcrumb));
 
-    // Type annotation
-    content.push_str(&format!("**Type:** `{}`\n", field_info.type_str));
+    // Type annotation (what type is it?)
+    content.push_str(&format!("**Type:** `{}`\n\n", field_info.type_str));
 
-    // Doc comment (rendered as markdown)
-    if let Some(doc) = &field_info.doc_comment {
-        content.push('\n');
-        content.push_str(doc);
-        content.push('\n');
-    }
-
-    content.push('\n');
-
-    // Schema source link
+    // Schema source link with line:col
+    // Show just the filename as link label, full path in the URI
+    let display_name = std::path::Path::new(schema_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(schema_path);
     if let Some(uri) = schema_uri {
-        content.push_str(&format!("Defined in [{}]({})", schema_path, uri));
+        content.push_str(&format!("Defined at [{}]({})", display_name, uri));
     } else {
-        content.push_str(&format!("Defined in {}", schema_path));
+        content.push_str(&format!("Defined at {}", display_name));
     }
 
     content
 }
 
 /// Get schema fields at a specific path (for nested object completion)
-fn get_schema_fields_from_source_at_path(schema_source: &str, path: &[String]) -> Vec<(String, String)> {
+fn get_schema_fields_from_source_at_path(
+    schema_source: &str,
+    path: &[String],
+) -> Vec<(String, String)> {
     let mut fields = Vec::new();
 
     let Ok(tree) = styx_tree::parse(schema_source) else {
@@ -1827,7 +1906,10 @@ fn get_schema_fields_from_source_at_path(schema_source: &str, path: &[String]) -
     };
 
     // Find the "schema" entry
-    let schema_entry = obj.entries.iter().find(|e| e.key.as_str() == Some("schema"));
+    let schema_entry = obj
+        .entries
+        .iter()
+        .find(|e| e.key.as_str() == Some("schema"));
     let Some(schema_entry) = schema_entry else {
         return fields;
     };
@@ -2562,6 +2644,102 @@ schema {
         );
         let info = info.unwrap();
         assert_eq!(info.type_str, "@optional(@bool)");
+
+        // Test map type - hovering on a map key
+        let map_schema = r#"meta { id test }
+schema {
+    @ @object{
+        hints @map(@string @Hint)
+    }
+    Hint @object{
+        title @string
+        patterns @seq(@string)
+    }
+}"#;
+
+        // Hovering on a map key like "captain" should return @Hint
+        let info = get_field_info_from_schema(map_schema, &["hints", "captain"]);
+        assert!(info.is_some(), "Should find map key 'hints.captain'");
+        let info = info.unwrap();
+        assert_eq!(info.type_str, "@Hint");
+
+        // Hovering on a field inside a map value like "captain.title"
+        let info = get_field_info_from_schema(map_schema, &["hints", "captain", "title"]);
+        assert!(info.is_some(), "Should find 'hints.captain.title'");
+        let info = info.unwrap();
+        assert_eq!(info.type_str, "@string");
+
+        // Test nested maps: @map(@string @map(@string @Foo))
+        let nested_map_schema = r#"meta { id test }
+schema {
+    @ @object{
+        data @map(@string @map(@string @Item))
+    }
+    Item @object{
+        value @int
+    }
+}"#;
+
+        // First level map key
+        let info = get_field_info_from_schema(nested_map_schema, &["data", "outer"]);
+        assert!(info.is_some(), "Should find 'data.outer'");
+        assert_eq!(info.unwrap().type_str, "@map(@string @Item)");
+
+        // Second level map key
+        let info = get_field_info_from_schema(nested_map_schema, &["data", "outer", "inner"]);
+        assert!(info.is_some(), "Should find 'data.outer.inner'");
+        assert_eq!(info.unwrap().type_str, "@Item");
+
+        // Field inside nested map value
+        let info =
+            get_field_info_from_schema(nested_map_schema, &["data", "outer", "inner", "value"]);
+        assert!(info.is_some(), "Should find 'data.outer.inner.value'");
+        assert_eq!(info.unwrap().type_str, "@int");
+
+        // Test type reference at top level
+        let type_ref_schema = r#"meta { id test }
+schema {
+    @ @object{
+        config @Config
+    }
+    Config @object{
+        port @int
+        host @string
+    }
+}"#;
+
+        let info = get_field_info_from_schema(type_ref_schema, &["config", "port"]);
+        assert!(info.is_some(), "Should find 'config.port'");
+        assert_eq!(info.unwrap().type_str, "@int");
+
+        // Test optional type reference: @optional(@Config)
+        let optional_ref_schema = r#"meta { id test }
+schema {
+    @ @object{
+        config @optional(@Config)
+    }
+    Config @object{
+        port @int
+    }
+}"#;
+
+        let info = get_field_info_from_schema(optional_ref_schema, &["config", "port"]);
+        assert!(
+            info.is_some(),
+            "Should find 'config.port' through @optional(@Config)"
+        );
+        assert_eq!(info.unwrap().type_str, "@int");
+
+        // Test non-existent field
+        let info = get_field_info_from_schema(schema_source, &["nonexistent"]);
+        assert!(info.is_none(), "Should not find 'nonexistent' field");
+
+        // Test non-existent nested field
+        let info = get_field_info_from_schema(schema_source, &["logging", "nonexistent"]);
+        assert!(
+            info.is_none(),
+            "Should not find 'logging.nonexistent' field"
+        );
     }
 
     #[test]
@@ -2644,10 +2822,7 @@ schema {
             "Root should have 'content', got: {:?}",
             root_names
         );
-        assert!(
-            root_names.contains(&"output"),
-            "Root should have 'output'"
-        );
+        assert!(root_names.contains(&"output"), "Root should have 'output'");
         assert!(
             root_names.contains(&"syntax_highlight"),
             "Root should have 'syntax_highlight'"
@@ -2661,8 +2836,15 @@ schema {
         // Debug: trace the schema structure
         let tree = styx_tree::parse(schema_source).unwrap();
         let obj = tree.as_object().unwrap();
-        let schema_entry = obj.entries.iter().find(|e| e.key.as_str() == Some("schema")).unwrap();
-        tracing::debug!("schema_entry.value.tag: {:?}", schema_entry.value.tag_name());
+        let schema_entry = obj
+            .entries
+            .iter()
+            .find(|e| e.key.as_str() == Some("schema"))
+            .unwrap();
+        tracing::debug!(
+            "schema_entry.value.tag: {:?}",
+            schema_entry.value.tag_name()
+        );
 
         // Look for syntax_highlight in the schema
         if let Some(inner_obj) = extract_object_from_value(&schema_entry.value) {
