@@ -45,7 +45,7 @@ or {inline style, with commas, never both}
 
 ## Minimal quoting
 
-Of course you can have spaces, and special chars:
+Of course, you can have spaces and special chars:
 
 </div>
 <div class="feature-code">

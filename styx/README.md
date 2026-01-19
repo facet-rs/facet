@@ -12,7 +12,7 @@ Imagine JSON
 }
 ```
 
-But you remove everything that's getting in the way: the double quotes, the
+But you remove everything that's getting in the way: the double quotes,
 the colon, even the comma:
 
 ```styx
@@ -112,9 +112,9 @@ like Rust enums:
 
 ```rust
 enum Alternatives {
-    NoPayload
-    TuplePayload(u32, u32)
-    StructPayload { name: String }
+    NoPayload,
+    TuplePayload(u32, u32),
+    StructPayload { name: String },
 }
 ```
 
@@ -166,7 +166,7 @@ Spaces separate seq elements or key-value pairs in object context:
 @tag()      // key(tag=tag, payload=()) value(tag=@, payload=@)
 ```
 
-Does it confusing? Maybe. Little bit.
+Is it confusing? Maybe. Little bit.
 
 ## Styx the objective
 

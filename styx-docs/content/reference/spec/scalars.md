@@ -89,7 +89,7 @@ Styx scalars are opaque text at parse time — the parser assigns no type. Inter
 > - An optional fractional part (`.` followed by one or more digits)
 > - An optional exponent (`e` or `E`, optional sign, one or more digits)
 >
-> At least one of fractional part or exponent MUST be present to distinguish from integer.
+> At least one of the fractional parts or exponent MUST be present to distinguish from integer.
 > Underscores MAY appear between digits.
 >
 > ```styx
@@ -199,7 +199,7 @@ Styx scalars are opaque text at parse time — the parser assigns no type. Inter
 
 > r[interp.null]
 > The unit value `@` MAY be interpreted as null/nil/None in languages that support it.
-> When deserializing to an optional type, unit indicates absence.
+> Unit indicates absence when deserializing to an optional type.
 >
 > ```styx
 > value @              // null / None / nil

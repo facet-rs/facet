@@ -148,7 +148,7 @@ All strings in the output use JSON escaping:
 Implementations SHOULD format output with:
 - Newlines after each top-level node
 - 2-space indentation for nesting
-- Single space between tokens on same line
+- Single space between tokens on the same line
 
 However, for comparison purposes, implementations MAY normalize whitespace before diffing.
 
