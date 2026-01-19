@@ -54,6 +54,7 @@ mod plugin;
 pub mod query;
 pub mod schema;
 pub mod service;
+pub mod solver;
 
 pub use backoffice::SquelServiceImpl;
 pub use diff::{Change, SchemaDiff, TableDiff};

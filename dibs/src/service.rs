@@ -162,9 +162,20 @@ impl Default for DibsServiceImpl {
     }
 }
 
+/// Result of computing a schema diff, including context needed for ordering.
+struct DiffWithContext {
+    /// The computed diff.
+    diff: crate::SchemaDiff,
+    /// Names of tables that exist in the current database.
+    existing_tables: std::collections::HashSet<String>,
+}
+
 impl DibsServiceImpl {
-    /// Connect to database and compute schema diff.
-    async fn compute_diff(&self, database_url: &str) -> Result<crate::SchemaDiff, DibsError> {
+    /// Connect to database and compute schema diff with context.
+    async fn compute_diff_with_context(
+        &self,
+        database_url: &str,
+    ) -> Result<DiffWithContext, DibsError> {
         // Connect to database
         let (client, connection) =
             tokio_postgres::connect(database_url, tokio_postgres::NoTls)
@@ -184,8 +195,17 @@ impl DibsServiceImpl {
             .await
             .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
 
+        // Extract existing table names from DB schema
+        let existing_tables: std::collections::HashSet<String> =
+            db_schema.tables.iter().map(|t| t.name.clone()).collect();
+
         // Compute diff
-        Ok(rust_schema.diff(&db_schema))
+        let diff = rust_schema.diff(&db_schema);
+
+        Ok(DiffWithContext {
+            diff,
+            existing_tables,
+        })
     }
 }
 
@@ -196,13 +216,14 @@ impl DibsService for DibsServiceImpl {
     }
 
     async fn diff(&self, request: DiffRequest) -> Result<DiffResult, DibsError> {
-        let diff = self.compute_diff(&request.database_url).await?;
-        Ok(diff_to_result(&diff))
+        let ctx = self.compute_diff_with_context(&request.database_url).await?;
+        Ok(diff_to_result(&ctx.diff))
     }
 
     async fn generate_migration_sql(&self, request: DiffRequest) -> Result<String, DibsError> {
-        let diff = self.compute_diff(&request.database_url).await?;
-        Ok(diff.to_sql())
+        let ctx = self.compute_diff_with_context(&request.database_url).await?;
+        // Use ordered SQL generation to satisfy FK dependencies
+        Ok(ctx.diff.to_ordered_sql(&ctx.existing_tables))
     }
 
     async fn migration_status(
