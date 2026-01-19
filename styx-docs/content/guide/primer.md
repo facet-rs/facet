@@ -50,16 +50,37 @@ greeting "Hello, world!"
 template "{{name}}"
 ```
 
-For values with many quotes or escapes, use raw scalars (`r#"..."#`) or heredocs:
+### Escape sequences
+
+Quoted scalars support escape sequences:
+
+| Escape | Result |
+|--------|--------|
+| `\\` | backslash |
+| `\"` | quote |
+| `\n` | newline (LF) |
+| `\r` | carriage return |
+| `\t` | tab |
+| `\uXXXX` | Unicode codepoint |
+| `\u{X...}` | Unicode codepoint (variable length) |
 
 ```styx
-// Raw scalar - no escape processing
-json r#"{"key": "value"}"#
+multiline "first line\nsecond line"
+emoji "\u{1F600}"
+```
 
-// Heredoc - for multiline content
-script <<SH
-echo "Hello, $USER"
-SH
+### Raw scalars
+
+For values with many quotes or escapes, use raw scalars — no escape processing:
+
+```styx
+json r#"{"key": "value"}"#
+```
+
+The number of `#` must match on both sides. Need a `"#` in your content? Use more `#`:
+
+```styx
+code r##"println!(r#"nested"#);"##
 ```
 
 ### Documents are implicit objects
@@ -80,6 +101,17 @@ age 30
 ### Separator rules
 
 Objects use either commas OR newlines as separators — never both in the same object. This prevents the ambiguity that plagues YAML.
+
+### What can be a key?
+
+Keys are scalars or unit, optionally tagged. Objects, sequences, and heredocs cannot be keys.
+
+```styx
+host localhost              // bare scalar
+"content-type" application/json  // quoted scalar
+@ default-value             // unit
+@env"PATH" /usr/bin         // tagged scalar
+```
 
 ### Sequences
 
