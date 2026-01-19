@@ -746,7 +746,7 @@ $ node index.ts
 <div class="tooling-demo">
 <h3>Web Playground</h3>
 <p>Try Styx in your browser with full syntax highlighting and validation.</p>
-<a href="/codemirror">CodeMirror</a> | <a href="/monaco">Monaco</a>
+<a href="/tools/playgrounds/codemirror">CodeMirror</a> | <a href="/tools/playgrounds/monaco">Monaco</a>
 </div>
 
 </div>
@@ -755,11 +755,11 @@ $ node index.ts
 <div class="cta-section">
 <p class="cta-header">What are you waiting for?</p>
 <div class="cta-buttons">
-<a href="/learn/primer" class="cta-button cta-primary">
+<a href="/guide/primer" class="cta-button cta-primary">
 <span class="cta-title">Learn Styx</span>
 <span class="cta-desc">The language in 5 minutes</span>
 </a>
-<a href="/guides/integrate" class="cta-button cta-primary">
+<a href="/guide/integrate-rust" class="cta-button cta-primary">
 <span class="cta-title">Use Styx</span>
 <span class="cta-desc">In your app or CLI</span>
 </a>

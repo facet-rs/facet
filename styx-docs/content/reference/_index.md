@@ -18,6 +18,3 @@ The normative Styx specification and language bindings.
 ## Bindings
 
 - [Rust](bindings/rust) — Reference implementation with Facet integration
-- [Python](bindings/python) — Native Python 3.12+ implementation
-- [Go](bindings/go) — Native Go implementation
-- [JavaScript / TypeScript](bindings/javascript) — Native TypeScript implementation
