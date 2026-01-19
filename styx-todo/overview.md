@@ -9,17 +9,10 @@
 | 013 | `styx cache` CLI command | [TODO-013](TODO-013-cache-cli.md) |
 | 014 | Hover on map keys | [TODO-014](TODO-014-hover-map-keys.md) |
 
-## Parser
-
-| ID  | Task | File |
-|-----|------|------|
-| 015 | Merge trailing `>` error fix (PR #2) | [TODO-015](TODO-015-trailing-gt-fix.md) |
-
 ## Documentation
 
 | ID  | Task | File |
 |-----|------|------|
-| 004 | Add CLI documentation section | [TODO-004](TODO-004-cli-docs.md) |
 | 005 | Document Rust/TS/JS implementations | [TODO-005](TODO-005-implementations.md) |
 | 006 | Document tree-sitter grammar & arborium | [TODO-006](TODO-006-tree-sitter.md) |
 | 009 | Complete documentation site | [TODO-009](TODO-009-documentation.md) |
@@ -36,4 +29,7 @@
 ## Completed
 
 - 001: Typos and fixes (d21a942)
+- 004: CLI documentation (docs/content/tools/cli.md)
 - 007: CodeMirror integration
+- 015: Trailing `>` error fix (c9350ea)
+- 016: CLI subcommands migration (a923df1)
