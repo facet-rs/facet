@@ -5,8 +5,10 @@
 //! - Diagnostics (parse errors, validation errors)
 //! - Completions (keys, values, tags from schema)
 //! - Hover information (type info from schema)
+//! - Schema suggestions for known file patterns
 
 pub mod cache;
+pub mod schema_hints;
 mod schema_validation;
 mod semantic_tokens;
 mod server;

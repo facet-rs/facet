@@ -10,9 +10,11 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+use crate::schema_hints::find_matching_hint;
 use crate::schema_validation::{
-    find_object_at_offset, get_document_fields, get_error_span, get_schema_fields,
-    get_schema_fields_at_path, load_document_schema, resolve_schema, validate_against_schema,
+    find_object_at_offset, find_schema_declaration, get_document_fields, get_error_span,
+    get_schema_fields, get_schema_fields_at_path, load_document_schema, resolve_schema,
+    validate_against_schema,
 };
 use crate::semantic_tokens::{compute_semantic_tokens, semantic_token_legend};
 
@@ -220,6 +222,38 @@ impl StyxLanguageServer {
                     }
                 }
             }
+        }
+
+        // Phase 4: Schema hint suggestions
+        // If no schema declaration but file matches a known pattern, suggest adding one
+        if let Some(tree) = tree
+            && find_schema_declaration(tree).is_none()
+            && let Some(hint_match) = find_matching_hint(uri)
+        {
+            // Create data for the code action
+            let data = serde_json::json!({
+                "type": "add_schema",
+                "declaration": hint_match.schema_declaration(),
+                "tool": hint_match.tool_name,
+            });
+
+            diagnostics.push(Diagnostic {
+                range: Range {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 0),
+                },
+                severity: Some(DiagnosticSeverity::HINT),
+                code: Some(NumberOrString::String("missing-schema".to_string())),
+                code_description: None,
+                source: Some("styx-hints".to_string()),
+                message: format!(
+                    "This file matches the {} pattern. Add @schema declaration?",
+                    hint_match.description()
+                ),
+                related_information: None,
+                tags: None,
+                data: Some(data),
+            });
         }
 
         diagnostics
@@ -714,7 +748,74 @@ impl LanguageServer for StyxLanguageServer {
 
         // Process each diagnostic to generate code actions (quickfixes)
         for diag in params.context.diagnostics {
-            // Only process our diagnostics
+            // Handle schema hint diagnostics (add @schema declaration)
+            if diag.source.as_deref() == Some("styx-hints") {
+                if let Some(data) = &diag.data
+                    && let Some(fix_type) = data.get("type").and_then(|v| v.as_str())
+                    && fix_type == "add_schema"
+                    && let Some(declaration) = data.get("declaration").and_then(|v| v.as_str())
+                {
+                    let tool_name = data
+                        .get("tool")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("schema");
+
+                    // Action 1: Add the suggested schema declaration
+                    {
+                        let edit = TextEdit {
+                            range: Range {
+                                start: Position::new(0, 0),
+                                end: Position::new(0, 0),
+                            },
+                            new_text: format!("{}\n\n", declaration),
+                        };
+
+                        let mut changes = std::collections::HashMap::new();
+                        changes.insert(uri.clone(), vec![edit]);
+
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: format!("Add {} schema declaration", tool_name),
+                            kind: Some(CodeActionKind::QUICKFIX),
+                            diagnostics: Some(vec![diag.clone()]),
+                            edit: Some(WorkspaceEdit {
+                                changes: Some(changes),
+                                ..Default::default()
+                            }),
+                            is_preferred: Some(true),
+                            ..Default::default()
+                        }));
+                    }
+
+                    // Action 2: Stop reminding (insert @schema @ to explicitly disable)
+                    {
+                        let edit = TextEdit {
+                            range: Range {
+                                start: Position::new(0, 0),
+                                end: Position::new(0, 0),
+                            },
+                            new_text: "@schema @\n\n".to_string(),
+                        };
+
+                        let mut changes = std::collections::HashMap::new();
+                        changes.insert(uri.clone(), vec![edit]);
+
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: "Don't use a schema for this file".to_string(),
+                            kind: Some(CodeActionKind::QUICKFIX),
+                            diagnostics: Some(vec![diag.clone()]),
+                            edit: Some(WorkspaceEdit {
+                                changes: Some(changes),
+                                ..Default::default()
+                            }),
+                            is_preferred: Some(false),
+                            ..Default::default()
+                        }));
+                    }
+                }
+                continue;
+            }
+
+            // Only process styx-schema diagnostics below
             if diag.source.as_deref() != Some("styx-schema") {
                 continue;
             }

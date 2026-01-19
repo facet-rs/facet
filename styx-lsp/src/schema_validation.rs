@@ -30,6 +30,75 @@ pub enum SchemaRef {
     External(String),
     /// Embedded schema from binary: @schema {id ..., cli <binary>}
     Embedded { cli: String },
+    /// Explicit opt-out: @schema @ (no schema validation)
+    None,
+}
+
+impl SchemaRef {
+    /// Load the schema source text.
+    ///
+    /// Returns `Err` for `SchemaRef::None` since there's no source to load.
+    pub fn load_source(&self, document_uri: &Url) -> Result<String, String> {
+        match self {
+            SchemaRef::External(path) => {
+                let resolved = resolve_schema_path(path, document_uri)
+                    .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
+                std::fs::read_to_string(&resolved).map_err(|e| {
+                    format!("failed to read schema file '{}': {}", resolved.display(), e)
+                })
+            }
+            SchemaRef::Embedded { cli } => extract_embedded_schema_source(cli),
+            SchemaRef::None => Err("schema validation explicitly disabled".to_string()),
+        }
+    }
+
+    /// Load and parse the schema file.
+    ///
+    /// Returns `Err` for `SchemaRef::None` since there's no schema to load.
+    pub fn load_schema(&self, document_uri: &Url) -> Result<SchemaFile, String> {
+        match self {
+            SchemaRef::External(path) => {
+                let resolved = resolve_schema_path(path, document_uri)
+                    .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
+                load_schema_file(&resolved)
+            }
+            SchemaRef::Embedded { cli } => extract_embedded_schema(cli),
+            SchemaRef::None => Err("schema validation explicitly disabled".to_string()),
+        }
+    }
+
+    /// Get the URI for this schema reference.
+    ///
+    /// For embedded schemas, caches the source to disk first.
+    /// Returns `Err` for `SchemaRef::None`.
+    pub fn to_uri(&self, document_uri: &Url, source: &str) -> Result<Url, String> {
+        match self {
+            SchemaRef::External(path) => {
+                let resolved = resolve_schema_path(path, document_uri)
+                    .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
+                Url::from_file_path(&resolved)
+                    .map_err(|_| format!("could not create URI for '{}'", resolved.display()))
+            }
+            SchemaRef::Embedded { cli } => {
+                // Cache the schema to disk and return a file:// URI
+                if let Some(cache_path) = cache::cache_embedded_schema(cli, source) {
+                    Url::from_file_path(&cache_path)
+                        .map_err(|_| format!("could not create URI for '{}'", cache_path.display()))
+                } else {
+                    // Fallback to virtual URI if caching fails
+                    Url::parse(&format!("{}://{}/schema.styx", EMBEDDED_SCHEMA_SCHEME, cli))
+                        .map_err(|e| format!("could not create embedded schema URI: {}", e))
+                }
+            }
+            SchemaRef::None => Err("schema validation explicitly disabled".to_string()),
+        }
+    }
+
+    /// Returns true if this is an explicit opt-out (`@schema @`).
+    #[cfg(test)]
+    pub fn is_none(&self) -> bool {
+        matches!(self, SchemaRef::None)
+    }
 }
 
 /// A fully resolved schema with source text and location.
@@ -49,6 +118,7 @@ pub struct ResolvedSchema {
 /// Find the schema declaration in a document.
 ///
 /// Looks for:
+/// - `@schema @` - explicit opt-out (no schema)
 /// - `@schema "path/to/schema.styx"` - external schema file
 /// - `@schema {id ..., cli <binary>}` - embedded schema from binary
 pub fn find_schema_declaration(value: &Value) -> Option<SchemaRef> {
@@ -56,6 +126,11 @@ pub fn find_schema_declaration(value: &Value) -> Option<SchemaRef> {
 
     for entry in &obj.entries {
         if entry.key.is_schema_tag() {
+            // @schema @ (explicit opt-out)
+            if entry.value.is_unit() {
+                return Some(SchemaRef::None);
+            }
+
             // @schema path/to/schema.styx
             if let Some(path) = entry.value.as_str() {
                 return Some(SchemaRef::External(path.to_string()));
@@ -77,7 +152,7 @@ pub fn find_schema_declaration(value: &Value) -> Option<SchemaRef> {
 }
 
 /// Resolve a schema path relative to the document URI.
-pub fn resolve_schema_path(schema_path: &str, document_uri: &Url) -> Option<PathBuf> {
+fn resolve_schema_path(schema_path: &str, document_uri: &Url) -> Option<PathBuf> {
     // If it's a URL, not supported yet
     if schema_path.starts_with("http://") || schema_path.starts_with("https://") {
         return None;
@@ -97,7 +172,7 @@ pub fn resolve_schema_path(schema_path: &str, document_uri: &Url) -> Option<Path
 }
 
 /// Load a schema file from disk.
-pub fn load_schema_file(path: &Path) -> Result<SchemaFile, String> {
+fn load_schema_file(path: &Path) -> Result<SchemaFile, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read schema file '{}': {}", path.display(), e))?;
 
@@ -129,33 +204,9 @@ pub fn strip_schema_declaration(value: &Value) -> Value {
 }
 
 /// Extract schema from a binary with embedded styx schemas.
-///
-/// Uses the `which` crate to find the binary in PATH, then extracts
-/// embedded schemas using `styx_embed::extract_schemas_from_file`.
 fn extract_embedded_schema(cli_name: &str) -> Result<SchemaFile, String> {
-    // Find the binary in PATH
-    let binary_path =
-        which::which(cli_name).map_err(|_| format!("binary '{}' not found in PATH", cli_name))?;
-
-    // Extract schemas from the binary (zero-execution, memory-mapped scan)
-    let schemas = styx_embed::extract_schemas_from_file(&binary_path).map_err(|e| {
-        format!(
-            "failed to extract schema from '{}': {}",
-            binary_path.display(),
-            e
-        )
-    })?;
-
-    // We expect at least one schema
-    if schemas.is_empty() {
-        return Err(format!(
-            "no embedded schemas found in '{}'",
-            binary_path.display()
-        ));
-    }
-
-    // Parse the first schema
-    facet_styx::from_str(&schemas[0]).map_err(|e| format!("failed to parse embedded schema: {}", e))
+    let source = extract_embedded_schema_source(cli_name)?;
+    facet_styx::from_str(&source).map_err(|e| format!("failed to parse embedded schema: {}", e))
 }
 
 /// Extract schema source text from a binary with embedded styx schemas.
@@ -181,68 +232,32 @@ fn extract_embedded_schema_source(cli_name: &str) -> Result<String, String> {
     Ok(schemas.into_iter().next().unwrap())
 }
 
-/// Load schema source text for a schema reference.
-///
-/// For External schemas, reads the file from disk.
-/// For Embedded schemas, extracts from the binary.
-pub fn load_schema_source(schema_ref: &SchemaRef, document_uri: &Url) -> Result<String, String> {
-    match schema_ref {
-        SchemaRef::External(path) => {
-            let resolved = resolve_schema_path(path, document_uri)
-                .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
-            std::fs::read_to_string(&resolved)
-                .map_err(|e| format!("failed to read schema file '{}': {}", resolved.display(), e))
-        }
-        SchemaRef::Embedded { cli } => extract_embedded_schema_source(cli),
-    }
-}
-
 /// The URI scheme for embedded schemas (fallback if caching fails).
 pub const EMBEDDED_SCHEMA_SCHEME: &str = "styx-embedded";
 
 /// Resolve a schema reference to a fully loaded ResolvedSchema.
 ///
-/// This is the single entry point for getting schema information.
-/// All LSP features should use this instead of handling SchemaRef variants directly.
-///
-/// For embedded schemas, the source is cached to disk and a `file://` URI is returned
-/// pointing to the cache location. This enables go-to-definition in any editor.
+/// This is the main entry point for getting schema information.
+/// Returns `Err` if no schema declaration, if schema is `@schema @`, or if loading fails.
 pub fn resolve_schema(value: &Value, document_uri: &Url) -> Result<ResolvedSchema, String> {
     let schema_ref =
         find_schema_declaration(value).ok_or_else(|| "no schema declaration found".to_string())?;
 
-    let source = load_schema_source(&schema_ref, document_uri)?;
+    let source = schema_ref.load_source(document_uri)?;
 
-    // Validate that the source is a valid schema (parse it but don't keep the result)
+    // Validate that the source is a valid schema
     let _: SchemaFile =
         facet_styx::from_str(&source).map_err(|e| format!("failed to parse schema: {}", e))?;
 
-    let uri = match &schema_ref {
-        SchemaRef::External(path) => {
-            let resolved = resolve_schema_path(path, document_uri)
-                .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
-            Url::from_file_path(&resolved)
-                .map_err(|_| format!("could not create URI for '{}'", resolved.display()))?
-        }
-        SchemaRef::Embedded { cli } => {
-            // Cache the schema to disk and return a file:// URI
-            if let Some(cache_path) = cache::cache_embedded_schema(cli, &source) {
-                Url::from_file_path(&cache_path)
-                    .map_err(|_| format!("could not create URI for '{}'", cache_path.display()))?
-            } else {
-                // Fallback to virtual URI if caching fails
-                Url::parse(&format!("{}://{}/schema.styx", EMBEDDED_SCHEMA_SCHEME, cli))
-                    .map_err(|e| format!("could not create embedded schema URI: {}", e))?
-            }
-        }
-    };
+    let uri = schema_ref.to_uri(document_uri, &source)?;
 
     Ok(ResolvedSchema { source, uri })
 }
 
 /// Load and validate a document against its declared schema.
 ///
-/// Returns validation errors, or a schema loading error message.
+/// Returns validation errors, or an error message if schema can't be loaded.
+/// Returns `Err` for `@schema @` (explicit opt-out).
 pub fn validate_against_schema(
     value: &Value,
     document_uri: &Url,
@@ -250,14 +265,7 @@ pub fn validate_against_schema(
     let schema_ref =
         find_schema_declaration(value).ok_or_else(|| "no schema declaration found".to_string())?;
 
-    let schema_file = match schema_ref {
-        SchemaRef::External(path) => {
-            let resolved = resolve_schema_path(&path, document_uri)
-                .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
-            load_schema_file(&resolved)?
-        }
-        SchemaRef::Embedded { cli } => extract_embedded_schema(&cli)?,
-    };
+    let schema_file = schema_ref.load_schema(document_uri)?;
 
     // Strip schema declaration before validation
     let value_for_validation = strip_schema_declaration(value);
@@ -266,8 +274,6 @@ pub fn validate_against_schema(
 }
 
 /// Find a value in the tree by path (e.g., "server.tls.cert").
-///
-/// Returns the value and its span if found.
 pub fn find_value_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     if path.is_empty() {
         return Some(value);
@@ -302,8 +308,6 @@ pub fn find_value_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value>
 }
 
 /// Get the span for a validation error path.
-///
-/// Returns (start_offset, end_offset) or None if not found.
 pub fn get_error_span(value: &Value, error_path: &str) -> Option<(usize, usize)> {
     let target = find_value_by_path(value, error_path)?;
     let span = target.span?;
@@ -314,7 +318,6 @@ pub fn get_error_span(value: &Value, error_path: &str) -> Option<(usize, usize)>
 pub fn get_schema_fields(schema_file: &SchemaFile) -> Vec<SchemaField> {
     let mut fields = Vec::new();
 
-    // Get the root schema (key = None)
     let Some(root_schema) = schema_file.schema.get(&None) else {
         return fields;
     };
@@ -342,11 +345,9 @@ fn collect_object_fields(schema: &Schema, fields: &mut Vec<SchemaField>) {
                 });
             }
         }
-        // Handle flatten - inline fields from another type
         Schema::Flatten(flatten) => {
             collect_object_fields(&flatten.0.0, fields);
         }
-        // Handle type references - look them up in the schema
         Schema::Type {
             name: Some(_type_name),
         } => {
@@ -368,10 +369,7 @@ fn unwrap_field_modifiers(schema: Schema) -> (bool, Option<String>, Schema) {
             let (optional, _, inner) = unwrap_field_modifiers(*def.0.1);
             (optional, Some(default_value), inner)
         }
-        Schema::Deprecated(dep) => {
-            // Still include deprecated fields but unwrap
-            unwrap_field_modifiers(*dep.0.1)
-        }
+        Schema::Deprecated(dep) => unwrap_field_modifiers(*dep.0.1),
         other => (false, None, other),
     }
 }
@@ -389,16 +387,14 @@ pub fn generate_placeholder(schema: &Schema) -> String {
         Schema::Map(_) => "{}".to_string(),
         Schema::Object(_) => "{}".to_string(),
         Schema::Optional(opt) => generate_placeholder(&opt.0.0),
-        Schema::Default(def) => def.0.0.clone(), // Use the default value
+        Schema::Default(def) => def.0.0.clone(),
         Schema::Deprecated(dep) => generate_placeholder(&dep.0.1),
         Schema::Union(u) => {
-            // Use first variant as placeholder
             u.0.first()
                 .map(generate_placeholder)
                 .unwrap_or_else(|| "@".to_string())
         }
         Schema::Enum(e) => {
-            // Use first variant name as placeholder
             e.0.keys()
                 .next()
                 .map(|k| format!("@{}", k))
@@ -406,12 +402,10 @@ pub fn generate_placeholder(schema: &Schema) -> String {
         }
         Schema::Flatten(f) => generate_placeholder(&f.0.0),
         Schema::Literal(lit) => lit.clone(),
-        Schema::Type { name } => {
-            // For custom types, use a tagged unit as placeholder
-            name.as_ref()
-                .map(|n| format!("@{}", n))
-                .unwrap_or_else(|| "@".to_string())
-        }
+        Schema::Type { name } => name
+            .as_ref()
+            .map(|n| format!("@{}", n))
+            .unwrap_or_else(|| "@".to_string()),
     }
 }
 
@@ -420,14 +414,7 @@ pub fn load_document_schema(value: &Value, document_uri: &Url) -> Result<SchemaF
     let schema_ref =
         find_schema_declaration(value).ok_or_else(|| "no schema declaration found".to_string())?;
 
-    match schema_ref {
-        SchemaRef::External(path) => {
-            let resolved = resolve_schema_path(&path, document_uri)
-                .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
-            load_schema_file(&resolved)
-        }
-        SchemaRef::Embedded { cli } => extract_embedded_schema(&cli),
-    }
+    schema_ref.load_schema(document_uri)
 }
 
 /// Get the existing field names from a document.
@@ -455,7 +442,6 @@ pub struct ObjectContext {
 }
 
 /// Find the innermost object containing the given offset.
-/// Returns the path to that object and the object itself.
 pub fn find_object_at_offset(value: &Value, offset: usize) -> Option<ObjectContext> {
     find_object_at_offset_recursive(value, offset, Vec::new())
 }
@@ -467,32 +453,27 @@ fn find_object_at_offset_recursive(
 ) -> Option<ObjectContext> {
     let obj = value.as_object()?;
 
-    // Check if offset is within this object's span
     if let Some(span) = obj.span
         && (offset < span.start as usize || offset > span.end as usize)
     {
         return None;
     }
 
-    // Check each entry to see if we're inside a nested object
     for entry in &obj.entries {
         if let Some(val_span) = entry.value.span
             && offset >= val_span.start as usize
             && offset <= val_span.end as usize
         {
-            // We're inside this value - check if it's a nested object
             if let Some(nested_obj) = entry.value.as_object() {
                 let mut nested_path = path.clone();
                 if let Some(key) = entry.key.as_str() {
                     nested_path.push(key.to_string());
                 }
-                // Recurse into the nested object
                 if let Some(deeper) =
                     find_object_at_offset_recursive(&entry.value, offset, nested_path.clone())
                 {
                     return Some(deeper);
                 }
-                // We're in this nested object but not deeper
                 return Some(ObjectContext {
                     path: nested_path,
                     object: nested_obj.clone(),
@@ -502,7 +483,6 @@ fn find_object_at_offset_recursive(
         }
     }
 
-    // We're in this object but not in any nested object
     Some(ObjectContext {
         path,
         object: obj.clone(),
@@ -511,8 +491,6 @@ fn find_object_at_offset_recursive(
 }
 
 /// Get the schema for a given path within a schema file.
-/// For example, path ["server", "tls"] would look up the schema for the tls field
-/// inside the server field.
 pub fn get_schema_at_path(schema_file: &SchemaFile, path: &[String]) -> Option<Schema> {
     let root_schema = schema_file.schema.get(&None)?;
     get_schema_at_path_recursive(root_schema, path, schema_file)
@@ -532,26 +510,15 @@ fn get_schema_at_path_recursive(
 
     match schema {
         Schema::Object(obj) => {
-            // Look up the field in this object
             let field_schema = obj.0.get(&Some(field_name.clone()))?;
             get_schema_at_path_recursive(field_schema, rest, schema_file)
         }
-        Schema::Optional(opt) => {
-            // Unwrap optional and continue
-            get_schema_at_path_recursive(&opt.0.0, path, schema_file)
-        }
-        Schema::Default(def) => {
-            // Unwrap default and continue
-            get_schema_at_path_recursive(&def.0.1, path, schema_file)
-        }
-        Schema::Deprecated(dep) => {
-            // Unwrap deprecated and continue
-            get_schema_at_path_recursive(&dep.0.1, path, schema_file)
-        }
+        Schema::Optional(opt) => get_schema_at_path_recursive(&opt.0.0, path, schema_file),
+        Schema::Default(def) => get_schema_at_path_recursive(&def.0.1, path, schema_file),
+        Schema::Deprecated(dep) => get_schema_at_path_recursive(&dep.0.1, path, schema_file),
         Schema::Type {
             name: Some(type_name),
         } => {
-            // Look up the named type in schema definitions
             let type_schema = schema_file.schema.get(&Some(type_name.clone()))?;
             get_schema_at_path_recursive(type_schema, path, schema_file)
         }
@@ -568,4 +535,62 @@ pub fn get_schema_fields_at_path(schema_file: &SchemaFile, path: &[String]) -> V
     let mut fields = Vec::new();
     collect_object_fields(&schema, &mut fields);
     fields
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_schema_declaration_none() {
+        // No @schema declaration
+        let value = styx_tree::parse("foo bar").unwrap();
+        assert!(find_schema_declaration(&value).is_none());
+    }
+
+    #[test]
+    fn test_find_schema_declaration_external() {
+        let value = styx_tree::parse(r#"@schema "path/to/schema.styx""#).unwrap();
+        let decl = find_schema_declaration(&value).expect("should find declaration");
+        assert!(matches!(decl, SchemaRef::External(path) if path == "path/to/schema.styx"));
+    }
+
+    #[test]
+    fn test_find_schema_declaration_embedded() {
+        let value = styx_tree::parse("@schema {id crate:foo@1, cli foo}").unwrap();
+        let decl = find_schema_declaration(&value).expect("should find declaration");
+        assert!(matches!(decl, SchemaRef::Embedded { cli } if cli == "foo"));
+    }
+
+    #[test]
+    fn test_find_schema_declaration_opt_out() {
+        // @schema @ means "no schema, stop asking"
+        let value = styx_tree::parse("@schema @").unwrap();
+        let decl = find_schema_declaration(&value).expect("should find declaration");
+        assert!(matches!(decl, SchemaRef::None));
+        assert!(decl.is_none());
+    }
+
+    #[test]
+    fn test_schema_ref_none_returns_error() {
+        let schema_ref = SchemaRef::None;
+        let uri = Url::parse("file:///test.styx").unwrap();
+
+        // All methods should return errors for SchemaRef::None
+        assert!(schema_ref.load_source(&uri).is_err());
+        assert!(schema_ref.load_schema(&uri).is_err());
+        assert!(schema_ref.to_uri(&uri, "").is_err());
+    }
+
+    #[test]
+    fn test_opt_out_prevents_schema_hints() {
+        // With @schema @, find_schema_declaration returns Some(SchemaRef::None)
+        // This means "a schema declaration exists" so hints should not appear
+        let value = styx_tree::parse("@schema @\nfoo bar").unwrap();
+        let decl = find_schema_declaration(&value);
+        assert!(
+            decl.is_some(),
+            "@schema @ should be detected as a declaration"
+        );
+    }
 }
