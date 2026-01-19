@@ -35,14 +35,25 @@ The differences:
 
 ### When you need quotes
 
-Bare scalars work for most values, but you need quotes when the value contains special characters like spaces, commas, or braces:
+Bare scalars can contain most characters. They cannot *start* with:
+
+- whitespace, `{`, `}`, `(`, `)`, `,`, `"`, `=`, `@`, or `>`
+
+And `>` is forbidden anywhere (it's the attribute separator).
+
+So paths and URLs work unquoted:
+
+```styx
+path /usr/local/bin
+url https://example.com/path?query=value&foo=bar
+```
+
+But you need quotes for values with spaces or forbidden characters:
 
 ```styx
 greeting "Hello, world!"
-path "/usr/local/bin"
+template "{{name}}"
 ```
-
-The rule: if it would confuse the parser, quote it.
 
 ### Multiline objects
 
