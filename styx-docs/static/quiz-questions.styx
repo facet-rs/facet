@@ -36,15 +36,18 @@ questions {
     }
     bare-scalar-path {
         question <<DOC,markdown
-            Does this need quotes?
+            Are these equivalent?
 
-            ```styx
+            ```compare
+            /// styx
             path /usr/local/bin
+            /// styx
+            path "/usr/local/bin"
             ```
             DOC
         options (
-            {text "Yes", help "Slashes are fine in bare scalars"}
-            {text "No", correct true}
+            {text "Yes", correct true}
+            {text "No", help "Slashes are fine in bare scalars"}
         )
         explanation <<DOC,markdown
             Paths work as bare scalars. Slashes don't have special meaning in Styx.
@@ -52,15 +55,18 @@ questions {
     }
     bare-scalar-url {
         question <<DOC,markdown
-            Does this need quotes?
+            Are these equivalent?
 
-            ```styx
+            ```compare
+            /// styx
             url https://example.org/path?q=1
+            /// styx
+            url "https://example.org/path?q=1"
             ```
             DOC
         options (
-            {text "Yes", help "Colons, slashes, question marks, equals signs - all fine"}
-            {text "No", correct true}
+            {text "Yes", correct true}
+            {text "No", help "Colons, slashes, question marks, equals signs - all fine"}
         )
         explanation <<DOC,markdown
             URLs work as bare scalars. The only characters that terminate a bare scalar are whitespace, `{`, `}`, `(`, `)`, `,`, `"`, and `>`.
