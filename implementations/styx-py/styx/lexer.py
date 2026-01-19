@@ -296,8 +296,6 @@ class Lexer:
 
             # Check for exact match (no indentation)
             if line == bare_delimiter:
-                if "," in delimiter:
-                    text = delimiter[len(bare_delimiter) :] + "\n" + text
                 return Token(
                     TokenType.HEREDOC, text, Span(start, self.byte_pos), had_whitespace, had_newline
                 )
@@ -308,8 +306,6 @@ class Lexer:
                 indent_len = len(line) - len(stripped)
                 # Dedent the content by stripping up to indent_len from each line
                 result = self._dedent_heredoc(text, indent_len)
-                if "," in delimiter:
-                    result = delimiter[len(bare_delimiter) :] + "\n" + result
                 return Token(
                     TokenType.HEREDOC,
                     result,

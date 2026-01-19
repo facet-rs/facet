@@ -137,9 +137,9 @@ class Parser:
         while self._check(TokenType.COMMA):
             self._advance()
 
-        # Skip stray > tokens (can happen with `value>` where > has no following value)
-        while self._check(TokenType.GT):
-            self._advance()
+        # Stray > tokens without a value are an error
+        if self._check(TokenType.GT):
+            raise ParseError("expected a value", self.current.span)
 
         if self._check(TokenType.EOF, TokenType.RBRACE):
             return None
@@ -193,9 +193,9 @@ class Parser:
         while self._check(TokenType.COMMA):
             self._advance()
 
-        # Skip stray > tokens (can happen with `value>` where > has no following value)
-        while self._check(TokenType.GT):
-            self._advance()
+        # Stray > tokens without a value are an error
+        if self._check(TokenType.GT):
+            raise ParseError("expected a value", self.current.span)
 
         if self._check(TokenType.EOF, TokenType.RBRACE):
             return None
