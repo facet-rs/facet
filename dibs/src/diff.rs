@@ -522,6 +522,12 @@ impl Schema {
         let renamed_from: HashSet<&str> = renames.iter().map(|(from, _)| from.as_str()).collect();
         let renamed_to: HashSet<&str> = renames.iter().map(|(_, to)| to.as_str()).collect();
 
+        // Build a map of old_name -> new_name for FK comparison.
+        // This is used to account for the fact that Postgres automatically updates
+        // FK references when a table is renamed.
+        let table_renames: std::collections::HashMap<String, String> =
+            renames.iter().cloned().collect();
+
         // Generate rename changes
         for (from, to) in &renames {
             table_diffs.push(TableDiff {
@@ -537,7 +543,7 @@ impl Schema {
                 db_schema.tables.iter().find(|t| &t.name == from),
                 self.tables.iter().find(|t| &t.name == to),
             ) {
-                let column_changes = diff_table(new_table, old_table);
+                let column_changes = diff_table(new_table, old_table, &table_renames);
                 if !column_changes.is_empty() {
                     // Add column changes to the same table diff
                     if let Some(td) = table_diffs.iter_mut().find(|td| &td.table == to) {
@@ -577,7 +583,7 @@ impl Schema {
                 .iter()
                 .find(|t| t.name == desired_table.name)
             {
-                let changes = diff_table(desired_table, current_table);
+                let changes = diff_table(desired_table, current_table, &table_renames);
                 if !changes.is_empty() {
                     table_diffs.push(TableDiff {
                         table: desired_table.name.clone(),
@@ -595,7 +601,15 @@ impl Schema {
 }
 
 /// Diff two tables with the same name.
-fn diff_table(desired: &Table, current: &Table) -> Vec<Change> {
+///
+/// The `table_renames` map contains old_name -> new_name mappings for tables being
+/// renamed in this migration. This is needed so FK comparisons can account for
+/// automatic reference updates.
+fn diff_table(
+    desired: &Table,
+    current: &Table,
+    table_renames: &std::collections::HashMap<String, String>,
+) -> Vec<Change> {
     let mut changes = Vec::new();
 
     // Diff columns
@@ -605,6 +619,7 @@ fn diff_table(desired: &Table, current: &Table) -> Vec<Change> {
     changes.extend(diff_foreign_keys(
         &desired.foreign_keys,
         &current.foreign_keys,
+        table_renames,
     ));
 
     // Diff indices
@@ -837,8 +852,35 @@ fn diff_columns(desired: &[Column], current: &[Column]) -> Vec<Change> {
 }
 
 /// Diff foreign keys.
-fn diff_foreign_keys(desired: &[ForeignKey], current: &[ForeignKey]) -> Vec<Change> {
+///
+/// The `table_renames` map contains old_name -> new_name mappings for tables being
+/// renamed in this migration. When comparing FKs, current FKs that reference a renamed
+/// table are treated as if they already reference the new name, since Postgres
+/// automatically updates FK references when a table is renamed.
+fn diff_foreign_keys(
+    desired: &[ForeignKey],
+    current: &[ForeignKey],
+    table_renames: &std::collections::HashMap<String, String>,
+) -> Vec<Change> {
     let mut changes = Vec::new();
+
+    // Transform current FKs to account for table renames.
+    // If a current FK references a table that's being renamed, transform it
+    // to reference the new name for comparison purposes.
+    let transformed_current: Vec<ForeignKey> = current
+        .iter()
+        .map(|fk| {
+            if let Some(new_name) = table_renames.get(&fk.references_table) {
+                ForeignKey {
+                    columns: fk.columns.clone(),
+                    references_table: new_name.clone(),
+                    references_columns: fk.references_columns.clone(),
+                }
+            } else {
+                fk.clone()
+            }
+        })
+        .collect();
 
     // Use a simple key for comparison
     let fk_key = |fk: &ForeignKey| -> String {
@@ -851,19 +893,27 @@ fn diff_foreign_keys(desired: &[ForeignKey], current: &[ForeignKey]) -> Vec<Chan
     };
 
     let desired_keys: HashSet<String> = desired.iter().map(fk_key).collect();
-    let current_keys: HashSet<String> = current.iter().map(fk_key).collect();
+    let transformed_current_keys: HashSet<String> = transformed_current.iter().map(fk_key).collect();
 
-    // FKs to add
+    // FKs to add (in desired but not in transformed current)
     for fk in desired {
-        if !current_keys.contains(&fk_key(fk)) {
+        if !transformed_current_keys.contains(&fk_key(fk)) {
             changes.push(Change::AddForeignKey(fk.clone()));
         }
     }
 
-    // FKs to drop
-    for fk in current {
+    // FKs to drop (in current but not in desired, after accounting for renames)
+    // We compare transformed current against desired to see what's truly missing
+    for fk in &transformed_current {
         if !desired_keys.contains(&fk_key(fk)) {
-            changes.push(Change::DropForeignKey(fk.clone()));
+            // Find the original FK to drop (with original references_table)
+            let original = current
+                .iter()
+                .find(|orig| {
+                    orig.columns == fk.columns && orig.references_columns == fk.references_columns
+                })
+                .unwrap_or(fk);
+            changes.push(Change::DropForeignKey(original.clone()));
         }
     }
 
@@ -1482,6 +1532,149 @@ mod tests {
 
         let diff = desired.diff(&current);
         insta::assert_snapshot!(diff.to_sql());
+    }
+
+    #[test]
+    fn test_rename_table_preserves_fk_references() {
+        // When a table is renamed, FKs that reference it should NOT generate
+        // add/drop changes - Postgres automatically updates them.
+
+        fn make_table_with_fks(name: &str, columns: Vec<Column>, fks: Vec<ForeignKey>) -> Table {
+            Table {
+                name: name.to_string(),
+                columns,
+                foreign_keys: fks,
+                indices: Vec::new(),
+                source: SourceLocation::default(),
+                doc: None,
+                icon: None,
+            }
+        }
+
+        // Current: categories with self-ref FK
+        let current = Schema {
+            tables: vec![make_table_with_fks(
+                "categories",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("parent_id", PgType::BigInt, true),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["parent_id".to_string()],
+                    references_table: "categories".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            )],
+        };
+
+        // Desired: same table renamed to category, FK references category
+        let desired = Schema {
+            tables: vec![make_table_with_fks(
+                "category",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("parent_id", PgType::BigInt, true),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["parent_id".to_string()],
+                    references_table: "category".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            )],
+        };
+
+        let diff = desired.diff(&current);
+
+        // Should only have ONE table diff with ONE change (the rename)
+        assert_eq!(diff.table_diffs.len(), 1, "Should have exactly one table diff");
+        assert_eq!(
+            diff.table_diffs[0].changes.len(),
+            1,
+            "Should have exactly one change (rename), not add/drop FK. Changes: {:?}",
+            diff.table_diffs[0].changes
+        );
+        assert!(
+            matches!(
+                &diff.table_diffs[0].changes[0],
+                Change::RenameTable { from, to } if from == "categories" && to == "category"
+            ),
+            "The one change should be a rename"
+        );
+    }
+
+    #[test]
+    fn test_rename_table_with_external_fk_references() {
+        // When a table is renamed, FKs from OTHER tables that reference it
+        // should also NOT generate add/drop changes.
+
+        fn make_table_with_fks(name: &str, columns: Vec<Column>, fks: Vec<ForeignKey>) -> Table {
+            Table {
+                name: name.to_string(),
+                columns,
+                foreign_keys: fks,
+                indices: Vec::new(),
+                source: SourceLocation::default(),
+                doc: None,
+                icon: None,
+            }
+        }
+
+        // Current: users and posts (posts has FK to users)
+        let current = Schema {
+            tables: vec![
+                make_table("users", vec![make_column("id", PgType::BigInt, false)]),
+                make_table_with_fks(
+                    "posts",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("author_id", PgType::BigInt, false),
+                    ],
+                    vec![ForeignKey {
+                        columns: vec!["author_id".to_string()],
+                        references_table: "users".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    }],
+                ),
+            ],
+        };
+
+        // Desired: users renamed to user, posts FK now references user
+        let desired = Schema {
+            tables: vec![
+                make_table("user", vec![make_column("id", PgType::BigInt, false)]),
+                make_table_with_fks(
+                    "posts",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("author_id", PgType::BigInt, false),
+                    ],
+                    vec![ForeignKey {
+                        columns: vec!["author_id".to_string()],
+                        references_table: "user".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    }],
+                ),
+            ],
+        };
+
+        let diff = desired.diff(&current);
+
+        // Should only have ONE table diff (the user rename)
+        // The posts table should NOT have any changes since its FK reference
+        // will be automatically updated by Postgres
+        assert_eq!(
+            diff.table_diffs.len(),
+            1,
+            "Should only have one table diff (rename). Got: {:?}",
+            diff.table_diffs
+        );
+        assert!(
+            matches!(
+                &diff.table_diffs[0].changes[0],
+                Change::RenameTable { from, to } if from == "users" && to == "user"
+            ),
+            "The change should be the user rename"
+        );
     }
 
     // ===== Column rename detection tests =====
