@@ -31,7 +31,7 @@ The differences:
 
 - No colons between keys and values — whitespace separates them
 - No quotes around `Alice` — bare scalars work for simple text
-- No quotes around `30` — it's just text (more on this later)
+- `30` is not a number, just an atom (more on this later)
 
 ### When you need quotes
 
