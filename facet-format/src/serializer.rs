@@ -224,6 +224,20 @@ pub trait FormatSerializer {
         self.end_struct()
     }
 
+    /// Serialize a map key in `MapEncoding::Struct` mode.
+    ///
+    /// This is called for each map key when using struct encoding. The default
+    /// implementation converts the key to a string (via `as_str()` or `Display`)
+    /// and calls `field_key()`.
+    ///
+    /// Formats can override this to handle special key types differently.
+    /// For example, Styx overrides this to serialize `Option::None` as `@`.
+    ///
+    /// Returns `Ok(true)` if handled, `Ok(false)` to use the default behavior.
+    fn serialize_map_key(&mut self, _key: Peek<'_, '_>) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
     /// Serialize a scalar with full type information.
     ///
     /// Binary formats need to encode different integer sizes differently:
@@ -633,16 +647,22 @@ where
             MapEncoding::Struct => {
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
                 for (key, val) in map.iter() {
-                    // Convert the key to a string for the field name
-                    let key_str = if let Some(s) = key.as_str() {
-                        Cow::Borrowed(s)
-                    } else {
-                        // For non-string keys, use Display format (not Debug, which adds quotes)
-                        Cow::Owned(alloc::format!("{}", key))
-                    };
-                    serializer
-                        .field_key(&key_str)
-                        .map_err(SerializeError::Backend)?;
+                    // Let format handle special key types first
+                    if !serializer
+                        .serialize_map_key(key)
+                        .map_err(SerializeError::Backend)?
+                    {
+                        // Default: convert the key to a string for the field name
+                        let key_str = if let Some(s) = key.as_str() {
+                            Cow::Borrowed(s)
+                        } else {
+                            // For non-string keys, use Display format (not Debug, which adds quotes)
+                            Cow::Owned(alloc::format!("{}", key))
+                        };
+                        serializer
+                            .field_key(&key_str)
+                            .map_err(SerializeError::Backend)?;
+                    }
                     shared_serialize(serializer, val)?;
                 }
                 serializer.end_struct().map_err(SerializeError::Backend)?;
