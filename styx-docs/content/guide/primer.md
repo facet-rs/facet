@@ -130,23 +130,27 @@ ratio 3.14
 
 These are all text. Types come later, from schemas or deserialization.
 
-In YAML, this classic gotcha:
+In YAML, these classic gotchas:
 
-```yaml
+```compare
+/// yaml
 - country: FR
 - country: NL
 - country: NO
+/// yaml
+- country: FR
+- country: NL
+- country: false
 ```
 
-...shows the first country set to boolean `false`.
-
-Similarly.
-
-```yaml
+```compare
+/// yaml
 version: 1.10
+/// yaml
+version: 1.1
 ```
 
-Sets version to number `1.1` instead of the string "1.10".
+The left is what you write, the right is what YAML parses.
 
 Styx does not assign a type at parse time — only later, at deserialization time, do
 these become what you want them to become.
