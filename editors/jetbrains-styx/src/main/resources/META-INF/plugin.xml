@@ -59,6 +59,7 @@
             Styx Language Server for configuration file support.
             ]]></description>
         </server>
-        <languageMapping language="Styx" serverId="styxLsp"/>
+        <languageMapping language="Styx" serverId="styxLsp" languageId="styx"/>
+        <fileTypeMapping fileType="Styx" serverId="styxLsp" languageId="styx"/>
     </extensions>
 </idea-plugin>
