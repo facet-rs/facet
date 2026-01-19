@@ -1,6 +1,6 @@
 ---
 source: facet-python/src/lib.rs
-assertion_line: 953
+assertion_line: 952
 expression: py
 ---
 From = TypedDict(
@@ -8,7 +8,7 @@ From = TypedDict(
     {"from": Required[str]},
     total=False,
 )
-ImportSource = Union["From", "Url"]
+type ImportSource = "From" | "Url"
 
 class Url(TypedDict, total=False):
     url: Required[str]

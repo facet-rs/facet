@@ -1,5 +1,6 @@
 ---
 source: facet-python/src/lib.rs
+assertion_line: 1047
 expression: py
 ---
 class Data(TypedDict, total=False):
@@ -9,4 +10,4 @@ class DataData(TypedDict, total=False):
     name: Required[str]
     value: Required[float]
 
-Message = Union["Data"]
+type Message = "Data"

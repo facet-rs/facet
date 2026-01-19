@@ -347,7 +347,6 @@ impl PythonGenerator {
         enum_type: &facet_core::EnumType,
     ) {
         self.imports.insert("Literal");
-        self.imports.insert("Union");
 
         let variants: Vec<String> = enum_type
             .variants
@@ -357,9 +356,9 @@ impl PythonGenerator {
 
         writeln!(
             output,
-            "{} = Union[{}]",
+            "type {} = {}",
             shape.type_identifier,
-            variants.join(", ")
+            variants.join(" | ")
         )
         .unwrap();
     }
@@ -378,12 +377,11 @@ impl PythonGenerator {
             variant_class_names.push(variant_type_name);
         }
 
-        self.imports.insert("Union");
         writeln!(
             output,
-            "{} = Union[{}]",
+            "type {} = {}",
             shape.type_identifier,
-            variant_class_names.join(", ")
+            variant_class_names.join(" | ")
         )
         .unwrap();
     }

@@ -1,5 +1,6 @@
 ---
 source: facet-python/src/lib.rs
+assertion_line: 739
 expression: py
 ---
-GitStatus = Union[Literal["dirty"], Literal["staged"], Literal["clean"]]
+type GitStatus = Literal["dirty"] | Literal["staged"] | Literal["clean"]

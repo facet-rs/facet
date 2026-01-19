@@ -1,7 +1,8 @@
 ---
 source: facet-python/src/lib.rs
+assertion_line: 865
 expression: py
 ---
-from typing import Literal, Union
+from typing import Literal
 
-Status = Union[Literal["Active"], Literal["Inactive"]]
+type Status = Literal["Active"] | Literal["Inactive"]

@@ -1,5 +1,6 @@
 ---
 source: facet-python/src/lib.rs
+assertion_line: 679
 expression: py
 ---
-Status = Union[Literal["Active"], Literal["Inactive"], Literal["Pending"]]
+type Status = Literal["Active"] | Literal["Inactive"] | Literal["Pending"]

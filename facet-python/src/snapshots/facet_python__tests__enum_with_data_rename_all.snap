@@ -1,5 +1,6 @@
 ---
 source: facet-python/src/lib.rs
+assertion_line: 782
 expression: py
 ---
 class ImageUpload(TypedDict, total=False):
@@ -9,7 +10,7 @@ class ImageUploadData(TypedDict, total=False):
     url: Required[str]
     width: Required[int]
 
-Message = Union["TextMessage", "ImageUpload"]
+type Message = "TextMessage" | "ImageUpload"
 
 class TextMessage(TypedDict, total=False):
     text_message: Required["TextMessageData"]
