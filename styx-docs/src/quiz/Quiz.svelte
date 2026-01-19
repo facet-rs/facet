@@ -336,6 +336,14 @@
         margin-bottom: 0;
     }
 
+    .explanation :global(.code-block) {
+        margin: 0.75rem 0;
+    }
+
+    .explanation :global(.code-block:last-child) {
+        margin-bottom: 0;
+    }
+
     .explanation :global(code),
     .help :global(code) {
         padding: 0.1em 0.3em;
