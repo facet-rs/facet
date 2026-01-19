@@ -3,11 +3,73 @@
 //! This module provides utilities for generating Styx schemas from Rust types
 //! that implement `Facet`.
 
-use facet_core::{Def, NumericType, PrimitiveType, Shape, TextualType, Type, UserType};
+use facet_core::{
+    Def, DefaultSource, Field, NumericType, PrimitiveType, PtrConst, PtrMut, PtrUninit, Shape,
+    ShapeLayout, TextualType, Type, UserType,
+};
+use facet_reflect::Peek;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::marker::PhantomData;
 use std::path::Path;
+use std::ptr::NonNull;
+
+use crate::peek_to_string;
+
+/// Try to get the default value for a field as a string.
+/// Returns None if the field has no default or if serialization fails.
+fn field_default_value(field: &Field) -> Option<String> {
+    let default_source = field.default?;
+    let shape = field.shape();
+
+    // Get layout
+    let layout = match shape.layout {
+        ShapeLayout::Sized(l) => l,
+        ShapeLayout::Unsized => return None,
+    };
+
+    if layout.size() == 0 {
+        // Zero-sized type
+        return None;
+    }
+
+    // Allocate memory for the value
+    let ptr = unsafe { std::alloc::alloc(layout) };
+    if ptr.is_null() {
+        return None;
+    }
+    let ptr = unsafe { NonNull::new_unchecked(ptr) };
+
+    // Initialize with the default value
+    let ptr_uninit = PtrUninit::new(ptr.as_ptr());
+    match default_source {
+        DefaultSource::Custom(default_fn) => {
+            unsafe { default_fn(ptr_uninit) };
+        }
+        DefaultSource::FromTrait => {
+            let ptr_mut = unsafe { ptr_uninit.assume_init() };
+            if unsafe { shape.call_default_in_place(ptr_mut) }.is_none() {
+                unsafe { std::alloc::dealloc(ptr.as_ptr(), layout) };
+                return None;
+            }
+        }
+    }
+
+    // Create a Peek to serialize
+    let ptr_const = PtrConst::new(ptr.as_ptr());
+    let peek = unsafe { Peek::unchecked_new(ptr_const, shape) };
+
+    // Serialize to styx string
+    let styx_str = peek_to_string(peek).ok()?;
+
+    // Drop the value and free memory
+    unsafe {
+        shape.call_drop_in_place(PtrMut::new(ptr.as_ptr()));
+        std::alloc::dealloc(ptr.as_ptr(), layout);
+    }
+
+    Some(styx_str)
+}
 
 /// Builder for generating Styx schemas from Facet types.
 ///
@@ -425,7 +487,13 @@ impl SchemaGenerator {
                     }
 
                     let field_name = field.effective_name();
-                    let field_schema = self.shape_to_schema(field.shape(), depth + 1);
+                    let mut field_schema = self.shape_to_schema(field.shape(), depth + 1);
+
+                    // Wrap with @default if field has a default value
+                    if let Some(default_value) = field_default_value(field) {
+                        field_schema = format!("@default({default_value} {field_schema})");
+                    }
+
                     writeln!(fields, "{field_indent}{field_name} {field_schema}").unwrap();
                 }
 
