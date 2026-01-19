@@ -662,4 +662,30 @@ mod tests {
         let result = peek_to_string_expr(peek).unwrap();
         assert_eq!(result, "42");
     }
+
+    #[test]
+    fn test_doc_metadata_field() {
+        use crate::schema_types::Documented;
+
+        // A struct with documented fields
+        #[derive(Facet, Debug)]
+        struct Config {
+            name: Documented<String>,
+            port: Documented<u16>,
+        }
+
+        let config = Config {
+            name: Documented::with_doc_line("myapp".into(), "The application name"),
+            port: Documented::with_doc_line(8080, "Port to listen on"),
+        };
+
+        let serialized = to_string(&config).unwrap();
+        eprintln!("Serialized with doc metadata:\n{}", serialized);
+
+        // For now just check it serializes - we'll add doc comment output later
+        assert!(serialized.contains("name"));
+        assert!(serialized.contains("myapp"));
+        assert!(serialized.contains("port"));
+        assert!(serialized.contains("8080"));
+    }
 }

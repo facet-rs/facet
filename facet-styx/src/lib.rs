@@ -324,4 +324,53 @@ port 8080"#;
         let parsed: Config = from_str_expr(&serialized).unwrap();
         assert_eq!(original, parsed);
     }
+
+    // =========================================================================
+    // Documented<T> tests
+    // =========================================================================
+
+    #[test]
+    fn test_documented_basic() {
+        // Documented<T> should have the metadata_container flag
+        use facet::Shape;
+        let shape = <Documented<String>>::SHAPE;
+        assert!(shape.is_metadata_container());
+    }
+
+    #[test]
+    fn test_documented_helper_methods() {
+        let doc = Documented::new(42);
+        assert_eq!(*doc.value(), 42);
+        assert!(doc.doc().is_none());
+
+        let doc = Documented::with_doc(42, vec!["The answer".into()]);
+        assert_eq!(*doc.value(), 42);
+        assert_eq!(doc.doc(), Some(&["The answer".to_string()][..]));
+
+        let doc = Documented::with_doc_line(42, "The answer");
+        assert_eq!(doc.doc(), Some(&["The answer".to_string()][..]));
+    }
+
+    #[test]
+    fn test_documented_deref() {
+        let doc = Documented::new("hello".to_string());
+        // Deref should give us access to the inner value
+        assert_eq!(doc.len(), 5);
+        assert!(doc.starts_with("hel"));
+    }
+
+    #[test]
+    fn test_documented_from() {
+        let doc: Documented<i32> = 42.into();
+        assert_eq!(*doc.value(), 42);
+        assert!(doc.doc().is_none());
+    }
+
+    #[test]
+    fn test_documented_map() {
+        let doc = Documented::with_doc_line(42, "The answer");
+        let mapped = doc.map(|x| x.to_string());
+        assert_eq!(*mapped.value(), "42");
+        assert_eq!(mapped.doc(), Some(&["The answer".to_string()][..]));
+    }
 }

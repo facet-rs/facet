@@ -240,3 +240,117 @@ pub struct DefaultSchema(pub (RawStyx, Box<Schema>));
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
 pub struct DeprecatedSchema(pub (String, Box<Schema>));
+
+// =============================================================================
+// Metadata container types
+// =============================================================================
+
+/// A value with documentation metadata.
+///
+/// This is a metadata container - it serializes transparently as just the value,
+/// but formats that support metadata (like Styx) can emit the doc comments.
+///
+/// # Example
+///
+/// ```ignore
+/// let config = Config {
+///     port: Documented {
+///         value: 8080,
+///         doc: Some(vec!["The port to listen on".into()]),
+///     },
+/// };
+///
+/// // JSON (no metadata support): {"port": 8080}
+/// // Styx (with metadata support):
+/// // /// The port to listen on
+/// // port 8080
+/// ```
+#[derive(Facet, Debug, Clone)]
+#[facet(metadata_container)]
+pub struct Documented<T> {
+    /// The actual value.
+    pub value: T,
+    /// Documentation lines (each line is a separate string).
+    #[facet(metadata = "doc")]
+    pub doc: Option<Vec<String>>,
+}
+
+impl<T> Documented<T> {
+    /// Create a new documented value without any documentation.
+    pub fn new(value: T) -> Self {
+        Self { value, doc: None }
+    }
+
+    /// Create a new documented value with documentation.
+    pub fn with_doc(value: T, doc: Vec<String>) -> Self {
+        Self {
+            value,
+            doc: Some(doc),
+        }
+    }
+
+    /// Create a new documented value with a single line of documentation.
+    pub fn with_doc_line(value: T, line: impl Into<String>) -> Self {
+        Self {
+            value,
+            doc: Some(vec![line.into()]),
+        }
+    }
+
+    /// Get a reference to the inner value.
+    pub fn value(&self) -> &T {
+        &self.value
+    }
+
+    /// Get a mutable reference to the inner value.
+    pub fn value_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+
+    /// Unwrap into the inner value, discarding documentation.
+    pub fn into_inner(self) -> T {
+        self.value
+    }
+
+    /// Get the documentation lines, if any.
+    pub fn doc(&self) -> Option<&[String]> {
+        self.doc.as_deref()
+    }
+
+    /// Map the inner value to a new type.
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Documented<U> {
+        Documented {
+            value: f(self.value),
+            doc: self.doc,
+        }
+    }
+}
+
+impl<T: Default> Default for Documented<T> {
+    fn default() -> Self {
+        Self {
+            value: T::default(),
+            doc: None,
+        }
+    }
+}
+
+impl<T> std::ops::Deref for Documented<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl<T> std::ops::DerefMut for Documented<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.value
+    }
+}
+
+impl<T> From<T> for Documented<T> {
+    fn from(value: T) -> Self {
+        Self::new(value)
+    }
+}
