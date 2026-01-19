@@ -136,7 +136,7 @@ tracing-subscriber = { version = "^0.3.22", default-features = false, features =
 ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
-rust_decimal = "^1.38.0"
+rust_decimal = { version = "^1.38.0", default-features = false, features = ["std"] }
 iddqd = { version = "^0.3", default-features = false }
 libtest-mimic = "^0.8.1"
 
