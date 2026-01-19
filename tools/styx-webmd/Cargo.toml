@@ -9,6 +9,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 marq = { path = "../../../marq", default-features = false, features = ["highlight", "lang-rust", "lang-markdown", "lang-styx"] }
-wasm-bindgen = "0.2"
+wasm-bindgen = "=0.2.106"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
+
+[profile.release]
+opt-level = "s"
+lto = true

@@ -9,6 +9,7 @@
   "dependencies": {
     "@bearcove/codemirror-lang-styx": "workspace:*",
     "@bearcove/styx": "workspace:*",
+    "@bearcove/styx-webmd": "workspace:*",
     "@codemirror/autocomplete": "^6.18.0",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-sql": "^6.10.0",
@@ -24,7 +25,9 @@
     "codemirror": "^6.0.2",
     "monaco-editor": "^0.52.0",
     "monaco-vim": "^0.4.1",
-    "svelte": "^5.47.0"
+    "svelte": "^5.47.0",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.5.0"
   },
   "devDependencies": {
     "vite": "^7.3.1"

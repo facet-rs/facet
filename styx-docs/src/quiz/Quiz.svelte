@@ -1,6 +1,6 @@
 <script lang="ts">
     import { parseTyped } from "@bearcove/styx";
-    import init, { render_markdown } from "../webmd/styx_webmd.js";
+    import { render_markdown } from "@bearcove/styx-webmd";
 
     interface Question {
         code: string;
@@ -23,9 +23,6 @@
     let renderedExplanation: string = $state("");
 
     async function loadQuestion() {
-        // Init wasm module
-        await init();
-
         const [dataResponse, schemaResponse] = await Promise.all([
             fetch("/quiz-questions.styx"),
             fetch("/quiz-questions.schema.styx"),
@@ -99,6 +96,7 @@
 
 <style>
     .quiz {
+        color-scheme: light dark;
         margin: 1.5rem 0;
         padding: 1rem;
         border: 1px solid light-dark(#ddd, #333);
@@ -191,5 +189,18 @@
     .verdict {
         font-weight: 600;
         margin-right: 0.5rem;
+    }
+
+    .result :global(p) {
+        display: inline;
+        margin: 0;
+    }
+
+    .result :global(code) {
+        background: rgba(0, 0, 0, 0.2);
+        padding: 0.1em 0.3em;
+        border-radius: 3px;
+        font-family: "SF Mono", Monaco, Consolas, monospace;
+        font-size: 0.85em;
     }
 </style>

@@ -3,3 +3,4 @@ packages:
   - "editors/codemirror-styx"
   - "editors/vscode-styx"
   - "implementations/styx-js"
+  - "tools/styx-webmd"
