@@ -127,6 +127,34 @@ pub trait FormatSerializer {
         Ok(())
     }
 
+    /// Serialize a metadata container value.
+    ///
+    /// Metadata containers (structs with `#[facet(metadata_container)]`) have exactly
+    /// one non-metadata field (the actual value) and one or more metadata fields
+    /// (like doc comments or source spans).
+    ///
+    /// Formats that support metadata can override this to emit metadata in the
+    /// appropriate position. For example, Styx emits doc comments before the value:
+    ///
+    /// ```text
+    /// /// The port to listen on
+    /// port 8080
+    /// ```
+    ///
+    /// The format is responsible for:
+    /// 1. Extracting metadata fields (use `field.metadata_kind()` to identify them)
+    /// 2. Emitting metadata in the appropriate position
+    /// 3. Serializing the non-metadata field value
+    ///
+    /// Returns `Ok(true)` if handled, `Ok(false)` to fall back to default transparent
+    /// serialization (which just serializes the non-metadata field).
+    fn serialize_metadata_container(
+        &mut self,
+        _container: &facet_reflect::PeekStruct<'_, '_>,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
     /// Preferred field ordering for this format.
     /// Default is declaration order.
     fn preferred_field_order(&self) -> FieldOrdering {
@@ -349,7 +377,6 @@ pub trait FormatSerializer {
         Ok(())
     }
 
-
     /// Write a tag for an externally-tagged enum variant.
     ///
     /// Formats like Styx that use `@tag` syntax for enum variants should override
@@ -514,6 +541,27 @@ where
     }
 
     let value = value.innermost_peek();
+
+    // Check for metadata containers - serialize transparently through the inner value
+    // Metadata containers have exactly one non-metadata field that carries the actual value,
+    // while other fields (like doc comments) are metadata for formats that support it.
+    if value.shape().is_metadata_container() {
+        if let Ok(struct_) = value.into_struct() {
+            // Let the format handle metadata containers if it wants to (e.g., emit doc comments)
+            if serializer
+                .serialize_metadata_container(&struct_)
+                .map_err(SerializeError::Backend)?
+            {
+                return Ok(());
+            }
+            // Default: serialize transparently through the non-metadata field
+            for (field, field_value) in struct_.fields() {
+                if !field.is_metadata() {
+                    return shared_serialize(serializer, field_value);
+                }
+            }
+        }
+    }
 
     // Check for container-level proxy - serialize through the proxy type
     // Format-specific proxies take precedence over format-agnostic proxies
@@ -946,7 +994,9 @@ where
                         let inner = enum_
                             .field(0)
                             .map_err(|_| {
-                                SerializeError::Internal(Cow::Borrowed("variant field lookup failed"))
+                                SerializeError::Internal(Cow::Borrowed(
+                                    "variant field lookup failed",
+                                ))
                             })?
                             .ok_or(SerializeError::Internal(Cow::Borrowed(
                                 "variant reported 1 field but field(0) returned None",
