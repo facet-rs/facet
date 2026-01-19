@@ -1,0 +1,14 @@
+[package]
+name = "dibs-runtime"
+version = "0.1.0"
+edition = "2024"
+description = "Runtime types for dibs-generated query code"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+tokio-postgres = "0.7"
+facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-tokio-postgres = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["jiff02", "rust_decimal", "uuid"] }
+jiff = "0.2"
+uuid = "1"
+rust_decimal = "1"

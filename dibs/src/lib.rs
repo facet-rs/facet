@@ -80,6 +80,12 @@ pub use inventory;
 // Re-export the proc macro
 pub use dibs_macros::migration;
 
+// Re-export query DSL codegen types
+pub use dibs_query_gen::{
+    generate_rust_code, generate_rust_code_with_schema, parse_query_file, ColumnInfo,
+    GeneratedCode, QueryFile, SchemaInfo, TableInfo,
+};
+
 /// Quote a PostgreSQL identifier.
 ///
 /// Always quotes identifiers to avoid issues with reserved keywords like

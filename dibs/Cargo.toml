@@ -20,6 +20,7 @@ thiserror = "2"
 facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
 dibs-macros = { path = "../dibs-macros" }
 dibs-proto = { path = "../dibs-proto" }
+dibs-query-gen = { path = "../dibs-query-gen" }
 roam = { git = "https://github.com/bearcove/roam", branch = "main" }
 roam-stream = { git = "https://github.com/bearcove/roam", branch = "main" }
 
