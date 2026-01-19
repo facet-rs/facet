@@ -1,10 +1,9 @@
 ---
 source: facet-python/src/lib.rs
-assertion_line: 975
 expression: py
 ---
 class Move(TypedDict, total=False):
-    Move: Required[MoveData]
+    Move: Required["MoveData"]
 
 MoveData = TypedDict(
     "MoveData",

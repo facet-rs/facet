@@ -496,9 +496,10 @@ impl PythonGenerator {
         self.generated.insert(data_class_name.clone(), data_output);
 
         // Generate the wrapper class
+        // Quote the data class name for forward reference compatibility in Python
         let wrapper_fields = [TypedDictField::new(
             variant_name,
-            data_class_name,
+            format!("\"{}\"", data_class_name),
             true,
             &[],
         )];
@@ -1028,6 +1029,23 @@ mod tests {
             Point(i32, i32),
         }
         let py = to_python::<TupleVariant>(false);
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_enum_struct_variant_forward_reference() {
+        // This test verifies that struct variant data classes are quoted
+        // to handle forward references correctly in Python.
+        // Without quoting, Python would fail with "NameError: name 'DataData' is not defined"
+        // because DataData is defined after Data in alphabetical order.
+        #[derive(Facet)]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum Message {
+            // Struct variant with inline fields - generates MessageData class
+            Data { name: String, value: f64 },
+        }
+        let py = to_python::<Message>(false);
         insta::assert_snapshot!(py);
     }
 }
