@@ -63,7 +63,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::framing::CobsFramed;
-use crate::transport::MessageTransport;
+use roam_session::MessageTransport;
 
 /// Negotiated connection parameters after Hello exchange.
 #[derive(Debug, Clone)]

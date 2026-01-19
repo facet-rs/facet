@@ -22,7 +22,7 @@ use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
 use roam_wire::Message;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::transport::MessageTransport;
+use roam_session::MessageTransport;
 
 /// Enable wire-level message logging for debugging.
 /// Set ROAM_WIRE_SPY=1 to enable.

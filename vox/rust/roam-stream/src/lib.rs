@@ -60,7 +60,9 @@
 
 mod driver;
 mod framing;
-mod transport;
+
+// MessageTransport moved to roam-session
+// mod transport;
 
 // Main API
 pub use driver::{
@@ -87,7 +89,9 @@ pub use driver::{
 };
 
 pub use framing::CobsFramed;
-pub use transport::MessageTransport;
+
+// MessageTransport now lives in roam-session
+pub use roam_session::MessageTransport;
 
 // Re-export session types for convenience
 pub use roam_session::{

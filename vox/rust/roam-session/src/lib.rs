@@ -8,6 +8,11 @@
 #[macro_use]
 mod macros;
 
+pub mod runtime;
+pub mod transport;
+
+pub use transport::MessageTransport;
+
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

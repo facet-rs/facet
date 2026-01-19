@@ -19,5 +19,15 @@ facet.workspace = true
 facet-postcard.workspace = true
 roam-frame.workspace = true
 roam-wire.workspace = true
-tokio.workspace = true
 tracing = { workspace = true, optional = true }
+
+# Native runtime
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio.workspace = true
+
+# WASM runtime
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures.workspace = true
+futures-channel.workspace = true
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+gloo-timers.workspace = true

@@ -76,6 +76,11 @@ facet-cargo-toml = { version = "0.1.0", git = "https://github.com/bearcove/facet
 
 # Futures utilities
 futures-util = "0.3"
+futures-channel = "0.3"
+
+# WASM support
+wasm-bindgen-futures = "0.4"
+gloo-timers = { version = "0.3", features = ["futures"] }
 
 # Tracing
 tracing = "0.1"
