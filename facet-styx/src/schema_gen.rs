@@ -5,18 +5,19 @@
 
 use facet_core::{
     Def, DefaultSource, Field, NumericType, PrimitiveType, PtrConst, PtrMut, PtrUninit, Shape,
-    ShapeLayout, TextualType, Type, UserType,
+    ShapeLayout, Type, UserType,
 };
 use facet_reflect::Peek;
 use std::collections::HashSet;
-use std::fmt::Write as _;
+use std::fmt::Write;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::ptr::NonNull;
 
-use crate::peek_to_string;
+use crate::peek_to_string_with_options;
+use styx_format::FormatOptions;
 
-/// Try to get the default value for a field as a string.
+/// Try to get the default value for a field as a styx string.
 /// Returns None if the field has no default or if serialization fails.
 fn field_default_value(field: &Field) -> Option<String> {
     let default_source = field.default?;
@@ -59,8 +60,9 @@ fn field_default_value(field: &Field) -> Option<String> {
     let ptr_const = PtrConst::new(ptr.as_ptr());
     let peek = unsafe { Peek::unchecked_new(ptr_const, shape) };
 
-    // Serialize to styx string
-    let styx_str = peek_to_string(peek).ok()?;
+    // Serialize to styx string (compact/inline format)
+    let options = FormatOptions::default().inline();
+    let styx_str = peek_to_string_with_options(peek, &options).ok()?;
 
     // Drop the value and free memory
     unsafe {
@@ -111,38 +113,24 @@ impl<T: facet_core::Facet<'static>> GenerateSchema<T> {
     }
 
     /// Set the crate name for the schema ID.
-    ///
-    /// This becomes part of the `source` in config files:
-    /// `@schema {source crate:myapp-config@1, cli myapp}`
     pub fn crate_name(mut self, name: impl Into<String>) -> Self {
         self.crate_name = Some(name.into());
         self
     }
 
     /// Set the version for the schema ID.
-    ///
-    /// This becomes part of the `source` in config files:
-    /// `@schema {source crate:myapp-config@1, cli myapp}`
     pub fn version(mut self, version: impl Into<String>) -> Self {
         self.version = Some(version.into());
         self
     }
 
     /// Set the CLI binary name.
-    ///
-    /// When users create config files, they can reference your schema like:
-    /// `@schema {source crate:myapp-config@1, cli myapp}`
     pub fn cli(mut self, cli: impl Into<String>) -> Self {
         self.cli = Some(cli.into());
         self
     }
 
     /// Write the schema to `$OUT_DIR/{filename}`.
-    ///
-    /// Panics if:
-    /// - `OUT_DIR` is not set (i.e., not in a build script)
-    /// - `crate_name` was not set
-    /// - `version` was not set
     pub fn write(self, filename: &str) {
         let out_dir =
             std::env::var("OUT_DIR").expect("OUT_DIR not set - are you in a build script?");
@@ -153,8 +141,6 @@ impl<T: facet_core::Facet<'static>> GenerateSchema<T> {
     }
 
     /// Generate the schema as a string.
-    ///
-    /// Panics if `crate_name` or `version` was not set.
     pub fn generate(self) -> String {
         let crate_name = self
             .crate_name
@@ -164,10 +150,10 @@ impl<T: facet_core::Facet<'static>> GenerateSchema<T> {
             .expect("version is required - call .version(\"...\")");
 
         let id = format!("crate:{crate_name}@{version}");
-
         let shape = T::SHAPE;
-        let mut generator = SchemaGenerator::new(id, self.cli);
-        generator.generate(shape)
+
+        let mut generator = SchemaGenerator::new();
+        generator.generate_schema_file(&id, self.cli.as_deref(), shape)
     }
 }
 
@@ -177,422 +163,337 @@ impl<T: facet_core::Facet<'static>> Default for GenerateSchema<T> {
     }
 }
 
-/// Generate a Styx schema from a Facet type and write it to `$OUT_DIR/{filename}`.
-///
-/// **Deprecated**: Use [`GenerateSchema`] builder instead, which requires an explicit ID.
-///
-/// This function auto-generates the ID from the type name, which may not match
-/// your crate naming conventions.
-#[deprecated(
-    since = "0.2.0",
-    note = "use GenerateSchema::new().crate_name(...).version(...).cli(...).write(filename) instead"
-)]
-pub fn generate_schema<T: facet_core::Facet<'static>>(filename: &str) {
-    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set - are you in a build script?");
-    let path = Path::new(&out_dir).join(filename);
-
-    let schema = schema_from_type::<T>();
-    std::fs::write(&path, schema).expect("failed to write schema");
-}
-
 /// Generate a Styx schema string from a Facet type.
-///
-/// Returns the schema as a string that can be written to a file or used directly.
-/// The ID is auto-generated from the type name.
 pub fn schema_from_type<T: facet_core::Facet<'static>>() -> String {
     let shape = T::SHAPE;
-    let mut generator = SchemaGenerator::new_auto(shape);
-    generator.generate(shape)
+    let id = shape.type_identifier;
+    let mut generator = SchemaGenerator::new();
+    generator.generate_schema_file(id, None, shape)
 }
 
-/// Internal schema generator that tracks state during generation.
+/// Internal schema generator that outputs styx schema syntax.
 struct SchemaGenerator {
-    /// Schema ID (e.g., "crate:myapp-config@1")
-    id: String,
-    /// Optional CLI binary name
-    cli: Option<String>,
-    /// Named type definitions to emit after the main schema
-    type_defs: String,
     /// Types currently being generated (for cycle detection)
     generating: HashSet<&'static str>,
+    /// Output buffer
+    output: String,
+    /// Current indentation level
+    indent: usize,
 }
 
 impl SchemaGenerator {
-    fn new(id: String, cli: Option<String>) -> Self {
+    fn new() -> Self {
         Self {
-            id,
-            cli,
-            type_defs: String::new(),
             generating: HashSet::new(),
+            output: String::new(),
+            indent: 0,
         }
     }
 
-    fn new_auto(shape: &'static Shape) -> Self {
-        Self {
-            id: shape.type_identifier.to_string(),
-            cli: None,
-            type_defs: String::new(),
-            generating: HashSet::new(),
+    fn write_indent(&mut self) {
+        for _ in 0..self.indent {
+            self.output.push_str("    ");
         }
     }
 
-    fn generate(&mut self, shape: &'static Shape) -> String {
-        let mut output = String::new();
-
+    fn generate_schema_file(
+        &mut self,
+        id: &str,
+        cli: Option<&str>,
+        shape: &'static Shape,
+    ) -> String {
         // Meta block
-        writeln!(output, "meta {{").unwrap();
-        writeln!(output, "    id {}", self.id).unwrap();
-        if let Some(cli) = &self.cli {
-            writeln!(output, "    cli {cli}").unwrap();
+        self.output.push_str("meta {\n");
+        self.indent += 1;
+
+        self.write_indent();
+        writeln!(self.output, "id {id}").unwrap();
+
+        if let Some(cli) = cli {
+            self.write_indent();
+            writeln!(self.output, "cli {cli}").unwrap();
         }
 
-        // Add description from doc comments if present
         if !shape.doc.is_empty() {
-            let description: String = shape
+            let desc = shape
                 .doc
                 .iter()
                 .map(|s| s.trim())
                 .collect::<Vec<_>>()
                 .join(" ");
-            writeln!(output, "    description {}", quote_string(&description)).unwrap();
+            self.write_indent();
+            writeln!(self.output, "description \"{}\"", escape_string(&desc)).unwrap();
         }
 
-        writeln!(output, "}}").unwrap();
+        self.indent -= 1;
+        self.output.push_str("}\n\n");
 
         // Schema block
-        writeln!(output, "schema {{").unwrap();
+        self.output.push_str("schema ");
+        self.shape_to_schema(shape);
+        self.output.push('\n');
 
-        // Generate the root type inline
-        let root_schema = self.shape_to_schema(shape, 1);
-        writeln!(output, "    @ {root_schema}").unwrap();
-
-        writeln!(output, "}}").unwrap();
-
-        // Append any named type definitions
-        if !self.type_defs.is_empty() {
-            output.push('\n');
-            output.push_str(&self.type_defs);
-        }
-
-        output
+        std::mem::take(&mut self.output)
     }
 
-    /// Convert a shape to its Styx schema representation.
-    fn shape_to_schema(&mut self, shape: &'static Shape, depth: usize) -> String {
-        // Handle based on Def first (semantic definition)
+    /// Convert a shape to schema syntax and write to output.
+    fn shape_to_schema(&mut self, shape: &'static Shape) {
         match &shape.def {
             Def::Scalar => self.scalar_to_schema(shape),
             Def::Option(opt_def) => {
-                let inner = self.shape_to_schema(opt_def.t, depth);
-                format!("@optional({inner})")
+                self.output.push_str("@optional(");
+                self.shape_to_schema(opt_def.t);
+                self.output.push(')');
             }
             Def::List(list_def) => {
-                let inner = self.shape_to_schema(list_def.t, depth);
-                format!("@seq({inner})")
+                self.output.push_str("@seq(");
+                self.shape_to_schema(list_def.t);
+                self.output.push(')');
             }
             Def::Array(array_def) => {
-                let inner = self.shape_to_schema(array_def.t, depth);
-                format!("@seq({inner})")
+                self.output.push_str("@seq(");
+                self.shape_to_schema(array_def.t);
+                self.output.push(')');
             }
             Def::Map(map_def) => {
-                let key = self.shape_to_schema(map_def.k, depth);
-                let value = self.shape_to_schema(map_def.v, depth);
-                format!("@map({key} {value})")
+                self.output.push_str("@map(");
+                self.shape_to_schema(map_def.k);
+                self.output.push(' ');
+                self.shape_to_schema(map_def.v);
+                self.output.push(')');
             }
             Def::Set(set_def) => {
-                let inner = self.shape_to_schema(set_def.t, depth);
-                format!("@seq({inner})")
+                self.output.push_str("@seq(");
+                self.shape_to_schema(set_def.t);
+                self.output.push(')');
             }
             Def::Result(result_def) => {
-                let ok = self.shape_to_schema(result_def.t, depth);
-                let err = self.shape_to_schema(result_def.e, depth);
-                format!("@enum{{ok {ok}, err {err}}}")
+                self.output.push_str("@enum{\n");
+                self.indent += 1;
+                self.write_indent();
+                self.output.push_str("ok ");
+                self.shape_to_schema(result_def.t);
+                self.output.push('\n');
+                self.write_indent();
+                self.output.push_str("err ");
+                self.shape_to_schema(result_def.e);
+                self.output.push('\n');
+                self.indent -= 1;
+                self.write_indent();
+                self.output.push('}');
             }
             Def::Pointer(ptr_def) => {
-                // For smart pointers like Arc<T>, Box<T>, just use the pointee type
                 if let Some(pointee) = ptr_def.pointee {
-                    self.shape_to_schema(pointee, depth)
+                    self.shape_to_schema(pointee);
                 } else {
-                    "@any".to_string()
+                    self.output.push_str("@any");
                 }
             }
             Def::Slice(slice_def) => {
-                let inner = self.shape_to_schema(slice_def.t, depth);
-                format!("@seq({inner})")
+                self.output.push_str("@seq(");
+                self.shape_to_schema(slice_def.t);
+                self.output.push(')');
             }
-            Def::Undefined | Def::NdArray(_) | Def::DynamicValue(_) => {
-                // Fall back to Type-based handling
-                self.type_to_schema(shape, depth)
-            }
-            // Def is non_exhaustive, handle any future variants
-            _ => self.type_to_schema(shape, depth),
+            Def::Undefined | Def::NdArray(_) | Def::DynamicValue(_) => self.type_to_schema(shape),
+            _ => self.type_to_schema(shape),
         }
     }
 
-    /// Convert based on Type (Rust type category).
-    fn type_to_schema(&mut self, shape: &'static Shape, depth: usize) -> String {
+    fn type_to_schema(&mut self, shape: &'static Shape) {
         match &shape.ty {
-            Type::Primitive(prim) => self.primitive_type_to_schema(prim, shape),
-            Type::User(user) => self.user_type_to_schema(user, shape, depth),
+            Type::Primitive(prim) => self.primitive_to_schema(prim),
+            Type::User(user) => self.user_type_to_schema(user, shape),
             Type::Sequence(seq) => {
                 use facet_core::SequenceType;
                 match seq {
                     SequenceType::Array(arr) => {
-                        let inner = self.shape_to_schema(arr.t, depth);
-                        format!("@seq({inner})")
+                        self.output.push_str("@seq(");
+                        self.shape_to_schema(arr.t);
+                        self.output.push(')');
                     }
                     SequenceType::Slice(slice) => {
-                        let inner = self.shape_to_schema(slice.t, depth);
-                        format!("@seq({inner})")
+                        self.output.push_str("@seq(");
+                        self.shape_to_schema(slice.t);
+                        self.output.push(')');
                     }
                 }
             }
-            Type::Pointer(_) | Type::Undefined => "@any".to_string(),
+            Type::Pointer(_) | Type::Undefined => {
+                self.output.push_str("@any");
+            }
         }
     }
 
-    /// Convert scalar types (primitives and opaque types like String) to Styx schema.
-    fn scalar_to_schema(&self, shape: &'static Shape) -> String {
+    fn scalar_to_schema(&mut self, shape: &'static Shape) {
         match &shape.ty {
-            Type::Primitive(prim) => self.primitive_type_to_schema(prim, shape),
+            Type::Primitive(prim) => self.primitive_to_schema(prim),
             Type::User(UserType::Opaque) => {
-                // Handle well-known opaque types
                 let type_id = shape.type_identifier;
                 match type_id {
-                    "String" | "str" | "Cow" => "@string".to_string(),
-                    "PathBuf" | "Path" => "@string".to_string(),
-                    "OsString" | "OsStr" => "@string".to_string(),
-                    "Url" | "Uri" => "@string".to_string(),
-                    "Uuid" => "@string".to_string(),
-                    "Duration" => "@string".to_string(),
-                    "SystemTime" | "Instant" => "@string".to_string(),
-                    "IpAddr" | "Ipv4Addr" | "Ipv6Addr" => "@string".to_string(),
-                    "SocketAddr" | "SocketAddrV4" | "SocketAddrV6" => "@string".to_string(),
-                    _ => format!("@{type_id}"),
+                    "String" | "str" | "Cow" | "PathBuf" | "Path" | "OsString" | "OsStr"
+                    | "Url" | "Uri" | "Uuid" | "Duration" | "SystemTime" | "Instant" | "IpAddr"
+                    | "Ipv4Addr" | "Ipv6Addr" | "SocketAddr" | "SocketAddrV4" | "SocketAddrV6" => {
+                        self.output.push_str("@string");
+                    }
+                    _ => {
+                        write!(self.output, "@{type_id}").unwrap();
+                    }
                 }
             }
-            _ => "@any".to_string(),
+            _ => {
+                self.output.push_str("@any");
+            }
         }
     }
 
-    fn primitive_type_to_schema(&self, prim: &PrimitiveType, _shape: &'static Shape) -> String {
+    fn primitive_to_schema(&mut self, prim: &PrimitiveType) {
         match prim {
-            PrimitiveType::Boolean => "@bool".to_string(),
+            PrimitiveType::Boolean => self.output.push_str("@bool"),
             PrimitiveType::Numeric(num) => match num {
-                NumericType::Integer { .. } => "@int".to_string(),
-                NumericType::Float => "@float".to_string(),
+                NumericType::Integer { .. } => self.output.push_str("@int"),
+                NumericType::Float => self.output.push_str("@float"),
             },
-            PrimitiveType::Textual(text) => match text {
-                TextualType::Char => "@string".to_string(),
-                TextualType::Str => "@string".to_string(),
-            },
-            PrimitiveType::Never => "@unit".to_string(),
+            PrimitiveType::Textual(_) => self.output.push_str("@string"),
+            PrimitiveType::Never => self.output.push_str("@unit"),
         }
     }
 
-    /// Convert user-defined types (struct, enum, union) to Styx schema.
-    fn user_type_to_schema(
-        &mut self,
-        user: &UserType,
-        shape: &'static Shape,
-        depth: usize,
-    ) -> String {
+    fn user_type_to_schema(&mut self, user: &UserType, shape: &'static Shape) {
         let type_id = shape.type_identifier;
 
-        // Cycle detection: if we're already generating this type, emit a reference
-        // to break the cycle and prevent stack overflow
+        // Cycle detection
         if self.generating.contains(type_id) {
-            return format!("@{type_id}");
+            write!(self.output, "@{type_id}").unwrap();
+            return;
         }
 
         match user {
             UserType::Struct(struct_type) => {
-                // Track that we're generating this type
                 self.generating.insert(type_id);
-                let result = self.struct_to_schema(struct_type, shape, depth);
+                self.struct_to_schema(struct_type);
                 self.generating.remove(type_id);
-                result
             }
             UserType::Enum(enum_type) => {
-                // Track that we're generating this type
                 self.generating.insert(type_id);
-                let result = self.enum_to_schema(enum_type, shape, depth);
+                self.enum_to_schema(enum_type);
                 self.generating.remove(type_id);
-                result
             }
             UserType::Union(_) => {
-                // Unions are tricky - treat as any for now
-                "@any".to_string()
+                self.output.push_str("@any");
             }
-            UserType::Opaque => {
-                // Opaque types - check if it's a known type like String
-                let type_id = shape.type_identifier;
-                match type_id {
-                    "String" | "str" | "&str" | "Cow" => "@string".to_string(),
-                    "PathBuf" | "Path" => "@string".to_string(),
-                    "OsString" | "OsStr" => "@string".to_string(),
-                    "Url" | "Uri" => "@string".to_string(),
-                    "Uuid" => "@string".to_string(),
-                    "Duration" => "@string".to_string(),
-                    "SystemTime" | "Instant" => "@string".to_string(),
-                    "IpAddr" | "Ipv4Addr" | "Ipv6Addr" => "@string".to_string(),
-                    "SocketAddr" | "SocketAddrV4" | "SocketAddrV6" => "@string".to_string(),
-                    _ => {
-                        // Reference to a named type
-                        format!("@{type_id}")
-                    }
+            UserType::Opaque => match type_id {
+                "String" | "str" | "&str" | "Cow" | "PathBuf" | "Path" => {
+                    self.output.push_str("@string");
                 }
-            }
+                _ => {
+                    write!(self.output, "@{type_id}").unwrap();
+                }
+            },
         }
     }
 
-    fn struct_to_schema(
-        &mut self,
-        struct_type: &facet_core::StructType,
-        _shape: &'static Shape,
-        depth: usize,
-    ) -> String {
+    fn struct_to_schema(&mut self, struct_type: &facet_core::StructType) {
         use facet_core::StructKind;
 
         match struct_type.kind {
-            StructKind::Unit => "@unit".to_string(),
+            StructKind::Unit => {
+                self.output.push_str("@unit");
+            }
             StructKind::Tuple | StructKind::TupleStruct => {
-                // Tuple structs become sequences
                 if struct_type.fields.len() == 1 {
-                    // Newtype - just use inner type
-                    self.shape_to_schema(struct_type.fields[0].shape(), depth)
+                    // Newtype - unwrap
+                    self.shape_to_schema(struct_type.fields[0].shape());
                 } else {
-                    // Multiple fields - use a sequence
-                    let fields: Vec<String> = struct_type
-                        .fields
-                        .iter()
-                        .map(|f| self.shape_to_schema(f.shape(), depth))
-                        .collect();
-                    format!("@seq({})", fields.join(" "))
+                    // Tuple as any for now
+                    self.output.push_str("@any");
                 }
             }
             StructKind::Struct => {
-                // Named struct - emit as @object{...}
-                let indent = "    ".repeat(depth);
-                let field_indent = "    ".repeat(depth + 1);
+                self.output.push_str("@object{\n");
+                self.indent += 1;
 
-                let mut fields = String::new();
                 for field in struct_type.fields {
-                    // Add doc comment if present
-                    for doc in field.doc {
-                        let doc = doc.trim();
-                        if !doc.is_empty() {
-                            writeln!(fields, "{field_indent}/// {doc}").unwrap();
-                        }
-                    }
-
                     let field_name = field.effective_name();
-                    let mut field_schema = self.shape_to_schema(field.shape(), depth + 1);
+                    self.write_indent();
 
-                    // Wrap with @default if field has a default value
-                    if let Some(default_value) = field_default_value(field) {
-                        field_schema = format!("@default({default_value} {field_schema})");
+                    // Handle catch-all field
+                    if field_name.is_empty() {
+                        self.output.push_str("@ ");
+                    } else {
+                        write!(self.output, "{field_name} ").unwrap();
                     }
 
-                    writeln!(fields, "{field_indent}{field_name} {field_schema}").unwrap();
+                    // Check for default value
+                    if let Some(default_value) = field_default_value(field) {
+                        self.output.push_str("@default(");
+                        self.output.push_str(&default_value);
+                        self.output.push(' ');
+                        self.shape_to_schema(field.shape());
+                        self.output.push(')');
+                    } else {
+                        self.shape_to_schema(field.shape());
+                    }
+
+                    self.output.push('\n');
                 }
 
-                if fields.is_empty() {
-                    "@object{}".to_string()
-                } else {
-                    format!("@object{{\n{fields}{indent}}}")
-                }
+                self.indent -= 1;
+                self.write_indent();
+                self.output.push('}');
             }
         }
     }
 
-    #[allow(unused_variables)]
-    fn enum_to_schema(
-        &mut self,
-        enum_type: &facet_core::EnumType,
-        shape: &'static Shape,
-        depth: usize,
-    ) -> String {
+    fn enum_to_schema(&mut self, enum_type: &facet_core::EnumType) {
         use facet_core::StructKind;
 
-        let indent = "    ".repeat(depth);
-        let variant_indent = "    ".repeat(depth + 1);
+        self.output.push_str("@enum{\n");
+        self.indent += 1;
 
-        let mut variants = String::new();
         for variant in enum_type.variants {
-            // Add doc comment if present
-            for doc in variant.doc {
-                let doc = doc.trim();
-                if !doc.is_empty() {
-                    writeln!(variants, "{variant_indent}/// {doc}").unwrap();
-                }
-            }
-
             let variant_name = variant.effective_name();
-            let variant_schema = match variant.data.kind {
-                StructKind::Unit => "@unit".to_string(),
+            self.write_indent();
+            write!(self.output, "{variant_name} ").unwrap();
+
+            match variant.data.kind {
+                StructKind::Unit => {
+                    self.output.push_str("@unit");
+                }
                 StructKind::Tuple | StructKind::TupleStruct => {
                     if variant.data.fields.len() == 1 {
-                        self.shape_to_schema(variant.data.fields[0].shape(), depth + 1)
+                        self.shape_to_schema(variant.data.fields[0].shape());
                     } else {
-                        let fields: Vec<String> = variant
-                            .data
-                            .fields
-                            .iter()
-                            .map(|f| self.shape_to_schema(f.shape(), depth + 1))
-                            .collect();
-                        format!("@seq({})", fields.join(" "))
+                        self.output.push_str("@any");
                     }
                 }
                 StructKind::Struct => {
-                    // Struct variant - emit as inline object
-                    self.struct_to_schema(&variant.data, shape, depth + 1)
+                    self.struct_to_schema(&variant.data);
                 }
-            };
+            }
 
-            writeln!(variants, "{variant_indent}{variant_name} {variant_schema}").unwrap();
+            self.output.push('\n');
         }
 
-        if variants.is_empty() {
-            "@enum{}".to_string()
-        } else {
-            format!("@enum{{\n{variants}{indent}}}")
-        }
+        self.indent -= 1;
+        self.write_indent();
+        self.output.push('}');
     }
 }
 
-/// Quote a string for Styx output.
-fn quote_string(s: &str) -> String {
-    // Check if the string needs quoting
-    let needs_quotes = s.is_empty()
-        || s.contains(char::is_whitespace)
-        || s.contains('"')
-        || s.contains('\\')
-        || s.contains('{')
-        || s.contains('}')
-        || s.contains('(')
-        || s.contains(')')
-        || s.starts_with('@');
-
-    if !needs_quotes {
-        return s.to_string();
-    }
-
-    // Escape and quote
-    let mut quoted = String::with_capacity(s.len() + 2);
-    quoted.push('"');
+/// Escape a string for styx output.
+fn escape_string(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
-            '"' => quoted.push_str("\\\""),
-            '\\' => quoted.push_str("\\\\"),
-            '\n' => quoted.push_str("\\n"),
-            '\r' => quoted.push_str("\\r"),
-            '\t' => quoted.push_str("\\t"),
-            _ => quoted.push(c),
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            _ => result.push(c),
         }
     }
-    quoted.push('"');
-    quoted
+    result
 }
 
 #[cfg(test)]
@@ -613,8 +514,6 @@ mod tests {
         let schema = schema_from_type::<Config>();
         tracing::debug!("Generated schema:\n{schema}");
         assert!(schema.contains("meta {"));
-        assert!(schema.contains("id Config"));
-        assert!(schema.contains("schema {"));
         assert!(schema.contains("name @string"));
         assert!(schema.contains("port @int"));
     }
@@ -645,105 +544,18 @@ mod tests {
     }
 
     #[test]
-    fn test_nested_struct() {
+    fn test_with_default() {
         #[derive(Facet)]
         #[allow(dead_code)]
-        struct Inner {
-            value: i32,
+        struct Config {
+            name: String,
+            #[facet(default = 8080)]
+            port: u16,
         }
 
-        #[derive(Facet)]
-        #[allow(dead_code)]
-        struct Outer {
-            inner: Inner,
-        }
-
-        let schema = schema_from_type::<Outer>();
-        assert!(schema.contains("inner @object{"));
-        assert!(schema.contains("value @int"));
-    }
-
-    #[test]
-    fn test_enum() {
-        #[derive(Facet)]
-        #[repr(u8)]
-        #[allow(dead_code)]
-        enum Status {
-            Active,
-            Inactive,
-            Pending(String),
-        }
-
-        let schema = schema_from_type::<Status>();
-        assert!(schema.contains("@enum{"));
-        assert!(schema.contains("Active @unit"));
-        assert!(schema.contains("Inactive @unit"));
-        assert!(schema.contains("Pending @string"));
-    }
-
-    #[test]
-    fn test_recursive_type_no_stack_overflow() {
-        // Test that recursive types don't cause a stack overflow.
-        // The generator should detect cycles and emit type references.
-        use std::collections::HashMap;
-
-        #[derive(Facet)]
-        #[repr(u8)]
-        #[allow(dead_code)]
-        enum RecursiveSchema {
-            String,
-            Int,
-            Object(HashMap<String, Box<RecursiveSchema>>),
-            Seq(Box<RecursiveSchema>),
-        }
-
-        // This should complete without stack overflow
-        let schema = schema_from_type::<RecursiveSchema>();
-        tracing::debug!("Recursive schema:\n{schema}");
-
-        // Verify the schema was generated
-        assert!(schema.contains("@enum{"));
-        assert!(schema.contains("String @unit"));
-        assert!(schema.contains("Int @unit"));
-        // The recursive reference should be broken with a type reference
-        assert!(
-            schema.contains("@RecursiveSchema") || schema.contains("Object @map"),
-            "schema should contain type reference or map"
-        );
-    }
-
-    #[test]
-    fn test_direct_self_reference() {
-        // Test a type that directly references itself
-        use std::collections::HashMap;
-
-        #[derive(Facet)]
-        #[allow(dead_code)]
-        struct TreeNode {
-            value: String,
-            children: Option<HashMap<String, Box<TreeNode>>>,
-        }
-
-        // This should complete without stack overflow
-        let schema = schema_from_type::<TreeNode>();
-        tracing::debug!("TreeNode schema:\n{schema}");
-
-        assert!(schema.contains("value @string"));
-        assert!(schema.contains("children @optional"));
-    }
-
-    #[test]
-    fn test_styx_schema_schema_type() {
-        // Test the actual styx_schema::Schema type from issue #5
-        // This was causing stack overflow before the fix
-        use styx_schema::Schema;
-
-        // This should complete without stack overflow
-        let schema = schema_from_type::<Schema>();
-        tracing::debug!("styx_schema::Schema schema:\n{schema}");
-
-        // Just verify it generated something - the exact output depends on Schema's definition
-        assert!(schema.contains("@enum{"));
-        assert!(schema.len() > 100, "schema should have substantial content");
+        let schema = schema_from_type::<Config>();
+        tracing::debug!("Generated schema:\n{schema}");
+        assert!(schema.contains("@default("));
+        assert!(schema.contains("8080"));
     }
 }

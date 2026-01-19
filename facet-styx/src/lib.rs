@@ -53,8 +53,6 @@ pub use error::{StyxError, StyxErrorKind};
 pub use facet_format::DeserializeError;
 pub use facet_format::SerializeError;
 pub use parser::StyxParser;
-#[allow(deprecated)]
-pub use schema_gen::generate_schema;
 pub use schema_gen::{GenerateSchema, schema_from_type};
 pub use serializer::{
     SerializeOptions, StyxSerializeError, StyxSerializer, peek_to_string,
