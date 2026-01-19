@@ -12,6 +12,7 @@ Coming soon.
 
 ```bash
 cd editors/jetbrains-styx
+gradle wrapper
 ./gradlew buildPlugin
 ```
 
