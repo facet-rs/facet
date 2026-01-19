@@ -5,19 +5,34 @@
 //! - Schema introspection via facet reflection
 //! - Query building (planned)
 //!
+//! # Naming Convention
+//!
+//! **Table names use singular form** (e.g., `user`, `post`, `comment`).
+//!
+//! This convention treats each table as a definition of what a single record
+//! represents, rather than a container of multiple records. It reads more
+//! naturally in code: `User::find(id)` returns "a user", and foreign keys
+//! like `author_id` reference "the user table".
+//!
+//! Junction tables for many-to-many relationships use singular forms joined
+//! by underscore: `post_tag`, `post_like`, `user_follow`.
+//!
 //! # Migrations
 //!
 //! Migrations are registered using the `#[dibs::migration]` attribute.
 //! The version is automatically derived from the filename:
 //!
 //! ```ignore
-//! // In file: src/migrations/m_2026_01_17_120000_create_users.rs
+//! // In file: src/migrations/m_2026_01_17_120000_create_user.rs
 //! #[dibs::migration]
-//! async fn migrate(ctx: &mut MigrationContext) -> Result<()> {
-//!     ctx.execute("CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL)").await?;
+//! async fn migrate(ctx: &mut MigrationContext) -> MigrationResult<()> {
+//!     ctx.execute("CREATE TABLE user (id SERIAL PRIMARY KEY, name TEXT NOT NULL)").await?;
 //!     Ok(())
 //! }
 //! ```
+//!
+//! Use `MigrationResult` instead of `Result` to enable `#[track_caller]` - when an
+//! error occurs, the exact source location (file:line:column) is captured.
 //!
 //! Run migrations with `MigrationRunner`:
 //!
@@ -42,7 +57,7 @@ pub mod service;
 
 pub use backoffice::SquelServiceImpl;
 pub use diff::{Change, SchemaDiff, TableDiff};
-pub use error::{Error, SqlErrorContext};
+pub use error::{Error, MigrationError, SqlErrorContext};
 pub use meta::{create_meta_tables_sql, record_migration_sql, sync_tables_sql};
 pub use migrate::{Migration, MigrationContext, MigrationRunner, MigrationStatus};
 pub use service::{DibsServiceImpl, run_service};
@@ -95,13 +110,18 @@ pub const fn __derive_migration_version(filename: &str) -> &str {
 /// Result type for dibs operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Result type for migration functions, captures caller location on error.
+pub type MigrationResult<T> = std::result::Result<T, MigrationError>;
+
 /// Type alias for migration functions.
 ///
 /// Migration functions are async functions that take a mutable reference to a
-/// `MigrationContext` and return a `Result<()>`.
+/// `MigrationContext` and return a `MigrationResult<()>`. Using `MigrationResult`
+/// instead of `Result` enables `#[track_caller]` to capture the exact source
+/// location where an error occurs (via the `?` operator).
 pub type MigrationFn = for<'a> fn(
     &'a mut MigrationContext<'a>,
-) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+) -> Pin<Box<dyn Future<Output = MigrationResult<()>> + Send + 'a>>;
 
 // Register Migration with inventory
 inventory::collect!(Migration);

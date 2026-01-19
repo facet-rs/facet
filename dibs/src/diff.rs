@@ -2,6 +2,41 @@
 //!
 //! This module compares two [`Schema`] instances and produces a list of changes
 //! needed to transform one into the other.
+//!
+//! ## Rename Detection
+//!
+//! The diff algorithm automatically detects likely table renames instead of
+//! generating separate drop + add operations. This is particularly useful when
+//! migrating from plural to singular table names (e.g., `users` → `user`).
+//!
+//! Detection is based on a similarity score combining:
+//! - **Name similarity (30%)**: Recognizes plural/singular patterns like
+//!   `users`→`user`, `categories`→`category`, `post_tags`→`post_tag`
+//! - **Column overlap (70%)**: Uses Jaccard similarity to compare column sets
+//!
+//! Tables with similarity ≥ 0.6 are considered rename candidates. The algorithm
+//! greedily assigns the best matches (highest similarity first) to avoid
+//! ambiguous many-to-many mappings.
+//!
+//! ### Example
+//!
+//! ```text
+//! // Instead of:
+//! categories:
+//!   - table categories
+//! category:
+//!   + table category
+//!
+//! // You'll see:
+//! category:
+//!   ~ rename categories -> category
+//! ```
+//!
+//! The generated SQL uses `ALTER TABLE ... RENAME TO`:
+//!
+//! ```sql
+//! ALTER TABLE categories RENAME TO category;
+//! ```
 
 use crate::{Column, ForeignKey, Index, PgType, Schema, Table};
 use std::collections::HashSet;
@@ -55,6 +90,8 @@ pub enum Change {
     AddTable(Table),
     /// Drop an existing table.
     DropTable(String),
+    /// Rename a table.
+    RenameTable { from: String, to: String },
     /// Add a new column.
     AddColumn(Column),
     /// Drop an existing column.
@@ -99,6 +136,7 @@ impl Change {
         match self {
             Change::AddTable(t) => t.to_create_table_sql(),
             Change::DropTable(name) => format!("DROP TABLE {};", name),
+            Change::RenameTable { from, to } => format!("ALTER TABLE {} RENAME TO {};", from, to),
             Change::AddColumn(col) => {
                 let not_null = if col.nullable { "" } else { " NOT NULL" };
                 let default = col
@@ -216,6 +254,7 @@ impl std::fmt::Display for Change {
         match self {
             Change::AddTable(t) => write!(f, "+ table {}", t.name),
             Change::DropTable(name) => write!(f, "- table {}", name),
+            Change::RenameTable { from, to } => write!(f, "~ rename {} -> {}", from, to),
             Change::AddColumn(col) => {
                 let nullable = if col.nullable { " (nullable)" } else { "" };
                 write!(f, "+ {}: {}{}", col.name, col.pg_type, nullable)
@@ -271,10 +310,164 @@ impl std::fmt::Display for Change {
     }
 }
 
+/// Check if two names are likely plural/singular variants of each other.
+///
+/// Recognizes common English plural patterns:
+/// - Basic 's' suffix: `users` ↔ `user`, `posts` ↔ `post`
+/// - 'ies' → 'y': `categories` ↔ `category`, `entries` ↔ `entry`
+/// - Compound names: `post_tags` ↔ `post_tag`, `user_follows` ↔ `user_follow`
+/// - Compound with 'ies': `post_categories` ↔ `post_category`
+///
+/// Note: This is intentionally simple and covers the most common cases.
+/// Irregular plurals (e.g., `people`/`person`) are not detected.
+fn is_plural_singular_pair(a: &str, b: &str) -> bool {
+    // Ensure a is the longer one (likely plural)
+    let (plural, singular) = if a.len() > b.len() { (a, b) } else { (b, a) };
+
+    // Common plural patterns
+    // "users" -> "user" (remove trailing 's')
+    if plural == format!("{}s", singular) {
+        return true;
+    }
+
+    // "categories" -> "category" (ies -> y)
+    if plural.ends_with("ies") && singular.ends_with('y') {
+        let plural_stem = &plural[..plural.len() - 3];
+        let singular_stem = &singular[..singular.len() - 1];
+        if plural_stem == singular_stem {
+            return true;
+        }
+    }
+
+    // "post_tags" -> "post_tag", "user_follows" -> "user_follow"
+    // Check if the last segment differs by 's'
+    if let (Some(plural_last), Some(singular_last)) =
+        (plural.rsplit('_').next(), singular.rsplit('_').next())
+    {
+        if plural_last == format!("{}s", singular_last) {
+            let plural_prefix = &plural[..plural.len() - plural_last.len()];
+            let singular_prefix = &singular[..singular.len() - singular_last.len()];
+            if plural_prefix == singular_prefix {
+                return true;
+            }
+        }
+        // "post_likes" -> "post_like" already covered above
+        // "categories" case for compound: "post_categories" -> "post_category"
+        if plural_last.ends_with("ies") && singular_last.ends_with('y') {
+            let plural_stem = &plural_last[..plural_last.len() - 3];
+            let singular_stem = &singular_last[..singular_last.len() - 1];
+            if plural_stem == singular_stem {
+                let plural_prefix = &plural[..plural.len() - plural_last.len()];
+                let singular_prefix = &singular[..singular.len() - singular_last.len()];
+                if plural_prefix == singular_prefix {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Calculate similarity score between two tables (0.0 to 1.0).
+///
+/// The score combines two factors:
+///
+/// - **Name similarity (30% weight)**: Adds 0.3 if the table names are
+///   plural/singular variants of each other (see [`is_plural_singular_pair`]).
+///
+/// - **Column overlap (70% weight)**: Uses Jaccard similarity (intersection/union)
+///   on the column name sets. Identical column sets score 0.7, no overlap scores 0.
+///
+/// A score of 1.0 means identical columns + matching plural/singular names.
+/// A score of 0.6 or higher typically indicates a likely rename.
+fn table_similarity(a: &Table, b: &Table) -> f64 {
+    let mut score = 0.0;
+
+    // Name similarity (0.3 weight)
+    if is_plural_singular_pair(&a.name, &b.name) {
+        score += 0.3;
+    }
+
+    // Column overlap (0.7 weight)
+    let a_cols: HashSet<&str> = a.columns.iter().map(|c| c.name.as_str()).collect();
+    let b_cols: HashSet<&str> = b.columns.iter().map(|c| c.name.as_str()).collect();
+
+    let intersection = a_cols.intersection(&b_cols).count();
+    let union = a_cols.union(&b_cols).count();
+
+    if union > 0 {
+        let jaccard = intersection as f64 / union as f64;
+        score += 0.7 * jaccard;
+    }
+
+    score
+}
+
+/// Detect likely table renames from lists of added and dropped tables.
+///
+/// Given tables that appear only in the desired schema (added) and tables that
+/// appear only in the current schema (dropped), this function identifies pairs
+/// that are likely renames rather than independent add/drop operations.
+///
+/// ## Algorithm
+///
+/// 1. Calculate similarity scores for all (dropped, added) table pairs
+/// 2. Filter pairs with similarity ≥ `RENAME_THRESHOLD` (0.6)
+/// 3. Sort by similarity descending (best matches first)
+/// 4. Greedily assign matches, ensuring each table is used at most once
+///
+/// ## Returns
+///
+/// A list of `(old_name, new_name)` pairs representing detected renames.
+/// Tables not involved in a rename will be handled as regular add/drop operations.
+fn detect_renames(added: &[&Table], dropped: &[&Table]) -> Vec<(String, String)> {
+    const RENAME_THRESHOLD: f64 = 0.6;
+
+    let mut renames = Vec::new();
+    let mut used_added: HashSet<&str> = HashSet::new();
+    let mut used_dropped: HashSet<&str> = HashSet::new();
+
+    // Find best matches
+    let mut candidates: Vec<(f64, &str, &str)> = Vec::new();
+
+    for dropped_table in dropped {
+        for added_table in added {
+            let sim = table_similarity(dropped_table, added_table);
+            if sim >= RENAME_THRESHOLD {
+                candidates.push((sim, &dropped_table.name, &added_table.name));
+            }
+        }
+    }
+
+    // Sort by similarity descending
+    candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Greedily assign renames
+    for (_, from, to) in candidates {
+        if !used_dropped.contains(from) && !used_added.contains(to) {
+            renames.push((from.to_string(), to.to_string()));
+            used_dropped.insert(from);
+            used_added.insert(to);
+        }
+    }
+
+    renames
+}
+
 impl Schema {
     /// Compare this schema (desired/Rust) against another schema (current/database).
     ///
     /// Returns the changes needed to transform `db_schema` into `self`.
+    ///
+    /// ## Rename Detection
+    ///
+    /// This method automatically detects likely table renames based on column
+    /// similarity and plural/singular name patterns. Instead of generating
+    /// separate `DropTable` + `AddTable` changes, it produces a single
+    /// `RenameTable` change with the appropriate `ALTER TABLE ... RENAME TO` SQL.
+    ///
+    /// See the module-level documentation for details on how rename detection works.
     ///
     /// # Example
     ///
@@ -301,19 +494,63 @@ impl Schema {
         let current_tables: HashSet<&str> =
             db_schema.tables.iter().map(|t| t.name.as_str()).collect();
 
-        // Tables to add (in desired but not in current)
-        for table in &self.tables {
-            if !current_tables.contains(table.name.as_str()) {
+        // Find tables only in desired (candidates for add or rename target)
+        let added_tables: Vec<&Table> = self
+            .tables
+            .iter()
+            .filter(|t| !current_tables.contains(t.name.as_str()))
+            .collect();
+
+        // Find tables only in current (candidates for drop or rename source)
+        let dropped_tables: Vec<&Table> = db_schema
+            .tables
+            .iter()
+            .filter(|t| !desired_tables.contains(t.name.as_str()))
+            .collect();
+
+        // Detect likely renames
+        let renames = detect_renames(&added_tables, &dropped_tables);
+        let renamed_from: HashSet<&str> = renames.iter().map(|(from, _)| from.as_str()).collect();
+        let renamed_to: HashSet<&str> = renames.iter().map(|(_, to)| to.as_str()).collect();
+
+        // Generate rename changes
+        for (from, to) in &renames {
+            table_diffs.push(TableDiff {
+                table: to.clone(),
+                changes: vec![Change::RenameTable {
+                    from: from.clone(),
+                    to: to.clone(),
+                }],
+            });
+
+            // Also diff the columns between old and new
+            if let (Some(old_table), Some(new_table)) = (
+                db_schema.tables.iter().find(|t| &t.name == from),
+                self.tables.iter().find(|t| &t.name == to),
+            ) {
+                let column_changes = diff_table(new_table, old_table);
+                if !column_changes.is_empty() {
+                    // Add column changes to the same table diff
+                    if let Some(td) = table_diffs.iter_mut().find(|td| &td.table == to) {
+                        td.changes.extend(column_changes);
+                    }
+                }
+            }
+        }
+
+        // Tables to add (not involved in a rename)
+        for table in &added_tables {
+            if !renamed_to.contains(table.name.as_str()) {
                 table_diffs.push(TableDiff {
                     table: table.name.clone(),
-                    changes: vec![Change::AddTable(table.clone())],
+                    changes: vec![Change::AddTable((*table).clone())],
                 });
             }
         }
 
-        // Tables to drop (in current but not in desired)
-        for table in &db_schema.tables {
-            if !desired_tables.contains(table.name.as_str()) {
+        // Tables to drop (not involved in a rename)
+        for table in &dropped_tables {
+            if !renamed_from.contains(table.name.as_str()) {
                 table_diffs.push(TableDiff {
                     table: table.name.clone(),
                     changes: vec![Change::DropTable(table.name.clone())],
@@ -321,8 +558,11 @@ impl Schema {
             }
         }
 
-        // Tables in both - diff columns and constraints
+        // Tables in both (not renamed) - diff columns and constraints
         for desired_table in &self.tables {
+            if renamed_to.contains(desired_table.name.as_str()) {
+                continue; // Already handled above
+            }
             if let Some(current_table) = db_schema
                 .tables
                 .iter()
@@ -532,6 +772,9 @@ mod tests {
             label: false,
             enum_variants: vec![],
             doc: None,
+            icon: None,
+            lang: None,
+            subtype: None,
         }
     }
 
@@ -543,6 +786,7 @@ mod tests {
             indices: Vec::new(),
             source: SourceLocation::default(),
             doc: None,
+            icon: None,
         }
     }
 
@@ -720,6 +964,9 @@ mod tests {
             label: false,
             enum_variants: vec![],
             doc: None,
+            icon: None,
+            lang: None,
+            subtype: None,
         }
     }
 
@@ -737,6 +984,9 @@ mod tests {
             label: false,
             enum_variants: vec![],
             doc: None,
+            icon: None,
+            lang: None,
+            subtype: None,
         }
     }
 
@@ -754,6 +1004,9 @@ mod tests {
             label: false,
             enum_variants: vec![],
             doc: None,
+            icon: None,
+            lang: None,
+            subtype: None,
         }
     }
 
@@ -772,6 +1025,7 @@ mod tests {
             indices: Vec::new(),
             source: SourceLocation::default(),
             doc: None,
+            icon: None,
         };
 
         insta::assert_snapshot!(table.to_create_table_sql());
@@ -791,6 +1045,7 @@ mod tests {
             indices: Vec::new(),
             source: SourceLocation::default(),
             doc: None,
+            icon: None,
         };
 
         insta::assert_snapshot!(table.to_create_table_sql());
@@ -822,6 +1077,7 @@ mod tests {
             indices: Vec::new(),
             source: SourceLocation::default(),
             doc: None,
+            icon: None,
         };
 
         // Note: to_create_table_sql doesn't include FKs (they're added separately)
@@ -852,6 +1108,7 @@ mod tests {
             indices: Vec::new(),
             source: SourceLocation::default(),
             doc: None,
+            icon: None,
         };
 
         insta::assert_snapshot!(table.to_create_table_sql());
@@ -873,6 +1130,7 @@ mod tests {
                     indices: Vec::new(),
                     source: SourceLocation::default(),
                     doc: None,
+                    icon: None,
                 },
                 Table {
                     name: "posts".to_string(),
@@ -889,6 +1147,7 @@ mod tests {
                     indices: Vec::new(),
                     source: SourceLocation::default(),
                     doc: None,
+                    icon: None,
                 },
                 Table {
                     name: "post_likes".to_string(),
@@ -911,6 +1170,7 @@ mod tests {
                     indices: Vec::new(),
                     source: SourceLocation::default(),
                     doc: None,
+                    icon: None,
                 },
             ],
         };
@@ -918,6 +1178,144 @@ mod tests {
         let current = Schema::new();
         let diff = desired.diff(&current);
 
+        insta::assert_snapshot!(diff.to_sql());
+    }
+
+    // ===== Rename detection tests =====
+
+    #[test]
+    fn test_plural_singular_detection() {
+        // Basic 's' suffix
+        assert!(super::is_plural_singular_pair("users", "user"));
+        assert!(super::is_plural_singular_pair("posts", "post"));
+        assert!(super::is_plural_singular_pair("tags", "tag"));
+
+        // 'ies' -> 'y'
+        assert!(super::is_plural_singular_pair("categories", "category"));
+        assert!(super::is_plural_singular_pair("entries", "entry"));
+
+        // Compound names
+        assert!(super::is_plural_singular_pair("post_tags", "post_tag"));
+        assert!(super::is_plural_singular_pair("user_follows", "user_follow"));
+        assert!(super::is_plural_singular_pair("post_likes", "post_like"));
+        assert!(super::is_plural_singular_pair("post_categories", "post_category"));
+
+        // Non-matches
+        assert!(!super::is_plural_singular_pair("users", "posts"));
+        assert!(!super::is_plural_singular_pair("user", "category"));
+        assert!(!super::is_plural_singular_pair("foo", "bar"));
+    }
+
+    #[test]
+    fn test_table_similarity() {
+        let users_plural = make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false),
+                make_column("name", PgType::Text, false),
+            ],
+        );
+
+        let user_singular = make_table(
+            "user",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false),
+                make_column("name", PgType::Text, false),
+            ],
+        );
+
+        let posts = make_table(
+            "posts",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("title", PgType::Text, false),
+            ],
+        );
+
+        // Same columns + plural/singular name = high similarity
+        let sim = super::table_similarity(&users_plural, &user_singular);
+        assert!(sim > 0.9, "Expected high similarity, got {}", sim);
+
+        // Different tables = low similarity
+        let sim_different = super::table_similarity(&users_plural, &posts);
+        assert!(sim_different < 0.5, "Expected low similarity, got {}", sim_different);
+    }
+
+    #[test]
+    fn test_diff_detects_rename() {
+        let desired = Schema {
+            tables: vec![make_table(
+                "user",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("email", PgType::Text, false),
+                ],
+            )],
+        };
+
+        let current = Schema {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("email", PgType::Text, false),
+                ],
+            )],
+        };
+
+        let diff = desired.diff(&current);
+
+        // Should detect a rename, not add + drop
+        assert_eq!(diff.table_diffs.len(), 1);
+        assert!(matches!(
+            &diff.table_diffs[0].changes[0],
+            Change::RenameTable { from, to } if from == "users" && to == "user"
+        ));
+    }
+
+    #[test]
+    fn snapshot_rename_table_sql() {
+        let desired = Schema {
+            tables: vec![
+                make_table(
+                    "user",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("email", PgType::Text, false),
+                    ],
+                ),
+                make_table(
+                    "category",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("name", PgType::Text, false),
+                    ],
+                ),
+            ],
+        };
+
+        let current = Schema {
+            tables: vec![
+                make_table(
+                    "users",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("email", PgType::Text, false),
+                    ],
+                ),
+                make_table(
+                    "categories",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("name", PgType::Text, false),
+                    ],
+                ),
+            ],
+        };
+
+        let diff = desired.diff(&current);
         insta::assert_snapshot!(diff.to_sql());
     }
 }

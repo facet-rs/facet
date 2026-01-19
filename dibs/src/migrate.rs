@@ -1,4 +1,4 @@
-use crate::{MigrationFn, Result};
+use crate::{MigrationError, MigrationFn, Result};
 use tokio_postgres::{Client, Transaction};
 
 /// A registered migration.
@@ -171,7 +171,12 @@ impl<'a> MigrationRunner<'a> {
     ///
     /// Each migration runs in its own transaction. If a migration fails,
     /// all its changes are rolled back and subsequent migrations are skipped.
-    pub async fn migrate(&mut self) -> Result<Vec<&'static str>> {
+    ///
+    /// Returns `MigrationError` on failure, which includes the exact source
+    /// location where the error occurred (captured via `#[track_caller]`).
+    pub async fn migrate(
+        &mut self,
+    ) -> std::result::Result<Vec<&'static str>, MigrationError> {
         self.init().await?;
         let applied = self.applied().await?;
         let pending = self.pending(&applied);

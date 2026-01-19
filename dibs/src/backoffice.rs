@@ -147,6 +147,9 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
                         label: c.label,
                         enum_variants: c.enum_variants.clone(),
                         doc: c.doc.clone(),
+                        lang: c.lang.clone(),
+                        icon: c.icon.clone(),
+                        subtype: c.subtype.clone(),
                     })
                     .collect(),
                 foreign_keys: t
@@ -170,6 +173,7 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
                 source_file: t.source.file.clone(),
                 source_line: t.source.line,
                 doc: t.doc.clone(),
+                icon: t.icon.clone(),
             })
             .collect(),
     }

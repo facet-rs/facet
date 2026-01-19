@@ -1,13 +1,20 @@
 //! Schema definition and introspection.
 //!
-//! Define tables using facet attributes:
+//! ## Naming Convention
+//!
+//! **Table names use singular form** (e.g., `user`, `post`, `comment`).
+//!
+//! This convention treats each table as a definition of what a single record
+//! represents, rather than a container of multiple records.
+//!
+//! ## Example
 //!
 //! ```ignore
 //! use dibs::prelude::*;
 //! use facet::Facet;
 //!
 //! #[derive(Facet)]
-//! #[facet(dibs::table = "users")]
+//! #[facet(dibs::table = "user")]
 //! pub struct User {
 //!     #[facet(dibs::pk)]
 //!     pub id: i64,
@@ -93,6 +100,33 @@ facet::define_attr_grammar! {
         ///
         /// Usage: `#[facet(dibs::label)]`
         Label,
+
+        /// Specifies the language/format of a text field (e.g., "markdown", "json").
+        /// Implies `long` - will render with a code editor in admin UI.
+        ///
+        /// Usage: `#[facet(dibs::lang = "markdown")]`
+        Lang(&'static str),
+
+        /// Specifies a Lucide icon name for display in the admin UI.
+        /// Can be used on fields or containers (tables).
+        ///
+        /// Usage: `#[facet(dibs::icon = "user")]`
+        Icon(&'static str),
+
+        /// Specifies the semantic subtype of a column.
+        /// Sets a default icon (can be overridden with explicit `dibs::icon`).
+        ///
+        /// Supported subtypes:
+        /// - Contact: `email`, `phone`, `url`, `website`, `username`
+        /// - Media: `image`, `avatar`, `file`, `video`
+        /// - Money: `currency`, `money`, `price`, `percent`
+        /// - Security: `password`, `secret`, `token`
+        /// - Code: `code`, `json`, `markdown`, `html`
+        /// - Location: `address`, `country`, `ip`
+        /// - Content: `slug`, `color`, `tag`
+        ///
+        /// Usage: `#[facet(dibs::subtype = "email")]`
+        Subtype(&'static str),
     }
 
     /// Composite index definition for multi-column indices.
@@ -182,6 +216,67 @@ pub struct Column {
     pub enum_variants: Vec<String>,
     /// Doc comment (if any)
     pub doc: Option<String>,
+    /// Language/format for code editor (e.g., "markdown", "json")
+    pub lang: Option<String>,
+    /// Lucide icon name for display in admin UI (explicit or derived from subtype)
+    pub icon: Option<String>,
+    /// Semantic subtype of the column (e.g., "email", "url", "password")
+    pub subtype: Option<String>,
+}
+
+/// Get the default Lucide icon name for a subtype.
+fn subtype_default_icon(subtype: &str) -> Option<&'static str> {
+    match subtype {
+        // Contact/Identity
+        "email" => Some("mail"),
+        "phone" => Some("phone"),
+        "url" | "website" => Some("link"),
+        "username" => Some("at-sign"),
+
+        // Media
+        "image" | "avatar" | "photo" => Some("image"),
+        "file" => Some("file"),
+        "video" => Some("video"),
+        "audio" => Some("music"),
+
+        // Money
+        "currency" | "money" | "price" => Some("coins"),
+        "percent" | "percentage" => Some("percent"),
+
+        // Security
+        "password" => Some("lock"),
+        "secret" | "token" | "api_key" => Some("key"),
+
+        // Code/Technical
+        "code" => Some("code"),
+        "json" => Some("braces"),
+        "markdown" | "md" => Some("file-text"),
+        "html" => Some("code"),
+        "regex" => Some("asterisk"),
+
+        // Location
+        "address" => Some("map-pin"),
+        "city" => Some("building-2"),
+        "country" => Some("flag"),
+        "zip" | "postal_code" => Some("hash"),
+        "ip" | "ip_address" => Some("globe"),
+        "coordinates" | "geo" => Some("map"),
+
+        // Content
+        "slug" => Some("link-2"),
+        "color" | "hex_color" => Some("palette"),
+        "tag" | "tags" => Some("tag"),
+
+        // Identifiers
+        "uuid" => Some("fingerprint"),
+        "sku" | "barcode" => Some("scan-barcode"),
+        "version" => Some("git-branch"),
+
+        // Time
+        "duration" => Some("timer"),
+
+        _ => None,
+    }
 }
 
 /// A foreign key constraint.
@@ -258,6 +353,8 @@ pub struct Table {
     pub source: SourceLocation,
     /// Doc comment from the Rust struct
     pub doc: Option<String>,
+    /// Lucide icon name for display in admin UI
+    pub icon: Option<String>,
 }
 
 /// A complete database schema.
@@ -595,11 +692,23 @@ impl TableDef {
             let auto_generated = is_auto_generated_default(&default)
                 || field_has_dibs_attr(field, "auto");
 
-            // Check for long text annotation
-            let long = field_has_dibs_attr(field, "long");
+            // Check for lang annotation (implies long)
+            let lang = field_get_dibs_attr_str(field, "lang").map(|s| s.to_string());
+
+            // Check for long text annotation (or implied by lang)
+            let long = field_has_dibs_attr(field, "long") || lang.is_some();
 
             // Check for label annotation
             let label = field_has_dibs_attr(field, "label");
+
+            // Check for subtype annotation
+            let subtype = field_get_dibs_attr_str(field, "subtype").map(|s| s.to_string());
+
+            // Check for explicit icon annotation, or derive from subtype
+            let explicit_icon = field_get_dibs_attr_str(field, "icon").map(|s| s.to_string());
+            let icon = explicit_icon.or_else(|| {
+                subtype.as_ref().and_then(|st| subtype_default_icon(st).map(|s| s.to_string()))
+            });
 
             // Check for enum variants
             let enum_variants = extract_enum_variants(inner_shape);
@@ -617,6 +726,9 @@ impl TableDef {
                 label,
                 enum_variants,
                 doc,
+                lang,
+                icon,
+                subtype,
             });
 
             // Check for foreign key
@@ -659,6 +771,9 @@ impl TableDef {
             Some(self.shape.doc.join("\n"))
         };
 
+        // Extract container-level icon
+        let icon = shape_get_dibs_attr_str(self.shape, "icon").map(|s| s.to_string());
+
         Some(Table {
             name: table_name,
             columns,
@@ -666,6 +781,7 @@ impl TableDef {
             indices,
             source,
             doc,
+            icon,
         })
     }
 }

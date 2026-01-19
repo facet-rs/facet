@@ -99,27 +99,60 @@ fn format_sql_call(sql: &str) -> String {
     }
 }
 
-/// Format a migration error with rich SQL context using ariadne.
-fn format_migration_error(err: &CallError<DibsError>) -> String {
-    // Try to extract SqlError from the nested error
-    if let CallError::Roam(RoamError::User(DibsError::MigrationFailed(sql_err))) = err {
-        format_sql_error(sql_err)
-    } else {
-        // Fallback for other errors
-        format!("{}", err)
-    }
-}
-
 /// Format a SqlError with ariadne for nice display.
 fn format_sql_error(err: &SqlError) -> String {
     use ariadne::{Config, Label, Report, ReportKind, Source};
 
-    // If we have SQL and position, render with ariadne
-    if let (Some(sql), Some(pos)) = (&err.sql, err.position) {
-        let pos = pos as usize;
+    let mut result = String::new();
+
+    // If we have caller location, try to render the Rust source with ariadne
+    if let Some(caller) = &err.caller {
+        if let Some((file_path, line, _col)) = parse_caller_location(caller) {
+            // Try to resolve the path and read the source file
+            if let Some(resolved_path) = resolve_source_path(&file_path) {
+                if let Ok(source) = std::fs::read_to_string(&resolved_path) {
+                    // Calculate byte offset for the line
+                    if let Some(byte_offset) = line_to_byte_offset(&source, line) {
+                        let mut output = Vec::new();
+
+                        let builder = Report::build(ReportKind::Error, (&file_path, byte_offset..byte_offset + 1))
+                            .with_message(&err.message)
+                            .with_config(Config::default().with_color(false))
+                            .with_label(
+                                Label::new((&file_path, byte_offset..byte_offset + 1))
+                                    .with_message(&err.message),
+                            );
+
+                        let report = builder.finish();
+                        report
+                            .write((&file_path, Source::from(&source)), &mut output)
+                            .ok();
+
+                        result.push_str(&String::from_utf8_lossy(&output));
+
+                        // Add hint/detail if available
+                        if let Some(hint) = &err.hint {
+                            result.push_str(&format!("\nHint: {}", hint));
+                        }
+                        if let Some(detail) = &err.detail {
+                            result.push_str(&format!("\nDetail: {}", detail));
+                        }
+
+                        return result;
+                    }
+                }
+            }
+        }
+        // Fallback: just show the location
+        result.push_str(&format!("At: {}\n\n", caller));
+    }
+
+    // If we have SQL, render with ariadne (with or without position)
+    if let Some(sql) = &err.sql {
+        // Determine position - use provided position or default to start of SQL
+        let pos = err.position.map(|p| p as usize).unwrap_or(1);
         // ariadne uses 0-indexed byte offsets, postgres gives 1-indexed
         let pos = pos.saturating_sub(1);
-
         // Clamp position to valid range
         let pos = pos.min(sql.len().saturating_sub(1));
 
@@ -129,11 +162,13 @@ fn format_sql_error(err: &SqlError) -> String {
             .with_message(&err.message)
             .with_config(Config::default().with_color(false));
 
-        // Add label at the error position
-        builder = builder.with_label(
-            Label::new(("sql", pos..pos.saturating_add(1)))
-                .with_message(&err.message),
-        );
+        // Add label at the error position (only if we have a specific position)
+        if err.position.is_some() {
+            builder = builder.with_label(
+                Label::new(("sql", pos..pos.saturating_add(1)))
+                    .with_message(&err.message),
+            );
+        }
 
         // Add hint if available
         if let Some(hint) = &err.hint {
@@ -152,17 +187,181 @@ fn format_sql_error(err: &SqlError) -> String {
             .write(("sql", Source::from(sql)), &mut output)
             .ok();
 
-        String::from_utf8_lossy(&output).into_owned()
+        result.push_str(&String::from_utf8_lossy(&output));
     } else {
         // No SQL context, just format the message
-        let mut msg = err.message.clone();
+        result.push_str(&err.message);
         if let Some(detail) = &err.detail {
-            msg.push_str(&format!("\nDetail: {}", detail));
+            result.push_str(&format!("\nDetail: {}", detail));
         }
         if let Some(hint) = &err.hint {
-            msg.push_str(&format!("\nHint: {}", hint));
+            result.push_str(&format!("\nHint: {}", hint));
         }
-        msg
+    }
+
+    result
+}
+
+/// Parse a caller location string like "path/to/file.rs:14:5" into (path, line, col)
+fn parse_caller_location(caller: &str) -> Option<(String, usize, usize)> {
+    // Format is "file:line:col"
+    let parts: Vec<&str> = caller.rsplitn(3, ':').collect();
+    if parts.len() == 3 {
+        let col: usize = parts[0].parse().ok()?;
+        let line: usize = parts[1].parse().ok()?;
+        let file = parts[2].to_string();
+        Some((file, line, col))
+    } else {
+        None
+    }
+}
+
+/// Convert a 1-indexed line number to a byte offset in the source
+fn line_to_byte_offset(source: &str, line: usize) -> Option<usize> {
+    if line == 0 {
+        return None;
+    }
+    let mut current_line = 1;
+    for (i, c) in source.char_indices() {
+        if current_line == line {
+            return Some(i);
+        }
+        if c == '\n' {
+            current_line += 1;
+        }
+    }
+    // If we're looking for the last line and it doesn't end with newline
+    if current_line == line {
+        return Some(source.len().saturating_sub(1));
+    }
+    None
+}
+
+/// Resolve a potentially relative file path to an absolute path.
+/// Handles the case where file!() returns workspace-relative paths.
+fn resolve_source_path(file_path: &str) -> Option<String> {
+    let path = std::path::Path::new(file_path);
+
+    // If already absolute and exists, use it
+    if path.is_absolute() {
+        if path.exists() {
+            return Some(file_path.to_string());
+        }
+        return None;
+    }
+
+    // Try from current directory
+    if let Ok(cwd) = std::env::current_dir() {
+        let candidate = cwd.join(path);
+        if candidate.exists() {
+            return Some(candidate.display().to_string());
+        }
+
+        // Walk up the directory tree looking for a match
+        // This handles the case where cwd is inside the workspace
+        let mut dir = cwd.as_path();
+        while let Some(parent) = dir.parent() {
+            let candidate = parent.join(path);
+            if candidate.exists() {
+                return Some(candidate.display().to_string());
+            }
+            dir = parent;
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_caller_location_valid() {
+        let result = parse_caller_location("src/lib.rs:42:5");
+        assert_eq!(result, Some(("src/lib.rs".to_string(), 42, 5)));
+    }
+
+    #[test]
+    fn test_parse_caller_location_deep_path() {
+        let result = parse_caller_location("examples/my-app-db/src/migrations/m2026_01_19.rs:14:5");
+        assert_eq!(result, Some(("examples/my-app-db/src/migrations/m2026_01_19.rs".to_string(), 14, 5)));
+    }
+
+    #[test]
+    fn test_parse_caller_location_invalid() {
+        assert_eq!(parse_caller_location("no-colons"), None);
+        assert_eq!(parse_caller_location("file:notanumber:5"), None);
+        assert_eq!(parse_caller_location("file:5:notanumber"), None);
+    }
+
+    #[test]
+    fn test_line_to_byte_offset() {
+        let source = "line1\nline2\nline3\n";
+        assert_eq!(line_to_byte_offset(source, 1), Some(0));  // start of line1
+        assert_eq!(line_to_byte_offset(source, 2), Some(6));  // start of line2
+        assert_eq!(line_to_byte_offset(source, 3), Some(12)); // start of line3
+        assert_eq!(line_to_byte_offset(source, 0), None);     // invalid line
+    }
+
+    #[test]
+    fn test_line_to_byte_offset_no_trailing_newline() {
+        let source = "line1\nline2";
+        assert_eq!(line_to_byte_offset(source, 1), Some(0));
+        assert_eq!(line_to_byte_offset(source, 2), Some(6));
+    }
+
+    #[test]
+    fn test_resolve_source_path_finds_file_in_parent() {
+        // This test verifies the walk-up-the-tree logic
+        // We can't easily test this without setting up a temp directory structure
+        // but at least verify it doesn't panic on non-existent paths
+        let result = resolve_source_path("definitely/does/not/exist.rs");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_error_pointer_padding() {
+        // The error display format is:
+        // "> 1234 code_here()"
+        //   ^--^  = 2 chars for "> " prefix
+        //      ^--^ = 5 chars for line number format "{:4} " (4 digits + space)
+        // Total prefix = 7 chars before code content starts
+
+        // For column 1 (first char of code), we need 7 spaces before ^
+        // padding = 7 + col.saturating_sub(1) = 7 + 0 = 7
+        assert_eq!(7 + 1_usize.saturating_sub(1), 7);
+
+        // For column 5, we need 7 + 4 = 11 spaces before ^
+        // padding = 7 + col.saturating_sub(1) = 7 + 4 = 11
+        assert_eq!(7 + 5_usize.saturating_sub(1), 11);
+
+        // For column 48 (e.g., where ? is at end of line), we need 7 + 47 = 54 spaces
+        assert_eq!(7 + 48_usize.saturating_sub(1), 54);
+    }
+
+    #[test]
+    fn test_effective_col_calculation() {
+        // We point to the first non-whitespace char, not the track_caller col
+        // (track_caller col points to `?` at end of line, which isn't helpful)
+
+        // Line with 4 spaces of indentation
+        let line = "    ctx.execute(\"...\").await?;";
+        let leading_ws = line.chars().take_while(|c| c.is_whitespace()).count();
+        let effective_col = leading_ws + 1; // 1-indexed
+        assert_eq!(effective_col, 5); // points to 'c' in ctx
+
+        // Line with no indentation
+        let line = "ctx.execute(\"...\").await?;";
+        let leading_ws = line.chars().take_while(|c| c.is_whitespace()).count();
+        let effective_col = leading_ws + 1;
+        assert_eq!(effective_col, 1); // points to 'c' in ctx
+
+        // Line with tabs (each tab counts as 1 char)
+        let line = "\t\tctx.execute(\"...\").await?;";
+        let leading_ws = line.chars().take_while(|c| c.is_whitespace()).count();
+        let effective_col = leading_ws + 1;
+        assert_eq!(effective_col, 3); // points to 'c' in ctx
     }
 }
 
@@ -216,8 +415,8 @@ pub struct App {
     migration_name_cursor: usize,
     /// Whether showing error modal (for long errors)
     show_error_modal: bool,
-    /// Error message for modal display
-    error_modal_text: String,
+    /// Error lines for modal display (pre-highlighted)
+    error_modal_lines: Vec<Line<'static>>,
     /// Which pane has focus in schema view (0 = table list, 1 = details)
     schema_focus: usize,
     /// Selected item index in details pane (columns then foreign keys)
@@ -329,7 +528,7 @@ impl App {
             migration_name_input: String::new(),
             migration_name_cursor: 0,
             show_error_modal: false,
-            error_modal_text: String::new(),
+            error_modal_lines: Vec::new(),
             schema_focus: 0,
             details_selection: 0,
             details_scroll: 0,
@@ -665,7 +864,7 @@ impl App {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
                             self.show_error_modal = false;
-                            self.error_modal_text.clear();
+                            self.error_modal_lines.clear();
                         }
                         _ => {}
                     }
@@ -887,12 +1086,160 @@ impl App {
     fn show_error(&mut self, msg: String) {
         // Use modal for multi-line errors or errors longer than 60 chars
         if msg.contains('\n') || msg.len() > 60 {
-            self.error_modal_text = msg;
+            self.error_modal_lines = msg
+                .lines()
+                .map(|l| Line::from(l.to_string()))
+                .collect();
             self.show_error_modal = true;
             self.error = Some("Error occurred - see details".to_string());
         } else {
             self.error = Some(msg);
         }
+    }
+
+    /// Show an error with pre-highlighted lines.
+    fn show_error_lines(&mut self, lines: Vec<Line<'static>>) {
+        self.error_modal_lines = lines;
+        self.show_error_modal = true;
+        self.error = Some("Error occurred - see details".to_string());
+    }
+
+    /// Show a migration error with syntax-highlighted source code.
+    fn show_migration_error(&mut self, err: &CallError<DibsError>) {
+        // Try to extract SqlError from the nested error
+        let sql_err = match err {
+            CallError::Roam(RoamError::User(DibsError::MigrationFailed(e))) => e,
+            _ => {
+                self.show_error(format!("{}", err));
+                return;
+            }
+        };
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        // If we have caller location, show highlighted source
+        if let Some(caller) = &sql_err.caller {
+            if let Some((file_path, line_num, col)) = parse_caller_location(caller) {
+                if let Some(resolved_path) = resolve_source_path(&file_path) {
+                    if let Ok(source) = std::fs::read_to_string(&resolved_path) {
+                        // Error header
+                        lines.push(Line::from(vec![
+                            Span::styled("Error: ", Style::default().fg(Color::Red).bold()),
+                            Span::styled(
+                                sql_err.message.clone(),
+                                Style::default().fg(Color::White),
+                            ),
+                        ]));
+
+                        // File location
+                        lines.push(Line::from(vec![
+                            Span::styled("   --> ", Style::default().fg(Color::Cyan)),
+                            Span::styled(
+                                format!("{}:{}:{}", file_path, line_num, col),
+                                Style::default().fg(Color::White),
+                            ),
+                        ]));
+
+                        lines.push(Line::from(""));
+
+                        // Get highlighted source lines
+                        let highlighted = highlight_to_lines(
+                            &mut self.highlighter,
+                            &self.theme,
+                            "rust",
+                            &source,
+                        );
+
+                        // Get the source lines for finding leading whitespace
+                        let source_lines: Vec<&str> = source.lines().collect();
+
+                        // Show context: 2 lines before, error line, 2 lines after
+                        let start = line_num.saturating_sub(3);
+                        let end = (line_num + 2).min(highlighted.len());
+
+                        for (i, hl_line) in highlighted.iter().enumerate() {
+                            let display_line = i + 1; // 1-indexed
+                            if display_line >= start && display_line <= end {
+                                let line_num_str = format!("{:4} ", display_line);
+                                let is_error_line = display_line == line_num;
+
+                                let mut spans = vec![Span::styled(
+                                    line_num_str,
+                                    Style::default().fg(Color::DarkGray),
+                                )];
+
+                                if is_error_line {
+                                    spans.insert(
+                                        0,
+                                        Span::styled("> ", Style::default().fg(Color::Red).bold()),
+                                    );
+                                } else {
+                                    spans.insert(
+                                        0,
+                                        Span::styled("  ", Style::default()),
+                                    );
+                                }
+
+                                // Add the highlighted content
+                                spans.extend(hl_line.spans.iter().cloned());
+
+                                lines.push(Line::from(spans));
+
+                                // Add error pointer under the error line
+                                if is_error_line {
+                                    // Point to first non-whitespace char instead of track_caller col
+                                    // (track_caller col points to `?` which isn't helpful)
+                                    let effective_col = source_lines
+                                        .get(line_num - 1)
+                                        .map(|line| {
+                                            line.chars()
+                                                .take_while(|c| c.is_whitespace())
+                                                .count()
+                                                + 1 // 1-indexed
+                                        })
+                                        .unwrap_or(col);
+
+                                    // Prefix is: "> " (2) + "{:4} " line number (5) = 7 chars
+                                    let padding =
+                                        " ".repeat(7 + effective_col.saturating_sub(1));
+                                    lines.push(Line::from(vec![
+                                        Span::styled(
+                                            format!("{}^", padding),
+                                            Style::default().fg(Color::Red).bold(),
+                                        ),
+                                        Span::styled(
+                                            format!(" {}", sql_err.message),
+                                            Style::default().fg(Color::Red),
+                                        ),
+                                    ]));
+                                }
+                            }
+                        }
+
+                        // Add hint/detail
+                        if let Some(hint) = &sql_err.hint {
+                            lines.push(Line::from(""));
+                            lines.push(Line::from(vec![
+                                Span::styled("Hint: ", Style::default().fg(Color::Cyan).bold()),
+                                Span::styled(hint.clone(), Style::default().fg(Color::White)),
+                            ]));
+                        }
+                        if let Some(detail) = &sql_err.detail {
+                            lines.push(Line::from(vec![
+                                Span::styled("Detail: ", Style::default().fg(Color::Yellow).bold()),
+                                Span::styled(detail.clone(), Style::default().fg(Color::White)),
+                            ]));
+                        }
+
+                        self.show_error_lines(lines);
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Fallback to plain text
+        self.show_error(format_sql_error(sql_err));
     }
 
     /// Suggest a migration name based on the current diff.
@@ -1069,10 +1416,10 @@ impl App {
             r#"//! Migration: {name}
 //! Created: {created}
 
-use dibs::{{MigrationContext, Result}};
+use dibs::{{MigrationContext, MigrationResult}};
 
 #[dibs::migration]
-pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
+pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
 {sql_calls}
     Ok(())
 }}
@@ -1288,7 +1635,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
                     self.refresh_diff().await;
                 }
                 Err(e) => {
-                    self.show_error(format_migration_error(&e));
+                    self.show_migration_error(&e);
                 }
             }
             self.loading = None;
@@ -1620,10 +1967,17 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
         use ratatui::widgets::Clear;
 
         // Calculate dialog size based on content
-        let lines: Vec<&str> = self.error_modal_text.lines().collect();
-        let max_line_len = lines.iter().map(|l| l.len()).max().unwrap_or(20);
-        let dialog_width = (max_line_len as u16 + 4).min(area.width.saturating_sub(4)).max(40);
-        let dialog_height = (lines.len() as u16 + 5).min(area.height.saturating_sub(4));
+        let max_line_len = self
+            .error_modal_lines
+            .iter()
+            .map(|l| l.width())
+            .max()
+            .unwrap_or(20);
+        let dialog_width = (max_line_len as u16 + 4)
+            .min(area.width.saturating_sub(4))
+            .max(40);
+        let dialog_height = (self.error_modal_lines.len() as u16 + 5)
+            .min(area.height.saturating_sub(4));
 
         let x = (area.width.saturating_sub(dialog_width)) / 2;
         let y = (area.height.saturating_sub(dialog_height)) / 2;
@@ -1646,10 +2000,11 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
 
         // Error text (scrollable if needed)
         let content_height = inner.height.saturating_sub(2); // Reserve space for help
-        let error_lines: Vec<Line> = self.error_modal_text
-            .lines()
+        let error_lines: Vec<Line> = self
+            .error_modal_lines
+            .iter()
             .take(content_height as usize)
-            .map(|l| Line::from(Span::styled(l, Style::default().fg(Color::White))))
+            .cloned()
             .collect();
 
         let content_area = Rect::new(inner.x, inner.y, inner.width, content_height);

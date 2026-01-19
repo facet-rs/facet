@@ -79,6 +79,7 @@ async fn introspect_table(client: &Client, table_name: &str) -> Result<Table> {
         indices,
         source: SourceLocation::default(), // DB tables don't have Rust source
         doc: None,
+        icon: None, // Not available from introspection
     })
 }
 
@@ -131,6 +132,9 @@ async fn introspect_columns(client: &Client, table_name: &str) -> Result<Vec<Col
             label: false,         // Not available from introspection
             enum_variants: vec![], // TODO: fetch from pg_enum if pg_type is USER-DEFINED
             doc: None,            // Not available from introspection
+            lang: None,           // Not available from introspection
+            icon: None,           // Not available from introspection
+            subtype: None,        // Not available from introspection
         });
     }
 

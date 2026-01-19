@@ -26,6 +26,8 @@ pub struct TableInfo {
     pub source_line: Option<u32>,
     /// Doc comment (if any)
     pub doc: Option<String>,
+    /// Lucide icon name for display in admin UI
+    pub icon: Option<String>,
 }
 
 /// Column information.
@@ -55,6 +57,12 @@ pub struct ColumnInfo {
     pub enum_variants: Vec<String>,
     /// Doc comment (if any)
     pub doc: Option<String>,
+    /// Language/format for code editor (e.g., "markdown", "json")
+    pub lang: Option<String>,
+    /// Lucide icon name for display in admin UI
+    pub icon: Option<String>,
+    /// Semantic subtype of the column (e.g., "email", "url", "password")
+    pub subtype: Option<String>,
 }
 
 /// Foreign key information.
@@ -210,6 +218,8 @@ pub struct SqlError {
     pub hint: Option<String>,
     /// Detail from postgres (if any)
     pub detail: Option<String>,
+    /// Source location where the error occurred (file:line:col)
+    pub caller: Option<String>,
 }
 
 /// Error from the dibs service.

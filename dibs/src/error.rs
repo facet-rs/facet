@@ -1,3 +1,4 @@
+use std::panic::Location;
 use thiserror::Error;
 
 /// Rich SQL error with context for display.
@@ -13,6 +14,52 @@ pub struct SqlErrorContext {
     pub hint: Option<String>,
     /// Detail from postgres (if any)
     pub detail: Option<String>,
+    /// Source location where the error occurred (file:line:col)
+    pub caller: Option<String>,
+}
+
+/// Error type for migrations that captures caller location via `#[track_caller]`.
+///
+/// When you use `?` on a Result in a migration function, the `From` impl captures
+/// the exact source location where the error occurred.
+#[derive(Debug)]
+pub struct MigrationError {
+    /// The underlying error
+    pub inner: Error,
+    /// Source location where the error was converted (via `?`)
+    pub caller: &'static Location<'static>,
+}
+
+impl std::fmt::Display for MigrationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} at {}", self.inner, self.caller)
+    }
+}
+
+impl std::error::Error for MigrationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.inner)
+    }
+}
+
+impl From<Error> for MigrationError {
+    #[track_caller]
+    fn from(e: Error) -> Self {
+        MigrationError {
+            inner: e,
+            caller: Location::caller(),
+        }
+    }
+}
+
+impl From<tokio_postgres::Error> for MigrationError {
+    #[track_caller]
+    fn from(e: tokio_postgres::Error) -> Self {
+        MigrationError {
+            inner: Error::Postgres(e),
+            caller: Location::caller(),
+        }
+    }
 }
 
 impl std::fmt::Display for SqlErrorContext {
@@ -73,6 +120,7 @@ impl Error {
                 position,
                 hint: db_err.hint().map(|s| s.to_string()),
                 detail: db_err.detail().map(|s| s.to_string()),
+                caller: None, // Would need macro-based approach for async fn caller tracking
             })
         } else {
             // Fall back to simple error

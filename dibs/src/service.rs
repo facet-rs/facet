@@ -13,15 +13,48 @@
 //! }
 //! ```
 
-use crate::{Change, Schema};
+use crate::{Change, MigrationError, Schema};
 use dibs_proto::*;
 use roam_stream::{HandshakeConfig, connect};
 use std::io;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 
-/// Convert a dibs Error to a DibsError for the protocol.
-fn to_migration_error(err: crate::Error) -> DibsError {
+/// Convert a MigrationError to a DibsError for the protocol.
+///
+/// Extracts the caller location from MigrationError (captured via `#[track_caller]`)
+/// and includes it in the SqlError for display in the TUI.
+fn to_migration_error(err: MigrationError) -> DibsError {
+    let caller_str = format!(
+        "{}:{}:{}",
+        err.caller.file(),
+        err.caller.line(),
+        err.caller.column()
+    );
+
+    if let Some(ctx) = err.inner.sql_context() {
+        DibsError::MigrationFailed(SqlError {
+            message: ctx.message.clone(),
+            sql: Some(ctx.sql.clone()),
+            position: ctx.position.map(|p| p as u32),
+            hint: ctx.hint.clone(),
+            detail: ctx.detail.clone(),
+            caller: Some(caller_str),
+        })
+    } else {
+        DibsError::MigrationFailed(SqlError {
+            message: err.inner.to_string(),
+            sql: None,
+            position: None,
+            hint: None,
+            detail: None,
+            caller: Some(caller_str),
+        })
+    }
+}
+
+/// Convert a plain Error to DibsError (for non-migration operations like status).
+fn error_to_dibs_error(err: crate::Error) -> DibsError {
     if let Some(ctx) = err.sql_context() {
         DibsError::MigrationFailed(SqlError {
             message: ctx.message.clone(),
@@ -29,6 +62,7 @@ fn to_migration_error(err: crate::Error) -> DibsError {
             position: ctx.position.map(|p| p as u32),
             hint: ctx.hint.clone(),
             detail: ctx.detail.clone(),
+            caller: ctx.caller.clone(),
         })
     } else {
         DibsError::MigrationFailed(SqlError {
@@ -37,6 +71,7 @@ fn to_migration_error(err: crate::Error) -> DibsError {
             position: None,
             hint: None,
             detail: None,
+            caller: None,
         })
     }
 }
@@ -192,7 +227,7 @@ impl DibsService for DibsServiceImpl {
         let status = runner
             .status()
             .await
-            .map_err(to_migration_error)?;
+            .map_err(error_to_dibs_error)?;
 
         Ok(status
             .into_iter()
@@ -311,6 +346,9 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
                         label: c.label,
                         enum_variants: c.enum_variants.clone(),
                         doc: c.doc.clone(),
+                        lang: c.lang.clone(),
+                        icon: c.icon.clone(),
+                        subtype: c.subtype.clone(),
                     })
                     .collect(),
                 foreign_keys: t
@@ -334,6 +372,7 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
                 source_file: t.source.file.clone(),
                 source_line: t.source.line,
                 doc: t.doc.clone(),
+                icon: t.icon.clone(),
             })
             .collect(),
     }
@@ -364,7 +403,8 @@ fn diff_to_result(diff: &crate::SchemaDiff) -> DiffResult {
                             | Change::DropForeignKey(_)
                             | Change::DropIndex(_)
                             | Change::DropUnique(_) => ChangeKind::Drop,
-                            Change::AlterColumnType { .. }
+                            Change::RenameTable { .. }
+                            | Change::AlterColumnType { .. }
                             | Change::AlterColumnNullable { .. }
                             | Change::AlterColumnDefault { .. } => ChangeKind::Alter,
                         };

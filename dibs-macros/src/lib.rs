@@ -13,11 +13,14 @@ use unsynn::{LiteralString, Parse, ToTokens, TokenIter};
 /// ```ignore
 /// // In file: src/migrations/m_2026_01_18_create_users.rs
 /// #[dibs::migration]
-/// async fn migrate(ctx: &mut MigrationContext) -> Result<()> {
+/// async fn migrate(ctx: &mut MigrationContext) -> MigrationResult<()> {
 ///     ctx.execute("CREATE TABLE users (...)").await?;
 ///     Ok(())
 /// }
 /// ```
+///
+/// Use `MigrationResult` instead of `Result` to enable `#[track_caller]` -
+/// when an error occurs, the exact source location (file:line:column) is captured.
 #[proc_macro_attribute]
 pub fn migration(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Convert to proc_macro2 and create unsynn TokenIter
