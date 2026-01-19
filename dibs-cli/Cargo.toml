@@ -26,7 +26,7 @@ owo-colors = "4"
 ratatui = "0.30"
 crossterm = "0.29"
 dotenvy = "0.15.7"
-arborium = { path = "/Users/amos/bearcove/arborium/crates/arborium", features = ["lang-rust"] }
-arborium-highlight = { path = "/Users/amos/bearcove/arborium/crates/arborium-highlight" }
-arborium-theme = { path = "/Users/amos/bearcove/arborium/crates/arborium-theme" }
+arborium = { git = "https://github.com/bearcove/arborium", branch = "main", features = ["lang-rust"] }
+arborium-highlight = { git = "https://github.com/bearcove/arborium", branch = "main" }
+arborium-theme = { git = "https://github.com/bearcove/arborium", branch = "main" }
 ariadne = "0.6"
