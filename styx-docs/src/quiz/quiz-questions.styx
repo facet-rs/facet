@@ -435,8 +435,22 @@ questions {
             ```
             DOC
         options (
-            {text "A sequence", help "Sequences use `()`, this is `{}`"}
-            {text "An object", correct true}
+            {
+                text <<DOC,markdown
+                    ```json
+                    ["enabled", "debug", "verbose"]
+                    ```
+                    DOC
+                help "Sequences use `()`, this is `{}`"
+            }
+            {
+                text <<DOC,markdown
+                    ```json
+                    {"enabled": null, "debug": null, "verbose": null}
+                    ```
+                    DOC
+                correct true
+            }
             {text "A parse error", help "Omitting values is valid"}
         )
         explanation <<DOC,markdown
@@ -483,8 +497,22 @@ questions {
             ```
             DOC
         options (
-            {text "A single key-value pair", help "Dots create nested structure"}
-            {text "Nested objects", correct true}
+            {
+                text <<DOC,markdown
+                    ```json
+                    {"server.host": "localhost"}
+                    ```
+                    DOC
+                help "Dots create nested structure"
+            }
+            {
+                text <<DOC,markdown
+                    ```json
+                    {"server": {"host": "localhost"}}
+                    ```
+                    DOC
+                correct true
+            }
         )
         explanation <<DOC,markdown
             Dotted keys define nested paths:

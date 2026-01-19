@@ -341,6 +341,35 @@
         border-radius: 3px;
     }
 
+    .option-text :global(.code-block) {
+        background: light-dark(#fafafa, #0a0a0a);
+        border: 1px solid light-dark(#e0e0e0, #2a2a2a);
+        border-radius: 6px;
+        overflow: hidden;
+        margin: 0;
+    }
+
+    .option-text :global(.code-block) :global(.code-header) {
+        background: light-dark(#f0f0f0, #1a1a1a);
+        border-bottom: 1px solid light-dark(#e0e0e0, #2a2a2a);
+        padding: 0.3rem 0.75rem;
+        font-size: 0.65rem;
+        font-weight: 500;
+        font-family: "SF Mono", Monaco, Consolas, monospace;
+        color: light-dark(#888, #666);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .option-text :global(pre) {
+        background: none;
+        border: none;
+        border-radius: 0;
+        padding: 0.75rem;
+        overflow-x: auto;
+        margin: 0;
+    }
+
     .result {
         margin-top: 1rem;
         padding: 1rem;
