@@ -2,13 +2,15 @@
 //!
 //! No serde, no bollard - just shells out to the `docker` CLI.
 //!
+//! Features:
+//! - Automatic cleanup via reaper container (survives crashes)
+//! - Ephemeral host ports (no conflicts in parallel tests)
+//! - Wait for log patterns or TCP port ready
+//!
 //! # Example
 //!
 //! ```no_run
 //! use dockside::{Container, Image};
-//!
-//! // Clean up any orphaned containers from previous crashed runs
-//! dockside::cleanup_orphans();
 //!
 //! let container = Container::run(
 //!     Image::new("postgres", "16-alpine")
@@ -19,37 +21,61 @@
 //! let host_port = container.host_port(5432).unwrap();
 //! println!("Postgres available at localhost:{}", host_port);
 //!
-//! // Container is automatically removed on drop
+//! // Container is automatically removed on drop.
+//! // If process crashes, reaper container cleans up.
 //! ```
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-/// Label used to identify dockside-managed containers.
-const DOCKSIDE_LABEL: &str = "dockside.managed=true";
+/// Session state - reaper process and session ID.
+struct Session {
+    id: String,
+    #[allow(dead_code)]
+    reaper: Child,
+}
 
-/// Clean up any orphaned containers from previous runs.
-///
-/// Call this at the start of your test suite to remove containers
-/// that may have been left behind if a previous test run crashed.
-pub fn cleanup_orphans() {
-    let output = Command::new("docker")
-        .args(["ps", "-q", "--filter", &format!("label={}", DOCKSIDE_LABEL)])
-        .output();
+static SESSION: OnceLock<Session> = OnceLock::new();
 
-    if let Ok(output) = output {
-        let ids = String::from_utf8_lossy(&output.stdout);
-        for id in ids.lines() {
-            let id = id.trim();
-            if !id.is_empty() {
-                let _ = Command::new("docker")
-                    .args(["rm", "-f", id])
-                    .output();
-            }
-        }
-    }
+/// Get or initialize the session (starts reaper on first call).
+fn session() -> &'static Session {
+    SESSION.get_or_init(|| {
+        let id = format!("{}-{}", std::process::id(), timestamp_ms());
+
+        // Start reaper container that monitors our stdin
+        // When stdin closes (we die), it cleans up all our containers
+        let reaper_script = format!(
+            r#"cat >/dev/null; docker rm -f $(docker ps -q --filter label=dockside.session={}) 2>/dev/null; true"#,
+            id
+        );
+
+        let reaper = Command::new("docker")
+            .args([
+                "run",
+                "--rm",
+                "-i", // interactive - monitors stdin
+                "-v", "/var/run/docker.sock:/var/run/docker.sock",
+                "docker:cli",
+                "sh", "-c", &reaper_script,
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to start reaper container");
+
+        Session { id, reaper }
+    })
+}
+
+fn timestamp_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
 }
 
 /// Error type for docker operations.
@@ -146,6 +172,7 @@ impl Image {
 /// A running Docker container.
 ///
 /// The container is automatically removed when this struct is dropped.
+/// If the process crashes, the reaper container will clean it up.
 pub struct Container {
     id: String,
     port_mappings: HashMap<u16, u16>,
@@ -154,11 +181,14 @@ pub struct Container {
 impl Container {
     /// Run a container from the given image.
     pub fn run(image: Image) -> Result<Self> {
+        // Ensure reaper is running
+        let session = session();
+
         let mut cmd = Command::new("docker");
         cmd.arg("run")
             .arg("-d") // detached
             .arg("--rm") // remove on stop
-            .arg("--label").arg(DOCKSIDE_LABEL); // for orphan cleanup
+            .arg("--label").arg(format!("dockside.session={}", session.id));
 
         // Add environment variables
         for (key, value) in &image.env {
