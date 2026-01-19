@@ -30,6 +30,6 @@ kotlin {
 tasks {
     patchPluginXml {
         sinceBuild.set("243")
-        untilBuild.set("251.*")
+        // No untilBuild - compatible with all future versions
     }
 }
