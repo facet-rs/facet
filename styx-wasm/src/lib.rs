@@ -195,6 +195,7 @@ fn format_error(kind: &styx_parse::ParseErrorKind) -> String {
                 terminal_path.join(".")
             )
         }
+        CommaInSequence => "Sequences use whitespace separators, not commas".to_string(),
     }
 }
 
