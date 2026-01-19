@@ -27,7 +27,7 @@ struct User {
     email: Option<String>,
 }
 
-let py = to_python::<User>();
+let py = to_python::<User>(false);
 println!("{}", py);
 ```
 
@@ -37,7 +37,7 @@ println!("{}", py);
 class User(TypedDict, total=False):
     name: Required[str]
     age: Required[int]
-    email: Optional[str] = None
+    email: str
 ```
 
 ## Multiple Types
@@ -52,7 +52,7 @@ gen.add_type::<User>();
 gen.add_type::<Post>();
 gen.add_type::<Comment>();
 
-let py = gen.finish();
+let py = gen.finish(false);
 ```
 
 
