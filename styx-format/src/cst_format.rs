@@ -177,41 +177,89 @@ impl CstFormatter {
 
         self.write("{");
 
-        if entries.is_empty() {
+        // Check if the object contains any comments (even if no entries)
+        let has_comments = node.children_with_tokens().any(|el| {
+            matches!(
+                el.kind(),
+                SyntaxKind::LINE_COMMENT | SyntaxKind::DOC_COMMENT
+            )
+        });
+
+        // Empty object with no comments
+        if entries.is_empty() && !has_comments {
             self.write("}");
             return;
         }
 
-        match separator {
-            Separator::Newline | Separator::Mixed => {
-                // Multiline format
-                self.write_newline();
-                self.indent_level += 1;
+        // Determine if we need multiline format
+        let is_multiline = matches!(separator, Separator::Newline | Separator::Mixed)
+            || has_comments
+            || entries.is_empty(); // Empty with comments needs multiline
 
-                for (i, entry) in entries.iter().enumerate() {
-                    self.write_preceding_comments(entry.syntax());
-                    self.format_node(entry.syntax());
+        if is_multiline {
+            // Multiline format - preserve comments as children of the object
+            self.write_newline();
+            self.indent_level += 1;
 
-                    if i < entries.len() - 1 {
-                        self.write_newline();
+            // Iterate through all children to preserve comments in order
+            // Track consecutive newlines to preserve blank lines
+            let mut wrote_content = false;
+            let mut consecutive_newlines = 0;
+            for el in node.children_with_tokens() {
+                match el.kind() {
+                    SyntaxKind::NEWLINE => {
+                        consecutive_newlines += 1;
+                    }
+                    SyntaxKind::LINE_COMMENT | SyntaxKind::DOC_COMMENT => {
+                        if let Some(token) = el.into_token() {
+                            if wrote_content {
+                                self.write_newline();
+                                // 2+ consecutive newlines means there was a blank line
+                                if consecutive_newlines >= 2 {
+                                    self.write_newline();
+                                }
+                            }
+                            self.write(token.text());
+                            wrote_content = true;
+                            consecutive_newlines = 0;
+                        }
+                    }
+                    SyntaxKind::ENTRY => {
+                        if let Some(entry_node) = el.into_node() {
+                            if wrote_content {
+                                self.write_newline();
+                                // 2+ consecutive newlines means there was a blank line
+                                if consecutive_newlines >= 2 {
+                                    self.write_newline();
+                                }
+                            }
+                            self.format_node(&entry_node);
+                            wrote_content = true;
+                            consecutive_newlines = 0;
+                        }
+                    }
+                    // Skip whitespace, braces - we handle formatting ourselves
+                    // Whitespace doesn't reset newline count (it comes between newlines)
+                    SyntaxKind::WHITESPACE | SyntaxKind::L_BRACE | SyntaxKind::R_BRACE => {}
+                    _ => {
+                        consecutive_newlines = 0;
                     }
                 }
-
-                self.write_newline();
-                self.indent_level -= 1;
-                self.write("}");
             }
-            Separator::Comma => {
-                // Inline format
-                for (i, entry) in entries.iter().enumerate() {
-                    self.format_node(entry.syntax());
 
-                    if i < entries.len() - 1 {
-                        self.write(", ");
-                    }
+            self.write_newline();
+            self.indent_level -= 1;
+            self.write("}");
+        } else {
+            // Inline format (comma-separated, no comments)
+            for (i, entry) in entries.iter().enumerate() {
+                self.format_node(entry.syntax());
+
+                if i < entries.len() - 1 {
+                    self.write(", ");
                 }
-                self.write("}");
             }
+            self.write("}");
         }
     }
 
@@ -693,6 +741,45 @@ schema {
     // comment
     b
   )
+}"#;
+        let output = format(input);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_object_with_only_comments() {
+        // Regression test: objects containing only comments should preserve them
+        let input = r#"pre-commit {
+    // generate-readmes false
+    // rustfmt false
+    // cargo-lock false
+}"#;
+        let output = format(input);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_object_comments_with_blank_line() {
+        // Regression test: blank lines between comment groups should be preserved
+        let input = r#"config {
+    // first group
+    // still first group
+
+    // second group after blank line
+    // still second group
+}"#;
+        let output = format(input);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_object_mixed_entries_and_comments() {
+        // Test mixing actual entries with commented-out entries
+        let input = r#"settings {
+    enabled true
+    // disabled-option false
+    name "test"
+    // another-disabled option
 }"#;
         let output = format(input);
         insta::assert_snapshot!(output);

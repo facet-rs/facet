@@ -1,0 +1,11 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+config {
+    // first group
+    // still first group
+
+    // second group after blank line
+    // still second group
+}

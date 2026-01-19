@@ -1,0 +1,10 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+settings {
+    enabled true
+    // disabled-option false
+    name "test"
+    // another-disabled option
+}

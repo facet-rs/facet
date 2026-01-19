@@ -1,0 +1,9 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+pre-commit {
+    // generate-readmes false
+    // rustfmt false
+    // cargo-lock false
+}
