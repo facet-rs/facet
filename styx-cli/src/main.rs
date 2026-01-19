@@ -1,12 +1,22 @@
 //! Styx CLI tool
 //!
-//! File-first design:
-//!   styx <file> [options]         - operate on a file
-//!   styx @<cmd> [args] [options]  - run a subcommand
+//! Disambiguation heuristic:
+//!   If arg contains '.' or '/' → file mode
+//!   If arg is '-' → stdin (file mode)
+//!   Otherwise → subcommand mode
+//!
+//! Examples:
+//!   styx config.styx              - file mode (has '.')
+//!   styx ./config                 - file mode (has '/')
+//!   styx -                        - stdin
+//!   styx lsp                      - subcommand (bare word)
+//!   styx tree config.styx         - subcommand with file arg
 
 use std::io::{self, Read};
 use std::path::Path;
 
+use facet::Facet;
+use facet_args as args;
 use styx_format::{FormatOptions, format_source};
 use styx_schema::{SchemaFile, validate};
 use styx_tree::{Payload, Value};
@@ -21,26 +31,196 @@ const EXIT_VALIDATION_ERROR: i32 = 2;
 const EXIT_IO_ERROR: i32 = 3;
 
 // ============================================================================
-// Main entry point
+// CLI argument structures
 // ============================================================================
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+/// File mode arguments: styx <file> [options]
+#[derive(Facet, Debug, Default)]
+struct FileArgs {
+    /// Input file path (or "-" for stdin)
+    #[facet(args::positional)]
+    input: String,
 
-    let result = if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
-        print_usage();
-        Ok(())
-    } else if args[0] == "--version" || args[0] == "-V" {
+    /// Output to file (styx format)
+    #[facet(args::named, args::short = 'o', default)]
+    output: Option<String>,
+
+    /// Output as JSON to file (or "-" for stdout)
+    #[facet(args::named, default)]
+    json_out: Option<String>,
+
+    /// Modify input file in place
+    #[facet(args::named, default)]
+    in_place: bool,
+
+    /// Single-line/compact formatting
+    #[facet(args::named, default)]
+    compact: bool,
+
+    /// Validate against declared schema (no output unless -o specified)
+    #[facet(args::named, default)]
+    validate: bool,
+
+    /// Use this schema instead of declared @schema
+    #[facet(args::named, default)]
+    schema: Option<String>,
+}
+
+/// Top-level CLI with optional subcommand
+#[derive(Facet, Debug)]
+struct Args {
+    /// Show version
+    #[facet(args::named, args::short = 'V', default)]
+    version: bool,
+
+    /// Subcommand to run
+    #[facet(args::subcommand, default)]
+    command: Option<Command>,
+}
+
+/// Available subcommands
+#[derive(Facet, Debug)]
+#[repr(u8)]
+enum Command {
+    /// Start language server (stdio)
+    Lsp,
+
+    /// Show parse tree
+    Tree {
+        /// Output format: sexp or debug
+        #[facet(args::named, default = "debug")]
+        format: String,
+
+        /// Input file
+        #[facet(args::positional)]
+        file: String,
+    },
+
+    /// Show CST structure
+    Cst {
+        /// Input file
+        #[facet(args::positional)]
+        file: String,
+    },
+
+    /// Extract embedded schemas from a binary
+    Extract {
+        /// Binary file to extract from
+        #[facet(args::positional)]
+        binary: String,
+    },
+
+    /// Compare schema against published version
+    Diff {
+        /// Schema file to compare
+        #[facet(args::positional)]
+        schema: String,
+
+        /// Crate name on staging.crates.io
+        #[facet(args::named, rename = "crate")]
+        crate_name: String,
+
+        /// Baseline version (default: latest)
+        #[facet(args::named, default)]
+        baseline: Option<String>,
+    },
+
+    /// Generate publishable crate from schema
+    Package {
+        /// Schema file
+        #[facet(args::positional)]
+        schema: String,
+
+        /// Crate name
+        #[facet(args::named)]
+        name: String,
+
+        /// Crate version
+        #[facet(args::named)]
+        version: String,
+
+        /// Output directory (default: ./<name>)
+        #[facet(args::named, default)]
+        output: Option<String>,
+    },
+
+    /// Publish schema to staging.crates.io
+    Publish {
+        /// Schema file
+        #[facet(args::positional)]
+        schema: String,
+
+        /// Skip confirmation prompt
+        #[facet(args::named, args::short = 'y', default)]
+        yes: bool,
+    },
+
+    /// Cache management
+    Cache {
+        /// Open cache directory in file explorer
+        #[facet(args::named, default)]
+        open: bool,
+
+        /// Clear all cached schemas
+        #[facet(args::named, default)]
+        clear: bool,
+    },
+
+    /// Output Claude Code skill for AI assistance
+    Skill,
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[facet(args::positional)]
+        shell: String,
+    },
+}
+
+// ============================================================================
+// Main entry point
+// ============================================================================
+
+/// Determines if an argument should be treated as a file path.
+///
+/// Returns true if the argument:
+/// - Contains '.' (e.g., config.styx, file.json)
+/// - Contains '/' (e.g., ./config, ../path, /absolute/path)
+/// - Is exactly '-' (stdin)
+fn is_file_arg(arg: &str) -> bool {
+    arg == "-" || arg.contains('.') || arg.contains('/')
+}
+
+fn main() {
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Handle empty args or help
+    if raw_args.is_empty() {
+        print_help();
+        std::process::exit(EXIT_SUCCESS);
+    }
+
+    // Handle --version / -V at top level
+    if raw_args[0] == "--version" || raw_args[0] == "-V" {
         println!("styx {VERSION}");
-        Ok(())
-    } else if args[0].starts_with('@') {
-        // Subcommand mode: styx @tree, styx @diff, etc.
-        run_subcommand(&args[0][1..], &args[1..])
+        std::process::exit(EXIT_SUCCESS);
+    }
+
+    // Handle --help / -h at top level
+    if raw_args[0] == "--help" || raw_args[0] == "-h" {
+        print_help();
+        std::process::exit(EXIT_SUCCESS);
+    }
+
+    // Disambiguation: is first arg a file or a subcommand?
+    let result = if is_file_arg(&raw_args[0]) {
+        // File mode: parse as FileArgs
+        run_file_mode(&raw_args)
     } else {
-        // File-first mode: styx <file> [options]
-        run_file_first(&args)
+        // Subcommand mode: parse as Args with subcommand
+        run_subcommand_mode(&raw_args)
     };
 
     match result {
@@ -52,7 +232,6 @@ fn main() {
                     source,
                     filename,
                 } => {
-                    // Render pretty diagnostic
                     if let Some(parse_error) = error.as_parse_error() {
                         parse_error.write_report(filename, source, std::io::stderr());
                     } else {
@@ -68,43 +247,150 @@ fn main() {
     }
 }
 
-fn print_usage() {
-    eprintln!(
-        r#"styx - command-line tool for Styx configuration files
+fn print_help() {
+    eprintln!("styx {VERSION} - command-line tool for Styx configuration files\n");
+    eprintln!("USAGE:");
+    eprintln!("    styx <file> [options]           Process a Styx file");
+    eprintln!("    styx <command> [args]           Run a subcommand\n");
+    eprintln!("    Files are detected by '.' or '/' in the name, or '-' for stdin.");
+    eprintln!("    Bare words (e.g., 'lsp', 'tree') are subcommands.\n");
+    eprintln!("FILE MODE OPTIONS:");
+    eprintln!("    -o, --output <FILE>             Output to file (styx format)");
+    eprintln!("        --json-out <FILE>           Output as JSON (use '-' for stdout)");
+    eprintln!("        --in-place                  Modify input file in place");
+    eprintln!("        --compact                   Single-line/compact formatting");
+    eprintln!("        --validate                  Validate against declared schema");
+    eprintln!("        --schema <FILE>             Use this schema instead of @schema\n");
+    eprintln!("SUBCOMMANDS:");
+    eprintln!("    lsp                             Start language server (stdio)");
+    eprintln!("    tree <file>                     Show parse tree");
+    eprintln!("    cst <file>                      Show CST structure");
+    eprintln!("    extract <binary>                Extract embedded schemas");
+    eprintln!("    diff <schema> --crate <name>    Compare against published version");
+    eprintln!("    package <schema> --name <n> --version <v>");
+    eprintln!("                                    Generate publishable crate");
+    eprintln!("    publish <schema> [-y]           Publish to staging.crates.io");
+    eprintln!("    cache [--open|--clear]          Cache management");
+    eprintln!("    skill                           Output Claude Code skill");
+    eprintln!("    completions <shell>             Generate shell completions (bash, zsh, fish)\n");
+    eprintln!("EXAMPLES:");
+    eprintln!("    styx config.styx                Format and print to stdout");
+    eprintln!("    styx config.styx --in-place     Format file in place");
+    eprintln!("    styx config.styx --validate     Validate against schema");
+    eprintln!("    styx tree config.styx           Show parse tree");
+    eprintln!("    styx completions bash           Generate bash completions");
+}
 
-USAGE:
-    styx <file> [options]           Process a Styx file
-    styx @<command> [args]          Run a subcommand
+fn run_file_mode(args: &[String]) -> Result<(), CliError> {
+    let args_strs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let opts: FileArgs =
+        facet_args::from_slice(&args_strs).map_err(|e| CliError::Usage(format!("{}", e)))?;
 
-FILE MODE OPTIONS:
-    -o <file>                       Output to file (styx format)
-    --json-out <file>               Output as JSON
-    --in-place                      Modify input file in place
-    --compact                       Single-line formatting
-    --validate                      Validate against declared schema
-    --override-schema <file>        Use this schema instead of declared
+    // Validate option combinations
+    if opts.in_place && opts.input == "-" {
+        return Err(CliError::Usage(
+            "--in-place cannot be used with stdin".into(),
+        ));
+    }
 
-SUBCOMMANDS:
-    @tree [--format sexp|debug] <file>  Show parse tree (styx_tree)
-    @cst <file>                     Show CST structure (styx_cst)
-    @extract <binary>               Extract embedded schemas from a binary
-    @diff <schema> --crate <name> [--baseline <ver>]
-                                    Compare schema against published version
-    @lsp                            Start language server (stdio)
-    @skill                          Output Claude Code skill for AI assistance
-    @package <schema> --name <n> --version <v> [--output <dir>]
-                                    Generate publishable crate from schema
-    @publish <schema> [-y]          Diff, bump, publish to staging (needs STYX_STAGING_TOKEN)
-    @cache [--open|--clear]         Show cache info, open in explorer, or clear
+    if opts.schema.is_some() && !opts.validate {
+        return Err(CliError::Usage("--schema requires --validate".into()));
+    }
 
-EXAMPLES:
-    styx config.styx                Format and print to stdout
-    styx config.styx --in-place     Format file in place
-    styx config.styx --json-out -   Convert to JSON, print to stdout
-    styx - < input.styx             Read from stdin
-    styx @tree config.styx          Show parse tree
-"#
-    );
+    // Safety check: prevent -o pointing to same file as input
+    if let Some(ref output) = opts.output {
+        if opts.input != "-" && output != "-" && is_same_file(&opts.input, output) {
+            return Err(CliError::Usage(
+                "input and output are the same file\nhint: use --in-place to modify in place"
+                    .into(),
+            ));
+        }
+    }
+
+    // Read input
+    let source = read_input(Some(&opts.input))?;
+    let filename = if opts.input == "-" {
+        "<stdin>".to_string()
+    } else {
+        opts.input.clone()
+    };
+
+    // Parse
+    let value = styx_tree::parse(&source).map_err(|e| CliError::ParseDiagnostic {
+        error: e,
+        source: source.clone(),
+        filename: filename.clone(),
+    })?;
+
+    // Validate if requested
+    if opts.validate {
+        run_validation(&value, &source, &filename, opts.schema.as_deref())?;
+    }
+
+    // If --validate with no explicit output, we're done (exit code only)
+    let has_explicit_output = opts.json_out.is_some() || opts.output.is_some() || opts.in_place;
+    if opts.validate && !has_explicit_output {
+        return Ok(());
+    }
+
+    // Determine output format and destination
+    if let Some(ref json_path) = opts.json_out {
+        // JSON output
+        let json = value_to_json(&value);
+        let output =
+            serde_json::to_string_pretty(&json).map_err(|e| CliError::Io(io::Error::other(e)))?;
+        write_output(json_path, &output)?;
+    } else {
+        // Styx output - use CST formatter to preserve comments
+        let format_opts = if opts.compact {
+            FormatOptions::default().inline()
+        } else {
+            FormatOptions::default()
+        };
+        let output = format_source(&source, format_opts);
+
+        if opts.in_place {
+            std::fs::write(&opts.input, &output)?;
+        } else if let Some(ref out_path) = opts.output {
+            write_output(out_path, &output)?;
+        } else {
+            print!("{output}");
+        }
+    }
+
+    Ok(())
+}
+
+fn run_subcommand_mode(args: &[String]) -> Result<(), CliError> {
+    let args_strs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let parsed: Args =
+        facet_args::from_slice(&args_strs).map_err(|e| CliError::Usage(format!("{}", e)))?;
+
+    match parsed.command {
+        Some(Command::Lsp) => run_lsp(),
+        Some(Command::Tree { format, file }) => run_tree(&format, &file),
+        Some(Command::Cst { file }) => run_cst(&file),
+        Some(Command::Extract { binary }) => run_extract(&binary),
+        Some(Command::Diff {
+            schema,
+            crate_name,
+            baseline,
+        }) => run_diff(&schema, &crate_name, baseline.as_deref()),
+        Some(Command::Package {
+            schema,
+            name,
+            version,
+            output,
+        }) => run_package(&schema, &name, &version, output.as_deref()),
+        Some(Command::Publish { schema, yes }) => run_publish(&schema, yes),
+        Some(Command::Cache { open, clear }) => run_cache(open, clear),
+        Some(Command::Skill) => run_skill(),
+        Some(Command::Completions { shell }) => run_completions(&shell),
+        None => {
+            print_help();
+            Ok(())
+        }
+    }
 }
 
 // ============================================================================
@@ -116,7 +402,6 @@ EXAMPLES:
 enum CliError {
     Io(io::Error),
     Parse(String),
-    /// Parse error with source and filename for pretty diagnostics
     ParseDiagnostic {
         error: styx_tree::BuildError,
         source: String,
@@ -163,156 +448,184 @@ impl From<styx_tree::BuildError> for CliError {
 }
 
 // ============================================================================
-// File-first mode
+// Subcommand implementations
 // ============================================================================
 
-#[derive(Default)]
-struct FileOptions {
-    input: Option<String>,
-    output: Option<String>,
-    json_out: Option<String>,
-    in_place: bool,
-    compact: bool,
-    validate: bool,
-    override_schema: Option<String>,
+fn run_lsp() -> Result<(), CliError> {
+    let rt = tokio::runtime::Runtime::new().map_err(CliError::Io)?;
+    rt.block_on(async {
+        styx_lsp::run()
+            .await
+            .map_err(|e| CliError::Io(io::Error::other(e)))
+    })
 }
 
-fn parse_file_options(args: &[String]) -> Result<FileOptions, CliError> {
-    let mut opts = FileOptions::default();
-    let mut i = 0;
+fn run_tree(format: &str, file: &str) -> Result<(), CliError> {
+    let source = read_input(Some(file))?;
+    let filename = if file == "-" { "<stdin>" } else { file };
 
-    while i < args.len() {
-        let arg = &args[i];
-
-        if arg == "-o" {
-            i += 1;
-            opts.output = Some(
-                args.get(i)
-                    .ok_or_else(|| CliError::Usage("-o requires an argument".into()))?
-                    .clone(),
-            );
-        } else if arg == "--json-out" {
-            i += 1;
-            opts.json_out = Some(
-                args.get(i)
-                    .ok_or_else(|| CliError::Usage("--json-out requires an argument".into()))?
-                    .clone(),
-            );
-        } else if arg == "--in-place" {
-            opts.in_place = true;
-        } else if arg == "--compact" {
-            opts.compact = true;
-        } else if arg == "--validate" {
-            opts.validate = true;
-        } else if arg == "--override-schema" {
-            i += 1;
-            opts.override_schema = Some(
-                args.get(i)
-                    .ok_or_else(|| {
-                        CliError::Usage("--override-schema requires an argument".into())
-                    })?
-                    .clone(),
-            );
-        } else if arg.starts_with('-') && arg != "-" {
-            return Err(CliError::Usage(format!("unknown option: {arg}")));
-        } else if opts.input.is_none() {
-            opts.input = Some(arg.clone());
-        } else {
-            return Err(CliError::Usage(format!("unexpected argument: {arg}")));
+    match format {
+        "sexp" => match styx_tree::parse(&source) {
+            Ok(value) => {
+                println!("; file: {}", filename);
+                print_sexp(&value, 0);
+                println!();
+            }
+            Err(e) => {
+                let (start, end) = match &e {
+                    styx_tree::BuildError::Parse(_, span) => (span.start, span.end),
+                    _ => (0, 0),
+                };
+                let msg = json_escape(&e.to_string());
+                println!("; file: {}", filename);
+                println!("(error [{}, {}] \"{}\")", start, end, msg);
+            }
+        },
+        "debug" => {
+            let value = styx_tree::parse(&source)?;
+            print_tree(&value, 0);
         }
-
-        i += 1;
-    }
-
-    // Validate option combinations
-    if opts.in_place && opts.input.as_deref() == Some("-") {
-        return Err(CliError::Usage(
-            "--in-place cannot be used with stdin".into(),
-        ));
-    }
-
-    if opts.in_place && opts.input.is_none() {
-        return Err(CliError::Usage("--in-place requires an input file".into()));
-    }
-
-    if opts.override_schema.is_some() && !opts.validate {
-        return Err(CliError::Usage(
-            "--override-schema requires --validate".into(),
-        ));
-    }
-
-    // Safety check: prevent -o pointing to same file as input
-    if let (Some(input), Some(output)) = (&opts.input, &opts.output)
-        && input != "-"
-        && output != "-"
-        && is_same_file(input, output)
-    {
-        return Err(CliError::Usage(
-            "input and output are the same file\nhint: use --in-place to modify in place".into(),
-        ));
-    }
-
-    Ok(opts)
-}
-
-fn is_same_file(a: &str, b: &str) -> bool {
-    // Try to canonicalize both paths
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(a), Ok(b)) => a == b,
-        // If either doesn't exist yet, compare the strings
-        _ => a == b,
-    }
-}
-
-fn run_file_first(args: &[String]) -> Result<(), CliError> {
-    let opts = parse_file_options(args)?;
-
-    // Read input
-    let source = read_input(opts.input.as_deref())?;
-    let filename = opts.input.as_deref().unwrap_or("<stdin>").to_string();
-
-    // Parse
-    let value = styx_tree::parse(&source).map_err(|e| CliError::ParseDiagnostic {
-        error: e,
-        source: source.clone(),
-        filename: filename.clone(),
-    })?;
-
-    // Validate if requested
-    if opts.validate {
-        run_validation(&value, &source, &filename, opts.override_schema.as_deref())?;
-    }
-
-    // Determine output format and destination
-    if let Some(json_path) = &opts.json_out {
-        // JSON output
-        let json = value_to_json(&value);
-        let output =
-            serde_json::to_string_pretty(&json).map_err(|e| CliError::Io(io::Error::other(e)))?;
-        write_output(json_path, &output)?;
-    } else {
-        // Styx output - use CST formatter to preserve comments
-        let format_opts = if opts.compact {
-            FormatOptions::default().inline()
-        } else {
-            FormatOptions::default()
-        };
-        let output = format_source(&source, format_opts);
-
-        if opts.in_place {
-            // Write to input file
-            let path = opts.input.as_ref().unwrap();
-            std::fs::write(path, &output)?;
-        } else if let Some(out_path) = &opts.output {
-            write_output(out_path, &output)?;
-        } else {
-            // Default: stdout
-            print!("{output}");
+        _ => {
+            return Err(CliError::Usage(format!(
+                "unknown format '{}', expected 'sexp' or 'debug'",
+                format
+            )));
         }
     }
 
     Ok(())
 }
+
+fn run_cst(file: &str) -> Result<(), CliError> {
+    let source = read_input(Some(file))?;
+    let parsed = styx_cst::parse(&source);
+
+    println!("{:#?}", parsed.syntax());
+
+    if !parsed.errors().is_empty() {
+        println!("\nParse errors:");
+        for err in parsed.errors() {
+            println!("  {:?}", err);
+        }
+    }
+
+    Ok(())
+}
+
+fn run_extract(binary: &str) -> Result<(), CliError> {
+    let schemas = styx_embed::extract_schemas_from_file(Path::new(binary)).map_err(|e| {
+        CliError::Io(io::Error::new(
+            io::ErrorKind::Other,
+            format!("{binary}: {e}"),
+        ))
+    })?;
+
+    if schemas.is_empty() {
+        return Err(CliError::Usage(format!(
+            "no embedded schemas found in {binary}"
+        )));
+    }
+
+    for (i, schema) in schemas.iter().enumerate() {
+        if schemas.len() > 1 {
+            eprintln!("--- schema {} ---", i + 1);
+        }
+        println!("{schema}");
+    }
+
+    Ok(())
+}
+
+fn run_skill() -> Result<(), CliError> {
+    print!("{}", include_str!("../../../contrib/claude-skill/SKILL.md"));
+    Ok(())
+}
+
+fn run_completions(shell: &str) -> Result<(), CliError> {
+    let shell_enum = match shell.to_lowercase().as_str() {
+        "bash" => facet_args::Shell::Bash,
+        "zsh" => facet_args::Shell::Zsh,
+        "fish" => facet_args::Shell::Fish,
+        _ => {
+            return Err(CliError::Usage(format!(
+                "unknown shell '{}', expected: bash, zsh, fish",
+                shell
+            )));
+        }
+    };
+
+    let completions = facet_args::generate_completions::<Args>(shell_enum, "styx");
+    print!("{completions}");
+    Ok(())
+}
+
+fn run_cache(open: bool, clear: bool) -> Result<(), CliError> {
+    use styx_lsp::cache;
+
+    if clear {
+        match cache::clear_cache() {
+            Ok((count, size)) => {
+                println!("Cleared {} cached schemas ({} bytes)", count, size);
+            }
+            Err(e) => {
+                return Err(CliError::Io(e));
+            }
+        }
+        return Ok(());
+    }
+
+    let Some(cache_dir) = cache::cache_dir() else {
+        return Err(CliError::Usage(
+            "could not determine cache directory".into(),
+        ));
+    };
+
+    if open {
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg(&cache_dir)
+                .spawn()
+                .map_err(CliError::Io)?;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(&cache_dir)
+                .spawn()
+                .map_err(CliError::Io)?;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer")
+                .arg(&cache_dir)
+                .spawn()
+                .map_err(CliError::Io)?;
+        }
+        return Ok(());
+    }
+
+    println!("Cache directory: {}", cache_dir.display());
+
+    if let Some(stats) = cache::cache_stats() {
+        println!(
+            "Embedded schemas: {} ({} bytes)",
+            stats.embedded_count, stats.embedded_size
+        );
+        println!(
+            "Crate schemas: {} ({} bytes)",
+            stats.crate_count, stats.crate_size
+        );
+    } else {
+        println!("(cache directory does not exist)");
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Validation
+// ============================================================================
 
 fn run_validation(
     value: &Value,
@@ -320,34 +633,23 @@ fn run_validation(
     filename: &str,
     override_schema: Option<&str>,
 ) -> Result<(), CliError> {
-    // Determine schema source
     let schema_file = if let Some(schema_path) = override_schema {
-        // Use override schema
         load_schema_file(schema_path)?
     } else {
-        // Look for @ or @schema key in document root for schema declaration
         let schema_ref = find_schema_declaration(value)?;
         match schema_ref {
             SchemaRef::External(path) => {
-                // Resolve relative to input file's directory
                 let resolved = resolve_schema_path(&path, Some(filename))?;
                 load_schema_file(&resolved)?
             }
-            SchemaRef::Embedded { cli } => {
-                // Extract schema from embedded binary
-                extract_embedded_schema(&cli)?
-            }
+            SchemaRef::Embedded { cli } => extract_embedded_schema(&cli)?,
         }
     };
 
-    // Strip the @ key (schema declaration) from the value before validation
     let value_for_validation = strip_schema_declaration(value);
-
-    // Run validation
     let result = validate(&value_for_validation, &schema_file);
 
     if !result.is_valid() {
-        // Use ariadne for pretty error reporting
         result.write_report(filename, source, std::io::stderr());
         return Err(CliError::Validation(format!(
             "{} validation error(s)",
@@ -355,7 +657,6 @@ fn run_validation(
         )));
     }
 
-    // Print warnings (also with ariadne)
     if !result.warnings.is_empty() {
         result.write_report(filename, source, std::io::stderr());
     }
@@ -364,13 +665,10 @@ fn run_validation(
 }
 
 enum SchemaRef {
-    /// Path to external schema file: @schema path/to/schema.styx
     External(String),
-    /// Embedded schema from binary: @schema {id ..., cli <binary>}
     Embedded { cli: String },
 }
 
-/// Strip schema declaration keys from a document before validation.
 fn strip_schema_declaration(value: &Value) -> Value {
     if let Some(obj) = value.as_object() {
         let filtered_entries: Vec<_> = obj
@@ -400,12 +698,10 @@ fn find_schema_declaration(value: &Value) -> Result<SchemaRef, CliError> {
 
     for entry in &obj.entries {
         if entry.key.is_schema_tag() {
-            // @schema path/to/schema.styx
             if let Some(path) = entry.value.as_str() {
                 return Ok(SchemaRef::External(path.to_string()));
             }
 
-            // @schema {id ..., cli ...}
             if let Some(schema_obj) = entry.value.as_object() {
                 if let Some(cli_value) = schema_obj.get("cli") {
                     if let Some(cli_name) = cli_value.as_str() {
@@ -426,26 +722,23 @@ fn find_schema_declaration(value: &Value) -> Result<SchemaRef, CliError> {
     }
 
     Err(CliError::Validation(
-        "no schema declaration found (@schema key)\nhint: use --override-schema to specify a schema file"
+        "no schema declaration found (@schema key)\nhint: use --schema to specify a schema file"
             .into(),
     ))
 }
 
 fn resolve_schema_path(schema_path: &str, input_path: Option<&str>) -> Result<String, CliError> {
-    // If it's a URL, return as-is (not supported yet)
     if schema_path.starts_with("http://") || schema_path.starts_with("https://") {
         return Err(CliError::Usage(
             "URL schema references are not yet supported".into(),
         ));
     }
 
-    // If absolute, return as-is
     let path = Path::new(schema_path);
     if path.is_absolute() {
         return Ok(schema_path.to_string());
     }
 
-    // Resolve relative to input file's directory
     if let Some(input) = input_path
         && input != "-"
         && let Some(parent) = Path::new(input).parent()
@@ -453,7 +746,6 @@ fn resolve_schema_path(schema_path: &str, input_path: Option<&str>) -> Result<St
         return Ok(parent.join(schema_path).to_string_lossy().to_string());
     }
 
-    // Fall back to current directory
     Ok(schema_path.to_string())
 }
 
@@ -469,12 +761,7 @@ fn load_schema_file(path: &str) -> Result<SchemaFile, CliError> {
         .map_err(|e| CliError::Parse(format!("failed to parse schema '{}': {}", path, e)))
 }
 
-/// Extract schema from a binary with embedded styx schemas.
-///
-/// Uses the `which` crate to find the binary in PATH, then extracts
-/// embedded schemas using `styx_embed::extract_schemas_from_file`.
 fn extract_embedded_schema(cli_name: &str) -> Result<SchemaFile, CliError> {
-    // Find the binary in PATH
     let binary_path = which::which(cli_name).map_err(|_| {
         CliError::Validation(format!(
             "binary '{}' not found in PATH\nhint: ensure the binary is installed and in your PATH",
@@ -482,24 +769,21 @@ fn extract_embedded_schema(cli_name: &str) -> Result<SchemaFile, CliError> {
         ))
     })?;
 
-    // Extract schemas from the binary (zero-execution, memory-mapped scan)
     let schemas = styx_embed::extract_schemas_from_file(&binary_path).map_err(|e| {
         CliError::Validation(format!(
-            "failed to extract schema from '{}': {}\nhint: the binary may not have embedded schemas (use styx_embed macros to embed)",
+            "failed to extract schema from '{}': {}\nhint: the binary may not have embedded schemas",
             binary_path.display(),
             e
         ))
     })?;
 
-    // We expect exactly one schema for now
     if schemas.is_empty() {
         return Err(CliError::Validation(format!(
-            "no embedded schemas found in '{}'\nhint: use styx_embed::embed_schema! or similar to embed schemas",
+            "no embedded schemas found in '{}'",
             binary_path.display()
         )));
     }
 
-    // Parse the first schema
     let schema_source = &schemas[0];
     facet_styx::from_str(schema_source).map_err(|e| {
         CliError::Parse(format!(
@@ -508,211 +792,6 @@ fn extract_embedded_schema(cli_name: &str) -> Result<SchemaFile, CliError> {
             e
         ))
     })
-}
-
-// ============================================================================
-// Subcommand mode
-// ============================================================================
-
-fn run_subcommand(cmd: &str, args: &[String]) -> Result<(), CliError> {
-    match cmd {
-        "tree" => run_tree(args),
-        "cst" => run_cst(args),
-        "extract" => run_extract(args),
-        "diff" => run_diff(args),
-        "lsp" => run_lsp(args),
-        "skill" => run_skill(args),
-        "package" => run_package(args),
-        "publish" => run_publish(args),
-        "cache" => run_cache(args),
-        _ => Err(CliError::Usage(format!("unknown subcommand: @{cmd}"))),
-    }
-}
-
-fn run_lsp(_args: &[String]) -> Result<(), CliError> {
-    let rt = tokio::runtime::Runtime::new().map_err(CliError::Io)?;
-    rt.block_on(async {
-        styx_lsp::run()
-            .await
-            .map_err(|e| CliError::Io(io::Error::other(e)))
-    })
-}
-
-fn run_cache(args: &[String]) -> Result<(), CliError> {
-    use styx_lsp::cache;
-
-    let open = args.iter().any(|a| a == "--open");
-    let clear = args.iter().any(|a| a == "--clear");
-
-    if clear {
-        match cache::clear_cache() {
-            Ok((count, size)) => {
-                println!("Cleared {} cached schemas ({} bytes)", count, size);
-            }
-            Err(e) => {
-                return Err(CliError::Io(e));
-            }
-        }
-        return Ok(());
-    }
-
-    let Some(cache_dir) = cache::cache_dir() else {
-        return Err(CliError::Usage(
-            "could not determine cache directory".into(),
-        ));
-    };
-
-    if open {
-        // Open in file explorer
-        #[cfg(target_os = "macos")]
-        {
-            std::process::Command::new("open")
-                .arg(&cache_dir)
-                .spawn()
-                .map_err(CliError::Io)?;
-        }
-        #[cfg(target_os = "linux")]
-        {
-            std::process::Command::new("xdg-open")
-                .arg(&cache_dir)
-                .spawn()
-                .map_err(CliError::Io)?;
-        }
-        #[cfg(target_os = "windows")]
-        {
-            std::process::Command::new("explorer")
-                .arg(&cache_dir)
-                .spawn()
-                .map_err(CliError::Io)?;
-        }
-        return Ok(());
-    }
-
-    // Default: show cache info
-    println!("Cache directory: {}", cache_dir.display());
-
-    if let Some(stats) = cache::cache_stats() {
-        println!(
-            "Embedded schemas: {} ({} bytes)",
-            stats.embedded_count, stats.embedded_size
-        );
-        println!(
-            "Crate schemas: {} ({} bytes)",
-            stats.crate_count, stats.crate_size
-        );
-    } else {
-        println!("(cache directory does not exist)");
-    }
-
-    Ok(())
-}
-
-fn run_tree(args: &[String]) -> Result<(), CliError> {
-    // Parse args: [--format sexp|debug] <file>
-    let mut format = "debug";
-    let mut file = None;
-    let mut i = 0;
-    while i < args.len() {
-        if args[i] == "--format" {
-            i += 1;
-            format = args.get(i).map(|s| s.as_str()).ok_or_else(|| {
-                CliError::Usage("--format requires an argument (sexp or debug)".into())
-            })?;
-        } else if args[i].starts_with('-') {
-            return Err(CliError::Usage(format!("unknown option: {}", args[i])));
-        } else if file.is_none() {
-            file = Some(args[i].as_str());
-        } else {
-            return Err(CliError::Usage(format!("unexpected argument: {}", args[i])));
-        }
-        i += 1;
-    }
-
-    let source = read_input(file)?;
-    let filename = file.unwrap_or("<stdin>");
-
-    match format {
-        "sexp" => {
-            match styx_tree::parse(&source) {
-                Ok(value) => {
-                    println!("; file: {}", filename);
-                    print_sexp(&value, 0);
-                    println!();
-                }
-                Err(e) => {
-                    // Output error in sexp format
-                    let (start, end) = match &e {
-                        styx_tree::BuildError::Parse(_, span) => (span.start, span.end),
-                        _ => (0, 0),
-                    };
-                    let msg = json_escape(&e.to_string());
-                    println!("; file: {}", filename);
-                    println!("(error [{}, {}] \"{}\")", start, end, msg);
-                }
-            }
-        }
-        "debug" => {
-            let value = styx_tree::parse(&source)?;
-            print_tree(&value, 0);
-        }
-        _ => {
-            return Err(CliError::Usage(format!(
-                "unknown format '{}', expected 'sexp' or 'debug'",
-                format
-            )));
-        }
-    }
-
-    Ok(())
-}
-
-fn run_skill(_args: &[String]) -> Result<(), CliError> {
-    print!("{}", include_str!("../../../contrib/claude-skill/SKILL.md"));
-    Ok(())
-}
-
-fn run_cst(args: &[String]) -> Result<(), CliError> {
-    let file = args.first().map(|s| s.as_str());
-    let source = read_input(file)?;
-
-    let parsed = styx_cst::parse(&source);
-
-    // Print the CST using Debug format
-    println!("{:#?}", parsed.syntax());
-
-    // Print parse errors if any
-    if !parsed.errors().is_empty() {
-        println!("\nParse errors:");
-        for err in parsed.errors() {
-            println!("  {:?}", err);
-        }
-    }
-
-    Ok(())
-}
-
-fn run_extract(args: &[String]) -> Result<(), CliError> {
-    let file = args
-        .first()
-        .ok_or_else(|| CliError::Usage("@extract requires a binary file".into()))?;
-
-    let schemas = styx_embed::extract_schemas_from_file(Path::new(file))
-        .map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, format!("{file}: {e}"))))?;
-
-    if schemas.is_empty() {
-        return Err(CliError::Usage(format!(
-            "no embedded schemas found in {file}"
-        )));
-    }
-
-    for (i, schema) in schemas.iter().enumerate() {
-        if schemas.len() > 1 {
-            eprintln!("--- schema {} ---", i + 1);
-        }
-        println!("{schema}");
-    }
-
-    Ok(())
 }
 
 // ============================================================================
@@ -736,6 +815,13 @@ fn write_output(path: &str, content: &str) -> Result<(), io::Error> {
         Ok(())
     } else {
         std::fs::write(path, content)
+    }
+}
+
+fn is_same_file(a: &str, b: &str) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
     }
 }
 
@@ -861,7 +947,6 @@ fn print_tree_inline(value: &Value) {
 use styx_parse::ScalarKind;
 
 fn print_sexp(value: &Value, indent: usize) {
-    // The root value is always an object representing the document
     let pad = "  ".repeat(indent);
 
     if let Some(obj) = value.as_object() {
@@ -875,7 +960,6 @@ fn print_sexp(value: &Value, indent: usize) {
         }
         print!("{pad})");
     } else {
-        // Shouldn't happen for a parsed document, but handle it
         print_sexp_value(value, indent);
     }
 }
@@ -898,11 +982,9 @@ fn print_sexp_value(value: &Value, indent: usize) {
         .unwrap_or_else(|| "[-1, -1]".to_string());
 
     match (&value.tag, &value.payload) {
-        // Unit: no tag, no payload
         (None, None) => {
             print!("{pad}(unit {span})");
         }
-        // Tagged value (with or without payload)
         (Some(tag), payload) => {
             let tag_name = json_escape(&tag.name);
             print!("{pad}(tag {span} \"{tag_name}\"");
@@ -914,7 +996,6 @@ fn print_sexp_value(value: &Value, indent: usize) {
                 print!(")");
             }
         }
-        // Untagged scalar
         (None, Some(Payload::Scalar(s))) => {
             let kind = match s.kind {
                 ScalarKind::Bare => "bare",
@@ -925,7 +1006,6 @@ fn print_sexp_value(value: &Value, indent: usize) {
             let text = json_escape(&s.text);
             print!("{pad}(scalar {span} {kind} \"{text}\")");
         }
-        // Untagged sequence
         (None, Some(Payload::Sequence(seq))) => {
             print!("{pad}(sequence {span}");
             if seq.items.is_empty() {
@@ -941,7 +1021,6 @@ fn print_sexp_value(value: &Value, indent: usize) {
                 print!(")");
             }
         }
-        // Untagged object
         (None, Some(Payload::Object(obj))) => {
             let sep = match obj.separator {
                 styx_parse::Separator::Newline => "newline",
@@ -1085,93 +1164,41 @@ fn payload_to_json(payload: &Payload) -> serde_json::Value {
 }
 
 // ============================================================================
-// Package command - generate a publishable crate from a schema
+// Package command
 // ============================================================================
 
-fn run_package(args: &[String]) -> Result<(), CliError> {
-    let mut name: Option<String> = None;
-    let mut version: Option<String> = None;
-    let mut output: Option<String> = None;
-    let mut schema_file: Option<String> = None;
-    let mut i = 0;
+fn run_package(
+    schema_file: &str,
+    name: &str,
+    version: &str,
+    output: Option<&str>,
+) -> Result<(), CliError> {
+    let output_dir = output.unwrap_or(name);
+    let output_path = Path::new(output_dir);
 
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "--name" {
-            i += 1;
-            name = Some(
-                args.get(i)
-                    .ok_or_else(|| CliError::Usage("--name requires an argument".into()))?
-                    .clone(),
-            );
-        } else if arg == "--version" {
-            i += 1;
-            version = Some(
-                args.get(i)
-                    .ok_or_else(|| CliError::Usage("--version requires an argument".into()))?
-                    .clone(),
-            );
-        } else if arg == "--output" {
-            i += 1;
-            output = Some(
-                args.get(i)
-                    .ok_or_else(|| CliError::Usage("--output requires an argument".into()))?
-                    .clone(),
-            );
-        } else if arg.starts_with('-') {
-            return Err(CliError::Usage(format!("unknown option: {arg}")));
-        } else if schema_file.is_none() {
-            schema_file = Some(arg.clone());
-        } else {
-            return Err(CliError::Usage(format!("unexpected argument: {arg}")));
-        }
-        i += 1;
-    }
-
-    let schema_file =
-        schema_file.ok_or_else(|| CliError::Usage("@package requires a schema file".into()))?;
-    let name =
-        name.ok_or_else(|| CliError::Usage("@package requires --name <crate-name>".into()))?;
-    let version =
-        version.ok_or_else(|| CliError::Usage("@package requires --version <semver>".into()))?;
-
-    // Default output to ./<name>/
-    let output_dir = output.unwrap_or_else(|| name.clone());
-    let output_path = Path::new(&output_dir);
-
-    // Read and validate the schema file
-    let schema_content = std::fs::read_to_string(&schema_file)
+    let schema_content = std::fs::read_to_string(schema_file)
         .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("{schema_file}: {e}"))))?;
 
-    // Parse to validate it's valid styx
     styx_tree::parse(&schema_content)
         .map_err(|e| CliError::Parse(format!("invalid schema: {e}")))?;
 
-    // Create output directory structure
     std::fs::create_dir_all(output_path.join("src"))?;
 
-    // Write Cargo.toml
-    let cargo_toml = generate_cargo_toml(&name, &version);
+    let cargo_toml = generate_cargo_toml(name, version);
     std::fs::write(output_path.join("Cargo.toml"), cargo_toml)?;
 
-    // Write src/lib.rs
-    let lib_rs = generate_lib_rs(&name);
+    let lib_rs = generate_lib_rs(name);
     std::fs::write(output_path.join("src/lib.rs"), lib_rs)?;
 
-    // Write README.md
-    let readme = generate_readme(&name);
+    let readme = generate_readme(name);
     std::fs::write(output_path.join("README.md"), readme)?;
 
-    // Copy schema file
     std::fs::write(output_path.join("schema.styx"), &schema_content)?;
 
     eprintln!("Created crate in {output_dir}/");
     eprintln!();
     eprintln!("To publish:");
     eprintln!("  cd {output_dir} && cargo publish");
-    eprintln!();
-    eprintln!("To publish to staging:");
-    eprintln!("  cd {output_dir} && cargo publish --index sparse+https://index.staging.crates.io/");
 
     Ok(())
 }
@@ -1187,8 +1214,6 @@ description = "Styx schema for {name}"
 readme = "README.md"
 categories = ["config"]
 keywords = ["styx", "schema"]
-
-# No dependencies - pure data crate
 "#
     )
 }
@@ -1198,29 +1223,13 @@ fn generate_readme(name: &str) -> String {
     format!(
         r#"# {name}
 
-A [Styx](https://styx.bearcove.eu) schema crate for configuration validation.
+A [Styx](https://styx.bearcove.eu) schema crate.
 
 ## Usage
 
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-{name} = "VERSION"
-```
-
-Then use the schema:
-
 ```rust
 use {crate_name_snake}::SCHEMA;
-
-// SCHEMA contains the raw styx schema text
-// Pass it to styx validation APIs
 ```
-
-## Schema
-
-See [`schema.styx`](./schema.styx) for the full schema definition.
 
 ## License
 
@@ -1232,52 +1241,24 @@ MIT OR Apache-2.0
 fn generate_lib_rs(name: &str) -> String {
     let crate_name_snake = name.replace('-', "_");
     format!(
-        r#"//! Styx schema crate.
-//!
-//! This crate provides the schema definition for validating configuration files.
-//!
-//! ## Usage
-//!
-//! ```rust
-//! let schema = {crate_name_snake}::SCHEMA;
-//! // Pass to styx validation APIs
-//! ```
+        r#"//! Styx schema crate for {name}.
 
 /// The styx schema content.
 pub const SCHEMA: &str = include_str!("../schema.styx");
-"#
+"#,
+        name = crate_name_snake
     )
 }
 
 // ============================================================================
-// Publish command - package and publish to staging.crates.io
+// Publish command
 // ============================================================================
 
 const STAGING_INDEX: &str = "sparse+https://index.staging.crates.io/";
+const STAGING_API: &str = "https://staging.crates.io/api/v1/crates";
+const STAGING_DOWNLOAD: &str = "https://static.staging.crates.io/crates";
 
-fn run_publish(args: &[String]) -> Result<(), CliError> {
-    let mut schema_file: Option<String> = None;
-    let mut yes = false;
-    let mut i = 0;
-
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "-y" || arg == "--yes" {
-            yes = true;
-        } else if arg.starts_with('-') {
-            return Err(CliError::Usage(format!("unknown option: {arg}")));
-        } else if schema_file.is_none() {
-            schema_file = Some(arg.clone());
-        } else {
-            return Err(CliError::Usage(format!("unexpected argument: {arg}")));
-        }
-        i += 1;
-    }
-
-    let schema_file =
-        schema_file.ok_or_else(|| CliError::Usage("@publish requires a schema file".into()))?;
-
-    // Get token from environment
+fn run_publish(schema_file: &str, yes: bool) -> Result<(), CliError> {
     let token = std::env::var("STYX_STAGING_TOKEN").ok();
     if token.is_none() {
         return Err(CliError::Usage(
@@ -1285,33 +1266,27 @@ fn run_publish(args: &[String]) -> Result<(), CliError> {
         ));
     }
 
-    // Read and validate the schema file
-    let schema_content = std::fs::read_to_string(&schema_file)
+    let schema_content = std::fs::read_to_string(schema_file)
         .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("{schema_file}: {e}"))))?;
 
-    // Parse to validate it's valid styx
     let local_tree = styx_tree::parse(&schema_content)
         .map_err(|e| CliError::Parse(format!("invalid schema: {e}")))?;
 
-    // Extract crate name from meta.crate
     let name = extract_meta_field(&local_tree, "crate").ok_or_else(|| {
         CliError::Usage("schema must have meta.crate field for publishing".into())
     })?;
 
-    // Try to fetch latest published version
     let (version, _changes) = match fetch_latest_version(&name) {
         Ok(latest_version) => {
             eprintln!("Found {name}@{latest_version} on staging.crates.io");
             eprintln!();
 
-            // Fetch and diff
             let baseline_content = fetch_crate_schema(&name, &latest_version)?;
             let baseline_tree = styx_tree::parse(&baseline_content)
                 .map_err(|e| CliError::Parse(format!("invalid baseline schema: {e}")))?;
 
             let changes = compare_schemas(&baseline_tree, &local_tree);
 
-            // Show changes
             if changes.breaking.is_empty()
                 && changes.additive.is_empty()
                 && changes.patch.is_empty()
@@ -1341,7 +1316,6 @@ fn run_publish(args: &[String]) -> Result<(), CliError> {
                 }
             }
 
-            // Calculate next version
             let next_version = calculate_next_version(&latest_version, &changes)?;
             eprintln!();
             eprintln!("Version bump: {latest_version} -> {next_version}");
@@ -1349,7 +1323,6 @@ fn run_publish(args: &[String]) -> Result<(), CliError> {
             (next_version, Some(changes))
         }
         Err(_) => {
-            // First publish
             eprintln!("No existing version found - this will be the first publish.");
             ("0.1.0".to_string(), None)
         }
@@ -1357,7 +1330,6 @@ fn run_publish(args: &[String]) -> Result<(), CliError> {
 
     eprintln!();
 
-    // Ask for confirmation unless -y was passed
     if !yes {
         eprint!("Publish {name}@{version} to staging.crates.io? [y/N] ");
         let mut input = String::new();
@@ -1368,12 +1340,10 @@ fn run_publish(args: &[String]) -> Result<(), CliError> {
         }
     }
 
-    // Create temp directory for the crate
     let temp_dir = std::env::temp_dir().join(format!("styx-publish-{name}-{}", std::process::id()));
     std::fs::create_dir_all(temp_dir.join("src"))?;
     std::fs::create_dir_all(temp_dir.join(".cargo"))?;
 
-    // Write crate files
     let cargo_toml = generate_cargo_toml(&name, &version);
     std::fs::write(temp_dir.join("Cargo.toml"), cargo_toml)?;
 
@@ -1385,7 +1355,6 @@ fn run_publish(args: &[String]) -> Result<(), CliError> {
 
     std::fs::write(temp_dir.join("schema.styx"), &schema_content)?;
 
-    // Configure staging registry
     let cargo_config = format!(
         r#"[registries.staging]
 index = "{STAGING_INDEX}"
@@ -1395,14 +1364,12 @@ index = "{STAGING_INDEX}"
 
     eprintln!("Publishing {name}@{version}...");
 
-    // Build cargo publish command
     let mut cmd = std::process::Command::new("cargo");
     cmd.arg("publish")
         .arg("--registry")
         .arg("staging")
         .current_dir(&temp_dir);
 
-    // Pass token via environment variable
     if let Some(token) = token {
         cmd.env("CARGO_REGISTRIES_STAGING_TOKEN", token);
     }
@@ -1414,7 +1381,6 @@ index = "{STAGING_INDEX}"
         ))
     })?;
 
-    // Clean up temp directory
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     if status.success() {
@@ -1429,7 +1395,6 @@ index = "{STAGING_INDEX}"
 }
 
 fn extract_meta_field(value: &Value, field: &str) -> Option<String> {
-    // Look for meta.field in the root object
     if let Some(Payload::Object(obj)) = &value.payload {
         for entry in &obj.entries {
             if entry.key.as_str() == Some("meta")
@@ -1465,17 +1430,14 @@ fn calculate_next_version(current: &str, changes: &SchemaChanges) -> Result<Stri
         .map_err(|_| CliError::Parse(format!("invalid patch: {}", parts[2])))?;
 
     let (new_major, new_minor, new_patch) = if !changes.breaking.is_empty() {
-        // Breaking change -> major bump (or 1.0.0 if pre-1.0)
         if major == 0 {
-            (0, minor + 1, 0) // 0.x stays 0.x but bumps minor for breaking
+            (0, minor + 1, 0)
         } else {
             (major + 1, 0, 0)
         }
     } else if !changes.additive.is_empty() {
-        // Additive change -> minor bump
         (major, minor + 1, 0)
     } else {
-        // Patch change
         (major, minor, patch + 1)
     };
 
@@ -1483,76 +1445,30 @@ fn calculate_next_version(current: &str, changes: &SchemaChanges) -> Result<Stri
 }
 
 // ============================================================================
-// Diff command - compare local schema against published version
+// Diff command
 // ============================================================================
 
-const STAGING_API: &str = "https://staging.crates.io/api/v1/crates";
-const STAGING_DOWNLOAD: &str = "https://static.staging.crates.io/crates";
-
-fn run_diff(args: &[String]) -> Result<(), CliError> {
-    let mut crate_name: Option<String> = None;
-    let mut baseline: Option<String> = None;
-    let mut schema_file: Option<String> = None;
-    let mut i = 0;
-
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "--crate" {
-            i += 1;
-            crate_name = Some(
-                args.get(i)
-                    .ok_or_else(|| CliError::Usage("--crate requires an argument".into()))?
-                    .clone(),
-            );
-        } else if arg == "--baseline" {
-            i += 1;
-            baseline = Some(
-                args.get(i)
-                    .ok_or_else(|| CliError::Usage("--baseline requires an argument".into()))?
-                    .clone(),
-            );
-        } else if arg.starts_with('-') {
-            return Err(CliError::Usage(format!("unknown option: {arg}")));
-        } else if schema_file.is_none() {
-            schema_file = Some(arg.clone());
-        } else {
-            return Err(CliError::Usage(format!("unexpected argument: {arg}")));
-        }
-        i += 1;
-    }
-
-    let schema_file =
-        schema_file.ok_or_else(|| CliError::Usage("@diff requires a schema file".into()))?;
-    let crate_name =
-        crate_name.ok_or_else(|| CliError::Usage("@diff requires --crate <name>".into()))?;
-
-    // Read local schema
-    let local_content = std::fs::read_to_string(&schema_file)
+fn run_diff(schema_file: &str, crate_name: &str, baseline: Option<&str>) -> Result<(), CliError> {
+    let local_content = std::fs::read_to_string(schema_file)
         .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("{schema_file}: {e}"))))?;
 
-    // Parse local schema
     let local_tree = styx_tree::parse(&local_content)
         .map_err(|e| CliError::Parse(format!("invalid schema: {e}")))?;
 
-    // Fetch baseline version if not specified
     let version = match baseline {
-        Some(v) => v,
-        None => fetch_latest_version(&crate_name)?,
+        Some(v) => v.to_string(),
+        None => fetch_latest_version(crate_name)?,
     };
 
     eprintln!("Comparing against {crate_name}@{version}...");
 
-    // Fetch and extract baseline schema
-    let baseline_content = fetch_crate_schema(&crate_name, &version)?;
+    let baseline_content = fetch_crate_schema(crate_name, &version)?;
 
-    // Parse baseline schema
     let baseline_tree = styx_tree::parse(&baseline_content)
         .map_err(|e| CliError::Parse(format!("invalid baseline schema: {e}")))?;
 
-    // Compare schemas
     let changes = compare_schemas(&baseline_tree, &local_tree);
 
-    // Report changes
     if changes.breaking.is_empty() && changes.additive.is_empty() && changes.patch.is_empty() {
         eprintln!("No changes detected.");
         return Ok(());
@@ -1579,7 +1495,6 @@ fn run_diff(args: &[String]) -> Result<(), CliError> {
         }
     }
 
-    // Suggest version bump
     let bump = if !changes.breaking.is_empty() {
         "major"
     } else if !changes.additive.is_empty() {
@@ -1621,7 +1536,6 @@ fn fetch_crate_schema(crate_name: &str, version: &str) -> Result<String, CliErro
         std::env::temp_dir().join(format!("styx-diff-{}-{}", crate_name, std::process::id()));
     std::fs::create_dir_all(&temp_dir)?;
 
-    // Download and extract in one pipeline
     let status = std::process::Command::new("sh")
         .arg("-c")
         .arg(format!(
@@ -1639,7 +1553,6 @@ fn fetch_crate_schema(crate_name: &str, version: &str) -> Result<String, CliErro
         )));
     }
 
-    // Find schema.styx in extracted crate
     let schema_path = temp_dir.join(format!("{crate_name}-{version}/schema.styx"));
     let content = std::fs::read_to_string(&schema_path).map_err(|e| {
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1663,11 +1576,9 @@ struct SchemaChanges {
 fn compare_schemas(baseline: &Value, local: &Value) -> SchemaChanges {
     let mut changes = SchemaChanges::default();
 
-    // Extract schema objects from both
     let baseline_schema = extract_schema_map(baseline);
     let local_schema = extract_schema_map(local);
 
-    // Check for removed types (breaking)
     for name in baseline_schema.keys() {
         if !local_schema.contains_key(name) {
             let type_name = name.as_deref().unwrap_or("(root)");
@@ -1675,7 +1586,6 @@ fn compare_schemas(baseline: &Value, local: &Value) -> SchemaChanges {
         }
     }
 
-    // Check for added types (additive)
     for name in local_schema.keys() {
         if !baseline_schema.contains_key(name) {
             let type_name = name.as_deref().unwrap_or("(root)");
@@ -1683,7 +1593,6 @@ fn compare_schemas(baseline: &Value, local: &Value) -> SchemaChanges {
         }
     }
 
-    // Check for modified types
     for (name, baseline_type) in &baseline_schema {
         if let Some(local_type) = local_schema.get(name) {
             let type_name = name.as_deref().unwrap_or("(root)");
@@ -1697,7 +1606,6 @@ fn compare_schemas(baseline: &Value, local: &Value) -> SchemaChanges {
 fn extract_schema_map(value: &Value) -> std::collections::HashMap<Option<String>, &Value> {
     let mut map = std::collections::HashMap::new();
 
-    // Look for "schema" entry in the root object
     if let Some(Payload::Object(obj)) = &value.payload {
         for entry in &obj.entries {
             if entry.key.as_str() == Some("schema")
@@ -1724,7 +1632,6 @@ fn compare_type_definitions(
     local: &Value,
     changes: &mut SchemaChanges,
 ) {
-    // Compare tags
     let baseline_tag = baseline.tag.as_ref().map(|t| t.name.as_str());
     let local_tag = local.tag.as_ref().map(|t| t.name.as_str());
 
@@ -1737,12 +1644,10 @@ fn compare_type_definitions(
         return;
     }
 
-    // For @object types, compare fields
     if baseline_tag == Some("object") {
         compare_object_fields(type_name, baseline, local, changes);
     }
 
-    // For @enum types, compare variants
     if baseline_tag == Some("enum") {
         compare_enum_variants(type_name, baseline, local, changes);
     }
@@ -1757,7 +1662,6 @@ fn compare_object_fields(
     let baseline_fields = extract_object_fields(baseline);
     let local_fields = extract_object_fields(local);
 
-    // Removed fields are breaking
     for field_name in baseline_fields.keys() {
         if !local_fields.contains_key(field_name) {
             changes
@@ -1766,7 +1670,6 @@ fn compare_object_fields(
         }
     }
 
-    // Added fields
     for (field_name, field_type) in &local_fields {
         if !baseline_fields.contains_key(field_name) {
             let is_optional = is_optional_field(field_type);
@@ -1786,7 +1689,6 @@ fn compare_object_fields(
 fn extract_object_fields(value: &Value) -> std::collections::HashMap<String, &Value> {
     let mut fields = std::collections::HashMap::new();
 
-    // Object fields are in the value's payload (for @object{...})
     if let Some(Payload::Object(obj)) = &value.payload {
         for entry in &obj.entries {
             if let Some(name) = entry.key.as_str() {
@@ -1815,7 +1717,6 @@ fn compare_enum_variants(
     let baseline_variants = extract_enum_variants(baseline);
     let local_variants = extract_enum_variants(local);
 
-    // Removed variants are breaking
     for variant in &baseline_variants {
         if !local_variants.contains(variant) {
             changes
@@ -1824,7 +1725,6 @@ fn compare_enum_variants(
         }
     }
 
-    // Added variants are additive
     for variant in &local_variants {
         if !baseline_variants.contains(variant) {
             changes
@@ -1837,7 +1737,6 @@ fn compare_enum_variants(
 fn extract_enum_variants(value: &Value) -> Vec<String> {
     let mut variants = Vec::new();
 
-    // Enum variants are in the value's payload (for @enum{...})
     if let Some(Payload::Object(obj)) = &value.payload {
         for entry in &obj.entries {
             if let Some(name) = entry.key.as_str() {
