@@ -1,7 +1,7 @@
 plugins {
     id("java")
-    id("org.jetbrains.kotlin.jvm") version "1.9.0"
-    id("org.jetbrains.intellij") version "1.16.0"
+    id("org.jetbrains.kotlin.jvm") version "2.0.21"
+    id("org.jetbrains.intellij.platform") version "2.10.5"
 }
 
 group = "com.bearcove"
@@ -9,25 +9,27 @@ version = "0.1.0"
 
 repositories {
     mavenCentral()
+    intellijPlatform {
+        defaultRepositories()
+    }
 }
 
-intellij {
-    version.set("2023.2")
-    type.set("IC") // IntelliJ IDEA Community Edition
-    plugins.set(listOf("com.redhat.devtools.lsp4ij:0.0.2"))
+dependencies {
+    intellijPlatform {
+        intellijIdeaCommunity("2024.3")
+        pluginVerifier()
+        zipSigner()
+        plugin("com.redhat.devtools.lsp4ij", "0.17.0")
+    }
+}
+
+kotlin {
+    jvmToolchain(21)
 }
 
 tasks {
-    withType<JavaCompile> {
-        sourceCompatibility = "17"
-        targetCompatibility = "17"
-    }
-    withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
-        kotlinOptions.jvmTarget = "17"
-    }
-
     patchPluginXml {
-        sinceBuild.set("232")
-        untilBuild.set("242.*")
+        sinceBuild.set("243")
+        untilBuild.set("251.*")
     }
 }
