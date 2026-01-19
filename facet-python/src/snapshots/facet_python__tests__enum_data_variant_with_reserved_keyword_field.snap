@@ -1,0 +1,14 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 975
+expression: py
+---
+class Move(TypedDict, total=False):
+    Move: Required[MoveData]
+
+MoveData = TypedDict(
+    "MoveData",
+    {"from": Required[str], "to": Required[str], "amount": Required[float]},
+    total=False,
+)
+Transfer = Union["Move", Literal["Cancel"]]

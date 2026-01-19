@@ -41,6 +41,106 @@ fn is_python_keyword(name: &str) -> bool {
     KEYWORDS.binary_search(&name).is_ok()
 }
 
+/// A field in a TypedDict, used for shared generation logic.
+struct TypedDictField<'a> {
+    name: &'a str,
+    type_string: String,
+    required: bool,
+    doc: &'a [&'a str],
+}
+
+impl<'a> TypedDictField<'a> {
+    fn new(name: &'a str, type_string: String, required: bool) -> Self {
+        Self {
+            name,
+            type_string,
+            required,
+            doc: &[],
+        }
+    }
+
+    fn with_doc(name: &'a str, type_string: String, required: bool, doc: &'a [&'a str]) -> Self {
+        Self {
+            name,
+            type_string,
+            required,
+            doc,
+        }
+    }
+
+    /// Get the full type string with Required[] wrapper if needed
+    fn full_type_string(&self) -> String {
+        if self.required {
+            format!("Required[{}]", self.type_string)
+        } else {
+            self.type_string.clone()
+        }
+    }
+}
+
+/// Check if any field has a name that is a Python reserved keyword
+fn has_reserved_keyword_field(fields: &[TypedDictField]) -> bool {
+    fields.iter().any(|f| is_python_keyword(f.name))
+}
+
+/// Generate TypedDict using functional syntax: `Name = TypedDict("Name", {...}, total=False)`
+///
+/// This syntax is required when field names are Python reserved keywords.
+fn write_typed_dict_functional(output: &mut String, class_name: &str, fields: &[TypedDictField]) {
+    writeln!(output, "{} = TypedDict(", class_name).unwrap();
+    writeln!(output, "    \"{}\",", class_name).unwrap();
+    output.push_str("    {");
+
+    let mut first = true;
+    for field in fields {
+        if !first {
+            output.push_str(", ");
+        }
+        first = false;
+
+        write!(output, "\"{}\": {}", field.name, field.full_type_string()).unwrap();
+    }
+
+    output.push_str("},\n");
+    output.push_str("    total=False,\n");
+    output.push(')');
+}
+
+/// Generate TypedDict using class syntax: `class Name(TypedDict, total=False): ...`
+///
+/// This is the preferred syntax for readability when no field names conflict with keywords.
+fn write_typed_dict_class(output: &mut String, class_name: &str, fields: &[TypedDictField]) {
+    writeln!(output, "class {}(TypedDict, total=False):", class_name).unwrap();
+
+    if fields.is_empty() {
+        output.push_str("    pass");
+        return;
+    }
+
+    for field in fields {
+        // Generate doc comment for field
+        for line in field.doc {
+            output.push_str("    #");
+            output.push_str(line);
+            output.push('\n');
+        }
+
+        writeln!(output, "    {}: {}", field.name, field.full_type_string()).unwrap();
+    }
+}
+
+/// Generate a TypedDict, choosing between class and functional syntax.
+///
+/// Uses functional syntax when any field name is a Python reserved keyword,
+/// otherwise uses the more readable class syntax.
+fn write_typed_dict(output: &mut String, class_name: &str, fields: &[TypedDictField]) {
+    if has_reserved_keyword_field(fields) {
+        write_typed_dict_functional(output, class_name, fields);
+    } else {
+        write_typed_dict_class(output, class_name, fields);
+    }
+}
+
 /// Generate Python definitions for a single type.
 ///
 /// Returns a string containing the Python TypedDict or type declaration.
@@ -212,91 +312,30 @@ impl PythonGenerator {
             .filter(|f| !f.flags.contains(facet_core::FieldFlags::SKIP))
             .collect();
 
-        let has_keyword_field = visible_fields
+        // Convert to TypedDictField for shared generation logic
+        let typed_dict_fields: Vec<_> = visible_fields
             .iter()
-            .any(|f| is_python_keyword(f.effective_name()));
+            .map(|f| {
+                let (type_string, required) = self.field_type_info(f);
+                TypedDictField::with_doc(f.effective_name(), type_string, required, f.doc)
+            })
+            .collect();
+
+        // Track Required import if any field needs it
+        if typed_dict_fields.iter().any(|f| f.required) {
+            self.imports.insert("Required");
+        }
 
         write_doc_comment(output, shape.doc);
-
-        if has_keyword_field {
-            self.generate_typed_dict_functional(output, shape, &visible_fields);
-        } else {
-            self.generate_typed_dict_class(output, shape, &visible_fields);
-        }
+        write_typed_dict(output, shape.type_identifier, &typed_dict_fields);
     }
 
-    /// Generate TypedDict using functional syntax: `Name = TypedDict("Name", {...}, total=False)`
-    ///
-    /// This syntax is required when field names are Python reserved keywords.
-    fn generate_typed_dict_functional(
-        &mut self,
-        output: &mut String,
-        shape: &'static Shape,
-        visible_fields: &[&Field],
-    ) {
-        writeln!(output, "{} = TypedDict(", shape.type_identifier).unwrap();
-        writeln!(output, "    \"{}\",", shape.type_identifier).unwrap();
-        output.push_str("    {");
-
-        let mut first = true;
-        for field in visible_fields {
-            if !first {
-                output.push_str(", ");
-            }
-            first = false;
-
-            let field_name = field.effective_name();
-            let field_type = self.field_type_string(field);
-            write!(output, "\"{}\": {}", field_name, field_type).unwrap();
-        }
-
-        output.push_str("},\n");
-        output.push_str("    total=False,\n");
-        output.push(')');
-    }
-
-    /// Generate TypedDict using class syntax: `class Name(TypedDict, total=False): ...`
-    ///
-    /// This is the preferred syntax for readability when no field names conflict with keywords.
-    fn generate_typed_dict_class(
-        &mut self,
-        output: &mut String,
-        shape: &'static Shape,
-        visible_fields: &[&Field],
-    ) {
-        writeln!(
-            output,
-            "class {}(TypedDict, total=False):",
-            shape.type_identifier
-        )
-        .unwrap();
-
-        if visible_fields.is_empty() {
-            output.push_str("    pass");
-            return;
-        }
-
-        for field in visible_fields {
-            // Generate doc comment for field
-            for line in field.doc {
-                output.push_str("    #");
-                output.push_str(line);
-                output.push('\n');
-            }
-
-            let field_name = field.effective_name();
-            let field_type = self.field_type_string(field);
-            writeln!(output, "    {}: {}", field_name, field_type).unwrap();
-        }
-    }
-
-    /// Get the Python type string for a field, handling Optional fields specially.
-    fn field_type_string(&mut self, field: &Field) -> String {
+    /// Get the Python type string and required status for a field.
+    fn field_type_info(&mut self, field: &Field) -> (String, bool) {
         if let Def::Option(opt) = &field.shape.get().def {
-            self.type_for_shape(opt.t)
+            (self.type_for_shape(opt.t), false)
         } else {
-            self.imports.insert("Required");
-            format!("Required[{}]", self.type_for_shape(field.shape.get()))
+            (self.type_for_shape(field.shape.get()), true)
         }
     }
 
@@ -411,14 +450,10 @@ impl PythonGenerator {
 
         let inner_type = self.type_for_shape(variant.data.fields[0].shape.get());
 
+        let fields = [TypedDictField::new(variant_name, inner_type, true)];
+
         let mut output = String::new();
-        writeln!(
-            output,
-            "class {}(TypedDict, total=False):",
-            pascal_variant_name
-        )
-        .unwrap();
-        writeln!(output, "    {}: Required[{}]", variant_name, inner_type).unwrap();
+        write_typed_dict(&mut output, pascal_variant_name, &fields);
         output.push('\n');
 
         self.generated
@@ -441,41 +476,27 @@ impl PythonGenerator {
 
         let data_class_name = format!("{}Data", pascal_variant_name);
 
-        // Generate the data class
-        let mut data_output = String::new();
-        writeln!(
-            data_output,
-            "class {}(TypedDict, total=False):",
-            data_class_name
-        )
-        .unwrap();
-
-        if variant.data.fields.is_empty() {
-            data_output.push_str("    pass\n");
-        } else {
-            for field in variant.data.fields {
-                let field_name = field.effective_name();
+        // Generate the data class fields
+        let data_fields: Vec<_> = variant
+            .data
+            .fields
+            .iter()
+            .map(|field| {
                 let field_type = self.type_for_shape(field.shape.get());
-                writeln!(data_output, "    {}: Required[{}]", field_name, field_type).unwrap();
-            }
-        }
+                TypedDictField::new(field.effective_name(), field_type, true)
+            })
+            .collect();
+
+        let mut data_output = String::new();
+        write_typed_dict(&mut data_output, &data_class_name, &data_fields);
         data_output.push('\n');
         self.generated.insert(data_class_name.clone(), data_output);
 
         // Generate the wrapper class
+        let wrapper_fields = [TypedDictField::new(variant_name, data_class_name, true)];
+
         let mut wrapper_output = String::new();
-        writeln!(
-            wrapper_output,
-            "class {}(TypedDict, total=False):",
-            pascal_variant_name
-        )
-        .unwrap();
-        writeln!(
-            wrapper_output,
-            "    {}: Required[{}]",
-            variant_name, data_class_name
-        )
-        .unwrap();
+        write_typed_dict(&mut wrapper_output, pascal_variant_name, &wrapper_fields);
         wrapper_output.push('\n');
 
         self.generated
@@ -910,6 +931,47 @@ mod tests {
 
         let py = to_python::<ControlFlow>(false);
         // Multiple Python keywords - should use functional syntax
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_enum_variant_name_is_reserved_keyword() {
+        #[derive(Facet)]
+        #[repr(C)]
+        #[facet(rename_all = "snake_case")]
+        #[allow(dead_code)]
+        enum ImportSource {
+            /// Import from a file
+            From(String),
+            /// Import from a URL
+            Url(String),
+        }
+
+        let py = to_python::<ImportSource>(false);
+        // The variant "From" becomes field name "from" which is a Python keyword
+        // Should use functional TypedDict syntax for the wrapper class
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_enum_data_variant_with_reserved_keyword_field() {
+        #[derive(Facet)]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum Transfer {
+            /// A transfer between accounts
+            Move {
+                from: String,
+                to: String,
+                amount: f64,
+            },
+            /// Cancel the transfer
+            Cancel,
+        }
+
+        let py = to_python::<Transfer>(false);
+        // The data variant "Move" has fields "from" and "to" which are Python keywords
+        // Should use functional TypedDict syntax for the data class
         insta::assert_snapshot!(py);
     }
 }

@@ -1,0 +1,14 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 953
+expression: py
+---
+From = TypedDict(
+    "From",
+    {"from": Required[str]},
+    total=False,
+)
+ImportSource = Union["From", "Url"]
+
+class Url(TypedDict, total=False):
+    url: Required[str]
