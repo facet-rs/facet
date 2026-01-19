@@ -1868,23 +1868,20 @@ fn format_field_hover(
         content.push_str("\n\n");
     }
 
-    // Breadcrumb path (where am I?)
+    // Breadcrumb path with type at the end: `@ › hints › tracey › schema`: @SchemaRef
     let breadcrumb = format_breadcrumb(field_path);
-    content.push_str(&format!("`{}`\n\n", breadcrumb));
+    content.push_str(&format!("`{}`: `{}`\n\n", breadcrumb, field_info.type_str));
 
-    // Type annotation (what type is it?)
-    content.push_str(&format!("**Type:** `{}`\n\n", field_info.type_str));
-
-    // Schema source link with line:col
+    // Schema source link
     // Show just the filename as link label, full path in the URI
     let display_name = std::path::Path::new(schema_path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(schema_path);
     if let Some(uri) = schema_uri {
-        content.push_str(&format!("Defined at [{}]({})", display_name, uri));
+        content.push_str(&format!("[{}]({})", display_name, uri));
     } else {
-        content.push_str(&format!("Defined at {}", display_name));
+        content.push_str(display_name);
     }
 
     content
