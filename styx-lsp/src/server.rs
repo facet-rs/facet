@@ -2953,6 +2953,119 @@ schema {
             "Should find 'items[0].value' through @optional(@seq(...))"
         );
         assert_eq!(info.unwrap().type_str, "@int");
+
+        // Test @seq inside @map: @map(@string @seq(@Item))
+        let seq_in_map_schema = r#"meta { id test }
+schema {
+    @ @object{
+        groups @map(@string @seq(@Item))
+    }
+    Item @object{
+        id @int
+        label @string
+    }
+}"#;
+
+        // Map key returns the value type (@seq(@Item))
+        let info = get_field_info_from_schema(seq_in_map_schema, &["groups", "mygroup"]);
+        assert!(info.is_some(), "Should find map key 'groups.mygroup'");
+        assert_eq!(info.unwrap().type_str, "@seq(@Item)");
+
+        // Field inside seq element inside map value
+        let info =
+            get_field_info_from_schema(seq_in_map_schema, &["groups", "mygroup", "0", "label"]);
+        assert!(
+            info.is_some(),
+            "Should find 'groups.mygroup[0].label' through @map -> @seq"
+        );
+        assert_eq!(info.unwrap().type_str, "@string");
+
+        // Test @map inside @seq: @seq(@map(@string @Value))
+        let map_in_seq_schema = r#"meta { id test }
+schema {
+    @ @object{
+        records @seq(@map(@string @Value))
+    }
+    Value @object{
+        data @string
+    }
+}"#;
+
+        // Map inside seq element
+        let info = get_field_info_from_schema(map_in_seq_schema, &["records", "0", "somekey"]);
+        assert!(
+            info.is_some(),
+            "Should find 'records[0].somekey' through @seq -> @map"
+        );
+        assert_eq!(info.unwrap().type_str, "@Value");
+
+        // Field inside map value inside seq element
+        let info =
+            get_field_info_from_schema(map_in_seq_schema, &["records", "0", "somekey", "data"]);
+        assert!(
+            info.is_some(),
+            "Should find 'records[0].somekey.data' through @seq -> @map -> @object"
+        );
+        assert_eq!(info.unwrap().type_str, "@string");
+
+        // Test @default with @seq: @default([] @seq(@Item))
+        let default_seq_schema = r#"meta { id test }
+schema {
+    @ @object{
+        tags @default([] @seq(@object{
+            name @string
+        }))
+    }
+}"#;
+
+        let info = get_field_info_from_schema(default_seq_schema, &["tags", "0", "name"]);
+        assert!(
+            info.is_some(),
+            "Should find 'tags[0].name' through @default([] @seq(...))"
+        );
+        assert_eq!(info.unwrap().type_str, "@string");
+
+        // Test nested sequences: @seq(@seq(@Item))
+        let nested_seq_seq_schema = r#"meta { id test }
+schema {
+    @ @object{
+        matrix @seq(@seq(@Cell))
+    }
+    Cell @object{
+        value @int
+    }
+}"#;
+
+        // First level - hovering on index returns None (we skip indices to get element type)
+        let _info = get_field_info_from_schema(nested_seq_seq_schema, &["matrix", "0"]);
+
+        // Second level - inside the inner seq
+        let info =
+            get_field_info_from_schema(nested_seq_seq_schema, &["matrix", "0", "1", "value"]);
+        assert!(
+            info.is_some(),
+            "Should find 'matrix[0][1].value' through nested @seq"
+        );
+        assert_eq!(info.unwrap().type_str, "@int");
+
+        // Test @seq with @optional element: @seq(@optional(@Item))
+        let seq_optional_element_schema = r#"meta { id test }
+schema {
+    @ @object{
+        maybe_items @seq(@optional(@Item))
+    }
+    Item @object{
+        name @string
+    }
+}"#;
+
+        let info =
+            get_field_info_from_schema(seq_optional_element_schema, &["maybe_items", "0", "name"]);
+        assert!(
+            info.is_some(),
+            "Should find 'maybe_items[0].name' through @seq(@optional(@Item))"
+        );
+        assert_eq!(info.unwrap().type_str, "@string");
     }
 
     #[test]
