@@ -335,6 +335,44 @@ pub trait FormatSerializer {
         Ok(())
     }
 
+
+    /// Write a tag for an externally-tagged enum variant.
+    ///
+    /// Formats like Styx that use `@tag` syntax for enum variants should override
+    /// this to write their tag and return `Ok(true)`. The shared serializer will
+    /// then call the appropriate payload serialization method.
+    ///
+    /// If this returns `Ok(false)` (the default), the shared serializer uses
+    /// the standard externally-tagged representation: `{ "variant_name": payload }`.
+    ///
+    /// When returning `Ok(true)`:
+    /// - For unit variants, nothing more is written
+    /// - For newtype variants, the payload is serialized directly after
+    /// - For struct variants, begin_struct_after_tag is called for the payload
+    fn write_variant_tag(&mut self, _variant_name: &str) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
+    /// Begin a struct directly after a variant tag (no separator).
+    ///
+    /// Called after `write_variant_tag` returns `Ok(true)` for struct variants.
+    /// Formats should write `{` without any preceding space/separator.
+    ///
+    /// Default: calls `begin_struct()`.
+    fn begin_struct_after_tag(&mut self) -> Result<(), Self::Error> {
+        self.begin_struct()
+    }
+
+    /// Begin a sequence directly after a variant tag (no separator).
+    ///
+    /// Called after `write_variant_tag` returns `Ok(true)` for tuple variants.
+    /// Formats should write `(` or `[` without any preceding space/separator.
+    ///
+    /// Default: calls `begin_seq()`.
+    fn begin_seq_after_tag(&mut self) -> Result<(), Self::Error> {
+        self.begin_seq()
+    }
+
     /// Serialize a byte sequence (`Vec<u8>`, `&[u8]`, etc.) in bulk.
     ///
     /// For binary formats like postcard that store byte sequences as raw bytes
@@ -869,6 +907,86 @@ where
         }
 
         // Externally tagged (default).
+        // First, check if the format wants to handle this with tag syntax (e.g., Styx's @tag)
+        let use_tag_syntax = serializer
+            .write_variant_tag(variant.effective_name())
+            .map_err(SerializeError::Backend)?;
+
+        if use_tag_syntax {
+            // Format wrote the tag, now serialize the payload appropriately
+            return match variant.data.kind {
+                StructKind::Unit => {
+                    // Nothing more to write for unit variants
+                    Ok(())
+                }
+                StructKind::TupleStruct | StructKind::Tuple => {
+                    let field_count = variant.data.fields.len();
+                    if field_count == 1 {
+                        // Newtype variant - serialize payload directly
+                        let inner = enum_
+                            .field(0)
+                            .map_err(|_| {
+                                SerializeError::Internal(Cow::Borrowed("variant field lookup failed"))
+                            })?
+                            .ok_or(SerializeError::Internal(Cow::Borrowed(
+                                "variant reported 1 field but field(0) returned None",
+                            )))?;
+                        shared_serialize(serializer, inner)?;
+                    } else {
+                        // Multi-field tuple - use sequence after tag
+                        serializer
+                            .begin_seq_after_tag()
+                            .map_err(SerializeError::Backend)?;
+                        for idx in 0..field_count {
+                            let inner = enum_
+                                .field(idx)
+                                .map_err(|_| {
+                                    SerializeError::Internal(Cow::Borrowed(
+                                        "variant field lookup failed",
+                                    ))
+                                })?
+                                .ok_or(SerializeError::Internal(Cow::Borrowed(
+                                    "variant field missing while iterating tuple fields",
+                                )))?;
+                            shared_serialize(serializer, inner)?;
+                        }
+                        serializer.end_seq().map_err(SerializeError::Backend)?;
+                    }
+                    Ok(())
+                }
+                StructKind::Struct => {
+                    // Struct variant - use struct after tag
+                    serializer
+                        .begin_struct_after_tag()
+                        .map_err(SerializeError::Backend)?;
+                    let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
+                    sort_fields_if_needed(serializer, &mut fields);
+                    let field_mode = serializer.struct_field_mode();
+                    for (field_item, field_value) in fields {
+                        serializer
+                            .field_metadata(&field_item)
+                            .map_err(SerializeError::Backend)?;
+                        if field_mode == StructFieldMode::Named {
+                            serializer
+                                .field_key(field_item.effective_name())
+                                .map_err(SerializeError::Backend)?;
+                        }
+                        if let Some(proxy_def) = field_item
+                            .field
+                            .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                        {
+                            serialize_via_proxy(serializer, field_value, proxy_def)?;
+                        } else {
+                            shared_serialize(serializer, field_value)?;
+                        }
+                    }
+                    serializer.end_struct().map_err(SerializeError::Backend)?;
+                    Ok(())
+                }
+            };
+        }
+
+        // Standard externally tagged representation: { "variant_name": payload }
         return match variant.data.kind {
             StructKind::Unit => {
                 serializer
