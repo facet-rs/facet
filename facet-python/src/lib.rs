@@ -269,6 +269,11 @@ impl PythonGenerator {
                 write_doc_comment(output, shape.doc);
                 writeln!(output, "{} = None", shape.type_identifier).unwrap();
             }
+            StructKind::TupleStruct | StructKind::Tuple if fields.is_empty() => {
+                // Empty tuple struct like `struct Empty();` - treat like unit struct
+                write_doc_comment(output, shape.doc);
+                writeln!(output, "{} = None", shape.type_identifier).unwrap();
+            }
             StructKind::TupleStruct if fields.len() == 1 => {
                 let inner_type = self.type_for_shape(fields[0].shape.get());
                 write_doc_comment(output, shape.doc);
@@ -520,7 +525,11 @@ impl PythonGenerator {
                 format!("list[{}]", self.type_for_shape(set.t))
             }
             Def::Map(map) => {
-                format!("dict[str, {}]", self.type_for_shape(map.v))
+                format!(
+                    "dict[{}, {}]",
+                    self.type_for_shape(map.k),
+                    self.type_for_shape(map.v)
+                )
             }
             Def::Pointer(ptr) => {
                 // Smart pointers are transparent
@@ -972,6 +981,50 @@ mod tests {
         let py = to_python::<Transfer>(false);
         // The data variant "Move" has fields "from" and "to" which are Python keywords
         // Should use functional TypedDict syntax for the data class
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_hashmap_with_integer_keys() {
+        use std::collections::HashMap;
+
+        #[derive(Facet)]
+        struct IntKeyedMap {
+            /// Map with integer keys
+            counts: HashMap<i32, String>,
+        }
+
+        let py = to_python::<IntKeyedMap>(false);
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_empty_tuple_struct() {
+        #[derive(Facet)]
+        struct EmptyTuple();
+
+        let py = to_python::<EmptyTuple>(false);
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_hashmap_with_enum_keys() {
+        use std::collections::HashMap;
+
+        #[derive(Facet, Hash, PartialEq, Eq)]
+        #[repr(u8)]
+        enum Priority {
+            Low,
+            Medium,
+            High,
+        }
+
+        #[derive(Facet)]
+        struct TaskMap {
+            tasks: HashMap<Priority, String>,
+        }
+
+        let py = to_python::<TaskMap>(false);
         insta::assert_snapshot!(py);
     }
 }
