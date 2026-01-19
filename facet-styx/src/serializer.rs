@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use facet_core::Facet;
 use facet_format::{FormatSerializer, ScalarValue, SerializeError, serialize_root};
-use facet_reflect::Peek;
+use facet_reflect::{HasFields, Peek};
 use styx_format::{FormatOptions, StyxWriter};
 
 // Re-export FormatOptions as SerializeOptions for backwards compatibility
@@ -176,6 +176,52 @@ impl FormatSerializer for StyxSerializer {
             }
         }
         // Fall back to default behavior for other key types
+        Ok(false)
+    }
+
+    fn field_metadata_with_value(
+        &mut self,
+        field: &facet_reflect::FieldItem,
+        value: Peek<'_, '_>,
+    ) -> Result<bool, Self::Error> {
+        // Check if the field value is a metadata container (like Documented<T>)
+        if !value.shape().is_metadata_container() {
+            return Ok(false);
+        }
+
+        // It's a metadata container - extract doc comments and write them before the key
+        let Ok(container) = value.into_struct() else {
+            return Ok(false);
+        };
+
+        // Collect doc lines first
+        let mut doc_lines: Vec<&str> = Vec::new();
+        for (f, field_value) in container.fields() {
+            if f.metadata_kind() == Some("doc") {
+                // The field type is Option<Vec<String>>
+                if let Ok(opt) = field_value.into_option() {
+                    if let Some(inner) = opt.value() {
+                        if let Ok(list) = inner.into_list_like() {
+                            for item in list.iter() {
+                                if let Some(line) = item.as_str() {
+                                    doc_lines.push(line);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If we have doc lines, write them with the key
+        if !doc_lines.is_empty() {
+            let doc = doc_lines.join("\n");
+            self.writer
+                .write_doc_comment_and_key(&doc, field.effective_name());
+            return Ok(true);
+        }
+
+        // No doc comments, let normal handling proceed
         Ok(false)
     }
 }
@@ -680,12 +726,9 @@ mod tests {
         };
 
         let serialized = to_string(&config).unwrap();
-        eprintln!("Serialized with doc metadata:\n{}", serialized);
 
-        // For now just check it serializes - we'll add doc comment output later
-        assert!(serialized.contains("name"));
-        assert!(serialized.contains("myapp"));
-        assert!(serialized.contains("port"));
-        assert!(serialized.contains("8080"));
+        // Doc comments should appear before the field key
+        assert!(serialized.contains("/// The application name\nname myapp"));
+        assert!(serialized.contains("/// Port to listen on\nport 8080"));
     }
 }
