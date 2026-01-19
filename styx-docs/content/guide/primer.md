@@ -371,7 +371,10 @@ script <<BASH
     echo "world"
     BASH
 /// styx
-script "echo \"hello\"\necho \"world\"\n"
+script <<BASH
+echo "hello"
+echo "world"
+BASH
 ```
 
 ### Recap
