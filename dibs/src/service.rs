@@ -223,7 +223,16 @@ impl DibsService for DibsServiceImpl {
     async fn generate_migration_sql(&self, request: DiffRequest) -> Result<String, DibsError> {
         let ctx = self.compute_diff_with_context(&request.database_url).await?;
         // Use ordered SQL generation to satisfy FK dependencies
-        Ok(ctx.diff.to_ordered_sql(&ctx.existing_tables))
+        ctx.diff
+            .to_ordered_sql(&ctx.existing_tables)
+            .map_err(|e| DibsError::MigrationFailed(dibs_proto::SqlError {
+                message: e.to_string(),
+                sql: None,
+                position: None,
+                hint: None,
+                detail: None,
+                caller: None,
+            }))
     }
 
     async fn migration_status(
