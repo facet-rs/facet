@@ -162,7 +162,7 @@ struct VirtualTable {
 }
 
 /// Virtual schema state for simulating migrations.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct VirtualSchema {
     tables: HashMap<String, VirtualTable>,
 }
@@ -170,9 +170,7 @@ pub struct VirtualSchema {
 impl VirtualSchema {
     /// Create a virtual schema from a set of existing table names.
     pub fn new() -> Self {
-        Self {
-            tables: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Initialize from actual database state.
@@ -252,8 +250,8 @@ impl VirtualSchema {
 
         // Tables in both - compare contents
         for (name, self_table) in &self.tables {
-            if let Some(other_table) = other.tables.get(name) {
-                if self_table != other_table {
+            if let Some(other_table) = other.tables.get(name)
+                && self_table != other_table {
                     // Columns
                     for col in &self_table.columns {
                         if !other_table.columns.contains(col) {
@@ -300,7 +298,6 @@ impl VirtualSchema {
                         }
                     }
                 }
-            }
         }
 
         if diffs.is_empty() {
@@ -681,9 +678,7 @@ pub fn order_changes(
                 let mut test_schema = schema.clone();
                 for (i, change) in all_changes.iter().enumerate() {
                     if !scheduled.contains(&i) {
-                        if let Err(e) = test_schema.apply(&change.table, &change.change) {
-                            return Err(e);
-                        }
+                        test_schema.apply(&change.table, &change.change)?
                     }
                 }
 
@@ -1505,8 +1500,8 @@ mod tests {
 
         // Verify each FK comes after the rename of its referenced table
         for (i, c) in ordered.changes.iter().enumerate() {
-            if let Change::AddForeignKey(fk) = &c.change {
-                if let Some(&rename_pos) = rename_to_positions.get(&fk.references_table) {
+            if let Change::AddForeignKey(fk) = &c.change
+                && let Some(&rename_pos) = rename_to_positions.get(&fk.references_table) {
                     assert!(
                         rename_pos < i,
                         "FK to '{}' at position {} must come after rename at position {}",
@@ -1515,7 +1510,6 @@ mod tests {
                         rename_pos
                     );
                 }
-            }
         }
 
         // Also verify no errors would occur by simulating the full sequence

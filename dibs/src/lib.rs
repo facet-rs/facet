@@ -1,3 +1,7 @@
+#![allow(clippy::result_large_err)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::should_implement_trait)]
+
 //! Postgres toolkit for Rust, powered by facet reflection.
 //!
 //! This crate provides:
