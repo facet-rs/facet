@@ -11,4 +11,4 @@ facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-tokio-postgres = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["jiff02", "rust_decimal", "uuid"] }
 jiff = "0.2"
 uuid = "1"
-rust_decimal = "1"
+rust_decimal = { version = "1", default-features = false, features = ["std"] }
