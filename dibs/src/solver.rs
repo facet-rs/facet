@@ -251,53 +251,54 @@ impl VirtualSchema {
         // Tables in both - compare contents
         for (name, self_table) in &self.tables {
             if let Some(other_table) = other.tables.get(name)
-                && self_table != other_table {
-                    // Columns
-                    for col in &self_table.columns {
-                        if !other_table.columns.contains(col) {
-                            diffs.push(format!("+ {}.{}", name, col));
-                        }
-                    }
-                    for col in &other_table.columns {
-                        if !self_table.columns.contains(col) {
-                            diffs.push(format!("- {}.{}", name, col));
-                        }
-                    }
-
-                    // Foreign keys
-                    for fk in &self_table.foreign_keys {
-                        if !other_table.foreign_keys.contains(fk) {
-                            diffs.push(format!(
-                                "+ {}.FK({} -> {})",
-                                name,
-                                fk.columns.join(","),
-                                fk.references_table
-                            ));
-                        }
-                    }
-                    for fk in &other_table.foreign_keys {
-                        if !self_table.foreign_keys.contains(fk) {
-                            diffs.push(format!(
-                                "- {}.FK({} -> {})",
-                                name,
-                                fk.columns.join(","),
-                                fk.references_table
-                            ));
-                        }
-                    }
-
-                    // Indices
-                    for idx in &self_table.indices {
-                        if !other_table.indices.contains(idx) {
-                            diffs.push(format!("+ {}.index({})", name, idx));
-                        }
-                    }
-                    for idx in &other_table.indices {
-                        if !self_table.indices.contains(idx) {
-                            diffs.push(format!("- {}.index({})", name, idx));
-                        }
+                && self_table != other_table
+            {
+                // Columns
+                for col in &self_table.columns {
+                    if !other_table.columns.contains(col) {
+                        diffs.push(format!("+ {}.{}", name, col));
                     }
                 }
+                for col in &other_table.columns {
+                    if !self_table.columns.contains(col) {
+                        diffs.push(format!("- {}.{}", name, col));
+                    }
+                }
+
+                // Foreign keys
+                for fk in &self_table.foreign_keys {
+                    if !other_table.foreign_keys.contains(fk) {
+                        diffs.push(format!(
+                            "+ {}.FK({} -> {})",
+                            name,
+                            fk.columns.join(","),
+                            fk.references_table
+                        ));
+                    }
+                }
+                for fk in &other_table.foreign_keys {
+                    if !self_table.foreign_keys.contains(fk) {
+                        diffs.push(format!(
+                            "- {}.FK({} -> {})",
+                            name,
+                            fk.columns.join(","),
+                            fk.references_table
+                        ));
+                    }
+                }
+
+                // Indices
+                for idx in &self_table.indices {
+                    if !other_table.indices.contains(idx) {
+                        diffs.push(format!("+ {}.index({})", name, idx));
+                    }
+                }
+                for idx in &other_table.indices {
+                    if !self_table.indices.contains(idx) {
+                        diffs.push(format!("- {}.index({})", name, idx));
+                    }
+                }
+            }
         }
 
         if diffs.is_empty() {
@@ -1501,15 +1502,16 @@ mod tests {
         // Verify each FK comes after the rename of its referenced table
         for (i, c) in ordered.changes.iter().enumerate() {
             if let Change::AddForeignKey(fk) = &c.change
-                && let Some(&rename_pos) = rename_to_positions.get(&fk.references_table) {
-                    assert!(
-                        rename_pos < i,
-                        "FK to '{}' at position {} must come after rename at position {}",
-                        fk.references_table,
-                        i,
-                        rename_pos
-                    );
-                }
+                && let Some(&rename_pos) = rename_to_positions.get(&fk.references_table)
+            {
+                assert!(
+                    rename_pos < i,
+                    "FK to '{}' at position {} must come after rename at position {}",
+                    fk.references_table,
+                    i,
+                    rename_pos
+                );
+            }
         }
 
         // Also verify no errors would occur by simulating the full sequence

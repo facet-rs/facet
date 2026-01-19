@@ -302,10 +302,11 @@ async fn introspect_indices(client: &Client, table_name: &str) -> Result<Vec<Ind
 fn parse_index_columns(indexdef: &str) -> Vec<String> {
     // Find the part between the last ( and )
     if let Some(start) = indexdef.rfind('(')
-        && let Some(end) = indexdef.rfind(')') {
-            let cols_str = &indexdef[start + 1..end];
-            return cols_str.split(',').map(|s| s.trim().to_string()).collect();
-        }
+        && let Some(end) = indexdef.rfind(')')
+    {
+        let cols_str = &indexdef[start + 1..end];
+        return cols_str.split(',').map(|s| s.trim().to_string()).collect();
+    }
     Vec::new()
 }
 
