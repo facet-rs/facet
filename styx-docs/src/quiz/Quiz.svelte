@@ -218,8 +218,8 @@
         border-radius: 3px;
     }
 
-    /* Hide syntax highlighting until answer is chosen */
-    .quiz:not(.answered) .question-text :global(code) {
+    /* Hide syntax highlighting for Styx code until answer is chosen */
+    .quiz:not(.answered) .question-text :global(code.language-styx) {
         /* Core tags */
         :global(a-k),
         :global(a-f),
