@@ -918,10 +918,7 @@ mod tests {
         let mut schema = VirtualSchema::from_tables(&current.tables);
 
         // Trying to drop categories should fail because posts references it
-        let result = schema.apply(
-            "categories",
-            &Change::DropTable("categories".to_string()),
-        );
+        let result = schema.apply("categories", &Change::DropTable("categories".to_string()));
         assert!(
             matches!(result, Err(SolverError::TableHasDependents { ref table, ref referencing_table, .. }) if table == "categories" && referencing_table == "posts"),
             "Expected TableHasDependents error, got: {:?}",
@@ -993,10 +990,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Now dropping categories should succeed
-        let result = schema.apply(
-            "categories",
-            &Change::DropTable("categories".to_string()),
-        );
+        let result = schema.apply("categories", &Change::DropTable("categories".to_string()));
         assert!(result.is_ok());
         assert!(!schema.table_exists("categories"));
     }
@@ -1445,10 +1439,7 @@ mod tests {
             .iter()
             .position(|c| matches!(&c.change, Change::DropTable(name) if name == "category"));
 
-        assert!(
-            drop_post_pos.is_some(),
-            "Should have DropTable for post"
-        );
+        assert!(drop_post_pos.is_some(), "Should have DropTable for post");
         assert!(
             drop_category_pos.is_some(),
             "Should have DropTable for category"
@@ -1702,7 +1693,10 @@ mod tests {
         let current_schema = VirtualSchema::from_tables(&current.tables);
         let desired_schema = VirtualSchema::from_tables(&desired.tables);
 
-        eprintln!("Current schema tables: {:?}", current_schema.tables.keys().collect::<Vec<_>>());
+        eprintln!(
+            "Current schema tables: {:?}",
+            current_schema.tables.keys().collect::<Vec<_>>()
+        );
         eprintln!("Diff changes:");
         for td in &diff.table_diffs {
             for change in &td.changes {

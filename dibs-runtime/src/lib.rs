@@ -14,7 +14,7 @@ pub use facet_tokio_postgres;
 
 // Re-export common types used in generated structs
 pub mod types {
-    pub use jiff::{civil::Date, civil::Time, Timestamp};
+    pub use jiff::{Timestamp, civil::Date, civil::Time};
     pub use rust_decimal::Decimal;
     pub use uuid::Uuid;
 }
@@ -63,6 +63,6 @@ pub mod prelude {
     pub use facet::Facet;
     pub use facet_tokio_postgres::from_row;
 
-    pub use super::types::*;
     pub use super::QueryError;
+    pub use super::types::*;
 }

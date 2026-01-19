@@ -115,7 +115,10 @@ async fn create_postgres_container() -> (Container, tokio_postgres::Client) {
 
         // Wait for postgres to be ready
         container
-            .wait_for_log("database system is ready to accept connections", Duration::from_secs(30))
+            .wait_for_log(
+                "database system is ready to accept connections",
+                Duration::from_secs(30),
+            )
             .expect("Postgres failed to become ready");
 
         let port = container

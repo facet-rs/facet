@@ -96,7 +96,9 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Command { cmd, stderr } => write!(f, "docker command failed: {}\n{}", cmd, stderr),
+            Error::Command { cmd, stderr } => {
+                write!(f, "docker command failed: {}\n{}", cmd, stderr)
+            }
             Error::DockerNotFound => write!(f, "docker CLI not found"),
             Error::Timeout { message } => write!(f, "timeout: {}", message),
             Error::Io(e) => write!(f, "I/O error: {}", e),
@@ -188,7 +190,8 @@ impl Container {
         cmd.arg("run")
             .arg("-d") // detached
             .arg("--rm") // remove on stop
-            .arg("--label").arg(format!("dockside.session={}", session.id));
+            .arg("--label")
+            .arg(format!("dockside.session={}", session.id));
 
         // Add environment variables
         for (key, value) in &image.env {
@@ -242,10 +245,7 @@ impl Container {
 
     /// Get the container logs.
     pub fn logs(&self) -> Result<String> {
-        let output = Command::new("docker")
-            .arg("logs")
-            .arg(&self.id)
-            .output()?;
+        let output = Command::new("docker").arg("logs").arg(&self.id).output()?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -272,9 +272,9 @@ impl Container {
 
     /// Wait for a TCP port to accept connections.
     pub fn wait_for_port(&self, container_port: u16, timeout: Duration) -> Result<u16> {
-        let host_port = self.host_port(container_port).ok_or_else(|| Error::Parse(
-            format!("port {} not mapped", container_port),
-        ))?;
+        let host_port = self
+            .host_port(container_port)
+            .ok_or_else(|| Error::Parse(format!("port {} not mapped", container_port)))?;
 
         let start = Instant::now();
         let addr = format!("127.0.0.1:{}", host_port);
@@ -347,7 +347,7 @@ impl Container {
         let port_str = output_str
             .trim()
             .split(':')
-            .last()
+            .next_back()
             .ok_or_else(|| Error::Parse(format!("unexpected port output: {}", output_str)))?;
 
         port_str
@@ -391,13 +391,18 @@ mod tests {
 
         // Wait for postgres to be ready
         container
-            .wait_for_log("database system is ready to accept connections", Duration::from_secs(30))
+            .wait_for_log(
+                "database system is ready to accept connections",
+                Duration::from_secs(30),
+            )
             .unwrap();
 
         let port = container.host_port(5432).unwrap();
         println!("Postgres available on port {}", port);
 
         // Verify we can connect
-        container.wait_for_port(5432, Duration::from_secs(5)).unwrap();
+        container
+            .wait_for_port(5432, Duration::from_secs(5))
+            .unwrap();
     }
 }
