@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use facet::Facet;
 use std::convert::Infallible;
-use tokio::sync::mpsc;
+use crate::runtime::{Sender, Receiver, OneshotSender, oneshot};
 
 pub use roam_frame::{Frame, MsgDesc, OwnedMessage, Payload};
 
@@ -77,7 +77,7 @@ impl ChannelIdAllocator {
 // SenderSlot - Wrapper for Option<Sender> that implements Facet
 // ============================================================================
 
-/// A wrapper around `Option<mpsc::Sender<Vec<u8>>>` that implements Facet.
+/// A wrapper around `Option<Sender<Vec<u8>>>` that implements Facet.
 ///
 /// This allows `Poke::get_mut::<SenderSlot>()` to work, enabling `.take()`
 /// via reflection. Used by `ConnectionHandle::call` to extract senders from
@@ -86,12 +86,12 @@ impl ChannelIdAllocator {
 #[facet(opaque)]
 pub struct SenderSlot {
     /// The optional sender. Public within crate for `Tx::send()` access.
-    pub(crate) inner: Option<mpsc::Sender<Vec<u8>>>,
+    pub(crate) inner: Option<Sender<Vec<u8>>>,
 }
 
 impl SenderSlot {
     /// Create a slot containing a sender.
-    pub fn new(tx: mpsc::Sender<Vec<u8>>) -> Self {
+    pub fn new(tx: Sender<Vec<u8>>) -> Self {
         Self { inner: Some(tx) }
     }
 
@@ -101,7 +101,7 @@ impl SenderSlot {
     }
 
     /// Take the sender out of the slot, leaving it empty.
-    pub fn take(&mut self) -> Option<mpsc::Sender<Vec<u8>>> {
+    pub fn take(&mut self) -> Option<Sender<Vec<u8>>> {
         self.inner.take()
     }
 
@@ -119,7 +119,7 @@ impl SenderSlot {
     ///
     /// Used by `ChannelRegistry::bind_streams` to hydrate a deserialized `Tx<T>`
     /// with an actual channel sender.
-    pub fn set(&mut self, tx: mpsc::Sender<Vec<u8>>) {
+    pub fn set(&mut self, tx: Sender<Vec<u8>>) {
         self.inner = Some(tx);
     }
 }
@@ -128,7 +128,7 @@ impl SenderSlot {
 // DriverTxSlot - Wrapper for Option<Sender<DriverMessage>> that implements Facet
 // ============================================================================
 
-/// A wrapper around `Option<mpsc::Sender<DriverMessage>>` that implements Facet.
+/// A wrapper around `Option<Sender<DriverMessage>>` that implements Facet.
 ///
 /// This allows `Poke::get_mut::<DriverTxSlot>()` to work, enabling reflection-based
 /// hydration of `Tx<T>` handles on the server side. Sends Data/Close messages
@@ -137,12 +137,12 @@ impl SenderSlot {
 #[facet(opaque)]
 pub struct DriverTxSlot {
     /// The optional sender. Public within crate for `Tx::send()` access.
-    pub(crate) inner: Option<mpsc::Sender<DriverMessage>>,
+    pub(crate) inner: Option<Sender<DriverMessage>>,
 }
 
 impl DriverTxSlot {
     /// Create a slot containing a task sender.
-    pub fn new(tx: mpsc::Sender<DriverMessage>) -> Self {
+    pub fn new(tx: Sender<DriverMessage>) -> Self {
         Self { inner: Some(tx) }
     }
 
@@ -152,7 +152,7 @@ impl DriverTxSlot {
     }
 
     /// Take the sender out of the slot, leaving it empty.
-    pub fn take(&mut self) -> Option<mpsc::Sender<DriverMessage>> {
+    pub fn take(&mut self) -> Option<Sender<DriverMessage>> {
         self.inner.take()
     }
 
@@ -170,12 +170,12 @@ impl DriverTxSlot {
     ///
     /// Used by `ChannelRegistry::bind_streams` to hydrate a deserialized `Tx<T>`
     /// with the connection's task message channel.
-    pub fn set(&mut self, tx: mpsc::Sender<DriverMessage>) {
+    pub fn set(&mut self, tx: Sender<DriverMessage>) {
         self.inner = Some(tx);
     }
 
     /// Clone the sender if present.
-    pub fn clone_inner(&self) -> Option<mpsc::Sender<DriverMessage>> {
+    pub fn clone_inner(&self) -> Option<Sender<DriverMessage>> {
         self.inner.clone()
     }
 }
@@ -252,7 +252,7 @@ impl<T: 'static> TryFrom<u64> for Tx<T> {
 
 impl<T: 'static> Tx<T> {
     /// Create a new Tx stream with the given ID and sender channel (client-side mode).
-    pub fn new(channel_id: ChannelId, tx: mpsc::Sender<Vec<u8>>) -> Self {
+    pub fn new(channel_id: ChannelId, tx: Sender<Vec<u8>>) -> Self {
         Self {
             channel_id,
             sender: SenderSlot::new(tx),
@@ -265,7 +265,7 @@ impl<T: 'static> Tx<T> {
     ///
     /// Used by `roam::channel()` to create a pair before binding.
     /// Connection will poke the channel_id when binding.
-    pub fn unbound(tx: mpsc::Sender<Vec<u8>>) -> Self {
+    pub fn unbound(tx: Sender<Vec<u8>>) -> Self {
         Self {
             channel_id: 0,
             sender: SenderSlot::new(tx),
@@ -332,7 +332,7 @@ impl<T: 'static> Drop for Tx<T> {
                 .is_err()
             {
                 // Channel full or closed - spawn as fallback (see warning above)
-                tokio::spawn(async move {
+                crate::runtime::spawn(async move {
                     let _ = task_tx.send(DriverMessage::Close { channel_id }).await;
                 });
             }
@@ -369,7 +369,7 @@ impl std::error::Error for TxError {}
 // ReceiverSlot - Wrapper for Option<Receiver> that implements Facet
 // ============================================================================
 
-/// A wrapper around `Option<mpsc::Receiver<Vec<u8>>>` that implements Facet.
+/// A wrapper around `Option<Receiver<Vec<u8>>>` that implements Facet.
 ///
 /// This allows `Poke::get_mut::<ReceiverSlot>()` to work, enabling `.take()`
 /// via reflection. Used by `ConnectionHandle::call` to extract receivers from
@@ -378,12 +378,12 @@ impl std::error::Error for TxError {}
 #[facet(opaque)]
 pub struct ReceiverSlot {
     /// The optional receiver. Public within crate for `Rx::recv()` access.
-    pub(crate) inner: Option<mpsc::Receiver<Vec<u8>>>,
+    pub(crate) inner: Option<Receiver<Vec<u8>>>,
 }
 
 impl ReceiverSlot {
     /// Create a slot containing a receiver.
-    pub fn new(rx: mpsc::Receiver<Vec<u8>>) -> Self {
+    pub fn new(rx: Receiver<Vec<u8>>) -> Self {
         Self { inner: Some(rx) }
     }
 
@@ -393,7 +393,7 @@ impl ReceiverSlot {
     }
 
     /// Take the receiver out of the slot, leaving it empty.
-    pub fn take(&mut self) -> Option<mpsc::Receiver<Vec<u8>>> {
+    pub fn take(&mut self) -> Option<Receiver<Vec<u8>>> {
         self.inner.take()
     }
 
@@ -411,7 +411,7 @@ impl ReceiverSlot {
     ///
     /// Used by `ChannelRegistry::bind_streams` to hydrate a deserialized `Rx<T>`
     /// with an actual channel receiver.
-    pub fn set(&mut self, rx: mpsc::Receiver<Vec<u8>>) {
+    pub fn set(&mut self, rx: Receiver<Vec<u8>>) {
         self.inner = Some(rx);
     }
 }
@@ -478,7 +478,7 @@ impl<T: 'static> TryFrom<u64> for Rx<T> {
 
 impl<T: 'static> Rx<T> {
     /// Create a new Rx stream with the given ID and receiver channel.
-    pub fn new(channel_id: ChannelId, rx: mpsc::Receiver<Vec<u8>>) -> Self {
+    pub fn new(channel_id: ChannelId, rx: Receiver<Vec<u8>>) -> Self {
         Self {
             channel_id,
             receiver: ReceiverSlot::new(rx),
@@ -490,7 +490,7 @@ impl<T: 'static> Rx<T> {
     ///
     /// Used by `roam::channel()` to create a pair before binding.
     /// Connection will poke the channel_id when binding.
-    pub fn unbound(rx: mpsc::Receiver<Vec<u8>>) -> Self {
+    pub fn unbound(rx: Receiver<Vec<u8>>) -> Self {
         Self {
             channel_id: 0,
             receiver: ReceiverSlot::new(rx),
@@ -573,7 +573,7 @@ impl std::error::Error for RxError {}
 /// let sum = fut.await?;
 /// ```
 pub fn channel<T: 'static>() -> (Tx<T>, Rx<T>) {
-    let (sender, receiver) = mpsc::channel::<Vec<u8>>(CHANNEL_SIZE);
+    let (sender, receiver) = crate::runtime::channel(CHANNEL_SIZE);
     (Tx::unbound(sender), Rx::unbound(receiver))
 }
 
@@ -598,7 +598,7 @@ pub enum DriverMessage {
         /// Channel IDs used by this call (Tx/Rx), in declaration order.
         channels: Vec<u64>,
         payload: Vec<u8>,
-        response_tx: tokio::sync::oneshot::Sender<Result<Vec<u8>, TransportError>>,
+        response_tx: OneshotSender<Result<Vec<u8>, TransportError>>,
     },
     /// Send a Data message on a stream.
     Data {
@@ -621,7 +621,7 @@ pub enum DriverMessage {
 pub struct ChannelRegistry {
     /// Streams where we receive Data messages (backing `Rx<T>` or `Tx<T>` handles on our side).
     /// Key: channel_id, Value: sender to route Data payloads to the handle.
-    incoming: HashMap<ChannelId, mpsc::Sender<Vec<u8>>>,
+    incoming: HashMap<ChannelId, Sender<Vec<u8>>>,
 
     /// Stream IDs that have been closed.
     /// Used to detect data-after-close violations.
@@ -651,7 +651,7 @@ pub struct ChannelRegistry {
     /// Unified channel for all messages to the driver.
     /// The driver owns the receiving end and sends these on the wire.
     /// Using a single channel ensures FIFO ordering.
-    driver_tx: mpsc::Sender<DriverMessage>,
+    driver_tx: Sender<DriverMessage>,
 }
 
 impl ChannelRegistry {
@@ -661,7 +661,7 @@ impl ChannelRegistry {
     /// to the driver for transmission on the wire.
     ///
     /// r[impl flow.channel.initial-credit] - Each stream starts with this credit.
-    pub fn new_with_credit(initial_credit: u32, driver_tx: mpsc::Sender<DriverMessage>) -> Self {
+    pub fn new_with_credit(initial_credit: u32, driver_tx: Sender<DriverMessage>) -> Self {
         Self {
             incoming: HashMap::new(),
             closed: HashSet::new(),
@@ -677,14 +677,14 @@ impl ChannelRegistry {
     /// r[impl flow.channel.infinite-credit] - Implementations MAY use very large credit.
     /// r[impl flow.channel.zero-credit] - With infinite credit, zero-credit never occurs.
     /// This disables backpressure but simplifies implementation.
-    pub fn new(driver_tx: mpsc::Sender<DriverMessage>) -> Self {
+    pub fn new(driver_tx: Sender<DriverMessage>) -> Self {
         Self::new_with_credit(u32::MAX, driver_tx)
     }
 
     /// Get a clone of the driver message sender.
     ///
     /// Used by codegen to spawn tasks that send Data/Close/Response messages.
-    pub fn driver_tx(&self) -> mpsc::Sender<DriverMessage> {
+    pub fn driver_tx(&self) -> Sender<DriverMessage> {
         self.driver_tx.clone()
     }
 
@@ -694,7 +694,7 @@ impl ChannelRegistry {
     /// Used for both `Rx<T>` (caller receives from callee) and `Tx<T>` (callee sends to caller).
     ///
     /// r[impl flow.channel.initial-credit] - Stream starts with initial credit.
-    pub fn register_incoming(&mut self, channel_id: ChannelId, tx: mpsc::Sender<Vec<u8>>) {
+    pub fn register_incoming(&mut self, channel_id: ChannelId, tx: Sender<Vec<u8>>) {
         self.incoming.insert(channel_id, tx);
         // Grant initial credit - peer can send us this many bytes
         self.incoming_credit.insert(channel_id, self.initial_credit);
@@ -727,7 +727,7 @@ impl ChannelRegistry {
         &mut self,
         channel_id: ChannelId,
         payload: Vec<u8>,
-    ) -> Result<(mpsc::Sender<Vec<u8>>, Vec<u8>), ChannelError> {
+    ) -> Result<(Sender<Vec<u8>>, Vec<u8>), ChannelError> {
         // Check for data-after-close
         if self.closed.contains(&channel_id) {
             return Err(ChannelError::DataAfterClose);
@@ -913,7 +913,7 @@ impl ChannelRegistry {
             };
 
             // Create channel and set receiver slot
-            let (tx, rx) = mpsc::channel::<Vec<u8>>(RX_STREAM_BUFFER_SIZE);
+            let (tx, rx) = crate::runtime::channel(RX_STREAM_BUFFER_SIZE);
 
             if let Ok(mut receiver_field) = ps.field_by_name("receiver")
                 && let Ok(slot) = receiver_field.get_mut::<ReceiverSlot>()
@@ -1623,12 +1623,12 @@ impl ServiceDispatcher for ForwardingDispatcher {
                 channel_map.push((downstream_id, upstream_id));
 
                 // Buffer for downstream → upstream (client sends Data)
-                let (ds_to_us_tx, ds_to_us_rx) = mpsc::channel::<Vec<u8>>(64);
+                let (ds_to_us_tx, ds_to_us_rx) = crate::runtime::channel(64);
                 registry.register_incoming(downstream_id, ds_to_us_tx);
                 ds_to_us_rxs.push(ds_to_us_rx);
 
                 // Buffer for upstream → downstream (server sends Data)
-                let (us_to_ds_tx, us_to_ds_rx) = mpsc::channel::<Vec<u8>>(64);
+                let (us_to_ds_tx, us_to_ds_rx) = crate::runtime::channel(64);
                 upstream.register_incoming(upstream_id, us_to_ds_tx);
                 us_to_ds_rxs.push(us_to_ds_rx);
             }
@@ -1645,7 +1645,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
                 for (i, mut rx) in ds_to_us_rxs.into_iter().enumerate() {
                     let upstream_id = channel_map[i].1;
                     let upstream_task_tx = upstream_task_tx.clone();
-                    tokio::spawn(async move {
+                    crate::runtime::spawn(async move {
                         while let Some(data) = rx.recv().await {
                             let _ = upstream_task_tx
                                 .send(DriverMessage::Data {
@@ -1666,7 +1666,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
                 for (i, mut rx) in us_to_ds_rxs.into_iter().enumerate() {
                     let downstream_id = channel_map[i].0;
                     let task_tx = task_tx.clone();
-                    tokio::spawn(async move {
+                    crate::runtime::spawn(async move {
                         while let Some(data) = rx.recv().await {
                             let _ = task_tx
                                 .send(DriverMessage::Data {
@@ -1966,7 +1966,7 @@ impl Caller for ConnectionHandle {
 /// Shared state between ConnectionHandle and Driver.
 struct HandleShared {
     /// Unified channel to send all messages to the driver.
-    driver_tx: mpsc::Sender<DriverMessage>,
+    driver_tx: Sender<DriverMessage>,
     /// Request ID generator.
     request_ids: RequestIdGenerator,
     /// Stream ID allocator.
@@ -2000,7 +2000,7 @@ impl ConnectionHandle {
     ///
     /// All messages (Call/Data/Close/Response) go through a single unified channel
     /// to ensure FIFO ordering.
-    pub fn new(driver_tx: mpsc::Sender<DriverMessage>, role: Role, initial_credit: u32) -> Self {
+    pub fn new(driver_tx: Sender<DriverMessage>, role: Role, initial_credit: u32) -> Self {
         let channel_registry = ChannelRegistry::new_with_credit(initial_credit, driver_tx.clone());
         Self {
             shared: Arc::new(HandleShared {
@@ -2068,7 +2068,7 @@ impl ConnectionHandle {
             // We need to actually send the DriverMessage::Call to the driver's queue
             // before spawning drains, not just create the future.
             let request_id = self.shared.request_ids.next();
-            let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+            let (response_tx, response_rx) = oneshot();
 
             let msg = DriverMessage::Call {
                 request_id,
@@ -2089,7 +2089,7 @@ impl ConnectionHandle {
             // Spawn a task for each drain to forward data to driver
             for (channel_id, mut rx) in drains {
                 let task_tx = task_tx.clone();
-                tokio::spawn(async move {
+                crate::runtime::spawn(async move {
                     loop {
                         match rx.recv().await {
                             Some(payload) => {
@@ -2138,7 +2138,7 @@ impl ConnectionHandle {
     fn bind_streams<T: Facet<'static>>(
         &self,
         args: &mut T,
-        drains: &mut Vec<(ChannelId, mpsc::Receiver<Vec<u8>>)>,
+        drains: &mut Vec<(ChannelId, Receiver<Vec<u8>>)>,
     ) {
         let poke = facet::Poke::new(args);
         self.bind_streams_recursive(poke, drains);
@@ -2148,7 +2148,7 @@ impl ConnectionHandle {
     fn bind_streams_recursive(
         &self,
         poke: facet::Poke<'_, '_>,
-        drains: &mut Vec<(ChannelId, mpsc::Receiver<Vec<u8>>)>,
+        drains: &mut Vec<(ChannelId, Receiver<Vec<u8>>)>,
     ) {
         let shape = poke.shape();
 
@@ -2180,7 +2180,7 @@ impl ConnectionHandle {
     fn bind_rx_stream(
         &self,
         poke: facet::Poke<'_, '_>,
-        drains: &mut Vec<(ChannelId, mpsc::Receiver<Vec<u8>>)>,
+        drains: &mut Vec<(ChannelId, Receiver<Vec<u8>>)>,
     ) {
         let channel_id = self.alloc_channel_id();
 
@@ -2274,7 +2274,7 @@ impl ConnectionHandle {
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, TransportError> {
         let request_id = self.shared.request_ids.next();
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        let (response_tx, response_rx) = oneshot();
 
         let msg = DriverMessage::Call {
             request_id,
@@ -2314,7 +2314,7 @@ impl ConnectionHandle {
     /// Register an incoming stream (we receive data from peer).
     ///
     /// Used when schema has `Tx<T>` (callee sends to caller) - we receive that data.
-    pub fn register_incoming(&self, channel_id: ChannelId, tx: mpsc::Sender<Vec<u8>>) {
+    pub fn register_incoming(&self, channel_id: ChannelId, tx: Sender<Vec<u8>>) {
         self.shared
             .channel_registry
             .lock()
@@ -2391,7 +2391,7 @@ impl ConnectionHandle {
     ///
     /// Used for forwarding/proxy scenarios where messages need to be sent
     /// on this connection's wire.
-    pub fn driver_tx(&self) -> mpsc::Sender<DriverMessage> {
+    pub fn driver_tx(&self) -> Sender<DriverMessage> {
         self.shared.channel_registry.lock().unwrap().driver_tx()
     }
 }
@@ -2415,11 +2415,14 @@ pub enum DispatchError {
 }
 
 // ============================================================================
-// Tunnel Adapters for AsyncRead/AsyncWrite Streams
+// Tunnel Adapters for AsyncRead/AsyncWrite Streams (native only)
 // ============================================================================
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::io;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinHandle;
 
 /// Default chunk size for tunnel pumps (32KB).
@@ -2427,6 +2430,7 @@ use tokio::task::JoinHandle;
 /// Balances throughput with memory usage and slot consumption.
 /// Larger values improve throughput but use more memory per read.
 /// Smaller values improve latency but increase syscall overhead.
+#[cfg(not(target_arch = "wasm32"))]
 pub const DEFAULT_TUNNEL_CHUNK_SIZE: usize = 32 * 1024;
 
 /// A bidirectional byte tunnel over roam channels.
@@ -2506,6 +2510,7 @@ pub fn tunnel_pair() -> (Tunnel, Tunnel) {
 /// let (tx, rx) = roam::channel::<Vec<u8>>();
 /// let result = pump_read_to_tx(reader, tx, 32 * 1024).await;
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn pump_read_to_tx<R: AsyncRead + Unpin>(
     mut reader: R,
     tx: Tx<Vec<u8>>,
@@ -2548,6 +2553,7 @@ pub async fn pump_read_to_tx<R: AsyncRead + Unpin>(
 /// let (tx, rx) = roam::channel::<Vec<u8>>();
 /// let result = pump_rx_to_write(rx, writer).await;
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn pump_rx_to_write<W: AsyncWrite + Unpin>(
     mut rx: Rx<Vec<u8>>,
     mut writer: W,
@@ -2604,6 +2610,7 @@ pub async fn pump_rx_to_write<W: AsyncWrite + Unpin>(
 /// let _ = read_handle.await;
 /// let _ = write_handle.await;
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub fn tunnel_stream<S>(
     stream: S,
     tunnel: Tunnel,
@@ -2671,7 +2678,7 @@ mod tests {
 
     /// Create a test registry with a dummy task channel.
     fn test_registry() -> ChannelRegistry {
-        let (task_tx, _task_rx) = mpsc::channel(10);
+        let (task_tx, _task_rx) = crate::runtime::channel(10);
         ChannelRegistry::new(task_tx)
     }
 
@@ -2679,7 +2686,7 @@ mod tests {
     #[tokio::test]
     async fn data_after_close_is_rejected() {
         let mut registry = test_registry();
-        let (tx, _rx) = mpsc::channel::<Vec<u8>>(10);
+        let (tx, _rx) = crate::runtime::channel(10);
         registry.register_incoming(42, tx);
 
         // Close the stream
@@ -2697,7 +2704,7 @@ mod tests {
         let mut registry = test_registry();
 
         // Register a stream
-        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(10);
+        let (tx, mut rx) = crate::runtime::channel(10);
         registry.register_incoming(42, tx);
 
         // Data to registered stream should succeed
@@ -2714,7 +2721,7 @@ mod tests {
     #[tokio::test]
     async fn channel_registry_close_terminates_stream() {
         let mut registry = test_registry();
-        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(10);
+        let (tx, mut rx) = crate::runtime::channel(10);
         registry.register_incoming(42, tx);
 
         // Send some data

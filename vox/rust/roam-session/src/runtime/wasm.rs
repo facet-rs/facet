@@ -2,26 +2,106 @@
 //!
 //! Uses browser-compatible primitives:
 //! - `wasm_bindgen_futures::spawn_local` for spawning
-//! - `futures_channel` for channels
+//! - `async-channel` for mpsc channels (has `send(&self)` like tokio)
+//! - `futures_channel::oneshot` for oneshot channels
 //! - `gloo_timers` for timeout/sleep
 
 use std::future::Future;
 use std::time::Duration;
 
-// Re-export futures-channel types
-pub use futures_channel::mpsc::{
-    Receiver, Sender, UnboundedReceiver, UnboundedSender,
-};
+// For oneshot, use futures-channel (async-channel doesn't have oneshot)
 pub use futures_channel::oneshot::{Receiver as OneshotReceiver, Sender as OneshotSender};
 
+/// Wrapper around async-channel Sender to match tokio's API.
+pub struct Sender<T>(async_channel::Sender<T>);
+
+impl<T> Clone for Sender<T> {
+    fn clone(&self) -> Self {
+        Sender(self.0.clone())
+    }
+}
+
+impl<T> Sender<T> {
+    /// Send a value, waiting if the channel is full.
+    pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
+        self.0.send(value).await.map_err(|e| SendError(e.0))
+    }
+
+    /// Try to send a value without blocking.
+    pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
+        self.0.try_send(value).map_err(|e| match e {
+            async_channel::TrySendError::Full(v) => TrySendError::Full(v),
+            async_channel::TrySendError::Closed(v) => TrySendError::Closed(v),
+        })
+    }
+
+    /// Check if the channel is closed.
+    pub fn is_closed(&self) -> bool {
+        self.0.is_closed()
+    }
+}
+
+/// Error returned when sending fails because the receiver was dropped.
+pub struct SendError<T>(pub T);
+
+impl<T> std::fmt::Debug for SendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SendError").finish_non_exhaustive()
+    }
+}
+
+impl<T> std::fmt::Display for SendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "channel closed")
+    }
+}
+
+impl<T> std::error::Error for SendError<T> {}
+
+/// Error returned when try_send fails.
+pub enum TrySendError<T> {
+    /// Channel is full.
+    Full(T),
+    /// Channel is closed.
+    Closed(T),
+}
+
+impl<T> std::fmt::Debug for TrySendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TrySendError::Full(_) => f.debug_struct("TrySendError::Full").finish_non_exhaustive(),
+            TrySendError::Closed(_) => {
+                f.debug_struct("TrySendError::Closed").finish_non_exhaustive()
+            }
+        }
+    }
+}
+
+/// Wrapper around async-channel Receiver to match tokio's API.
+pub struct Receiver<T>(async_channel::Receiver<T>);
+
+impl<T> Receiver<T> {
+    /// Receive a value, returning None if the channel is closed.
+    pub async fn recv(&mut self) -> Option<T> {
+        self.0.recv().await.ok()
+    }
+}
+
+/// Unbounded sender (same as bounded for async-channel).
+pub type UnboundedSender<T> = Sender<T>;
+/// Unbounded receiver (same as bounded for async-channel).
+pub type UnboundedReceiver<T> = Receiver<T>;
+
 /// Create a bounded mpsc channel.
-pub fn bounded<T>(buffer: usize) -> (Sender<T>, Receiver<T>) {
-    futures_channel::mpsc::channel(buffer)
+pub fn channel<T>(buffer: usize) -> (Sender<T>, Receiver<T>) {
+    let (tx, rx) = async_channel::bounded(buffer);
+    (Sender(tx), Receiver(rx))
 }
 
 /// Create an unbounded mpsc channel.
-pub fn unbounded<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
-    futures_channel::mpsc::unbounded()
+pub fn unbounded_channel<T>() -> (Sender<T>, Receiver<T>) {
+    let (tx, rx) = async_channel::unbounded();
+    (Sender(tx), Receiver(rx))
 }
 
 /// Create a oneshot channel.

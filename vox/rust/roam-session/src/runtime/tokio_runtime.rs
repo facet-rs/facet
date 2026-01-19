@@ -6,6 +6,7 @@ use std::time::Duration;
 // Re-export tokio channel types directly
 pub use tokio::sync::mpsc::{
     Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
+    error::SendError,
 };
 pub use tokio::sync::oneshot::{Receiver as OneshotReceiver, Sender as OneshotSender};
 
