@@ -1,0 +1,9 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+TradeOrder = TypedDict(
+    "TradeOrder",
+    {"from": Required[float], "to": Required[float], "quantity": Required[float]},
+    total=False,
+)

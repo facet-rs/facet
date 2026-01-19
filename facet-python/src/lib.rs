@@ -29,6 +29,18 @@ use core::fmt::Write;
 
 use facet_core::{Def, Facet, Field, Shape, StructKind, Type, UserType};
 
+/// Check if a field name is a Python reserved keyword using binary search
+fn is_python_keyword(name: &str) -> bool {
+    // Python reserved keywords - MUST be sorted alphabetically for binary search
+    const KEYWORDS: &[&str] = &[
+        "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class",
+        "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
+        "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return",
+        "try", "while", "with", "yield",
+    ];
+    KEYWORDS.binary_search(&name).is_ok()
+}
+
 /// Generate Python definitions for a single type.
 ///
 /// Returns a string containing the Python TypedDict or type declaration.
@@ -154,18 +166,15 @@ impl PythonGenerator {
     ) {
         match kind {
             StructKind::Unit => {
-                // Unit struct as None type alias
                 write_doc_comment(output, shape.doc);
                 writeln!(output, "{} = None", shape.type_identifier).unwrap();
             }
             StructKind::TupleStruct if fields.len() == 1 => {
-                // Newtype - type alias to inner
                 let inner_type = self.type_for_shape(fields[0].shape.get());
                 write_doc_comment(output, shape.doc);
                 writeln!(output, "{} = {}", shape.type_identifier, inner_type).unwrap();
             }
             StructKind::TupleStruct | StructKind::Tuple => {
-                // Tuple type
                 let types: Vec<String> = fields
                     .iter()
                     .map(|f| self.type_for_shape(f.shape.get()))
@@ -180,54 +189,115 @@ impl PythonGenerator {
                 .unwrap();
             }
             StructKind::Struct => {
-                self.imports.insert("TypedDict");
-                write_doc_comment(output, shape.doc);
-                writeln!(
-                    output,
-                    "class {}(TypedDict, total=False):",
-                    shape.type_identifier
-                )
-                .unwrap();
-
-                let visible_fields: Vec<_> = fields
-                    .iter()
-                    .filter(|f| !f.flags.contains(facet_core::FieldFlags::SKIP))
-                    .collect();
-
-                if visible_fields.is_empty() {
-                    output.push_str("    pass\n");
-                } else {
-                    for field in visible_fields {
-                        // Generate doc comment for field
-                        if !field.doc.is_empty() {
-                            for line in field.doc {
-                                output.push_str("    #");
-                                output.push_str(line);
-                                output.push('\n');
-                            }
-                        }
-
-                        let field_name = field.effective_name();
-                        let is_option = matches!(field.shape.get().def, Def::Option(_));
-
-                        if is_option {
-                            // Optional field - unwrap the Option and don't use Required
-                            if let Def::Option(opt) = &field.shape.get().def {
-                                let inner_type = self.type_for_shape(opt.t);
-                                writeln!(output, "    {}: {}", field_name, inner_type).unwrap();
-                            }
-                        } else {
-                            // Required field - wrap in Required[]
-                            self.imports.insert("Required");
-                            let field_type = self.type_for_shape(field.shape.get());
-                            writeln!(output, "    {}: Required[{}]", field_name, field_type)
-                                .unwrap();
-                        }
-                    }
-                }
+                self.generate_typed_dict(output, shape, fields);
             }
         }
         output.push('\n');
+    }
+
+    /// Generate a TypedDict for a struct, choosing between class and functional syntax.
+    ///
+    /// Uses functional syntax when any field name is a Python reserved keyword,
+    /// otherwise uses the more readable class syntax.
+    fn generate_typed_dict(
+        &mut self,
+        output: &mut String,
+        shape: &'static Shape,
+        fields: &'static [Field],
+    ) {
+        self.imports.insert("TypedDict");
+
+        let visible_fields: Vec<_> = fields
+            .iter()
+            .filter(|f| !f.flags.contains(facet_core::FieldFlags::SKIP))
+            .collect();
+
+        let has_keyword_field = visible_fields
+            .iter()
+            .any(|f| is_python_keyword(f.effective_name()));
+
+        write_doc_comment(output, shape.doc);
+
+        if has_keyword_field {
+            self.generate_typed_dict_functional(output, shape, &visible_fields);
+        } else {
+            self.generate_typed_dict_class(output, shape, &visible_fields);
+        }
+    }
+
+    /// Generate TypedDict using functional syntax: `Name = TypedDict("Name", {...}, total=False)`
+    ///
+    /// This syntax is required when field names are Python reserved keywords.
+    fn generate_typed_dict_functional(
+        &mut self,
+        output: &mut String,
+        shape: &'static Shape,
+        visible_fields: &[&Field],
+    ) {
+        writeln!(output, "{} = TypedDict(", shape.type_identifier).unwrap();
+        writeln!(output, "    \"{}\",", shape.type_identifier).unwrap();
+        output.push_str("    {");
+
+        let mut first = true;
+        for field in visible_fields {
+            if !first {
+                output.push_str(", ");
+            }
+            first = false;
+
+            let field_name = field.effective_name();
+            let field_type = self.field_type_string(field);
+            write!(output, "\"{}\": {}", field_name, field_type).unwrap();
+        }
+
+        output.push_str("},\n");
+        output.push_str("    total=False,\n");
+        output.push(')');
+    }
+
+    /// Generate TypedDict using class syntax: `class Name(TypedDict, total=False): ...`
+    ///
+    /// This is the preferred syntax for readability when no field names conflict with keywords.
+    fn generate_typed_dict_class(
+        &mut self,
+        output: &mut String,
+        shape: &'static Shape,
+        visible_fields: &[&Field],
+    ) {
+        writeln!(
+            output,
+            "class {}(TypedDict, total=False):",
+            shape.type_identifier
+        )
+        .unwrap();
+
+        if visible_fields.is_empty() {
+            output.push_str("    pass");
+            return;
+        }
+
+        for field in visible_fields {
+            // Generate doc comment for field
+            for line in field.doc {
+                output.push_str("    #");
+                output.push_str(line);
+                output.push('\n');
+            }
+
+            let field_name = field.effective_name();
+            let field_type = self.field_type_string(field);
+            writeln!(output, "    {}: {}", field_name, field_type).unwrap();
+        }
+    }
+
+    /// Get the Python type string for a field, handling Optional fields specially.
+    fn field_type_string(&mut self, field: &Field) -> String {
+        if let Def::Option(opt) = &field.shape.get().def {
+            self.type_for_shape(opt.t)
+        } else {
+            self.imports.insert("Required");
+            format!("Required[{}]", self.type_for_shape(field.shape.get()))
+        }
     }
 
     fn generate_enum(
@@ -766,6 +836,34 @@ mod tests {
 
         let py = to_python::<Container>(false);
         // This should NOT generate "(…)" as a type - it should properly expand the tuple
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_struct_with_reserved_keyword_field() {
+        #[derive(Facet)]
+        struct TradeOrder {
+            from: f64,
+            to: f64,
+            quantity: f64,
+        }
+
+        let py = to_python::<TradeOrder>(false);
+        // This should use functional TypedDict syntax since "from" is a Python keyword
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_struct_with_multiple_reserved_keywords() {
+        #[derive(Facet)]
+        struct ControlFlow {
+            r#if: bool,
+            r#else: String,
+            r#return: i32,
+        }
+
+        let py = to_python::<ControlFlow>(false);
+        // Multiple Python keywords - should use functional syntax
         insta::assert_snapshot!(py);
     }
 }
