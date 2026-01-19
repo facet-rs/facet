@@ -36,15 +36,15 @@ questions {
     }
     bare-scalar-path {
         question <<DOC,markdown
-            Is this valid Styx?
+            Does this need quotes?
 
             ```styx
             path /usr/local/bin
             ```
             DOC
         options (
-            {text "Yes", correct true}
-            {text "No", help "Slashes are fine in bare scalars"}
+            {text "Yes", help "Slashes are fine in bare scalars"}
+            {text "No", correct true}
         )
         explanation <<DOC,markdown
             Paths work as bare scalars. Slashes don't have special meaning in Styx.
@@ -52,15 +52,15 @@ questions {
     }
     bare-scalar-url {
         question <<DOC,markdown
-            Is this valid Styx?
+            Does this need quotes?
 
             ```styx
             url https://example.org/path?q=1
             ```
             DOC
         options (
-            {text "Yes", correct true}
-            {text "No", help "Colons, slashes, question marks, equals signs - all fine"}
+            {text "Yes", help "Colons, slashes, question marks, equals signs - all fine"}
+            {text "No", correct true}
         )
         explanation <<DOC,markdown
             URLs work as bare scalars. The only characters that terminate a bare scalar are whitespace, `{`, `}`, `(`, `)`, `,`, `"`, and `>`.
@@ -68,10 +68,13 @@ questions {
     }
     bare-scalar-space {
         question <<DOC,markdown
-            Is this valid Styx?
+            Are these equivalent?
 
-            ```styx
+            ```compare
+            /// styx
             greeting hello world
+            /// styx
+            greeting "hello world"
             ```
             DOC
         options (
@@ -79,29 +82,30 @@ questions {
             {text "No", correct true}
         )
         explanation <<DOC,markdown
-            Spaces terminate bare scalars. This has three atoms (`greeting`, `hello`, `world`) but entries can only have two.
+            Spaces terminate bare scalars. The first has three atoms (`greeting`, `hello`, `world`) — that's a parse error.
 
-            For a value with spaces, use quotes: `greeting "hello world"`
+            Use quotes for values with spaces: `greeting "hello world"`
             DOC
     }
     bare-scalar-comma {
         question <<DOC,markdown
-            Is this valid Styx?
+            Are these equivalent?
 
-            ```styx
+            ```compare
+            /// styx
             list a,b,c
+            /// styx
+            list "a,b,c"
             ```
             DOC
         options (
-            {text "Yes - value is `a,b,c`", help "Commas terminate bare scalars"}
+            {text "Yes", help "Commas terminate bare scalars"}
             {text "No", correct true}
         )
         explanation <<DOC,markdown
-            Commas terminate bare scalars (they separate entries in inline objects).
+            Commas terminate bare scalars. The first parses as key `list`, value `a`, then `,b,c` — a parse error.
 
-            This tries to parse as: key `list`, value `a`, then `,b,c` which is invalid.
-
-            Use quotes: `list "a,b,c"` or make a real sequence: `list (a b c)`
+            Use quotes: `list "a,b,c"`
             DOC
     }
     basics-sequence-syntax {

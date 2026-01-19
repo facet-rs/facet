@@ -123,7 +123,7 @@ colors (red green blue)
 
 ## Scalars are opaque text
 
-Here's a fundamental difference from JSON: the parser assigns no type information to scalars.
+Scalars are just atoms of text. The parser assigns no type information.
 
 ```styx
 name Alice
@@ -132,23 +132,30 @@ active true
 ratio 3.14
 ```
 
-In JSON, `30` is a number, `true` is a boolean, and `3.14` is a float. In Styx, they're all just text. The parser doesn't distinguish between them.
+These are all text. Types come later, from schemas or deserialization.
 
-This might seem limiting, but it solves real problems:
+In YAML, this classic gotcha:
 
-**The Norway problem**: In YAML, `NO` (the country code for Norway) is parsed as boolean `false`. In Styx, `NO` is just the text `NO`.
-
-**Large numbers**: JSON parsers often lose precision on large integers. In Styx, `9007199254740993` is preserved exactly as text until your application parses it.
-
-**Version strings**: Is `1.0` a number or a version? In Styx, it doesn't matter at parse time — your schema or application decides.
-
-Types come from schemas or deserialization, not from syntax. This means URLs, paths, and other complex values work without escaping:
-
-```styx
-url https://example.com/path?query=value
-email user@example.com
-version 2.0.0-beta.1
+```yaml
+- country: FR
+- country: NL
+- country: NO
 ```
+
+...shows the first country set to boolean `false`. Similarly:
+
+```yaml
+version: 1.10
+```
+
+Sets version to number `1.1` instead of the string "1.10".
+
+Styx does not assign a type at parse time — only later, at deserialization time, do
+these become what you want them to become.
+
+When deserializing to a strongly typed language like Rust, it's no problem — you
+already have types! When doing it in JavaScript, Python, etc. then you can bring
+a schema with you. More on that later.
 
 ### Recap
 
