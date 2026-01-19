@@ -1446,7 +1446,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         // Rule 3: no duplicate metadata kinds
         let mut seen_kinds = std::collections::HashSet::new();
         for field in &metadata_fields {
-            if let Some(kind) = field.attrs.facet.iter().find_map(|a| {
+            let kind = field.attrs.facet.iter().find_map(|a| {
                 if a.is_builtin() && a.key_str() == "metadata" {
                     let args_str = a.args.to_string();
                     let kind_str = args_str.trim_start_matches('=').trim().trim_matches('"');
@@ -1454,24 +1454,25 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 } else {
                     None
                 }
-            }) {
-                if !seen_kinds.insert(kind.clone()) {
-                    let mc_span = ps
-                        .container
-                        .attrs
-                        .facet
-                        .iter()
-                        .find(|a| a.is_builtin() && a.key_str() == "metadata_container")
-                        .map(|a| a.key.span())
-                        .unwrap_or_else(proc_macro2::Span::call_site);
-                    let msg = format!(
-                        "#[facet(metadata_container)] has duplicate metadata kind: {}",
-                        kind
-                    );
-                    return quote_spanned! { mc_span =>
-                        compile_error!(#msg);
-                    };
-                }
+            });
+            if let Some(kind) = kind
+                && !seen_kinds.insert(kind.clone())
+            {
+                let mc_span = ps
+                    .container
+                    .attrs
+                    .facet
+                    .iter()
+                    .find(|a| a.is_builtin() && a.key_str() == "metadata_container")
+                    .map(|a| a.key.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+                let msg = format!(
+                    "#[facet(metadata_container)] has duplicate metadata kind: {}",
+                    kind
+                );
+                return quote_spanned! { mc_span =>
+                    compile_error!(#msg);
+                };
             }
         }
     }

@@ -1280,7 +1280,6 @@ fn test_decl_id() {
     );
 }
 
-<<<<<<< HEAD
 // Test for #[facet(from_ref)] attribute - infallible constructor from reference
 #[test]
 fn from_ref_infallible() {
