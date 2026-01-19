@@ -194,6 +194,16 @@ impl ParseError {
                     )
                     .with_help("you cannot add children to a path that already has a scalar, sequence, tag, or unit value")
             }
+
+            // diag[impl diagnostic.parser.comma-in-sequence]
+            ParseErrorKind::CommaInSequence => Report::build(ReportKind::Error, (filename, range.clone()))
+                .with_message("unexpected comma in sequence")
+                .with_label(
+                    Label::new((filename, range))
+                        .with_message("comma not allowed here")
+                        .with_color(Color::Red),
+                )
+                .with_help("sequences are whitespace-separated, not comma-separated"),
         }
     }
 }
@@ -220,6 +230,7 @@ impl std::fmt::Display for ParseError {
             ParseErrorKind::NestIntoTerminal { terminal_path } => {
                 write!(f, "cannot nest into `{}`", terminal_path.join("."))
             }
+            ParseErrorKind::CommaInSequence => write!(f, "unexpected comma in sequence"),
         }?;
         write!(f, " at offset {}", self.span.start)
     }

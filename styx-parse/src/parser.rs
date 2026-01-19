@@ -1063,6 +1063,7 @@ impl<'src> Parser<'src> {
         let mut elements: Vec<Atom<'src>> = Vec::new();
         let mut end_span = start_span;
         let mut unclosed = false;
+        let mut comma_spans: Vec<Span> = Vec::new();
 
         loop {
             // Sequences allow whitespace and newlines between elements
@@ -1083,8 +1084,8 @@ impl<'src> Parser<'src> {
 
                 TokenKind::Comma => {
                     // Commas are NOT allowed in sequences per spec
-                    // TODO: emit error event
-                    self.advance(); // skip it and continue
+                    let comma = self.advance().unwrap();
+                    comma_spans.push(comma.span);
                 }
 
                 TokenKind::LineComment | TokenKind::DocComment => {
@@ -1113,7 +1114,11 @@ impl<'src> Parser<'src> {
                 end: end_span.end,
             },
             kind: ScalarKind::Bare,
-            content: AtomContent::Sequence { elements, unclosed },
+            content: AtomContent::Sequence {
+                elements,
+                unclosed,
+                comma_spans,
+            },
         }
     }
 
@@ -1429,7 +1434,11 @@ impl<'src> Parser<'src> {
                 callback.event(Event::ObjectEnd { span: atom.span })
             }
             // parser[impl sequence.syntax] parser[impl sequence.elements]
-            AtomContent::Sequence { elements, unclosed } => {
+            AtomContent::Sequence {
+                elements,
+                unclosed,
+                comma_spans,
+            } => {
                 if !callback.event(Event::SequenceStart { span: atom.span }) {
                     return false;
                 }
@@ -1442,6 +1451,16 @@ impl<'src> Parser<'src> {
                     })
                 {
                     return false;
+                }
+
+                // Emit errors for commas in sequence
+                for comma_span in comma_spans {
+                    if !callback.event(Event::Error {
+                        span: *comma_span,
+                        kind: ParseErrorKind::CommaInSequence,
+                    }) {
+                        return false;
+                    }
                 }
 
                 for elem in elements {
@@ -1929,6 +1948,8 @@ enum AtomContent<'src> {
         elements: Vec<Atom<'src>>,
         /// Whether the sequence was not properly closed (missing `)`).
         unclosed: bool,
+        /// Spans of commas found in the sequence (for error reporting).
+        comma_spans: Vec<Span>,
     },
     /// Attributes (key=value pairs that become an object).
     // parser[impl attr.syntax] parser[impl attr.atom]

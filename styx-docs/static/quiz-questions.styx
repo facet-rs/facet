@@ -1,173 +1,617 @@
 @schema ./quiz-questions.schema.styx
 
 /// Quiz questions for the Styx primer
-/// Each question tests parser knowledge
-
+/// Organized by learning progression
 questions {
-  duplicate-keys {
-    code <<DOC,styx
-    foo bar
-    foo baz
-    DOC
-    valid false
-    explanation "Objects cannot have duplicate keys. `foo` appears twice."
-  }
+    //==========================================================================
+    // Section 1: Basics - key-value pairs, objects, sequences
+    //==========================================================================
+    basics-json-to-styx {
+        question <<DOC,markdown
+            Is this valid Styx?
 
-  three-atoms {
-    code <<DOC,styx
-    key @tag {}
-    DOC
-    valid false
-    explanation "Entries have at most two atoms (key and value). `@tag` and `{}` are separate atoms because of the space."
-  }
+            ```styx
+            name: "Alice"
+            ```
+            DOC
+        options (
+            {text "Valid", help "Styx doesn't use colons between keys and values"}
+            {text "Invalid", correct true}
+        )
+        explanation <<DOC,markdown
+            Styx uses whitespace to separate keys from values, not colons. The valid form is:
 
-  reopening-path {
-    code <<DOC,styx
-    a.b 1
-    a.c 2
-    a.b.x 3
-    DOC
-    valid false
-    explanation "Once `a.c` is written, `a.b` is closed. You can't add to it later."
-  }
+            ```styx
+            name "Alice"
+            ```
 
-  mixing-separators {
-    code <<DOC,styx
-    {a 1, b 2
-    c 3}
-    DOC
-    valid false
-    explanation "Objects must use either newlines OR commas, not both."
-  }
-
-  comma-in-sequence {
-    code <<DOC,styx
-    items (a, b, c)
-    DOC
-    valid false
-    explanation "Sequences use whitespace separation, not commas."
-  }
-
-  simple-kv {
-    code <<DOC,styx
-    host localhost
-    port 8080
-    DOC
-    valid true
-    explanation "Simple key-value pairs, newline separated."
-  }
-
-  tagged-unit {
-    code <<DOC,styx
-    status @ok
-    DOC
-    valid true
-    explanation "`@ok` is a tag with implicit unit payload."
-  }
-
-  tagged-object {
-    code <<DOC,styx
-    result @err{message "failed"}
-    DOC
-    valid true
-    explanation "Tag with object payload. No space between `@err` and `{`."
-  }
-
-  sequence {
-    code <<DOC,styx
-    ports (80 443 8080)
-    DOC
-    valid true
-    explanation "Whitespace-separated sequence."
-  }
-
-  nested-objects {
-    code <<DOC,styx
-    server {
-      host localhost
-      tls {
-        enabled true
-      }
+            Or even just `name Alice` if you don't need the quotes.
+            DOC
     }
-    DOC
-    valid true
-    explanation "Objects can nest arbitrarily."
-  }
+    basics-when-quotes {
+        question <<DOC,markdown
+            When do you need quotes around a scalar in Styx?
 
-  dotted-paths {
-    code <<DOC,styx
-    server.host localhost
-    server.port 8080
-    DOC
-    valid true
-    explanation "Dotted paths create nested objects. Sibling paths under same prefix are fine."
-  }
+            ```styx
+            greeting Hello, world!
+            ```
+            DOC
+        options (
+            {text "Always - strings must be quoted", help "Styx only requires quotes when the value contains special characters"}
+            {text "Never - quotes are optional", help "The comma and exclamation here would cause parsing issues"}
+            {text "Only when the value contains spaces or special characters", correct true}
+        )
+        explanation <<DOC,markdown
+            Bare scalars work for simple values: `name Alice`
 
-  heredoc {
-    code <<DOC,styx
-    script <<BASH
-    echo "hello"
-    BASH
-    DOC
-    valid true
-    explanation "Heredocs for multi-line content. Delimiter must be UPPERCASE."
-  }
+            But `Hello, world!` contains a comma (which separates entries in inline objects) and spaces. You'd write:
 
-  comma-separated {
-    code <<DOC,styx
-    {host localhost, port 8080}
-    DOC
-    valid true
-    explanation "Single-line objects use comma separation."
-  }
+            ```styx
+            greeting "Hello, world!"
+            ```
+            DOC
+    }
+    basics-sequence-syntax {
+        question <<DOC,markdown
+            Is this valid Styx?
 
-  unit-value {
-    code <<DOC,styx
-    nothing @
-    DOC
-    valid true
-    explanation "`@` alone is the unit value (like null)."
-  }
+            ```styx
+            colors [red, green, blue]
+            ```
+            DOC
+        options (
+            {text "Valid", help "Styx uses parentheses for sequences, not square brackets"}
+            {text "Invalid", correct true}
+        )
+        explanation <<DOC,markdown
+            Sequences use parentheses, not square brackets. And they're whitespace-separated, not comma-separated:
 
-  lowercase-heredoc {
-    code <<DOC,styx
-    text <<eof
-    content
-    eof
-    DOC
-    valid false
-    explanation "Heredoc delimiters must start with uppercase: `<<EOF` not `<<eof`."
-  }
+            ```styx
+            colors (red green blue)
+            ```
+            DOC
+    }
+    basics-comma-sequence {
+        question <<DOC,markdown
+            Is this valid Styx?
 
-  space-in-attr {
-    code <<DOC,styx
-    div id > main
-    DOC
-    valid false
-    explanation "Attribute syntax has no spaces: `id>main` not `id > main`."
-  }
+            ```styx
+            items (a, b, c)
+            ```
+            DOC
+        options (
+            {text "Valid - commas separate sequence elements", help "Sequences don't use commas"}
+            {text "Invalid - commas are not allowed in sequences", correct true}
+        )
+        explanation <<DOC,markdown
+            Sequences are whitespace-separated only. Commas are a parse error.
 
-  attr-syntax {
-    code <<DOC,styx
-    div id>main class>container
-    DOC
-    valid true
-    explanation "Attributes create inline objects: `{id main, class container}`."
-  }
+            The valid form is: `items (a b c)`
+            DOC
+    }
+    basics-mixing-separators {
+        question <<DOC,markdown
+            Is this valid Styx?
 
-  unit-key {
-    code <<DOC,styx
-    @ default-value
-    DOC
-    valid true
-    explanation "`@` can be used as a key (unit key)."
-  }
+            ```styx
+            {a 1, b 2
+            c 3}
+            ```
+            DOC
+        options (
+            {text "Valid - you can mix commas and newlines", help "Objects must use one separator style consistently"}
+            {text "Invalid", correct true}
+        )
+        explanation <<DOC,markdown
+            Objects must use either commas OR newlines as separators, not both.
 
-  quoted-key {
-    code <<DOC,styx
-    "my key" value
-    DOC
-    valid true
-    explanation "Quoted strings can be keys."
-  }
+            Valid alternatives:
+            ```styx
+            {a 1, b 2, c 3}
+            ```
+            ```styx
+            {
+                a 1
+                b 2
+                c 3
+            }
+            ```
+            DOC
+    }
+    basics-duplicate-keys {
+        question <<DOC,markdown
+            Is this valid Styx?
+
+            ```styx
+            name Alice
+            name Bob
+            ```
+            DOC
+        options (
+            {text "Valid - Bob overwrites Alice", help "Styx doesn't allow duplicate keys"}
+            {text "Valid - creates a list of names", help "Styx doesn't auto-convert to arrays"}
+            {text "Invalid", correct true}
+        )
+        explanation <<DOC,markdown
+            Objects cannot have duplicate keys. Each key must be unique within its object.
+            DOC
+    }
+    //==========================================================================
+    // Section 2: Scalars are just text
+    //==========================================================================
+    scalars-number {
+        question <<DOC,markdown
+            In this Styx document, what type is `42`?
+
+            ```styx
+            answer 42
+            ```
+            DOC
+        options (
+            {text "Integer", help "Styx scalars don't have inherent types"}
+            {text "Number", help "Styx scalars don't have inherent types"}
+            {text "Just a text atom - type comes later", correct true}
+        )
+        explanation <<DOC,markdown
+            Scalars are untyped text. `42` is not inherently a number any more than `hello` is inherently a string.
+
+            Types matter at two points:
+            - Schema validation
+            - Deserialization into a typed language
+            DOC
+    }
+    scalars-norway {
+        question <<DOC,markdown
+            A YAML file has `country: no` for Norway. What happens?
+
+            In Styx, what is `no` in this document?
+
+            ```styx
+            country no
+            ```
+            DOC
+        options (
+            {text "The boolean `false`", help "That's YAML's problem, not Styx's"}
+            {text "A text atom that could become anything", correct true}
+            {text "A parse error", help "It's perfectly valid Styx"}
+        )
+        explanation <<DOC,markdown
+            This is the "Norway problem" - YAML interprets `no` as boolean false.
+
+            In Styx, `no` is just text. It becomes a boolean, string, or country code only when you deserialize it with a schema or into a typed structure.
+            DOC
+    }
+    scalars-url {
+        question <<DOC,markdown
+            Is this valid Styx?
+
+            ```styx
+            website https://example.org/path?query=1
+            ```
+            DOC
+        options (
+            {text "Invalid - URLs need quotes", help "Bare scalars can contain many characters"}
+            {text "Valid", correct true}
+        )
+        explanation <<DOC,markdown
+            URLs work as bare scalars. Colons, slashes, question marks, and equals signs are all fine in bare scalars.
+
+            You'd only need quotes if the value contained spaces, commas, or other structural characters.
+            DOC
+    }
+    //==========================================================================
+    // Section 3: Tags and the two dimensions
+    //==========================================================================
+    tags-two-dimensions {
+        question <<DOC,markdown
+            Every Styx value has two parts: a **tag** and a **payload**.
+
+            What are the tag and payload of `hello`?
+
+            ```styx
+            greeting hello
+            ```
+            DOC
+        options (
+            {text "tag=hello, payload=@", help "The word itself is the payload, not the tag"}
+            {text "tag=@, payload=hello", correct true}
+            {text "No tag - it's just a plain value", help "Every value has a tag; it defaults to @"}
+        )
+        explanation <<DOC,markdown
+            A bare scalar like `hello` has:
+            - **tag**: `@` (empty/default)
+            - **payload**: `hello`
+
+            Every Styx value has both parts. When you don't write a tag, it's implicitly `@`.
+            DOC
+    }
+    tags-explicit {
+        question <<DOC,markdown
+            What are the tag and payload of `@rgb(255 128 0)`?
+
+            ```styx
+            color @rgb(255 128 0)
+            ```
+            DOC
+        options (
+            {text "tag=rgb, payload=(255 128 0)", correct true}
+            {text "tag=@, payload=rgb(255 128 0)", help "The @ starts a tag name"}
+            {text "tag=color, payload=rgb", help "color is the key, not part of the value"}
+        )
+        explanation <<DOC,markdown
+            `@rgb(255 128 0)` has:
+            - **tag**: `rgb`
+            - **payload**: `(255 128 0)` (a sequence)
+
+            Tags attach semantic meaning - useful for enums where the tag selects a variant.
+            DOC
+    }
+    tags-unit-payload {
+        question <<DOC,markdown
+            What are the tag and payload of `@pending`?
+
+            ```styx
+            status @pending
+            ```
+            DOC
+        options (
+            {text "tag=pending, payload=@ (unit)", correct true}
+            {text "tag=@, payload=pending", help "The @ before pending makes pending the tag"}
+            {text "tag=pending, no payload", help "Every value has a payload; it defaults to @"}
+        )
+        explanation <<DOC,markdown
+            `@pending` has:
+            - **tag**: `pending`
+            - **payload**: `@` (unit, implied)
+
+            When a tag has no explicit payload, it defaults to `@`. The canonical form is `@pending@`.
+            DOC
+    }
+    tags-space-matters {
+        question <<DOC,markdown
+            What's the difference between these two lines?
+
+            ```styx
+            a @tag()
+            b @tag ()
+            ```
+            DOC
+        options (
+            {text "No difference - whitespace is ignored", help "Space between tag and payload is significant"}
+            {text "Line a is a tagged empty sequence; line b is a key-value pair", correct true}
+            {text "Line b is a parse error", help "Both are valid, just different"}
+        )
+        explanation <<DOC,markdown
+            There is **never** a space between a tag and its payload.
+
+            - `@tag()` — tag `tag` with payload `()` (empty sequence)
+            - `@tag ()` — key `@tag` (unit payload), value `()` (empty sequence)
+
+            This is the most important whitespace rule in Styx.
+            DOC
+    }
+    tags-three-atoms {
+        question <<DOC,markdown
+            Is this valid Styx?
+
+            ```styx
+            key @tag {}
+            ```
+            DOC
+        options (
+            {text "Valid - a key with a tagged empty object", help "Count the atoms: `key`, `@tag`, `{}`"}
+            {text "Invalid - too many atoms", correct true}
+        )
+        explanation <<DOC,markdown
+            Entries can have at most two atoms (key and value). Here there are three: `key`, `@tag`, and `{}`.
+
+            The space between `@tag` and `{}` makes them separate atoms.
+
+            To create a tagged empty object as the value: `key @tag{}`
+            DOC
+    }
+    tags-on-objects {
+        question <<DOC,markdown
+            Is this valid Styx?
+
+            ```styx
+            result @error{code 404, message "Not found"}
+            ```
+            DOC
+        options (
+            {text "Invalid - tags can only go on scalars", help "Tags can attach to any payload type"}
+            {text "Valid", correct true}
+        )
+        explanation <<DOC,markdown
+            Tags can have any payload: scalars, sequences, or objects.
+
+            This is perfect for representing Rust-style enums:
+            ```rust
+            enum Result {
+                Ok(Value),
+                Error { code: u32, message: String },
+            }
+            ```
+            DOC
+    }
+    //==========================================================================
+    // Section 4: Unit and elision
+    //==========================================================================
+    unit-what-is {
+        question <<DOC,markdown
+            What does `@` by itself represent?
+
+            ```styx
+            nothing @
+            ```
+            DOC
+        options (
+            {text "An empty string", help "Unit is distinct from empty string"}
+            {text "A parse error - @ needs a tag name", help "@ alone is valid"}
+            {text "The unit value (like null)", correct true}
+        )
+        explanation <<DOC,markdown
+            `@` is the unit value - similar to `null` but more principled.
+
+            Fun fact: `@` is shorthand for `@@` (empty tag with unit payload). An empty tag degenerates to `@`, and a missing payload defaults to `@`.
+            DOC
+    }
+    unit-canonical {
+        question <<DOC,markdown
+            Which is the canonical (fully explicit) form?
+
+            ```styx
+            value @ok
+            ```
+            DOC
+        options (
+            {text "`value @ok` is already canonical", help "The payload is implied"}
+            {text "`value @ok@`", correct true}
+            {text "`value ok`", help "That removes the tag entirely"}
+        )
+        explanation <<DOC,markdown
+            When a tag has no explicit payload, it defaults to `@` (unit).
+
+            - `@ok` — idiomatic, payload implied
+            - `@ok@` — canonical, payload explicit
+
+            Both mean: tag `ok`, payload `@` (unit).
+            DOC
+    }
+    unit-elision-key {
+        question <<DOC,markdown
+            What does this mean?
+
+            ```styx
+            {enabled, debug, verbose}
+            ```
+            DOC
+        options (
+            {text "A sequence with three elements", help "Sequences use `()`, this is `{}`"}
+            {text "Three keys, each with unit value", correct true}
+            {text "A parse error", help "Omitting values is valid"}
+        )
+        explanation <<DOC,markdown
+            When a key has no value, it defaults to `@` (unit). This is idiomatic for flags/options.
+
+            Canonical form:
+            ```styx
+            {enabled @, debug @, verbose @}
+            ```
+
+            Idiomatic form:
+            ```styx
+            {enabled, debug, verbose}
+            ```
+            DOC
+    }
+    unit-sparse-sequence {
+        question <<DOC,markdown
+            Is this valid Styx?
+
+            ```styx
+            grid (1 2 @ @ 5)
+            ```
+            DOC
+        options (
+            {text "Invalid - @ can't appear in sequences", help "Unit is a value like any other"}
+            {text "Valid - a sparse sequence with holes", correct true}
+        )
+        explanation <<DOC,markdown
+            `@` is a first-class value. You can use it anywhere: as object values, sequence elements, tag payloads.
+
+            `(1 2 @ @ 5)` is a sequence of five elements, two of which are unit.
+            DOC
+    }
+    //==========================================================================
+    // Section 5: Key chains and object attributes
+    //==========================================================================
+    keychains-basic {
+        question <<DOC,markdown
+            What does this mean?
+
+            ```styx
+            fee fi foe fum
+            ```
+            DOC
+        options (
+            {text "A key `fee` with value `fi foe fum`", help "That would be a sequence: `fee (fi foe fum)`"}
+            {text "Four separate keys", help "That would need newlines or commas"}
+            {text "Nested objects: fee → fi → foe → fum", correct true}
+        )
+        explanation <<DOC,markdown
+            Multiple bare words form a "key chain" - nested single-key objects:
+
+            ```styx
+            fee fi foe fum
+            ```
+
+            Is equivalent to:
+
+            ```styx
+            fee {fi {foe fum}}
+            ```
+            DOC
+    }
+    attributes-basic {
+        question <<DOC,markdown
+            What does `>` do here?
+
+            ```styx
+            server host>localhost port>8080
+            ```
+            DOC
+        options (
+            {text "Greater-than comparison", help "Styx doesn't have operators"}
+            {text "Sets attributes on the key", correct true}
+            {text "A parse error", help "Object attribute syntax is valid"}
+        )
+        explanation <<DOC,markdown
+            `key>value` is object attribute syntax - a compact way to attach properties.
+
+            This is equivalent to:
+            ```styx
+            server {host localhost, port 8080}
+            ```
+
+            Useful when you have many keys with similar attributes.
+            DOC
+    }
+    attributes-multiple {
+        question <<DOC,markdown
+            Is this valid Styx?
+
+            ```styx
+            {
+                web  host>example.org   port>80
+                api  host>api.example   port>8080
+            }
+            ```
+            DOC
+        options (
+            {text "Valid", correct true}
+            {text "Invalid - only one attribute per key", help "Keys can have multiple attributes"}
+            {text "Invalid - attributes need commas", help "Attributes are whitespace-separated"}
+        )
+        explanation <<DOC,markdown
+            Keys can have multiple attributes. This creates:
+            ```styx
+            {
+                web {host example.org, port 80}
+                api {host api.example, port 8080}
+            }
+            ```
+
+            Great for tabular data where alignment shows structure.
+            DOC
+    }
+    //==========================================================================
+    // Section 6: Heredocs
+    //==========================================================================
+    heredoc-basic {
+        question <<DOC,markdown
+            What does `<<CODE` introduce?
+
+            ```styx
+            script <<CODE
+            echo "hello"
+            CODE
+            ```
+            DOC
+        options (
+            {text "A file include", help "Styx doesn't have includes"}
+            {text "A multiline string (heredoc)", correct true}
+            {text "A parse error", help "Heredocs are valid Styx"}
+        )
+        explanation <<DOC,markdown
+            `<<MARKER` starts a heredoc - a multiline string that ends when `MARKER` appears alone on a line.
+
+            The delimiter can be any identifier: `<<EOF`, `<<SQL`, `<<CODE`, etc.
+            DOC
+    }
+    heredoc-hint {
+        question <<DOC,markdown
+            What does `,rust` do here?
+
+            ```styx
+            source <<CODE,rust
+            fn main() {}
+            CODE
+            ```
+            DOC
+        options (
+            {text "Compiles the code as Rust", help "Styx doesn't execute code"}
+            {text "A language hint for syntax highlighting", correct true}
+            {text "A parse error - heredocs can't have hints", help "Language hints are valid"}
+        )
+        explanation <<DOC,markdown
+            The `,rust` after the heredoc marker is a language hint. It doesn't affect parsing - it's metadata for editors and tools to enable syntax highlighting.
+
+            Common hints: `,sql`, `,json`, `,markdown`, `,html`
+            DOC
+    }
+    //==========================================================================
+    // Section 7: Schemas
+    //==========================================================================
+    schema-doc-comments {
+        question <<DOC,markdown
+            What do `///` comments do in Styx?
+
+            ```styx
+            /// User's display name
+            name @string
+            ```
+            DOC
+        options (
+            {text "Same as `//` - just a comment", help "Triple-slash has special meaning"}
+            {text "Documentation that attaches to the next element", correct true}
+            {text "A parse error", help "Doc comments are valid"}
+        )
+        explanation <<DOC,markdown
+            `///` is a doc comment - it attaches to the next element as documentation.
+
+            This powers editor features: hover for docs, autocomplete descriptions, etc.
+            DOC
+    }
+    schema-types {
+        question <<DOC,markdown
+            In a Styx schema, what does `@seq(@string)` mean?
+
+            ```styx
+            tags @seq(@string)
+            ```
+            DOC
+        options (
+            {text "A sequence containing the literal text '@string'", help "In schemas, @ introduces type annotations"}
+            {text "A sequence of strings", correct true}
+            {text "A tagged value", help "Schema types use @ differently than data"}
+        )
+        explanation <<DOC,markdown
+            In schemas, `@` prefixes type annotations:
+            - `@string`, `@int`, `@float`, `@bool` - scalar types
+            - `@seq(@T)` - sequence of T
+            - `@map(@T)` - object with values of type T
+            - `@optional(@T)` - T or absent
+            - `@object{...}` - object with specific fields
+            DOC
+    }
+    schema-validation {
+        question <<DOC,markdown
+            When can a Styx document be validated against a schema?
+            DOC
+        options (
+            {text "Only at compile time", help "Styx has no compile step"}
+            {text "Only at runtime in the application", help "Validation can happen anywhere"}
+            {text "Anytime: CLI, editor, CI, runtime", correct true}
+        )
+        explanation <<DOC,markdown
+            Schema validation is separate from parsing. Your document can be validated:
+            - By the CLI (`styx validate`)
+            - By your editor's LSP (live as you type)
+            - In CI pipelines
+            - At runtime when loading config
+
+            This is one of Styx's key features - schemas are portable.
+            DOC
+    }
 }

@@ -1,23 +1,30 @@
 meta {
-  id https://styx.bearcove.eu/schemas/quiz-questions
-  version 2026-01-19
-  description "Schema for Styx primer quiz questions"
+    id https://styx.bearcove.eu/schemas/quiz-questions
+    version 2026-01-19
+    description "Schema for Styx primer quiz questions"
 }
-
 schema {
-  /// Root document structure
-  @ @object{
-    /// Map of question ID to question definition
-    questions @map(@Question)
-  }
-
-  /// A single quiz question
-  Question @object{
-    /// The Styx code snippet to evaluate
-    code @string
-    /// Whether the code is valid Styx
-    valid @bool
-    /// Explanation shown after answering
-    explanation @string
-  }
+    /// Root document structure
+    @ @object{
+        /// Map of question ID to question definition
+        questions @map(@Question)
+    }
+    /// A single quiz question
+    Question @object{
+        /// The question text (markdown supported, can include code blocks)
+        question @string
+        /// Answer options
+        options @seq(@Option)
+        /// Explanation shown after answering (markdown)
+        explanation @string
+    }
+    /// An answer option
+    Option @object{
+        /// The option text
+        text @string
+        /// Whether this option is correct (defaults to false)
+        correct @default(false @bool)
+        /// Help text explaining why this option is wrong (only for incorrect options)
+        help @optional(@string)
+    }
 }

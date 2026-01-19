@@ -17,10 +17,11 @@ interface SchemaType {
     | "map"
     | "union"
     | "optional"
+    | "default"
     | "ref";
   // For @object{...}
   fields?: Record<string, SchemaType>;
-  // For @seq(@T), @optional(@T), @map(@V)
+  // For @seq(@T), @optional(@T), @map(@V), @default(@V @T)
   inner?: SchemaType;
   // For @map(@K @V) - key type (usually string)
   keyType?: SchemaType;
@@ -28,6 +29,8 @@ interface SchemaType {
   variants?: SchemaType[];
   // For named type references like @Question
   refName?: string;
+  // For @default(value @type)
+  defaultValue?: Value;
 }
 
 interface ParsedSchema {
@@ -171,6 +174,28 @@ function parseSchemaType(value: Value | undefined): SchemaType {
       return { type: "optional", inner: { type: "any" } };
     }
 
+    case "default": {
+      // @default(value @type) - first item is default value, second is the type
+      if (value.payload?.type === "sequence") {
+        const seq = value.payload as Sequence;
+        if (seq.items.length >= 2) {
+          return {
+            type: "default",
+            defaultValue: seq.items[0],
+            inner: parseSchemaType(seq.items[1]),
+          };
+        } else if (seq.items.length === 1) {
+          // Just a default value, infer type
+          return {
+            type: "default",
+            defaultValue: seq.items[0],
+            inner: { type: "any" },
+          };
+        }
+      }
+      return { type: "any" };
+    }
+
     case "union": {
       if (value.payload?.type === "sequence") {
         const seq = value.payload as Sequence;
@@ -186,6 +211,33 @@ function parseSchemaType(value: Value | undefined): SchemaType {
       // Unknown tag - treat as reference to named type
       return { type: "ref", refName: tagName };
   }
+}
+
+/**
+ * Get the default value for a schema type, if it has one
+ */
+function getDefaultValue(schemaType: SchemaType, types: Record<string, SchemaType>): unknown {
+  // Resolve type references
+  if (schemaType.type === "ref" && schemaType.refName) {
+    const resolved = types[schemaType.refName];
+    if (resolved) {
+      return getDefaultValue(resolved, types);
+    }
+    return undefined;
+  }
+
+  if (schemaType.type === "default" && schemaType.defaultValue) {
+    // Convert the default value using the inner type
+    const innerType = schemaType.inner ?? { type: "any" };
+    return toTyped(schemaType.defaultValue, innerType, types);
+  }
+
+  // Optional fields default to undefined (no value)
+  if (schemaType.type === "optional") {
+    return undefined;
+  }
+
+  return undefined;
 }
 
 /**
@@ -242,11 +294,26 @@ function toTyped(
       const obj = value.payload as StyxObject;
       const result: Record<string, unknown> = {};
 
+      // First, collect field names that are present in the value
+      const presentFields = new Set<string>();
       for (const entry of obj.entries) {
         const fieldName = getScalarContent(entry.key);
         if (fieldName && schemaType.fields) {
+          presentFields.add(fieldName);
           const fieldType = schemaType.fields[fieldName] ?? { type: "any" };
           result[fieldName] = toTyped(entry.value, fieldType, types);
+        }
+      }
+
+      // Apply defaults for missing fields
+      if (schemaType.fields) {
+        for (const [fieldName, fieldType] of Object.entries(schemaType.fields)) {
+          if (!presentFields.has(fieldName)) {
+            const defaultValue = getDefaultValue(fieldType, types);
+            if (defaultValue !== undefined) {
+              result[fieldName] = defaultValue;
+            }
+          }
         }
       }
       return result;
@@ -279,6 +346,11 @@ function toTyped(
     }
 
     case "optional": {
+      const innerType = schemaType.inner ?? { type: "any" };
+      return toTyped(value, innerType, types);
+    }
+
+    case "default": {
       const innerType = schemaType.inner ?? { type: "any" };
       return toTyped(value, innerType, types);
     }

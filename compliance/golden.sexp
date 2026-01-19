@@ -1084,6 +1084,8 @@
       (scalar [19, 20] bare "i")
       (scalar [21, 22] bare "j")))
 )
+; file: compliance/corpus/07-invalid/comma-in-sequence.styx
+(error [8, 9] "parse error at 8-9: unexpected `,` in sequence (sequences are whitespace-separated, not comma-separated)")
 ; file: compliance/corpus/07-invalid/duplicate-keys.styx
 (error [45, 49] "parse error at 45-49: duplicate key")
 ; file: compliance/corpus/07-invalid/heredoc-as-key.styx

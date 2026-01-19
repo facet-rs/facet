@@ -7,269 +7,233 @@ insert_anchor_links = "heading"
 
 At least it's not YAML!
 
-## Styx the straightforward
+## The basics
 
-Imagine JSON
+If you know JSON, you know most of Styx. We just remove the ceremony.
 
 ```json
-{
-  "key": "value"
-}
+{"name": "Alice", "age": 30}
 ```
 
-But you remove everything that's getting in the way: the double quotes, the
-colon, even the comma:
+Becomes:
 
 ```styx
-{
-  key value
-}
+{name Alice, age 30}
 ```
 
-Of course you can have the comma back if you want to put everything in a single line:
+No colons. Quotes only when needed. Let's make sure that landed:
+
+<div data-quiz="basics-json-to-styx"></div>
+
+For multiline, use newlines instead of commas:
 
 ```styx
-{key value, koi tuvalu}
+name Alice
+age 30
 ```
 
-Not far enough? Wanna get rid of the brackets? Okay, but only for the top-level object:
+(Top-level doesn't need braces - it's implicitly an object.)
+
+<div data-quiz="basics-when-quotes"></div>
+
+### Sequences
+
+Arrays are called sequences. They use parentheses:
 
 ```styx
-key value
-koi tuvalu
+colors (red green blue)
 ```
 
-What about arrays? They're called sequences and they use parentheses:
+<div data-quiz="basics-sequence-syntax"></div>
+
+<div data-quiz="basics-comma-sequence"></div>
+
+### Separator rules
+
+Objects use either commas OR newlines - never both.
+
+<div data-quiz="basics-mixing-separators"></div>
+
+<div data-quiz="basics-duplicate-keys"></div>
+
+## Scalars are just text
+
+Here's something different from JSON: values don't have types.
 
 ```styx
-methods (GET POST PUT)
+name Alice
+age 30
+active true
 ```
 
-They're always whitespace-separated, never comma-separated.
+Is `30` a number? Is `true` a boolean? In Styx: **no**. They're all just text atoms.
 
-## Styx the typed
-
-```styx
-name "John Doe"
-age 97
-retired true
-```
-
-Hey, which type are those values? Any type you want them to.
-
-Scalars are just text atoms, `97` is not any more a number
-than `https://example.org/` is.
-
-Types matter at exactly two times:
-
-- Validation via [schemas](https://styx.bearcove.eu/reference/spec/schema/) (which are also Styx documents)
-- Deserialization, in either flavor (dynamic or static typing)
-
-In dynamic typing flavor, your Styx document gets parsed into a tree,
-and then you get to request "field name as type string" — and if it can't
-be coerced into a string, you get an error at that point.
-
-In static typing flavor, you may for example deserialize to:
-
-```rust
-#[derive(Facet)]
-struct Does {
-    name: String,
-    age: u32,
-    retired: bool,
-}
-```
-
-And then the type mapping is, well, what you'd expect.
+<div data-quiz="scalars-number"></div>
 
 This solves the Norway problem:
 
-```styx
-country no
-```
+<div data-quiz="scalars-norway"></div>
 
-This `no` is not a boolean, not a string, not a number, it's everything, everywhere,
-all at once, until you _need_ it to be something.
+Types come from schemas or deserialization - not from the syntax. This means URLs, paths, and other complex values just work:
 
-## Styx the nerd
+<div data-quiz="scalars-url"></div>
 
-Sometimes a value isn't quite enough, and you want to tag it:
+## The two dimensions
 
-```styx
-this (is an untagged list)
-that @special(list I hold dear)
-```
+Every Styx value has two parts:
+- A **tag** (what kind of thing)
+- A **payload** (the thing itself)
 
-Remember `()` are for sequences. They're not for grouping/precedence/calls.
+<div data-quiz="tags-two-dimensions"></div>
 
-You can tag objects, too:
+When you write `@rgb(255 128 0)`, you're explicitly setting both:
 
-```styx
-rule @path_prefix{
-  prefix /api
-  route_to localhost:9000 // still no need to double-quote anything
-  // oh yeah also comments just work
-}
-```
+<div data-quiz="tags-explicit"></div>
 
-That's because Styx was designed to play nice with sum types,
-like Rust enums:
+When there's no explicit payload, it defaults to `@` (unit):
 
-```rust
-enum Alternatives {
-    NoPayload
-    TuplePayload(u32, u32)
-    StructPayload { name: String }
-}
-```
+<div data-quiz="tags-unit-payload"></div>
 
-And so, tags are a natural way to _select_ a variant:
+### The space rule
+
+This is the most important rule in Styx:
+
+**There is never a space between a tag and its payload.**
 
 ```styx
-alts (
-    @no_payload@
-    @tuple_payload(3, 7)
-    @struct_payload{name Gisèle}
-)
+@tag()    // tag=tag, payload=()
+@tag ()   // TWO atoms: @tag and ()
 ```
 
-Did you notice the `@` at the end of `@no_payload@`? Not a typo:
-that's the unit value. It means "nothing", "none", kinda like "null"
-but a little superior.
+<div data-quiz="tags-space-matters"></div>
 
-`@` is a value like any other:
+<div data-quiz="tags-three-atoms"></div>
+
+Tags work with any payload type:
+
+<div data-quiz="tags-on-objects"></div>
+
+## Unit and elision
+
+`@` by itself is the **unit** value - like `null` but more principled.
+
+<div data-quiz="unit-what-is"></div>
+
+### Canonical vs idiomatic
+
+Styx has a fully explicit (canonical) form and a shorter (idiomatic) form:
+
+| Canonical | Idiomatic | Meaning |
+|-----------|-----------|---------|
+| `@@` | `@` | unit value |
+| `@ok@` | `@ok` | tag `ok`, payload unit |
+| `key @` | `key` | key with unit value |
+
+<div data-quiz="unit-canonical"></div>
+
+<div data-quiz="unit-elision-key"></div>
+
+Unit is a value like any other:
+
+<div data-quiz="unit-sparse-sequence"></div>
+
+## Key chains and attributes
+
+Multiple bare words form nested objects:
 
 ```styx
-sparse_seq (1 2 @ 8 9)
+database connection timeout 30
 ```
 
-And in fact, wanna know a secret? `@` is not even the canonical form
-of unit: `@@` is.
-
-An empty tag degenerates to `@`, and a tag without a payload defaults to
-a payload of `@`.
-
-Therefore:
+Expands to:
 
 ```styx
-@            // tag=@,   payload=@ (implied)
-@@           // tag=@,   payload=@
-@tag         // tag=tag, payload=@ (implied)
-@tag@        // tag=tag, payload=@
-@tag"must"   // tag=tag, payload=must
-@tag()       // tag=tag, payload=() aka empty sequence
+database {connection {timeout 30}}
 ```
 
-Importantly, there is NEVER ANY SPACE between a tag and its payload.
-Spaces separate seq elements or key-value pairs in object context:
+<div data-quiz="keychains-basic"></div>
 
-```styx
-// this is a key-value pair:
-@tag ()     // key(tag=tag, payload=@) value(tag=@, payload=())
+### Object attributes
 
-// this is a DIFFERENT key-value pair
-@tag()      // key(tag=tag, payload=()) value(tag=@, payload=@)
-```
-
-Does it get confusing? Maybe. Little bit.
-
-<div data-quiz="three-atoms"></div>
-
-## Styx the objective
-
-We've just seen this in the last gotcha:
-
-```styx
-@tag()      // key(tag=tag, payload=()) value(tag=@, payload=@)
-```
-
-Which, okay, `@tag()` is the entire key. But where's the value?
-
-It's omitted. It defaults to `@`:
-
-```styx
-key @ // explicitly set to unit
-koi   // implicitly set to unit
-```
-
-So, key-value pairs can be missing a value, and... they can also
-have more than one key — those are called "key chains".
-
-```styx
-fee fi foe fum
-// equivalent to
-fee {fi {foe fum}}
-```
-
-And, if you need to have an object as your value and you want to avoid
-one last bit of nesting? As a treat? You can use object attribute syntax:
+For tabular data, `key>value` syntax is cleaner:
 
 ```styx
 {
-    web domain>example.org      port>9000
-    api domain>api.example.org  port>9001
+    web  host>example.org   port>80
+    api  host>api.example   port>8080
 }
 ```
 
-And that's _it_ with the weirdness. (Don't worry, there are comprehensive
-specifications and test suites).
+<div data-quiz="attributes-basic"></div>
 
-Some unfamiliar bits, but hopefully not too many, which lets us...
+<div data-quiz="attributes-multiple"></div>
 
-## Styx the schematic
+## Heredocs
 
-...define Styx schemas in Styx itself.
+Multiline strings use heredoc syntax:
+
+```styx
+query <<SQL
+SELECT * FROM users
+WHERE active = true
+SQL
+```
+
+<div data-quiz="heredoc-basic"></div>
+
+The language hint after the marker enables syntax highlighting:
+
+```styx
+code <<SRC,rust
+fn main() {
+    println!("Hello!");
+}
+SRC
+```
+
+<div data-quiz="heredoc-hint"></div>
+
+## Schemas
+
+Styx documents can have schemas - also written in Styx:
 
 ```styx
 schema {
-  /// The root structure of a schema file.
-  @ @object{
-    /// Schema metadata (required).
-    meta @Meta
-    /// External schema imports (optional).
-    imports @optional(@map(@string @string))
-    /// Type definitions: @ for document root, strings for named types.
-    schema @map(@union(@string @unit) @Schema)
-  }
-  
-  // etc.
+    @ @object{
+        name @string
+        age @int
+        tags @seq(@string)
+    }
 }
 ```
 
-Are those doc comments? Yes. Parsers are taught to keep them and attach them to
-the next element. This means your styx documents can be validated against a
-schema:
-
-  * by a CLI, locally, in CI
-  * by an LSP, in your code editor
-  * honestly anytime for any reason
-
-And that your code editor (mine's [Zed](https://zed.dev)) can have the full
-code editing experience: autocomplete, documentation on hover, jump to definition
-(in schema), hover for field documentation, etc.
-
-It's... so nice.
-
-## Styx the one last thing
-
-Oh! Also, HEREDOCs:
+Doc comments (`///`) attach documentation to elements:
 
 ```styx
-examples (
-    {
-        name hello.rs
-        source <<SRC,rust
-        fn main() {
-          println!("Hello from Rust!")
-        }
-        SRC
+schema {
+    @ @object{
+        /// User's display name
+        name @string
+        /// Age in years
+        age @int
     }
-)
+}
 ```
 
-The `,rust` is just a hint which is used by your editor to inject syntax
-highlighting from the embedded language :)
+<div data-quiz="schema-doc-comments"></div>
+
+<div data-quiz="schema-types"></div>
+
+<div data-quiz="schema-validation"></div>
+
+## That's it!
+
+You now know Styx. The key points:
+
+1. **Clean syntax**: no colons, minimal quotes, whitespace-separated
+2. **Untyped scalars**: types come from schemas, not syntax
+3. **Tags**: `@name` attaches meaning, no space before payload
+4. **Unit**: `@` is null-like, can be elided
+5. **Schemas**: validation anywhere, editor support everywhere
 
 <script type="module" src="/src/quiz/main.ts"></script>
-
-

@@ -177,6 +177,8 @@ pub enum ParseErrorKind {
         /// The path that has a terminal value.
         terminal_path: Vec<String>,
     },
+    /// Comma in sequence (sequences are whitespace-separated, not comma-separated).
+    CommaInSequence,
 }
 
 impl std::fmt::Display for ParseErrorKind {
@@ -213,6 +215,12 @@ impl std::fmt::Display for ParseErrorKind {
                     f,
                     "cannot nest into `{}` which has a terminal value",
                     terminal_path.join(".")
+                )
+            }
+            ParseErrorKind::CommaInSequence => {
+                write!(
+                    f,
+                    "unexpected `,` in sequence (sequences are whitespace-separated, not comma-separated)"
                 )
             }
         }
