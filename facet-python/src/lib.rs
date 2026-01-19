@@ -118,7 +118,7 @@ impl PythonGenerator {
             self.add_shape(inner);
             let inner_type = self.type_for_shape(inner);
             write_doc_comment(&mut output, shape.doc);
-            writeln!(output, "{} = {}", shape.type_identifier, inner_type).unwrap();
+            writeln!(output, "type {} = {}", shape.type_identifier, inner_type).unwrap();
             output.push('\n');
             self.generated
                 .insert(shape.type_identifier.to_string(), output);
@@ -136,7 +136,7 @@ impl PythonGenerator {
                 // For other types, generate a type alias
                 let type_str = self.type_for_shape(shape);
                 write_doc_comment(&mut output, shape.doc);
-                writeln!(output, "{} = {}", shape.type_identifier, type_str).unwrap();
+                writeln!(output, "type {} = {}", shape.type_identifier, type_str).unwrap();
                 output.push('\n');
             }
         }
@@ -711,6 +711,33 @@ mod tests {
         }
 
         let py = to_python::<Status>(true);
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_transparent_wrapper() {
+        #[derive(Facet)]
+        #[facet(transparent)]
+        struct UserId(String);
+
+        let py = to_python::<UserId>(false);
+        // This should generate "type UserId = str" not "UserId = str"
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_transparent_wrapper_with_inner_type() {
+        #[derive(Facet)]
+        struct Inner {
+            value: i32,
+        }
+
+        #[derive(Facet)]
+        #[facet(transparent)]
+        struct Wrapper(Inner);
+
+        let py = to_python::<Wrapper>(false);
+        // This should generate "type Wrapper = Inner" not "Wrapper = Inner"
         insta::assert_snapshot!(py);
     }
 }
