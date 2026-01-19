@@ -341,21 +341,21 @@ impl<'src> Lexer<'src> {
         if self.peek() == Some(',') {
             self.advance(); // consume ','
             // First char must be lowercase letter
-            if let Some(c) = self.peek() {
-                if c.is_ascii_lowercase() {
-                    self.advance();
-                    // Rest: lowercase, digit, underscore, dot, hyphen
-                    while let Some(c) = self.peek() {
-                        if c.is_ascii_lowercase()
-                            || c.is_ascii_digit()
-                            || c == '_'
-                            || c == '.'
-                            || c == '-'
-                        {
-                            self.advance();
-                        } else {
-                            break;
-                        }
+            if let Some(c) = self.peek()
+                && c.is_ascii_lowercase()
+            {
+                self.advance();
+                // Rest: lowercase, digit, underscore, dot, hyphen
+                while let Some(c) = self.peek() {
+                    if c.is_ascii_lowercase()
+                        || c.is_ascii_digit()
+                        || c == '_'
+                        || c == '.'
+                        || c == '-'
+                    {
+                        self.advance();
+                    } else {
+                        break;
                     }
                 }
             }

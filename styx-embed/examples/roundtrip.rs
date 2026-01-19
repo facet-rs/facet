@@ -5,7 +5,8 @@
 use styx_embed::extract_schemas_from_file;
 
 // Embed the schema at compile time using inline string
-styx_embed::embed_inline!(r#"meta {
+styx_embed::embed_inline!(
+    r#"meta {
   id example-config
   version 1.0.0
   description "Example schema for testing embedding"
@@ -18,7 +19,8 @@ schema {
     debug @optional(@bool)
   }
 }
-"#);
+"#
+);
 
 fn main() {
     // Get path to our own executable

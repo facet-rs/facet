@@ -1943,10 +1943,10 @@ fn navigate_schema_path<'a>(value: &'a Value, path: &[String]) -> Option<&'a Val
         }
 
         // Check unit key (root definition)
-        if entry.key.is_unit() {
-            if let Some(result) = navigate_schema_path(&entry.value, path) {
-                return Some(result);
-            }
+        if entry.key.is_unit()
+            && let Some(result) = navigate_schema_path(&entry.value, path)
+        {
+            return Some(result);
         }
     }
 
@@ -1956,27 +1956,27 @@ fn navigate_schema_path<'a>(value: &'a Value, path: &[String]) -> Option<&'a Val
 /// Unwrap type wrappers like @optional(...) to get to the inner type
 fn unwrap_type_wrappers(value: &Value) -> &Value {
     // Check for @optional, @default, etc. which wrap the actual type
-    if let Some(tag) = value.tag_name() {
-        if matches!(tag, "optional" | "default" | "deprecated") {
-            // The inner type is in the payload
-            match &value.payload {
-                // @optional(@object{...}) - parenthesized, so it's a sequence with one item
-                Some(styx_tree::Payload::Sequence(seq)) => {
-                    if let Some(first) = seq.items.first() {
-                        return unwrap_type_wrappers(first);
-                    }
+    if let Some(tag) = value.tag_name()
+        && matches!(tag, "optional" | "default" | "deprecated")
+    {
+        // The inner type is in the payload
+        match &value.payload {
+            // @optional(@object{...}) - parenthesized, so it's a sequence with one item
+            Some(styx_tree::Payload::Sequence(seq)) => {
+                if let Some(first) = seq.items.first() {
+                    return unwrap_type_wrappers(first);
                 }
-                // @optional @object{...} - the object is the payload directly
-                Some(styx_tree::Payload::Object(obj)) => {
-                    // Check for unit entry pattern
-                    for entry in &obj.entries {
-                        if entry.key.is_unit() {
-                            return unwrap_type_wrappers(&entry.value);
-                        }
-                    }
-                }
-                _ => {}
             }
+            // @optional @object{...} - the object is the payload directly
+            Some(styx_tree::Payload::Object(obj)) => {
+                // Check for unit entry pattern
+                for entry in &obj.entries {
+                    if entry.key.is_unit() {
+                        return unwrap_type_wrappers(&entry.value);
+                    }
+                }
+            }
+            _ => {}
         }
     }
     value

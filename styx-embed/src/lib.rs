@@ -262,10 +262,11 @@ pub fn extract_schemas_from_object(data: &[u8]) -> Result<Vec<String>, ExtractEr
 
     // Try to parse as a known object format
     if let Ok(object) = Object::parse(data)
-        && let Some(section_data) = find_schema_section(&object, data) {
-            // Found the section - extract directly from it
-            return extract_schemas(section_data);
-        }
+        && let Some(section_data) = find_schema_section(&object, data)
+    {
+        // Found the section - extract directly from it
+        return extract_schemas(section_data);
+    }
 
     // Fall back to magic byte scanning for unknown formats or missing section
     extract_schemas(data)
@@ -287,13 +288,14 @@ fn find_schema_section<'a>(object: &goblin::Object, data: &'a [u8]) -> Option<&'
 fn find_elf_section<'a>(elf: &goblin::elf::Elf, data: &'a [u8]) -> Option<&'a [u8]> {
     for section in &elf.section_headers {
         if let Some(name) = elf.shdr_strtab.get_at(section.sh_name)
-            && name == section_names::ELF {
-                let start = section.sh_offset as usize;
-                let size = section.sh_size as usize;
-                if start + size <= data.len() {
-                    return Some(&data[start..start + size]);
-                }
+            && name == section_names::ELF
+        {
+            let start = section.sh_offset as usize;
+            let size = section.sh_size as usize;
+            if start + size <= data.len() {
+                return Some(&data[start..start + size]);
             }
+        }
     }
     None
 }
@@ -313,9 +315,10 @@ fn find_macho_section<'a>(mach: &goblin::mach::Mach, data: &'a [u8]) -> Option<&
                     let arch_data = &data[start..start + size];
                     if let Ok(goblin::Object::Mach(Mach::Binary(macho))) =
                         goblin::Object::parse(arch_data)
-                        && let Some(section) = find_macho_section_in_binary(&macho, arch_data) {
-                            return Some(section);
-                        }
+                        && let Some(section) = find_macho_section_in_binary(&macho, arch_data)
+                    {
+                        return Some(section);
+                    }
                 }
             }
             None
@@ -330,18 +333,20 @@ fn find_macho_section_in_binary<'a>(
 ) -> Option<&'a [u8]> {
     for segment in &macho.segments {
         if let Ok(name) = segment.name()
-            && name == section_names::MACHO_SEGMENT {
-                for (section, _section_data) in segment.sections().ok()? {
-                    if let Ok(sect_name) = section.name()
-                        && sect_name == section_names::MACHO_SECTION {
-                            let start = section.offset as usize;
-                            let size = section.size as usize;
-                            if start + size <= data.len() {
-                                return Some(&data[start..start + size]);
-                            }
-                        }
+            && name == section_names::MACHO_SEGMENT
+        {
+            for (section, _section_data) in segment.sections().ok()? {
+                if let Ok(sect_name) = section.name()
+                    && sect_name == section_names::MACHO_SECTION
+                {
+                    let start = section.offset as usize;
+                    let size = section.size as usize;
+                    if start + size <= data.len() {
+                        return Some(&data[start..start + size]);
+                    }
                 }
             }
+        }
     }
     None
 }
@@ -350,13 +355,14 @@ fn find_macho_section_in_binary<'a>(
 fn find_pe_section<'a>(pe: &goblin::pe::PE, data: &'a [u8]) -> Option<&'a [u8]> {
     for section in &pe.sections {
         if let Ok(name) = section.name()
-            && name == section_names::PE {
-                let start = section.pointer_to_raw_data as usize;
-                let size = section.size_of_raw_data as usize;
-                if start + size <= data.len() {
-                    return Some(&data[start..start + size]);
-                }
+            && name == section_names::PE
+        {
+            let start = section.pointer_to_raw_data as usize;
+            let size = section.size_of_raw_data as usize;
+            if start + size <= data.len() {
+                return Some(&data[start..start + size]);
             }
+        }
     }
     None
 }

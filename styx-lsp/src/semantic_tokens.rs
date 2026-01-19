@@ -108,7 +108,12 @@ pub fn compute_semantic_tokens(parse: &Parse) -> Vec<SemanticToken> {
     let mut raw_tokens = Vec::new();
 
     // Walk the CST and emit tokens
-    walk_node(&parse.syntax(), &content, &mut raw_tokens, WalkContext::default());
+    walk_node(
+        &parse.syntax(),
+        &content,
+        &mut raw_tokens,
+        WalkContext::default(),
+    );
 
     // Sort tokens by position
     raw_tokens.sort_by(|a, b| a.line.cmp(&b.line).then(a.start_char.cmp(&b.start_char)));
@@ -276,22 +281,28 @@ fn collect_key_tokens(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToke
                     for tag_child in child_node.children_with_tokens() {
                         if let Some(token) = tag_child.as_token() {
                             if token.kind() == SyntaxKind::AT {
-                                add_token_from_syntax(tokens, content, token, TokenType::Operator, 0);
+                                add_token_from_syntax(
+                                    tokens,
+                                    content,
+                                    token,
+                                    TokenType::Operator,
+                                    0,
+                                );
                             }
-                        } else if let Some(tag_node) = tag_child.as_node() {
-                            if tag_node.kind() == SyntaxKind::TAG_NAME {
-                                for t in tag_node.children_with_tokens() {
-                                    if let Some(token) = t.as_token()
-                                        && is_scalar_token(token.kind())
-                                    {
-                                        add_token_from_syntax(
-                                            tokens,
-                                            content,
-                                            token,
-                                            TokenType::Type,
-                                            0,
-                                        );
-                                    }
+                        } else if let Some(tag_node) = tag_child.as_node()
+                            && tag_node.kind() == SyntaxKind::TAG_NAME
+                        {
+                            for t in tag_node.children_with_tokens() {
+                                if let Some(token) = t.as_token()
+                                    && is_scalar_token(token.kind())
+                                {
+                                    add_token_from_syntax(
+                                        tokens,
+                                        content,
+                                        token,
+                                        TokenType::Type,
+                                        0,
+                                    );
                                 }
                             }
                         }
@@ -330,7 +341,13 @@ fn collect_key_tokens_as_values(node: &SyntaxNode, content: &str, tokens: &mut V
                     for tag_child in child_node.children_with_tokens() {
                         if let Some(token) = tag_child.as_token() {
                             if token.kind() == SyntaxKind::AT {
-                                add_token_from_syntax(tokens, content, token, TokenType::Operator, 0);
+                                add_token_from_syntax(
+                                    tokens,
+                                    content,
+                                    token,
+                                    TokenType::Operator,
+                                    0,
+                                );
                             }
                         } else if let Some(tag_node) = tag_child.as_node() {
                             if tag_node.kind() == SyntaxKind::TAG_NAME {
@@ -531,7 +548,10 @@ mod tests {
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].token_type, TokenType::Comment);
         // Documentation modifier is bit 0
-        assert_eq!(tokens[0].modifiers, 1 << TokenModifier::Documentation as u32);
+        assert_eq!(
+            tokens[0].modifiers,
+            1 << TokenModifier::Documentation as u32
+        );
         assert_eq!(tokens[0].length, 25);
     }
 

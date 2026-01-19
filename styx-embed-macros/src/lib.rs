@@ -41,14 +41,14 @@ fn parse_string_literal(lit: &unsynn::Literal) -> Option<String> {
     let s = lit.to_string();
 
     // Raw string: r#"..."# or r"..."
-    if s.starts_with("r") {
-        // Find the opening quote pattern (r, r#, r##, etc.)
-        let hash_count = s[1..].chars().take_while(|&c| c == '#').count();
-        let prefix_len = 1 + hash_count + 1; // 'r' + hashes + '"'
+    if let Some(after_r) = s.strip_prefix("r") {
+        // Find the opening quote pattern (r#, r##, etc.)
+        let hash_count = after_r.chars().take_while(|&c| c == '#').count();
+        let prefix_len = hash_count + 1; // hashes + '"'
         let suffix_len = 1 + hash_count; // '"' + hashes
 
-        if s.len() >= prefix_len + suffix_len {
-            return Some(s[prefix_len..s.len() - suffix_len].to_string());
+        if after_r.len() >= prefix_len + suffix_len {
+            return Some(after_r[prefix_len..after_r.len() - suffix_len].to_string());
         }
     }
 
@@ -143,7 +143,7 @@ pub fn embed_inline(input: TokenStream) -> TokenStream {
         Err(e) => {
             return format!("compile_error!(\"expected string literals: {e}\")")
                 .parse()
-                .unwrap()
+                .unwrap();
         }
     };
 
@@ -155,7 +155,7 @@ pub fn embed_inline(input: TokenStream) -> TokenStream {
             None => {
                 return "compile_error!(\"expected string literal\")"
                     .parse()
-                    .unwrap()
+                    .unwrap();
             }
         }
     }
@@ -196,7 +196,7 @@ pub fn embed_file(input: TokenStream) -> TokenStream {
         Err(e) => {
             return format!("compile_error!(\"expected file path string: {e}\")")
                 .parse()
-                .unwrap()
+                .unwrap();
         }
     };
 
@@ -205,7 +205,7 @@ pub fn embed_file(input: TokenStream) -> TokenStream {
         None => {
             return "compile_error!(\"expected string literal for file path\")"
                 .parse()
-                .unwrap()
+                .unwrap();
         }
     };
 
@@ -215,7 +215,7 @@ pub fn embed_file(input: TokenStream) -> TokenStream {
         Err(e) => {
             return format!("compile_error!(\"failed to read {}: {}\")", path, e)
                 .parse()
-                .unwrap()
+                .unwrap();
         }
     };
 
@@ -242,7 +242,7 @@ pub fn embed_files(input: TokenStream) -> TokenStream {
         Err(e) => {
             return format!("compile_error!(\"expected file path strings: {e}\")")
                 .parse()
-                .unwrap()
+                .unwrap();
         }
     };
 
@@ -254,7 +254,7 @@ pub fn embed_files(input: TokenStream) -> TokenStream {
             None => {
                 return "compile_error!(\"expected string literal for file path\")"
                     .parse()
-                    .unwrap()
+                    .unwrap();
             }
         };
 
@@ -263,7 +263,7 @@ pub fn embed_files(input: TokenStream) -> TokenStream {
             Err(e) => {
                 return format!("compile_error!(\"failed to read {}: {}\")", path, e)
                     .parse()
-                    .unwrap()
+                    .unwrap();
             }
         }
     }
@@ -301,7 +301,7 @@ pub fn embed_outdir_file(input: TokenStream) -> TokenStream {
         Err(e) => {
             return format!("compile_error!(\"expected filename string: {e}\")")
                 .parse()
-                .unwrap()
+                .unwrap();
         }
     };
 
@@ -310,7 +310,7 @@ pub fn embed_outdir_file(input: TokenStream) -> TokenStream {
         None => {
             return "compile_error!(\"expected string literal for filename\")"
                 .parse()
-                .unwrap()
+                .unwrap();
         }
     };
 
@@ -334,7 +334,7 @@ pub fn embed_outdir_file(input: TokenStream) -> TokenStream {
         Err(e) => {
             return format!("compile_error!(\"failed to read {}: {}\")", path_str, e)
                 .parse()
-                .unwrap()
+                .unwrap();
         }
     };
 

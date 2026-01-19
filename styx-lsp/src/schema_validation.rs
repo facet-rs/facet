@@ -62,14 +62,13 @@ pub fn find_schema_declaration(value: &Value) -> Option<SchemaRef> {
             }
 
             // @schema {id ..., cli ...}
-            if let Some(schema_obj) = entry.value.as_object() {
-                if let Some(cli_value) = schema_obj.get("cli") {
-                    if let Some(cli_name) = cli_value.as_str() {
-                        return Some(SchemaRef::Embedded {
-                            cli: cli_name.to_string(),
-                        });
-                    }
-                }
+            if let Some(schema_obj) = entry.value.as_object()
+                && let Some(cli_value) = schema_obj.get("cli")
+                && let Some(cli_name) = cli_value.as_str()
+            {
+                return Some(SchemaRef::Embedded {
+                    cli: cli_name.to_string(),
+                });
             }
         }
     }

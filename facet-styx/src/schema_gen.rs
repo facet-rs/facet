@@ -121,7 +121,10 @@ impl<T: facet_core::Facet<'static>> Default for GenerateSchema<T> {
 ///
 /// This function auto-generates the ID from the type name, which may not match
 /// your crate naming conventions.
-#[deprecated(since = "0.2.0", note = "use GenerateSchema::new().crate_name(...).version(...).cli(...).write(filename) instead")]
+#[deprecated(
+    since = "0.2.0",
+    note = "use GenerateSchema::new().crate_name(...).version(...).cli(...).write(filename) instead"
+)]
 pub fn generate_schema<T: facet_core::Facet<'static>>(filename: &str) {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set - are you in a build script?");
     let path = Path::new(&out_dir).join(filename);

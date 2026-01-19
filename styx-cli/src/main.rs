@@ -298,13 +298,14 @@ fn run_file_mode(args: &[String]) -> Result<(), CliError> {
     }
 
     // Safety check: prevent -o pointing to same file as input
-    if let Some(ref output) = opts.output {
-        if opts.input != "-" && output != "-" && is_same_file(&opts.input, output) {
-            return Err(CliError::Usage(
-                "input and output are the same file\nhint: use --in-place to modify in place"
-                    .into(),
-            ));
-        }
+    if let Some(ref output) = opts.output
+        && opts.input != "-"
+        && output != "-"
+        && is_same_file(&opts.input, output)
+    {
+        return Err(CliError::Usage(
+            "input and output are the same file\nhint: use --in-place to modify in place".into(),
+        ));
     }
 
     // Read input
@@ -513,12 +514,8 @@ fn run_cst(file: &str) -> Result<(), CliError> {
 }
 
 fn run_extract(binary: &str) -> Result<(), CliError> {
-    let schemas = styx_embed::extract_schemas_from_file(Path::new(binary)).map_err(|e| {
-        CliError::Io(io::Error::new(
-            io::ErrorKind::Other,
-            format!("{binary}: {e}"),
-        ))
-    })?;
+    let schemas = styx_embed::extract_schemas_from_file(Path::new(binary))
+        .map_err(|e| CliError::Io(io::Error::other(format!("{binary}: {e}"))))?;
 
     if schemas.is_empty() {
         return Err(CliError::Usage(format!(
@@ -703,12 +700,12 @@ fn find_schema_declaration(value: &Value) -> Result<SchemaRef, CliError> {
             }
 
             if let Some(schema_obj) = entry.value.as_object() {
-                if let Some(cli_value) = schema_obj.get("cli") {
-                    if let Some(cli_name) = cli_value.as_str() {
-                        return Ok(SchemaRef::Embedded {
-                            cli: cli_name.to_string(),
-                        });
-                    }
+                if let Some(cli_value) = schema_obj.get("cli")
+                    && let Some(cli_name) = cli_value.as_str()
+                {
+                    return Ok(SchemaRef::Embedded {
+                        cli: cli_name.to_string(),
+                    });
                 }
                 return Err(CliError::Validation(
                     "@schema directive must have a 'cli' field with the binary name".into(),
