@@ -1,8 +1,8 @@
 <script lang="ts">
     import { parseTyped } from "@bearcove/styx";
     import { render_markdown } from "@bearcove/styx-webmd";
-    import quizQuestionsStyx from "../../static/quiz-questions.styx?raw";
-    import quizQuestionsSchemaStyx from "../../static/quiz-questions.schema.styx?raw";
+    import quizQuestionsStyx from "./quiz-questions.styx?raw";
+    import quizQuestionsSchemaStyx from "./quiz-questions.schema.styx?raw";
 
     interface Option {
         text: string;
