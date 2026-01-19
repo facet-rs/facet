@@ -1,6 +1,8 @@
 <script lang="ts">
     import { parseTyped } from "@bearcove/styx";
     import { render_markdown } from "@bearcove/styx-webmd";
+    import quizQuestionsStyx from "../../static/quiz-questions.styx?raw";
+    import quizQuestionsSchemaStyx from "../../static/quiz-questions.schema.styx?raw";
 
     interface Option {
         text: string;
@@ -31,15 +33,7 @@
     let renderedHelp: string = $state("");
 
     async function loadQuestion() {
-        const [dataResponse, schemaResponse] = await Promise.all([
-            fetch("/quiz-questions.styx"),
-            fetch("/quiz-questions.schema.styx"),
-        ]);
-
-        const dataText = await dataResponse.text();
-        const schemaText = await schemaResponse.text();
-
-        const data = parseTyped<QuizData>(dataText, schemaText);
+        const data = parseTyped<QuizData>(quizQuestionsStyx, quizQuestionsSchemaStyx);
         question = data.questions[questionId] ?? null;
 
         if (!question) {

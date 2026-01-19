@@ -163,7 +163,6 @@ a schema with you. More on that later.
 
 <div data-quiz="scalars-norway"></div>
 
-
 ## The two dimensions
 
 Every Styx value has two parts:
