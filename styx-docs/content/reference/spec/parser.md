@@ -58,7 +58,7 @@ Scalars are opaque text. The parser assigns no type information.
 >
 > After the first character, `@` and `=` are allowed but `>` is still forbidden.
 > This allows URLs with `@` (like `user@host` or `crate:pkg@2`) and query strings with `=`.
->
+
 > r[scalar.bare.termination]
 > A bare scalar is terminated by any forbidden character or end of input.
 >
@@ -71,7 +71,7 @@ Scalars are opaque text. The parser assigns no type information.
 > r[scalar.quoted.escapes]
 > Quoted scalars use `"..."` and support escape sequences:
 > `\\`, `\"`, `\n`, `\r`, `\t`, `\uXXXX`, `\u{X...}`.
->
+
 > r[scalar.quoted.newline]
 > The `\n` escape sequence always produces a single LF character (U+000A), regardless of platform.
 > Use `\r\n` explicitly if CRLF is needed.
@@ -300,7 +300,7 @@ An **entry** consists of a key and an optional value.
 > foo.bar.y value2         // foo.bar still open
 > foo.baz value3           // foo still open, foo.bar now closed
 > ```
->
+
 > r[entry.path.reopen]
 > Reopening a closed path is an error. A path is closed when a sibling path
 > at the same level receives an entry.
@@ -411,7 +411,7 @@ A Styx document is an object. Top-level entries do not require braces.
 
 > r[document.root]
 > The parser MUST interpret top-level entries as entries of an implicit root object.
-> Root entries follow the same separator rules as block objects: newlines or commas (see `r[object.separators]`).
+> Root entries follow the same separator rules as block objects: newlines or commas (see [`object.separators`](#object.separators)).
 > If the document starts with `{`, it MUST be parsed as a single explicit block object.
 >
 > ```compare
