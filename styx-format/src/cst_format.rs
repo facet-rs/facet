@@ -269,44 +269,84 @@ impl CstFormatter {
 
         self.write("(");
 
-        if entries.is_empty() {
+        // Check if the sequence contains any comments (even if no entries)
+        let has_comments = node.children_with_tokens().any(|el| {
+            matches!(
+                el.kind(),
+                SyntaxKind::LINE_COMMENT | SyntaxKind::DOC_COMMENT
+            )
+        });
+
+        // Empty sequence with no comments
+        if entries.is_empty() && !has_comments {
             self.write(")");
             return;
         }
 
-        if seq.is_multiline() {
-            // Multiline format - preserve newlines and comments
+        // Determine if we need multiline format
+        let is_multiline = seq.is_multiline() || has_comments || entries.is_empty();
+
+        if is_multiline {
+            // Multiline format - preserve comments as children of the sequence
             self.write_newline();
             self.indent_level += 1;
 
-            for (i, entry) in entries.iter().enumerate() {
-                // Write preceding comments for this entry
-                self.write_preceding_comments(entry.syntax());
-
-                // Get the actual value from the entry's key
-                if let Some(key) = entry
-                    .syntax()
-                    .children()
-                    .find(|n| n.kind() == SyntaxKind::KEY)
-                {
-                    for child in key.children() {
-                        self.format_node(&child);
+            // Iterate through all children to preserve comments in order
+            let mut wrote_content = false;
+            let mut consecutive_newlines = 0;
+            for el in node.children_with_tokens() {
+                match el.kind() {
+                    SyntaxKind::NEWLINE => {
+                        consecutive_newlines += 1;
+                    }
+                    SyntaxKind::LINE_COMMENT | SyntaxKind::DOC_COMMENT => {
+                        if let Some(token) = el.into_token() {
+                            if wrote_content {
+                                self.write_newline();
+                                // 2+ consecutive newlines means there was a blank line
+                                if consecutive_newlines >= 2 {
+                                    self.write_newline();
+                                }
+                            }
+                            self.write(token.text());
+                            wrote_content = true;
+                            consecutive_newlines = 0;
+                        }
+                    }
+                    SyntaxKind::ENTRY => {
+                        if let Some(entry_node) = el.into_node() {
+                            if wrote_content {
+                                self.write_newline();
+                                // 2+ consecutive newlines means there was a blank line
+                                if consecutive_newlines >= 2 {
+                                    self.write_newline();
+                                }
+                            }
+                            // Format the entry's value (sequence entries have implicit unit keys)
+                            if let Some(key) =
+                                entry_node.children().find(|n| n.kind() == SyntaxKind::KEY)
+                            {
+                                for child in key.children() {
+                                    self.format_node(&child);
+                                }
+                            }
+                            wrote_content = true;
+                            consecutive_newlines = 0;
+                        }
+                    }
+                    // Skip whitespace, parens - we handle formatting ourselves
+                    SyntaxKind::WHITESPACE | SyntaxKind::L_PAREN | SyntaxKind::R_PAREN => {}
+                    _ => {
+                        consecutive_newlines = 0;
                     }
                 }
-
-                if i < entries.len() - 1 {
-                    self.write_newline();
-                }
             }
-
-            // Check for trailing comments (comments after the last entry but before `)`)
-            self.write_trailing_sequence_comments(node);
 
             self.write_newline();
             self.indent_level -= 1;
             self.write(")");
         } else {
-            // Inline format - single line with spaces
+            // Inline format - single line with spaces (no comments possible here)
             for (i, entry) in entries.iter().enumerate() {
                 // Get the actual value from the entry's key
                 if let Some(key) = entry
@@ -324,31 +364,6 @@ impl CstFormatter {
                 }
             }
             self.write(")");
-        }
-    }
-
-    /// Write trailing comments in a sequence (comments after the last entry but before `)`).
-    fn write_trailing_sequence_comments(&mut self, node: &SyntaxNode) {
-        // Collect all children to find where the last entry ends
-        let children: Vec<_> = node.children_with_tokens().collect();
-
-        // Find the position of the last ENTRY
-        let last_entry_idx = children.iter().rposition(
-            |el| matches!(el, rowan::NodeOrToken::Node(n) if n.kind() == SyntaxKind::ENTRY),
-        );
-
-        let Some(last_entry_idx) = last_entry_idx else {
-            return;
-        };
-
-        // Look for comments after the last entry
-        for el in children.iter().skip(last_entry_idx + 1) {
-            if let rowan::NodeOrToken::Token(t) = el
-                && (t.kind() == SyntaxKind::LINE_COMMENT || t.kind() == SyntaxKind::DOC_COMMENT)
-            {
-                self.write_newline();
-                self.write(t.text());
-            }
         }
     }
 
@@ -1199,5 +1214,199 @@ mod proptests {
                 formatted
             );
         }
+
+        /// Formatting must preserve all comments (line and doc comments)
+        #[test]
+        fn format_preserves_comments(input in document_with_comments()) {
+            let original_comments = extract_comments(&input);
+
+            // Skip if no comments (not interesting for this test)
+            if original_comments.is_empty() {
+                return Ok(());
+            }
+
+            let formatted = format_source(&input, FormatOptions::default());
+            let formatted_comments = extract_comments(&formatted);
+
+            prop_assert_eq!(
+                original_comments.len(),
+                formatted_comments.len(),
+                "Comment count changed!\nInput ({} comments):\n{}\nFormatted ({} comments):\n{}\nOriginal comments: {:?}\nFormatted comments: {:?}",
+                original_comments.len(),
+                input,
+                formatted_comments.len(),
+                formatted,
+                original_comments,
+                formatted_comments
+            );
+
+            // Check that each comment text is preserved (order may change slightly due to formatting)
+            for comment in &original_comments {
+                prop_assert!(
+                    formatted_comments.contains(comment),
+                    "Comment lost during formatting!\nMissing: {:?}\nInput:\n{}\nFormatted:\n{}\nOriginal comments: {:?}\nFormatted comments: {:?}",
+                    comment,
+                    input,
+                    formatted,
+                    original_comments,
+                    formatted_comments
+                );
+            }
+        }
+
+        /// Objects with only comments should preserve them
+        #[test]
+        fn format_preserves_comments_in_empty_objects(
+            key in bare_scalar(),
+            comments in prop::collection::vec(line_comment(), 1..5)
+        ) {
+            let inner = comments.iter()
+                .map(|c| format!("    {c}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let input = format!("{key} {{\n{inner}\n}}");
+
+            let original_comments = extract_comments(&input);
+            let formatted = format_source(&input, FormatOptions::default());
+            let formatted_comments = extract_comments(&formatted);
+
+            prop_assert_eq!(
+                original_comments.len(),
+                formatted_comments.len(),
+                "Comments in empty object lost!\nInput:\n{}\nFormatted:\n{}",
+                input,
+                formatted
+            );
+        }
+
+        /// Objects with mixed entries and comments should preserve all comments
+        #[test]
+        fn format_preserves_comments_mixed_with_entries(
+            key in bare_scalar(),
+            items in prop::collection::vec(
+                prop_oneof![
+                    // Entry
+                    (bare_scalar(), scalar()).prop_map(|(k, v)| format!("{k} {v}")),
+                    // Comment
+                    line_comment(),
+                ],
+                2..6
+            )
+        ) {
+            let inner = items.iter()
+                .map(|item| format!("    {item}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let input = format!("{key} {{\n{inner}\n}}");
+
+            let original_comments = extract_comments(&input);
+            let formatted = format_source(&input, FormatOptions::default());
+            let formatted_comments = extract_comments(&formatted);
+
+            prop_assert_eq!(
+                original_comments.len(),
+                formatted_comments.len(),
+                "Comments mixed with entries lost!\nInput:\n{}\nFormatted:\n{}\nOriginal: {:?}\nFormatted: {:?}",
+                input,
+                formatted,
+                original_comments,
+                formatted_comments
+            );
+        }
+
+        /// Sequences with comments should preserve them
+        #[test]
+        fn format_preserves_comments_in_sequences(
+            key in bare_scalar(),
+            items in prop::collection::vec(
+                prop_oneof![
+                    // Scalar item
+                    2 => scalar(),
+                    // Comment
+                    1 => line_comment(),
+                ],
+                2..6
+            )
+        ) {
+            // Only create multiline sequence if we have comments
+            let has_comment = items.iter().any(|i| i.starts_with("//"));
+            if !has_comment {
+                return Ok(());
+            }
+
+            let inner = items.iter()
+                .map(|item| format!("    {item}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let input = format!("{key} (\n{inner}\n)");
+
+            let original_comments = extract_comments(&input);
+            let formatted = format_source(&input, FormatOptions::default());
+            let formatted_comments = extract_comments(&formatted);
+
+            prop_assert_eq!(
+                original_comments.len(),
+                formatted_comments.len(),
+                "Comments in sequence lost!\nInput:\n{}\nFormatted:\n{}\nOriginal: {:?}\nFormatted: {:?}",
+                input,
+                formatted,
+                original_comments,
+                formatted_comments
+            );
+        }
+    }
+
+    /// Generate a document that definitely contains comments in various positions
+    fn document_with_comments() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop_oneof![
+                // Regular entry
+                2 => entry(),
+                // Entry preceded by comment
+                2 => (line_comment(), entry()).prop_map(|(c, e)| format!("{c}\n{e}")),
+                // Entry preceded by doc comment
+                1 => (doc_comment(), entry()).prop_map(|(c, e)| format!("{c}\n{e}")),
+                // Object with comments inside
+                1 => object_with_internal_comments(),
+            ],
+            1..5,
+        )
+        .prop_map(|entries| entries.join("\n"))
+    }
+
+    /// Generate an object that has comments inside it
+    fn object_with_internal_comments() -> impl Strategy<Value = String> {
+        (
+            bare_scalar(),
+            prop::collection::vec(
+                prop_oneof![
+                    // Entry
+                    2 => (bare_scalar(), scalar()).prop_map(|(k, v)| format!("{k} {v}")),
+                    // Comment
+                    1 => line_comment(),
+                ],
+                1..5,
+            ),
+        )
+            .prop_map(|(key, items)| {
+                let inner = items
+                    .iter()
+                    .map(|item| format!("    {item}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!("{key} {{\n{inner}\n}}")
+            })
+    }
+
+    /// Extract all comments from source text (both line and doc comments)
+    fn extract_comments(source: &str) -> Vec<String> {
+        let mut comments = Vec::new();
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("///") || trimmed.starts_with("//") {
+                comments.push(trimmed.to_string());
+            }
+        }
+        comments
     }
 }
