@@ -29,6 +29,7 @@
     let question: Question | null = $state(null);
     let selectedIndex: number | null = $state(null);
     let renderedQuestion: string = $state("");
+    let renderedOptions: string[] = $state([]);
     let renderedExplanation: string = $state("");
     let renderedHelp: string = $state("");
 
@@ -40,6 +41,9 @@
             console.error(`Question '${questionId}' not found`);
         } else {
             renderedQuestion = await render_markdown(question.question);
+            renderedOptions = await Promise.all(
+                question.options.map((opt) => render_markdown(opt.text)),
+            );
         }
     }
 
@@ -55,8 +59,12 @@
         }
     }
 
+    let loaded = false;
     $effect(() => {
-        loadQuestion();
+        if (!loaded) {
+            loaded = true;
+            loadQuestion();
+        }
     });
 
     let answered = $derived(selectedIndex !== null);
@@ -86,7 +94,7 @@
                         disabled={answered}
                     >
                         <span class="option-letter">{String.fromCharCode(65 + i)}</span>
-                        <span class="option-text">{option.text}</span>
+                        <span class="option-text">{@html renderedOptions[i]}</span>
                     </button>
                 {/each}
             </div>
@@ -319,6 +327,18 @@
     .option-text {
         flex: 1;
         line-height: 1.5;
+    }
+
+    .option-text :global(p) {
+        margin: 0;
+    }
+
+    .option-text :global(code) {
+        font-family: "SF Mono", Monaco, Consolas, monospace;
+        font-size: 1em;
+        background: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.1));
+        padding: 0.1em 0.3em;
+        border-radius: 3px;
     }
 
     .result {

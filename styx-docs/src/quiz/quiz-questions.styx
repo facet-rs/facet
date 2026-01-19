@@ -130,9 +130,17 @@ questions {
             {text "No", correct true}
         )
         explanation <<DOC,markdown
-            Square brackets have no special meaning in Styx. The value is literally `[value]`.
+            Square brackets have no special meaning in Styx, so that doc is equivalent to:
 
-            Sequences use parentheses: `key (value)`
+            ```json
+            {"key": "[value]"}
+            ```
+
+            The equivalent styx would've been:
+
+            ```styx
+            key (value)
+            ```
             DOC
     }
     basics-comma-sequence {
@@ -153,7 +161,11 @@ questions {
         explanation <<DOC,markdown
             Sequences are whitespace-separated. Commas are a parse error.
 
-            The equivalent Styx is: `items (a b c)`
+            The equivalent Styx is:
+
+            ```styx
+            items (a b c)
+            ```
             DOC
     }
     basics-mixing-separators {
@@ -173,12 +185,14 @@ questions {
             {text "No", correct true}
         )
         explanation <<DOC,markdown
-            Objects must use either commas OR newlines, not both. The Styx is a parse error.
+            Objects must use either commas:
 
-            Valid alternatives:
             ```styx
             {a 1, b 2, c 3}
             ```
+
+            or newlines:
+
             ```styx
             {
                 a 1
@@ -186,6 +200,8 @@ questions {
                 c 3
             }
             ```
+
+            but never both.
             DOC
     }
     basics-duplicate-keys {
@@ -211,7 +227,7 @@ questions {
     //==========================================================================
     scalars-number {
         question <<DOC,markdown
-            In this Styx document, what type is `42`?
+            In this document, what type is `42`?
 
             ```styx
             answer 42
@@ -220,7 +236,7 @@ questions {
         options (
             {text "Integer", help "Styx scalars don't have inherent types"}
             {text "Number", help "Styx scalars don't have inherent types"}
-            {text "Just a text atom - type comes later", correct true}
+            {text "Neither", correct true}
         )
         explanation <<DOC,markdown
             Scalars are untyped text. `42` is not inherently a number any more than `hello` is inherently a string.
@@ -228,27 +244,6 @@ questions {
             Types matter at two points:
             - Schema validation
             - Deserialization into a typed language
-            DOC
-    }
-    scalars-norway {
-        question <<DOC,markdown
-            A YAML file has `country: no` for Norway. What happens?
-
-            In Styx, what is `no` in this document?
-
-            ```styx
-            country no
-            ```
-            DOC
-        options (
-            {text "The boolean `false`", help "That's YAML's problem, not Styx's"}
-            {text "A text atom that could become anything", correct true}
-            {text "A parse error", help "It's perfectly valid Styx"}
-        )
-        explanation <<DOC,markdown
-            This is the "Norway problem" - YAML interprets `no` as boolean false.
-
-            In Styx, `no` is just text. It becomes a boolean, string, or country code only when you deserialize it with a schema or into a typed structure.
             DOC
     }
     //==========================================================================
@@ -265,9 +260,9 @@ questions {
             ```
             DOC
         options (
-            {text "tag=hello, payload=@", help "The word itself is the payload, not the tag"}
-            {text "tag=@, payload=hello", correct true}
-            {text "No tag - it's just a plain value", help "Every value has a tag; it defaults to @"}
+            {text "`tag=hello`, `payload=@`", help "The word itself is the payload, not the tag"}
+            {text "`tag=@`, `payload=hello`", correct true}
+            {text "No tag - it's just a plain value", help "Every value has a tag; it defaults to `@`"}
         )
         explanation <<DOC,markdown
             A bare scalar like `hello` has:
@@ -286,9 +281,9 @@ questions {
             ```
             DOC
         options (
-            {text "tag=rgb, payload=(255 128 0)", correct true}
-            {text "tag=@, payload=rgb(255 128 0)", help "The @ starts a tag name"}
-            {text "tag=color, payload=rgb", help "color is the key, not part of the value"}
+            {text "`tag=rgb`, `payload=(255 128 0)`", correct true}
+            {text "`tag=@`, `payload=rgb(255 128 0)`", help "The `@` starts a tag name"}
+            {text "`tag=color`, `payload=rgb`", help "`color` is the key, not part of the value"}
         )
         explanation <<DOC,markdown
             `@rgb(255 128 0)` has:
@@ -307,9 +302,9 @@ questions {
             ```
             DOC
         options (
-            {text "tag=pending, payload=@ (unit)", correct true}
-            {text "tag=@, payload=pending", help "The @ before pending makes pending the tag"}
-            {text "tag=pending, no payload", help "Every value has a payload; it defaults to @"}
+            {text "`tag=pending`, `payload=@` (unit)", correct true}
+            {text "`tag=@`, `payload=pending`", help "The `@` before `pending` makes `pending` the tag"}
+            {text "`tag=pending`, no payload", help "Every value has a payload; it defaults to `@`"}
         )
         explanation <<DOC,markdown
             `@pending` has:
@@ -321,67 +316,46 @@ questions {
     }
     tags-space-matters {
         question <<DOC,markdown
-            What's the difference between these two lines?
+            Are those two lines the same?
 
             ```styx
-            a @tag()
-            b @tag ()
+            key @tag()
+            // vs
+            key @tag ()
             ```
             DOC
         options (
-            {text "No difference - whitespace is ignored", help "Space between tag and payload is significant"}
-            {text "Both valid - line a has tagged sequence, line b has key-value pair", help "Count the atoms on line b"}
-            {text "Line b has three atoms - that's invalid", correct true}
+            {text "Yes, they're the same", help "Space between tag and payload is significant"}
+            {text "They're both valid but different", help "Count the atoms on line b"}
+            {text "One of them is invalid", correct true}
         )
         explanation <<DOC,markdown
-            Line a: `a @tag()` — key `a`, value `@tag()` (tagged empty sequence). Two atoms, valid.
+            First line: key `key`, value `@tag()` (tagged empty sequence). Two atoms, valid.
 
-            Line b: `b @tag ()` — three atoms: `b`, `@tag`, `()`. Entries can only have two atoms (key and value).
-
-            The space between `@tag` and `()` makes them separate atoms.
+            Second line: three atoms: `key`, `@tag`, `()`. Entries can only have two atoms (key and value).
             DOC
     }
     tags-standalone-vs-payload {
         question <<DOC,markdown
-            What's the difference between these two values?
+            Are those two lines the same?
 
             ```styx
             @tag()
+            // vs
             @tag ()
             ```
             DOC
         options (
-            {text "No difference - whitespace is ignored", help "Space between tag and payload is significant"}
-            {text "First is a tagged sequence; second is two separate values", correct true}
-            {text "Second is a parse error", help "Both are valid Styx values"}
+            {text "Yes they're the same", help "Space between tag and payload is significant"}
+            {text "They're both valid but different"}
+            {text "One of them is invalid", help "Both are valid Styx values", correct true}
         )
         explanation <<DOC,markdown
-            There is **never** a space between a tag and its payload.
+            The first one is an error: it's in object context, and sequences `()`
+            (tagged or not) cannot be used as keys.
 
-            - `@tag()` — ONE value: tag `tag` with payload `()` (empty sequence)
-            - `@tag ()` — TWO values: `@tag` (unit payload) and `()` (empty sequence)
-
-            This matters because `@tag()` cannot be a key (sequences aren't valid keys), but `@tag` can be.
-            DOC
-    }
-    tags-three-atoms {
-        question <<DOC,markdown
-            Is this valid Styx?
-
-            ```styx
-            key @tag {}
-            ```
-            DOC
-        options (
-            {text "Valid", help "Count the atoms: `key`, `@tag`, `{}`"}
-            {text "Invalid", correct true}
-        )
-        explanation <<DOC,markdown
-            Entries can have at most two atoms (key and value). Here there are three: `key`, `@tag`, and `{}`.
-
-            The space between `@tag` and `{}` makes them separate atoms.
-
-            To create a tagged empty object as the value: `key @tag{}`
+            The second is fine: it's using a tagged unit (canonical form `@tag@`)
+            as a key, and the value is an empty sequence.
             DOC
     }
     tags-on-objects {
@@ -399,7 +373,7 @@ questions {
         explanation <<DOC,markdown
             Tags can have any payload: scalars, sequences, or objects.
 
-            This is perfect for representing Rust-style enums:
+            This maps to Rust-style enums:
             ```rust
             enum Result {
                 Ok(Value),
@@ -425,7 +399,7 @@ questions {
             {text "The unit value (like null)", correct true}
         )
         explanation <<DOC,markdown
-            `@` is the unit value - similar to `null` but more principled.
+            `@` is the unit value - similar to `null` / `None` etc..
 
             Fun fact: `@` is shorthand for `@@` (empty tag with unit payload). An empty tag degenerates to `@`, and a missing payload defaults to `@`.
             DOC

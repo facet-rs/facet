@@ -142,7 +142,9 @@ In YAML, this classic gotcha:
 - country: NO
 ```
 
-...shows the first country set to boolean `false`. Similarly:
+...shows the first country set to boolean `false`.
+
+Similarly.
 
 ```yaml
 version: 1.10
@@ -160,8 +162,6 @@ a schema with you. More on that later.
 ### Recap
 
 <div data-quiz="scalars-number"></div>
-
-<div data-quiz="scalars-norway"></div>
 
 ## The two dimensions
 
@@ -235,8 +235,6 @@ Entries can only have two atoms (key and value). The space between `@tag` and `(
 
 <div data-quiz="tags-standalone-vs-payload"></div>
 
-<div data-quiz="tags-three-atoms"></div>
-
 <div data-quiz="tags-on-objects"></div>
 
 ## Unit and elision
@@ -277,14 +275,11 @@ row (1 @ @ 4 5)  // sparse row with gaps
 
 Dotted keys define nested structure:
 
-```styx
+```compare
+/// styx
 server.host localhost
 server.port 8080
-```
-
-This is equivalent to:
-
-```styx
+/// styx
 server {
   host localhost
   port 8080
@@ -293,9 +288,14 @@ server {
 
 Useful for deeply nested configuration:
 
-```styx
+```compare
+/// styx
 profile.release.lto true
 profile.release.opt-level 3
+/// toml
+[profile.release]
+lto = true
+opt-level = 3
 ```
 
 ### Attributes
