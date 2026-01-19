@@ -1844,8 +1844,13 @@ fn format_type_concise(value: &Value) -> String {
 }
 
 /// Format a breadcrumb path like `@ › logging › format › timestamp`
-fn format_breadcrumb(path: &[String]) -> String {
-    let mut result = String::from("@");
+/// The `@` can optionally be a link to the schema.
+fn format_breadcrumb(path: &[String], schema_link: Option<&str>) -> String {
+    let root = match schema_link {
+        Some(uri) => format!("[@]({})", uri),
+        None => "@".to_string(),
+    };
+    let mut result = root;
     for segment in path {
         result.push_str(" › ");
         result.push_str(segment);
@@ -1857,7 +1862,7 @@ fn format_breadcrumb(path: &[String]) -> String {
 fn format_field_hover(
     field_path: &[String],
     field_info: &FieldInfo,
-    schema_path: &str,
+    _schema_path: &str,
     schema_uri: Option<&Url>,
 ) -> String {
     let mut content = String::new();
@@ -1868,21 +1873,11 @@ fn format_field_hover(
         content.push_str("\n\n");
     }
 
-    // Breadcrumb path with type at the end: `@ › hints › tracey › schema`: @SchemaRef
-    let breadcrumb = format_breadcrumb(field_path);
-    content.push_str(&format!("`{}`: `{}`\n\n", breadcrumb, field_info.type_str));
-
-    // Schema source link
-    // Show just the filename as link label, full path in the URI
-    let display_name = std::path::Path::new(schema_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(schema_path);
-    if let Some(uri) = schema_uri {
-        content.push_str(&format!("[{}]({})", display_name, uri));
-    } else {
-        content.push_str(display_name);
-    }
+    // Breadcrumb path with @ as schema link and type at the end:
+    // [@](schema-uri) › hints › tracey › schema: `@SchemaRef`
+    let schema_link = schema_uri.map(|u| u.as_str());
+    let breadcrumb = format_breadcrumb(field_path, schema_link);
+    content.push_str(&format!("{}: `{}`", breadcrumb, field_info.type_str));
 
     content
 }
@@ -2583,24 +2578,36 @@ schema {
 
     #[test]
     fn test_format_breadcrumb() {
-        assert_eq!(format_breadcrumb(&[]), "@");
-        assert_eq!(format_breadcrumb(&["logging".to_string()]), "@ › logging");
+        // Without schema link
+        assert_eq!(format_breadcrumb(&[], None), "@");
         assert_eq!(
-            format_breadcrumb(&["logging".to_string(), "format".to_string()]),
+            format_breadcrumb(&["logging".to_string()], None),
+            "@ › logging"
+        );
+        assert_eq!(
+            format_breadcrumb(&["logging".to_string(), "format".to_string()], None),
             "@ › logging › format"
         );
+
+        // With schema link - @ becomes a link
         assert_eq!(
-            format_breadcrumb(&[
-                "logging".to_string(),
-                "format".to_string(),
-                "timestamp".to_string()
-            ]),
-            "@ › logging › format › timestamp"
+            format_breadcrumb(&[], Some("file:///schema.styx")),
+            "[@](file:///schema.styx)"
         );
-        // With index
         assert_eq!(
-            format_breadcrumb(&["items".to_string(), "0".to_string(), "name".to_string()]),
-            "@ › items › 0 › name"
+            format_breadcrumb(&["logging".to_string()], Some("file:///schema.styx")),
+            "[@](file:///schema.styx) › logging"
+        );
+        assert_eq!(
+            format_breadcrumb(
+                &[
+                    "logging".to_string(),
+                    "format".to_string(),
+                    "timestamp".to_string()
+                ],
+                Some("file:///schema.styx")
+            ),
+            "[@](file:///schema.styx) › logging › format › timestamp"
         );
     }
 
