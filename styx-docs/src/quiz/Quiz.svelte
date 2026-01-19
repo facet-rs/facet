@@ -72,7 +72,7 @@
     let isCorrect = $derived(selectedOption?.correct ?? false);
 </script>
 
-<div class="quiz">
+<div class="quiz" class:answered>
     {#if !question}
         <div class="loading">Loading...</div>
     {:else}
@@ -179,6 +179,42 @@
         background: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.1));
         padding: 0.1em 0.3em;
         border-radius: 3px;
+    }
+
+    /* Hide syntax highlighting until answer is chosen */
+    .quiz:not(.answered) .question-text :global(code) {
+        /* Core tags */
+        :global(a-k),
+        :global(a-f),
+        :global(a-s),
+        :global(a-c),
+        :global(a-t),
+        :global(a-v),
+        :global(a-co),
+        :global(a-n),
+        :global(a-o),
+        :global(a-p),
+        :global(a-pr),
+        :global(a-at),
+        :global(a-tg),
+        :global(a-m),
+        :global(a-l),
+        :global(a-ns),
+        :global(a-cr),
+        /* Markup tags */
+        :global(a-tt),
+        :global(a-st),
+        :global(a-em),
+        :global(a-tu),
+        :global(a-tl),
+        :global(a-tx),
+        /* Diff & special */
+        :global(a-da),
+        :global(a-dd),
+        :global(a-eb),
+        :global(a-er) {
+            color: inherit !important;
+        }
     }
 
     .options {
@@ -302,7 +338,6 @@
 
     .explanation :global(code),
     .help :global(code) {
-        background: rgba(0, 0, 0, 0.2);
         padding: 0.1em 0.3em;
         border-radius: 3px;
         font-family: "SF Mono", Monaco, Consolas, monospace;
