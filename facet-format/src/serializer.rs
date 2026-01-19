@@ -112,6 +112,24 @@ pub trait FormatSerializer {
         Ok(())
     }
 
+    /// Optional: Provide field metadata with access to the field value.
+    ///
+    /// This is called before `field_key` and allows formats to inspect the field value
+    /// for metadata. This is particularly useful for metadata containers like `Documented<T>`
+    /// where doc comments are stored in the value, not the field definition.
+    ///
+    /// If this returns `Ok(true)`, the field key has been written and `field_key` will be skipped.
+    /// If this returns `Ok(false)`, normal field_key handling continues.
+    ///
+    /// Default implementation does nothing and returns `Ok(false)`.
+    fn field_metadata_with_value(
+        &mut self,
+        _field: &facet_reflect::FieldItem,
+        _value: Peek<'_, '_>,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
     /// Optional: Provide struct/enum type metadata when beginning to serialize it.
     /// Default implementation does nothing.
     fn struct_metadata(&mut self, _shape: &facet_core::Shape) -> Result<(), Self::Error> {
@@ -764,13 +782,19 @@ where
             let field_mode = serializer.struct_field_mode();
 
             for (field_item, field_value) in fields {
-                serializer
-                    .field_metadata(&field_item)
+                // Let format handle field metadata with value access (for metadata containers)
+                let key_written = serializer
+                    .field_metadata_with_value(&field_item, field_value)
                     .map_err(SerializeError::Backend)?;
-                if field_mode == StructFieldMode::Named {
+                if !key_written {
                     serializer
-                        .field_key(field_item.effective_name())
+                        .field_metadata(&field_item)
                         .map_err(SerializeError::Backend)?;
+                    if field_mode == StructFieldMode::Named {
+                        serializer
+                            .field_key(field_item.effective_name())
+                            .map_err(SerializeError::Backend)?;
+                    }
                 }
                 // Check for field-level proxy
                 if let Some(proxy_def) = field_item
