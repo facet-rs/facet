@@ -1,9 +1,9 @@
-//! Integration tests using testcontainers with Postgres 18.
+//! Integration tests using dockside with Postgres 18.
 
 use dibs::{Schema, Table};
+use dockside::{Container, containers};
 use facet::Facet;
-use testcontainers::{ImageExt, runners::AsyncRunner};
-use testcontainers_modules::postgres::Postgres;
+use std::time::Duration;
 use tokio_postgres::NoTls;
 
 // Test table definitions
@@ -107,27 +107,51 @@ fn test_table(
     }
 }
 
-async fn create_postgres_container() -> (
-    testcontainers::ContainerAsync<Postgres>,
-    tokio_postgres::Client,
-) {
-    let container = Postgres::default()
-        .with_tag("18")
-        .start()
-        .await
-        .expect("Failed to start Postgres container");
+async fn create_postgres_container() -> (Container, tokio_postgres::Client) {
+    // Run container creation on blocking thread since it uses std::process
+    let container = tokio::task::spawn_blocking(|| {
+        let container = Container::run(containers::postgres("18", "postgres"))
+            .expect("Failed to start Postgres container");
 
-    let host = container.get_host().await.unwrap();
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
+        // Wait for postgres to be ready
+        container
+            .wait_for_log("database system is ready to accept connections", Duration::from_secs(30))
+            .expect("Postgres failed to become ready");
+
+        let port = container
+            .wait_for_port(5432, Duration::from_secs(5))
+            .expect("Failed to connect to postgres port");
+
+        (container, port)
+    })
+    .await
+    .expect("spawn_blocking failed");
+
+    let (container, port) = container;
 
     let connection_string = format!(
-        "host={} port={} user=postgres password=postgres dbname=postgres",
-        host, port
+        "host=127.0.0.1 port={} user=postgres password=postgres dbname=postgres",
+        port
     );
 
-    let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
-        .await
-        .expect("Failed to connect to Postgres");
+    // Retry connection a few times - postgres might not be fully ready even after port opens
+    let mut last_err = None;
+    let mut client_and_conn = None;
+    for _ in 0..30 {
+        match tokio_postgres::connect(&connection_string, NoTls).await {
+            Ok(c) => {
+                client_and_conn = Some(c);
+                break;
+            }
+            Err(e) => {
+                last_err = Some(e);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+    let (client, connection) = client_and_conn
+        .ok_or_else(|| last_err.unwrap())
+        .expect("Failed to connect to Postgres after retries");
 
     // Spawn connection handler
     tokio::spawn(async move {

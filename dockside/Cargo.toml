@@ -1,0 +1,8 @@
+[package]
+name = "dockside"
+version = "0.1.0"
+edition = "2024"
+description = "Minimal Docker CLI wrapper for testing - no serde, no bollard"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
