@@ -25,7 +25,7 @@ questions {
             name "Alice"
             ```
 
-            Or just `name Alice` since we don't need.
+            Or just `name Alice` since it doesn't need quoting.
             DOC
     }
     basics-when-quotes {
@@ -38,7 +38,7 @@ questions {
             DOC
         options (
             {text "Always - strings must be quoted", help "Styx only requires quotes when the value contains special characters"}
-            {text "Never - quotes are optional", help "The comma and exclamation here would cause parsing issues"}
+            {text "Sometimes - quotes are optional", help "The comma and exclamation here would cause parsing issues"}
             {text "Only when the value contains spaces or special characters", correct true}
         )
         explanation <<DOC,markdown
@@ -278,16 +278,38 @@ questions {
             DOC
         options (
             {text "No difference - whitespace is ignored", help "Space between tag and payload is significant"}
-            {text "Line a is a tagged empty sequence; line b is a key-value pair", correct true}
-            {text "Line b is a parse error", help "Both are valid, just different"}
+            {text "Both valid - line a has tagged sequence, line b has key-value pair", help "Count the atoms on line b"}
+            {text "Line b has three atoms - that's invalid", correct true}
+        )
+        explanation <<DOC,markdown
+            Line a: `a @tag()` — key `a`, value `@tag()` (tagged empty sequence). Two atoms, valid.
+
+            Line b: `b @tag ()` — three atoms: `b`, `@tag`, `()`. Entries can only have two atoms (key and value).
+
+            The space between `@tag` and `()` makes them separate atoms.
+            DOC
+    }
+    tags-standalone-vs-payload {
+        question <<DOC,markdown
+            What's the difference between these two values?
+
+            ```styx
+            @tag()
+            @tag ()
+            ```
+            DOC
+        options (
+            {text "No difference - whitespace is ignored", help "Space between tag and payload is significant"}
+            {text "First is a tagged sequence; second is two separate values", correct true}
+            {text "Second is a parse error", help "Both are valid Styx values"}
         )
         explanation <<DOC,markdown
             There is **never** a space between a tag and its payload.
 
-            - `@tag()` — tag `tag` with payload `()` (empty sequence)
-            - `@tag ()` — key `@tag` (unit payload), value `()` (empty sequence)
+            - `@tag()` — ONE value: tag `tag` with payload `()` (empty sequence)
+            - `@tag ()` — TWO values: `@tag` (unit payload) and `()` (empty sequence)
 
-            This is the most important whitespace rule in Styx.
+            This matters because `@tag()` cannot be a key (sequences aren't valid keys), but `@tag` can be.
             DOC
     }
     tags-three-atoms {
