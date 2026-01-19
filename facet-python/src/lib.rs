@@ -402,6 +402,10 @@ impl PythonGenerator {
                 self.generate_newtype_variant(variant_name, &pascal_variant_name, variant);
                 format!("\"{}\"", pascal_variant_name)
             }
+            StructKind::TupleStruct => {
+                self.generate_tuple_variant(variant_name, &pascal_variant_name, variant);
+                format!("\"{}\"", pascal_variant_name)
+            }
             _ => {
                 self.generate_struct_variant(variant_name, &pascal_variant_name, variant);
                 format!("\"{}\"", pascal_variant_name)
@@ -420,6 +424,38 @@ impl PythonGenerator {
         self.imports.insert("Required");
 
         let inner_type = self.type_for_shape(variant.data.fields[0].shape.get());
+
+        let fields = [TypedDictField::new(variant_name, inner_type, true, &[])];
+
+        let mut output = String::new();
+        write_typed_dict(&mut output, pascal_variant_name, &fields);
+        output.push('\n');
+
+        self.generated
+            .insert(pascal_variant_name.to_string(), output);
+    }
+
+    /// Generate a tuple variant (multiple fields).
+    fn generate_tuple_variant(
+        &mut self,
+        variant_name: &str,
+        pascal_variant_name: &str,
+        variant: &facet_core::Variant,
+    ) {
+        self.imports.insert("TypedDict");
+        self.imports.insert("Required");
+
+        let types: Vec<String> = variant
+            .data
+            .fields
+            .iter()
+            .map(|f| self.type_for_shape(f.shape.get()))
+            .collect();
+
+        // Note: types should never be empty here because:
+        // - Single-field tuple structs are handled by generate_newtype_variant
+        // - Zero-field tuple variants (e.g., A()) fail to compile in the derive macro
+        let inner_type = format!("tuple[{}]", types.join(", "));
 
         let fields = [TypedDictField::new(variant_name, inner_type, true, &[])];
 
@@ -980,6 +1016,18 @@ mod tests {
         }
 
         let py = to_python::<TaskMap>(false);
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_enum_tuple_variant() {
+        #[derive(Facet)]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum TupleVariant {
+            Point(i32, i32),
+        }
+        let py = to_python::<TupleVariant>(false);
         insta::assert_snapshot!(py);
     }
 }

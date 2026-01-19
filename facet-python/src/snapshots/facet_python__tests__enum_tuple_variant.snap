@@ -1,0 +1,9 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 1032
+expression: py
+---
+class Point(TypedDict, total=False):
+    Point: Required[tuple[int, int]]
+
+TupleVariant = Union["Point"]
