@@ -1505,3 +1505,73 @@ mod yoke {
         }
     }
 }
+
+#[test]
+fn metadata_container_basic() {
+    // Basic metadata container with doc metadata
+    #[derive(Facet)]
+    #[facet(metadata_container)]
+    struct Documented<T> {
+        value: T,
+        #[facet(metadata = "doc")]
+        doc: Option<Vec<String>>,
+    }
+
+    let shape = <Documented<String>>::SHAPE;
+    assert!(shape.is_metadata_container());
+
+    // Check that the struct has the right fields
+    if let Type::User(UserType::Struct(StructType { fields, .. })) = shape.ty {
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "value");
+        assert_eq!(fields[1].name, "doc");
+        // The doc field should have metadata kind "doc"
+        assert_eq!(fields[1].metadata_kind(), Some("doc"));
+    } else {
+        panic!("Expected struct type");
+    }
+}
+
+#[test]
+fn metadata_container_with_span() {
+    // A span type for testing
+    #[derive(Facet, Clone, Copy)]
+    struct Span {
+        start: usize,
+        end: usize,
+    }
+
+    // Metadata container with span metadata
+    #[derive(Facet)]
+    #[facet(metadata_container)]
+    struct Spanned<T> {
+        value: T,
+        #[facet(metadata = "span")]
+        span: Option<Span>,
+    }
+
+    let shape = <Spanned<u32>>::SHAPE;
+    assert!(shape.is_metadata_container());
+
+    if let Type::User(UserType::Struct(StructType { fields, .. })) = shape.ty {
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "value");
+        assert_eq!(fields[1].name, "span");
+        assert_eq!(fields[1].metadata_kind(), Some("span"));
+    } else {
+        panic!("Expected struct type");
+    }
+}
+
+#[test]
+fn non_metadata_container_flag() {
+    // A regular struct should NOT have the metadata_container flag
+    #[derive(Facet)]
+    struct Regular {
+        foo: u32,
+        bar: String,
+    }
+
+    let shape = Regular::SHAPE;
+    assert!(!shape.is_metadata_container());
+}

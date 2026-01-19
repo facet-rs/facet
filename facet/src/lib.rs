@@ -67,6 +67,34 @@ pub mod builtin {
             /// Usage: `#[facet(transparent)]`
             Transparent,
 
+            /// Marks a struct as a metadata container - it serializes transparently through
+            /// its non-metadata field while preserving metadata for formats that support it.
+            ///
+            /// Rules:
+            /// 1. Exactly one non-metadata field (the "value" field)
+            /// 2. At least one metadata field (marked with `#[facet(metadata = "...")]`)
+            /// 3. No duplicate metadata kinds
+            ///
+            /// During serialization, the container is transparent - `Documented<String>` serializes
+            /// exactly like `String`. However, formats that support metadata (like Styx) can access
+            /// the metadata fields and emit them appropriately (e.g., as doc comments).
+            ///
+            /// Usage: `#[facet(metadata_container)]`
+            ///
+            /// # Example
+            ///
+            /// ```ignore
+            /// #[derive(Facet)]
+            /// #[facet(metadata_container)]
+            /// struct Documented<T> {
+            ///     value: T,
+            ///     #[facet(metadata = "doc")]
+            ///     doc: Option<Vec<String>>,
+            /// }
+            /// ```
+            #[target(container)]
+            MetadataContainer,
+
             /// Marks a field to be flattened into its parent structure.
             ///
             /// Usage: `#[facet(flatten)]`

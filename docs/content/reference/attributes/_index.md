@@ -67,6 +67,111 @@ Forward serialization/deserialization to the inner type. Used for newtype patter
 struct UserId(u64);  // Serialized as just the u64
 ```
 
+### `metadata_container`
+
+Mark a struct as a metadata container — it serializes transparently through its non-metadata field while preserving metadata for formats that support it.
+
+```rust,noexec
+#[derive(Facet)]
+#[facet(metadata_container)]
+struct Documented<T> {
+    value: T,
+    #[facet(metadata = "doc")]
+    doc: Option<Vec<String>>,
+}
+```
+
+**Rules for metadata containers:**
+
+1. **Exactly one non-metadata field** — This is the "value" field that the container serializes as
+2. **At least one metadata field** — Fields marked with `#[facet(metadata = "...")]`
+3. **No duplicate metadata kinds** — Each metadata kind can only appear once
+
+**Serialization behavior:**
+
+During serialization, the container is transparent — `Documented<String>` serializes exactly like `String`. However, formats that support metadata (like Styx) can access the metadata fields and emit them appropriately (e.g., as doc comments).
+
+```rust,noexec
+#[derive(Facet)]
+#[facet(metadata_container)]
+struct Documented<T> {
+    value: T,
+    #[facet(metadata = "doc")]
+    doc: Option<Vec<String>>,
+}
+
+#[derive(Facet)]
+struct Config {
+    name: Documented<String>,
+    port: Documented<u16>,
+}
+
+let config = Config {
+    name: Documented {
+        value: "myapp".into(),
+        doc: Some(vec!["The application name".into()]),
+    },
+    port: Documented {
+        value: 8080,
+        doc: Some(vec!["Port to listen on".into(), "Must be > 1024".into()]),
+    },
+};
+
+// JSON (no metadata support): {"name": "myapp", "port": 8080}
+// Styx (with metadata support):
+// /// The application name
+// name "myapp"
+// /// Port to listen on
+// /// Must be > 1024
+// port 8080
+```
+
+**Composing metadata containers:**
+
+You can nest metadata containers to combine multiple kinds of metadata:
+
+```rust,noexec
+#[derive(Facet)]
+#[facet(metadata_container)]
+struct Spanned<T> {
+    value: T,
+    #[facet(metadata = "span")]
+    span: Option<Span>,
+}
+
+#[derive(Facet)]
+#[facet(metadata_container)]
+struct Documented<T> {
+    value: T,
+    #[facet(metadata = "doc")]
+    doc: Option<Vec<String>>,
+}
+
+// Combine both: value with span AND doc metadata
+type FullyAnnotated<T> = Spanned<Documented<T>>;
+
+#[derive(Facet)]
+struct Schema {
+    fields: Vec<FullyAnnotated<Field>>,
+}
+```
+
+When nested, the outer container's value field is the inner container. The metadata from both levels is preserved and accessible to formats that need it.
+
+**Why use metadata containers?**
+
+- **Preserve source information** — Track spans, doc comments, or other metadata from parsing
+- **Format-specific output** — Let formats like Styx emit doc comments while JSON ignores them
+- **Type-safe metadata** — The metadata is part of the type system, not a side channel
+- **Composable** — Combine different metadata kinds by nesting containers
+
+**Difference from `transparent`:**
+
+- `transparent` requires exactly one field total
+- `metadata_container` requires exactly one *non-metadata* field, plus one or more metadata fields
+- Both serialize transparently through their inner value
+- `metadata_container` preserves metadata for formats that support it
+
 ### `opaque`
 
 Mark a type as opaque — its inner structure is hidden from facet. The type itself implements `Facet`, but its fields are not inspected or serialized. This is useful for:
@@ -608,6 +713,54 @@ struct Document {
     sections: Vec<Section>,
 }
 ```
+
+### `metadata`
+
+Mark a field as carrying metadata about the value, not part of the value itself. Used with `#[facet(metadata_container)]` to create transparent wrappers that preserve metadata.
+
+```rust,noexec
+#[derive(Facet)]
+#[facet(metadata_container)]
+struct Spanned<T> {
+    value: T,
+    #[facet(metadata = "span")]
+    span: Option<Span>,
+}
+
+#[derive(Facet)]
+#[facet(metadata_container)]
+struct Documented<T> {
+    value: T,
+    #[facet(metadata = "doc")]
+    doc: Option<Vec<String>>,
+}
+```
+
+**The metadata kind string** identifies what type of metadata this field carries:
+
+- `"span"` — Source location information (line, column, byte offset)
+- `"doc"` — Documentation comments from the source
+- Custom kinds for format-specific metadata
+
+**How formats use metadata:**
+
+Formats can query metadata fields during serialization/deserialization:
+
+```rust,noexec
+// In a format's serializer:
+if let Some(doc_field) = struct_def.fields.iter()
+    .find(|f| f.metadata_kind() == Some("doc"))
+{
+    // Access the doc field's value and emit it appropriately
+    // e.g., as doc comments in Styx: /// line 1\n/// line 2
+}
+```
+
+**Metadata fields are not serialized** in the normal field list — they're either:
+1. Handled specially by formats that understand them (e.g., Styx emits doc comments)
+2. Ignored by formats that don't support metadata (e.g., JSON)
+
+See [`metadata_container`](#metadata_container) for complete usage examples.
 
 ### `invariants`
 

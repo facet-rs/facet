@@ -112,6 +112,24 @@ pub trait FormatSerializer {
         Ok(())
     }
 
+    /// Optional: Provide field metadata with access to the field value.
+    ///
+    /// This is called before `field_key` and allows formats to inspect the field value
+    /// for metadata. This is particularly useful for metadata containers like `Documented<T>`
+    /// where doc comments are stored in the value, not the field definition.
+    ///
+    /// If this returns `Ok(true)`, the field key has been written and `field_key` will be skipped.
+    /// If this returns `Ok(false)`, normal field_key handling continues.
+    ///
+    /// Default implementation does nothing and returns `Ok(false)`.
+    fn field_metadata_with_value(
+        &mut self,
+        _field: &facet_reflect::FieldItem,
+        _value: Peek<'_, '_>,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
     /// Optional: Provide struct/enum type metadata when beginning to serialize it.
     /// Default implementation does nothing.
     fn struct_metadata(&mut self, _shape: &facet_core::Shape) -> Result<(), Self::Error> {
@@ -125,6 +143,34 @@ pub trait FormatSerializer {
         _variant: &'static facet_core::Variant,
     ) -> Result<(), Self::Error> {
         Ok(())
+    }
+
+    /// Serialize a metadata container value.
+    ///
+    /// Metadata containers (structs with `#[facet(metadata_container)]`) have exactly
+    /// one non-metadata field (the actual value) and one or more metadata fields
+    /// (like doc comments or source spans).
+    ///
+    /// Formats that support metadata can override this to emit metadata in the
+    /// appropriate position. For example, Styx emits doc comments before the value:
+    ///
+    /// ```text
+    /// /// The port to listen on
+    /// port 8080
+    /// ```
+    ///
+    /// The format is responsible for:
+    /// 1. Extracting metadata fields (use `field.metadata_kind()` to identify them)
+    /// 2. Emitting metadata in the appropriate position
+    /// 3. Serializing the non-metadata field value
+    ///
+    /// Returns `Ok(true)` if handled, `Ok(false)` to fall back to default transparent
+    /// serialization (which just serializes the non-metadata field).
+    fn serialize_metadata_container(
+        &mut self,
+        _container: &facet_reflect::PeekStruct<'_, '_>,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
     }
 
     /// Preferred field ordering for this format.
@@ -222,6 +268,20 @@ pub trait FormatSerializer {
     /// Default: delegates to `end_struct()`.
     fn end_map(&mut self) -> Result<(), Self::Error> {
         self.end_struct()
+    }
+
+    /// Serialize a map key in `MapEncoding::Struct` mode.
+    ///
+    /// This is called for each map key when using struct encoding. The default
+    /// implementation converts the key to a string (via `as_str()` or `Display`)
+    /// and calls `field_key()`.
+    ///
+    /// Formats can override this to handle special key types differently.
+    /// For example, Styx overrides this to serialize `Option::None` as `@`.
+    ///
+    /// Returns `Ok(true)` if handled, `Ok(false)` to use the default behavior.
+    fn serialize_map_key(&mut self, _key: Peek<'_, '_>) -> Result<bool, Self::Error> {
+        Ok(false)
     }
 
     /// Serialize a scalar with full type information.
@@ -334,7 +394,6 @@ pub trait FormatSerializer {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
-
 
     /// Write a tag for an externally-tagged enum variant.
     ///
@@ -501,6 +560,27 @@ where
 
     let value = value.innermost_peek();
 
+    // Check for metadata containers - serialize transparently through the inner value
+    // Metadata containers have exactly one non-metadata field that carries the actual value,
+    // while other fields (like doc comments) are metadata for formats that support it.
+    if value.shape().is_metadata_container()
+        && let Ok(struct_) = value.into_struct()
+    {
+        // Let the format handle metadata containers if it wants to (e.g., emit doc comments)
+        if serializer
+            .serialize_metadata_container(&struct_)
+            .map_err(SerializeError::Backend)?
+        {
+            return Ok(());
+        }
+        // Default: serialize transparently through the non-metadata field
+        for (field, field_value) in struct_.fields() {
+            if !field.is_metadata() {
+                return shared_serialize(serializer, field_value);
+            }
+        }
+    }
+
     // Check for container-level proxy - serialize through the proxy type
     // Format-specific proxies take precedence over format-agnostic proxies
     if let Some(proxy_def) = value.shape().effective_proxy(serializer.format_namespace()) {
@@ -633,16 +713,22 @@ where
             MapEncoding::Struct => {
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
                 for (key, val) in map.iter() {
-                    // Convert the key to a string for the field name
-                    let key_str = if let Some(s) = key.as_str() {
-                        Cow::Borrowed(s)
-                    } else {
-                        // For non-string keys, use Display format (not Debug, which adds quotes)
-                        Cow::Owned(alloc::format!("{}", key))
-                    };
-                    serializer
-                        .field_key(&key_str)
-                        .map_err(SerializeError::Backend)?;
+                    // Let format handle special key types first
+                    if !serializer
+                        .serialize_map_key(key)
+                        .map_err(SerializeError::Backend)?
+                    {
+                        // Default: convert the key to a string for the field name
+                        let key_str = if let Some(s) = key.as_str() {
+                            Cow::Borrowed(s)
+                        } else {
+                            // For non-string keys, use Display format (not Debug, which adds quotes)
+                            Cow::Owned(alloc::format!("{}", key))
+                        };
+                        serializer
+                            .field_key(&key_str)
+                            .map_err(SerializeError::Backend)?;
+                    }
                     shared_serialize(serializer, val)?;
                 }
                 serializer.end_struct().map_err(SerializeError::Backend)?;
@@ -696,13 +782,19 @@ where
             let field_mode = serializer.struct_field_mode();
 
             for (field_item, field_value) in fields {
-                serializer
-                    .field_metadata(&field_item)
+                // Let format handle field metadata with value access (for metadata containers)
+                let key_written = serializer
+                    .field_metadata_with_value(&field_item, field_value)
                     .map_err(SerializeError::Backend)?;
-                if field_mode == StructFieldMode::Named {
+                if !key_written {
                     serializer
-                        .field_key(field_item.effective_name())
+                        .field_metadata(&field_item)
                         .map_err(SerializeError::Backend)?;
+                    if field_mode == StructFieldMode::Named {
+                        serializer
+                            .field_key(field_item.effective_name())
+                            .map_err(SerializeError::Backend)?;
+                    }
                 }
                 // Check for field-level proxy
                 if let Some(proxy_def) = field_item
@@ -926,7 +1018,9 @@ where
                         let inner = enum_
                             .field(0)
                             .map_err(|_| {
-                                SerializeError::Internal(Cow::Borrowed("variant field lookup failed"))
+                                SerializeError::Internal(Cow::Borrowed(
+                                    "variant field lookup failed",
+                                ))
                             })?
                             .ok_or(SerializeError::Internal(Cow::Borrowed(
                                 "variant reported 1 field but field(0) returned None",

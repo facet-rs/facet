@@ -939,10 +939,10 @@ pub(crate) fn gen_field_from_pfield(
                 }
                 "metadata" => {
                     // metadata = kind - marks field as metadata, excluded from structural hashing
-                    // Parse `= ident` to get just the ident as a string
+                    // Parse `= "kind"` to get just the kind string (without quotes)
                     let args = &attr.args;
                     let args_str = args.to_string();
-                    let kind_str = args_str.trim_start_matches('=').trim();
+                    let kind_str = args_str.trim_start_matches('=').trim().trim_matches('"');
                     metadata_value = Some(kind_str.to_string());
                 }
                 // Note: "rename" is handled via field.name.rename (set by PName::new)
@@ -1383,6 +1383,100 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         };
     }
 
+    // Validate: metadata_container has correct field structure
+    let has_metadata_container = ps.container.attrs.has_builtin("metadata_container");
+    if has_metadata_container {
+        // Get all fields
+        let all_fields: &[PStructField] = match &ps.kind {
+            PStructKind::Struct { fields } => fields,
+            PStructKind::TupleStruct { fields } => fields,
+            PStructKind::UnitStruct => &[],
+        };
+
+        // Count metadata and non-metadata fields
+        let metadata_fields: Vec<_> = all_fields
+            .iter()
+            .filter(|f| {
+                f.attrs
+                    .facet
+                    .iter()
+                    .any(|a| a.is_builtin() && a.key_str() == "metadata")
+            })
+            .collect();
+        let non_metadata_fields: Vec<_> = all_fields
+            .iter()
+            .filter(|f| {
+                !f.attrs
+                    .facet
+                    .iter()
+                    .any(|a| a.is_builtin() && a.key_str() == "metadata")
+            })
+            .collect();
+
+        // Rule 1: exactly one non-metadata field
+        if non_metadata_fields.len() != 1 {
+            let mc_span = ps
+                .container
+                .attrs
+                .facet
+                .iter()
+                .find(|a| a.is_builtin() && a.key_str() == "metadata_container")
+                .map(|a| a.key.span())
+                .unwrap_or_else(proc_macro2::Span::call_site);
+            return quote_spanned! { mc_span =>
+                compile_error!("#[facet(metadata_container)] requires exactly one non-metadata field (the value field)");
+            };
+        }
+
+        // Rule 2: at least one metadata field
+        if metadata_fields.is_empty() {
+            let mc_span = ps
+                .container
+                .attrs
+                .facet
+                .iter()
+                .find(|a| a.is_builtin() && a.key_str() == "metadata_container")
+                .map(|a| a.key.span())
+                .unwrap_or_else(proc_macro2::Span::call_site);
+            return quote_spanned! { mc_span =>
+                compile_error!("#[facet(metadata_container)] requires at least one field with #[facet(metadata = \"...\")]");
+            };
+        }
+
+        // Rule 3: no duplicate metadata kinds
+        let mut seen_kinds = std::collections::HashSet::new();
+        for field in &metadata_fields {
+            let kind = field.attrs.facet.iter().find_map(|a| {
+                if a.is_builtin() && a.key_str() == "metadata" {
+                    let args_str = a.args.to_string();
+                    let kind_str = args_str.trim_start_matches('=').trim().trim_matches('"');
+                    Some(kind_str.to_string())
+                } else {
+                    None
+                }
+            });
+            if let Some(kind) = kind
+                && !seen_kinds.insert(kind.clone())
+            {
+                let mc_span = ps
+                    .container
+                    .attrs
+                    .facet
+                    .iter()
+                    .find(|a| a.is_builtin() && a.key_str() == "metadata_container")
+                    .map(|a| a.key.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+                let msg = format!(
+                    "#[facet(metadata_container)] has duplicate metadata kind: {}",
+                    kind
+                );
+                return quote_spanned! { mc_span =>
+                    compile_error!(#msg);
+                };
+            }
+        }
+    }
+
     let struct_name_ident = format_ident!("{}", ps.container.name);
     let struct_name = &ps.container.name;
     let struct_name_str = struct_name.to_string();
@@ -1803,6 +1897,13 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         quote! {}
     };
 
+    // Metadata container flag - marks type as a metadata container
+    let metadata_container_call = if has_metadata_container {
+        quote! { .metadata_container() }
+    } else {
+        quote! {}
+    };
+
     // Type tag from PStruct - returns builder call only if present
     let type_tag_call = {
         if let Some(type_tag) = ps.container.attrs.get_builtin_args("type_tag") {
@@ -2169,6 +2270,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     #inner_call
                     #variance_call
                     #pod_call
+                    #metadata_container_call
                     .build()
             };
         }
