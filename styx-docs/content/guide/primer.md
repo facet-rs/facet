@@ -295,15 +295,11 @@ Useful for deeply nested configuration:
 
 ```compare
 /// styx
-spec.containers.0.resources.limits.memory 128Mi
-spec.containers.0.resources.limits.cpu 500m
+selector.matchLabels app>web
 /// yaml
-spec:
-  containers:
-    - resources:
-        limits:
-          memory: 128Mi
-          cpu: 500m
+selector:
+  matchLabels:
+    app: web
 ```
 
 ### Attributes
