@@ -233,6 +233,18 @@ impl SelectQuery {
 
         b.finish()
     }
+
+    /// Build a COUNT(*) query (ignores columns, order, limit, offset).
+    pub fn build_count(&self) -> BuiltQuery {
+        let mut b = SqlBuilder::new();
+
+        b.push("SELECT COUNT(*) FROM ");
+        b.push_ident(&self.table);
+
+        b.build_where(&self.filters);
+
+        b.finish()
+    }
 }
 
 impl InsertQuery {

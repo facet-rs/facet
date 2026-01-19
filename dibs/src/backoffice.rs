@@ -204,7 +204,21 @@ impl SquelService for SquelServiceImpl {
 
         let db = Db::new(&client);
 
-        // Build the query
+        // Build the count query (same filters, no pagination)
+        let mut count_builder = db
+            .select(&request.table)
+            .map_err(|e| DibsError::UnknownTable(e.to_string()))?;
+
+        for filter in &request.filters {
+            count_builder = count_builder.filter(filter_to_expr(filter));
+        }
+
+        let total = count_builder
+            .count()
+            .await
+            .map_err(|e| DibsError::QueryError(e.to_string()))?;
+
+        // Build the main query
         let mut builder = db
             .select(&request.table)
             .map_err(|e| DibsError::UnknownTable(e.to_string()))?;
@@ -235,7 +249,7 @@ impl SquelService for SquelServiceImpl {
 
         Ok(ListResponse {
             rows: rows.into_iter().map(query_row_to_proto).collect(),
-            total: None, // TODO: implement count
+            total: Some(total),
         })
     }
 

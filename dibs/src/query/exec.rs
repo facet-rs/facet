@@ -231,10 +231,8 @@ impl<'a> SelectBuilder<'a> {
 
     /// Execute and return the count of matching rows.
     pub async fn count(self) -> Result<u64, Error> {
-        // Build a COUNT(*) query instead
-        let mut query = self.query;
-        query.columns = vec!["COUNT(*)".to_string()];
-        let built = query.build();
+        // Build a COUNT(*) query
+        let built = self.query.build_count();
 
         let params: Vec<SqlParam> = built.params.iter().map(SqlParam).collect();
         let params_ref: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
