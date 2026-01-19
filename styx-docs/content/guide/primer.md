@@ -51,7 +51,18 @@ But you need quotes when your value contains terminating characters:
 ```styx
 greeting "Hello, world!"
 template "{{name}}"
-json "{\"key\": \"value\"}"
+```
+
+For values with many quotes or escapes, use raw scalars (`r#"..."#`) or heredocs:
+
+```styx
+// Raw scalar - no escape processing
+json r#"{"key": "value"}"#
+
+// Heredoc - for multiline content
+script <<SH
+echo "Hello, $USER"
+SH
 ```
 
 ### Multiline objects
