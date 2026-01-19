@@ -1748,6 +1748,16 @@ fn get_field_info_in_type(
     let field_name = path[0];
     let remaining_path = &path[1..];
 
+    // Check if value is a @seq type - if so, skip numeric indices and recurse into element type
+    if let Some(seq_element_type) = extract_seq_element_type(value) {
+        // If the path segment is a numeric index, skip it and continue into the element type
+        if field_name.parse::<usize>().is_ok() {
+            // Resolve type reference if needed (e.g., @seq(@Spec) -> look up Spec)
+            let resolved = resolve_type_reference(seq_element_type, schema_defs);
+            return get_field_info_in_type(resolved, remaining_path, schema_defs);
+        }
+    }
+
     // Check if value is a @map type - if so, any key is valid and returns the value type
     if let Some(map_value_type) = extract_map_value_type(value) {
         if remaining_path.is_empty() {
@@ -1813,6 +1823,32 @@ fn resolve_type_reference<'a>(value: &'a Value, schema_defs: &'a styx_tree::Obje
         }
     }
     value
+}
+
+/// Extract the element type from a @seq type.
+/// For @seq(@Spec), returns @Spec.
+/// Also handles @optional(@seq(@T)) by unwrapping the optional first.
+fn extract_seq_element_type(value: &Value) -> Option<&Value> {
+    let tag = value.tag.as_ref()?;
+
+    // Direct @seq(@T)
+    if tag.name == "seq" {
+        let seq = value.as_sequence()?;
+        return seq.items.first();
+    }
+
+    // Handle @optional(@seq(@T)) - unwrap the optional and check inside
+    if (tag.name == "optional" || tag.name == "default")
+        && let Some(seq) = value.as_sequence()
+    {
+        for item in &seq.items {
+            if let Some(element_type) = extract_seq_element_type(item) {
+                return Some(element_type);
+            }
+        }
+    }
+
+    None
 }
 
 /// Extract the value type from a @map type.
@@ -2845,6 +2881,78 @@ schema {
             info.is_none(),
             "Should not find 'logging.nonexistent' field"
         );
+
+        // Test @seq type - field inside sequence element
+        let seq_schema = r#"meta { id test }
+schema {
+    @ @object{
+        /// List of specifications
+        specs @seq(@object{
+            /// Name of the spec
+            name @string
+            /// Prefix for annotations
+            prefix @string
+        })
+    }
+}"#;
+
+        // Hovering on a field inside a sequence element (path includes index)
+        // Path is ["specs", "0", "name"] where "0" is the sequence index
+        let info = get_field_info_from_schema(seq_schema, &["specs", "0", "name"]);
+        assert!(
+            info.is_some(),
+            "Should find 'specs[0].name' field inside @seq element"
+        );
+        let info = info.unwrap();
+        assert_eq!(info.type_str, "@string");
+        assert_eq!(info.doc_comment, Some("Name of the spec".to_string()));
+
+        // Test nested @seq with type reference
+        let nested_seq_schema = r#"meta { id test }
+schema {
+    @ @object{
+        specs @seq(@Spec)
+    }
+    Spec @object{
+        name @string
+        impls @seq(@Impl)
+    }
+    Impl @object{
+        /// Implementation name
+        name @string
+        include @seq(@string)
+    }
+}"#;
+
+        // Field in first-level seq element
+        let info = get_field_info_from_schema(nested_seq_schema, &["specs", "0", "name"]);
+        assert!(info.is_some(), "Should find 'specs[0].name'");
+        assert_eq!(info.unwrap().type_str, "@string");
+
+        // Field in nested seq element (specs[0].impls[0].name)
+        let info =
+            get_field_info_from_schema(nested_seq_schema, &["specs", "0", "impls", "1", "name"]);
+        assert!(info.is_some(), "Should find 'specs[0].impls[1].name'");
+        let info = info.unwrap();
+        assert_eq!(info.type_str, "@string");
+        assert_eq!(info.doc_comment, Some("Implementation name".to_string()));
+
+        // Test @optional(@seq(...))
+        let optional_seq_schema = r#"meta { id test }
+schema {
+    @ @object{
+        items @optional(@seq(@object{
+            value @int
+        }))
+    }
+}"#;
+
+        let info = get_field_info_from_schema(optional_seq_schema, &["items", "0", "value"]);
+        assert!(
+            info.is_some(),
+            "Should find 'items[0].value' through @optional(@seq(...))"
+        );
+        assert_eq!(info.unwrap().type_str, "@int");
     }
 
     #[test]

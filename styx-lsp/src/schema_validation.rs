@@ -463,23 +463,22 @@ fn find_object_at_offset_recursive(
         if let Some(val_span) = entry.value.span
             && offset >= val_span.start as usize
             && offset <= val_span.end as usize
+            && let Some(nested_obj) = entry.value.as_object()
         {
-            if let Some(nested_obj) = entry.value.as_object() {
-                let mut nested_path = path.clone();
-                if let Some(key) = entry.key.as_str() {
-                    nested_path.push(key.to_string());
-                }
-                if let Some(deeper) =
-                    find_object_at_offset_recursive(&entry.value, offset, nested_path.clone())
-                {
-                    return Some(deeper);
-                }
-                return Some(ObjectContext {
-                    path: nested_path,
-                    object: nested_obj.clone(),
-                    span: entry.value.span,
-                });
+            let mut nested_path = path.clone();
+            if let Some(key) = entry.key.as_str() {
+                nested_path.push(key.to_string());
             }
+            if let Some(deeper) =
+                find_object_at_offset_recursive(&entry.value, offset, nested_path.clone())
+            {
+                return Some(deeper);
+            }
+            return Some(ObjectContext {
+                path: nested_path,
+                object: nested_obj.clone(),
+                span: entry.value.span,
+            });
         }
     }
 
