@@ -1279,3 +1279,229 @@ fn test_decl_id() {
         "Different macro invocations should have different decl_id"
     );
 }
+
+// Test for #[facet(from_ref)] attribute - infallible constructor from reference
+#[test]
+fn from_ref_infallible() {
+    use std::borrow::Cow;
+
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(from_ref = BorrowedData::from_ref)]
+    struct BorrowedData<'a> {
+        text: Cow<'a, str>,
+    }
+
+    impl<'a> BorrowedData<'a> {
+        fn from_ref(s: &'a str) -> Self {
+            BorrowedData {
+                text: Cow::Borrowed(s),
+            }
+        }
+    }
+
+    let shape = BorrowedData::SHAPE;
+
+    // The VTable should have try_from set
+    assert!(
+        shape.vtable.has_try_from(),
+        "BorrowedData should have try_from in VTable"
+    );
+
+    // Test that try_from works by calling it manually
+    // Pass a wide pointer to str directly (not a pointer to the &str on the stack)
+    let src_shape = <&str>::SHAPE;
+    let src_str: &str = "hello world";
+    let src_ptr = facet::PtrConst::new(src_str);
+
+    let mut uninit = core::mem::MaybeUninit::<BorrowedData<'_>>::uninit();
+    let dst_ptr = facet::PtrMut::new(uninit.as_mut_ptr());
+
+    let outcome = unsafe { shape.call_try_from(src_shape, src_ptr, dst_ptr) };
+    assert!(
+        matches!(outcome, Some(facet::TryFromOutcome::Converted)),
+        "try_from should succeed with matching source shape"
+    );
+
+    let result = unsafe { uninit.assume_init() };
+    assert_eq!(result.text, "hello world");
+}
+
+// Test for #[facet(try_from_ref)] attribute - fallible constructor from reference
+#[test]
+fn try_from_ref_fallible() {
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(try_from_ref = AsStr::try_from_ref)]
+    struct AsStr<'a> {
+        value: &'a str,
+    }
+
+    impl<'a> AsStr<'a> {
+        fn try_from_ref(s: &'a [u8]) -> Result<Self, std::str::Utf8Error> {
+            Ok(AsStr {
+                value: std::str::from_utf8(s)?,
+            })
+        }
+    }
+
+    let shape = AsStr::SHAPE;
+
+    // The VTable should have try_from set
+    assert!(
+        shape.vtable.has_try_from(),
+        "ParsedInt should have try_from in VTable"
+    );
+
+    // Test successful conversion
+    // Pass a wide pointer to [u8] directly (not a pointer to the &[u8] on the stack)
+    let src_shape = <&[u8]>::SHAPE;
+    let src_str: &[u8] = b"buh";
+    let src_ptr = facet::PtrConst::new(src_str);
+
+    let mut uninit = core::mem::MaybeUninit::<AsStr>::uninit();
+    let dst_ptr = facet::PtrMut::new(uninit.as_mut_ptr());
+
+    let outcome = unsafe { shape.call_try_from(src_shape, src_ptr, dst_ptr) };
+    assert!(
+        matches!(outcome, Some(facet::TryFromOutcome::Converted)),
+        "try_from should succeed with valid UTF-8 string"
+    );
+
+    let result = unsafe { uninit.assume_init() };
+    assert_eq!(result.value, "buh");
+
+    // Test failed conversion
+    let invalid_str: &[u8] = b"\xFF";
+    let invalid_ptr = facet::PtrConst::new(invalid_str);
+
+    let mut uninit2 = core::mem::MaybeUninit::<AsStr>::uninit();
+    let dst_ptr2 = facet::PtrMut::new(uninit2.as_mut_ptr());
+
+    let outcome2 = unsafe { shape.call_try_from(src_shape, invalid_ptr, dst_ptr2) };
+    assert!(
+        matches!(outcome2, Some(facet::TryFromOutcome::Failed(_))),
+        "try_from should fail with invalid UTF-8 string"
+    );
+}
+
+// Test that from_ref returns Unsupported for wrong source type
+#[test]
+fn from_ref_wrong_source_type() {
+    use std::borrow::Cow;
+
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(from_ref = TextData::from_ref)]
+    struct TextData<'a> {
+        text: Cow<'a, str>,
+    }
+
+    impl<'a> TextData<'a> {
+        fn from_ref(s: &'a str) -> Self {
+            TextData {
+                text: Cow::Borrowed(s),
+            }
+        }
+    }
+
+    let shape = TextData::SHAPE;
+
+    // Try to convert from wrong type (i32 instead of &str)
+    let wrong_shape = i32::SHAPE;
+    let wrong_value: i32 = 42;
+    let wrong_ptr = facet::PtrConst::new(&wrong_value as *const i32);
+
+    let mut uninit = core::mem::MaybeUninit::<TextData<'_>>::uninit();
+    let dst_ptr = facet::PtrMut::new(uninit.as_mut_ptr());
+
+    let outcome = unsafe { shape.call_try_from(wrong_shape, wrong_ptr, dst_ptr) };
+    assert!(
+        matches!(outcome, Some(facet::TryFromOutcome::Unsupported)),
+        "try_from should return Unsupported for wrong source type"
+    );
+}
+
+#[test]
+fn from_ref_enum() {
+    use std::borrow::Cow;
+
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(from_ref = Status::from_ref)]
+    #[repr(u8)]
+    enum Status<'a> {
+        Active(Cow<'a, str>),
+        Inactive,
+    }
+
+    impl<'a> Status<'a> {
+        fn from_ref(s: &'a str) -> Self {
+            if s == "inactive" {
+                Status::Inactive
+            } else {
+                Status::Active(Cow::Borrowed(s))
+            }
+        }
+    }
+
+    let shape = Status::SHAPE;
+
+    // The VTable should have try_from set
+    assert!(
+        shape.vtable.has_try_from(),
+        "Status enum should have try_from in VTable"
+    );
+
+    // Test with "active" status
+    // Pass a wide pointer to str directly (not a pointer to the &str on the stack)
+    let src_shape = <&str>::SHAPE;
+    let src_str: &str = "hello";
+    let src_ptr = facet::PtrConst::new(src_str);
+
+    let mut uninit = core::mem::MaybeUninit::<Status<'_>>::uninit();
+    let dst_ptr = facet::PtrMut::new(uninit.as_mut_ptr());
+
+    let outcome = unsafe { shape.call_try_from(src_shape, src_ptr, dst_ptr) };
+    assert!(
+        matches!(outcome, Some(facet::TryFromOutcome::Converted)),
+        "try_from should succeed with matching source shape"
+    );
+
+    let result = unsafe { uninit.assume_init() };
+    assert_eq!(result, Status::Active(Cow::Borrowed("hello")));
+
+    // Test with "inactive" status
+    let src_str2: &str = "inactive";
+    let src_ptr2 = facet::PtrConst::new(src_str2);
+
+    let mut uninit2 = core::mem::MaybeUninit::<Status<'_>>::uninit();
+    let dst_ptr2 = facet::PtrMut::new(uninit2.as_mut_ptr());
+
+    let outcome2 = unsafe { shape.call_try_from(src_shape, src_ptr2, dst_ptr2) };
+    assert!(
+        matches!(outcome2, Some(facet::TryFromOutcome::Converted)),
+        "try_from should succeed for inactive status"
+    );
+
+    let result2 = unsafe { uninit2.assume_init() };
+    assert_eq!(result2, Status::Inactive);
+}
+
+#[cfg(feature = "yoke")]
+mod yoke {
+    use super::*;
+
+    #[test]
+    fn test_yoke() {
+        #[derive(Debug, PartialEq, Facet)]
+        #[facet(try_from_ref = AsStr::try_from_ref)]
+        struct AsStr<'a> {
+            value: &'a str,
+        }
+
+        impl<'a> AsStr<'a> {
+            fn try_from_ref(s: &'a [u8]) -> Result<Self, std::str::Utf8Error> {
+                Ok(AsStr {
+                    value: std::str::from_utf8(s)?,
+                })
+            }
+        }
+    }
+}

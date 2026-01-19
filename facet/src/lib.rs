@@ -288,7 +288,29 @@ pub mod builtin {
             Metadata(&'static str),
 
             /// Specifies `facet`'s path in case it's not in the default location.
-            Crate(&'static str)
+            Crate(&'static str),
+
+            // Note: `from_ref` and `try_from_ref` are compile-time-only directives
+            // processed by the derive macro. They are not stored as runtime attributes.
+            // They generate a `try_from` function in the VTable.
+            // The derive macro reads these from raw PFacetAttr tokens, not from Attr values.
+            // The reference type is inferred from the function signature.
+
+            /// Infallible constructor from a reference type.
+            /// The function must have signature `fn(&'a R) -> Self` where R is the source type.
+            ///
+            /// Usage: `#[facet(from_ref = Self::from_ref)]`
+            ///
+            /// Note: This is compile-time only. The path is read from raw tokens by the derive macro.
+            FromRef(arbitrary),
+
+            /// Fallible constructor from a reference type.
+            /// The function must have signature `fn(&'a R) -> Result<Self, E>` where R is the source type.
+            ///
+            /// Usage: `#[facet(try_from_ref = Self::try_from_ref)]`
+            ///
+            /// Note: This is compile-time only. The path is read from raw tokens by the derive macro.
+            TryFromRef(arbitrary)
         }
     }
 

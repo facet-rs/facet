@@ -440,6 +440,16 @@ impl FormatSuite for MsgPackSlice {
         CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
     }
 
+    #[cfg(feature = "yoke")]
+    fn yoke_cow_str() -> CaseSpec {
+        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+    }
+
+    #[cfg(feature = "yoke")]
+    fn yoke_custom() -> CaseSpec {
+        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+    }
+
     fn nonzero_integers_extended() -> CaseSpec {
         CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
     }

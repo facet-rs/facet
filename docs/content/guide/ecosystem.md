@@ -31,6 +31,7 @@ facet = { version = "{{ data.versions.facet }}", features = ["uuid", "chrono"] }
 | `ordered-float` | [ordered-float](https://docs.rs/ordered-float) | `OrderedFloat<f32>`, `OrderedFloat<f64>`, `NotNan<f32>`, `NotNan<f64>` |
 | `ruint` | [ruint](https://docs.rs/ruint) | `Uint<BITS, LIMBS>`, `Bits<BITS, LIMBS>` |
 | `lock_api` | [lock_api](https://docs.rs/lock_api) | `Mutex<R, T>`, `RwLock<R, T>`, `MutexGuard`, `RwLockReadGuard`, `RwLockWriteGuard` |
+| `yoke` | [yoke](https://docs.rs/yoke) | `Yoke<Y, C>` |
 
 [^1]: `IdOrdMap` requires `std` feature
 
@@ -75,6 +76,21 @@ use camino::Utf8PathBuf;
 #[derive(Facet)]
 struct Config {
     data_dir: Utf8PathBuf,
+}
+```
+
+### Example: zero-copy strings with yoke
+
+```rust,noexec
+use facet::Facet;
+use std::borrow::Cow;
+use std::sync::Arc;
+use yoke::Yoke;
+
+#[derive(Facet)]
+struct Document {
+    // Zero-copy string that borrows from an Arc<str> cart
+    title: Yoke<Cow<'static, str>, Arc<str>>,
 }
 ```
 
