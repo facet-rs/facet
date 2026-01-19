@@ -350,6 +350,28 @@ impl VirtualSchema {
                 if let Some(table) = self.tables.remove(from) {
                     self.tables.insert(to.clone(), table);
                 }
+
+                // Update all FKs that reference the old table name to reference the new name.
+                // This mirrors Postgres behavior: when you rename a table, FKs that reference
+                // it are automatically updated to reference the new name.
+                for table in self.tables.values_mut() {
+                    let updated_fks: HashSet<ForeignKey> = table
+                        .foreign_keys
+                        .iter()
+                        .map(|fk| {
+                            if fk.references_table == *from {
+                                ForeignKey {
+                                    columns: fk.columns.clone(),
+                                    references_table: to.clone(),
+                                    references_columns: fk.references_columns.clone(),
+                                }
+                            } else {
+                                fk.clone()
+                            }
+                        })
+                        .collect();
+                    table.foreign_keys = updated_fks;
+                }
             }
 
             Change::AddColumn(col) => {
@@ -811,6 +833,79 @@ mod tests {
         );
 
         assert!(matches!(result, Err(SolverError::TableNotFound { .. })));
+    }
+
+    #[test]
+    fn test_virtual_schema_rename_updates_fk_references() {
+        // When a table is renamed, FKs that reference it should be updated automatically.
+        // This mirrors Postgres behavior.
+        let current = Schema {
+            tables: vec![
+                make_table_with_fks(
+                    "categories",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("parent_id", PgType::BigInt, true),
+                    ],
+                    vec![ForeignKey {
+                        columns: vec!["parent_id".to_string()],
+                        references_table: "categories".to_string(), // self-ref
+                        references_columns: vec!["id".to_string()],
+                    }],
+                ),
+                make_table_with_fks(
+                    "posts",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("category_id", PgType::BigInt, false),
+                    ],
+                    vec![ForeignKey {
+                        columns: vec!["category_id".to_string()],
+                        references_table: "categories".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    }],
+                ),
+            ],
+        };
+
+        let mut schema = VirtualSchema::from_tables(&current.tables);
+
+        // Rename categories -> category
+        schema
+            .apply(
+                "category",
+                &Change::RenameTable {
+                    from: "categories".to_string(),
+                    to: "category".to_string(),
+                },
+            )
+            .unwrap();
+
+        // Check that the table was renamed
+        assert!(!schema.table_exists("categories"));
+        assert!(schema.table_exists("category"));
+
+        // Check that the self-referential FK in category now references "category"
+        let category_table = schema.tables.get("category").unwrap();
+        assert!(
+            category_table.foreign_keys.iter().any(|fk| fk.references_table == "category"),
+            "Self-referential FK should reference 'category' after rename"
+        );
+        assert!(
+            !category_table.foreign_keys.iter().any(|fk| fk.references_table == "categories"),
+            "No FK should still reference 'categories'"
+        );
+
+        // Check that the FK in posts now references "category"
+        let posts_table = schema.tables.get("posts").unwrap();
+        assert!(
+            posts_table.foreign_keys.iter().any(|fk| fk.references_table == "category"),
+            "FK in posts should reference 'category' after rename"
+        );
+        assert!(
+            !posts_table.foreign_keys.iter().any(|fk| fk.references_table == "categories"),
+            "No FK in posts should still reference 'categories'"
+        );
     }
 
     #[test]
