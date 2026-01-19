@@ -141,6 +141,43 @@ impl FormatSerializer for StyxSerializer {
         self.writer.begin_seq_after_tag();
         Ok(())
     }
+
+    fn raw_serialize_shape(&self) -> Option<&'static facet_core::Shape> {
+        Some(crate::RawStyx::SHAPE)
+    }
+
+    fn raw_scalar(&mut self, content: &str) -> Result<(), Self::Error> {
+        // For RawStyx, output the content directly without quoting
+        self.at_root = false;
+        self.just_wrote_tag = false;
+        self.writer.before_value();
+        self.writer.write_str(content);
+        Ok(())
+    }
+
+    fn serialize_map_key(&mut self, key: Peek<'_, '_>) -> Result<bool, Self::Error> {
+        // Handle Option<String> keys specially: None becomes @ (unit)
+        if let Ok(opt) = key.into_option() {
+            match opt.value() {
+                Some(inner) => {
+                    // Some(string) - use the string as the key
+                    if let Some(s) = inner.as_str() {
+                        self.writer.field_key(s).map_err(StyxSerializeError::new)?;
+                        return Ok(true);
+                    }
+                }
+                None => {
+                    // None - write @ as a raw key
+                    self.writer
+                        .field_key_raw("@")
+                        .map_err(StyxSerializeError::new)?;
+                    return Ok(true);
+                }
+            }
+        }
+        // Fall back to default behavior for other key types
+        Ok(false)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

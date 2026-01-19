@@ -15,8 +15,8 @@ use std::ptr::NonNull;
 
 use crate::peek_to_string_expr;
 use crate::schema_types::{
-    DefaultSchema, EnumSchema, MapSchema, Meta, ObjectSchema, OptionalSchema, Schema, SchemaFile,
-    SeqSchema,
+    DefaultSchema, EnumSchema, MapSchema, Meta, ObjectSchema, OptionalSchema, RawStyx, Schema,
+    SchemaFile, SeqSchema,
 };
 
 /// Try to get the default value for a field as a styx expression string.
@@ -403,7 +403,8 @@ impl SchemaGenerator {
                     let mut field_schema = self.shape_to_schema(field.shape());
 
                     // Wrap with @default if field has a default value
-                    if let Some(default_value) = field_default_value(field) {
+                    if let Some(default_value_str) = field_default_value(field) {
+                        let default_value = RawStyx::new(default_value_str);
                         field_schema =
                             Schema::Default(DefaultSchema((default_value, Box::new(field_schema))));
                     }
@@ -539,5 +540,249 @@ mod tests {
         // The nested default should be serialized with braces
         assert!(schema.contains("default"));
         assert!(schema.contains("enabled"));
+    }
+
+    // =========================================================================
+    // Roundtrip tests - parse generated schema back into SchemaFile
+    // =========================================================================
+
+    #[test]
+    fn test_roundtrip_simple_struct() {
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            name: String,
+            port: u16,
+        }
+
+        let schema_str = schema_from_type::<Config>();
+        tracing::debug!("Generated schema:\n{schema_str}");
+
+        // Parse it back
+        let parsed: SchemaFile =
+            crate::from_str(&schema_str).expect("failed to parse generated schema");
+
+        // Verify structure
+        assert_eq!(parsed.meta.id, "Config");
+        assert!(
+            parsed.schema.contains_key(&None),
+            "should have root schema with None key"
+        );
+
+        let root_schema = parsed.schema.get(&None).expect("missing root schema");
+        if let Schema::Object(obj) = root_schema {
+            assert!(obj.0.contains_key(&Some("name".to_string())));
+            assert!(obj.0.contains_key(&Some("port".to_string())));
+        } else {
+            panic!("expected root schema to be Object, got {:?}", root_schema);
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_with_option() {
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            name: String,
+            debug: Option<bool>,
+        }
+
+        let schema_str = schema_from_type::<Config>();
+        tracing::debug!("Generated schema:\n{schema_str}");
+
+        let parsed: SchemaFile =
+            crate::from_str(&schema_str).expect("failed to parse generated schema");
+
+        let root_schema = parsed.schema.get(&None).expect("missing root schema");
+        if let Schema::Object(obj) = root_schema {
+            let debug_schema = obj
+                .0
+                .get(&Some("debug".to_string()))
+                .expect("missing debug field");
+            assert!(
+                matches!(debug_schema, Schema::Optional(_)),
+                "debug should be Optional, got {:?}",
+                debug_schema
+            );
+        } else {
+            panic!("expected root schema to be Object");
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_with_vec() {
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            items: Vec<String>,
+        }
+
+        let schema_str = schema_from_type::<Config>();
+        tracing::debug!("Generated schema:\n{schema_str}");
+
+        let parsed: SchemaFile =
+            crate::from_str(&schema_str).expect("failed to parse generated schema");
+
+        let root_schema = parsed.schema.get(&None).expect("missing root schema");
+        if let Schema::Object(obj) = root_schema {
+            let items_schema = obj
+                .0
+                .get(&Some("items".to_string()))
+                .expect("missing items field");
+            assert!(
+                matches!(items_schema, Schema::Seq(_)),
+                "items should be Seq, got {:?}",
+                items_schema
+            );
+        } else {
+            panic!("expected root schema to be Object");
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_with_default() {
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            name: String,
+            #[facet(default = 8080)]
+            port: u16,
+        }
+
+        let schema_str = schema_from_type::<Config>();
+        tracing::debug!("Generated schema:\n{schema_str}");
+
+        let parsed: SchemaFile =
+            crate::from_str(&schema_str).expect("failed to parse generated schema");
+
+        let root_schema = parsed.schema.get(&None).expect("missing root schema");
+        if let Schema::Object(obj) = root_schema {
+            let port_schema = obj
+                .0
+                .get(&Some("port".to_string()))
+                .expect("missing port field");
+            if let Schema::Default(default_schema) = port_schema {
+                assert_eq!(
+                    default_schema.0.0.as_str(),
+                    "8080",
+                    "default value should be 8080"
+                );
+            } else {
+                panic!("port should be Default, got {:?}", port_schema);
+            }
+        } else {
+            panic!("expected root schema to be Object");
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_with_nested_default() {
+        #[derive(Facet, Default)]
+        #[allow(dead_code)]
+        struct Inner {
+            #[facet(default = true)]
+            enabled: bool,
+            #[facet(default = 8080)]
+            port: u16,
+        }
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            inner: Inner,
+        }
+
+        let schema_str = schema_from_type::<Config>();
+        tracing::debug!("Generated schema:\n{schema_str}");
+
+        let parsed: SchemaFile =
+            crate::from_str(&schema_str).expect("failed to parse generated schema");
+
+        let root_schema = parsed.schema.get(&None).expect("missing root schema");
+        if let Schema::Object(obj) = root_schema {
+            let inner_schema = obj
+                .0
+                .get(&Some("inner".to_string()))
+                .expect("missing inner field");
+            // Inner is an object with fields that have defaults
+            if let Schema::Object(inner_obj) = inner_schema {
+                // Check that the inner object has fields with @default wrappers
+                let enabled_schema = inner_obj
+                    .0
+                    .get(&Some("enabled".to_string()))
+                    .expect("missing enabled field");
+                assert!(
+                    matches!(enabled_schema, Schema::Default(_)),
+                    "enabled should have @default wrapper"
+                );
+                let port_schema = inner_obj
+                    .0
+                    .get(&Some("port".to_string()))
+                    .expect("missing port field");
+                assert!(
+                    matches!(port_schema, Schema::Default(_)),
+                    "port should have @default wrapper"
+                );
+            } else {
+                panic!("inner should be Object, got {:?}", inner_schema);
+            }
+        } else {
+            panic!("expected root schema to be Object");
+        }
+    }
+
+    #[test]
+    fn test_schema_uses_at_for_root_key() {
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            name: String,
+        }
+
+        let schema_str = schema_from_type::<Config>();
+        tracing::debug!("Generated schema:\n{schema_str}");
+
+        // The schema should use @ as the key for the root type, not "None"
+        assert!(
+            schema_str.contains("@ @object")
+                || schema_str.contains("@\n")
+                || schema_str.contains("@ {"),
+            "schema should use @ for root key, not None. Got:\n{}",
+            schema_str
+        );
+        assert!(
+            !schema_str.contains("None @object"),
+            "schema should not contain 'None @object'. Got:\n{}",
+            schema_str
+        );
+    }
+
+    #[test]
+    fn test_debug_nested_default_serialization() {
+        use crate::to_string_compact;
+
+        #[derive(Facet, Default)]
+        #[allow(dead_code)]
+        struct Inner {
+            #[facet(default = true)]
+            enabled: bool,
+            #[facet(default = 8080)]
+            port: u16,
+        }
+
+        // Check what Inner::default() serializes to
+        let inner_default = Inner::default();
+        let serialized = to_string_compact(&inner_default).expect("serialization should work");
+        tracing::debug!("Inner::default() serializes to: {}", serialized);
+
+        // Now check what the schema looks like
+        let schema_str = schema_from_type::<Inner>();
+        tracing::debug!("Inner schema:\n{}", schema_str);
+
+        // Check if the schema contains @default wrappers at field level
+        assert!(
+            schema_str.contains("@default"),
+            "Inner schema should contain @default for fields with defaults"
+        );
     }
 }

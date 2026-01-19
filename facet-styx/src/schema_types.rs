@@ -13,9 +13,10 @@ pub struct SchemaFile {
     pub meta: Meta,
     /// External schema imports (optional).
     /// Maps namespace prefixes to external schema locations.
+    #[facet(skip_serializing_if = Option::is_none)]
     pub imports: Option<HashMap<String, String>>,
     /// Type definitions.
-    /// Keys are type names (Some) or unit (None) for the document root.
+    /// Keys are type names, or `None` for the document root (serialized as `@`).
     pub schema: HashMap<Option<String>, Schema>,
 }
 
@@ -25,10 +26,13 @@ pub struct Meta {
     /// Unique identifier for the schema (e.g., `crate:myapp-config@1`).
     pub id: String,
     /// Schema version (semver).
+    #[facet(skip_serializing_if = Option::is_none)]
     pub version: Option<String>,
     /// CLI binary name for schema discovery.
+    #[facet(skip_serializing_if = Option::is_none)]
     pub cli: Option<String>,
     /// Human-readable description.
+    #[facet(skip_serializing_if = Option::is_none)]
     pub description: Option<String>,
 }
 
@@ -201,12 +205,34 @@ pub struct FlattenSchema(pub (Box<Schema>,));
 // Wrapper schema types
 // =============================================================================
 
+/// A raw Styx value that serializes without quotes and deserializes any value as a string.
+///
+/// Used for embedding Styx expressions in schemas (e.g., default values).
+#[derive(Debug, Clone, PartialEq, Eq, Facet)]
+pub struct RawStyx(pub String);
+
+impl RawStyx {
+    pub fn new(s: impl Into<String>) -> Self {
+        RawStyx(s.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for RawStyx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Default value wrapper: @default(value @type).
 /// If the field is missing, use the default value.
 /// Tuple is (default_value, inner_schema).
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct DefaultSchema(pub (String, Box<Schema>));
+pub struct DefaultSchema(pub (RawStyx, Box<Schema>));
 
 /// Deprecated wrapper: @deprecated("reason" @type).
 /// Marks a field as deprecated; validation warns but doesn't fail.

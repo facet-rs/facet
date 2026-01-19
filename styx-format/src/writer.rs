@@ -554,7 +554,7 @@ impl StyxWriter {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Handle separator before a value in a container.
-    fn before_value(&mut self) {
+    pub fn before_value(&mut self) {
         // If we just wrote a tag, skip spacing for the payload
         if self.skip_next_before_value {
             self.skip_next_before_value = false;

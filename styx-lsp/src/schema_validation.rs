@@ -365,7 +365,7 @@ fn unwrap_field_modifiers(schema: Schema) -> (bool, Option<String>, Schema) {
             (true, default, inner)
         }
         Schema::Default(def) => {
-            let default_value = def.0.0.clone();
+            let default_value = def.0.0.to_string();
             let (optional, _, inner) = unwrap_field_modifiers(*def.0.1);
             (optional, Some(default_value), inner)
         }
@@ -387,7 +387,7 @@ pub fn generate_placeholder(schema: &Schema) -> String {
         Schema::Map(_) => "{}".to_string(),
         Schema::Object(_) => "{}".to_string(),
         Schema::Optional(opt) => generate_placeholder(&opt.0.0),
-        Schema::Default(def) => def.0.0.clone(),
+        Schema::Default(def) => def.0.0.to_string(),
         Schema::Deprecated(dep) => generate_placeholder(&dep.0.1),
         Schema::Union(u) => {
             u.0.first()

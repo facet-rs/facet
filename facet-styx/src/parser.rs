@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use facet_core::Facet;
 use facet_format::{
     ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
     ProbeStream, ScalarValue, ValueTypeHint,
@@ -13,6 +14,7 @@ use crate::trace;
 
 /// Streaming Styx parser implementing FormatParser.
 pub struct StyxParser<'de> {
+    input: &'de str,
     lexer: Lexer<'de>,
     /// Stack of parsing contexts.
     stack: Vec<ContextState>,
@@ -32,6 +34,8 @@ pub struct StyxParser<'de> {
     expecting_value: bool,
     /// Expression mode: parse a single value, not an implicit root object.
     expr_mode: bool,
+    /// Start offset of the value being peeked (for capture_raw).
+    peek_start_offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -46,6 +50,7 @@ impl<'de> StyxParser<'de> {
     /// Create a new parser for the given source (document mode).
     pub fn new(source: &'de str) -> Self {
         Self {
+            input: source,
             lexer: Lexer::new(source),
             stack: Vec::new(),
             peeked_token: None,
@@ -56,6 +61,7 @@ impl<'de> StyxParser<'de> {
             pending_key: None,
             expecting_value: false,
             expr_mode: false,
+            peek_start_offset: None,
         }
     }
 
@@ -65,6 +71,7 @@ impl<'de> StyxParser<'de> {
     /// Use this for parsing embedded values like default values in schemas.
     pub fn new_expr(source: &'de str) -> Self {
         Self {
+            input: source,
             lexer: Lexer::new(source),
             stack: Vec::new(),
             peeked_token: None,
@@ -75,6 +82,7 @@ impl<'de> StyxParser<'de> {
             pending_key: None,
             expecting_value: true, // Start expecting a value immediately
             expr_mode: true,
+            peek_start_offset: None,
         }
     }
 
@@ -305,6 +313,10 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         // Return queued event if any (FIFO - take from front)
         if !self.peeked_events.is_empty() {
             let event = self.peeked_events.remove(0);
+            // Clear peek_start_offset when consuming peeked events
+            if self.peeked_events.is_empty() {
+                self.peek_start_offset = None;
+            }
             trace!(?event, "next_event: returning queued event");
             return Ok(Some(event));
         }
@@ -610,11 +622,13 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
     }
 
     fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
-        if self.peeked_events.is_empty()
-            && let Some(event) = self.next_event()?
-        {
-            // Insert at front since next_event may have pushed follow-up events
-            self.peeked_events.insert(0, event);
+        if self.peeked_events.is_empty() {
+            // Record the lexer position before consuming any tokens
+            self.peek_start_offset = Some(self.lexer.position() as usize);
+            if let Some(event) = self.next_event()? {
+                // Insert at front since next_event may have pushed follow-up events
+                self.peeked_events.insert(0, event);
+            }
         }
         Ok(self.peeked_events.first().cloned())
     }
@@ -666,6 +680,31 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
             offset: s.start as usize,
             len: (s.end - s.start) as usize,
         })
+    }
+
+    fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
+        Some(crate::RawStyx::SHAPE)
+    }
+
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
+        // Get the start offset - either from peek_event or current position
+        let start_offset = self
+            .peek_start_offset
+            .take()
+            .unwrap_or_else(|| self.lexer.position() as usize);
+
+        // Skip the entire value (including nested structures)
+        self.skip_value()?;
+
+        let end_offset = self.lexer.position() as usize;
+
+        // Extract the raw slice
+        let raw_str = &self.input[start_offset..end_offset];
+
+        // Trim trailing whitespace/newlines
+        let raw_str = raw_str.trim_end();
+
+        Ok(Some(raw_str))
     }
 }
 
