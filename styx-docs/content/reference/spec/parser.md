@@ -411,7 +411,7 @@ A Styx document is an object. Top-level entries do not require braces.
 
 > r[document.root]
 > The parser MUST interpret top-level entries as entries of an implicit root object.
-> Root entries follow the same separator rules as block objects: newlines or commas (see [`object.separators`](#object.separators)).
+> Root entries follow the same separator rules as block objects: newlines or commas (see `r[object.separators]`).
 > If the document starts with `{`, it MUST be parsed as a single explicit block object.
 >
 > ```compare
