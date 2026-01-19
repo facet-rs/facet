@@ -129,7 +129,7 @@ func getGoOutput(content string) string {
 }
 
 func getRustOutput(t *testing.T, file string, styxCLI string) string {
-	cmd := exec.Command(styxCLI, "@tree", "--format", "sexp", file)
+	cmd := exec.Command(styxCLI, "tree", "--format", "sexp", file)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

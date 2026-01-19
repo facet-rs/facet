@@ -381,9 +381,6 @@ func (l *Lexer) readHeredoc(start int, hadWhitespace, hadNewline bool) (*Token, 
 		// Check for exact match (no indentation)
 		if lineStr == bareDelimiter {
 			result := text.String()
-			if strings.Contains(delimStr, ",") {
-				result = delimStr[len(bareDelimiter):] + "\n" + result
-			}
 			return &Token{TokenHeredoc, result, Span{start, l.bytePos}, hadWhitespace, hadNewline}, nil
 		}
 
@@ -393,9 +390,6 @@ func (l *Lexer) readHeredoc(start int, hadWhitespace, hadNewline bool) (*Token, 
 			indentLen := len(lineStr) - len(stripped)
 			// Dedent the content by stripping up to indentLen from each line
 			result := dedentHeredoc(text.String(), indentLen)
-			if strings.Contains(delimStr, ",") {
-				result = delimStr[len(bareDelimiter):] + "\n" + result
-			}
 			return &Token{TokenHeredoc, result, Span{start, l.bytePos}, hadWhitespace, hadNewline}, nil
 		}
 
