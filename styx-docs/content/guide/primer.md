@@ -35,24 +35,23 @@ The differences:
 
 ### When you need quotes
 
-Bare scalars can contain most characters. They cannot *start* with:
+A bare scalar is terminated by whitespace or any of: `{`, `}`, `(`, `)`, `,`, `"`, `>`.
 
-- whitespace, `{`, `}`, `(`, `)`, `,`, `"`, `=`, `@`, or `>`
-
-And `>` is forbidden anywhere (it's the attribute separator).
+Additionally, a bare scalar cannot *start* with `=` or `@`.
 
 So paths and URLs work unquoted:
 
 ```styx
 path /usr/local/bin
-url https://example.com/path?query=value&foo=bar
+url https://example.com/path?query=value
 ```
 
-But you need quotes for values with spaces or forbidden characters:
+But you need quotes when your value contains terminating characters:
 
 ```styx
 greeting "Hello, world!"
 template "{{name}}"
+json "{\"key\": \"value\"}"
 ```
 
 ### Multiline objects
