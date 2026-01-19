@@ -141,7 +141,7 @@
         margin-bottom: 0;
     }
 
-    .question-text :global(.code-block) {
+    .question-text > :global(.code-block) {
         background: light-dark(#fafafa, #0a0a0a);
         border: 1px solid light-dark(#e0e0e0, #2a2a2a);
         border-radius: 8px;
@@ -149,7 +149,7 @@
         margin: 0.75rem 0;
     }
 
-    .question-text :global(.code-header) {
+    .question-text > :global(.code-block) > :global(.code-header) {
         background: light-dark(#f0f0f0, #1a1a1a);
         border-bottom: 1px solid light-dark(#e0e0e0, #2a2a2a);
         padding: 0.4rem 1rem;
@@ -159,6 +159,43 @@
         color: light-dark(#888, #666);
         text-transform: uppercase;
         letter-spacing: 0.05em;
+    }
+
+    /* Compare blocks */
+    .question-text :global(.compare-container) {
+        display: flex;
+        margin: 0.75rem 0;
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid light-dark(#e0e0e0, #2a2a2a);
+    }
+
+    .question-text :global(.compare-section) {
+        flex: 1;
+        background: light-dark(#fafafa, #0a0a0a);
+    }
+
+    .question-text :global(.compare-section:not(:last-child)) {
+        border-right: 1px solid light-dark(#e0e0e0, #2a2a2a);
+    }
+
+    .question-text :global(.compare-header) {
+        background: light-dark(#f0f0f0, #1a1a1a);
+        border-bottom: 1px solid light-dark(#e0e0e0, #2a2a2a);
+        padding: 0.4rem 1rem;
+        font-size: 0.7rem;
+        font-weight: 500;
+        font-family: "SF Mono", Monaco, Consolas, monospace;
+        color: light-dark(#888, #666);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .question-text :global(.compare-section) :global(.code-block) {
+        background: none;
+        border: none;
+        border-radius: 0;
+        margin: 0;
     }
 
     .question-text :global(pre) {

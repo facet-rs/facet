@@ -65,25 +65,23 @@ echo "Hello, $USER"
 SH
 ```
 
-### Multiline objects
+### Documents are implicit objects
 
-For multiline, use newlines instead of commas:
+A Styx document is implicitly an object. These are equivalent:
 
 ```styx
 name Alice
 age 30
-active true
 ```
-
-A Styx document is implicitly an object, so the above is equivalent to:
 
 ```styx
 {
     name Alice
     age 30
-    active true
 }
 ```
+
+### Separator rules
 
 Objects use either commas OR newlines as separators — never both in the same object. This prevents the ambiguity that plagues YAML.
 
@@ -109,7 +107,13 @@ colors (red green blue)
 
 <div data-quiz="basics-json-to-styx"></div>
 
-<div data-quiz="basics-when-quotes"></div>
+<div data-quiz="bare-scalar-path"></div>
+
+<div data-quiz="bare-scalar-url"></div>
+
+<div data-quiz="bare-scalar-space"></div>
+
+<div data-quiz="bare-scalar-comma"></div>
 
 <div data-quiz="basics-sequence-syntax"></div>
 
@@ -152,7 +156,6 @@ version 2.0.0-beta.1
 
 <div data-quiz="scalars-norway"></div>
 
-<div data-quiz="scalars-url"></div>
 
 ## The two dimensions
 
@@ -264,27 +267,29 @@ row (1 @ @ 4 5)  // sparse row with gaps
 
 <div data-quiz="unit-sparse-sequence"></div>
 
-## Key chains
+## Dotted paths
 
-Multiple bare words in sequence form nested objects automatically:
+Dotted keys define nested structure:
 
 ```styx
-database connection timeout 30
+server.host localhost
+server.port 8080
 ```
 
-This expands to:
+This is equivalent to:
 
 ```styx
-database {connection {timeout 30}}
+server {
+  host localhost
+  port 8080
+}
 ```
 
-This is purely syntactic sugar — the parser produces the same tree either way. It's useful for deeply nested configuration:
+Useful for deeply nested configuration:
 
 ```styx
-server http port 8080
-server http host localhost
-server tls enabled true
-server tls cert "/etc/ssl/cert.pem"
+profile.release.lto true
+profile.release.opt-level 3
 ```
 
 ### Attributes
@@ -303,7 +308,7 @@ Attributes produce the same structure as nested objects but read better for reco
 
 ### Recap
 
-<div data-quiz="keychains-basic"></div>
+<div data-quiz="dotted-paths-basic"></div>
 
 <div data-quiz="attributes-basic"></div>
 

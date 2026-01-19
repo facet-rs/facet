@@ -185,22 +185,20 @@ key @ // explicitly set to unit
 koi   // implicitly set to unit
 ```
 
-So, key-value pairs can be missing a value, and... they can also
-have more than one key — those are called "key chains".
+So, key-value pairs can be missing a value. And dotted keys create nested structure:
 
 ```styx
-fee fi foe fum
+server.host localhost
 // equivalent to
-fee {fi {foe fum}}
+server {host localhost}
 ```
 
-And, if you need to have an object as your value and you want to avoid
-one last bit of nesting? As a treat? You can use object attribute syntax:
+And object attribute syntax provides a compact way to build objects:
 
 ```styx
 {
-    web domain=example.org      port=9000
-    api domain=api.example.org  port=9001
+    web domain>example.org      port>9000
+    api domain>api.example.org  port>9001
 }
 ```
 

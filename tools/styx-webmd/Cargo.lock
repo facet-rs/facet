@@ -24,6 +24,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72c7786491956470ff732a5cc5271973c0d35f2dfdd1c6a89554ffc436cb7f7d"
 dependencies = [
  "arborium-highlight",
+ "arborium-json",
  "arborium-markdown",
  "arborium-rust",
  "arborium-styx",
@@ -72,6 +73,17 @@ name = "arborium-javascript"
 version = "2.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc16c4b8f7d921667d95665add5cb08c5cd52e8fdbeacf8a66a57d3e0e0ce5b9"
+dependencies = [
+ "arborium-sysroot",
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "arborium-json"
+version = "2.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "082e5d5dec5123a04f4c4f089a756439938979d4db9bded0b2abcf8307ea72c1"
 dependencies = [
  "arborium-sysroot",
  "cc",

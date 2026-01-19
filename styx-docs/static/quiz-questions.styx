@@ -8,47 +8,100 @@ questions {
     //==========================================================================
     basics-json-to-styx {
         question <<DOC,markdown
-            Is this valid Styx?
+            Are these two documents equivalent?
 
-            ```styx
+            ```compare
+            /// json
+            {"name": "Alice"}
+            /// styx
             name: "Alice"
             ```
             DOC
         options (
-            {text "Valid", help "Styx doesn't use colons between keys and values"}
-            {text "Invalid", correct true}
+            {text "Yes", help "Look carefully at the key in the Styx version"}
+            {text "No", correct true}
         )
         explanation <<DOC,markdown
-            Styx uses whitespace to separate keys from values, not colons. The valid form is:
+            The colon is part of the key! In Styx, `name: "Alice"` parses as:
+
+            - key: `name:` (bare scalar including the colon)
+            - value: `Alice`
+
+            The equivalent Styx would be:
 
             ```styx
-            name "Alice"
+            name Alice
             ```
-
-            Or just `name Alice` since it doesn't need quoting.
             DOC
     }
-    basics-when-quotes {
+    bare-scalar-path {
         question <<DOC,markdown
-            When do you need quotes around a scalar in Styx?
+            Is this valid Styx?
 
             ```styx
-            greeting Hello, world!
+            path /usr/local/bin
             ```
             DOC
         options (
-            {text "Always - strings must be quoted", help "Styx only requires quotes when the value contains special characters"}
-            {text "Sometimes - quotes are optional", help "The comma and exclamation here would cause parsing issues"}
-            {text "Only when the value contains spaces or special characters", correct true}
+            {text "Yes", correct true}
+            {text "No", help "Slashes are fine in bare scalars"}
         )
         explanation <<DOC,markdown
-            Bare scalars work for simple values: `name Alice`
-
-            But `Hello, world!` contains a comma (which separates entries in inline objects) and spaces. You'd write:
+            Paths work as bare scalars. Slashes don't have special meaning in Styx.
+            DOC
+    }
+    bare-scalar-url {
+        question <<DOC,markdown
+            Is this valid Styx?
 
             ```styx
-            greeting "Hello, world!"
+            url https://example.org/path?q=1
             ```
+            DOC
+        options (
+            {text "Yes", correct true}
+            {text "No", help "Colons, slashes, question marks, equals signs - all fine"}
+        )
+        explanation <<DOC,markdown
+            URLs work as bare scalars. The only characters that terminate a bare scalar are whitespace, `{`, `}`, `(`, `)`, `,`, `"`, and `>`.
+            DOC
+    }
+    bare-scalar-space {
+        question <<DOC,markdown
+            Is this valid Styx?
+
+            ```styx
+            greeting hello world
+            ```
+            DOC
+        options (
+            {text "Yes", help "Spaces terminate bare scalars"}
+            {text "No", correct true}
+        )
+        explanation <<DOC,markdown
+            Spaces terminate bare scalars. This has three atoms (`greeting`, `hello`, `world`) but entries can only have two.
+
+            For a value with spaces, use quotes: `greeting "hello world"`
+            DOC
+    }
+    bare-scalar-comma {
+        question <<DOC,markdown
+            Is this valid Styx?
+
+            ```styx
+            list a,b,c
+            ```
+            DOC
+        options (
+            {text "Yes - value is `a,b,c`", help "Commas terminate bare scalars"}
+            {text "No", correct true}
+        )
+        explanation <<DOC,markdown
+            Commas terminate bare scalars (they separate entries in inline objects).
+
+            This tries to parse as: key `list`, value `a`, then `,b,c` which is invalid.
+
+            Use quotes: `list "a,b,c"` or make a real sequence: `list (a b c)`
             DOC
     }
     basics-sequence-syntax {
@@ -80,8 +133,8 @@ questions {
             ```
             DOC
         options (
-            {text "Valid - commas separate sequence elements", help "Sequences don't use commas"}
-            {text "Invalid - commas are not allowed in sequences", correct true}
+            {text "Valid", help "Sequences don't use commas"}
+            {text "Invalid", correct true}
         )
         explanation <<DOC,markdown
             Sequences are whitespace-separated only. Commas are a parse error.
@@ -99,7 +152,7 @@ questions {
             ```
             DOC
         options (
-            {text "Valid - you can mix commas and newlines", help "Objects must use one separator style consistently"}
+            {text "Valid", help "Objects must use one separator style consistently"}
             {text "Invalid", correct true}
         )
         explanation <<DOC,markdown
@@ -179,24 +232,6 @@ questions {
             This is the "Norway problem" - YAML interprets `no` as boolean false.
 
             In Styx, `no` is just text. It becomes a boolean, string, or country code only when you deserialize it with a schema or into a typed structure.
-            DOC
-    }
-    scalars-url {
-        question <<DOC,markdown
-            Is this valid Styx?
-
-            ```styx
-            website https://example.org/path?query=1
-            ```
-            DOC
-        options (
-            {text "Invalid - URLs need quotes", help "Bare scalars can contain many characters"}
-            {text "Valid", correct true}
-        )
-        explanation <<DOC,markdown
-            URLs work as bare scalars. Colons, slashes, question marks, and equals signs are all fine in bare scalars.
-
-            You'd only need quotes if the value contained spaces, commas, or other structural characters.
             DOC
     }
     //==========================================================================
@@ -321,8 +356,8 @@ questions {
             ```
             DOC
         options (
-            {text "Valid - a key with a tagged empty object", help "Count the atoms: `key`, `@tag`, `{}`"}
-            {text "Invalid - too many atoms", correct true}
+            {text "Valid", help "Count the atoms: `key`, `@tag`, `{}`"}
+            {text "Invalid", correct true}
         )
         explanation <<DOC,markdown
             Entries can have at most two atoms (key and value). Here there are three: `key`, `@tag`, and `{}`.
@@ -341,8 +376,8 @@ questions {
             ```
             DOC
         options (
-            {text "Invalid - tags can only go on scalars", help "Tags can attach to any payload type"}
             {text "Valid", correct true}
+            {text "Invalid", help "Tags can attach to any payload type"}
         )
         explanation <<DOC,markdown
             Tags can have any payload: scalars, sequences, or objects.
@@ -409,8 +444,8 @@ questions {
             ```
             DOC
         options (
-            {text "A sequence with three elements", help "Sequences use `()`, this is `{}`"}
-            {text "Three keys, each with unit value", correct true}
+            {text "A sequence", help "Sequences use `()`, this is `{}`"}
+            {text "An object", correct true}
             {text "A parse error", help "Omitting values is valid"}
         )
         explanation <<DOC,markdown
@@ -436,8 +471,8 @@ questions {
             ```
             DOC
         options (
-            {text "Invalid - @ can't appear in sequences", help "Unit is a value like any other"}
-            {text "Valid - a sparse sequence with holes", correct true}
+            {text "Valid", correct true}
+            {text "Invalid", help "Unit is a value like any other"}
         )
         explanation <<DOC,markdown
             `@` is a first-class value. You can use it anywhere: as object values, sequence elements, tag payloads.
@@ -446,32 +481,33 @@ questions {
             DOC
     }
     //==========================================================================
-    // Section 5: Key chains and object attributes
+    // Section 5: Dotted paths and object attributes
     //==========================================================================
-    keychains-basic {
+    dotted-paths-basic {
         question <<DOC,markdown
             What does this mean?
 
             ```styx
-            fee fi foe fum
+            server.host localhost
             ```
             DOC
         options (
-            {text "A key `fee` with value `fi foe fum`", help "That would be a sequence: `fee (fi foe fum)`"}
-            {text "Four separate keys", help "That would need newlines or commas"}
-            {text "Nested objects: fee → fi → foe → fum", correct true}
+            {text "A single key-value pair", help "Dots create nested structure"}
+            {text "Nested objects", correct true}
         )
         explanation <<DOC,markdown
-            Multiple bare words form a "key chain" - nested single-key objects:
+            Dotted keys define nested paths:
 
             ```styx
-            fee fi foe fum
+            server.host localhost
             ```
 
             Is equivalent to:
 
             ```styx
-            fee {fi {foe fum}}
+            server {
+              host localhost
+            }
             ```
             DOC
     }
@@ -485,7 +521,7 @@ questions {
             DOC
         options (
             {text "Greater-than comparison", help "Styx doesn't have operators"}
-            {text "Sets attributes on the key", correct true}
+            {text "Sets attributes", correct true}
             {text "A parse error", help "Object attribute syntax is valid"}
         )
         explanation <<DOC,markdown
@@ -512,8 +548,7 @@ questions {
             DOC
         options (
             {text "Valid", correct true}
-            {text "Invalid - only one attribute per key", help "Keys can have multiple attributes"}
-            {text "Invalid - attributes need commas", help "Attributes are whitespace-separated"}
+            {text "Invalid", help "Keys can have multiple attributes"}
         )
         explanation <<DOC,markdown
             Keys can have multiple attributes. This creates:
@@ -542,7 +577,7 @@ questions {
             DOC
         options (
             {text "A file include", help "Styx doesn't have includes"}
-            {text "A multiline string (heredoc)", correct true}
+            {text "A multiline string", correct true}
             {text "A parse error", help "Heredocs are valid Styx"}
         )
         explanation <<DOC,markdown
@@ -563,8 +598,8 @@ questions {
             DOC
         options (
             {text "Compiles the code as Rust", help "Styx doesn't execute code"}
-            {text "A language hint for syntax highlighting", correct true}
-            {text "A parse error - heredocs can't have hints", help "Language hints are valid"}
+            {text "A language hint", correct true}
+            {text "A parse error", help "Language hints are valid"}
         )
         explanation <<DOC,markdown
             The `,rust` after the heredoc marker is a language hint. It doesn't affect parsing - it's metadata for editors and tools to enable syntax highlighting.
@@ -585,8 +620,8 @@ questions {
             ```
             DOC
         options (
-            {text "Same as `//` - just a comment", help "Triple-slash has special meaning"}
-            {text "Documentation that attaches to the next element", correct true}
+            {text "Same as `//`", help "Triple-slash has special meaning"}
+            {text "A doc comment", correct true}
             {text "A parse error", help "Doc comments are valid"}
         )
         explanation <<DOC,markdown
@@ -604,7 +639,7 @@ questions {
             ```
             DOC
         options (
-            {text "A sequence containing the literal text '@string'", help "In schemas, @ introduces type annotations"}
+            {text "A sequence containing `@string`", help "In schemas, @ introduces type annotations"}
             {text "A sequence of strings", correct true}
             {text "A tagged value", help "Schema types use @ differently than data"}
         )
