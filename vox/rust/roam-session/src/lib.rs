@@ -8,9 +8,15 @@
 #[macro_use]
 mod macros;
 
+pub mod driver;
 pub mod runtime;
 pub mod transport;
 
+pub use driver::{
+    ConnectError, ConnectionError, Driver, FramedClient, HandshakeConfig, MessageConnector,
+    Negotiated, NoDispatcher, RetryPolicy, accept_framed, connect_framed,
+    connect_framed_with_policy, initiate_framed,
+};
 pub use transport::MessageTransport;
 
 use std::marker::PhantomData;

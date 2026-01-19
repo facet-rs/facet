@@ -12,6 +12,9 @@ use std::time::Duration;
 // For oneshot, use futures-channel (async-channel doesn't have oneshot)
 pub use futures_channel::oneshot::{Receiver as OneshotReceiver, Sender as OneshotSender};
 
+// Async mutex
+pub use futures_util::lock::Mutex;
+
 /// Wrapper around async-channel Sender to match tokio's API.
 pub struct Sender<T>(async_channel::Sender<T>);
 

@@ -1,41 +1,35 @@
 # WASM Support for roam-websocket
 
-## Goal
+## Status: COMPLETE (2025-01-19)
 
-Make `roam-websocket` work seamlessly in both native (tokio) and WASM (browser) environments,
-sharing the same Driver, ConnectionHandle, and protocol logic.
+**What's been achieved:**
+- Runtime abstraction in `roam-session/src/runtime/` (tokio + wasm)
+- WASM WsTransport in `roam-websocket/src/wasm.rs`
+- MessageTransport trait in `roam-session/src/transport.rs`
+- Driver, accept_framed, initiate_framed moved to `roam-session`
+- dodeca-devtools compiles for WASM without roam-stream dependency
 
-## Current Problem
+## Completed Phases
 
-```
-roam-stream depends on tokio for:
-  - Driver (spawn, mpsc, oneshot, timeout, sleep)
-  - CobsFramed (AsyncRead/AsyncWrite)
-  - MessageTransport trait
+1. [01-DONE-move-driver.md](./01-DONE-move-driver.md) - Moved Driver to roam-session
+2. [02-DONE-dodeca-integration.md](./02-DONE-dodeca-integration.md) - dodeca-devtools WASM compilation
 
-roam-session depends on tokio for:
-  - mpsc channels
-  - oneshot channels
-  - spawn for dispatch handlers
-  - tunnel_stream (AsyncRead/AsyncWrite)
-```
+## Key Changes
 
-The tokio dependencies fall into two buckets:
+### roam-session
+- New `driver.rs` with `Driver`, `HandshakeConfig`, `NoDispatcher`, `accept_framed`, `initiate_framed`, etc.
+- Uses `crate::runtime::*` (Mutex, channel, spawn, etc.) for WASM portability
+- Added `futures-util` dependency for both native and WASM
 
-1. **WASM-portable** (has equivalents): spawn, mpsc, oneshot, timeout, sleep
-2. **NOT WASM-portable** (byte-stream I/O): AsyncRead, AsyncWrite, CobsFramed, tunnel_stream
+### roam-stream
+- Kept byte-stream specific code: `Connector`, `Client`, `accept`, `connect`, `CobsFramed`
+- Re-exports moved types from roam-session for backwards compatibility
 
-## Solution
+### dodeca-devtools
+- Removed roam-stream dependency
+- Uses roam-session directly for `ConnectionHandle`, `HandshakeConfig`, `NoDispatcher`, `accept_framed`
 
-Restructure so that:
-- Core protocol logic uses abstract runtime traits (portable)
-- Byte-stream specific code stays separate (not portable, not needed for WebSocket)
-- WebSocket transport implements MessageTransport for both native and WASM
+## Next Steps (if needed)
 
-## Phases
-
-1. [01-runtime-abstraction.md](./01-runtime-abstraction.md) - Create runtime abstraction layer
-2. [02-restructure-crates.md](./02-restructure-crates.md) - Move Driver/MessageTransport to roam-session
-3. [03-wasm-runtime.md](./03-wasm-runtime.md) - Implement WASM runtime
-4. [04-wasm-wstransport.md](./04-wasm-wstransport.md) - Add WASM WsTransport
-5. [05-integration.md](./05-integration.md) - Test and integrate
+- Test end-to-end: run dodeca, verify devtools connects in browser
+- Clean up legacy protocol types in dodeca-protocol (ClientMessage, ServerMessage)

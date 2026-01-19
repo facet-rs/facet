@@ -3,7 +3,8 @@
 use std::future::Future;
 use std::time::Duration;
 
-// Re-export tokio channel types directly
+// Re-export tokio sync types directly
+pub use tokio::sync::Mutex;
 pub use tokio::sync::mpsc::{
     Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, error::SendError,
     unbounded_channel,

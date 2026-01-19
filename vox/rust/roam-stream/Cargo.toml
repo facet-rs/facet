@@ -15,6 +15,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 cobs.workspace = true
 ctor.workspace = true
 facet.workspace = true
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await-macro"] }
 tokio = { workspace = true, features = ["net", "io-util", "rt", "time", "sync"] }
 roam-wire.workspace = true
 roam-session.workspace = true

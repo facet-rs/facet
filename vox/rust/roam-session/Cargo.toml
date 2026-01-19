@@ -24,11 +24,12 @@ tracing = { workspace = true, optional = true }
 # Native runtime
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio.workspace = true
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await-macro"] }
 
 # WASM runtime
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true
 async-channel.workspace = true
 futures-channel.workspace = true
-futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await-macro"] }
 gloo-timers.workspace = true

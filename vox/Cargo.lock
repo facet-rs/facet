@@ -2179,6 +2179,7 @@ dependencies = [
  "ctor",
  "facet",
  "facet-postcard",
+ "futures-util",
  "roam-session",
  "roam-wire",
  "tokio",

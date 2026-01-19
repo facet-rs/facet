@@ -27,9 +27,11 @@ pub use roam_session::{
 };
 
 // Re-export tunnel types for byte stream bridging
+pub use roam_session::{Tunnel, tunnel_pair};
+
+#[cfg(not(target_arch = "wasm32"))]
 pub use roam_session::{
-    DEFAULT_TUNNEL_CHUNK_SIZE, Tunnel, pump_read_to_tx, pump_rx_to_write, tunnel_pair,
-    tunnel_stream,
+    DEFAULT_TUNNEL_CHUNK_SIZE, pump_read_to_tx, pump_rx_to_write, tunnel_stream,
 };
 
 // Re-export schema types
