@@ -45,5 +45,41 @@
         </div>
     </footer>
 
+    <script>
+    (function() {
+        const toc = document.querySelector('.toc');
+        if (!toc) return;
+
+        const tocLinks = toc.querySelectorAll('a[href^="#"]');
+        if (!tocLinks.length) return;
+
+        const headings = [];
+        tocLinks.forEach(link => {
+            const id = link.getAttribute('href').slice(1);
+            const heading = document.getElementById(id);
+            if (heading) headings.push({ id, heading, link });
+        });
+
+        if (!headings.length) return;
+
+        function updateActive() {
+            const scrollY = window.scrollY;
+            const offset = 100;
+
+            let current = headings[0];
+            for (const h of headings) {
+                if (h.heading.offsetTop - offset <= scrollY) {
+                    current = h;
+                }
+            }
+
+            tocLinks.forEach(link => link.classList.remove('active'));
+            if (current) current.link.classList.add('active');
+        }
+
+        window.addEventListener('scroll', updateActive, { passive: true });
+        updateActive();
+    })();
+    </script>
 </body>
 </html>

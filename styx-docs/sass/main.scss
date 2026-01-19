@@ -332,6 +332,11 @@ body {
   &:hover {
     color: var(--text);
   }
+
+  &.active {
+    color: var(--accent);
+    font-weight: 500;
+  }
 }
 
 // Typography
@@ -775,4 +780,3 @@ article p:has(> img[src*="/grammar/"]) {
     max-width: none;
   }
 }
-
