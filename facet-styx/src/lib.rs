@@ -55,7 +55,7 @@ pub use facet_format::SerializeError;
 pub use parser::StyxParser;
 #[allow(deprecated)]
 pub use schema_gen::generate_schema;
-pub use schema_gen::{schema_from_type, GenerateSchema};
+pub use schema_gen::{GenerateSchema, schema_from_type};
 pub use serializer::{
     SerializeOptions, StyxSerializeError, StyxSerializer, peek_to_string,
     peek_to_string_with_options, to_string, to_string_compact, to_string_with_options,
@@ -207,5 +207,24 @@ value 123"#;
         let input = "items (1 2 3)";
         let result: WithVec = from_str(input).unwrap();
         assert_eq!(result.items, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_schema_directive_skipped() {
+        // @schema directive should be skipped during deserialization
+        // See: https://github.com/bearcove/styx/issues/3
+        #[derive(Facet, Debug, PartialEq)]
+        struct Config {
+            name: String,
+            port: u16,
+        }
+
+        let input = r#"@schema {source crate:test@1, cli test}
+
+name myapp
+port 8080"#;
+        let result: Config = from_str(input).unwrap();
+        assert_eq!(result.name, "myapp");
+        assert_eq!(result.port, 8080);
     }
 }
