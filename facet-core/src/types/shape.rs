@@ -88,6 +88,12 @@ crate::bitflags! {
         /// This enables safe mutation through reflection (poke operations).
         /// Set by `#[facet(pod)]`.
         const POD = 1 << 2;
+
+        /// Metadata container - serializes transparently through the non-metadata field
+        /// while preserving metadata fields for formats that support them.
+        ///
+        /// Set by `#[facet(metadata_container)]`.
+        const METADATA_CONTAINER = 1 << 3;
     }
 }
 
@@ -493,6 +499,16 @@ impl Shape {
     pub const fn is_pod(&self) -> bool {
         // Primitives are implicitly POD - any value of the type is valid
         matches!(self.ty, Type::Primitive(_)) || self.flags.contains(ShapeFlags::POD)
+    }
+
+    /// Returns true if this struct is a metadata container.
+    ///
+    /// Metadata containers serialize transparently through their non-metadata field
+    /// while preserving metadata fields for formats that support them.
+    /// This checks the `METADATA_CONTAINER` flag (O(1)).
+    #[inline]
+    pub const fn is_metadata_container(&self) -> bool {
+        self.flags.contains(ShapeFlags::METADATA_CONTAINER)
     }
 
     /// Returns the tag field name for internally/adjacently tagged enums.

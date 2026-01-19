@@ -419,6 +419,16 @@ impl ShapeBuilder {
         self
     }
 
+    /// Mark this struct as a metadata container.
+    ///
+    /// Metadata containers serialize transparently through their non-metadata field
+    /// while preserving metadata fields for formats that support them.
+    #[inline]
+    pub const fn metadata_container(mut self) -> Self {
+        self.shape.flags = self.shape.flags.union(ShapeFlags::METADATA_CONTAINER);
+        self
+    }
+
     /// Build the Shape.
     ///
     /// If `ty` was not explicitly set (still `Type::Undefined`), it will be
