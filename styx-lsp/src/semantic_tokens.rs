@@ -95,13 +95,20 @@ struct RawToken {
     modifiers: u32,
 }
 
+/// Context for semantic token collection
+#[derive(Clone, Copy, Default)]
+struct WalkContext {
+    /// Are we inside a sequence? (affects how keys are highlighted)
+    in_sequence: bool,
+}
+
 /// Compute semantic tokens for a parsed document
 pub fn compute_semantic_tokens(parse: &Parse) -> Vec<SemanticToken> {
     let content = parse.syntax().to_string();
     let mut raw_tokens = Vec::new();
 
     // Walk the CST and emit tokens
-    walk_node(&parse.syntax(), &content, &mut raw_tokens);
+    walk_node(&parse.syntax(), &content, &mut raw_tokens, WalkContext::default());
 
     // Sort tokens by position
     raw_tokens.sort_by(|a, b| a.line.cmp(&b.line).then(a.start_char.cmp(&b.start_char)));
@@ -111,16 +118,16 @@ pub fn compute_semantic_tokens(parse: &Parse) -> Vec<SemanticToken> {
 }
 
 /// Recursively walk a syntax node and collect semantic tokens
-fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>) {
+fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>, ctx: WalkContext) {
     match node.kind() {
         SyntaxKind::KEY => {
-            // Key nodes contain scalars - highlight the scalar tokens as properties
-            for child in node.children_with_tokens() {
-                if let Some(token) = child.as_token()
-                    && is_scalar_token(token.kind())
-                {
-                    add_token_from_syntax(tokens, content, token, TokenType::Property, 0);
-                }
+            // Key nodes contain scalars or tags
+            // In a sequence context, keys are actually values (strings)
+            // In object context, keys are properties
+            if ctx.in_sequence {
+                collect_key_tokens_as_values(node, content, tokens);
+            } else {
+                collect_key_tokens(node, content, tokens);
             }
         }
         SyntaxKind::TAG => {
@@ -142,8 +149,17 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>) {
                         }
                     } else if child_node.kind() == SyntaxKind::TAG_PAYLOAD {
                         // Recurse into payload
-                        walk_node(child_node, content, tokens);
+                        walk_node(child_node, content, tokens, ctx);
                     }
+                }
+            }
+        }
+        SyntaxKind::SEQUENCE => {
+            // Sequence - entries inside are values, not key-value pairs
+            let seq_ctx = WalkContext { in_sequence: true };
+            for child in node.children_with_tokens() {
+                if let Some(child_node) = child.as_node() {
+                    walk_node(child_node, content, tokens, seq_ctx);
                 }
             }
         }
@@ -200,7 +216,7 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>) {
                     }
                 } else if let Some(child_node) = child.as_node() {
                     // Recurse into child nodes
-                    walk_node(child_node, content, tokens);
+                    walk_node(child_node, content, tokens, ctx);
                 }
             }
         }
@@ -226,8 +242,130 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>) {
                         _ => {}
                     }
                 } else if let Some(child_node) = child.as_node() {
-                    walk_node(child_node, content, tokens);
+                    walk_node(child_node, content, tokens, ctx);
                 }
+            }
+        }
+    }
+}
+
+/// Collect tokens from a KEY node, highlighting them as properties
+/// KEY can contain: SCALAR, TAG, or direct scalar tokens
+fn collect_key_tokens(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>) {
+    for child in node.children_with_tokens() {
+        if let Some(token) = child.as_token() {
+            // Direct scalar token under KEY (might happen in some cases)
+            if is_scalar_token(token.kind()) {
+                add_token_from_syntax(tokens, content, token, TokenType::Property, 0);
+            }
+        } else if let Some(child_node) = child.as_node() {
+            match child_node.kind() {
+                SyntaxKind::SCALAR => {
+                    // KEY -> SCALAR -> token
+                    for scalar_child in child_node.children_with_tokens() {
+                        if let Some(token) = scalar_child.as_token()
+                            && is_scalar_token(token.kind())
+                        {
+                            add_token_from_syntax(tokens, content, token, TokenType::Property, 0);
+                        }
+                    }
+                }
+                SyntaxKind::TAG => {
+                    // KEY -> TAG (tag as key, e.g., `@string "hello"`)
+                    // Highlight @ as operator and tag name as type (since it's in key position)
+                    for tag_child in child_node.children_with_tokens() {
+                        if let Some(token) = tag_child.as_token() {
+                            if token.kind() == SyntaxKind::AT {
+                                add_token_from_syntax(tokens, content, token, TokenType::Operator, 0);
+                            }
+                        } else if let Some(tag_node) = tag_child.as_node() {
+                            if tag_node.kind() == SyntaxKind::TAG_NAME {
+                                for t in tag_node.children_with_tokens() {
+                                    if let Some(token) = t.as_token()
+                                        && is_scalar_token(token.kind())
+                                    {
+                                        add_token_from_syntax(
+                                            tokens,
+                                            content,
+                                            token,
+                                            TokenType::Type,
+                                            0,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Collect tokens from a KEY node, highlighting them as values (for sequence elements)
+/// In sequences, "keys" are actually values (e.g., `(1 2 3)` - the 1, 2, 3 are values)
+fn collect_key_tokens_as_values(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>) {
+    for child in node.children_with_tokens() {
+        if let Some(token) = child.as_token() {
+            // Direct scalar token under KEY
+            if is_scalar_token(token.kind()) {
+                add_token_from_syntax(tokens, content, token, TokenType::String, 0);
+            }
+        } else if let Some(child_node) = child.as_node() {
+            match child_node.kind() {
+                SyntaxKind::SCALAR => {
+                    // KEY -> SCALAR -> token
+                    for scalar_child in child_node.children_with_tokens() {
+                        if let Some(token) = scalar_child.as_token()
+                            && is_scalar_token(token.kind())
+                        {
+                            add_token_from_syntax(tokens, content, token, TokenType::String, 0);
+                        }
+                    }
+                }
+                SyntaxKind::TAG => {
+                    // KEY -> TAG in sequence (e.g., `(@ok @err)` or `@route{...}`)
+                    // Highlight @ and tag name, then recurse into payload
+                    for tag_child in child_node.children_with_tokens() {
+                        if let Some(token) = tag_child.as_token() {
+                            if token.kind() == SyntaxKind::AT {
+                                add_token_from_syntax(tokens, content, token, TokenType::Operator, 0);
+                            }
+                        } else if let Some(tag_node) = tag_child.as_node() {
+                            if tag_node.kind() == SyntaxKind::TAG_NAME {
+                                for t in tag_node.children_with_tokens() {
+                                    if let Some(token) = t.as_token()
+                                        && is_scalar_token(token.kind())
+                                    {
+                                        add_token_from_syntax(
+                                            tokens,
+                                            content,
+                                            token,
+                                            TokenType::Type,
+                                            0,
+                                        );
+                                    }
+                                }
+                            } else if tag_node.kind() == SyntaxKind::TAG_PAYLOAD {
+                                // Recurse into tag payload (object context for properties)
+                                walk_node(tag_node, content, tokens, WalkContext::default());
+                            }
+                        }
+                    }
+                }
+                SyntaxKind::SEQUENCE => {
+                    // KEY -> SEQUENCE (nested sequences like `((1 2) (3 4))`)
+                    // Recurse into nested sequence with sequence context
+                    let seq_ctx = WalkContext { in_sequence: true };
+                    walk_node(child_node, content, tokens, seq_ctx);
+                }
+                SyntaxKind::OBJECT => {
+                    // KEY -> OBJECT (objects in sequences like `({a 1} {b 2})`)
+                    // Objects should use regular object context (keys are properties)
+                    walk_node(child_node, content, tokens, WalkContext::default());
+                }
+                _ => {}
             }
         }
     }
@@ -310,4 +448,640 @@ fn encode_tokens(raw_tokens: &[RawToken]) -> Vec<SemanticToken> {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Decoded token for easier test assertions
+    #[derive(Debug, PartialEq, Eq)]
+    struct DecodedToken {
+        line: u32,
+        start: u32,
+        length: u32,
+        token_type: TokenType,
+        modifiers: u32,
+    }
+
+    /// Decode delta-encoded tokens back to absolute positions
+    fn decode_tokens(tokens: &[SemanticToken]) -> Vec<DecodedToken> {
+        let mut result = Vec::with_capacity(tokens.len());
+        let mut line = 0u32;
+        let mut start = 0u32;
+
+        for token in tokens {
+            line += token.delta_line;
+            if token.delta_line == 0 {
+                start += token.delta_start;
+            } else {
+                start = token.delta_start;
+            }
+
+            let token_type = match token.token_type {
+                0 => TokenType::Comment,
+                1 => TokenType::String,
+                2 => TokenType::Number,
+                3 => TokenType::Keyword,
+                4 => TokenType::Type,
+                5 => TokenType::EnumMember,
+                6 => TokenType::Property,
+                7 => TokenType::Operator,
+                _ => panic!("Unknown token type: {}", token.token_type),
+            };
+
+            result.push(DecodedToken {
+                line,
+                start,
+                length: token.length,
+                token_type,
+                modifiers: token.token_modifiers_bitset,
+            });
+        }
+
+        result
+    }
+
+    /// Parse source and get decoded tokens
+    fn get_tokens(source: &str) -> Vec<DecodedToken> {
+        let parse = styx_cst::parse(source);
+        let tokens = compute_semantic_tokens(&parse);
+        decode_tokens(&tokens)
+    }
+
+    /// Find tokens by type
+    fn filter_by_type(tokens: &[DecodedToken], ty: TokenType) -> Vec<&DecodedToken> {
+        tokens.iter().filter(|t| t.token_type == ty).collect()
+    }
+
+    // ========== SECTION 1: COMMENTS ==========
+
+    #[test]
+    fn line_comment() {
+        let tokens = get_tokens("// This is a comment");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token_type, TokenType::Comment);
+        assert_eq!(tokens[0].modifiers, 0); // No documentation modifier
+        assert_eq!(tokens[0].length, 20);
+    }
+
+    #[test]
+    fn doc_comment() {
+        let tokens = get_tokens("/// This is a doc comment");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token_type, TokenType::Comment);
+        // Documentation modifier is bit 0
+        assert_eq!(tokens[0].modifiers, 1 << TokenModifier::Documentation as u32);
+        assert_eq!(tokens[0].length, 25);
+    }
+
+    #[test]
+    fn inline_comment_after_entry() {
+        let tokens = get_tokens("key value // inline comment");
+        let comments = filter_by_type(&tokens, TokenType::Comment);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].modifiers, 0);
+    }
+
+    #[test]
+    fn doc_comment_before_entry() {
+        let tokens = get_tokens("/// Documentation\nkey value");
+        let comments = filter_by_type(&tokens, TokenType::Comment);
+        let properties = filter_by_type(&tokens, TokenType::Property);
+
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].token_type, TokenType::Comment);
+        assert_eq!(comments[0].modifiers, 1); // Documentation modifier
+
+        assert_eq!(properties.len(), 1);
+        assert_eq!(properties[0].line, 1); // On second line
+    }
+
+    // ========== SECTION 2: BARE SCALARS ==========
+
+    #[test]
+    fn bare_scalar_key_value() {
+        let tokens = get_tokens("simple_key value");
+        assert_eq!(tokens.len(), 2);
+
+        // Key is Property
+        assert_eq!(tokens[0].token_type, TokenType::Property);
+        assert_eq!(tokens[0].length, 10); // "simple_key"
+
+        // Value is String
+        assert_eq!(tokens[1].token_type, TokenType::String);
+        assert_eq!(tokens[1].length, 5); // "value"
+    }
+
+    #[test]
+    fn bare_scalar_with_special_chars() {
+        // Test bare scalars with dots, colons, slashes
+        let tokens = get_tokens("path foo.bar.baz");
+        let strings = filter_by_type(&tokens, TokenType::String);
+        assert_eq!(strings.len(), 1);
+        assert_eq!(strings[0].length, 11); // "foo.bar.baz"
+    }
+
+    #[test]
+    fn url_as_bare_scalar() {
+        let tokens = get_tokens("url https://example.com/path?q=1");
+        let strings = filter_by_type(&tokens, TokenType::String);
+        assert_eq!(strings.len(), 1);
+        assert_eq!(strings[0].length, 28); // The URL (28 chars)
+    }
+
+    #[test]
+    fn numeric_bare_scalars() {
+        let tokens = get_tokens("int 42\nfloat 3.14\nhex 0xff");
+        let strings = filter_by_type(&tokens, TokenType::String);
+        // All numeric-looking scalars are highlighted as strings (no schema awareness)
+        assert_eq!(strings.len(), 3);
+    }
+
+    // ========== SECTION 3: QUOTED STRINGS ==========
+
+    #[test]
+    fn quoted_string_value() {
+        let tokens = get_tokens("key \"hello world\"");
+        let strings = filter_by_type(&tokens, TokenType::String);
+        assert_eq!(strings.len(), 1);
+        assert_eq!(strings[0].length, 13); // Including quotes
+    }
+
+    #[test]
+    fn quoted_string_with_escapes() {
+        let tokens = get_tokens(r#"key "line1\nline2""#);
+        let strings = filter_by_type(&tokens, TokenType::String);
+        assert_eq!(strings.len(), 1);
+    }
+
+    #[test]
+    fn quoted_string_as_key() {
+        let tokens = get_tokens("\"key with spaces\" value");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+        assert_eq!(properties.len(), 1);
+        assert_eq!(properties[0].length, 17); // "key with spaces"
+    }
+
+    #[test]
+    fn empty_quoted_string() {
+        let tokens = get_tokens("key \"\"");
+        let strings = filter_by_type(&tokens, TokenType::String);
+        assert_eq!(strings.len(), 1);
+        assert_eq!(strings[0].length, 2); // Just ""
+    }
+
+    // ========== SECTION 4: RAW STRINGS ==========
+
+    #[test]
+    fn raw_string_simple() {
+        let tokens = get_tokens(r#"key r"no escapes \n""#);
+        let strings = filter_by_type(&tokens, TokenType::String);
+        assert_eq!(strings.len(), 1);
+    }
+
+    #[test]
+    fn raw_string_with_hashes() {
+        let tokens = get_tokens(r##"key r#"has "quotes" inside"#"##);
+        let strings = filter_by_type(&tokens, TokenType::String);
+        assert_eq!(strings.len(), 1);
+    }
+
+    #[test]
+    fn raw_string_as_key() {
+        let tokens = get_tokens(r##"r#"raw key"# value"##);
+        let properties = filter_by_type(&tokens, TokenType::Property);
+        assert_eq!(properties.len(), 1);
+    }
+
+    // ========== SECTION 5: HEREDOCS ==========
+
+    #[test]
+    fn simple_heredoc() {
+        let tokens = get_tokens("script <<TEXT\nHello world\nTEXT");
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+        let strings = filter_by_type(&tokens, TokenType::String);
+
+        // HEREDOC_START and HEREDOC_END are operators
+        assert_eq!(operators.len(), 2);
+
+        // Content is string
+        assert_eq!(strings.len(), 1);
+    }
+
+    #[test]
+    fn heredoc_with_language_hint() {
+        let tokens = get_tokens("code <<SQL,sql\nSELECT * FROM users\nSQL");
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+        let strings = filter_by_type(&tokens, TokenType::String);
+
+        assert_eq!(operators.len(), 2); // Start and end markers
+        assert_eq!(strings.len(), 1); // Content
+    }
+
+    #[test]
+    fn heredoc_in_object() {
+        let tokens = get_tokens("config {\n    script <<BASH\n    echo hello\n    BASH\n}");
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+        let strings = filter_by_type(&tokens, TokenType::String);
+        let properties = filter_by_type(&tokens, TokenType::Property);
+
+        // "config" and "script" are properties
+        assert_eq!(properties.len(), 2);
+
+        // HEREDOC_START and HEREDOC_END
+        assert!(operators.len() >= 2);
+
+        // Heredoc content
+        assert!(!strings.is_empty());
+    }
+
+    // ========== SECTION 6: TAGS ==========
+
+    #[test]
+    fn simple_tag() {
+        let tokens = get_tokens(r#"status @ok"#);
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+        let types = filter_by_type(&tokens, TokenType::Type);
+
+        // @ is operator
+        assert_eq!(operators.len(), 1);
+        assert_eq!(operators[0].length, 1);
+
+        // "ok" is type
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0].length, 2);
+    }
+
+    #[test]
+    fn tag_with_object_payload() {
+        let tokens = get_tokens(r#"result @error{code 500, message "fail"}"#);
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+        let types = filter_by_type(&tokens, TokenType::Type);
+        let properties = filter_by_type(&tokens, TokenType::Property);
+        let strings = filter_by_type(&tokens, TokenType::String);
+
+        // @ is operator
+        assert!(operators.iter().any(|t| t.length == 1));
+
+        // "error" is type
+        assert_eq!(types.len(), 1);
+
+        // "code" and "message" are properties
+        assert_eq!(properties.len(), 3); // "result" + "code" + "message"
+
+        // "fail" and "500" are strings
+        assert_eq!(strings.len(), 2);
+    }
+
+    #[test]
+    fn tag_with_sequence_payload() {
+        let tokens = get_tokens(r#"point @rgb(255 128 0)"#);
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+        let types = filter_by_type(&tokens, TokenType::Type);
+        let strings = filter_by_type(&tokens, TokenType::String);
+
+        assert!(operators.iter().any(|t| t.length == 1)); // @
+        assert_eq!(types.len(), 1); // "rgb"
+        assert_eq!(strings.len(), 3); // 255, 128, 0
+    }
+
+    #[test]
+    fn tag_with_string_payload() {
+        let tokens = get_tokens(r#"env @env"HOME""#);
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+        let types = filter_by_type(&tokens, TokenType::Type);
+        let strings = filter_by_type(&tokens, TokenType::String);
+
+        assert!(operators.iter().any(|t| t.length == 1)); // @
+        assert_eq!(types.len(), 1); // "env"
+        assert_eq!(strings.len(), 1); // "HOME"
+    }
+
+    #[test]
+    fn nested_tags() {
+        let tokens = get_tokens(r#"data @ok{value @some(42)}"#);
+        let types = filter_by_type(&tokens, TokenType::Type);
+
+        // Both "ok" and "some" are types
+        assert_eq!(types.len(), 2);
+    }
+
+    #[test]
+    fn tag_as_key() {
+        let tokens = get_tokens(r#"@string "hello""#);
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+        let types = filter_by_type(&tokens, TokenType::Type);
+        let strings = filter_by_type(&tokens, TokenType::String);
+
+        assert_eq!(operators.len(), 1); // @
+        assert_eq!(types.len(), 1); // "string"
+        assert_eq!(strings.len(), 1); // "hello"
+    }
+
+    #[test]
+    fn consecutive_tags_in_sequence() {
+        let tokens = get_tokens(r#"tags (@ok @err @none)"#);
+        let types = filter_by_type(&tokens, TokenType::Type);
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+
+        assert_eq!(types.len(), 3); // ok, err, none
+        assert_eq!(operators.len(), 3); // Three @ signs
+    }
+
+    // ========== SECTION 7: UNIT VALUES ==========
+
+    #[test]
+    fn explicit_unit() {
+        let tokens = get_tokens(r#"unit @"#);
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+        let properties = filter_by_type(&tokens, TokenType::Property);
+
+        assert_eq!(properties.len(), 1); // "unit"
+        assert_eq!(operators.len(), 1); // @
+    }
+
+    #[test]
+    fn unit_in_object() {
+        let tokens = get_tokens("flags {\n    verbose\n    debug\n}");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+
+        // "flags", "verbose", and "debug" are all properties
+        assert_eq!(properties.len(), 3);
+    }
+
+    // ========== SECTION 8: ATTRIBUTES ==========
+
+    #[test]
+    fn single_attribute() {
+        let tokens = get_tokens("entry host>localhost");
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+        let properties = filter_by_type(&tokens, TokenType::Property);
+
+        // "entry" and "host" (attribute key) are properties
+        // Note: attribute implementation may vary
+        assert!(!properties.is_empty());
+
+        // > is operator
+        assert!(operators.iter().any(|t| t.length == 1));
+    }
+
+    #[test]
+    fn multiple_attributes() {
+        let tokens = get_tokens("server host>localhost port>8080");
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+
+        // Two > operators
+        assert_eq!(operators.len(), 2);
+    }
+
+    // ========== SECTION 9: OBJECTS ==========
+
+    #[test]
+    fn empty_object() {
+        let tokens = get_tokens("empty {}");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+        assert_eq!(properties.len(), 1); // Just "empty"
+    }
+
+    #[test]
+    fn nested_object() {
+        let tokens = get_tokens("outer {\n    inner {\n        deep value\n    }\n}");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+
+        // "outer", "inner", and "deep" are properties
+        assert_eq!(properties.len(), 3);
+    }
+
+    #[test]
+    fn inline_object() {
+        let tokens = get_tokens("config {host localhost, port 8080}");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+
+        // "config", "host", "port" are properties
+        assert_eq!(properties.len(), 3);
+    }
+
+    // ========== SECTION 10: SEQUENCES ==========
+
+    #[test]
+    fn simple_sequence() {
+        let tokens = get_tokens("numbers (1 2 3)");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+        let strings = filter_by_type(&tokens, TokenType::String);
+
+        assert_eq!(properties.len(), 1); // "numbers"
+        assert_eq!(strings.len(), 3); // 1, 2, 3
+    }
+
+    #[test]
+    fn nested_sequences() {
+        let tokens = get_tokens("matrix ((1 2) (3 4))");
+        let strings = filter_by_type(&tokens, TokenType::String);
+        assert_eq!(strings.len(), 4); // 1, 2, 3, 4
+    }
+
+    #[test]
+    fn sequence_with_objects() {
+        let tokens = get_tokens("items ({a 1} {b 2})");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+        let strings = filter_by_type(&tokens, TokenType::String);
+
+        // "items", "a", "b" are properties
+        assert_eq!(properties.len(), 3);
+        // 1, 2 are strings
+        assert_eq!(strings.len(), 2);
+    }
+
+    // ========== SECTION 11: UNICODE ==========
+
+    #[test]
+    fn unicode_key() {
+        let tokens = get_tokens("日本語 \"Japanese\"");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+        assert_eq!(properties.len(), 1);
+        // Length should be in characters, not bytes
+    }
+
+    #[test]
+    fn unicode_value() {
+        let tokens = get_tokens("greeting \"Hello, 世界!\"");
+        let strings = filter_by_type(&tokens, TokenType::String);
+        assert_eq!(strings.len(), 1);
+    }
+
+    #[test]
+    fn emoji_value() {
+        let tokens = get_tokens("emoji \"🎉🚀💻\"");
+        let strings = filter_by_type(&tokens, TokenType::String);
+        assert_eq!(strings.len(), 1);
+    }
+
+    // ========== SECTION 12: DOTTED PATHS ==========
+
+    #[test]
+    fn dotted_path_key() {
+        let tokens = get_tokens("server.host localhost");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+        assert_eq!(properties.len(), 1);
+        assert_eq!(properties[0].length, 11); // "server.host"
+    }
+
+    #[test]
+    fn deep_dotted_path() {
+        let tokens = get_tokens("a.b.c.d value");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+        assert_eq!(properties.len(), 1);
+        assert_eq!(properties[0].length, 7); // "a.b.c.d"
+    }
+
+    // ========== SECTION 13: COMPLEX COMBINATIONS ==========
+
+    #[test]
+    fn tag_with_heredoc_in_payload() {
+        let tokens = get_tokens(
+            r#"template @html{
+    content <<HTML
+<div>Hello</div>
+HTML
+}"#,
+        );
+        let types = filter_by_type(&tokens, TokenType::Type);
+        let operators = filter_by_type(&tokens, TokenType::Operator);
+
+        assert_eq!(types.len(), 1); // "html"
+        assert!(operators.len() >= 3); // @, <<HTML, HTML
+    }
+
+    #[test]
+    fn mixed_content_object() {
+        let tokens = get_tokens(
+            r#"kitchen_sink {
+    bare identifier
+    quoted "string"
+    number 42
+    tag @some(value)
+    seq (a b c)
+}"#,
+        );
+        let properties = filter_by_type(&tokens, TokenType::Property);
+        let strings = filter_by_type(&tokens, TokenType::String);
+        let types = filter_by_type(&tokens, TokenType::Type);
+
+        // Keys: kitchen_sink, bare, quoted, number, tag, seq
+        assert_eq!(properties.len(), 6);
+
+        // Values: identifier, "string", 42, value, a, b, c
+        assert_eq!(strings.len(), 7);
+
+        // Tag: some
+        assert_eq!(types.len(), 1);
+    }
+
+    #[test]
+    fn api_routes_example() {
+        let tokens = get_tokens(
+            r#"routes (
+    @route{method GET, path /}
+    @route{method POST, path /api}
+)"#,
+        );
+        let types = filter_by_type(&tokens, TokenType::Type);
+        let properties = filter_by_type(&tokens, TokenType::Property);
+
+        // Two @route tags
+        assert_eq!(types.len(), 2);
+
+        // "routes" + 2x("method", "path") = 5 properties
+        assert_eq!(properties.len(), 5);
+    }
+
+    #[test]
+    fn result_type_pattern() {
+        let tokens = get_tokens(
+            r#"result @ok{
+    data {
+        users (
+            {id 1, name Alice}
+            {id 2, name Bob}
+        )
+    }
+}"#,
+        );
+        let types = filter_by_type(&tokens, TokenType::Type);
+        let properties = filter_by_type(&tokens, TokenType::Property);
+
+        // @ok
+        assert_eq!(types.len(), 1);
+
+        // result, data, users, id, name, id, name
+        assert_eq!(properties.len(), 7);
+    }
+
+    // ========== SECTION 14: POSITION ACCURACY ==========
+
+    #[test]
+    fn multiline_positions() {
+        let tokens = get_tokens("line0 value0\nline1 value1\nline2 value2");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+
+        assert_eq!(properties[0].line, 0);
+        assert_eq!(properties[0].start, 0);
+
+        assert_eq!(properties[1].line, 1);
+        assert_eq!(properties[1].start, 0);
+
+        assert_eq!(properties[2].line, 2);
+        assert_eq!(properties[2].start, 0);
+    }
+
+    #[test]
+    fn indented_content_positions() {
+        let tokens = get_tokens("outer {\n    inner value\n}");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+
+        // "outer" at line 0, col 0
+        assert_eq!(properties[0].line, 0);
+        assert_eq!(properties[0].start, 0);
+
+        // "inner" at line 1, col 4 (after 4 spaces)
+        assert_eq!(properties[1].line, 1);
+        assert_eq!(properties[1].start, 4);
+    }
+
+    // ========== SECTION 15: EDGE CASES ==========
+
+    #[test]
+    fn empty_document() {
+        let tokens = get_tokens("");
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn whitespace_only() {
+        let tokens = get_tokens("   \n   \n   ");
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn comment_only() {
+        let tokens = get_tokens("// Just a comment");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token_type, TokenType::Comment);
+    }
+
+    #[test]
+    fn deeply_nested_structure() {
+        let tokens = get_tokens("a {b {c {d {e value}}}}");
+        let properties = filter_by_type(&tokens, TokenType::Property);
+        assert_eq!(properties.len(), 5); // a, b, c, d, e
+    }
+
+    #[test]
+    fn booleans_as_strings() {
+        // Without schema awareness, booleans are just strings
+        let tokens = get_tokens("flag true\nother false");
+        let strings = filter_by_type(&tokens, TokenType::String);
+        assert_eq!(strings.len(), 2);
+    }
 }
