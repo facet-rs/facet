@@ -50,16 +50,7 @@ struct TypedDictField<'a> {
 }
 
 impl<'a> TypedDictField<'a> {
-    fn new(name: &'a str, type_string: String, required: bool) -> Self {
-        Self {
-            name,
-            type_string,
-            required,
-            doc: &[],
-        }
-    }
-
-    fn with_doc(name: &'a str, type_string: String, required: bool, doc: &'a [&'a str]) -> Self {
+    fn new(name: &'a str, type_string: String, required: bool, doc: &'a [&'a str]) -> Self {
         Self {
             name,
             type_string,
@@ -84,8 +75,6 @@ fn has_reserved_keyword_field(fields: &[TypedDictField]) -> bool {
 }
 
 /// Generate TypedDict using functional syntax: `Name = TypedDict("Name", {...}, total=False)`
-///
-/// This syntax is required when field names are Python reserved keywords.
 fn write_typed_dict_functional(output: &mut String, class_name: &str, fields: &[TypedDictField]) {
     writeln!(output, "{} = TypedDict(", class_name).unwrap();
     writeln!(output, "    \"{}\",", class_name).unwrap();
@@ -107,8 +96,6 @@ fn write_typed_dict_functional(output: &mut String, class_name: &str, fields: &[
 }
 
 /// Generate TypedDict using class syntax: `class Name(TypedDict, total=False): ...`
-///
-/// This is the preferred syntax for readability when no field names conflict with keywords.
 fn write_typed_dict_class(output: &mut String, class_name: &str, fields: &[TypedDictField]) {
     writeln!(output, "class {}(TypedDict, total=False):", class_name).unwrap();
 
@@ -130,9 +117,6 @@ fn write_typed_dict_class(output: &mut String, class_name: &str, fields: &[Typed
 }
 
 /// Generate a TypedDict, choosing between class and functional syntax.
-///
-/// Uses functional syntax when any field name is a Python reserved keyword,
-/// otherwise uses the more readable class syntax.
 fn write_typed_dict(output: &mut String, class_name: &str, fields: &[TypedDictField]) {
     if has_reserved_keyword_field(fields) {
         write_typed_dict_functional(output, class_name, fields);
@@ -142,8 +126,6 @@ fn write_typed_dict(output: &mut String, class_name: &str, fields: &[TypedDictFi
 }
 
 /// Generate Python definitions for a single type.
-///
-/// Returns a string containing the Python TypedDict or type declaration.
 pub fn to_python<T: Facet<'static>>(write_imports: bool) -> String {
     let mut generator = PythonGenerator::new();
     generator.add_shape(T::SHAPE);
@@ -151,8 +133,6 @@ pub fn to_python<T: Facet<'static>>(write_imports: bool) -> String {
 }
 
 /// Generator for Python type definitions.
-///
-/// Use this when you need to generate multiple related types.
 pub struct PythonGenerator {
     /// Generated type definitions, keyed by type name for sorting
     generated: BTreeMap<String, String>,
@@ -191,9 +171,6 @@ impl PythonGenerator {
     }
 
     /// Finish generation and return the Python code.
-    ///
-    /// If `write_imports` is true, a `from typing import ...` line will be
-    /// prepended with only the imports actually used in the generated code.
     pub fn finish(mut self, write_imports: bool) -> String {
         // Process queue until empty
         while let Some(shape) = self.queue.pop() {
@@ -301,9 +278,6 @@ impl PythonGenerator {
     }
 
     /// Generate a TypedDict for a struct, choosing between class and functional syntax.
-    ///
-    /// Uses functional syntax when any field name is a Python reserved keyword,
-    /// otherwise uses the more readable class syntax.
     fn generate_typed_dict(
         &mut self,
         output: &mut String,
@@ -322,7 +296,7 @@ impl PythonGenerator {
             .iter()
             .map(|f| {
                 let (type_string, required) = self.field_type_info(f);
-                TypedDictField::with_doc(f.effective_name(), type_string, required, f.doc)
+                TypedDictField::new(f.effective_name(), type_string, required, f.doc)
             })
             .collect();
 
@@ -366,8 +340,6 @@ impl PythonGenerator {
     }
 
     /// Generate a simple enum where all variants are unit variants.
-    ///
-    /// Produces: `EnumName = Union[Literal["A"], Literal["B"], ...]`
     fn generate_enum_unit_variants(
         &mut self,
         output: &mut String,
@@ -393,8 +365,6 @@ impl PythonGenerator {
     }
 
     /// Generate an enum with data variants (discriminated union).
-    ///
-    /// Generates TypedDict wrapper classes for each variant, then unions them.
     fn generate_enum_with_data(
         &mut self,
         output: &mut String,
@@ -419,8 +389,6 @@ impl PythonGenerator {
     }
 
     /// Generate a single enum variant and return its type reference.
-    ///
-    /// Returns either `Literal["name"]` for unit variants or `"ClassName"` for data variants.
     fn generate_enum_variant(&mut self, variant: &facet_core::Variant) -> String {
         let variant_name = variant.effective_name();
         let pascal_variant_name = to_pascal_case(variant_name);
@@ -442,8 +410,6 @@ impl PythonGenerator {
     }
 
     /// Generate a newtype variant (single-field tuple variant).
-    ///
-    /// Produces a wrapper class: `class VariantName(TypedDict): variant_name: Required[InnerType]`
     fn generate_newtype_variant(
         &mut self,
         variant_name: &str,
@@ -455,7 +421,7 @@ impl PythonGenerator {
 
         let inner_type = self.type_for_shape(variant.data.fields[0].shape.get());
 
-        let fields = [TypedDictField::new(variant_name, inner_type, true)];
+        let fields = [TypedDictField::new(variant_name, inner_type, true, &[])];
 
         let mut output = String::new();
         write_typed_dict(&mut output, pascal_variant_name, &fields);
@@ -466,10 +432,6 @@ impl PythonGenerator {
     }
 
     /// Generate a struct variant (multiple fields or named fields).
-    ///
-    /// Produces a data class and a wrapper class:
-    /// - `class VariantNameData(TypedDict): field1: Type1, ...`
-    /// - `class VariantName(TypedDict): variant_name: Required[VariantNameData]`
     fn generate_struct_variant(
         &mut self,
         variant_name: &str,
@@ -488,7 +450,7 @@ impl PythonGenerator {
             .iter()
             .map(|field| {
                 let field_type = self.type_for_shape(field.shape.get());
-                TypedDictField::new(field.effective_name(), field_type, true)
+                TypedDictField::new(field.effective_name(), field_type, true, &[])
             })
             .collect();
 
@@ -498,7 +460,12 @@ impl PythonGenerator {
         self.generated.insert(data_class_name.clone(), data_output);
 
         // Generate the wrapper class
-        let wrapper_fields = [TypedDictField::new(variant_name, data_class_name, true)];
+        let wrapper_fields = [TypedDictField::new(
+            variant_name,
+            data_class_name,
+            true,
+            &[],
+        )];
 
         let mut wrapper_output = String::new();
         write_typed_dict(&mut wrapper_output, pascal_variant_name, &wrapper_fields);
@@ -531,15 +498,13 @@ impl PythonGenerator {
                     self.type_for_shape(map.v)
                 )
             }
-            Def::Pointer(ptr) => {
-                // Smart pointers are transparent
-                if let Some(pointee) = ptr.pointee {
-                    self.type_for_shape(pointee)
-                } else {
+            Def::Pointer(ptr) => match ptr.pointee {
+                Some(pointee) => self.type_for_shape(pointee),
+                None => {
                     self.imports.insert("Any");
                     "Any".to_string()
                 }
-            }
+            },
             Def::Undefined => {
                 // User-defined types - queue for generation and return quoted name
                 match &shape.ty {
@@ -562,43 +527,24 @@ impl PythonGenerator {
                         self.add_shape(shape);
                         format!("\"{}\"", shape.type_identifier)
                     }
-                    _ => {
-                        // For other undefined types, check if it's a transparent wrapper
-                        if let Some(inner) = shape.inner {
-                            self.type_for_shape(inner)
-                        } else {
-                            self.imports.insert("Any");
-                            "Any".to_string()
-                        }
-                    }
+                    _ => self.inner_type_or_any(shape),
                 }
             }
-            _ => {
-                // For other defs, check if it's a transparent wrapper
-                if let Some(inner) = shape.inner {
-                    self.type_for_shape(inner)
-                } else {
-                    self.imports.insert("Any");
-                    "Any".to_string()
-                }
+            _ => self.inner_type_or_any(shape),
+        }
+    }
+
+    /// Get the inner type for transparent wrappers, or "Any" as fallback.
+    fn inner_type_or_any(&mut self, shape: &'static Shape) -> String {
+        match shape.inner {
+            Some(inner) => self.type_for_shape(inner),
+            None => {
+                self.imports.insert("Any");
+                "Any".to_string()
             }
         }
     }
-}
 
-/// Write a doc comment to the output.
-fn write_doc_comment(output: &mut String, doc: &[&str]) {
-    if !doc.is_empty() {
-        for line in doc {
-            output.push('#');
-            output.push_str(line);
-            output.push('\n');
-        }
-    }
-}
-
-/// Get the Python type for a scalar shape.
-impl PythonGenerator {
     /// Get the Python type for a scalar shape.
     fn scalar_type(&mut self, shape: &'static Shape) -> String {
         match shape.type_identifier {
@@ -624,6 +570,15 @@ impl PythonGenerator {
                 "Any".to_string()
             }
         }
+    }
+}
+
+/// Write a doc comment to the output.
+fn write_doc_comment(output: &mut String, doc: &[&str]) {
+    for line in doc {
+        output.push('#');
+        output.push_str(line);
+        output.push('\n');
     }
 }
 
