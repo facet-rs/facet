@@ -15,15 +15,12 @@ Styx is a configuration language. Compared to JSON:
 
 ## The basics
 
-A JSON object like this:
+A JSON object like this becomes this in Styx:
 
-```json
+```compare
+/// json
 {"name": "Alice", "age": 30}
-```
-
-Becomes this in Styx:
-
-```styx
+/// styx
 {name Alice, age 30}
 ```
 
@@ -69,12 +66,11 @@ SH
 
 A Styx document is implicitly an object. These are equivalent:
 
-```styx
+```compare
+/// styx
 name Alice
 age 30
-```
-
-```styx
+/// styx
 {
     name Alice
     age 30
@@ -209,19 +205,25 @@ This is the most important whitespace rule in Styx:
 
 **There is never a space between a tag and its payload.**
 
-```styx
-@tag()     // ONE value: tag=tag, payload=()
-@tag ()    // TWO values: @tag and ()
+```compare
+/// styx
+@tag()
+/// styx
+@tag ()
 ```
+
+The left is ONE value (`tag=tag`, `payload=()`). The right is TWO values: `@tag` and `()`.
 
 This matters because `@tag()` is a single value (a tagged empty sequence), while `@tag ()` is two separate values. In an entry context:
 
-```styx
-a @tag()   // key=a, value=@tag()  — valid
-b @tag ()  // three atoms: b, @tag, () — invalid!
+```compare
+/// styx
+a @tag()
+/// styx
+b @tag ()
 ```
 
-Entries can only have two atoms (key and value). The space between `@tag` and `()` makes them separate atoms, resulting in three atoms total.
+The left is valid (`key=a`, `value=@tag()`). The right has three atoms (`b`, `@tag`, `()`) — entries can only have two atoms (key and value), so it's invalid.
 
 ### Recap
 
