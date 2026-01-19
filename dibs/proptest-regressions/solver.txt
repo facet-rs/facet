@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0dbd01cfe92e3ea50db43d484b6fee701db3d5600cb55e5413bcbcb1b2e283cf # shrinks to current = Schema { tables: [Table { name: "order", columns: [Column { name: "id", pg_type: BigInt, rust_type: None, nullable: false, default: None, primary_key: false, unique: false, auto_generated: false, long: false, label: false, enum_variants: [], doc: None, lang: None, icon: None, subtype: None }], foreign_keys: [], indices: [], source: SourceLocation { file: None, line: None, column: None }, doc: None, icon: None }] }, desired = Schema { tables: [Table { name: "order", columns: [Column { name: "id", pg_type: BigInt, rust_type: None, nullable: false, default: None, primary_key: true, unique: false, auto_generated: false, long: false, label: false, enum_variants: [], doc: None, lang: None, icon: None, subtype: None }, Column { name: "name", pg_type: BigInt, rust_type: None, nullable: false, default: None, primary_key: false, unique: true, auto_generated: false, long: false, label: false, enum_variants: [], doc: None, lang: None, icon: None, subtype: None }], foreign_keys: [], indices: [Index { name: "order_name_idx", columns: ["name"], unique: false }], source: SourceLocation { file: None, line: None, column: None }, doc: None, icon: None }] }

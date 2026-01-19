@@ -368,6 +368,10 @@ impl VirtualSchema {
                 }
                 if let Some(table) = self.tables.get_mut(table_context) {
                     table.columns.insert(col.name.clone());
+                    // Track unique constraint if column is unique
+                    if col.unique {
+                        table.unique_constraints.insert(col.name.clone());
+                    }
                 }
             }
 
@@ -381,6 +385,8 @@ impl VirtualSchema {
                 // Note: We don't require column to exist since we may not have full column info
                 if let Some(table) = self.tables.get_mut(table_context) {
                     table.columns.remove(name);
+                    // Also remove unique constraint if it existed
+                    table.unique_constraints.remove(name);
                 }
             }
 
@@ -1684,7 +1690,7 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
-    use crate::{Column, ForeignKey, PgType, Schema, SourceLocation, Table};
+    use crate::{Column, ForeignKey, Index, PgType, Schema, SourceLocation, Table};
     use proptest::prelude::*;
     use std::collections::HashSet;
 
@@ -1708,19 +1714,22 @@ mod proptests {
         ]
     }
 
-    // Strategy for column names
+    // Strategy for column names - includes self-referential FK columns
     fn column_name() -> impl Strategy<Value = String> {
         prop_oneof![
             Just("id".to_string()),
             Just("name".to_string()),
             Just("title".to_string()),
             Just("content".to_string()),
+            Just("email".to_string()),
+            Just("slug".to_string()),
             Just("created_at".to_string()),
             Just("updated_at".to_string()),
-            Just("parent_id".to_string()),
+            Just("parent_id".to_string()),  // self-referential
             Just("author_id".to_string()),
             Just("user_id".to_string()),
             Just("post_id".to_string()),
+            Just("category_id".to_string()),
             identifier(),
         ]
     }
@@ -1736,34 +1745,65 @@ mod proptests {
         ]
     }
 
-    // Strategy for a column
+    // Strategy for a column with optional unique constraint
     fn column_strategy() -> impl Strategy<Value = Column> {
-        (column_name(), pg_type(), any::<bool>()).prop_map(|(name, pg_type, nullable)| Column {
-            name,
-            pg_type,
-            rust_type: None,
-            nullable,
-            default: None,
-            primary_key: false,
-            unique: false,
-            auto_generated: false,
-            long: false,
-            label: false,
-            enum_variants: vec![],
-            doc: None,
-            icon: None,
-            lang: None,
-            subtype: None,
-        })
+        (column_name(), pg_type(), any::<bool>(), any::<bool>()).prop_map(
+            |(name, pg_type, nullable, unique)| Column {
+                name,
+                pg_type,
+                rust_type: None,
+                nullable,
+                default: None,
+                primary_key: false,
+                // Only apply unique to suitable columns (not id, not nullable)
+                unique: unique && !nullable,
+                auto_generated: false,
+                long: false,
+                label: false,
+                enum_variants: vec![],
+                doc: None,
+                icon: None,
+                lang: None,
+                subtype: None,
+            },
+        )
+    }
+
+    // Strategy for an index
+    fn index_strategy(table_name: &str, columns: &[String]) -> Vec<Index> {
+        if columns.is_empty() {
+            return vec![];
+        }
+
+        // Generate 0-2 indices on random columns
+        let mut indices = vec![];
+        let indexable: Vec<_> = columns
+            .iter()
+            .filter(|c| *c != "id") // Don't index PK
+            .collect();
+
+        for (i, col) in indexable.iter().take(2).enumerate() {
+            // ~50% chance to create an index
+            if i % 2 == 0 {
+                indices.push(Index {
+                    name: format!("{}_{}_idx", table_name, col),
+                    columns: vec![(*col).clone()],
+                    unique: false,
+                });
+            }
+        }
+
+        indices
     }
 
     // Strategy for a table (without FKs initially)
     fn table_without_fks() -> impl Strategy<Value = Table> {
         (
             table_name(),
-            prop::collection::vec(column_strategy(), 1..5),
+            prop::collection::vec(column_strategy(), 1..6),
+            any::<u8>(), // seed for index generation
         )
-            .prop_map(|(name, mut columns)| {
+            .prop_map(|(name, mut columns, seed)| {
                 // Ensure unique column names
                 let mut seen = HashSet::new();
                 columns.retain(|c| seen.insert(c.name.clone()));
@@ -1792,11 +1832,26 @@ mod proptests {
                     );
                 }
 
+                // Don't mark 'id' as unique (it's already PK)
+                for col in &mut columns {
+                    if col.name == "id" {
+                        col.unique = false;
+                    }
+                }
+
+                // Generate indices based on seed
+                let col_names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+                let indices = if seed % 3 == 0 {
+                    index_strategy(&name, &col_names)
+                } else {
+                    vec![]
+                };
+
                 Table {
                     name,
                     columns,
                     foreign_keys: vec![],
-                    indices: vec![],
+                    indices,
                     source: SourceLocation::default(),
                     doc: None,
                     icon: None,
@@ -1814,8 +1869,10 @@ mod proptests {
             // Collect table names for FK generation
             let table_names: Vec<String> = tables.iter().map(|t| t.name.clone()).collect();
 
-            // Add some FKs (referencing only tables that exist)
+            // Add FKs (including self-referential)
             for table in &mut tables {
+                let table_name = table.name.clone();
+
                 // Look for columns that look like FK columns (ending in _id)
                 let fk_columns: Vec<String> = table
                     .columns
@@ -1825,6 +1882,16 @@ mod proptests {
                     .collect();
 
                 for col_name in fk_columns {
+                    // Handle self-referential FK (parent_id -> same table)
+                    if col_name == "parent_id" {
+                        table.foreign_keys.push(ForeignKey {
+                            columns: vec![col_name],
+                            references_table: table_name.clone(),
+                            references_columns: vec!["id".to_string()],
+                        });
+                        continue;
+                    }
+
                     // Try to find a matching table
                     let ref_table = col_name.trim_end_matches("_id").to_string();
                     if table_names.contains(&ref_table) {
@@ -1842,7 +1909,7 @@ mod proptests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(5000))]
+        #![proptest_config(ProptestConfig::with_cases(10000))]
 
         /// The fundamental property: diff + solve + simulate = desired state
         #[test]
