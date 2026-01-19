@@ -295,11 +295,20 @@ Useful for deeply nested configuration:
 
 ```compare
 /// styx
-selector.matchLabels app>web
+selector.matchLabels.app web
 /// yaml
 selector:
   matchLabels:
     app: web
+```
+
+Sibling paths are fine, but you can't reopen a closed path:
+
+```styx
+foo.bar 1
+foo.baz 2    // ok: foo still open
+other 3      // closes foo
+foo.qux 4    // ERROR: foo was closed
 ```
 
 ### Attributes
