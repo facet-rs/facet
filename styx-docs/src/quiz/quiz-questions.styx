@@ -469,15 +469,22 @@ questions {
     }
     unit-sparse-sequence {
         question <<DOC,markdown
-            Is this valid Styx?
+            What does this mean?
 
             ```styx
             grid (1 2 @ @ 5)
             ```
             DOC
         options (
-            {text "Valid", correct true}
-            {text "Invalid", help "Unit is a value like any other"}
+            {
+                text <<DOC,markdown
+                    ```json
+                    {"grid": [1, 2, null, null, 5]}
+                    ```
+                    DOC
+                correct true
+            }
+            {text "A parse error", help "Unit is a value like any other"}
         )
         explanation <<DOC,markdown
             `@` is a first-class value. You can use it anywhere: as object values, sequence elements, tag payloads.
@@ -540,7 +547,14 @@ questions {
             DOC
         options (
             {text "Greater-than comparison", help "Styx doesn't have operators"}
-            {text "Sets attributes", correct true}
+            {
+                text <<DOC,markdown
+                    ```json
+                    {"server": {"host": "localhost", "port": 8080}}
+                    ```
+                    DOC
+                correct true
+            }
             {text "A parse error", help "Object attribute syntax is valid"}
         )
         explanation <<DOC,markdown
