@@ -130,6 +130,18 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   private channelRegistry: ChannelRegistry;
   private nextRequestId: bigint = 1n;
 
+  // Pending request tracking for concurrent calls
+  private pendingRequests = new Map<
+    bigint,
+    {
+      resolve: (payload: Uint8Array) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+  private messagePumpRunning = false;
+  private messagePumpPromise: Promise<void> | null = null;
+
   constructor(io: T, role: Role, negotiated: Negotiated, ourHello: Hello) {
     this.io = io;
     this._role = role;
@@ -242,6 +254,81 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   }
 
   /**
+   * Start the message pump if not already running.
+   * The pump receives messages and routes responses to pending requests.
+   */
+  private startMessagePump(): void {
+    if (this.messagePumpRunning) return;
+    this.messagePumpRunning = true;
+
+    this.messagePumpPromise = (async () => {
+      try {
+        while (this.pendingRequests.size > 0) {
+          const data = await this.io.recvTimeout(100); // Short timeout to check for new requests
+          if (!data) {
+            // No message received, but keep running if there are pending requests
+            continue;
+          }
+
+          // Parse message using wire codec
+          const result = decodeMessage(data);
+          const msg = result.value;
+
+          if (msg.tag === "Goodbye") {
+            // Reject all pending requests
+            const error = ConnectionError.closed();
+            for (const [, pending] of this.pendingRequests) {
+              clearTimeout(pending.timer);
+              pending.reject(error);
+            }
+            this.pendingRequests.clear();
+            return;
+          }
+
+          // Handle streaming messages
+          if (msg.tag === "Data") {
+            try {
+              this.channelRegistry.routeData(msg.channelId, msg.payload);
+            } catch {
+              // Ignore stream errors - connection still valid
+            }
+            continue;
+          }
+
+          if (msg.tag === "Close") {
+            if (this.channelRegistry.contains(msg.channelId)) {
+              this.channelRegistry.close(msg.channelId);
+            }
+            continue;
+          }
+
+          if (msg.tag === "Credit") {
+            // Flow control, currently ignored
+            continue;
+          }
+
+          if (msg.tag === "Response") {
+            // Route response to the correct pending request
+            const pending = this.pendingRequests.get(msg.requestId);
+            if (pending) {
+              clearTimeout(pending.timer);
+              this.pendingRequests.delete(msg.requestId);
+              pending.resolve(msg.payload);
+            }
+            // Ignore responses for unknown request IDs (already timed out?)
+            continue;
+          }
+
+          // Ignore other messages (Hello after handshake, Reset, etc.)
+        }
+      } finally {
+        this.messagePumpRunning = false;
+        this.messagePumpPromise = null;
+      }
+    })();
+  }
+
+  /**
    * Make an RPC call.
    *
    * r[impl core.call] - Caller sends Request, callee responds with Response.
@@ -260,6 +347,19 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   ): Promise<Uint8Array> {
     const requestId = this.nextRequestId++;
 
+    // Create a promise that will be resolved when the response arrives
+    const responsePromise = new Promise<Uint8Array>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(ConnectionError.io("timeout waiting for response"));
+      }, timeoutMs);
+
+      this.pendingRequests.set(requestId, { resolve, reject, timer });
+    });
+
+    // Start the message pump if not already running
+    this.startMessagePump();
+
     // Send request
     // r[impl call.request.channels] - Include channel IDs in Request.
     await this.io.send(encodeMessage(messageRequest(requestId, methodId, payload, [], channels)));
@@ -268,56 +368,8 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     // r[impl channeling.data] - Send queued Data/Close messages after Request.
     await this.flushOutgoing();
 
-    // Wait for response
-    while (true) {
-      const data = await this.io.recvTimeout(timeoutMs);
-      if (!data) {
-        throw ConnectionError.io("timeout waiting for response");
-      }
-
-      // Parse message using wire codec
-      const result = decodeMessage(data);
-      const msg = result.value;
-
-      if (msg.tag === "Goodbye") {
-        throw ConnectionError.closed();
-      }
-
-      // Handle streaming messages while waiting for response
-      if (msg.tag === "Data") {
-        // Route to registered stream
-        try {
-          this.channelRegistry.routeData(msg.channelId, msg.payload);
-        } catch {
-          // Ignore stream errors during call - connection still valid
-        }
-        continue;
-      }
-
-      if (msg.tag === "Close") {
-        if (this.channelRegistry.contains(msg.channelId)) {
-          this.channelRegistry.close(msg.channelId);
-        }
-        continue;
-      }
-
-      if (msg.tag === "Credit") {
-        // Credit { channel_id, bytes } - flow control, currently ignored
-        // TODO: Implement flow control tracking
-        continue;
-      }
-
-      if (msg.tag !== "Response") {
-        // Ignore other messages (Hello after handshake, Reset, etc.)
-        continue;
-      }
-
-      // Check if this response is for our request
-      if (msg.requestId === requestId) {
-        return msg.payload;
-      }
-      // Otherwise continue waiting (might be response to different pipelined request)
-    }
+    // Wait for the response to be routed by the message pump
+    return responsePromise;
   }
 
   /**
