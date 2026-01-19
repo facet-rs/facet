@@ -130,7 +130,8 @@ ratio 3.14
 
 These are all text. Types come later, from schemas or deserialization.
 
-In YAML, these classic gotchas:
+In YAML, `NO` is parsed as boolean false, and `1.10` is parsed as `1.1`,
+leading to these comical situations:
 
 ```compare
 /// yaml
@@ -149,8 +150,6 @@ version: 1.10
 /// yaml
 version: 1.1
 ```
-
-The left is what you write, the right is what YAML parses.
 
 Styx does not assign a type at parse time — only later, at deserialization time, do
 these become what you want them to become.
@@ -296,12 +295,15 @@ Useful for deeply nested configuration:
 
 ```compare
 /// styx
-profile.release.lto true
-profile.release.opt-level 3
-/// toml
-[profile.release]
-lto = true
-opt-level = 3
+spec.containers.0.resources.limits.memory 128Mi
+spec.containers.0.resources.limits.cpu 500m
+/// yaml
+spec:
+  containers:
+    - resources:
+        limits:
+          memory: 128Mi
+          cpu: 500m
 ```
 
 ### Attributes
