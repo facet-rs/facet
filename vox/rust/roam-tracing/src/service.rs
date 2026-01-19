@@ -7,25 +7,51 @@
 use facet::Facet;
 use roam::service;
 
-use crate::record::{Level, TracingRecord};
+use crate::record::TracingRecord;
 
 /// Configuration for tracing.
+///
+/// The `filter_directives` field uses the same syntax as `RUST_LOG`:
+/// - `trace`, `debug`, `info`, `warn`, `error` - global level
+/// - `target=level` - per-target level
+/// - `target[span]=level` - per-span level
+/// - Multiple directives separated by commas
+///
+/// Examples:
+/// - `"info"` - info level globally
+/// - `"debug,hyper=info"` - debug globally, but info for hyper
+/// - `"trace,tokio=off"` - trace everything except tokio
 #[derive(Debug, Clone, PartialEq, Facet)]
 pub struct TracingConfig {
-    /// Minimum level to emit (records below this are dropped).
-    pub min_level: Level,
-    /// Target filters (empty = accept all).
-    /// Format: "target=level" or just "target" (accepts all levels).
-    pub filters: Vec<String>,
+    /// Filter directives in RUST_LOG format.
+    ///
+    /// Empty string means "info" (the default).
+    pub filter_directives: String,
     /// Whether to include span enter/exit events (verbose).
     pub include_span_events: bool,
 }
 
 impl Default for TracingConfig {
     fn default() -> Self {
+        Self::from_env()
+    }
+}
+
+impl TracingConfig {
+    /// Create config from `RUST_LOG` environment variable.
+    ///
+    /// If `RUST_LOG` is not set, defaults to "info".
+    pub fn from_env() -> Self {
         Self {
-            min_level: Level::Info,
-            filters: Vec::new(),
+            filter_directives: std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+            include_span_events: false,
+        }
+    }
+
+    /// Create config with specific filter directives.
+    pub fn with_filter(filter_directives: impl Into<String>) -> Self {
+        Self {
+            filter_directives: filter_directives.into(),
             include_span_events: false,
         }
     }

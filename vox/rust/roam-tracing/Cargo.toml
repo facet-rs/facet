@@ -22,7 +22,7 @@ facet.workspace = true
 # Tracing ecosystem
 tracing = "0.1"
 tracing-core = "0.1"
-tracing-subscriber = { version = "0.3", features = ["registry"] }
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "std"] }
 
 # Async runtime
 tokio = { version = "1", features = ["sync", "rt"] }

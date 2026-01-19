@@ -117,7 +117,7 @@ pub use service::{
 };
 
 // Re-export cell-side types
-pub use cell::{CellTracingLayer, CellTracingService};
+pub use cell::{CellTracingGuard, CellTracingLayer, CellTracingService};
 
 // Re-export host-side types
 pub use host::{HostTracingService, HostTracingState, PeerId, TaggedRecord};
@@ -131,8 +131,8 @@ pub use dispatch::dispatch_record;
 ///
 /// Returns a tuple of:
 /// - `CellTracingLayer`: Install this as a layer in your tracing subscriber
-/// - `CellTracingService`: Register this with your cell's dispatcher, and call
-///   `spawn_drain(handle)` after establishing the connection
+/// - `CellTracingGuard`: **You must call `.start(handle).await`** after establishing
+///   the connection. Panics on drop if you forget!
 ///
 /// # Arguments
 ///
@@ -144,22 +144,26 @@ pub use dispatch::dispatch_record;
 /// use roam_tracing::{init_cell_tracing, CellTracingDispatcher};
 /// use tracing_subscriber::prelude::*;
 ///
-/// let (layer, service) = init_cell_tracing(1024);
+/// let (layer, tracing_guard) = init_cell_tracing(1024);
 ///
 /// tracing_subscriber::registry()
 ///     .with(layer)
 ///     .init();
 ///
-/// // Create dispatcher for the tracing service
-/// let tracing_dispatcher = CellTracingDispatcher::new(service.clone());
+/// // Create dispatcher using the service from the guard
+/// let tracing_dispatcher = CellTracingDispatcher::new(tracing_guard.service());
 ///
-/// // ... later, after establish_guest() returns handle:
-/// service.spawn_drain(handle);
+/// // ... after establish_guest() returns handle:
+/// // This MUST be called or the guard will panic on drop!
+/// tracing_guard.start(handle.clone()).await;
+///
+/// // Now tracing uses the host's RUST_LOG config
+/// tracing::info!("cell started");
 /// ```
-pub fn init_cell_tracing(buffer_size: usize) -> (CellTracingLayer, CellTracingService) {
+pub fn init_cell_tracing(buffer_size: usize) -> (CellTracingLayer, CellTracingGuard) {
     let layer = CellTracingLayer::new(buffer_size);
     let service = layer.service_handle();
-    (layer, service)
+    (layer, CellTracingGuard::new(service))
 }
 
 #[cfg(test)]
@@ -169,8 +173,9 @@ mod tests {
 
     #[test]
     fn test_layer_captures_events() {
-        // Create the layer and service
-        let (layer, _service) = init_cell_tracing(100);
+        // Use the real API, defuse guard for unit test (no host to connect to)
+        let (layer, guard) = init_cell_tracing(100);
+        let _service = guard.defuse();
 
         // Get access to the buffer for testing
         let buffer = layer.buffer.clone();
@@ -206,11 +211,10 @@ mod tests {
     fn test_layer_captures_spans() {
         // Create the layer with span events enabled
         let layer = CellTracingLayer::new(100);
-        {
-            let mut config = layer.config.write().unwrap();
-            config.include_span_events = true;
-            config.min_level = Level::Trace;
-        }
+        layer.set_config(&TracingConfig {
+            filter_directives: "trace".to_string(),
+            include_span_events: true,
+        });
 
         let buffer = layer.buffer.clone();
 
@@ -257,10 +261,10 @@ mod tests {
     #[test]
     fn test_level_filtering() {
         let layer = CellTracingLayer::new(100);
-        {
-            let mut config = layer.config.write().unwrap();
-            config.min_level = Level::Warn; // Only warn and error
-        }
+        layer.set_config(&TracingConfig {
+            filter_directives: "warn".to_string(), // Only warn and error
+            include_span_events: false,
+        });
 
         let buffer = layer.buffer.clone();
 

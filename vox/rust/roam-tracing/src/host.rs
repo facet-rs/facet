@@ -177,21 +177,20 @@ mod tests {
         let state = HostTracingState::new(100);
         let service = state.service_for_peer(1, None);
 
-        // Default config
+        // Default config (from RUST_LOG env var or "info")
         let config = service.get_tracing_config().await;
-        assert_eq!(config.min_level, Level::Info);
+        // Default should contain some filter directives
+        assert!(!config.filter_directives.is_empty() || config.filter_directives == "info");
 
         // Update config
         state.set_config(TracingConfig {
-            min_level: Level::Debug,
-            filters: vec!["mymodule".to_string()],
+            filter_directives: "debug,mymodule=trace".to_string(),
             include_span_events: true,
         });
 
         // Query again
         let config = service.get_tracing_config().await;
-        assert_eq!(config.min_level, Level::Debug);
-        assert_eq!(config.filters, vec!["mymodule".to_string()]);
+        assert_eq!(config.filter_directives, "debug,mymodule=trace");
         assert!(config.include_span_events);
     }
 }

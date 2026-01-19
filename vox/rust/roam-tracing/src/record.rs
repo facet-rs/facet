@@ -37,6 +37,17 @@ impl Level {
             tracing::Level::ERROR => Level::Error,
         }
     }
+
+    /// Convert to `tracing::Level`.
+    pub fn to_tracing(self) -> tracing::Level {
+        match self {
+            Level::Trace => tracing::Level::TRACE,
+            Level::Debug => tracing::Level::DEBUG,
+            Level::Info => tracing::Level::INFO,
+            Level::Warn => tracing::Level::WARN,
+            Level::Error => tracing::Level::ERROR,
+        }
+    }
 }
 
 /// A field value in a tracing event or span.

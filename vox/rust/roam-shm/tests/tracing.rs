@@ -12,8 +12,8 @@ use roam_shm::host::ShmHost;
 use roam_shm::layout::SegmentConfig;
 use roam_shm::transport::ShmGuestTransport;
 use roam_tracing::{
-    CellTracingDispatcher, CellTracingService, HostTracingDispatcher, HostTracingState, Level,
-    TracingConfig, TracingRecord, init_cell_tracing,
+    CellTracingDispatcher, CellTracingGuard, HostTracingDispatcher, HostTracingState, Level,
+    TracingConfig, TracingRecord, init_cell_tracing, ConfigResult,
 };
 
 /// A simple test service for the guest.
@@ -54,7 +54,7 @@ struct TracingTestFixture {
     guest_handle: roam_session::ConnectionHandle,
     host_handle: roam_session::ConnectionHandle,
     tracing_state: Arc<HostTracingState>,
-    tracing_service: CellTracingService,
+    tracing_guard: CellTracingGuard,
     _dir: tempfile::TempDir,
 }
 
@@ -77,15 +77,15 @@ fn setup_tracing_test() -> TracingTestFixture {
     let spawn_args = ticket.into_spawn_args();
 
     // === Guest side setup ===
-    // Initialize cell-side tracing
-    let (_tracing_layer, tracing_service) = init_cell_tracing(100);
+    // Initialize cell-side tracing (returns guard that must be started)
+    let (_tracing_layer, tracing_guard) = init_cell_tracing(100);
 
     // Set up tracing subscriber with the layer
     // Note: in tests we can't call .init() globally, so we'll skip actually
     // installing the subscriber. The layer still buffers records when used.
 
     // Create guest dispatcher: CellTracing + GuestService
-    let cell_tracing_dispatcher = CellTracingDispatcher::new(tracing_service.clone());
+    let cell_tracing_dispatcher = CellTracingDispatcher::new(tracing_guard.service());
     let guest_service_dispatcher = GuestServiceDispatcher::new(GuestServiceImpl);
     let guest_dispatcher = RoutedDispatcher::new(cell_tracing_dispatcher, guest_service_dispatcher);
 
@@ -119,7 +119,7 @@ fn setup_tracing_test() -> TracingTestFixture {
         guest_handle,
         host_handle,
         tracing_state,
-        tracing_service,
+        tracing_guard,
         _dir: dir,
     }
 }
@@ -128,11 +128,11 @@ fn setup_tracing_test() -> TracingTestFixture {
 #[tokio::test]
 async fn test_guest_queries_config() {
     let fixture = setup_tracing_test();
+    let _service = fixture.tracing_guard.defuse(); // No drain needed for this test
 
     // Set a custom config on host
     fixture.tracing_state.set_config(TracingConfig {
-        min_level: Level::Debug,
-        filters: vec!["mymodule".to_string()],
+        filter_directives: "debug,mymodule=trace".to_string(),
         include_span_events: true,
     });
 
@@ -140,8 +140,7 @@ async fn test_guest_queries_config() {
     let client = roam_tracing::HostTracingClient::new(fixture.guest_handle.clone());
     let config = client.get_tracing_config().await.unwrap();
 
-    assert_eq!(config.min_level, Level::Debug);
-    assert_eq!(config.filters, vec!["mymodule".to_string()]);
+    assert_eq!(config.filter_directives, "debug,mymodule=trace");
     assert!(config.include_span_events);
 }
 
@@ -149,6 +148,7 @@ async fn test_guest_queries_config() {
 #[tokio::test]
 async fn test_guest_emits_records_to_host() {
     let fixture = setup_tracing_test();
+    let _service = fixture.tracing_guard.defuse(); // No drain needed for this test
 
     // Take the receiver
     let mut records_rx = fixture.tracing_state.take_receiver().unwrap();
@@ -207,25 +207,26 @@ async fn test_guest_emits_records_to_host() {
 #[tokio::test]
 async fn test_host_pushes_config_to_cell() {
     let fixture = setup_tracing_test();
+    let _service = fixture.tracing_guard.defuse(); // No drain needed for this test
 
     // Host pushes config to cell
     let client = roam_tracing::CellTracingClient::new(fixture.host_handle.clone());
     let result = client
         .configure(TracingConfig {
-            min_level: Level::Error,
-            filters: vec![],
+            filter_directives: "error".to_string(),
             include_span_events: false,
         })
         .await
         .unwrap();
 
-    assert_eq!(result, roam_tracing::ConfigResult::Ok);
+    assert_eq!(result, ConfigResult::Ok);
 }
 
 /// Test bidirectional: guest calls host service, host calls guest service.
 #[tokio::test]
 async fn test_bidirectional_services_with_tracing() {
     let fixture = setup_tracing_test();
+    let _service = fixture.tracing_guard.defuse(); // No drain needed for this test
 
     // Guest calls host's HostService
     let host_client = HostServiceClient::new(fixture.guest_handle.clone());
@@ -246,18 +247,17 @@ async fn test_drain_task_flow() {
     // Take the receiver
     let mut records_rx = fixture.tracing_state.take_receiver().unwrap();
 
-    // Start the drain task
+    // Start the tracing service (queries config, then spawns drain)
+    // This consumes the guard - the proper way to start tracing
     fixture
-        .tracing_service
-        .spawn_drain(fixture.guest_handle.clone());
+        .tracing_guard
+        .start(fixture.guest_handle.clone())
+        .await;
 
     // Manually push records to the buffer (simulating what the layer would do)
     // Note: In a real scenario, the CellTracingLayer would push to the buffer
     // when tracing macros are used. Here we access the buffer directly.
     // This is a simplified test - full integration would need the tracing subscriber.
-
-    // Give the drain task time to start and query config
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // The drain task should be running. Since we can't easily push to the
     // internal buffer from here, we'll just verify the task started without error.

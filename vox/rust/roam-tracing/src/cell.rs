@@ -11,6 +11,7 @@ use roam::session::ConnectionHandle;
 use tracing::span::{Attributes, Id};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::Layer;
+use tracing_subscriber::filter::Targets;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 
@@ -20,6 +21,28 @@ use crate::service::{CellTracing, ConfigResult, HostTracingClient, TracingConfig
 
 /// Extension stored in span extensions to track our span ID.
 struct SpanIdExt(SpanId);
+
+/// Parsed filter state derived from TracingConfig.
+pub(crate) struct FilterState {
+    /// Parsed target filter for level/target checking.
+    targets: Targets,
+    /// Whether to include span enter/exit events.
+    include_span_events: bool,
+}
+
+impl FilterState {
+    fn from_config(config: &TracingConfig) -> Self {
+        // Parse the filter directives. If parsing fails, default to "info".
+        let targets = config
+            .filter_directives
+            .parse::<Targets>()
+            .unwrap_or_else(|_| "info".parse().unwrap());
+        Self {
+            targets,
+            include_span_events: config.include_span_events,
+        }
+    }
+}
 
 /// Cell-side tracing layer that forwards events to the host.
 ///
@@ -31,8 +54,8 @@ pub struct CellTracingLayer {
     pub(crate) buffer: Arc<LossyBuffer<TracingRecord>>,
     /// Span ID allocator (cell-local).
     next_span_id: AtomicU64,
-    /// Current configuration.
-    pub(crate) config: Arc<RwLock<TracingConfig>>,
+    /// Parsed filter state (derived from TracingConfig).
+    pub(crate) filter: Arc<RwLock<FilterState>>,
     /// Start time for monotonic timestamps.
     start: Instant,
 }
@@ -42,11 +65,17 @@ impl CellTracingLayer {
     ///
     /// `buffer_size` is the maximum number of records to buffer.
     /// When full, oldest records are dropped (lossy).
+    ///
+    /// **Important**: The layer starts with a maximally permissive filter ("trace")
+    /// to avoid losing events. Call [`CellTracingService::start`] immediately after
+    /// establishing the connection to query the host's config and start draining.
     pub fn new(buffer_size: usize) -> Self {
+        // Start maximally permissive - don't drop anything until host config arrives.
+        let initial_filter = FilterState::from_config(&TracingConfig::with_filter("trace"));
         Self {
             buffer: Arc::new(LossyBuffer::new(buffer_size)),
             next_span_id: AtomicU64::new(1),
-            config: Arc::new(RwLock::new(TracingConfig::default())),
+            filter: Arc::new(RwLock::new(initial_filter)),
             start: Instant::now(),
         }
     }
@@ -57,7 +86,7 @@ impl CellTracingLayer {
     pub fn service_handle(&self) -> CellTracingService {
         CellTracingService {
             buffer: self.buffer.clone(),
-            config: self.config.clone(),
+            filter: self.filter.clone(),
         }
     }
 
@@ -65,17 +94,20 @@ impl CellTracingLayer {
         self.next_span_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    fn should_emit(&self, level: Level, _target: &str) -> bool {
-        let config = self.config.read().unwrap();
-        if level < config.min_level {
-            return false;
-        }
-        // TODO: Apply target filters from config.filters
-        true
+    fn should_emit(&self, level: Level, target: &str) -> bool {
+        let filter = self.filter.read().unwrap();
+        filter.targets.would_enable(target, &level.to_tracing())
     }
 
     fn now_ns(&self) -> u64 {
         self.start.elapsed().as_nanos() as u64
+    }
+
+    /// Update the filter configuration.
+    ///
+    /// This is primarily for testing; in production, config is pushed via RPC.
+    pub fn set_config(&self, config: &TracingConfig) {
+        *self.filter.write().unwrap() = FilterState::from_config(config);
     }
 }
 
@@ -98,8 +130,8 @@ where
         }
 
         // Only emit SpanEnter record if include_span_events is enabled
-        let config = self.config.read().unwrap();
-        if !config.include_span_events {
+        let filter = self.filter.read().unwrap();
+        if !filter.include_span_events {
             return;
         }
 
@@ -165,8 +197,8 @@ where
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
-        let config = self.config.read().unwrap();
-        if !config.include_span_events {
+        let filter = self.filter.read().unwrap();
+        if !filter.include_span_events {
             return;
         }
 
@@ -184,8 +216,8 @@ where
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
         // SpanEnter is already recorded on_new_span, but we could emit
         // separate enter events for re-entry if needed
-        let config = self.config.read().unwrap();
-        if !config.include_span_events {
+        let filter = self.filter.read().unwrap();
+        if !filter.include_span_events {
             return;
         }
 
@@ -199,8 +231,8 @@ where
     }
 
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
-        let config = self.config.read().unwrap();
-        if !config.include_span_events {
+        let filter = self.filter.read().unwrap();
+        if !filter.include_span_events {
             return;
         }
 
@@ -223,60 +255,134 @@ where
 #[derive(Clone)]
 pub struct CellTracingService {
     buffer: Arc<LossyBuffer<TracingRecord>>,
-    config: Arc<RwLock<TracingConfig>>,
+    filter: Arc<RwLock<FilterState>>,
+}
+
+/// Guard returned by [`init_cell_tracing`](crate::init_cell_tracing).
+///
+/// You **must** call [`start()`](Self::start) on this guard after establishing
+/// the connection to the host. If dropped without calling `start()`, it will panic.
+///
+/// This ensures you don't forget to query the host's tracing config.
+#[must_use = "you must call .start(handle).await to initialize tracing"]
+pub struct CellTracingGuard {
+    service: CellTracingService,
+    started: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CellTracingGuard {
+    pub(crate) fn new(service: CellTracingService) -> Self {
+        Self {
+            service,
+            started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Start the tracing service: query host config, then spawn the drain task.
+    ///
+    /// **Call this immediately after `establish_guest()` returns**, before doing
+    /// any real work. This ensures the tracing filter matches the host's `RUST_LOG`.
+    ///
+    /// Consumes the guard to prevent double-start.
+    pub async fn start(self, handle: ConnectionHandle) {
+        self.started.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.service.start(handle).await;
+    }
+
+    /// Start with custom batch size and flush interval.
+    pub async fn start_with_options(
+        self,
+        handle: ConnectionHandle,
+        batch_size: usize,
+        flush_interval: Duration,
+    ) {
+        self.started.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.service
+            .start_with_options(handle, batch_size, flush_interval)
+            .await;
+    }
+
+    /// Get a clone of the underlying service for registering with dispatchers.
+    ///
+    /// The service implements `CellTracing` for receiving config updates from host.
+    pub fn service(&self) -> CellTracingService {
+        self.service.clone()
+    }
+}
+
+impl Drop for CellTracingGuard {
+    fn drop(&mut self) {
+        if !self.started.load(std::sync::atomic::Ordering::SeqCst) {
+            panic!(
+                "CellTracingGuard dropped without calling start()! \
+                 You must call guard.start(handle).await after establish_guest() \
+                 to initialize tracing with the host's RUST_LOG config."
+            );
+        }
+    }
+}
+
+impl CellTracingGuard {
+    /// Defuse the guard without starting (won't panic on drop).
+    ///
+    /// **For testing only.** In production, always call `.start()` instead.
+    /// This is useful for unit tests that don't have a host to connect to.
+    #[doc(hidden)]
+    pub fn defuse(self) -> CellTracingService {
+        self.started.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.service.clone()
+    }
 }
 
 impl CellTracingService {
-    /// Returns a future that drains the buffer and forwards records to the host.
+    /// Start the tracing service: query host config, then spawn the drain task.
     ///
-    /// This is an infinite loop that:
-    /// 1. Queries the tracing config from the host on startup
-    /// 2. Periodically drains the buffer and calls `emit_tracing()` on the host
-    ///
-    /// Call this after `establish_guest()` returns a handle.
+    /// **Call this immediately after `establish_guest()` returns**, before doing
+    /// any real work. This ensures the tracing filter matches the host's `RUST_LOG`
+    /// before any events are emitted.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// // Option 1: Use spawn_drain() for automatic panic handling
-    /// service.spawn_drain(handle);
+    /// let (layer, service) = init_cell_tracing(1024);
+    /// tracing_subscriber::registry().with(layer).init();
     ///
-    /// // Option 2: Spawn manually if you need control
-    /// tokio::spawn(service.drain(handle));
+    /// let handle = establish_guest(transport, dispatcher);
+    ///
+    /// // Query host config and start draining - do this FIRST
+    /// service.start(handle.clone()).await;
+    ///
+    /// // Now tracing is properly configured
+    /// tracing::info!("cell started");
     /// ```
-    pub fn drain(
-        &self,
-        handle: ConnectionHandle,
-    ) -> impl std::future::Future<Output = ()> + Send + 'static {
-        self.drain_with_options(handle, 64, Duration::from_millis(50))
+    pub async fn start(&self, handle: ConnectionHandle) {
+        self.start_with_options(handle, 64, Duration::from_millis(50))
+            .await;
     }
 
-    /// Returns a drain future with custom options.
+    /// Start with custom batch size and flush interval.
     ///
-    /// See [`drain`](Self::drain) for details.
-    pub fn drain_with_options(
+    /// See [`start`](Self::start) for details.
+    pub async fn start_with_options(
         &self,
         handle: ConnectionHandle,
         batch_size: usize,
         flush_interval: Duration,
-    ) -> impl std::future::Future<Output = ()> + Send + 'static {
-        let buffer = self.buffer.clone();
-        let config = self.config.clone();
-
-        async move {
-            let client = HostTracingClient::new(handle);
-
-            // Query initial config from host
-            match client.get_tracing_config().await {
-                Ok(host_config) => {
-                    *config.write().unwrap() = host_config;
-                }
-                Err(_) => {
-                    // Use default config if query fails
-                }
+    ) {
+        // Query config from host FIRST, before spawning drain task
+        let client = HostTracingClient::new(handle.clone());
+        match client.get_tracing_config().await {
+            Ok(host_config) => {
+                *self.filter.write().unwrap() = FilterState::from_config(&host_config);
             }
+            Err(_) => {
+                // Use default config if query fails (keeps "trace" level)
+            }
+        }
 
-            // Drain loop - runs forever
+        // Now spawn the drain task
+        let buffer = self.buffer.clone();
+        tokio::spawn(async move {
             loop {
                 // Collect batch from buffer
                 let mut batch = Vec::with_capacity(batch_size);
@@ -290,60 +396,57 @@ impl CellTracingService {
 
                 // Send batch if non-empty
                 if !batch.is_empty() {
-                    // Fire and forget - don't block on result
                     let _ = client.emit_tracing(batch).await;
                 }
 
                 tokio::time::sleep(flush_interval).await;
             }
-        }
+        });
     }
 
-    /// Spawn the drain task with automatic panic handling.
+    /// Spawn the drain task without querying config first.
     ///
-    /// This is the recommended way to start the drain. If the task exits
-    /// unexpectedly (which should never happen), it will panic loudly so
-    /// you know tracing stopped working.
-    ///
-    /// # Panics
-    ///
-    /// The spawned task will panic if:
-    /// - The drain loop exits (shouldn't happen - it's infinite)
-    /// - The drain loop panics internally
-    ///
-    /// This is intentional - silent tracing failures are hard to debug.
+    /// **Deprecated**: Use [`start`](Self::start) instead, which queries the host
+    /// config before spawning. This method exists for backwards compatibility.
+    #[deprecated(since = "0.7.0", note = "use `start()` instead which queries config first")]
     pub fn spawn_drain(&self, handle: ConnectionHandle) {
-        self.spawn_drain_with_options(handle, 64, Duration::from_millis(50));
-    }
-
-    /// Spawn the drain task with custom options.
-    ///
-    /// See [`spawn_drain`](Self::spawn_drain) for details.
-    pub fn spawn_drain_with_options(
-        &self,
-        handle: ConnectionHandle,
-        batch_size: usize,
-        flush_interval: Duration,
-    ) {
-        let drain_fut = self.drain_with_options(handle, batch_size, flush_interval);
+        let buffer = self.buffer.clone();
+        let filter = self.filter.clone();
 
         tokio::spawn(async move {
-            // The drain loop is infinite - if we get here, something is very wrong
-            drain_fut.await;
+            let client = HostTracingClient::new(handle);
 
-            // If we reach this point, the infinite loop exited somehow
-            panic!(
-                "roam-tracing: drain task exited unexpectedly! \
-                 Tracing from this cell will no longer be forwarded to host. \
-                 This is a bug in roam-tracing."
-            );
+            // Query config (but we're already racing with events)
+            match client.get_tracing_config().await {
+                Ok(host_config) => {
+                    *filter.write().unwrap() = FilterState::from_config(&host_config);
+                }
+                Err(_) => {}
+            }
+
+            loop {
+                let mut batch = Vec::with_capacity(64);
+                while batch.len() < 64 {
+                    if let Some(record) = buffer.try_pop() {
+                        batch.push(record);
+                    } else {
+                        break;
+                    }
+                }
+
+                if !batch.is_empty() {
+                    let _ = client.emit_tracing(batch).await;
+                }
+
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
         });
     }
 }
 
 impl CellTracing for CellTracingService {
     async fn configure(&self, config: TracingConfig) -> ConfigResult {
-        *self.config.write().unwrap() = config;
+        *self.filter.write().unwrap() = FilterState::from_config(&config);
         ConfigResult::Ok
     }
 }
