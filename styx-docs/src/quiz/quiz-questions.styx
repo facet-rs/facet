@@ -610,11 +610,11 @@ questions {
             DOC
         options (
             {text "A file include", help "Styx doesn't have includes"}
-            {text "A multiline string", correct true}
+            {text "A HEREDOC (multiline scalar)", correct true}
             {text "A parse error", help "Heredocs are valid Styx"}
         )
         explanation <<DOC,markdown
-            `<<MARKER` starts a heredoc - a multiline string that ends when `MARKER` appears alone on a line.
+            `<<MARKER` starts a heredoc — a multiline scalar that ends when `MARKER` appears alone on a line.
 
             The delimiter can be any identifier: `<<EOF`, `<<SQL`, `<<CODE`, etc.
             DOC
@@ -638,70 +638,6 @@ questions {
             The `,rust` after the heredoc marker is a language hint. It doesn't affect parsing - it's metadata for editors and tools to enable syntax highlighting.
 
             Common hints: `,sql`, `,json`, `,markdown`, `,html`
-            DOC
-    }
-    //==========================================================================
-    // Section 7: Schemas
-    //==========================================================================
-    schema-doc-comments {
-        question <<DOC,markdown
-            What do `///` comments do in Styx?
-
-            ```styx
-            /// User's display name
-            name @string
-            ```
-            DOC
-        options (
-            {text "Same as `//`", help "Triple-slash has special meaning"}
-            {text "A doc comment", correct true}
-            {text "A parse error", help "Doc comments are valid"}
-        )
-        explanation <<DOC,markdown
-            `///` is a doc comment - it attaches to the next element as documentation.
-
-            This powers editor features: hover for docs, autocomplete descriptions, etc.
-            DOC
-    }
-    schema-types {
-        question <<DOC,markdown
-            In a Styx schema, what does `@seq(@string)` mean?
-
-            ```styx
-            tags @seq(@string)
-            ```
-            DOC
-        options (
-            {text "A sequence containing `@string`", help "In schemas, @ introduces type annotations"}
-            {text "A sequence of strings", correct true}
-            {text "A tagged value", help "Schema types use @ differently than data"}
-        )
-        explanation <<DOC,markdown
-            In schemas, `@` prefixes type annotations:
-            - `@string`, `@int`, `@float`, `@bool` - scalar types
-            - `@seq(@T)` - sequence of T
-            - `@map(@T)` - object with values of type T
-            - `@optional(@T)` - T or absent
-            - `@object{...}` - object with specific fields
-            DOC
-    }
-    schema-validation {
-        question <<DOC,markdown
-            When can a Styx document be validated against a schema?
-            DOC
-        options (
-            {text "Only at compile time", help "Styx has no compile step"}
-            {text "Only at runtime in the application", help "Validation can happen anywhere"}
-            {text "Anytime: CLI, editor, CI, runtime", correct true}
-        )
-        explanation <<DOC,markdown
-            Schema validation is separate from parsing. Your document can be validated:
-            - By the CLI (`styx validate`)
-            - By your editor's LSP (live as you type)
-            - In CI pipelines
-            - At runtime when loading config
-
-            This is one of Styx's key features - schemas are portable.
             DOC
     }
 }

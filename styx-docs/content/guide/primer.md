@@ -385,38 +385,49 @@ BASH
 
 ## Schemas
 
-Styx documents can declare a schema for validation. Schemas are also written in Styx:
+Most Styx files you edit will have a schema. The schema tells your editor what keys are valid, what types they expect, and provides documentation on hover.
+
+### Where schemas come from
+
+When you open a config file, you'll typically see something like:
 
 ```styx
-@schema{
-    @ @object{
-        name @string
-        age @int
-        tags @seq(@string)
-    }
+@schema {source crate:tracey-config@1, cli tracey}
+
+spec {
+  // your config here
 }
 ```
 
-Doc comments (`///`) attach documentation to schema elements:
+The `@schema` line tells tooling where to find the schema:
+- `crate:tracey-config@1` — the schema is published to crates.io
+- `cli tracey` — or extract it from the `tracey` binary on your PATH
 
-```styx
-@schema{
-    @ @object{
-        /// User's display name
-        name @string
-        /// Age in years
-        age @int
-    }
-}
+Tooling tries the binary first (instant, works offline), then falls back to crates.io.
+
+### What you get
+
+With a schema, your editor provides:
+- **Validation** — red squiggles for typos and type errors
+- **Autocomplete** — suggestions as you type
+- **Hover docs** — documentation for each field
+- **Go to definition** — jump to where a field is defined in the schema
+
+### Getting started with a new tool
+
+Tools that use Styx typically provide an `init` command:
+
+```bash
+$ mytool init > config.styx
 ```
 
-Schemas enable editor features like autocomplete, hover documentation, and validation as you type.
+This generates a starter config with the `@schema` declaration already in place.
 
-### Recap
+### Known schema patterns
 
-<div data-quiz="schema-doc-comments"></div>
+The Styx CLI includes a registry of known config patterns. If you open a file like `.config/tracey/config.styx` without an `@schema` declaration, your editor will suggest adding one.
 
-<div data-quiz="schema-types"></div>
+For more details, see [Schema Distribution](/tools/schema-distribution/) and [Schema Registry](/tools/schema-registry/).
 
 ## Summary
 
