@@ -3,7 +3,7 @@
 //! WebSocket transport layer for roam RPC.
 //!
 //! This crate provides WebSocket support for roam services using the
-//! [`MessageTransport`] trait from `roam-session`.
+//! `MessageTransport` trait from `roam-session`.
 //!
 //! Unlike byte stream transports (TCP, Unix sockets), WebSocket provides
 //! native message framing, so no COBS encoding is needed.

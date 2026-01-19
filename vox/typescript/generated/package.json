@@ -10,6 +10,7 @@
     "check": "tsgo --noEmit"
   },
   "dependencies": {
-    "@bearcove/roam-core": "workspace:*"
+    "@bearcove/roam-core": "workspace:*",
+    "@bearcove/roam-ws": "workspace:*"
   }
 }

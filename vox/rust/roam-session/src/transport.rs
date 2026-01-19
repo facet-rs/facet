@@ -4,8 +4,8 @@
 //! transport mechanisms for sending and receiving roam messages.
 //!
 //! Implementations:
-//! - [`CobsFramed`](roam_stream::CobsFramed) for byte streams (TCP, Unix sockets)
-//! - `WsTransport` in `roam-websocket` crate for WebSocket
+//! - `CobsFramed` from `roam-stream` for byte streams (TCP, Unix sockets) - native only
+//! - `WsTransport` from `roam-websocket` for WebSocket (native and WASM)
 
 use std::io;
 use std::time::Duration;

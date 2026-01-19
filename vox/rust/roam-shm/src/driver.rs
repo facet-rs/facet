@@ -1430,9 +1430,10 @@ impl MultiPeerHostDriver {
 
         // Clean up empty queue
         if let Some(queue) = self.pending_sends.get(&peer_id)
-            && queue.is_empty() {
-                self.pending_sends.remove(&peer_id);
-            }
+            && queue.is_empty()
+        {
+            self.pending_sends.remove(&peer_id);
+        }
 
         if sent > 0 {
             debug!(
