@@ -3,7 +3,7 @@
 //! Provides a structured way to build Styx output with proper formatting,
 //! independent of any serialization framework.
 
-use crate::options::FormatOptions;
+use crate::options::{ForceStyle, FormatOptions};
 use crate::scalar::{can_be_bare, count_escapes, count_newlines, escape_quoted};
 
 /// Context for tracking serialization state.
@@ -106,10 +106,9 @@ impl StyxWriter {
 
     /// Check if we should use inline formatting at current depth.
     pub fn should_inline(&self) -> bool {
-        if self.options.force_inline {
+        if self.options.force_style == ForceStyle::Inline {
             return true;
-        }
-        if self.options.force_multiline {
+        } else if self.options.force_style == ForceStyle::Multiline {
             return false;
         }
         // Root level always uses newlines

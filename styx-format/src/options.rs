@@ -1,5 +1,17 @@
 //! Formatting options for Styx serialization.
 
+/// Restrict formatting to a kind.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ForceStyle {
+    None,
+
+    /// Force all objects to use comma separators
+    Inline,
+
+    /// Force all objects to use newline separators
+    Multiline,
+}
+
 /// Options for Styx serialization.
 #[derive(Debug, Clone)]
 pub struct FormatOptions {
@@ -22,12 +34,7 @@ pub struct FormatOptions {
     /// Use heredocs for strings with > N lines (default: 2)
     pub heredoc_line_threshold: usize,
 
-    /// Force all objects to use newline separators (default: false)
-    pub force_multiline: bool,
-
-    /// Force all objects to use comma separators (default: false)
-    /// Takes precedence over force_multiline if both set
-    pub force_inline: bool,
+    pub force_style: ForceStyle,
 }
 
 impl Default for FormatOptions {
@@ -39,8 +46,7 @@ impl Default for FormatOptions {
             inline_object_threshold: 4,
             inline_sequence_threshold: 8,
             heredoc_line_threshold: 2,
-            force_multiline: false,
-            force_inline: false,
+            force_style: ForceStyle::None,
         }
     }
 }
@@ -53,15 +59,13 @@ impl FormatOptions {
 
     /// Force all output to be multi-line (newline separators).
     pub fn multiline(mut self) -> Self {
-        self.force_multiline = true;
-        self.force_inline = false;
+        self.force_style = ForceStyle::Multiline;
         self
     }
 
     /// Force all output to be inline (comma separators, single line).
     pub fn inline(mut self) -> Self {
-        self.force_inline = true;
-        self.force_multiline = false;
+        self.force_style = ForceStyle::Inline;
         self
     }
 
