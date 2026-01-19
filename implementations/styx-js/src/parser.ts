@@ -76,9 +76,9 @@ export class Parser {
       this.advance();
     }
 
-    // Skip stray > tokens (can happen with `value>` where > has no following value)
-    while (this.check("gt")) {
-      this.advance();
+    // Trailing > without a value is a parse error
+    if (this.check("gt")) {
+      throw new ParseError("expected a value", this.current.span);
     }
 
     if (this.check("eof", "rbrace")) {
@@ -204,9 +204,9 @@ export class Parser {
       this.advance();
     }
 
-    // Skip stray > tokens (can happen with `value>` where > has no following value)
-    while (this.check("gt")) {
-      this.advance();
+    // Trailing > without a value is a parse error
+    if (this.check("gt")) {
+      throw new ParseError("expected a value", this.current.span);
     }
 
     if (this.check("eof", "rbrace")) {
@@ -378,10 +378,7 @@ export class Parser {
     if (!this.current.hadWhitespaceBefore) {
       // Check for invalid tag continuation (e.g., @org/package where / is not a valid tag char)
       if (this.check("scalar")) {
-        throw new ParseError(
-          "invalid tag name",
-          { start: start + 1, end: this.current.span.end }
-        );
+        throw new ParseError("invalid tag name", { start: start + 1, end: this.current.span.end });
       }
       if (this.check("lbrace")) {
         const obj = this.parseObject();
@@ -409,7 +406,10 @@ export class Parser {
     if (this.check("at")) {
       const atToken = this.advance();
       // Check for invalid tag name: @ followed immediately by non-tag-start character
-      if (!this.current.hadWhitespaceBefore && !this.check("eof", "rbrace", "rparen", "comma", "lbrace", "lparen")) {
+      if (
+        !this.current.hadWhitespaceBefore &&
+        !this.check("eof", "rbrace", "rparen", "comma", "lbrace", "lparen")
+      ) {
         // This looks like @123 or @-foo - invalid tag name
         // Error span starts after the @, just covering the invalid name
         throw new ParseError(`invalid tag name`, this.current.span);
@@ -437,23 +437,14 @@ export class Parser {
       const nextToken = this.current;
 
       if (nextToken.type === "gt" && !nextToken.hadWhitespaceBefore) {
-        // Peek ahead: if > is followed by newline/EOF, just consume the > and return scalar
-        // Otherwise, parse as attributes
+        // Attribute syntax: key>value
         this.advance(); // consume >
         const afterGT = this.current;
         if (afterGT.hadNewlineBefore || this.check("eof", "rbrace", "rparen")) {
-          // > at end of line - return just the scalar
-          return {
-            payload: {
-              type: "scalar",
-              text: scalarToken.text,
-              kind: "bare",
-              span: scalarToken.span,
-            },
-            span: scalarToken.span,
-          };
+          // Trailing > without a value is a parse error
+          throw new ParseError("expected a value", nextToken.span);
         }
-        // Not end of line - parse as attributes (we already consumed >)
+        // Parse as attributes (we already consumed >)
         return this.parseAttributesAfterGT(scalarToken);
       }
 

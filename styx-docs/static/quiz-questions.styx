@@ -1,0 +1,173 @@
+@schema ./quiz-questions.schema.styx
+
+/// Quiz questions for the Styx primer
+/// Each question tests parser knowledge
+
+questions {
+  duplicate-keys {
+    code <<DOC,styx
+    foo bar
+    foo baz
+    DOC
+    valid false
+    explanation "Objects cannot have duplicate keys. `foo` appears twice."
+  }
+
+  three-atoms {
+    code <<DOC,styx
+    key @tag {}
+    DOC
+    valid false
+    explanation "Entries have at most two atoms (key and value). `@tag` and `{}` are separate atoms because of the space."
+  }
+
+  reopening-path {
+    code <<DOC,styx
+    a.b 1
+    a.c 2
+    a.b.x 3
+    DOC
+    valid false
+    explanation "Once `a.c` is written, `a.b` is closed. You can't add to it later."
+  }
+
+  mixing-separators {
+    code <<DOC,styx
+    {a 1, b 2
+    c 3}
+    DOC
+    valid false
+    explanation "Objects must use either newlines OR commas, not both."
+  }
+
+  comma-in-sequence {
+    code <<DOC,styx
+    items (a, b, c)
+    DOC
+    valid false
+    explanation "Sequences use whitespace separation, not commas."
+  }
+
+  simple-kv {
+    code <<DOC,styx
+    host localhost
+    port 8080
+    DOC
+    valid true
+    explanation "Simple key-value pairs, newline separated."
+  }
+
+  tagged-unit {
+    code <<DOC,styx
+    status @ok
+    DOC
+    valid true
+    explanation "`@ok` is a tag with implicit unit payload."
+  }
+
+  tagged-object {
+    code <<DOC,styx
+    result @err{message "failed"}
+    DOC
+    valid true
+    explanation "Tag with object payload. No space between `@err` and `{`."
+  }
+
+  sequence {
+    code <<DOC,styx
+    ports (80 443 8080)
+    DOC
+    valid true
+    explanation "Whitespace-separated sequence."
+  }
+
+  nested-objects {
+    code <<DOC,styx
+    server {
+      host localhost
+      tls {
+        enabled true
+      }
+    }
+    DOC
+    valid true
+    explanation "Objects can nest arbitrarily."
+  }
+
+  dotted-paths {
+    code <<DOC,styx
+    server.host localhost
+    server.port 8080
+    DOC
+    valid true
+    explanation "Dotted paths create nested objects. Sibling paths under same prefix are fine."
+  }
+
+  heredoc {
+    code <<DOC,styx
+    script <<BASH
+    echo "hello"
+    BASH
+    DOC
+    valid true
+    explanation "Heredocs for multi-line content. Delimiter must be UPPERCASE."
+  }
+
+  comma-separated {
+    code <<DOC,styx
+    {host localhost, port 8080}
+    DOC
+    valid true
+    explanation "Single-line objects use comma separation."
+  }
+
+  unit-value {
+    code <<DOC,styx
+    nothing @
+    DOC
+    valid true
+    explanation "`@` alone is the unit value (like null)."
+  }
+
+  lowercase-heredoc {
+    code <<DOC,styx
+    text <<eof
+    content
+    eof
+    DOC
+    valid false
+    explanation "Heredoc delimiters must start with uppercase: `<<EOF` not `<<eof`."
+  }
+
+  space-in-attr {
+    code <<DOC,styx
+    div id > main
+    DOC
+    valid false
+    explanation "Attribute syntax has no spaces: `id>main` not `id > main`."
+  }
+
+  attr-syntax {
+    code <<DOC,styx
+    div id>main class>container
+    DOC
+    valid true
+    explanation "Attributes create inline objects: `{id main, class container}`."
+  }
+
+  unit-key {
+    code <<DOC,styx
+    @ default-value
+    DOC
+    valid true
+    explanation "`@` can be used as a key (unit key)."
+  }
+
+  quoted-key {
+    code <<DOC,styx
+    "my key" value
+    DOC
+    valid true
+    explanation "Quoted strings can be keys."
+  }
+}

@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@bearcove/codemirror-lang-styx": "workspace:*",
+    "@bearcove/styx": "workspace:*",
     "@codemirror/autocomplete": "^6.18.0",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-sql": "^6.10.0",
@@ -19,9 +20,11 @@
     "@lezer/highlight": "^1.2.0",
     "@lezer/lr": "^1.4.0",
     "@replit/codemirror-vim": "^6.3.0",
+    "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "codemirror": "^6.0.2",
     "monaco-editor": "^0.52.0",
-    "monaco-vim": "^0.4.1"
+    "monaco-vim": "^0.4.1",
+    "svelte": "^5.47.0"
   },
   "devDependencies": {
     "vite": "^7.3.1"

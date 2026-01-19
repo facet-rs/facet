@@ -1,0 +1,14 @@
+[package]
+name = "styx-webmd"
+version = "0.1.0"
+edition = "2024"
+description = "Markdown rendering for Styx docs (wasm)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+marq = { path = "../../../marq", default-features = false, features = ["highlight", "lang-rust", "lang-markdown", "lang-styx"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"

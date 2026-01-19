@@ -1,0 +1,23 @@
+meta {
+  id https://styx.bearcove.eu/schemas/quiz-questions
+  version 2026-01-19
+  description "Schema for Styx primer quiz questions"
+}
+
+schema {
+  /// Root document structure
+  @ @object{
+    /// Map of question ID to question definition
+    questions @map(@Question)
+  }
+
+  /// A single quiz question
+  Question @object{
+    /// The Styx code snippet to evaluate
+    code @string
+    /// Whether the code is valid Styx
+    valid @bool
+    /// Explanation shown after answering
+    explanation @string
+  }
+}

@@ -335,7 +335,33 @@ impl<'src> Lexer<'src> {
             return self.token(TokenKind::Error, start);
         }
 
-        // Consume newline after delimiter
+        // Consume optional language hint: ,lang where lang matches [a-z][a-z0-9_.-]*
+        // parser[impl scalar.heredoc.lang]
+        // The language hint is metadata and does not affect the scalar content.
+        if self.peek() == Some(',') {
+            self.advance(); // consume ','
+            // First char must be lowercase letter
+            if let Some(c) = self.peek() {
+                if c.is_ascii_lowercase() {
+                    self.advance();
+                    // Rest: lowercase, digit, underscore, dot, hyphen
+                    while let Some(c) = self.peek() {
+                        if c.is_ascii_lowercase()
+                            || c.is_ascii_digit()
+                            || c == '_'
+                            || c == '.'
+                            || c == '-'
+                        {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Consume newline after delimiter (and optional lang hint)
         if self.peek() == Some('\r') {
             self.advance();
         }

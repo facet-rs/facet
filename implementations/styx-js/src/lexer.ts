@@ -387,10 +387,7 @@ export class Lexer {
 
       // Check for exact match (no indentation)
       if (line === bareDelimiter) {
-        // Include language hint in text if present
-        if (delimiter.includes(",")) {
-          text = delimiter.slice(bareDelimiter.length) + "\n" + text;
-        }
+        // Language hint is metadata only, does not affect content (r[scalar.heredoc.lang])
         return {
           type: "heredoc",
           text,
@@ -405,11 +402,8 @@ export class Lexer {
       if (stripped === bareDelimiter) {
         const indentLen = line.length - stripped.length;
         // Dedent the content by stripping up to indentLen from each line
-        let result = this.dedentHeredoc(text, indentLen);
-        // Include language hint in text if present
-        if (delimiter.includes(",")) {
-          result = delimiter.slice(bareDelimiter.length) + "\n" + result;
-        }
+        const result = this.dedentHeredoc(text, indentLen);
+        // Language hint is metadata only, does not affect content (r[scalar.heredoc.lang])
         return {
           type: "heredoc",
           text: result,

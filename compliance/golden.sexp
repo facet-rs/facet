@@ -405,7 +405,7 @@
 (document [-1, -1]
   (entry
     (scalar [0, 4] bare "code")
-    (scalar [5, 59] heredoc ",rust\nfn main() {\n    println!(\"Hello!\");\n}\n"))
+    (scalar [5, 59] heredoc "fn main() {\n    println!(\"Hello!\");\n}\n"))
 )
 ; file: compliance/corpus/01-scalars/heredoc-simple.styx
 (document [-1, -1]

@@ -2,3 +2,4 @@ packages:
   - "docs"
   - "editors/codemirror-styx"
   - "editors/vscode-styx"
+  - "implementations/styx-js"

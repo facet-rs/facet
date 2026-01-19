@@ -173,6 +173,8 @@ Spaces separate seq elements or key-value pairs in object context:
 
 Does it get confusing? Maybe. Little bit.
 
+<div data-quiz="three-atoms"></div>
+
 ## Styx the objective
 
 We've just seen this in the last gotcha:
@@ -267,5 +269,7 @@ examples (
 
 The `,rust` is just a hint which is used by your editor to inject syntax
 highlighting from the embedded language :)
+
+<script type="module" src="/src/quiz/main.ts"></script>
 
 
