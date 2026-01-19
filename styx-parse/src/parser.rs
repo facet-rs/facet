@@ -911,7 +911,7 @@ impl<'src> Parser<'src> {
         // parser[impl object.separators]
         let mut mixed_separator_spans: Vec<Span> = Vec::new();
         // parser[impl comment.doc]
-        let mut pending_doc_comment: Option<(Span, &'src str)> = None;
+        let mut pending_doc_comments: Vec<(Span, &'src str)> = Vec::new();
         let mut dangling_doc_comment_spans: Vec<Span> = Vec::new();
         // Track whether the object was properly closed
         let mut unclosed = false;
@@ -923,9 +923,9 @@ impl<'src> Parser<'src> {
             let Some(token) = self.peek() else {
                 // Unclosed object - EOF
                 unclosed = true;
-                // Check for dangling doc comment
-                if let Some((span, _)) = pending_doc_comment {
-                    dangling_doc_comment_spans.push(span);
+                // Check for dangling doc comments
+                for (span, _) in &pending_doc_comments {
+                    dangling_doc_comment_spans.push(*span);
                 }
                 break;
             };
@@ -935,9 +935,9 @@ impl<'src> Parser<'src> {
 
             match token.kind {
                 TokenKind::RBrace => {
-                    // Check for dangling doc comment before closing
-                    if let Some((span, _)) = pending_doc_comment {
-                        dangling_doc_comment_spans.push(span);
+                    // Check for dangling doc comments before closing
+                    for (span, _) in &pending_doc_comments {
+                        dangling_doc_comment_spans.push(*span);
                     }
                     let close = self.advance().unwrap();
                     end_span = close.span;
@@ -974,23 +974,23 @@ impl<'src> Parser<'src> {
                 }
 
                 TokenKind::DocComment => {
-                    // Track doc comment for the next entry
+                    // Accumulate doc comments for the next entry (supports multi-line)
                     let doc_token = self.advance().unwrap();
-                    pending_doc_comment = Some((doc_token.span, doc_token.text));
+                    pending_doc_comments.push((doc_token.span, doc_token.text));
                 }
 
                 TokenKind::Eof => {
                     // Unclosed object
                     unclosed = true;
-                    if let Some((span, _)) = pending_doc_comment {
-                        dangling_doc_comment_spans.push(span);
+                    for (span, _) in &pending_doc_comments {
+                        dangling_doc_comment_spans.push(*span);
                     }
                     break;
                 }
 
                 _ => {
-                    // Capture and clear pending doc comment for this entry
-                    let doc_comment = pending_doc_comment.take();
+                    // Capture and clear pending doc comments for this entry
+                    let doc_comments = std::mem::take(&mut pending_doc_comments);
 
                     // Parse entry atoms
                     let entry_atoms = self.collect_entry_atoms();
@@ -1027,7 +1027,7 @@ impl<'src> Parser<'src> {
                         entries.push(ObjectEntry {
                             key,
                             value,
-                            doc_comment,
+                            doc_comments,
                             too_many_atoms_span,
                         });
                     }
@@ -1401,11 +1401,11 @@ impl<'src> Parser<'src> {
                 }
 
                 for entry in entries {
-                    // Emit doc comment before entry if present
-                    if let Some((span, text)) = &entry.doc_comment
-                        && !callback.event(Event::DocComment { span: *span, text })
-                    {
-                        return false;
+                    // Emit doc comments before entry (supports multi-line)
+                    for (span, text) in &entry.doc_comments {
+                        if !callback.event(Event::DocComment { span: *span, text }) {
+                            return false;
+                        }
                     }
                     if !callback.event(Event::EntryStart) {
                         return false;
@@ -1975,8 +1975,8 @@ struct AttributeEntry<'src> {
 struct ObjectEntry<'src> {
     key: Atom<'src>,
     value: Atom<'src>,
-    /// Doc comment preceding this entry, if any.
-    doc_comment: Option<(Span, &'src str)>,
+    /// Doc comments preceding this entry (supports multi-line doc comments).
+    doc_comments: Vec<(Span, &'src str)>,
     /// Span of unexpected third atom (for TooManyAtoms error).
     // parser[impl entry.toomany]
     too_many_atoms_span: Option<Span>,

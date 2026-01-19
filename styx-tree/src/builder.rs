@@ -517,10 +517,10 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                         pending_doc_comment,
                         ..
                     }) => {
-                        *pending_doc_comment = Some(comment);
+                        append_doc_comment(pending_doc_comment, comment);
                     }
                     _ => {
-                        self.pending_doc_comment = Some(comment);
+                        append_doc_comment(&mut self.pending_doc_comment, comment);
                     }
                 }
             }
@@ -548,6 +548,19 @@ fn extract_doc_comment(text: &str) -> String {
         .map(|s| s.strip_prefix(' ').unwrap_or(s))
         .unwrap_or(text)
         .to_string()
+}
+
+/// Append a doc comment line to an existing doc comment, joining with newline.
+fn append_doc_comment(target: &mut Option<String>, line: String) {
+    match target {
+        Some(existing) => {
+            existing.push('\n');
+            existing.push_str(&line);
+        }
+        None => {
+            *target = Some(line);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -721,6 +734,61 @@ mod tests {
             "schema should be an object, got tag={:?} payload={:?}",
             schema.tag,
             schema.payload.is_some()
+        );
+    }
+
+    #[test]
+    fn test_multiline_doc_comment() {
+        let source = r#"/// First line of doc
+/// Second line of doc
+name @string"#;
+        let value = parse(source);
+        let obj = value.as_object().unwrap();
+        let entry = obj.entries.iter().find(|e| e.key.as_str() == Some("name"));
+        assert!(entry.is_some(), "should have 'name' entry");
+        let entry = entry.unwrap();
+        assert_eq!(
+            entry.doc_comment,
+            Some("First line of doc\nSecond line of doc".to_string()),
+            "doc comment should contain both lines joined by newline"
+        );
+    }
+
+    #[test]
+    fn test_single_line_doc_comment() {
+        let source = r#"/// Just one line
+value 42"#;
+        let value = parse(source);
+        let obj = value.as_object().unwrap();
+        let entry = obj.entries.iter().find(|e| e.key.as_str() == Some("value"));
+        assert!(entry.is_some(), "should have 'value' entry");
+        let entry = entry.unwrap();
+        assert_eq!(entry.doc_comment, Some("Just one line".to_string()),);
+    }
+
+    #[test]
+    fn test_multiline_doc_comment_in_object() {
+        // Test doc comments inside a braced object
+        let source = r#"schema {
+    /// First line
+    /// Second line
+    /// Third line
+    field @string
+}"#;
+        let value = parse(source);
+        let obj = value.as_object().unwrap();
+        let schema = obj.get("schema").expect("should have schema");
+        let schema_obj = schema.as_object().expect("schema should be an object");
+        let entry = schema_obj
+            .entries
+            .iter()
+            .find(|e| e.key.as_str() == Some("field"));
+        assert!(entry.is_some(), "should have 'field' entry");
+        let entry = entry.unwrap();
+        assert_eq!(
+            entry.doc_comment,
+            Some("First line\nSecond line\nThird line".to_string()),
+            "doc comment should contain all lines joined by newline"
         );
     }
 }
