@@ -13,6 +13,7 @@ categories = ["database"]
 bytes = "1"
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
 chrono = "0.4"
+rust_decimal = { version = "1", features = ["db-tokio-postgres"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 inventory = "0.3"
 thiserror = "2"

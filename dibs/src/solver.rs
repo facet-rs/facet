@@ -51,6 +51,12 @@ pub enum SolverError {
         table: String,
         columns: Vec<String>,
     },
+    /// Cannot drop a table because another table has FKs referencing it.
+    TableHasDependents {
+        change: String,
+        table: String,
+        referencing_table: String,
+    },
     /// Changes form a dependency cycle that cannot be resolved.
     CycleDetected { changes: Vec<String> },
     /// Conflicting operations detected (e.g., add then drop same column).
@@ -119,6 +125,17 @@ impl std::fmt::Display for SolverError {
                     change,
                     columns.join(", "),
                     table
+                )
+            }
+            SolverError::TableHasDependents {
+                change,
+                table,
+                referencing_table,
+            } => {
+                write!(
+                    f,
+                    "{}: cannot drop table '{}' because table '{}' has foreign keys referencing it",
+                    change, table, referencing_table
                 )
             }
             SolverError::CycleDetected { changes } => {
@@ -223,6 +240,24 @@ impl VirtualSchema {
             .get(table)
             .map(|t| t.columns.contains(column))
             .unwrap_or(false)
+    }
+
+    /// Check if any OTHER tables have foreign keys that reference the given table.
+    /// Returns the first table name that has such a FK, if any.
+    /// Self-references are excluded (a table referencing itself doesn't block DROP TABLE).
+    pub fn tables_referencing(&self, target_table: &str) -> Option<String> {
+        for (table_name, table) in &self.tables {
+            // Skip self-references - when dropping a table, its own FKs go away with it
+            if table_name == target_table {
+                continue;
+            }
+            for fk in &table.foreign_keys {
+                if fk.references_table == target_table {
+                    return Some(table_name.clone());
+                }
+            }
+        }
+        None
     }
 
     /// Compare this schema to another and return a human-readable diff.
@@ -351,6 +386,14 @@ impl VirtualSchema {
                     return Err(SolverError::TableNotFound {
                         change: change_desc,
                         table: name.clone(),
+                    });
+                }
+                // Check if any other tables have FKs referencing this table
+                if let Some(referencing_table) = self.tables_referencing(name) {
+                    return Err(SolverError::TableHasDependents {
+                        change: change_desc,
+                        table: name.clone(),
+                        referencing_table,
                     });
                 }
                 self.tables.remove(name);
@@ -676,14 +719,41 @@ pub fn order_changes(
                     .collect();
 
                 // Try to determine why each unscheduled change can't be applied
-                let mut test_schema = schema.clone();
+                // Collect ALL errors, not just the first one
+                let mut errors: Vec<SolverError> = Vec::new();
                 for (i, change) in all_changes.iter().enumerate() {
                     if !scheduled.contains(&i) {
-                        test_schema.apply(&change.table, &change.change)?
+                        let mut test_schema = schema.clone();
+                        if let Err(e) = test_schema.apply(&change.table, &change.change) {
+                            errors.push(e);
+                        }
                     }
                 }
 
-                // If we get here, it's a cycle
+                // Return the first error (for backwards compatibility), but log all of them
+                if !errors.is_empty() {
+                    // If there are multiple errors, add context
+                    if errors.len() > 1 {
+                        eprintln!(
+                            "Migration ordering failed. {} changes could not be applied:",
+                            errors.len()
+                        );
+                        for (i, e) in errors.iter().enumerate() {
+                            eprintln!("  {}. {}", i + 1, e);
+                        }
+                        eprintln!(
+                            "This usually means there are foreign key dependencies that prevent \
+                             the migration from being ordered. Check for:"
+                        );
+                        eprintln!("  - Tables in the database that reference tables being dropped");
+                        eprintln!(
+                            "  - Circular foreign key dependencies between tables being dropped"
+                        );
+                    }
+                    return Err(errors.remove(0));
+                }
+
+                // If we get here with no errors, it's a cycle we couldn't detect
                 return Err(SolverError::CycleDetected {
                     changes: unscheduled,
                 });
@@ -822,6 +892,113 @@ mod tests {
 
         let result = schema.apply("users", &Change::DropTable("users".to_string()));
         assert!(matches!(result, Err(SolverError::TableNotFound { .. })));
+    }
+
+    #[test]
+    fn test_virtual_schema_drop_table_with_dependents() {
+        // Create a schema with two tables: categories and posts, where posts has a FK to categories
+        let current = Schema {
+            tables: vec![
+                make_table("categories", vec![make_column("id", PgType::BigInt, false)]),
+                make_table_with_fks(
+                    "posts",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("category_id", PgType::BigInt, false),
+                    ],
+                    vec![ForeignKey {
+                        columns: vec!["category_id".to_string()],
+                        references_table: "categories".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    }],
+                ),
+            ],
+        };
+
+        let mut schema = VirtualSchema::from_tables(&current.tables);
+
+        // Trying to drop categories should fail because posts references it
+        let result = schema.apply(
+            "categories",
+            &Change::DropTable("categories".to_string()),
+        );
+        assert!(
+            matches!(result, Err(SolverError::TableHasDependents { ref table, ref referencing_table, .. }) if table == "categories" && referencing_table == "posts"),
+            "Expected TableHasDependents error, got: {:?}",
+            result
+        );
+
+        // The table should still exist after the failed drop
+        assert!(schema.table_exists("categories"));
+    }
+
+    #[test]
+    fn test_self_referential_fk_does_not_block_drop() {
+        // A table with a self-referential FK (like category.parent_id -> category.id)
+        // should be droppable - the self-reference doesn't count as a blocker.
+        let current = Schema {
+            tables: vec![make_table_with_fks(
+                "category",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("parent_id", PgType::BigInt, true),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["parent_id".to_string()],
+                    references_table: "category".to_string(), // SELF-REFERENCE
+                    references_columns: vec!["id".to_string()],
+                }],
+            )],
+        };
+
+        let mut schema = VirtualSchema::from_tables(&current.tables);
+
+        // Should be able to drop category despite self-reference
+        let result = schema.apply("category", &Change::DropTable("category".to_string()));
+        assert!(
+            result.is_ok(),
+            "Self-referential FK should not block drop: {:?}",
+            result
+        );
+        assert!(!schema.table_exists("category"));
+    }
+
+    #[test]
+    fn test_virtual_schema_drop_table_after_fk_removed() {
+        // Create a schema with two tables: categories and posts, where posts has a FK to categories
+        let fk = ForeignKey {
+            columns: vec!["category_id".to_string()],
+            references_table: "categories".to_string(),
+            references_columns: vec!["id".to_string()],
+        };
+
+        let current = Schema {
+            tables: vec![
+                make_table("categories", vec![make_column("id", PgType::BigInt, false)]),
+                make_table_with_fks(
+                    "posts",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("category_id", PgType::BigInt, false),
+                    ],
+                    vec![fk.clone()],
+                ),
+            ],
+        };
+
+        let mut schema = VirtualSchema::from_tables(&current.tables);
+
+        // First, drop the FK from posts
+        let result = schema.apply("posts", &Change::DropForeignKey(fk));
+        assert!(result.is_ok());
+
+        // Now dropping categories should succeed
+        let result = schema.apply(
+            "categories",
+            &Change::DropTable("categories".to_string()),
+        );
+        assert!(result.is_ok());
+        assert!(!schema.table_exists("categories"));
     }
 
     #[test]
@@ -1199,6 +1376,422 @@ mod tests {
                 table_pos
             );
         }
+    }
+
+    #[test]
+    fn test_drop_both_tables_with_fk_between_them() {
+        // When dropping BOTH tables where one references the other,
+        // we need to drop the referencing table first (which removes its FK),
+        // then drop the referenced table.
+        //
+        // This is the scenario: blog schema → ecommerce schema
+        // Current: post, category (post.category_id → category)
+        // Desired: neither table
+        //
+        // Expected order:
+        // 1. DROP TABLE post (this implicitly drops its FKs)
+        // 2. DROP TABLE category (now nothing references it)
+
+        let current = Schema {
+            tables: vec![
+                make_table("category", vec![make_column("id", PgType::BigInt, false)]),
+                make_table_with_fks(
+                    "post",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("category_id", PgType::BigInt, true),
+                    ],
+                    vec![ForeignKey {
+                        columns: vec!["category_id".to_string()],
+                        references_table: "category".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    }],
+                ),
+            ],
+        };
+
+        let desired = Schema { tables: vec![] };
+
+        let diff = desired.diff(&current);
+        let current_schema = VirtualSchema::from_tables(&current.tables);
+        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+
+        // Debug: print the diff
+        eprintln!("Diff changes:");
+        for td in &diff.table_diffs {
+            for change in &td.changes {
+                eprintln!("  {}.{}", td.table, change);
+            }
+        }
+
+        let result = order_changes(&diff, &current_schema, &desired_schema);
+        assert!(result.is_ok(), "Should succeed: {:?}", result);
+
+        let ordered = result.unwrap();
+
+        // Debug: print the ordered changes
+        eprintln!("Ordered changes:");
+        for (i, c) in ordered.changes.iter().enumerate() {
+            eprintln!("  {}: {}.{}", i, c.table, c.change);
+        }
+
+        // Find positions of the two DropTable operations
+        let drop_post_pos = ordered
+            .changes
+            .iter()
+            .position(|c| matches!(&c.change, Change::DropTable(name) if name == "post"));
+        let drop_category_pos = ordered
+            .changes
+            .iter()
+            .position(|c| matches!(&c.change, Change::DropTable(name) if name == "category"));
+
+        assert!(
+            drop_post_pos.is_some(),
+            "Should have DropTable for post"
+        );
+        assert!(
+            drop_category_pos.is_some(),
+            "Should have DropTable for category"
+        );
+
+        // post must be dropped BEFORE category (because post references category)
+        assert!(
+            drop_post_pos.unwrap() < drop_category_pos.unwrap(),
+            "DropTable post (pos {:?}) must come before DropTable category (pos {:?})",
+            drop_post_pos,
+            drop_category_pos
+        );
+    }
+
+    #[test]
+    fn test_drop_full_blog_schema_for_ecommerce() {
+        // Comprehensive test using the ACTUAL my-app-db blog schema:
+        //
+        // - user (no incoming FKs from outside)
+        // - user_follow (FK to user.id x2) - junction, self-ref on user
+        // - category (SELF-REFERENTIAL: parent_id -> category.id)
+        // - post (FK to user.id, FK to category.id)
+        // - tag (no FKs)
+        // - post_tag (FK to post.id, FK to tag.id) - junction
+        //
+        // Key insight: category has a SELF-REFERENTIAL FK (parent_id -> category.id)
+        // This must NOT block dropping category - only OTHER tables should block it.
+
+        let current = Schema {
+            tables: vec![
+                make_table("user", vec![make_column("id", PgType::BigInt, false)]),
+                // user_follow: junction table with 2 FKs to user
+                make_table_with_fks(
+                    "user_follow",
+                    vec![
+                        make_column("follower_id", PgType::BigInt, false),
+                        make_column("following_id", PgType::BigInt, false),
+                    ],
+                    vec![
+                        ForeignKey {
+                            columns: vec!["follower_id".to_string()],
+                            references_table: "user".to_string(),
+                            references_columns: vec!["id".to_string()],
+                        },
+                        ForeignKey {
+                            columns: vec!["following_id".to_string()],
+                            references_table: "user".to_string(),
+                            references_columns: vec!["id".to_string()],
+                        },
+                    ],
+                ),
+                // category: SELF-REFERENTIAL FK (parent_id -> category.id)
+                make_table_with_fks(
+                    "category",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("parent_id", PgType::BigInt, true),
+                    ],
+                    vec![ForeignKey {
+                        columns: vec!["parent_id".to_string()],
+                        references_table: "category".to_string(), // SELF-REFERENCE!
+                        references_columns: vec!["id".to_string()],
+                    }],
+                ),
+                make_table_with_fks(
+                    "post",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("author_id", PgType::BigInt, false),
+                        make_column("category_id", PgType::BigInt, true),
+                    ],
+                    vec![
+                        ForeignKey {
+                            columns: vec!["author_id".to_string()],
+                            references_table: "user".to_string(),
+                            references_columns: vec!["id".to_string()],
+                        },
+                        ForeignKey {
+                            columns: vec!["category_id".to_string()],
+                            references_table: "category".to_string(),
+                            references_columns: vec!["id".to_string()],
+                        },
+                    ],
+                ),
+                make_table("tag", vec![make_column("id", PgType::BigInt, false)]),
+                make_table_with_fks(
+                    "post_tag",
+                    vec![
+                        make_column("post_id", PgType::BigInt, false),
+                        make_column("tag_id", PgType::BigInt, false),
+                    ],
+                    vec![
+                        ForeignKey {
+                            columns: vec!["post_id".to_string()],
+                            references_table: "post".to_string(),
+                            references_columns: vec!["id".to_string()],
+                        },
+                        ForeignKey {
+                            columns: vec!["tag_id".to_string()],
+                            references_table: "tag".to_string(),
+                            references_columns: vec!["id".to_string()],
+                        },
+                    ],
+                ),
+            ],
+        };
+
+        // Desired: empty schema (dropping everything for ecommerce)
+        let desired = Schema { tables: vec![] };
+
+        let diff = desired.diff(&current);
+        let current_schema = VirtualSchema::from_tables(&current.tables);
+        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+
+        // Debug: print the diff
+        eprintln!("Diff changes:");
+        for td in &diff.table_diffs {
+            for change in &td.changes {
+                eprintln!("  {}.{}", td.table, change);
+            }
+        }
+
+        let result = order_changes(&diff, &current_schema, &desired_schema);
+        assert!(result.is_ok(), "Should succeed: {:?}", result);
+
+        let ordered = result.unwrap();
+
+        // Debug: print the ordered changes
+        eprintln!("Ordered changes:");
+        for (i, c) in ordered.changes.iter().enumerate() {
+            eprintln!("  {}: {}.{}", i, c.table, c.change);
+        }
+
+        // Verify all tables are dropped
+        assert_eq!(
+            ordered.changes.len(),
+            6,
+            "Should have 6 drops (one per table)"
+        );
+
+        // Verify ordering constraints:
+        // - user_follow must be dropped before user
+        // - post_tag must be dropped before post
+        // - post_tag must be dropped before tag
+        // - post must be dropped before category
+        // - post must be dropped before user
+
+        let positions: std::collections::HashMap<&str, usize> = ordered
+            .changes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
+                if let Change::DropTable(name) = &c.change {
+                    Some((name.as_str(), i))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        eprintln!("Positions: {:?}", positions);
+
+        // Verify constraints
+        assert!(
+            positions["user_follow"] < positions["user"],
+            "user_follow must be dropped before user"
+        );
+        assert!(
+            positions["post_tag"] < positions["post"],
+            "post_tag must be dropped before post"
+        );
+        assert!(
+            positions["post_tag"] < positions["tag"],
+            "post_tag must be dropped before tag"
+        );
+        assert!(
+            positions["post"] < positions["category"],
+            "post must be dropped before category"
+        );
+        assert!(
+            positions["post"] < positions["user"],
+            "post must be dropped before user"
+        );
+    }
+
+    #[test]
+    fn test_drop_table_blocked_by_undropped_table() {
+        // Test case: trying to drop a table that's referenced by a table NOT being dropped
+        //
+        // This can happen when:
+        // - A table exists in the database but isn't in either old or new Rust schema
+        // - We're trying to drop tables that this "orphan" table references
+        //
+        // Current DB: category, post (FK to category), orphan_table (FK to category)
+        // Desired: empty
+        // But diff only knows about category and post (orphan_table isn't in Rust schema)
+        //
+        // Result: can't drop category because orphan_table references it
+
+        let current = Schema {
+            tables: vec![
+                make_table("category", vec![make_column("id", PgType::BigInt, false)]),
+                make_table_with_fks(
+                    "post",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("category_id", PgType::BigInt, true),
+                    ],
+                    vec![ForeignKey {
+                        columns: vec!["category_id".to_string()],
+                        references_table: "category".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    }],
+                ),
+                // This table exists in DB but isn't in Rust schema - it won't be dropped
+                make_table_with_fks(
+                    "orphan_table",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("category_id", PgType::BigInt, true),
+                    ],
+                    vec![ForeignKey {
+                        columns: vec!["category_id".to_string()],
+                        references_table: "category".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    }],
+                ),
+            ],
+        };
+
+        // Desired: only new tables, none of the old ones
+        // But we're only diffing against category and post (not orphan_table)
+        let desired = Schema { tables: vec![] };
+
+        // Manually create a diff that only drops category and post
+        // (simulating what happens when orphan_table isn't in Rust schema)
+        let diff = SchemaDiff {
+            table_diffs: vec![
+                crate::TableDiff {
+                    table: "category".to_string(),
+                    changes: vec![Change::DropTable("category".to_string())],
+                },
+                crate::TableDiff {
+                    table: "post".to_string(),
+                    changes: vec![Change::DropTable("post".to_string())],
+                },
+            ],
+        };
+
+        // VirtualSchema includes ALL tables from DB (including orphan_table)
+        let current_schema = VirtualSchema::from_tables(&current.tables);
+        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+
+        eprintln!("Current schema tables: {:?}", current_schema.tables.keys().collect::<Vec<_>>());
+        eprintln!("Diff changes:");
+        for td in &diff.table_diffs {
+            for change in &td.changes {
+                eprintln!("  {}.{}", td.table, change);
+            }
+        }
+
+        let result = order_changes(&diff, &current_schema, &desired_schema);
+
+        // This SHOULD fail because we can't drop category while orphan_table references it
+        eprintln!("Result: {:?}", result);
+        assert!(
+            result.is_err(),
+            "Should fail because orphan_table references category but isn't being dropped"
+        );
+
+        // The error should mention that orphan_table is blocking
+        if let Err(e) = &result {
+            let error_msg = e.to_string();
+            eprintln!("Error message: {}", error_msg);
+            assert!(
+                error_msg.contains("orphan_table"),
+                "Error should mention orphan_table: {}",
+                error_msg
+            );
+        }
+    }
+
+    #[test]
+    fn test_cyclic_fk_dependencies_fail() {
+        // Test case: two tables with FKs pointing at each other
+        // This is a true cycle that cannot be resolved.
+        //
+        // A -> B (A.b_id references B.id)
+        // B -> A (B.a_id references A.id)
+        //
+        // Neither can be dropped first.
+
+        let current = Schema {
+            tables: vec![
+                make_table_with_fks(
+                    "table_a",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("b_id", PgType::BigInt, true),
+                    ],
+                    vec![ForeignKey {
+                        columns: vec!["b_id".to_string()],
+                        references_table: "table_b".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    }],
+                ),
+                make_table_with_fks(
+                    "table_b",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("a_id", PgType::BigInt, true),
+                    ],
+                    vec![ForeignKey {
+                        columns: vec!["a_id".to_string()],
+                        references_table: "table_a".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    }],
+                ),
+            ],
+        };
+
+        // Desired: empty (drop both)
+        let desired = Schema { tables: vec![] };
+
+        let diff = desired.diff(&current);
+        let current_schema = VirtualSchema::from_tables(&current.tables);
+        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+
+        eprintln!("Diff changes:");
+        for td in &diff.table_diffs {
+            for change in &td.changes {
+                eprintln!("  {}.{}", td.table, change);
+            }
+        }
+
+        let result = order_changes(&diff, &current_schema, &desired_schema);
+
+        // This SHOULD fail because of the cycle
+        eprintln!("Result: {:?}", result);
+        assert!(
+            result.is_err(),
+            "Should fail because of FK cycle between table_a and table_b"
+        );
     }
 
     // ==================== Error Cases ====================

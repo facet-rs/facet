@@ -1,12 +1,11 @@
 //! Runtime values for query parameters.
 
-use facet::Facet;
+use rust_decimal::Decimal;
 
 /// A runtime SQL value.
 ///
 /// Used for query parameters and row data. Maps to Postgres types.
-#[derive(Debug, Clone, PartialEq, Facet)]
-#[repr(u8)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     /// NULL
     Null,
@@ -28,6 +27,9 @@ pub enum Value {
 
     /// 64-bit float (DOUBLE PRECISION)
     F64(f64),
+
+    /// Decimal (NUMERIC)
+    Decimal(Decimal),
 
     /// Text (TEXT, VARCHAR, etc.)
     String(String),
@@ -82,6 +84,12 @@ impl From<f32> for Value {
 impl From<f64> for Value {
     fn from(v: f64) -> Self {
         Value::F64(v)
+    }
+}
+
+impl From<Decimal> for Value {
+    fn from(v: Decimal) -> Self {
+        Value::Decimal(v)
     }
 }
 

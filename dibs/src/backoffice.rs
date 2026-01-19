@@ -53,6 +53,7 @@ fn query_value_to_proto(v: &QueryValue) -> ProtoValue {
         QueryValue::I64(n) => ProtoValue::I64(*n),
         QueryValue::F32(n) => ProtoValue::F32(*n),
         QueryValue::F64(n) => ProtoValue::F64(*n),
+        QueryValue::Decimal(d) => ProtoValue::String(d.to_string()),
         QueryValue::String(s) => ProtoValue::String(s.clone()),
         QueryValue::Bytes(b) => ProtoValue::Bytes(b.clone()),
     }

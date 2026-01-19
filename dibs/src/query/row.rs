@@ -2,6 +2,7 @@
 
 use super::Value;
 use crate::schema::PgType;
+use rust_decimal::Decimal;
 use tokio_postgres::types::{ToSql, Type as PgTypeInfo};
 
 /// A row of data as field name → value pairs.
@@ -54,6 +55,10 @@ fn pg_value_to_value(
         PgType::DoublePrecision => {
             let v: Option<f64> = row.get(idx);
             Ok(v.map(Value::F64).unwrap_or(Value::Null))
+        }
+        PgType::Numeric => {
+            let v: Option<Decimal> = row.get(idx);
+            Ok(v.map(Value::Decimal).unwrap_or(Value::Null))
         }
         PgType::Text => {
             let v: Option<String> = row.get(idx);
@@ -114,6 +119,7 @@ impl ToSql for SqlParam<'_> {
             Value::I64(v) => v.to_sql(ty, out),
             Value::F32(v) => v.to_sql(ty, out),
             Value::F64(v) => v.to_sql(ty, out),
+            Value::Decimal(v) => v.to_sql(ty, out),
             Value::String(v) => v.to_sql(ty, out),
             Value::Bytes(v) => v.to_sql(ty, out),
         }
@@ -129,6 +135,7 @@ impl ToSql for SqlParam<'_> {
                 | PgTypeInfo::INT8
                 | PgTypeInfo::FLOAT4
                 | PgTypeInfo::FLOAT8
+                | PgTypeInfo::NUMERIC
                 | PgTypeInfo::TEXT
                 | PgTypeInfo::VARCHAR
                 | PgTypeInfo::BYTEA

@@ -151,6 +151,8 @@ pub enum PgType {
     Real,
     /// DOUBLE PRECISION (8 bytes floating point)
     DoublePrecision,
+    /// NUMERIC (arbitrary precision)
+    Numeric,
     /// BOOLEAN
     Boolean,
     /// TEXT
@@ -177,6 +179,7 @@ impl std::fmt::Display for PgType {
             PgType::BigInt => write!(f, "BIGINT"),
             PgType::Real => write!(f, "REAL"),
             PgType::DoublePrecision => write!(f, "DOUBLE PRECISION"),
+            PgType::Numeric => write!(f, "NUMERIC"),
             PgType::Boolean => write!(f, "BOOLEAN"),
             PgType::Text => write!(f, "TEXT"),
             PgType::Bytea => write!(f, "BYTEA"),
@@ -517,6 +520,8 @@ pub fn rust_type_to_pg(type_name: &str) -> Option<PgType> {
         "i64" => Some(PgType::BigInt),
         "f32" => Some(PgType::Real),
         "f64" => Some(PgType::DoublePrecision),
+        // Decimal/Numeric
+        "Decimal" | "rust_decimal::Decimal" => Some(PgType::Numeric),
         "bool" => Some(PgType::Boolean),
         "String" | "&str" => Some(PgType::Text),
         "Vec<u8>" | "&[u8]" => Some(PgType::Bytea),
