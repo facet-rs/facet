@@ -370,6 +370,12 @@
         margin: 0;
     }
 
+    .option-text :global(pre) :global(code) {
+        background: none;
+        padding: 0;
+        border-radius: 0;
+    }
+
     .result {
         margin-top: 1rem;
         padding: 1rem;
