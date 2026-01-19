@@ -12,7 +12,7 @@ Generate Python type definitions from facet type metadata.
 
 This crate uses facet's reflection capabilities to generate Python type hints
 and TypedDicts from any type that implements `Facet`. Unlike going through JSON Schema,
-this generates Python directly.
+this generates Python directly. Currently the generated python code requires Python 3.12+.
 
 ## Usage
 
