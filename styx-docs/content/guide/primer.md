@@ -37,7 +37,7 @@ The differences:
 
 A bare scalar is terminated by whitespace or any of: `{`, `}`, `(`, `)`, `,`, `"`, `>`.
 
-Additionally, a bare scalar cannot *start* with `=` or `@`.
+A bare scalar cannot *start* with `@` or `=`, but these are fine after the first character. This allows URLs with `@` and query strings with `=`.
 
 So paths and URLs work unquoted:
 
