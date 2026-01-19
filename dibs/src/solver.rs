@@ -390,6 +390,34 @@ impl VirtualSchema {
                 }
             }
 
+            Change::RenameColumn { from, to } => {
+                if !self.table_exists(table_context) {
+                    return Err(SolverError::TableNotFound {
+                        change: change_desc,
+                        table: table_context.to_string(),
+                    });
+                }
+                if let Some(table) = self.tables.get_mut(table_context) {
+                    // Check new name doesn't already exist
+                    if table.columns.contains(to) {
+                        return Err(SolverError::ColumnAlreadyExists {
+                            change: change_desc,
+                            table: table_context.to_string(),
+                            column: to.clone(),
+                        });
+                    }
+                    // Rename in columns set
+                    table.columns.remove(from);
+                    table.columns.insert(to.clone());
+                    // Rename in unique constraints if present
+                    if table.unique_constraints.remove(from) {
+                        table.unique_constraints.insert(to.clone());
+                    }
+                    // Note: We don't update FKs here because they reference
+                    // other tables' columns, not our own column names
+                }
+            }
+
             Change::AddForeignKey(fk) => {
                 if !self.table_exists(table_context) {
                     return Err(SolverError::TableNotFound {

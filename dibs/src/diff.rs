@@ -96,6 +96,8 @@ pub enum Change {
     AddColumn(Column),
     /// Drop an existing column.
     DropColumn(String),
+    /// Rename a column.
+    RenameColumn { from: String, to: String },
     /// Change a column's type.
     AlterColumnType {
         name: String,
@@ -151,6 +153,12 @@ impl Change {
             }
             Change::DropColumn(name) => {
                 format!("ALTER TABLE {} DROP COLUMN {};", table_name, name)
+            }
+            Change::RenameColumn { from, to } => {
+                format!(
+                    "ALTER TABLE {} RENAME COLUMN {} TO {};",
+                    table_name, from, to
+                )
             }
             Change::AlterColumnType { name, to, .. } => {
                 format!(
@@ -260,6 +268,7 @@ impl std::fmt::Display for Change {
                 write!(f, "+ {}: {}{}", col.name, col.pg_type, nullable)
             }
             Change::DropColumn(name) => write!(f, "- {}", name),
+            Change::RenameColumn { from, to } => write!(f, "~ rename column {} -> {}", from, to),
             Change::AlterColumnType { name, from, to } => {
                 write!(f, "~ {}: {} -> {}", name, from, to)
             }
@@ -604,6 +613,106 @@ fn diff_table(desired: &Table, current: &Table) -> Vec<Change> {
     changes
 }
 
+/// Calculate similarity score between two columns for rename detection.
+///
+/// Returns a score from 0.0 to 1.0 based on:
+/// - Type match (50%): Must match exactly for any score
+/// - Nullability match (15%): Same nullability
+/// - Name similarity (35%): Similar names suggest rename
+fn column_similarity(a: &Column, b: &Column) -> f64 {
+    // Type must match - this is the strongest signal
+    if a.pg_type != b.pg_type {
+        return 0.0;
+    }
+
+    let mut score = 0.5; // Type match base score
+
+    // Nullability match
+    if a.nullable == b.nullable {
+        score += 0.15;
+    }
+
+    // Name similarity - check for common rename patterns
+    let name_sim = column_name_similarity(&a.name, &b.name);
+    score += 0.35 * name_sim;
+
+    score
+}
+
+/// Calculate name similarity between two column names.
+///
+/// Returns 1.0 for exact match, high score for similar names, 0.0 for unrelated.
+fn column_name_similarity(a: &str, b: &str) -> f64 {
+    if a == b {
+        return 1.0;
+    }
+
+    // Check for common transformations
+    let a_lower = a.to_lowercase();
+    let b_lower = b.to_lowercase();
+
+    // Remove underscores and compare (user_name vs username)
+    let a_no_underscore: String = a_lower.chars().filter(|c| *c != '_').collect();
+    let b_no_underscore: String = b_lower.chars().filter(|c| *c != '_').collect();
+    if a_no_underscore == b_no_underscore {
+        return 0.9;
+    }
+
+    // Check if one is prefix/suffix of the other with common additions
+    // e.g., "created" vs "created_at", "name" vs "user_name"
+    if a_lower.contains(&b_lower) || b_lower.contains(&a_lower) {
+        return 0.7;
+    }
+
+    // Check common prefixes (at least 3 chars)
+    let common_prefix_len = a_lower
+        .chars()
+        .zip(b_lower.chars())
+        .take_while(|(ca, cb)| ca == cb)
+        .count();
+    if common_prefix_len >= 3 {
+        let max_len = a.len().max(b.len());
+        return (common_prefix_len as f64 / max_len as f64) * 0.5;
+    }
+
+    0.0
+}
+
+/// Detect likely column renames from lists of added and dropped columns.
+fn detect_column_renames(added: &[&Column], dropped: &[&Column]) -> Vec<(String, String)> {
+    const RENAME_THRESHOLD: f64 = 0.65;
+
+    let mut renames = Vec::new();
+    let mut used_added: HashSet<&str> = HashSet::new();
+    let mut used_dropped: HashSet<&str> = HashSet::new();
+
+    // Find best matches
+    let mut candidates: Vec<(f64, &str, &str)> = Vec::new();
+
+    for dropped_col in dropped {
+        for added_col in added {
+            let sim = column_similarity(dropped_col, added_col);
+            if sim >= RENAME_THRESHOLD {
+                candidates.push((sim, &dropped_col.name, &added_col.name));
+            }
+        }
+    }
+
+    // Sort by similarity descending
+    candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Greedily assign renames
+    for (_, from, to) in candidates {
+        if !used_dropped.contains(from) && !used_added.contains(to) {
+            renames.push((from.to_string(), to.to_string()));
+            used_dropped.insert(from);
+            used_added.insert(to);
+        }
+    }
+
+    renames
+}
+
 /// Diff columns between desired and current state.
 fn diff_columns(desired: &[Column], current: &[Column]) -> Vec<Change> {
     let mut changes = Vec::new();
@@ -611,16 +720,72 @@ fn diff_columns(desired: &[Column], current: &[Column]) -> Vec<Change> {
     let desired_names: HashSet<&str> = desired.iter().map(|c| c.name.as_str()).collect();
     let current_names: HashSet<&str> = current.iter().map(|c| c.name.as_str()).collect();
 
-    // Columns to add
-    for col in desired {
-        if !current_names.contains(col.name.as_str()) {
-            changes.push(Change::AddColumn(col.clone()));
+    // Find columns only in desired (candidates for add or rename target)
+    let added_cols: Vec<&Column> = desired
+        .iter()
+        .filter(|c| !current_names.contains(c.name.as_str()))
+        .collect();
+
+    // Find columns only in current (candidates for drop or rename source)
+    let dropped_cols: Vec<&Column> = current
+        .iter()
+        .filter(|c| !desired_names.contains(c.name.as_str()))
+        .collect();
+
+    // Detect likely renames
+    let renames = detect_column_renames(&added_cols, &dropped_cols);
+    let renamed_from: HashSet<&str> = renames.iter().map(|(from, _)| from.as_str()).collect();
+    let renamed_to: HashSet<&str> = renames.iter().map(|(_, to)| to.as_str()).collect();
+
+    // Generate rename changes
+    for (from, to) in &renames {
+        changes.push(Change::RenameColumn {
+            from: from.clone(),
+            to: to.clone(),
+        });
+
+        // Also check if other properties changed after rename
+        if let (Some(current_col), Some(desired_col)) = (
+            current.iter().find(|c| &c.name == from),
+            desired.iter().find(|c| &c.name == to),
+        ) {
+            // Nullability change
+            if desired_col.nullable != current_col.nullable {
+                changes.push(Change::AlterColumnNullable {
+                    name: to.clone(),
+                    from: current_col.nullable,
+                    to: desired_col.nullable,
+                });
+            }
+            // Default change
+            if desired_col.default != current_col.default {
+                changes.push(Change::AlterColumnDefault {
+                    name: to.clone(),
+                    from: current_col.default.clone(),
+                    to: desired_col.default.clone(),
+                });
+            }
+            // Unique constraint change
+            if desired_col.unique != current_col.unique {
+                if desired_col.unique {
+                    changes.push(Change::AddUnique(to.clone()));
+                } else {
+                    changes.push(Change::DropUnique(to.clone()));
+                }
+            }
         }
     }
 
-    // Columns to drop
-    for col in current {
-        if !desired_names.contains(col.name.as_str()) {
+    // Columns to add (not involved in a rename)
+    for col in &added_cols {
+        if !renamed_to.contains(col.name.as_str()) {
+            changes.push(Change::AddColumn((*col).clone()));
+        }
+    }
+
+    // Columns to drop (not involved in a rename)
+    for col in &dropped_cols {
+        if !renamed_from.contains(col.name.as_str()) {
             changes.push(Change::DropColumn(col.name.clone()));
         }
     }
@@ -1313,6 +1478,179 @@ mod tests {
                     ],
                 ),
             ],
+        };
+
+        let diff = desired.diff(&current);
+        insta::assert_snapshot!(diff.to_sql());
+    }
+
+    // ===== Column rename detection tests =====
+
+    #[test]
+    fn test_column_name_similarity() {
+        // Exact match
+        assert_eq!(column_name_similarity("email", "email"), 1.0);
+
+        // Underscore variations
+        assert!(column_name_similarity("user_name", "username") > 0.8);
+
+        // Prefix/suffix containment
+        assert!(column_name_similarity("created", "created_at") > 0.6);
+        assert!(column_name_similarity("name", "user_name") > 0.6);
+
+        // Common prefix
+        assert!(column_name_similarity("user_id", "user_name") > 0.2);
+
+        // Unrelated
+        assert_eq!(column_name_similarity("foo", "bar"), 0.0);
+    }
+
+    #[test]
+    fn test_column_similarity() {
+        let col_a = make_column("email", PgType::Text, false);
+        let col_b = make_column("user_email", PgType::Text, false);
+        let col_c = make_column("email", PgType::Integer, false);
+        let col_d = make_column("email", PgType::Text, true);
+
+        // Same type + similar name = high similarity
+        let sim = column_similarity(&col_a, &col_b);
+        assert!(sim > 0.65, "Expected high similarity for similar columns, got {}", sim);
+
+        // Different type = 0 (disqualified)
+        assert_eq!(column_similarity(&col_a, &col_c), 0.0);
+
+        // Same type, same name, different nullability
+        let sim_nullable = column_similarity(&col_a, &col_d);
+        assert!(sim_nullable > 0.5, "Expected medium similarity, got {}", sim_nullable);
+    }
+
+    #[test]
+    fn test_diff_detects_column_rename() {
+        let desired = Schema {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("user_email", PgType::Text, false),
+                ],
+            )],
+        };
+
+        let current = Schema {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("email", PgType::Text, false),
+                ],
+            )],
+        };
+
+        let diff = desired.diff(&current);
+
+        // Should detect a column rename, not add + drop
+        assert_eq!(diff.table_diffs.len(), 1);
+        assert!(matches!(
+            &diff.table_diffs[0].changes[0],
+            Change::RenameColumn { from, to } if from == "email" && to == "user_email"
+        ), "Expected RenameColumn, got {:?}", diff.table_diffs[0].changes);
+    }
+
+    #[test]
+    fn test_column_rename_with_property_changes() {
+        let desired = Schema {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("user_email", PgType::Text, true), // Now nullable
+                ],
+            )],
+        };
+
+        let current = Schema {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("email", PgType::Text, false), // Was not nullable
+                ],
+            )],
+        };
+
+        let diff = desired.diff(&current);
+
+        // Should detect rename AND nullability change
+        assert_eq!(diff.table_diffs.len(), 1);
+        let changes = &diff.table_diffs[0].changes;
+
+        // First should be rename
+        assert!(matches!(
+            &changes[0],
+            Change::RenameColumn { from, to } if from == "email" && to == "user_email"
+        ), "Expected RenameColumn, got {:?}", changes[0]);
+
+        // Second should be nullability change
+        assert!(matches!(
+            &changes[1],
+            Change::AlterColumnNullable { name, from: false, to: true } if name == "user_email"
+        ), "Expected AlterColumnNullable, got {:?}", changes[1]);
+    }
+
+    #[test]
+    fn test_no_false_positive_rename() {
+        // Columns with different types should not be detected as renames
+        let desired = Schema {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("count", PgType::BigInt, false),
+                ],
+            )],
+        };
+
+        let current = Schema {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("total", PgType::Text, false), // Different type!
+                ],
+            )],
+        };
+
+        let diff = desired.diff(&current);
+        let changes = &diff.table_diffs[0].changes;
+
+        // Should NOT detect rename - types don't match
+        // Should see add + drop instead
+        assert!(changes.iter().any(|c| matches!(c, Change::AddColumn(col) if col.name == "count")));
+        assert!(changes.iter().any(|c| matches!(c, Change::DropColumn(name) if name == "total")));
+    }
+
+    #[test]
+    fn snapshot_rename_column_sql() {
+        let desired = Schema {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("user_email", PgType::Text, false),
+                    make_column("full_name", PgType::Text, true),
+                ],
+            )],
+        };
+
+        let current = Schema {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("email", PgType::Text, false),
+                    make_column("name", PgType::Text, true),
+                ],
+            )],
         };
 
         let diff = desired.diff(&current);

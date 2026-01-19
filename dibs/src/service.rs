@@ -438,6 +438,7 @@ fn diff_to_result(diff: &crate::SchemaDiff) -> DiffResult {
                             | Change::DropIndex(_)
                             | Change::DropUnique(_) => ChangeKind::Drop,
                             Change::RenameTable { .. }
+                            | Change::RenameColumn { .. }
                             | Change::AlterColumnType { .. }
                             | Change::AlterColumnNullable { .. }
                             | Change::AlterColumnDefault { .. } => ChangeKind::Alter,

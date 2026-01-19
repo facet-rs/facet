@@ -1,0 +1,7 @@
+---
+source: crates/dibs/src/diff.rs
+expression: diff.to_sql()
+---
+-- Table: users
+ALTER TABLE users RENAME COLUMN email TO user_email;
+ALTER TABLE users RENAME COLUMN name TO full_name;
