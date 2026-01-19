@@ -1,0 +1,7 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class Container(TypedDict, total=False):
+    # A tuple field containing coordinates
+    coordinates: Required[tuple[int, int]]

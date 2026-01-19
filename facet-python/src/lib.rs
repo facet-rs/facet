@@ -397,7 +397,22 @@ impl PythonGenerator {
             Def::Undefined => {
                 // User-defined types - queue for generation and return quoted name
                 match &shape.ty {
-                    Type::User(UserType::Struct(_) | UserType::Enum(_)) => {
+                    Type::User(UserType::Struct(st)) => {
+                        // Handle tuples specially - inline them as tuple[...] since their
+                        // type_identifier "(…)" is not a valid Python identifier
+                        if st.kind == StructKind::Tuple {
+                            let types: Vec<String> = st
+                                .fields
+                                .iter()
+                                .map(|f| self.type_for_shape(f.shape.get()))
+                                .collect();
+                            format!("tuple[{}]", types.join(", "))
+                        } else {
+                            self.add_shape(shape);
+                            format!("\"{}\"", shape.type_identifier)
+                        }
+                    }
+                    Type::User(UserType::Enum(_)) => {
                         self.add_shape(shape);
                         format!("\"{}\"", shape.type_identifier)
                     }
@@ -738,6 +753,19 @@ mod tests {
 
         let py = to_python::<Wrapper>(false);
         // This should generate "type Wrapper = Inner" not "Wrapper = Inner"
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_struct_with_tuple_field() {
+        #[derive(Facet)]
+        struct Container {
+            /// A tuple field containing coordinates
+            coordinates: (i32, i32),
+        }
+
+        let py = to_python::<Container>(false);
+        // This should NOT generate "(…)" as a type - it should properly expand the tuple
         insta::assert_snapshot!(py);
     }
 }
