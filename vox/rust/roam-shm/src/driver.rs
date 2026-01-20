@@ -389,7 +389,7 @@ where
         channel_id: u64,
         payload: Vec<u8>,
     ) -> Result<(), ShmConnectionError> {
-        debug!(
+        trace!(
             "handle_data called for channel {}, {} bytes",
             channel_id,
             payload.len()
@@ -404,18 +404,18 @@ where
 
         // Try server registry first, then client registry
         let result = if self.server_channel_registry.contains_incoming(channel_id) {
-            debug!("routing to server_channel_registry");
+            trace!("routing to server_channel_registry");
             let res = self
                 .server_channel_registry
                 .route_data(channel_id, payload)
                 .await;
-            debug!("server_channel_registry.route_data returned {:?}", res);
+            trace!("server_channel_registry.route_data returned {:?}", res);
             res
         } else if self.handle.contains_channel(channel_id) {
-            debug!("routing to client handle");
+            trace!("routing to client handle");
             self.handle.route_data(channel_id, payload).await
         } else {
-            debug!("channel {} unknown", channel_id);
+            trace!("channel {} unknown", channel_id);
             Err(ChannelError::Unknown)
         };
 
@@ -951,7 +951,7 @@ impl MultiPeerHostDriver {
                 dispatcher,
                 response,
             } => {
-                debug!("MultiPeerHostDriver: adding peer {:?} dynamically", peer_id);
+                trace!("MultiPeerHostDriver: adding peer {:?} dynamically", peer_id);
                 // Create single unified channel for all messages (Call/Data/Close/Response).
                 let (driver_tx, mut driver_rx) = mpsc::channel(256);
 
@@ -970,7 +970,7 @@ impl MultiPeerHostDriver {
                         handle: handle.clone(),
                     },
                 );
-                debug!("MultiPeerHostDriver: {} peers now active", self.peers.len());
+                trace!("MultiPeerHostDriver: {} peers now active", self.peers.len());
 
                 // Spawn forwarder task for this peer's driver messages
                 let driver_msg_tx = self.driver_msg_tx.clone();
@@ -984,9 +984,9 @@ impl MultiPeerHostDriver {
                 });
 
                 // Set up doorbell for this peer (shared via Arc)
-                debug!("AddPeer: looking for doorbell for {:?}", peer_id);
+                trace!("AddPeer: looking for doorbell for {:?}", peer_id);
                 if let Some(doorbell) = self.host.take_doorbell(peer_id) {
-                    debug!(
+                    trace!(
                         "AddPeer: found doorbell for {:?}, spawning waiter task",
                         peer_id
                     );
@@ -996,34 +996,34 @@ impl MultiPeerHostDriver {
                     // Spawn doorbell waiter task with cloned Arc
                     let ring_tx = self.ring_tx.clone();
                     tokio::spawn(async move {
-                        debug!("Doorbell waiter task started for peer {:?}", peer_id);
+                        trace!("Doorbell waiter task started for peer {:?}", peer_id);
                         // On Windows, accept the named pipe connection from the guest
-                        debug!("Doorbell waiter: calling accept() for {:?}", peer_id);
+                        trace!("Doorbell waiter: calling accept() for {:?}", peer_id);
                         if let Err(e) = doorbell.accept().await {
-                            debug!("Doorbell accept failed for peer {:?}: {:?}", peer_id, e);
+                            trace!("Doorbell accept failed for peer {:?}: {:?}", peer_id, e);
                             return;
                         }
-                        debug!("Doorbell waiter: accept() returned for peer {:?}", peer_id);
+                        trace!("Doorbell waiter: accept() returned for peer {:?}", peer_id);
                         loop {
-                            debug!("Doorbell waiter: calling wait() for peer {:?}", peer_id);
+                            trace!("Doorbell waiter: calling wait() for peer {:?}", peer_id);
                             match doorbell.wait().await {
                                 Ok(()) => {
-                                    debug!("Doorbell waiter: peer {:?} rang doorbell!", peer_id);
+                                    trace!("Doorbell waiter: peer {:?} rang doorbell!", peer_id);
                                     // Peer rang doorbell, notify driver
                                     if ring_tx.send(peer_id).is_err() {
-                                        debug!(
+                                        trace!(
                                             "Doorbell waiter: driver shut down for peer {:?}",
                                             peer_id
                                         );
                                         break;
                                     }
-                                    debug!(
+                                    trace!(
                                         "Doorbell waiter: notification sent for peer {:?}",
                                         peer_id
                                     );
                                 }
                                 Err(e) => {
-                                    debug!(
+                                    trace!(
                                         "Doorbell waiter: error for peer {:?}: {:?}",
                                         peer_id, e
                                     );
@@ -1032,7 +1032,7 @@ impl MultiPeerHostDriver {
                                 }
                             }
                         }
-                        debug!("Doorbell waiter task exiting for peer {:?}", peer_id);
+                        trace!("Doorbell waiter task exiting for peer {:?}", peer_id);
                     });
 
                     // Manually trigger an immediate SHM poll for this peer to catch any messages
@@ -1363,7 +1363,7 @@ impl MultiPeerHostDriver {
             .get(&peer_id)
             .is_some_and(|q| !q.is_empty())
         {
-            debug!(
+            trace!(
                 "send_to_peer: peer {:?} has pending messages, queuing to preserve order",
                 peer_id
             );
@@ -1378,7 +1378,7 @@ impl MultiPeerHostDriver {
             Ok(true) => Ok(()),
             Ok(false) => {
                 // Backpressure - queue for later
-                debug!(
+                trace!(
                     "send_to_peer: backpressure for peer {:?}, queuing message",
                     peer_id
                 );
@@ -1442,7 +1442,7 @@ impl MultiPeerHostDriver {
         }
 
         if sent > 0 {
-            debug!(
+            trace!(
                 "retry_pending_sends: sent {} pending messages to peer {:?}",
                 sent, peer_id
             );
