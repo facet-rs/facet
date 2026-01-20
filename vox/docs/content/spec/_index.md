@@ -6,7 +6,7 @@ weight = 10
 
 # Introduction
 
-This is roam specification v1.2.0, last updated January 7, 2026. It canonically
+This is roam specification v2.0.0, last updated January 20, 2026. It canonically
 lives at <https://github.com/bearcove/roam> — where you can get the latest version.
 
 roam is a **Rust-native** RPC protocol. We don't claim to be language-neutral —
@@ -59,16 +59,85 @@ This section defines transport-agnostic semantics that all roam
 implementations MUST follow. Transport bindings (networked, SHM) encode
 these concepts differently but preserve the same meaning.
 
-## Connections and Peers
+## Transports, Links, and Connections
 
-A **connection** is a communication context between two **peers**. How
-connections are established is transport-specific (TCP connect, SHM
-segment mapping, etc.).
+A **transport** is a mechanism for communication (TCP, WebSocket, SHM, etc.).
+A **link** is an instance of a transport between two **peers** — the actual
+connection over which messages flow.
 
-Each connection has two endpoints. For peer-to-peer transports, one is
-the **initiator** (opened the connection) and the other is the **acceptor**.
-This distinction affects stream ID allocation but not who can call whom —
-either peer can initiate calls.
+A link carries one or more **virtual connections**. Each connection is an
+independent communication context with its own request ID space, channel ID
+space, and dispatcher.
+
+> r[core.link]
+>
+> A link is a bidirectional communication channel between two peers,
+> established via a specific transport. The link carries virtual
+> connections, each identified by a `conn_id` (u64).
+
+> r[core.link.connection-zero]
+>
+> Connection 0 is established implicitly when the link is created.
+> Both peers can immediately send messages on connection 0 after the
+> Hello exchange.
+
+For peer-to-peer transports, one peer is the **initiator** (opened the
+link) and the other is the **acceptor**. This distinction affects
+ID allocation but not capabilities — either peer can initiate calls or
+open new connections.
+
+## Virtual Connections
+
+Either peer may open additional virtual connections on the link.
+This enables multiplexing: a proxy can map each downstream client to
+a separate upstream connection, preserving session identity.
+
+> r[core.conn.open]
+>
+> A peer opens a new connection by sending a `Connect` message with a
+> `request_id`. The remote peer responds with `Accept` (providing the
+> new `conn_id`) or `Reject`.
+
+> r[core.conn.accept-required]
+>
+> The remote peer MUST have called `take_incoming_connections()` on
+> connection 0 to accept new connections. If not listening, the peer
+> MUST respond with `Reject`.
+
+> r[core.conn.id-allocation]
+>
+> Connection IDs are allocated by the **acceptor** of the `Connect`
+> request (the peer receiving Connect, not the link acceptor).
+> IDs MUST be unique within the link and MUST NOT be 0.
+
+> r[core.conn.only-root-accepts]
+>
+> Only connection 0 (the root connection) can accept incoming connections.
+> Virtual connections opened via `Connect`/`Accept` cannot themselves
+> accept further nested connections.
+
+> r[core.conn.lifecycle]
+>
+> A virtual connection is closed when either peer sends `Goodbye` on
+> that connection. Closing a connection terminates all in-flight calls
+> and channels on that connection.
+
+> r[core.conn.independence]
+>
+> Virtual connections are independent. An error or closure on one
+> connection does not affect other connections on the same link.
+> Each connection has its own:
+> - Request ID space (IDs are unique per-connection, not per-link)
+> - Channel ID space
+> - Dispatcher (service handler)
+
+### Connection Messages
+
+| Message | Sender | Meaning |
+|---------|--------|---------|
+| **Connect** | either | Request to open a new virtual connection |
+| **Accept** | receiver of Connect | Connection accepted, here is the `conn_id` |
+| **Reject** | receiver of Connect | Connection refused (not listening) |
 
 ## Calls
 
@@ -154,12 +223,12 @@ Channel IDs must be unique within a connection (`r[channeling.id.uniqueness]`).
 ID 0 is reserved (`r[channeling.id.zero-reserved]`). The **caller** allocates
 all channel IDs for a call (`r[channeling.allocation.caller]`).
 
-For peer-to-peer transports, the **initiator** (who opened the connection)
-uses odd IDs (1, 3, 5, ...) and the **acceptor** uses even IDs (2, 4, 6, ...).
-See `r[channeling.id.parity]` for details.
+For peer-to-peer transports, the **link initiator** uses odd IDs (1, 3, 5, ...)
+and the **link acceptor** uses even IDs (2, 4, 6, ...). This applies to all
+virtual connections on the link. See `r[channeling.id.parity]` for details.
 
-Note: "Initiator" and "acceptor" refer to who opened the connection, not
-who is calling whom. If the initiator calls, they use odd IDs. If the
+Note: "Initiator" and "acceptor" refer to who opened the link, not who is
+calling whom. If the link initiator calls, they use odd IDs. If the link
 acceptor calls back, they use even IDs.
 
 ### Channels and Calls
@@ -784,15 +853,22 @@ on which variant is passed.
 
 > r[channeling.id.parity]
 >
-> For peer-to-peer transports, the **initiator** (who opened the connection)
-> MUST allocate odd channel IDs (1, 3, 5, ...). The **acceptor** MUST allocate
-> even channel IDs (2, 4, 6, ...). This prevents collisions when both peers
-> make concurrent calls.
+> For peer-to-peer transports, the **link initiator** (who opened the link)
+> MUST allocate odd channel IDs (1, 3, 5, ...). The **link acceptor** MUST
+> allocate even channel IDs (2, 4, 6, ...). This prevents collisions when
+> both peers make concurrent calls.
 
-Note: "Initiator" and "acceptor" refer to who opened the connection, not
-who is calling whom. If the initiator calls with a Tx and Rx, both
-use odd IDs (e.g., tx=1, rx=3). If the acceptor calls back, both use even
-IDs (e.g., tx=2, rx=4).
+> r[channeling.id.parity.virtual]
+>
+> For virtual connections (opened via `Connect`/`Accept`), the parity rule
+> is inherited from the link: the link initiator uses odd IDs on all
+> connections, and the link acceptor uses even IDs on all connections.
+> This is independent of who sent the `Connect` request.
+
+Note: "Initiator" and "acceptor" refer to who opened the link, not who is
+calling whom or who opened the virtual connection. If the link initiator
+calls with a Tx and Rx, both use odd IDs (e.g., tx=1, rx=3). If the link
+acceptor calls back, they use even IDs (e.g., tx=2, rx=4).
 
 ## Call Lifecycle with Channels
 
@@ -1081,22 +1157,36 @@ built on messages exchanged between peers.
 
 ```rust
 enum Message {
-    // Control
+    // Link control (no conn_id - applies to entire link)
     Hello(Hello),
-    Goodbye { reason: String },
     
-    // RPC
-    Request { request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> },
-    Response { request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> },
-    Cancel { request_id: u64 },
+    // Virtual connection control
+    Connect { request_id: u64, metadata: Vec<(String, MetadataValue)> },
+    Accept { request_id: u64, conn_id: u64, metadata: Vec<(String, MetadataValue)> },
+    Reject { request_id: u64, reason: String, metadata: Vec<(String, MetadataValue)> },
     
-    // Channels
-    Data { channel_id: u64, payload: Vec<u8> },
-    Close { channel_id: u64 },
-    Reset { channel_id: u64 },
-    Credit { channel_id: u64, bytes: u32 },
+    // Connection control (conn_id scoped)
+    Goodbye { conn_id: u64, reason: String },
+    
+    // RPC (conn_id scoped)
+    Request { conn_id: u64, request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> },
+    Response { conn_id: u64, request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> },
+    Cancel { conn_id: u64, request_id: u64 },
+    
+    // Channels (conn_id scoped)
+    Data { conn_id: u64, channel_id: u64, payload: Vec<u8> },
+    Close { conn_id: u64, channel_id: u64 },
+    Reset { conn_id: u64, channel_id: u64 },
+    Credit { conn_id: u64, channel_id: u64, bytes: u32 },
 }
 ```
+
+> r[message.conn-id]
+>
+> All messages except `Hello`, `Connect`, `Accept`, and `Reject` include
+> a `conn_id` field identifying which virtual connection they belong to.
+> Messages with an unknown `conn_id` MUST be handled as a protocol error
+> (send Goodbye on connection 0 and close the link).
 
 Messages are [^POSTCARD]-encoded. The enum discriminant identifies the message
 type, and each variant contains only the fields it needs.
@@ -1160,23 +1250,98 @@ enum Hello {
 >
 > If a peer receives a Request or Response whose payload exceeds the
 > negotiated `max_payload_size`, it MUST send a Goodbye message
-> (reason: `message.hello.enforcement`) and close the connection.
+> (reason: `message.hello.enforcement`) and close the link.
+
+### Connect / Accept / Reject
+
+These messages manage virtual connections on a link.
+
+```rust
+Connect { request_id: u64, metadata: Vec<(String, MetadataValue)> }
+Accept { request_id: u64, conn_id: u64, metadata: Vec<(String, MetadataValue)> }
+Reject { request_id: u64, reason: String, metadata: Vec<(String, MetadataValue)> }
+```
+
+> r[message.connect.initiate]
+>
+> Either peer MAY send `Connect` to request a new virtual connection.
+> The `request_id` is used to correlate the response (Accept or Reject).
+> Connect request IDs are scoped to the link, not to any connection.
+
+> r[message.connect.metadata]
+>
+> Connect metadata MAY include authentication tokens, routing hints,
+> tracing context, or application-specific data. The same metadata
+> limits apply as for RPC calls (see `r[call.metadata.limits]`).
+
+> r[message.connect.request-id]
+>
+> Connect `request_id`s MUST be unique among in-flight Connect requests
+> on the link. They are independent of RPC request IDs.
+
+> r[message.accept.response]
+>
+> If the peer is listening for incoming connections (via
+> `take_incoming_connections()` on connection 0), it responds with
+> `Accept`, providing the newly allocated `conn_id`. The new connection
+> is immediately usable.
+
+> r[message.accept.metadata]
+>
+> Accept metadata MAY include server-assigned session information,
+> connection-specific configuration, or tracing context.
+
+> r[message.reject.response]
+>
+> If the peer is not listening for incoming connections, or if the
+> connection is rejected for any other reason (auth failure, rate
+> limiting, etc.), it MUST respond with `Reject`.
+
+> r[message.reject.reason]
+>
+> The `reason` field SHOULD describe why the connection was rejected.
+> Common reasons include: "not listening", "unauthorized", "rate limited".
+> Metadata MAY provide additional structured rejection information.
+
+> r[message.connect.timeout]
+>
+> If no Accept or Reject is received within a reasonable time,
+> implementations SHOULD treat the Connect as failed. The `request_id`
+> is "burned" and MUST NOT be reused.
 
 ### Goodbye
 
+Goodbye closes a virtual connection. The `conn_id` field specifies which
+connection to close.
+
+```rust
+Goodbye { conn_id: u64, reason: String }
+```
+
 > r[message.goodbye.send]
 >
-> A peer MUST send a Goodbye message before closing the connection due to
-> a protocol error. The `reason` field MUST contain the rule ID that was
-> violated (e.g., `channeling.id.zero-reserved`), optionally followed by
-> additional context.
+> A peer MUST send a Goodbye message before closing a virtual connection
+> due to a protocol error. The `reason` field MUST contain the rule ID
+> that was violated (e.g., `channeling.id.zero-reserved`), optionally
+> followed by additional context.
 
 > r[message.goodbye.receive]
 >
 > Upon receiving a Goodbye message, a peer MUST stop sending messages
-> and close the connection. All in-flight requests fail with a
-> connection error (not `RoamError` — the connection itself is gone).
-> All open channels are terminated.
+> on that connection. All in-flight requests on that connection fail
+> with a connection error. All open channels on that connection are
+> terminated. Other connections on the same link are unaffected.
+
+> r[message.goodbye.connection-zero]
+>
+> Sending Goodbye on connection 0 closes the entire link. All
+> virtual connections are terminated, and the underlying transport
+> (TCP socket, WebSocket, etc.) is closed.
+
+> r[message.goodbye.graceful]
+>
+> A peer MAY send Goodbye with an empty reason for graceful shutdown
+> (not due to an error). This is the normal way to close a connection.
 
 ### Request / Response / Cancel
 
@@ -1220,7 +1385,7 @@ Message transports (like WebSocket) deliver discrete messages.
 > r[transport.message.multiplexing]
 >
 > All messages (control, RPC, channel data) flow through the same
-> transport connection. The `channel_id` field provides multiplexing.
+> link. The `channel_id` and `conn_id` fields provide multiplexing.
 
 ## Multi-stream Transports
 
@@ -1382,16 +1547,117 @@ These examples illustrate protocol behavior on byte-stream transports.
 | Peer |                                                | Peer |
 '--+---'                                                '--+---'
    |                                                       |
-   |-------- Data { channel=99, ... } -------------------->|
+   |-------- Data { conn=0, channel=99 } ----------------->|
    |                                                       |
    |          .---------------------------------.          |
    |          | channel 99 was never opened!   |           |
    |          '---------------------------------'          |
    |                                                       |
-   |<------- Goodbye { reason="channeling.unknown" } ------|
+   |<------- Goodbye { conn=0, reason="channeling.unknown" }|
    |                                                       |
-   X                [connection closed]                    X
+   X                  [link closed]                        X
    |                                                       |
+```
+
+## Virtual Connection: Opening
+
+```aasvg
+.-----------.                                           .-----------.
+| Initiator |                                           | Acceptor  |
+'-----+-----'                                           '-----+-----'
+      |                                                       |
+      |          [Hello exchange on transport]                |
+      |                                                       |
+      |-------- Connect { request_id=1 } -------------------->|
+      |                                                       |
+      |          .---------------------------------.          |
+      |          | Acceptor is listening          |           |
+      |          | (called take_incoming_conns)   |           |
+      |          '---------------------------------'          |
+      |                                                       |
+      |<------- Accept { request_id=1, conn_id=1 } -----------|
+      |                                                       |
+      |          .---------------------------------.          |
+      |          | Connection 1 now usable        |           |
+      |          '---------------------------------'          |
+      |                                                       |
+      |-- Request { conn=1, id=1, method=0xABC } ------------>|
+      |<- Response { conn=1, id=1, Ok(result) } --------------|
+      |                                                       |
+```
+
+## Virtual Connection: Rejected
+
+```aasvg
+.-----------.                                           .-----------.
+| Initiator |                                           | Acceptor  |
+'-----+-----'                                           '-----+-----'
+      |                                                       |
+      |-------- Connect { request_id=1 } -------------------->|
+      |                                                       |
+      |          .---------------------------------.          |
+      |          | Acceptor is NOT listening      |           |
+      |          '---------------------------------'          |
+      |                                                       |
+      |<------- Reject { request_id=1 } ----------------------|
+      |                                                       |
+      |          .---------------------------------.          |
+      |          | Connection refused             |           |
+      |          | Link still open                |           |
+      |          '---------------------------------'          |
+      |                                                       |
+```
+
+## Virtual Connection: Proxy Multiplexing
+
+This example shows the motivating use case — a proxy (cell-http) maps
+multiple downstream clients to separate upstream virtual connections.
+
+```aasvg
+.----------.          .-----------.          .------.
+| Browser1 |          | cell-http |          | Host |
+'----+-----'          '-----+-----'          '--+---'
+     |                      |                   |
+     |                      |<===== transport ==|  (single TCP conn)
+     |                      |                   |
+     |<-- ws1 connected --->|                   |
+     |                      |-- Connect{id=1} ->|
+     |                      |<- Accept{id=1,c=1}|  (conn 1 for browser1)
+     |                      |                   |
+     |<-- ws2 connected --->|                   |
+     |                      |-- Connect{id=2} ->|
+     |                      |<- Accept{id=2,c=2}|  (conn 2 for browser2)
+     |                      |                   |
+     |-- subscribe("/x") -->|                   |
+     |                      |-- Request{c=1} -->|  Host sees conn 1
+     |                      |<- Response{c=1} --|
+     |<- Rx<Update> --------|                   |
+     |                      |                   |
+     |                      |                   |
+     |                      |<- Request{c=1} ---|  Host calls back on conn 1
+     |<-- callback ---------|                   |  → routed to browser1
+     |                      |                   |
+```
+
+## Virtual Connection: Closing
+
+```aasvg
+.-----------.                                           .-----------.
+| Peer A    |                                           | Peer B    |
+'-----+-----'                                           '-----+-----'
+      |                                                       |
+      |          [conn 1 established, in use]                 |
+      |                                                       |
+      |-------- Goodbye { conn=1, reason="" } --------------->|
+      |                                                       |
+      |          .---------------------------------.          |
+      |          | Connection 1 closed            |           |
+      |          | Connection 0 still open        |           |
+      |          '---------------------------------'          |
+      |                                                       |
+      |-- Request { conn=0, id=5, method } ------------------>|
+      |<- Response { conn=0, id=5, Ok } ----------------------|
+      |                                                       |
 ```
 
 # Introspection
