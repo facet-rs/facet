@@ -6,15 +6,7 @@
 //! shm[verify shm.handshake]
 //! shm[verify shm.flow.no-credit-message]
 
-fn init_tracing() {
-    #[cfg(feature = "tracing")]
-    {
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .with_test_writer()
-            .try_init();
-    }
-}
+use facet_testhelpers::test;
 
 use roam_session::{Rx, Tx};
 use roam_shm::driver::{establish_guest, establish_multi_peer_host};
@@ -34,11 +26,111 @@ trait Testbed {
     async fn generate_large(&self, count: u32, output: Tx<String>);
     /// Receive large strings from caller (for testing host→guest streaming)
     async fn consume_large(&self, input: Rx<String>) -> u32;
+    /// Streaming call that fails after receiving some data.
+    /// Returns (success: bool, count: u32) - if success is false, error occurred after count messages
+    async fn consume_then_fail(&self, input: Rx<String>, fail_after: u32) -> (bool, u32);
+    /// Recursive call - calls back to caller with depth-1, until depth=0
+    async fn recursive_call(&self, depth: u32) -> u32;
 }
 
-/// Implementation of the Testbed service.
+/// Implementation of the Testbed service (basic, no callbacks).
 #[derive(Clone)]
 struct TestbedImpl;
+
+/// Implementation that can call back to the other side (for recursive tests).
+#[derive(Clone)]
+struct RecursiveTestbedImpl {
+    callback_handle: Option<roam_session::ConnectionHandle>,
+}
+
+impl RecursiveTestbedImpl {
+    fn new() -> Self {
+        Self { callback_handle: None }
+    }
+
+    fn with_callback(handle: roam_session::ConnectionHandle) -> Self {
+        Self { callback_handle: Some(handle) }
+    }
+}
+
+impl Testbed for RecursiveTestbedImpl {
+    async fn echo(&self, input: String) -> String {
+        input
+    }
+
+    async fn add(&self, (a, b): (i32, i32)) -> i32 {
+        a + b
+    }
+
+    async fn sum(&self, mut numbers: Rx<i32>) -> i64 {
+        let mut total = 0i64;
+        while let Ok(Some(n)) = numbers.recv().await {
+            total += n as i64;
+        }
+        total
+    }
+
+    async fn generate(&self, count: u32, output: Tx<i32>) {
+        for i in 0..count {
+            if output.send(&(i as i32)).await.is_err() {
+                break;
+            }
+        }
+    }
+
+    async fn generate_large(&self, count: u32, output: Tx<String>) {
+        for i in 0..count {
+            let large_string = format!("message_{:04}_padding_to_exceed_32_bytes_inline_limit", i);
+            if output.send(&large_string).await.is_err() {
+                break;
+            }
+        }
+    }
+
+    async fn consume_large(&self, mut input: Rx<String>) -> u32 {
+        let mut count = 0u32;
+        while let Ok(Some(_)) = input.recv().await {
+            count += 1;
+        }
+        count
+    }
+
+    async fn consume_then_fail(&self, mut input: Rx<String>, fail_after: u32) -> (bool, u32) {
+        let mut count = 0u32;
+        while let Ok(Some(_)) = input.recv().await {
+            count += 1;
+            if count >= fail_after {
+                return (false, count);
+            }
+        }
+        (true, count)
+    }
+
+    async fn recursive_call(&self, depth: u32) -> u32 {
+        eprintln!("recursive_call called with depth={}", depth);
+        if depth == 0 {
+            return 0;
+        }
+
+        if let Some(ref handle) = self.callback_handle {
+            let client = TestbedClient::new(handle.clone());
+            match client.recursive_call(depth - 1).await {
+                Ok(result) => {
+                    eprintln!("recursive_call depth={} got result={}", depth, result);
+                    result + 1
+                }
+                Err(e) => {
+                    eprintln!("recursive_call depth={} failed: {:?}", depth, e);
+                    // Return depth to indicate where we failed
+                    depth
+                }
+            }
+        } else {
+            eprintln!("recursive_call depth={} has no callback handle!", depth);
+            depth
+        }
+    }
+}
 
 impl Testbed for TestbedImpl {
     async fn echo(&self, input: String) -> String {
@@ -100,6 +192,24 @@ impl Testbed for TestbedImpl {
         }
         count
     }
+
+    async fn consume_then_fail(&self, mut input: Rx<String>, fail_after: u32) -> (bool, u32) {
+        let mut count = 0u32;
+        while let Ok(Some(_value)) = input.recv().await {
+            count += 1;
+            if count >= fail_after {
+                // Return failure after receiving fail_after messages
+                // This leaves the stream in a partially consumed state
+                return (false, count);
+            }
+        }
+        (true, count)
+    }
+
+    async fn recursive_call(&self, depth: u32) -> u32 {
+        // Basic impl without callback - just returns depth
+        depth
+    }
 }
 
 struct TestFixture {
@@ -149,9 +259,8 @@ fn setup_test() -> TestFixture {
     }
 }
 
-#[tokio::test]
+#[test(tokio::test)]
 async fn guest_calls_host_echo() {
-    init_tracing();
     let fixture = setup_test();
 
     let client = TestbedClient::new(fixture.guest_handle.clone());
@@ -163,9 +272,8 @@ async fn guest_calls_host_echo() {
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 }
 
-#[tokio::test]
+#[test(tokio::test)]
 async fn guest_calls_host_add() {
-    init_tracing();
     let fixture = setup_test();
 
     let client = TestbedClient::new(fixture.guest_handle);
@@ -173,9 +281,8 @@ async fn guest_calls_host_add() {
     assert_eq!(result, 42);
 }
 
-#[tokio::test]
+#[test(tokio::test)]
 async fn host_calls_guest() {
-    init_tracing();
     let fixture = setup_test();
 
     let client = TestbedClient::new(fixture.host_handle);
@@ -184,9 +291,8 @@ async fn host_calls_guest() {
     assert_eq!(result, input);
 }
 
-#[tokio::test]
+#[test(tokio::test)]
 async fn unknown_method_returns_error() {
-    init_tracing();
     let fixture = setup_test();
 
     let payload = facet_postcard::to_vec(&"test").unwrap();
@@ -195,9 +301,8 @@ async fn unknown_method_returns_error() {
     assert_eq!(response[0], 1, "Expected error marker");
 }
 
-#[tokio::test]
+#[test(tokio::test)]
 async fn multiple_sequential_calls() {
-    init_tracing();
     let fixture = setup_test();
 
     let client = TestbedClient::new(fixture.guest_handle);
@@ -214,9 +319,8 @@ async fn multiple_sequential_calls() {
 /// Test client streaming: client sends multiple values, server returns aggregate.
 ///
 /// shm[verify shm.handshake]
-#[tokio::test]
+#[test(tokio::test)]
 async fn client_streaming_sum() {
-    init_tracing();
     let fixture = setup_test();
 
     let client = TestbedClient::new(fixture.guest_handle);
@@ -252,9 +356,8 @@ async fn client_streaming_sum() {
 /// Test server streaming: server sends multiple values back to client.
 ///
 /// shm[verify shm.flow.no-credit-message]
-#[tokio::test]
+#[test(tokio::test)]
 async fn server_streaming_generate() {
-    init_tracing();
     let fixture = setup_test();
 
     let client = TestbedClient::new(fixture.guest_handle);
@@ -347,9 +450,8 @@ fn setup_multi_peer_test() -> MultiPeerFixture {
 }
 
 /// Test that multi-peer host driver can handle multiple guests.
-#[tokio::test]
+#[test(tokio::test)]
 async fn multi_peer_host_two_guests() {
-    init_tracing();
     let fixture = setup_multi_peer_test();
 
     // Both guests can make calls
@@ -373,9 +475,8 @@ async fn multi_peer_host_two_guests() {
 }
 
 /// Test concurrent calls from multiple guests.
-#[tokio::test]
+#[test(tokio::test)]
 async fn multi_peer_concurrent_calls() {
-    init_tracing();
     let fixture = setup_multi_peer_test();
 
     // Make concurrent calls from both guests
@@ -405,9 +506,8 @@ async fn multi_peer_concurrent_calls() {
 /// driver handle to dynamically create new peers without pre-registering them
 /// before building the driver. This enables true lazy spawning where peers are
 /// created on-demand rather than all at initialization.
-#[tokio::test]
+#[test(tokio::test)]
 async fn test_dynamic_peer_creation_no_preregistration() {
-    init_tracing();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("dynamic_peers.shm");
 
@@ -493,7 +593,6 @@ async fn test_dynamic_peer_creation_no_preregistration() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore] // Requires more debugging
 async fn test_lazy_spawn_real_processes() {
-    init_tracing();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("lazy_spawn.shm");
 
@@ -616,9 +715,8 @@ async fn test_lazy_spawn_real_processes() {
 /// 3. Guest receives slowly
 /// 4. Without backpressure: immediate SlotExhausted errors
 /// 5. With backpressure: host waits for guest to free slots, all messages delivered
-#[tokio::test]
+#[test(tokio::test)]
 async fn host_to_guest_backpressure_streaming() {
-    init_tracing();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("backpressure.shm");
 
@@ -723,9 +821,8 @@ async fn host_to_guest_backpressure_streaming() {
 /// 3. Guest consumes slowly (10ms delay per message)
 /// 4. Without backpressure: host fails with SlotExhausted
 /// 5. With backpressure: host waits for slots, all messages delivered
-#[tokio::test]
+#[test(tokio::test)]
 async fn host_to_guest_backpressure_host_streaming() {
-    init_tracing();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("h2g_backpressure.shm");
 
@@ -810,4 +907,688 @@ async fn host_to_guest_backpressure_host_streaming() {
             "consume_large() timed out - likely deadlock due to missing host→guest backpressure"
         ),
     }
+}
+
+/// Test that slot exhaustion during concurrent RPC calls does NOT cause protocol violations.
+///
+/// This reproduces the bug from dodeca where many concurrent browser requests
+/// caused slot exhaustion, which corrupted channel state and led to `streaming.unknown`
+/// protocol violations.
+///
+/// The scenario:
+/// 1. Configure very few slots (4)
+/// 2. Make many concurrent RPC calls (30+) from host to guest
+/// 3. Each call sends a large payload requiring slots
+/// 4. Slot exhaustion WILL occur
+/// 5. Expected: calls either succeed or fail cleanly with backpressure
+/// 6. Bug behavior: `streaming.unknown` protocol violation crashes the connection
+#[test(tokio::test)]
+async fn slot_exhaustion_should_not_corrupt_channel_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("slot_exhaustion.shm");
+
+    // Configure with very few slots to trigger exhaustion quickly
+    let config = SegmentConfig {
+        slots_per_guest: 4, // Very few slots
+        ring_size: 64,
+        max_guests: 4,
+        ..SegmentConfig::default()
+    };
+    let mut host = ShmHost::create(&path, config).unwrap();
+
+    let ticket = host
+        .add_peer(roam_shm::spawn::AddPeerOptions {
+            peer_name: Some("concurrent-test".to_string()),
+            on_death: None,
+        })
+        .unwrap();
+    let peer_id = ticket.peer_id;
+    let spawn_args = ticket.into_spawn_args();
+
+    let dispatcher = TestbedDispatcher::new(TestbedImpl);
+
+    let guest_transport = ShmGuestTransport::from_spawn_args(spawn_args).unwrap();
+    let (_guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
+
+    let (host_driver, mut handles, _driver_handle) =
+        establish_multi_peer_host(host, vec![(peer_id, dispatcher)]);
+    let host_handle = handles.remove(&peer_id).unwrap();
+
+    // Spawn drivers
+    let guest_driver_handle = tokio::spawn(guest_driver.run());
+    let host_driver_handle = tokio::spawn(host_driver.run());
+
+    // Give drivers time to start
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    // Make many concurrent RPC calls with large payloads
+    // This should trigger slot exhaustion
+    // In dodeca, the payload was ~4500 bytes. With 4 slots, we need payloads
+    // big enough that 4+ concurrent calls exhaust all slots.
+    const NUM_CONCURRENT_CALLS: usize = 30;
+    const PAYLOAD_SIZE: usize = 5000; // ~5KB per payload, similar to dodeca
+
+    let mut handles = Vec::new();
+    for i in 0..NUM_CONCURRENT_CALLS {
+        let client = TestbedClient::new(host_handle.clone());
+        let handle = tokio::spawn(async move {
+            // Large payload to force slot allocation - ~5KB like dodeca's HTML payloads
+            let large_input = format!(
+                "concurrent_call_{:04}_{}",
+                i,
+                "X".repeat(PAYLOAD_SIZE)
+            );
+            match client.echo(large_input.clone()).await {
+                Ok(result) => {
+                    assert_eq!(result, large_input);
+                    Ok(i)
+                }
+                Err(e) => {
+                    // Backpressure errors are acceptable - protocol violations are NOT
+                    let err_str = format!("{:?}", e);
+                    if err_str.contains("streaming.unknown") {
+                        panic!("BUG: slot exhaustion caused protocol violation: {}", err_str);
+                    }
+                    Err(e)
+                }
+            }
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all calls to complete (with timeout)
+    let results = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        futures::future::join_all(handles),
+    )
+    .await
+    .expect("Concurrent calls timed out - likely deadlock");
+
+    // Count successes and failures
+    let mut successes = 0;
+    let mut failures = 0;
+    for result in results {
+        match result {
+            Ok(Ok(_)) => successes += 1,
+            Ok(Err(_)) => failures += 1,
+            Err(e) => panic!("Task panicked: {:?}", e),
+        }
+    }
+
+    eprintln!(
+        "Concurrent calls: {} succeeded, {} failed (backpressure)",
+        successes, failures
+    );
+
+    // At least some calls should succeed
+    assert!(
+        successes > 0,
+        "Expected at least some calls to succeed, but all {} failed",
+        NUM_CONCURRENT_CALLS
+    );
+
+    // Verify drivers are still healthy (not crashed from protocol violations)
+    assert!(
+        !guest_driver_handle.is_finished(),
+        "Guest driver crashed unexpectedly"
+    );
+    assert!(
+        !host_driver_handle.is_finished(),
+        "Host driver crashed unexpectedly"
+    );
+}
+
+/// Test that streaming calls that fail partway through don't corrupt channel state.
+///
+/// This reproduces a potential bug where:
+/// 1. Host starts streaming data to guest
+/// 2. Guest returns error partway through (leaving stream partially consumed)
+/// 3. Concurrent calls on same connection cause channel confusion
+/// 4. Protocol violation occurs due to orphaned/misrouted channels
+#[test(tokio::test)]
+async fn streaming_errors_should_not_corrupt_channel_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("streaming_errors.shm");
+
+    // Configure with very few slots to increase contention
+    let config = SegmentConfig {
+        slots_per_guest: 4,
+        ring_size: 64,
+        max_guests: 4,
+        ..SegmentConfig::default()
+    };
+    let mut host = ShmHost::create(&path, config).unwrap();
+
+    let ticket = host
+        .add_peer(roam_shm::spawn::AddPeerOptions {
+            peer_name: Some("streaming-errors-test".to_string()),
+            on_death: None,
+        })
+        .unwrap();
+    let peer_id = ticket.peer_id;
+    let spawn_args = ticket.into_spawn_args();
+
+    let dispatcher = TestbedDispatcher::new(TestbedImpl);
+
+    let guest_transport = ShmGuestTransport::from_spawn_args(spawn_args).unwrap();
+    let (_guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
+
+    let (host_driver, mut handles, _driver_handle) =
+        establish_multi_peer_host(host, vec![(peer_id, dispatcher)]);
+    let host_handle = handles.remove(&peer_id).unwrap();
+
+    let guest_driver_handle = tokio::spawn(guest_driver.run());
+    let host_driver_handle = tokio::spawn(host_driver.run());
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    // Make many concurrent streaming calls where guest fails after receiving some data
+    // This stresses the cleanup logic when streams are partially consumed
+    const NUM_CONCURRENT_CALLS: usize = 20;
+    const MESSAGES_PER_CALL: u32 = 10;
+    const FAIL_AFTER: u32 = 3; // Guest will fail after receiving 3 messages
+
+    let mut task_handles = Vec::new();
+    for i in 0..NUM_CONCURRENT_CALLS {
+        let client = TestbedClient::new(host_handle.clone());
+        let handle = tokio::spawn(async move {
+            // Create channel - host will send, guest will receive
+            let (tx, rx) = roam::channel::<String>();
+
+            // Spawn sender task that keeps sending even after guest fails
+            let sender = tokio::spawn(async move {
+                for j in 0..MESSAGES_PER_CALL {
+                    let msg = format!("call_{}_msg_{:04}_padding_for_slot_allocation", i, j);
+                    if tx.send(&msg).await.is_err() {
+                        eprintln!("call {}: sender stopped at msg {}", i, j);
+                        return j;
+                    }
+                }
+                MESSAGES_PER_CALL
+            });
+
+            // Call consume_then_fail - guest will fail after FAIL_AFTER messages
+            let result = client.consume_then_fail(rx, FAIL_AFTER).await;
+
+            // Wait for sender
+            let sent = sender.await.unwrap();
+
+            match result {
+                Ok((false, _count)) => {
+                    // Expected - guest failed after FAIL_AFTER messages
+                    Ok((i, sent, "failed_as_expected"))
+                }
+                Ok((true, _count)) => {
+                    // Unexpected - shouldn't succeed with FAIL_AFTER < MESSAGES_PER_CALL
+                    Ok((i, sent, "success"))
+                }
+                Err(e) => {
+                    let err_str = format!("{:?}", e);
+                    if err_str.contains("streaming.unknown") {
+                        panic!("BUG: streaming error caused protocol violation: {}", err_str);
+                    }
+                    Err(e)
+                }
+            }
+        });
+        task_handles.push(handle);
+    }
+
+    // Wait for all calls with timeout
+    let results = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        futures::future::join_all(task_handles),
+    )
+    .await
+    .expect("Streaming error test timed out - likely deadlock");
+
+    let mut successes = 0;
+    let mut expected_failures = 0;
+    let mut transport_errors = 0;
+
+    for result in results {
+        match result {
+            Ok(Ok((_, _, status))) => {
+                if status == "failed_as_expected" {
+                    expected_failures += 1;
+                } else {
+                    successes += 1;
+                }
+            }
+            Ok(Err(_)) => transport_errors += 1,
+            Err(e) => panic!("Task panicked: {:?}", e),
+        }
+    }
+
+    eprintln!(
+        "Streaming error test: {} expected failures, {} successes, {} transport errors",
+        expected_failures, successes, transport_errors
+    );
+
+    // Most calls should complete (either with expected failure or success)
+    let completed = expected_failures + successes;
+    assert!(
+        completed > NUM_CONCURRENT_CALLS / 2,
+        "Expected most calls to complete, but only {} of {} did",
+        completed,
+        NUM_CONCURRENT_CALLS
+    );
+
+    // Verify drivers are still healthy
+    assert!(
+        !guest_driver_handle.is_finished(),
+        "Guest driver crashed - likely protocol violation"
+    );
+    assert!(
+        !host_driver_handle.is_finished(),
+        "Host driver crashed - likely protocol violation"
+    );
+}
+
+/// Aggressive stress test mixing streaming and non-streaming calls with slot exhaustion.
+///
+/// This test runs a chaotic mix of:
+/// - Simple echo calls (no streaming)
+/// - Streaming calls that succeed
+/// - Streaming calls that fail partway
+/// - All happening concurrently with only 4 slots
+#[test(tokio::test)]
+async fn mixed_calls_with_slot_exhaustion() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mixed_calls.shm");
+
+    let config = SegmentConfig {
+        slots_per_guest: 4,
+        ring_size: 64,
+        max_guests: 4,
+        ..SegmentConfig::default()
+    };
+    let mut host = ShmHost::create(&path, config).unwrap();
+
+    let ticket = host
+        .add_peer(roam_shm::spawn::AddPeerOptions {
+            peer_name: Some("mixed-calls-test".to_string()),
+            on_death: None,
+        })
+        .unwrap();
+    let peer_id = ticket.peer_id;
+    let spawn_args = ticket.into_spawn_args();
+
+    let dispatcher = TestbedDispatcher::new(TestbedImpl);
+    let guest_transport = ShmGuestTransport::from_spawn_args(spawn_args).unwrap();
+    let (_guest_handle, guest_driver) = establish_guest(guest_transport, dispatcher.clone());
+
+    let (host_driver, mut handles, _driver_handle) =
+        establish_multi_peer_host(host, vec![(peer_id, dispatcher)]);
+    let host_handle = handles.remove(&peer_id).unwrap();
+
+    let guest_driver_handle = tokio::spawn(guest_driver.run());
+    let host_driver_handle = tokio::spawn(host_driver.run());
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    // Run multiple rounds of mixed calls
+    for round in 0..5 {
+        let mut task_handles = Vec::new();
+
+        // Mix of different call types
+        for i in 0..10 {
+            let client = TestbedClient::new(host_handle.clone());
+            let call_type = (round * 10 + i) % 3;
+
+            let handle = tokio::spawn(async move {
+                match call_type {
+                    0 => {
+                        // Simple echo - no streaming
+                        let msg = format!("round_{}_echo_{}_padding_for_slots", round, i);
+                        match client.echo(msg.clone()).await {
+                            Ok(result) => {
+                                assert_eq!(result, msg);
+                                Ok("echo_ok")
+                            }
+                            Err(e) => {
+                                let err_str = format!("{:?}", e);
+                                if err_str.contains("streaming.unknown") {
+                                    panic!("BUG in echo: {}", err_str);
+                                }
+                                Err(e)
+                            }
+                        }
+                    }
+                    1 => {
+                        // Streaming call that completes successfully
+                        let (tx, rx) = roam::channel::<String>();
+                        let sender = tokio::spawn(async move {
+                            for j in 0..5 {
+                                let msg = format!("r{}_c{}_msg{}_ok", round, i, j);
+                                if tx.send(&msg).await.is_err() {
+                                    return j;
+                                }
+                            }
+                            5u32
+                        });
+
+                        let result = client.consume_large(rx).await;
+                        let _ = sender.await;
+
+                        match result {
+                            Ok(_count) => Ok("stream_ok"),
+                            Err(e) => {
+                                let err_str = format!("{:?}", e);
+                                if err_str.contains("streaming.unknown") {
+                                    panic!("BUG in stream_ok: {}", err_str);
+                                }
+                                Err(e)
+                            }
+                        }
+                    }
+                    _ => {
+                        // Streaming call that fails partway
+                        let (tx, rx) = roam::channel::<String>();
+                        let sender = tokio::spawn(async move {
+                            for j in 0..10 {
+                                let msg = format!("r{}_c{}_msg{}_fail", round, i, j);
+                                if tx.send(&msg).await.is_err() {
+                                    return j;
+                                }
+                            }
+                            10u32
+                        });
+
+                        let result = client.consume_then_fail(rx, 3).await;
+                        let _ = sender.await;
+
+                        match result {
+                            Ok(_) => Ok("stream_fail_ok"),
+                            Err(e) => {
+                                let err_str = format!("{:?}", e);
+                                if err_str.contains("streaming.unknown") {
+                                    panic!("BUG in stream_fail: {}", err_str);
+                                }
+                                Err(e)
+                            }
+                        }
+                    }
+                }
+            });
+            task_handles.push(handle);
+        }
+
+        // Wait for all calls in this round
+        let results = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            futures::future::join_all(task_handles),
+        )
+        .await
+        .expect("Round timed out");
+
+        let mut ok_count = 0;
+        let mut err_count = 0;
+        for result in results {
+            match result {
+                Ok(Ok(_)) => ok_count += 1,
+                Ok(Err(_)) => err_count += 1,
+                Err(e) => panic!("Task panicked: {:?}", e),
+            }
+        }
+        eprintln!("Round {}: {} ok, {} err", round, ok_count, err_count);
+    }
+
+    // Verify drivers survived
+    assert!(!guest_driver_handle.is_finished(), "Guest driver crashed");
+    assert!(!host_driver_handle.is_finished(), "Host driver crashed");
+}
+
+// ============================================================================
+// Separate services for recursive call testing (guest and host have different APIs)
+// ============================================================================
+
+/// Service provided by the GUEST (cell) - host calls this
+#[roam::service]
+trait CellService {
+    /// Process something, may call back to host
+    async fn process(&self, depth: u32) -> u32;
+    /// Process with streaming - receives data while recursing
+    async fn process_streaming(&self, depth: u32, data: Rx<String>) -> u32;
+}
+
+/// Service provided by the HOST - guest calls this
+#[roam::service]
+trait HostService {
+    /// Host-side processing, may call back to guest
+    async fn host_process(&self, depth: u32) -> u32;
+    /// Host processing with streaming
+    async fn host_process_streaming(&self, depth: u32, data: Rx<String>) -> u32;
+}
+
+/// Test recursive calls: cell -> host -> cell -> host -> ...
+///
+/// This is the "endless charade" scenario where:
+/// 1. Host calls guest.process(N)
+/// 2. Guest calls host.host_process(N-1)
+/// 3. Host calls guest.process(N-2)
+/// ... and so on until depth=0
+///
+/// Each in-flight call holds resources. With limited slots, we want to know:
+/// - Do we detect the cycle? (No, there's no cycle detection)
+/// - Do we error out gracefully? (Should hit backpressure/timeout)
+/// - Does it corrupt channel state? (This is what we're testing)
+#[test(tokio::test)]
+async fn recursive_calls_with_slot_exhaustion() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("recursive.shm");
+
+    // Very few slots - recursive calls will exhaust them quickly
+    let config = SegmentConfig {
+        slots_per_guest: 4,
+        ring_size: 64,
+        max_guests: 4,
+        ..SegmentConfig::default()
+    };
+    let mut host = ShmHost::create(&path, config).unwrap();
+
+    let ticket = host
+        .add_peer(roam_shm::spawn::AddPeerOptions {
+            peer_name: Some("recursive-test".to_string()),
+            on_death: None,
+        })
+        .unwrap();
+    let peer_id = ticket.peer_id;
+    let spawn_args = ticket.into_spawn_args();
+
+    // Lazy handles for bidirectional calls
+    let guest_to_host: std::sync::Arc<std::sync::OnceLock<roam_session::ConnectionHandle>> =
+        std::sync::Arc::new(std::sync::OnceLock::new());
+    let host_to_guest: std::sync::Arc<std::sync::OnceLock<roam_session::ConnectionHandle>> =
+        std::sync::Arc::new(std::sync::OnceLock::new());
+
+    // Guest-side implementation of CellService
+    #[derive(Clone)]
+    struct CellServiceImpl {
+        to_host: std::sync::Arc<std::sync::OnceLock<roam_session::ConnectionHandle>>,
+    }
+
+    impl CellService for CellServiceImpl {
+        async fn process(&self, depth: u32) -> u32 {
+            eprintln!("GUEST: process(depth={})", depth);
+            if depth == 0 {
+                return 0;
+            }
+
+            if let Some(handle) = self.to_host.get() {
+                let client = HostServiceClient::new(handle.clone());
+                eprintln!("GUEST: calling host.host_process({})", depth - 1);
+
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    client.host_process(depth - 1)
+                ).await {
+                    Ok(Ok(r)) => {
+                        eprintln!("GUEST: got result {} for depth {}", r, depth);
+                        r + 1
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("GUEST: call failed at depth {}: {:?}", depth, e);
+                        1000 + depth
+                    }
+                    Err(_) => {
+                        eprintln!("GUEST: timeout at depth {}", depth);
+                        2000 + depth
+                    }
+                }
+            } else {
+                eprintln!("GUEST: no host handle!");
+                depth
+            }
+        }
+
+        async fn process_streaming(&self, depth: u32, _data: Rx<String>) -> u32 {
+            // TODO: implement streaming version
+            depth
+        }
+    }
+
+    // Host-side implementation of HostService
+    #[derive(Clone)]
+    struct HostServiceImpl {
+        to_guest: std::sync::Arc<std::sync::OnceLock<roam_session::ConnectionHandle>>,
+    }
+
+    impl HostService for HostServiceImpl {
+        async fn host_process(&self, depth: u32) -> u32 {
+            eprintln!("HOST: host_process(depth={})", depth);
+            if depth == 0 {
+                return 0;
+            }
+
+            if let Some(handle) = self.to_guest.get() {
+                let client = CellServiceClient::new(handle.clone());
+                eprintln!("HOST: calling guest.process({})", depth - 1);
+
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    client.process(depth - 1)
+                ).await {
+                    Ok(Ok(r)) => {
+                        eprintln!("HOST: got result {} for depth {}", r, depth);
+                        r + 1
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("HOST: call failed at depth {}: {:?}", depth, e);
+                        1000 + depth
+                    }
+                    Err(_) => {
+                        eprintln!("HOST: timeout at depth {}", depth);
+                        2000 + depth
+                    }
+                }
+            } else {
+                eprintln!("HOST: no guest handle!");
+                depth
+            }
+        }
+
+        async fn host_process_streaming(&self, depth: u32, _data: Rx<String>) -> u32 {
+            // TODO: implement streaming version
+            depth
+        }
+    }
+
+    let cell_impl = CellServiceImpl { to_host: guest_to_host.clone() };
+    let host_impl = HostServiceImpl { to_guest: host_to_guest.clone() };
+
+    let guest_transport = ShmGuestTransport::from_spawn_args(spawn_args).unwrap();
+    // Guest provides CellService, uses guest_outbound to call host
+    let (guest_outbound, guest_driver) = establish_guest(
+        guest_transport,
+        CellServiceDispatcher::new(cell_impl)
+    );
+
+    // Host provides HostService, uses host_outbound to call guest
+    let (host_driver, mut handles, _driver_handle) =
+        establish_multi_peer_host(host, vec![(peer_id, HostServiceDispatcher::new(host_impl))]);
+    let host_outbound = handles.remove(&peer_id).unwrap();
+
+    // Wire up the callbacks
+    let _ = guest_to_host.set(guest_outbound.clone()); // guest calls host via guest's outbound
+    let _ = host_to_guest.set(host_outbound.clone());  // host calls guest via host's outbound
+
+    let guest_driver_handle = tokio::spawn(guest_driver.run());
+    let host_driver_handle = tokio::spawn(host_driver.run());
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    // Test 1: Simple recursive call (should work)
+    eprintln!("\n=== Test 1: depth=2 (should succeed) ===");
+    let client = CellServiceClient::new(host_outbound.clone());
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.process(2)
+    ).await;
+
+    match &result {
+        Ok(Ok(n)) => eprintln!("depth=2 returned {}", n),
+        Ok(Err(e)) => eprintln!("depth=2 failed: {:?}", e),
+        Err(_) => eprintln!("depth=2 timed out"),
+    }
+
+    // Test 2: Deeper recursion - might exhaust slots
+    eprintln!("\n=== Test 2: depth=10 (may exhaust slots) ===");
+    let result2 = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.process(10)
+    ).await;
+
+    match &result2 {
+        Ok(Ok(n)) => eprintln!("depth=10 returned {}", n),
+        Ok(Err(e)) => {
+            let err_str = format!("{:?}", e);
+            eprintln!("depth=10 failed: {}", err_str);
+            if err_str.contains("streaming.unknown") {
+                panic!("BUG: recursive calls caused protocol violation: {}", err_str);
+            }
+        }
+        Err(_) => eprintln!("depth=10 timed out (expected with slot exhaustion)"),
+    }
+
+    // Test 3: Multiple concurrent recursive calls
+    eprintln!("\n=== Test 3: 5 concurrent depth=5 calls ===");
+    let mut tasks = Vec::new();
+    for i in 0..5 {
+        let client = CellServiceClient::new(host_outbound.clone());
+        tasks.push(tokio::spawn(async move {
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                client.process(5)
+            ).await;
+            (i, result)
+        }));
+    }
+
+    let results = futures::future::join_all(tasks).await;
+    for result in results {
+        match result {
+            Ok((i, Ok(Ok(n)))) => eprintln!("task {} returned {}", i, n),
+            Ok((i, Ok(Err(e)))) => {
+                let err_str = format!("{:?}", e);
+                eprintln!("task {} failed: {}", i, err_str);
+                if err_str.contains("streaming.unknown") {
+                    panic!("BUG: concurrent recursive calls caused protocol violation");
+                }
+            }
+            Ok((i, Err(_))) => eprintln!("task {} timed out", i),
+            Err(e) => panic!("task panicked: {:?}", e),
+        }
+    }
+
+    // Check if drivers are still alive
+    let guest_alive = !guest_driver_handle.is_finished();
+    let host_alive = !host_driver_handle.is_finished();
+
+    eprintln!("\n=== Driver status ===");
+    eprintln!("Guest driver alive: {}", guest_alive);
+    eprintln!("Host driver alive: {}", host_alive);
+
+    assert!(guest_alive, "Guest driver crashed - likely protocol violation");
+    assert!(host_alive, "Host driver crashed - likely protocol violation");
 }

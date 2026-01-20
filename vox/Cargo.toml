@@ -73,6 +73,7 @@ facet-postcard = { version = "0.42.0", git = "https://github.com/facet-rs/facet"
 facet-pretty = { version = "0.42.0", git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-json = { version = "0.42.0", git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-value = { version = "0.42.0", git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-testhelpers = { version = "0.42.0", git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-cargo-toml = { version = "0.1.0", git = "https://github.com/bearcove/facet-cargo-toml", branch = "main" }
 
 # Futures utilities
