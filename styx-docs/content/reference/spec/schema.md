@@ -162,7 +162,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > | `@unit` | the unit value `@` |
 > | `@any` | any value |
 >
-> Composite type constructors (`@optional`, `@union`, `@map`, `@enum`, `@flatten`) are described in their own sections.
+> Composite type constructors (`@optional`, `@union`, `@map`, `@enum`, `@one-of`, `@flatten`) are described in their own sections.
 > Modifiers (`@default`, `@deprecated`) are described in their own sections.
 
 ### Type constraints
@@ -422,6 +422,31 @@ that is, any tagged unit value like `@string` or `@MyType`.
 >
 > Values use the tag syntax: `@ok`, `@pending`, `@err{message "timeout"}`.
 
+### Value constraints (one-of)
+
+> r[schema.one-of]
+> `@one-of(@type (value1 value2 ...))` constrains values to a finite set.
+> The first element is the base type, the remaining elements are allowed values.
+>
+> ```styx
+> level @one-of(@string (debug info warn error))
+> env @one-of(@string (development staging production))
+> method @one-of(@string (GET POST PUT DELETE PATCH))
+> ```
+>
+> r[schema.one-of.validation]
+> Validation first checks that the value matches the base type, then checks that
+> the value is one of the allowed values. Error messages include typo suggestions
+> when the value is close to an allowed value.
+>
+> r[schema.one-of.any-type]
+> While `@one-of` is most commonly used with `@string`, it works with any base type:
+>
+> ```styx
+> priority @one-of(@int (1 2 3 4 5))
+> enabled @one-of(@bool (true))  // must be true, false not allowed
+> ```
+
 ## Validation
 
 > r[schema.validation]
@@ -527,6 +552,8 @@ schema {
     optional(@Schema)
     /// Enum: @enum{variant, variant @object{...}}.
     enum @object{@ @Schema}
+    /// Value constraint: @one-of(@type (value1 value2 ...)).
+    one-of @seq(@Schema @seq(@any))
     /// Map: @map(@V) or @map(@K @V).
     map @seq(@Schema)
     /// Flatten: @flatten(@Type).
