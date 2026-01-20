@@ -19,6 +19,7 @@ facet.workspace = true
 facet-postcard.workspace = true
 roam-frame.workspace = true
 roam-wire.workspace = true
+roam-task-local.workspace = true
 tracing = { workspace = true, optional = true }
 
 # Native runtime

@@ -624,7 +624,7 @@ pub fn channel<T: 'static>() -> (Tx<T>, Rx<T>) {
     let (sender, receiver) = crate::runtime::channel(CHANNEL_SIZE);
 
     // Check if we're in a dispatch context - if so, create bound channels
-    if let Some(ctx) = DISPATCH_CONTEXT.with(|c| c.borrow().clone()) {
+    if let Some(ctx) = get_dispatch_context() {
         let channel_id = ctx.channel_ids.next();
         debug!(channel_id, "roam::channel() creating bound channel pair");
         (
@@ -638,10 +638,8 @@ pub fn channel<T: 'static>() -> (Tx<T>, Rx<T>) {
 }
 
 // ============================================================================
-// Dispatch Context (thread-local for response channel binding)
+// Dispatch Context (task-local for response channel binding)
 // ============================================================================
-
-use std::cell::RefCell;
 
 /// Context for binding response channels during dispatch.
 ///
@@ -654,27 +652,16 @@ struct DispatchContext {
     driver_tx: Sender<DriverMessage>,
 }
 
-thread_local! {
-    static DISPATCH_CONTEXT: RefCell<Option<DispatchContext>> = const { RefCell::new(None) };
+roam_task_local::task_local! {
+    /// Task-local dispatch context. Using task_local instead of thread_local
+    /// is critical: thread_local can leak across different async tasks that
+    /// happen to run on the same worker thread, causing channel binding bugs.
+    static DISPATCH_CONTEXT: DispatchContext;
 }
 
-/// Set the dispatch context for the current thread.
-/// Returns a guard that clears the context when dropped.
-fn set_dispatch_context(ctx: DispatchContext) -> DispatchContextGuard {
-    DISPATCH_CONTEXT.with(|c| {
-        *c.borrow_mut() = Some(ctx);
-    });
-    DispatchContextGuard
-}
-
-struct DispatchContextGuard;
-
-impl Drop for DispatchContextGuard {
-    fn drop(&mut self) {
-        DISPATCH_CONTEXT.with(|c| {
-            *c.borrow_mut() = None;
-        });
-    }
+/// Get the current dispatch context, if any.
+fn get_dispatch_context() -> Option<DispatchContext> {
+    DISPATCH_CONTEXT.try_with(|ctx| ctx.clone()).ok()
 }
 
 // ============================================================================
@@ -1314,10 +1301,10 @@ where
     let task_tx = registry.driver_tx();
     let dispatch_ctx = registry.dispatch_context();
 
-    Box::pin(async move {
-        // Set dispatch context so roam::channel() creates bound channels
-        let _guard = set_dispatch_context(dispatch_ctx);
-
+    // Use task_local scope so roam::channel() creates bound channels.
+    // This is critical: unlike thread_local, task_local won't leak to other
+    // tasks that happen to run on the same worker thread.
+    Box::pin(DISPATCH_CONTEXT.scope(dispatch_ctx, async move {
         debug!("dispatch_call: handler ASYNC starting");
         let result = handler(args).await;
         debug!("dispatch_call: handler ASYNC finished");
@@ -1353,7 +1340,7 @@ where
                 payload,
             })
             .await;
-    })
+    }))
 }
 
 /// Dispatch helper for infallible methods (those that return `T` instead of `Result<T, E>`).
@@ -1399,10 +1386,8 @@ where
     let task_tx = registry.driver_tx();
     let dispatch_ctx = registry.dispatch_context();
 
-    Box::pin(async move {
-        // Set dispatch context so roam::channel() creates bound channels
-        let _guard = set_dispatch_context(dispatch_ctx);
-
+    // Use task_local scope so roam::channel() creates bound channels.
+    Box::pin(DISPATCH_CONTEXT.scope(dispatch_ctx, async move {
         let result = handler(args).await;
 
         // Collect channel IDs from the result (e.g., Rx<T> in return type)
@@ -1430,7 +1415,7 @@ where
                 payload,
             })
             .await;
-    })
+    }))
 }
 
 /// Send an "unknown method" error response.

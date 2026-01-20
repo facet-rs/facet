@@ -20,6 +20,7 @@ members = [
     "rust/subject-rust",
     "rust/shm-primitives",
     "rust/ur-taking-me-with-you",
+    "rust/roam-task-local",
     # Compliance suite
     "spec/spec-proto",
     "spec/spec-tests",
@@ -57,6 +58,7 @@ roam-websocket = { path = "rust/roam-websocket", version = "0.6.0" }
 roam-http-bridge = { path = "rust/roam-http-bridge", version = "0.6.0" }
 shm-primitives = { path = "rust/shm-primitives", version = "0.6.0", default-features = false }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "0.6.0" }
+roam-task-local = { path = "rust/roam-task-local", version = "0.6.0" }
 
 # External dependencies
 bytes = "1"
@@ -95,3 +97,18 @@ ctor = "0.4"
 
 [profile.release]
 debug = 1
+
+# Use local facet for development
+[patch."https://github.com/facet-rs/facet"]
+facet = { path = "../facet/facet" }
+facet-core = { path = "../facet/facet-core" }
+facet-json = { path = "../facet/facet-json" }
+facet-postcard = { path = "../facet/facet-postcard" }
+facet-pretty = { path = "../facet/facet-pretty" }
+facet-reflect = { path = "../facet/facet-reflect" }
+facet-value = { path = "../facet/facet-value" }
+facet-testhelpers = { path = "../facet/facet-testhelpers" }
+facet-macros = { path = "../facet/facet-macros" }
+facet-macros-impl = { path = "../facet/facet-macros-impl" }
+facet-macro-parse = { path = "../facet/facet-macro-parse" }
+facet-macro-types = { path = "../facet/facet-macro-types" }
