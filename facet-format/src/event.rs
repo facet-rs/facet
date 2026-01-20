@@ -15,6 +15,7 @@ pub enum FieldLocationHint {
 ///
 /// For self-describing formats, this represents either:
 /// - A named key (struct field or map key with string name)
+/// - A tagged key (e.g., `@string` in Styx for type pattern keys)
 /// - A unit key (map key with no name, e.g., `@` in Styx representing `None` in `Option<String>` keys)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldKey<'de> {
@@ -32,6 +33,16 @@ pub struct FieldKey<'de> {
     /// When deserializing into a `metadata_container` type like `Documented<T>`,
     /// these doc lines are used to populate the metadata.
     pub doc: Option<Vec<Cow<'de, str>>>,
+    /// Tag name for tagged keys (for formats that support them).
+    ///
+    /// Used by formats like Styx where `@string` in key position represents a type pattern.
+    /// When deserializing into a `metadata_container` type with `#[facet(metadata = "tag")]`,
+    /// this tag name is used to populate the metadata.
+    ///
+    /// - `None`: not a tagged key (bare identifier like `name`)
+    /// - `Some("")`: unit tag (`@` alone)
+    /// - `Some("string")`: named tag (`@string`)
+    pub tag: Option<Cow<'de, str>>,
 }
 
 impl<'de> FieldKey<'de> {
@@ -41,6 +52,7 @@ impl<'de> FieldKey<'de> {
             name: Some(name.into()),
             location,
             doc: None,
+            tag: None,
         }
     }
 
@@ -54,17 +66,49 @@ impl<'de> FieldKey<'de> {
             name: Some(name.into()),
             location,
             doc: if doc.is_empty() { None } else { Some(doc) },
+            tag: None,
+        }
+    }
+
+    /// Create a tagged field key (e.g., `@string` in Styx).
+    ///
+    /// Used for type pattern keys where the key is a tag rather than a bare identifier.
+    pub fn tagged(
+        tag: impl Into<Cow<'de, str>>,
+        location: FieldLocationHint,
+    ) -> Self {
+        Self {
+            name: None,
+            location,
+            doc: None,
+            tag: Some(tag.into()),
+        }
+    }
+
+    /// Create a tagged field key with documentation.
+    pub fn tagged_with_doc(
+        tag: impl Into<Cow<'de, str>>,
+        location: FieldLocationHint,
+        doc: Vec<Cow<'de, str>>,
+    ) -> Self {
+        Self {
+            name: None,
+            location,
+            doc: if doc.is_empty() { None } else { Some(doc) },
+            tag: Some(tag.into()),
         }
     }
 
     /// Create a unit field key (no name).
     ///
     /// Used for formats like Styx where `@` represents a unit key in maps.
+    /// This is equivalent to `tagged("")` - a tag with an empty name.
     pub fn unit(location: FieldLocationHint) -> Self {
         Self {
             name: None,
             location,
             doc: None,
+            tag: Some(Cow::Borrowed("")),
         }
     }
 
@@ -74,6 +118,7 @@ impl<'de> FieldKey<'de> {
             name: None,
             location,
             doc: if doc.is_empty() { None } else { Some(doc) },
+            tag: Some(Cow::Borrowed("")),
         }
     }
 }
