@@ -165,3 +165,86 @@ fn test_xml_format_proxy_field_metadata() {
         "XML and JSON should use different proxies"
     );
 }
+
+/// A proxy type that wraps strings (uses FromStr/Display).
+#[derive(Facet, Clone, Debug)]
+#[facet(transparent)]
+pub struct StringRepr(pub String);
+
+impl TryFrom<StringRepr> for XmlScaleRangeName {
+    type Error = &'static str;
+    fn try_from(value: StringRepr) -> Result<Self, Self::Error> {
+        value.0.parse()
+    }
+}
+
+impl From<&XmlScaleRangeName> for StringRepr {
+    fn from(_value: &XmlScaleRangeName) -> Self {
+        StringRepr("Scale_Range".to_string())
+    }
+}
+
+/// A zero-sized type that always serializes as a specific constant string.
+/// The proxy is defined at the container level, not on the field.
+#[derive(Debug, Default, Clone, Copy, Facet, PartialEq)]
+#[facet(xml::proxy = StringRepr)]
+pub struct XmlScaleRangeName;
+
+impl core::fmt::Display for XmlScaleRangeName {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Scale_Range")
+    }
+}
+
+impl core::str::FromStr for XmlScaleRangeName {
+    type Err = &'static str;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "Scale_Range" {
+            Ok(Self)
+        } else {
+            Err("expected `Scale_Range`")
+        }
+    }
+}
+
+/// A struct that uses the XmlScaleRangeName type as a field.
+/// The proxy is defined on XmlScaleRangeName (container level), not on this field.
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename = "Array")]
+struct ArrayWithContainerProxy {
+    #[facet(facet_xml::attribute)]
+    name: XmlScaleRangeName,
+}
+
+/// Test that container-level proxies work when the type is used as a field.
+/// This is a regression test for <https://github.com/facet-rs/facet/issues/1825>.
+#[test]
+fn test_container_level_proxy_in_field_deserialization() {
+    let xml = r#"<Array name="Scale_Range" />"#;
+    let data: ArrayWithContainerProxy = from_str(xml).unwrap();
+    assert_eq!(data.name, XmlScaleRangeName);
+}
+
+/// Test serialization also works with container-level proxies.
+#[test]
+fn test_container_level_proxy_in_field_serialization() {
+    let data = ArrayWithContainerProxy {
+        name: XmlScaleRangeName,
+    };
+    let xml = to_string(&data).unwrap();
+    assert!(
+        xml.contains("Scale_Range"),
+        "XML should contain 'Scale_Range', got: {xml}"
+    );
+}
+
+/// Test round-trip with container-level proxy.
+#[test]
+fn test_container_level_proxy_roundtrip() {
+    let original = ArrayWithContainerProxy {
+        name: XmlScaleRangeName,
+    };
+    let xml = to_string(&original).unwrap();
+    let roundtripped: ArrayWithContainerProxy = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}

@@ -372,3 +372,93 @@ fn test_json_only_container_proxy_metadata() {
         "Should NOT have fallback proxy for xml"
     );
 }
+
+// =============================================================================
+// Container-level proxy used as a field in another struct
+// Regression test for https://github.com/facet-rs/facet/issues/1825
+// =============================================================================
+
+/// A proxy type that wraps strings (uses FromStr/Display).
+#[derive(Facet, Clone, Debug)]
+#[facet(transparent)]
+pub struct StringRepr(pub String);
+
+impl TryFrom<StringRepr> for JsonConstValue {
+    type Error = &'static str;
+    fn try_from(value: StringRepr) -> Result<Self, Self::Error> {
+        value.0.parse()
+    }
+}
+
+impl From<&JsonConstValue> for StringRepr {
+    fn from(_value: &JsonConstValue) -> Self {
+        StringRepr("CONST_VALUE".to_string())
+    }
+}
+
+/// A zero-sized type that always serializes to a specific constant string.
+/// The proxy is defined at the container level.
+#[derive(Debug, Default, Clone, Copy, Facet, PartialEq)]
+#[facet(json::proxy = StringRepr)]
+pub struct JsonConstValue;
+
+impl core::fmt::Display for JsonConstValue {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "CONST_VALUE")
+    }
+}
+
+impl core::str::FromStr for JsonConstValue {
+    type Err = &'static str;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "CONST_VALUE" {
+            Ok(Self)
+        } else {
+            Err("expected `CONST_VALUE`")
+        }
+    }
+}
+
+/// A struct that uses JsonConstValue as a field.
+/// The proxy is defined on JsonConstValue (container level), not on this field.
+#[derive(Facet, Debug, PartialEq)]
+struct StructWithContainerProxyField {
+    name: String,
+    const_val: JsonConstValue,
+}
+
+/// Test that container-level proxies work when the type is used as a field.
+/// This is a regression test for <https://github.com/facet-rs/facet/issues/1825>.
+#[test]
+fn test_container_level_proxy_in_field_deserialization() {
+    let json = r#"{"name":"test","const_val":"CONST_VALUE"}"#;
+    let data: StructWithContainerProxyField = from_str(json).unwrap();
+    assert_eq!(data.name, "test");
+    assert_eq!(data.const_val, JsonConstValue);
+}
+
+/// Test serialization also works with container-level proxies.
+#[test]
+fn test_container_level_proxy_in_field_serialization() {
+    let data = StructWithContainerProxyField {
+        name: "test".to_string(),
+        const_val: JsonConstValue,
+    };
+    let json = to_string(&data).unwrap();
+    assert!(
+        json.contains("CONST_VALUE"),
+        "JSON should contain 'CONST_VALUE', got: {json}"
+    );
+}
+
+/// Test round-trip with container-level proxy in a field.
+#[test]
+fn test_container_level_proxy_in_field_roundtrip() {
+    let original = StructWithContainerProxyField {
+        name: "example".to_string(),
+        const_val: JsonConstValue,
+    };
+    let json = to_string(&original).unwrap();
+    let roundtripped: StructWithContainerProxyField = from_str(&json).unwrap();
+    assert_eq!(original, roundtripped);
+}
