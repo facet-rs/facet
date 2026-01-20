@@ -3,9 +3,16 @@ name = "styx-tree"
 version = "0.1.0"
 edition.workspace = true
 
+[features]
+default = []
+facet = ["dep:facet", "styx-parse/facet"]
+
 [dependencies]
 styx-parse.workspace = true
 ariadne = "0.6"
+facet = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta = "1.42"
+facet.workspace = true
+facet-json = { path = "../../../facet/facet-json" }

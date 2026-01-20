@@ -35,3 +35,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 facet.workspace = true
 glob = "0.3"
 serde_json.workspace = true
+
+# LSP extensions (roam RPC)
+roam-stream = { git = "https://github.com/bearcove/roam" }
+roam-session = { git = "https://github.com/bearcove/roam" }
+
+# Extension protocol
+styx-lsp-ext = { path = "../styx-lsp-ext" }

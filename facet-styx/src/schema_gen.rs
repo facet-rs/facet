@@ -222,6 +222,7 @@ fn generate_schema_inner<T: facet_core::Facet<'static>>(id: String, cli: Option<
             version: None,
             cli,
             description,
+            lsp: None,
         },
         imports: None,
         schema: schema_map,

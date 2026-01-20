@@ -15,6 +15,8 @@ use styx_parse::{ScalarKind, Separator, Span};
 
 /// A Styx value: optional tag + optional payload.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
+#[cfg_attr(feature = "facet", facet(skip_all_unless_truthy))]
 pub struct Value {
     /// Optional tag (e.g., `string` for `@string`).
     pub tag: Option<Tag>,
@@ -26,6 +28,8 @@ pub struct Value {
 
 /// A tag on a value.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
+#[cfg_attr(feature = "facet", facet(skip_all_unless_truthy))]
 pub struct Tag {
     /// Tag name (without `@`).
     pub name: String,
@@ -35,6 +39,8 @@ pub struct Tag {
 
 /// The payload of a value.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
+#[repr(u8)]
 pub enum Payload {
     /// Scalar text.
     Scalar(Scalar),
@@ -46,6 +52,8 @@ pub enum Payload {
 
 /// A scalar value.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
+#[cfg_attr(feature = "facet", facet(skip_all_unless_truthy))]
 pub struct Scalar {
     /// The text content.
     pub text: String,
@@ -57,6 +65,8 @@ pub struct Scalar {
 
 /// A sequence of values.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
+#[cfg_attr(feature = "facet", facet(skip_all_unless_truthy))]
 pub struct Sequence {
     /// Items in the sequence.
     pub items: Vec<Value>,
@@ -66,6 +76,8 @@ pub struct Sequence {
 
 /// An object (mapping of keys to values).
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
+#[cfg_attr(feature = "facet", facet(skip_all_unless_truthy))]
 pub struct Object {
     /// Entries in the object.
     pub entries: Vec<Entry>,
@@ -77,6 +89,8 @@ pub struct Object {
 
 /// An entry in an object.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
+#[cfg_attr(feature = "facet", facet(skip_all_unless_truthy))]
 pub struct Entry {
     /// The key.
     pub key: Value,
@@ -586,5 +600,119 @@ mod tests {
         assert_eq!(value.get("items[0]").and_then(|v| v.as_str()), Some("a"));
         assert_eq!(value.get("items[2]").and_then(|v| v.as_str()), Some("c"));
         assert_eq!(value.get("missing"), None);
+    }
+
+    /// Test that Value can roundtrip through JSON via Facet.
+    #[test]
+    fn test_value_json_roundtrip() {
+        // Build a complicated Value
+        let value = Value {
+            tag: None,
+            payload: Some(Payload::Object(Object {
+                entries: vec![
+                    // Schema declaration
+                    Entry {
+                        key: Value::tag("schema"),
+                        value: Value::scalar("my-schema.styx"),
+                        doc_comment: Some("Schema for this config".to_string()),
+                    },
+                    // Simple scalar
+                    Entry {
+                        key: Value::scalar("name"),
+                        value: Value::scalar("my-app"),
+                        doc_comment: None,
+                    },
+                    // Tagged value
+                    Entry {
+                        key: Value::scalar("port"),
+                        value: Value::tagged("int", Value::scalar("8080")),
+                        doc_comment: None,
+                    },
+                    // Nested object
+                    Entry {
+                        key: Value::scalar("server"),
+                        value: Value {
+                            tag: None,
+                            payload: Some(Payload::Object(Object {
+                                entries: vec![
+                                    Entry {
+                                        key: Value::scalar("host"),
+                                        value: Value::scalar("localhost"),
+                                        doc_comment: None,
+                                    },
+                                    Entry {
+                                        key: Value::scalar("tls"),
+                                        value: Value {
+                                            tag: Some(Tag {
+                                                name: "object".to_string(),
+                                                span: None,
+                                            }),
+                                            payload: Some(Payload::Object(Object {
+                                                entries: vec![
+                                                    Entry {
+                                                        key: Value::scalar("cert"),
+                                                        value: Value::scalar("/path/to/cert.pem"),
+                                                        doc_comment: None,
+                                                    },
+                                                    Entry {
+                                                        key: Value::scalar("key"),
+                                                        value: Value::scalar("/path/to/key.pem"),
+                                                        doc_comment: None,
+                                                    },
+                                                ],
+                                                separator: Separator::Comma,
+                                                span: None,
+                                            })),
+                                            span: None,
+                                        },
+                                        doc_comment: Some("TLS configuration".to_string()),
+                                    },
+                                ],
+                                separator: Separator::Newline,
+                                span: None,
+                            })),
+                            span: None,
+                        },
+                        doc_comment: Some("Server settings".to_string()),
+                    },
+                    // Sequence
+                    Entry {
+                        key: Value::scalar("tags"),
+                        value: Value {
+                            tag: None,
+                            payload: Some(Payload::Sequence(Sequence {
+                                items: vec![
+                                    Value::scalar("production"),
+                                    Value::scalar("web"),
+                                    Value::tagged("important", Value::unit()),
+                                ],
+                                span: None,
+                            })),
+                            span: None,
+                        },
+                        doc_comment: None,
+                    },
+                    // Unit value
+                    Entry {
+                        key: Value::scalar("debug"),
+                        value: Value::unit(),
+                        doc_comment: None,
+                    },
+                ],
+                separator: Separator::Newline,
+                span: Some(Span::new(0, 100)),
+            })),
+            span: Some(Span::new(0, 100)),
+        };
+
+        // Serialize to JSON
+        let json = facet_json::to_string(&value).expect("should serialize");
+        eprintln!("JSON representation:\n{json}");
+
+        // Deserialize back
+        let roundtripped: Value = facet_json::from_str(&json).expect("should deserialize");
+
+        // Verify equality
+        assert_eq!(value, roundtripped, "Value should survive JSON roundtrip");
     }
 }

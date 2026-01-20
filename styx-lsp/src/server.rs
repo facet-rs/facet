@@ -10,6 +10,8 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+use crate::extensions::{ExtensionManager, get_extension_info};
+use styx_lsp_ext as ext;
 use crate::schema_hints::find_matching_hint;
 use crate::schema_validation::{
     find_object_at_offset, find_schema_declaration, get_document_fields, get_error_span,
@@ -19,34 +21,63 @@ use crate::schema_validation::{
 use crate::semantic_tokens::{compute_semantic_tokens, semantic_token_legend};
 
 /// Document state tracked by the server
-struct DocumentState {
+pub(crate) struct DocumentState {
     /// Document content
-    #[allow(dead_code)]
-    content: String,
+    pub content: String,
     /// Parsed CST
-    parse: Parse,
+    pub parse: Parse,
     /// Parsed tree (for schema validation)
-    #[allow(dead_code)]
-    tree: Option<Value>,
+    pub tree: Option<Value>,
     /// Document version
     #[allow(dead_code)]
-    version: i32,
+    pub version: i32,
 }
+
+/// Shared document map type
+pub(crate) type DocumentMap = Arc<RwLock<HashMap<Url, DocumentState>>>;
 
 /// The Styx language server
 pub struct StyxLanguageServer {
     /// LSP client for sending notifications
     client: Client,
     /// Open documents
-    documents: Arc<RwLock<HashMap<Url, DocumentState>>>,
+    documents: DocumentMap,
+    /// Extension manager
+    extensions: Arc<ExtensionManager>,
 }
 
 impl StyxLanguageServer {
     pub fn new(client: Client) -> Self {
+        let documents: DocumentMap = Arc::new(RwLock::new(HashMap::new()));
         Self {
             client,
-            documents: Arc::new(RwLock::new(HashMap::new())),
+            documents: documents.clone(),
+            extensions: Arc::new(ExtensionManager::new(documents)),
         }
+    }
+
+    /// Check if the document's schema has an LSP extension and spawn it if allowed.
+    async fn check_for_extension(&self, tree: &Value, uri: &Url) {
+        // Try to load the schema
+        let Ok(schema) = load_document_schema(tree, uri) else {
+            return;
+        };
+
+        // Check if schema has an LSP extension
+        let Some(ext_info) = get_extension_info(&schema) else {
+            return;
+        };
+
+        tracing::info!(
+            schema_id = %ext_info.schema_id,
+            launch = ?ext_info.config.launch,
+            "Document schema has LSP extension"
+        );
+
+        // Try to spawn the extension (will check allowlist internally)
+        self.extensions
+            .get_or_spawn(&ext_info.schema_id, &ext_info.config)
+            .await;
     }
 
     /// Publish diagnostics for a document
@@ -340,6 +371,11 @@ impl LanguageServer for StyxLanguageServer {
         // Parse into tree for schema validation
         let tree = styx_tree::parse(&content).ok();
 
+        // Check for LSP extension in schema
+        if let Some(ref tree) = tree {
+            self.check_for_extension(tree, &uri).await;
+        }
+
         // Publish diagnostics
         self.publish_diagnostics(uri.clone(), &content, &parsed, tree.as_ref(), version)
             .await;
@@ -603,6 +639,56 @@ impl LanguageServer for StyxLanguageServer {
             }
         }
 
+        // Case 3: Try extension for domain-specific hover
+        if let Ok(schema_file) = load_document_schema(tree, &uri) {
+            let schema_id = &schema_file.meta.id;
+            if let Some(client) = self.extensions.get_client(schema_id).await {
+                let field_path = find_field_path_at_offset(tree, offset).unwrap_or_default();
+                let context_obj = find_object_at_offset(tree, offset);
+
+                let ext_params = ext::HoverParams {
+                    document_uri: uri.to_string(),
+                    cursor: ext::Cursor {
+                        line: position.line,
+                        character: position.character,
+                        offset: offset as u32,
+                    },
+                    path: field_path,
+                    context: context_obj.map(|c| Value {
+                        tag: None,
+                        payload: Some(styx_tree::Payload::Object(c.object)),
+                        span: None,
+                    }),
+                };
+
+                match client.hover(ext_params).await {
+                    Ok(Some(result)) => {
+                        let range = result.range.map(|r| Range {
+                            start: Position {
+                                line: r.start.line,
+                                character: r.start.character,
+                            },
+                            end: Position {
+                                line: r.end.line,
+                                character: r.end.character,
+                            },
+                        });
+                        return Ok(Some(Hover {
+                            contents: HoverContents::Markup(MarkupContent {
+                                kind: MarkupKind::Markdown,
+                                value: result.contents,
+                            }),
+                            range,
+                        }));
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Extension hover failed");
+                    }
+                }
+            }
+        }
+
         Ok(None)
     }
 
@@ -633,6 +719,7 @@ impl LanguageServer for StyxLanguageServer {
 
         let schema_fields = get_schema_fields_from_source_at_path(&schema.source, path);
         let existing_fields = context
+            .as_ref()
             .map(|c| {
                 c.object
                     .entries
@@ -705,8 +792,8 @@ impl LanguageServer for StyxLanguageServer {
             available_fields
         };
 
-        // Build completion items
-        let items: Vec<CompletionItem> = filtered_fields
+        // Build completion items from schema
+        let mut items: Vec<CompletionItem> = filtered_fields
             .into_iter()
             .map(|(name, type_str)| {
                 let is_optional =
@@ -743,6 +830,40 @@ impl LanguageServer for StyxLanguageServer {
                 }
             })
             .collect();
+
+        // Try to get completions from extension
+        if let Ok(schema_file) = load_document_schema(tree, &uri) {
+            let schema_id = &schema_file.meta.id;
+            if let Some(client) = self.extensions.get_client(schema_id).await {
+                let ext_params = ext::CompletionParams {
+                    document_uri: uri.to_string(),
+                    cursor: ext::Cursor {
+                        line: position.line,
+                        character: position.character,
+                        offset: offset as u32,
+                    },
+                    path: path.iter().map(|s| s.to_string()).collect(),
+                    prefix: current_word.clone().unwrap_or_default(),
+                    context: context.map(|c| Value {
+                        tag: None,
+                        payload: Some(styx_tree::Payload::Object(c.object.clone())),
+                        span: None,
+                    }),
+                };
+
+                match client.completions(ext_params).await {
+                    Ok(ext_items) => {
+                        tracing::debug!(count = ext_items.len(), "Got completions from extension");
+                        for item in ext_items {
+                            items.push(convert_ext_completion(item));
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Extension completion failed");
+                    }
+                }
+            }
+        }
 
         Ok(Some(CompletionResponse::Array(items)))
     }
@@ -2404,6 +2525,31 @@ fn levenshtein(a: &str, b: &str) -> usize {
     }
 
     prev[n]
+}
+
+/// Convert an extension completion item to LSP completion item.
+fn convert_ext_completion(item: ext::CompletionItem) -> CompletionItem {
+    CompletionItem {
+        label: item.label,
+        kind: item.kind.map(|k| match k {
+            ext::CompletionKind::Field => CompletionItemKind::FIELD,
+            ext::CompletionKind::Value => CompletionItemKind::VALUE,
+            ext::CompletionKind::Keyword => CompletionItemKind::KEYWORD,
+            ext::CompletionKind::Type => CompletionItemKind::CLASS,
+        }),
+        detail: item.detail,
+        documentation: item.documentation.map(|d| {
+            Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: d,
+            })
+        }),
+        sort_text: item.sort_text,
+        insert_text: item.insert_text,
+        // Extension completions sort after schema completions
+        preselect: Some(false),
+        ..Default::default()
+    }
 }
 
 /// Check if a tree looks like a schema file (has "schema" and "meta" blocks)

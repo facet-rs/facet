@@ -2,6 +2,7 @@
 
 /// A span representing a range in the source text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
 pub struct Span {
     /// Byte offset of the start (inclusive)
     pub start: u32,

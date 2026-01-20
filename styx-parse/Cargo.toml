@@ -9,8 +9,10 @@ repository.workspace = true
 [features]
 default = []
 tracing = ["dep:tracing"]
+facet = ["dep:facet"]
 
 [dependencies]
+facet = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]

@@ -114,6 +114,8 @@ pub enum Event<'src> {
 
 /// Separator mode for object entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
+#[repr(u8)]
 pub enum Separator {
     /// Entries separated by newlines.
     #[default]
@@ -124,6 +126,8 @@ pub enum Separator {
 
 /// Kind of scalar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
+#[repr(u8)]
 pub enum ScalarKind {
     /// Bare (unquoted) scalar.
     Bare,

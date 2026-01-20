@@ -11,3 +11,4 @@ The normative Styx specification.
 - [Scalar Interpretation](scalars) — How scalars become typed values
 - [Schema](schema) — Type system and validation
 - [Diagnostics](diagnostics) — Error message standards
+- [LSP Extensions](lsp-extensions) — Extending the language server with domain-specific intelligence

@@ -34,6 +34,20 @@ pub struct Meta {
     /// Human-readable description.
     #[facet(skip_serializing_if = Option::is_none)]
     pub description: Option<String>,
+    /// LSP extension configuration.
+    #[facet(skip_serializing_if = Option::is_none)]
+    pub lsp: Option<LspExtensionConfig>,
+}
+
+/// Configuration for LSP extensions.
+#[derive(Facet, Debug, Clone)]
+pub struct LspExtensionConfig {
+    /// Command to launch the extension: (command arg1 arg2 ...)
+    /// e.g., (dibs lsp-extension --stdio)
+    pub launch: Vec<String>,
+    /// Capabilities the extension supports (optional, discovered at runtime if omitted).
+    #[facet(skip_serializing_if = Option::is_none)]
+    pub capabilities: Option<Vec<String>>,
 }
 
 /// A type constraint (corresponds to Schema @enum{...} in the meta-schema).
