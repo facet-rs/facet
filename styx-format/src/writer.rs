@@ -359,8 +359,13 @@ impl StyxWriter {
         let should_inline = self.should_inline();
 
         match self.stack.pop() {
-            Some(Context::Seq { first, .. }) => {
-                if !first && !should_inline {
+            Some(Context::Seq {
+                first,
+                inline_start,
+            }) => {
+                // If the sequence started inline, it should end inline
+                // Only add newline if it didn't start inline AND has items AND shouldn't inline
+                if !first && !inline_start && !should_inline {
                     self.write_newline_indent();
                 }
                 self.out.push(b')');
