@@ -273,7 +273,13 @@ fn encode_request_payload(
         channels: channels.to_vec(),
         payload: payload.to_vec(),
     };
-    facet_postcard::to_vec(&combined).unwrap_or_default()
+    let result = facet_postcard::to_vec(&combined).unwrap_or_default();
+    tracing::debug!(
+        channels = ?channels,
+        result_len = result.len(),
+        "encode_request_payload"
+    );
+    result
 }
 
 /// Encode metadata + channels + payload for Response messages.
@@ -292,11 +298,20 @@ fn encode_response_payload(
 
 /// Decode metadata + channels + payload for Request messages.
 fn decode_request_payload(data: &[u8]) -> DecodedRequestPayload {
+    tracing::debug!(
+        data_len = data.len(),
+        "decode_request_payload: input"
+    );
     if data.is_empty() {
+        tracing::debug!("decode_request_payload: empty data, returning empty");
         return Ok((Vec::new(), Vec::new(), Vec::new()));
     }
     let combined: CombinedPayload = facet_postcard::from_slice(data)
         .map_err(|e| format!("decode error: {}", e))?;
+    tracing::debug!(
+        channels = ?combined.channels,
+        "decode_request_payload: decoded"
+    );
     Ok((combined.metadata, combined.channels, combined.payload))
 }
 
