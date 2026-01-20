@@ -1078,9 +1078,10 @@ impl MultiPeerHostDriver {
                         }
                     }
 
-                    // Retry pending sends for this peer - guest may have freed slots by consuming messages
+                    // Retry pending sends for ALL peers - any doorbell activity is a good time to drain
+                    // queues, since the peer that rang isn't necessarily the one with stuck messages.
                     // shm[impl shm.backpressure.host-to-guest]
-                    self.retry_pending_sends(peer_id).await;
+                    self.retry_all_pending_sends().await;
                 }
 
                 // Driver message (outgoing call from ConnectionHandle)
@@ -1745,6 +1746,17 @@ impl MultiPeerHostDriver {
         }
 
         sent
+    }
+
+    /// Retry sending pending messages for ALL peers.
+    /// Called when any peer rings the doorbell, since that peer consuming messages
+    /// doesn't help other peers whose pending_sends are stuck.
+    async fn retry_all_pending_sends(&mut self) {
+        // Collect keys first to avoid borrow issues
+        let peer_ids: Vec<PeerId> = self.pending_sends.keys().cloned().collect();
+        for peer_id in peer_ids {
+            self.retry_pending_sends(peer_id).await;
+        }
     }
 
     /// Send Goodbye to a peer and return error.
