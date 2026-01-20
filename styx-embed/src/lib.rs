@@ -6,6 +6,9 @@
 //!
 //! # Embedding schemas
 //!
+//! Each schema must have a `meta { id ... }` block. The ID is used to generate
+//! a unique static name, allowing multiple schemas to coexist in the same binary.
+//!
 //! ## Inline strings
 //!
 //! ```rust,ignore
@@ -21,7 +24,7 @@
 //! // Single file (path relative to crate root)
 //! styx_embed::embed_file!("schema.styx");
 //!
-//! // Multiple files
+//! // Multiple files (each becomes its own embedded schema)
 //! styx_embed::embed_files!("config.styx", "plugin.styx");
 //! ```
 //!
@@ -45,18 +48,20 @@
 //!
 //! This keeps the schema in sync with your types automatically.
 //!
-//! # Binary format
+//! # Binary format (V2)
+//!
+//! Each embedded schema is stored as its own blob:
 //!
 //! ```text
-//! STYX_SCHEMAS_V1\x00          // 16 bytes magic
-//! <count:u16le>                // number of schemas
-//! [                            // repeated `count` times:
-//!   <decompressed_len:u32le>
-//!   <compressed_len:u32le>
-//!   <blake3:32bytes>           // hash of decompressed content
-//!   <lz4 compressed schema>
-//! ]...
+//! STYX_SCHEMA_V2\0\0           // 16 bytes magic
+//! <decompressed_len:u32le>
+//! <compressed_len:u32le>
+//! <blake3:32bytes>             // hash of decompressed content
+//! <lz4 compressed schema>
 //! ```
+//!
+//! Multiple schemas in a binary means multiple blobs, each with its own magic header.
+//! The schema's `meta { id ... }` is used to identify which schema is which.
 //!
 //! # Extracting schemas
 //!
@@ -74,9 +79,13 @@ pub use styx_embed_macros::{
     embed_file, embed_files, embed_inline, embed_outdir_file, embed_schema, embed_schemas,
 };
 
-/// Magic bytes that identify embedded Styx schemas.
+/// Magic bytes that identify an embedded Styx schema (V2 format).
+/// 16 bytes: "STYX_SCHEMA_V2\0\0"
+pub const MAGIC_V2: &[u8; 16] = b"STYX_SCHEMA_V2\0\0";
+
+/// Magic bytes for legacy V1 format (multiple schemas per blob).
 /// 16 bytes: "STYX_SCHEMAS_V1\0"
-pub const MAGIC: &[u8; 16] = b"STYX_SCHEMAS_V1\0";
+pub const MAGIC_V1: &[u8; 16] = b"STYX_SCHEMAS_V1\0";
 
 /// Error type for schema extraction.
 #[derive(Debug)]
@@ -107,15 +116,14 @@ impl std::fmt::Display for ExtractError {
 
 impl std::error::Error for ExtractError {}
 
-/// Compress a schema and return the blob (without magic/count header).
-///
-/// Format: `<decompressed_len:u32le><compressed_len:u32le><blake3:32><lz4 data>`
+/// Compress a schema and return the blob (for testing).
 pub fn compress_schema(schema: &str) -> Vec<u8> {
     let decompressed = schema.as_bytes();
     let hash = blake3::hash(decompressed);
     let compressed = lz4_flex::compress_prepend_size(decompressed);
 
-    let mut blob = Vec::with_capacity(4 + 4 + 32 + compressed.len());
+    let mut blob = Vec::with_capacity(16 + 4 + 4 + 32 + compressed.len());
+    blob.extend_from_slice(MAGIC_V2);
     blob.extend_from_slice(&(decompressed.len() as u32).to_le_bytes());
     blob.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
     blob.extend_from_slice(hash.as_bytes());
@@ -123,53 +131,107 @@ pub fn compress_schema(schema: &str) -> Vec<u8> {
     blob
 }
 
-/// Build the complete embedded blob for multiple schemas.
-pub fn build_embedded_blob(schemas: &[&str]) -> Vec<u8> {
-    let mut blob = Vec::new();
-    blob.extend_from_slice(MAGIC);
-    blob.extend_from_slice(&(schemas.len() as u16).to_le_bytes());
-
-    for schema in schemas {
-        blob.extend_from_slice(&compress_schema(schema));
-    }
-
-    blob
+/// Build the complete embedded blob for a single schema (V2 format).
+pub fn build_embedded_blob(schema: &str) -> Vec<u8> {
+    compress_schema(schema)
 }
 
 /// Extract all schemas from binary data.
 ///
-/// Scans for the magic bytes and extracts all embedded schemas.
-/// Returns an error if:
-/// - No magic bytes found
-/// - Data is truncated
-/// - Decompression fails
-/// - Hash doesn't match (possible false positive or corruption)
-/// - Data is not valid UTF-8
+/// Scans for magic bytes and extracts all embedded schemas found.
+/// In V2 format, each schema has its own blob with its own magic header.
+///
+/// Returns an error only if no schemas are found at all.
 pub fn extract_schemas(data: &[u8]) -> Result<Vec<String>, ExtractError> {
-    // Find magic bytes - try all occurrences since debug symbols might contain duplicates
+    let mut schemas = Vec::new();
     let mut search_start = 0;
-    let mut last_error = ExtractError::NotFound;
 
-    loop {
-        let magic_pos = match find_magic_from(data, search_start) {
-            Some(pos) => pos,
-            None => return Err(last_error),
-        };
-
-        match try_extract_at(data, magic_pos) {
-            Ok(schemas) => return Ok(schemas),
-            Err(e) => {
-                // Try next occurrence, but remember the error
-                last_error = e;
+    // Find all V2 blobs
+    while let Some(magic_pos) = find_magic_from(data, search_start, MAGIC_V2) {
+        match try_extract_v2_at(data, magic_pos) {
+            Ok(schema) => {
+                schemas.push(schema);
+                // Continue searching after this blob
+                search_start = magic_pos + MAGIC_V2.len();
+            }
+            Err(_) => {
+                // False positive (e.g., magic in debug symbols), try next
                 search_start = magic_pos + 1;
             }
         }
     }
+
+    // Also try legacy V1 format for backwards compatibility
+    search_start = 0;
+    while let Some(magic_pos) = find_magic_from(data, search_start, MAGIC_V1) {
+        match try_extract_v1_at(data, magic_pos) {
+            Ok(mut v1_schemas) => {
+                schemas.append(&mut v1_schemas);
+                search_start = magic_pos + MAGIC_V1.len();
+            }
+            Err(_) => {
+                search_start = magic_pos + 1;
+            }
+        }
+    }
+
+    if schemas.is_empty() {
+        Err(ExtractError::NotFound)
+    } else {
+        Ok(schemas)
+    }
 }
 
-/// Try to extract schemas starting at a specific magic position.
-fn try_extract_at(data: &[u8], magic_pos: usize) -> Result<Vec<String>, ExtractError> {
-    let mut pos = magic_pos + MAGIC.len();
+/// Try to extract a single schema from V2 format at a specific position.
+fn try_extract_v2_at(data: &[u8], magic_pos: usize) -> Result<String, ExtractError> {
+    let mut pos = magic_pos + MAGIC_V2.len();
+
+    // Read header: decompressed_len (4) + compressed_len (4) + hash (32) = 40 bytes
+    if pos + 40 > data.len() {
+        return Err(ExtractError::Truncated);
+    }
+
+    let decompressed_len =
+        u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+    pos += 4;
+
+    let compressed_len =
+        u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+    pos += 4;
+
+    let expected_hash: [u8; 32] = data[pos..pos + 32]
+        .try_into()
+        .map_err(|_| ExtractError::Truncated)?;
+    pos += 32;
+
+    // Read compressed data
+    if pos + compressed_len > data.len() {
+        return Err(ExtractError::Truncated);
+    }
+    let compressed = &data[pos..pos + compressed_len];
+
+    // Decompress
+    let decompressed = lz4_flex::decompress_size_prepended(compressed)
+        .map_err(|_| ExtractError::DecompressFailed)?;
+
+    // Verify length
+    if decompressed.len() != decompressed_len {
+        return Err(ExtractError::DecompressFailed);
+    }
+
+    // Verify hash
+    let actual_hash = blake3::hash(&decompressed);
+    if actual_hash.as_bytes() != &expected_hash {
+        return Err(ExtractError::HashMismatch);
+    }
+
+    // Convert to string
+    String::from_utf8(decompressed).map_err(|_| ExtractError::InvalidUtf8)
+}
+
+/// Try to extract schemas from legacy V1 format at a specific position.
+fn try_extract_v1_at(data: &[u8], magic_pos: usize) -> Result<Vec<String>, ExtractError> {
+    let mut pos = magic_pos + MAGIC_V1.len();
 
     // Read count
     if pos + 2 > data.len() {
@@ -206,7 +268,7 @@ fn try_extract_at(data: &[u8], magic_pos: usize) -> Result<Vec<String>, ExtractE
         let compressed = &data[pos..pos + compressed_len];
         pos += compressed_len;
 
-        // Decompress (lz4_flex prepend size format)
+        // Decompress
         let decompressed = lz4_flex::decompress_size_prepended(compressed)
             .map_err(|_| ExtractError::DecompressFailed)?;
 
@@ -229,14 +291,14 @@ fn try_extract_at(data: &[u8], magic_pos: usize) -> Result<Vec<String>, ExtractE
     Ok(schemas)
 }
 
-/// Find the position of the magic bytes in the data, starting from an offset.
-fn find_magic_from(data: &[u8], start: usize) -> Option<usize> {
+/// Find the position of magic bytes in the data, starting from an offset.
+fn find_magic_from(data: &[u8], start: usize, magic: &[u8; 16]) -> Option<usize> {
     if start >= data.len() {
         return None;
     }
     data[start..]
-        .windows(MAGIC.len())
-        .position(|w| w == MAGIC)
+        .windows(magic.len())
+        .position(|w| w == magic)
         .map(|pos| start + pos)
 }
 
@@ -385,7 +447,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn roundtrip_single_schema() {
+    fn roundtrip_single_schema_v2() {
         let schema = r#"meta {
   id test-schema
   version 1.0.0
@@ -399,7 +461,7 @@ schema {
 }
 "#;
 
-        let blob = build_embedded_blob(&[schema]);
+        let blob = build_embedded_blob(schema);
         let extracted = extract_schemas(&blob).unwrap();
 
         assert_eq!(extracted.len(), 1);
@@ -407,12 +469,15 @@ schema {
     }
 
     #[test]
-    fn roundtrip_multiple_schemas() {
+    fn multiple_v2_blobs() {
         let schema1 = "meta { id s1, version 1.0.0 }\nschema { @ @string }";
         let schema2 = "meta { id s2, version 2.0.0 }\nschema { @ @int }";
 
-        let blob = build_embedded_blob(&[schema1, schema2]);
-        let extracted = extract_schemas(&blob).unwrap();
+        // Concatenate two V2 blobs (simulating multiple embedded schemas)
+        let mut data = build_embedded_blob(schema1);
+        data.extend(build_embedded_blob(schema2));
+
+        let extracted = extract_schemas(&data).unwrap();
 
         assert_eq!(extracted.len(), 2);
         assert_eq!(extracted[0], schema1);
@@ -435,7 +500,7 @@ schema {
         // Simulate a binary with stuff before and after
         let mut binary = vec![0xDE, 0xAD, 0xBE, 0xEF]; // header
         binary.extend_from_slice(&[0u8; 1000]); // padding
-        binary.extend_from_slice(&build_embedded_blob(&[schema]));
+        binary.extend_from_slice(&build_embedded_blob(schema));
         binary.extend_from_slice(&[0u8; 500]); // trailing data
 
         let extracted = extract_schemas(&binary).unwrap();
@@ -446,15 +511,15 @@ schema {
     #[test]
     fn hash_mismatch_detected() {
         let schema = "meta { id test, version 1.0.0 }\nschema { @ @unit }";
-        let mut blob = build_embedded_blob(&[schema]);
+        let mut blob = build_embedded_blob(schema);
 
-        // Corrupt the hash (bytes 18-50 are the hash for first schema)
-        let hash_start = MAGIC.len() + 2 + 4 + 4; // magic + count + decompressed_len + compressed_len
+        // Corrupt the hash (bytes 16+8 = 24 onwards is the hash)
+        let hash_start = MAGIC_V2.len() + 4 + 4;
         blob[hash_start] ^= 0xFF;
 
         assert!(matches!(
             extract_schemas(&blob),
-            Err(ExtractError::HashMismatch)
+            Err(ExtractError::NotFound) // No valid schemas found
         ));
     }
 }

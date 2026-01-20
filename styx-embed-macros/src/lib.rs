@@ -2,37 +2,102 @@
 //!
 //! These macros compress schemas at compile time and embed them
 //! with a magic header so they can be extracted without execution.
+//!
+//! Each schema must have a `meta { id ... }` block. The ID is used to
+//! generate a unique static name, allowing multiple schemas to coexist
+//! in the same binary.
 
 use proc_macro::{Delimiter, Group, Literal, Punct, Spacing, TokenStream, TokenTree};
 use unsynn::{Comma, DelimitedVec, Parse, TokenIter};
 
-/// Magic bytes that identify embedded Styx schemas.
-const MAGIC: &[u8; 16] = b"STYX_SCHEMAS_V1\0";
+/// Magic bytes that identify an embedded Styx schema.
+/// 16 bytes: "STYX_SCHEMA_V2\0\0"
+const MAGIC: &[u8; 16] = b"STYX_SCHEMA_V2\0\0";
 
-/// Compress a schema and return the blob (without magic/count header).
-fn compress_schema(schema: &str) -> Vec<u8> {
+/// Extract the schema ID from a parsed styx document.
+///
+/// Looks for `meta { id <value> }` at the root level.
+fn extract_schema_id(schema: &str) -> Result<String, String> {
+    let value = styx_tree::parse(schema).map_err(|e| format!("failed to parse schema: {e}"))?;
+
+    let obj = value
+        .as_object()
+        .ok_or_else(|| "schema root must be an object".to_string())?;
+
+    let meta = obj
+        .get("meta")
+        .ok_or_else(|| "schema must have a `meta` block".to_string())?;
+
+    let meta_obj = meta
+        .as_object()
+        .ok_or_else(|| "`meta` must be an object".to_string())?;
+
+    let id_value = meta_obj
+        .get("id")
+        .ok_or_else(|| "`meta` block must have an `id` field".to_string())?;
+
+    // ID can be a bare identifier or a quoted string
+    if let Some(s) = id_value.as_str() {
+        return Ok(s.to_string());
+    }
+
+    Err("`meta.id` must be a string or identifier".to_string())
+}
+
+/// Sanitize an ID for the human-readable part of the symbol name.
+///
+/// Replaces non-alphanumeric characters with underscores.
+fn sanitize_id(id: &str) -> String {
+    let mut result = String::with_capacity(id.len());
+    for c in id.chars() {
+        if c.is_ascii_alphanumeric() {
+            result.push(c);
+        } else {
+            result.push('_');
+        }
+    }
+    // Ensure it doesn't start with a digit
+    if result.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        result.insert(0, '_');
+    }
+    result
+}
+
+/// Generate a unique symbol suffix from a schema ID.
+///
+/// Format: `{sanitized_id}_{hash8}` where hash8 is 8 hex chars of blake3.
+/// This gives human-readable symbols with guaranteed uniqueness.
+fn id_to_symbol_suffix(id: &str) -> String {
+    let sanitized = sanitize_id(id);
+    let hash = blake3::hash(id.as_bytes());
+    let bytes = hash.as_bytes();
+    format!(
+        "{}_{:02x}{:02x}{:02x}{:02x}",
+        sanitized, bytes[0], bytes[1], bytes[2], bytes[3]
+    )
+}
+
+/// Build the embedded blob for a single schema.
+///
+/// Format (V2 - single schema per blob):
+/// ```text
+/// STYX_SCHEMA_V2\0\0           // 16 bytes magic
+/// <decompressed_len:u32le>
+/// <compressed_len:u32le>
+/// <blake3:32bytes>             // hash of decompressed content
+/// <lz4 compressed schema>
+/// ```
+fn build_embedded_blob(schema: &str) -> Vec<u8> {
     let decompressed = schema.as_bytes();
     let hash = blake3::hash(decompressed);
     let compressed = lz4_flex::compress_prepend_size(decompressed);
 
-    let mut blob = Vec::with_capacity(4 + 4 + 32 + compressed.len());
+    let mut blob = Vec::with_capacity(16 + 4 + 4 + 32 + compressed.len());
+    blob.extend_from_slice(MAGIC);
     blob.extend_from_slice(&(decompressed.len() as u32).to_le_bytes());
     blob.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
     blob.extend_from_slice(hash.as_bytes());
     blob.extend_from_slice(&compressed);
-    blob
-}
-
-/// Build the complete embedded blob for multiple schemas.
-fn build_embedded_blob(schemas: &[String]) -> Vec<u8> {
-    let mut blob = Vec::new();
-    blob.extend_from_slice(MAGIC);
-    blob.extend_from_slice(&(schemas.len() as u16).to_le_bytes());
-
-    for schema in schemas {
-        blob.extend_from_slice(&compress_schema(schema));
-    }
-
     blob
 }
 
@@ -83,8 +148,11 @@ fn parse_string_literal(lit: &unsynn::Literal) -> Option<String> {
     None
 }
 
-/// Generate the static declaration for embedded schemas.
-fn generate_static(blob: Vec<u8>) -> TokenStream {
+/// Generate the static declaration for an embedded schema.
+fn generate_static(schema: &str) -> Result<TokenStream, String> {
+    let id = extract_schema_id(schema)?;
+    let suffix = id_to_symbol_suffix(&id);
+    let blob = build_embedded_blob(schema);
     let blob_len = blob.len();
 
     // Generate: [u8; N] = [b0, b1, b2, ...];
@@ -103,7 +171,7 @@ fn generate_static(blob: Vec<u8>) -> TokenStream {
         #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__styx_schemas"))]
         #[cfg_attr(target_os = "linux", unsafe(link_section = ".styx_schemas"))]
         #[cfg_attr(target_os = "windows", unsafe(link_section = ".styx"))]
-        static __STYX_EMBEDDED_SCHEMAS: [u8; {blob_len}] = "#
+        static __STYX_SCHEMA_{suffix}: [u8; {blob_len}] = "#
     );
 
     let mut result: TokenStream = output.parse().unwrap();
@@ -114,10 +182,12 @@ fn generate_static(blob: Vec<u8>) -> TokenStream {
     result.extend(std::iter::once(array_group));
     result.extend(";".parse::<TokenStream>().unwrap());
 
-    result
+    Ok(result)
 }
 
-/// Embed schemas from inline string literals.
+/// Embed a schema from an inline string literal.
+///
+/// The schema must have a `meta { id ... }` block.
 ///
 /// # Example
 ///
@@ -126,71 +196,48 @@ fn generate_static(blob: Vec<u8>) -> TokenStream {
 /// meta { id my-schema, version 1.0.0 }
 /// schema { @ @string }
 /// "#);
-///
-/// // Multiple schemas:
-/// styx_embed::embed_inline!(
-///     r#"meta { id s1, version 1.0.0 } schema { @ @string }"#,
-///     r#"meta { id s2, version 1.0.0 } schema { @ @int }"#,
-/// );
 /// ```
 #[proc_macro]
 pub fn embed_inline(input: TokenStream) -> TokenStream {
     let mut tokens = TokenIter::new(proc_macro2::TokenStream::from(input));
 
-    // Parse comma-separated literals
-    let literals: DelimitedVec<unsynn::Literal, Comma> = match Parse::parse(&mut tokens) {
+    let literal: unsynn::Literal = match Parse::parse(&mut tokens) {
         Ok(l) => l,
         Err(e) => {
-            return format!("compile_error!(\"expected string literals: {e}\")")
+            return format!("compile_error!(\"expected string literal: {e}\")")
                 .parse()
                 .unwrap();
         }
     };
 
-    // Extract string contents
-    let mut schemas = Vec::new();
-    for delimited in literals.iter() {
-        match parse_string_literal(&delimited.value) {
-            Some(s) => schemas.push(s),
-            None => {
-                return "compile_error!(\"expected string literal\")"
-                    .parse()
-                    .unwrap();
-            }
+    let schema = match parse_string_literal(&literal) {
+        Some(s) => s,
+        None => {
+            return "compile_error!(\"expected string literal\")".parse().unwrap();
         }
-    }
+    };
 
-    if schemas.is_empty() {
-        return "compile_error!(\"embed_inline! requires at least one schema\")"
+    match generate_static(&schema) {
+        Ok(ts) => ts,
+        Err(e) => format!("compile_error!(\"{}\")", e.replace('"', "\\\""))
             .parse()
-            .unwrap();
+            .unwrap(),
     }
-
-    generate_static(build_embedded_blob(&schemas))
 }
 
-/// Embed schemas from files (reads at compile time).
+/// Embed a schema from a file (reads at compile time).
+///
+/// The schema must have a `meta { id ... }` block.
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// // Single file:
 /// styx_embed::embed_file!("schema.styx");
-///
-/// // With env var (for build script output):
-/// styx_embed::embed_file!(concat!(env!("OUT_DIR"), "/schema.styx"));
-///
-/// // Multiple files:
-/// styx_embed::embed_files!(
-///     "config.styx",
-///     "plugin.styx",
-/// );
 /// ```
 #[proc_macro]
 pub fn embed_file(input: TokenStream) -> TokenStream {
     let mut tokens = TokenIter::new(proc_macro2::TokenStream::from(input));
 
-    // Parse a single literal (the path)
     let literal: unsynn::Literal = match Parse::parse(&mut tokens) {
         Ok(l) => l,
         Err(e) => {
@@ -209,7 +256,6 @@ pub fn embed_file(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Read the file
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
@@ -219,10 +265,18 @@ pub fn embed_file(input: TokenStream) -> TokenStream {
         }
     };
 
-    generate_static(build_embedded_blob(&[content]))
+    match generate_static(&content) {
+        Ok(ts) => ts,
+        Err(e) => format!("compile_error!(\"{}\")", e.replace('"', "\\\""))
+            .parse()
+            .unwrap(),
+    }
 }
 
 /// Embed multiple schema files (reads at compile time).
+///
+/// Each schema must have a `meta { id ... }` block. Each generates
+/// its own static with a unique name derived from the ID.
 ///
 /// # Example
 ///
@@ -236,7 +290,6 @@ pub fn embed_file(input: TokenStream) -> TokenStream {
 pub fn embed_files(input: TokenStream) -> TokenStream {
     let mut tokens = TokenIter::new(proc_macro2::TokenStream::from(input));
 
-    // Parse comma-separated literals
     let literals: DelimitedVec<unsynn::Literal, Comma> = match Parse::parse(&mut tokens) {
         Ok(l) => l,
         Err(e) => {
@@ -246,8 +299,8 @@ pub fn embed_files(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Read all files
-    let mut schemas = Vec::new();
+    let mut result = TokenStream::new();
+
     for delimited in literals.iter() {
         let path = match parse_string_literal(&delimited.value) {
             Some(s) => s,
@@ -258,29 +311,37 @@ pub fn embed_files(input: TokenStream) -> TokenStream {
             }
         };
 
-        match std::fs::read_to_string(&path) {
-            Ok(content) => schemas.push(content),
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
             Err(e) => {
                 return format!("compile_error!(\"failed to read {}: {}\")", path, e)
                     .parse()
                     .unwrap();
             }
+        };
+
+        match generate_static(&content) {
+            Ok(ts) => result.extend(ts),
+            Err(e) => {
+                return format!("compile_error!(\"{}\")", e.replace('"', "\\\""))
+                    .parse()
+                    .unwrap()
+            }
         }
     }
 
-    if schemas.is_empty() {
+    if result.is_empty() {
         return "compile_error!(\"embed_files! requires at least one file\")"
             .parse()
             .unwrap();
     }
 
-    generate_static(build_embedded_blob(&schemas))
+    result
 }
 
 /// Embed a schema file from OUT_DIR (for build script output).
 ///
-/// This macro reads `OUT_DIR` from the environment at compile time
-/// and joins it with the provided filename.
+/// The schema must have a `meta { id ... }` block.
 ///
 /// # Example
 ///
@@ -295,7 +356,6 @@ pub fn embed_files(input: TokenStream) -> TokenStream {
 pub fn embed_outdir_file(input: TokenStream) -> TokenStream {
     let mut tokens = TokenIter::new(proc_macro2::TokenStream::from(input));
 
-    // Parse a single literal (the filename)
     let literal: unsynn::Literal = match Parse::parse(&mut tokens) {
         Ok(l) => l,
         Err(e) => {
@@ -314,7 +374,6 @@ pub fn embed_outdir_file(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Get OUT_DIR from environment
     let out_dir = match std::env::var("OUT_DIR") {
         Ok(dir) => dir,
         Err(_) => {
@@ -324,11 +383,9 @@ pub fn embed_outdir_file(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Build full path
     let path = std::path::Path::new(&out_dir).join(&filename);
     let path_str = path.display().to_string();
 
-    // Read the file
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
@@ -338,7 +395,12 @@ pub fn embed_outdir_file(input: TokenStream) -> TokenStream {
         }
     };
 
-    generate_static(build_embedded_blob(&[content]))
+    match generate_static(&content) {
+        Ok(ts) => ts,
+        Err(e) => format!("compile_error!(\"{}\")", e.replace('"', "\\\""))
+            .parse()
+            .unwrap(),
+    }
 }
 
 // Keep the old names as aliases for compatibility

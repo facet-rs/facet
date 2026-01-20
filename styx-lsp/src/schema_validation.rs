@@ -29,7 +29,12 @@ pub enum SchemaRef {
     /// External schema file path: @schema path/to/schema.styx
     External(String),
     /// Embedded schema from binary: @schema {id ..., cli <binary>}
-    Embedded { cli: String },
+    Embedded {
+        /// The schema ID to look for
+        id: String,
+        /// The binary to extract from
+        cli: String,
+    },
     /// Explicit opt-out: @schema @ (no schema validation)
     None,
 }
@@ -47,7 +52,7 @@ impl SchemaRef {
                     format!("failed to read schema file '{}': {}", resolved.display(), e)
                 })
             }
-            SchemaRef::Embedded { cli } => extract_embedded_schema_source(cli),
+            SchemaRef::Embedded { id, cli } => extract_embedded_schema_source(cli, id),
             SchemaRef::None => Err("schema validation explicitly disabled".to_string()),
         }
     }
@@ -62,7 +67,7 @@ impl SchemaRef {
                     .ok_or_else(|| format!("could not resolve schema path '{}'", path))?;
                 load_schema_file(&resolved)
             }
-            SchemaRef::Embedded { cli } => extract_embedded_schema(cli),
+            SchemaRef::Embedded { id, cli } => extract_embedded_schema(cli, id),
             SchemaRef::None => Err("schema validation explicitly disabled".to_string()),
         }
     }
@@ -79,15 +84,20 @@ impl SchemaRef {
                 Url::from_file_path(&resolved)
                     .map_err(|_| format!("could not create URI for '{}'", resolved.display()))
             }
-            SchemaRef::Embedded { cli } => {
+            SchemaRef::Embedded { id, cli } => {
                 // Cache the schema to disk and return a file:// URI
-                if let Some(cache_path) = cache::cache_embedded_schema(cli, source) {
+                // Use both cli and id to create a unique cache key
+                let cache_key = format!("{}/{}", cli, id);
+                if let Some(cache_path) = cache::cache_embedded_schema(&cache_key, source) {
                     Url::from_file_path(&cache_path)
                         .map_err(|_| format!("could not create URI for '{}'", cache_path.display()))
                 } else {
                     // Fallback to virtual URI if caching fails
-                    Url::parse(&format!("{}://{}/schema.styx", EMBEDDED_SCHEMA_SCHEME, cli))
-                        .map_err(|e| format!("could not create embedded schema URI: {}", e))
+                    Url::parse(&format!(
+                        "{}://{}/{}/schema.styx",
+                        EMBEDDED_SCHEMA_SCHEME, cli, id
+                    ))
+                    .map_err(|e| format!("could not create embedded schema URI: {}", e))
                 }
             }
             SchemaRef::None => Err("schema validation explicitly disabled".to_string()),
@@ -138,10 +148,13 @@ pub fn find_schema_declaration(value: &Value) -> Option<SchemaRef> {
 
             // @schema {id ..., cli ...}
             if let Some(schema_obj) = entry.value.as_object()
+                && let Some(id_value) = schema_obj.get("id")
+                && let Some(id) = id_value.as_str()
                 && let Some(cli_value) = schema_obj.get("cli")
                 && let Some(cli_name) = cli_value.as_str()
             {
                 return Some(SchemaRef::Embedded {
+                    id: id.to_string(),
                     cli: cli_name.to_string(),
                 });
             }
@@ -204,13 +217,13 @@ pub fn strip_schema_declaration(value: &Value) -> Value {
 }
 
 /// Extract schema from a binary with embedded styx schemas.
-fn extract_embedded_schema(cli_name: &str) -> Result<SchemaFile, String> {
-    let source = extract_embedded_schema_source(cli_name)?;
+fn extract_embedded_schema(cli_name: &str, schema_id: &str) -> Result<SchemaFile, String> {
+    let source = extract_embedded_schema_source(cli_name, schema_id)?;
     facet_styx::from_str(&source).map_err(|e| format!("failed to parse embedded schema: {}", e))
 }
 
 /// Extract schema source text from a binary with embedded styx schemas.
-fn extract_embedded_schema_source(cli_name: &str) -> Result<String, String> {
+fn extract_embedded_schema_source(cli_name: &str, schema_id: &str) -> Result<String, String> {
     let binary_path =
         which::which(cli_name).map_err(|_| format!("binary '{}' not found in PATH", cli_name))?;
 
@@ -229,7 +242,28 @@ fn extract_embedded_schema_source(cli_name: &str) -> Result<String, String> {
         ));
     }
 
-    Ok(schemas.into_iter().next().unwrap())
+    // Find the schema with the matching ID
+    for schema_source in schemas {
+        if extract_schema_id(&schema_source).is_some_and(|id| id == schema_id) {
+            return Ok(schema_source);
+        }
+    }
+
+    Err(format!(
+        "schema with id '{}' not found in '{}'",
+        schema_id,
+        binary_path.display()
+    ))
+}
+
+/// Extract the schema ID from a schema source string.
+fn extract_schema_id(schema_source: &str) -> Option<String> {
+    let value = styx_tree::parse(schema_source).ok()?;
+    let obj = value.as_object()?;
+    let meta = obj.get("meta")?;
+    let meta_obj = meta.as_object()?;
+    let id_value = meta_obj.get("id")?;
+    id_value.as_str().map(|s| s.to_string())
 }
 
 /// The URI scheme for embedded schemas (fallback if caching fails).
@@ -558,7 +592,7 @@ mod tests {
     fn test_find_schema_declaration_embedded() {
         let value = styx_tree::parse("@schema {id crate:foo@1, cli foo}").unwrap();
         let decl = find_schema_declaration(&value).expect("should find declaration");
-        assert!(matches!(decl, SchemaRef::Embedded { cli } if cli == "foo"));
+        assert!(matches!(decl, SchemaRef::Embedded { id, cli } if id == "crate:foo@1" && cli == "foo"));
     }
 
     #[test]
