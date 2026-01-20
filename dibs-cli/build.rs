@@ -30,12 +30,4 @@ fn main() {
 
     std::fs::write(out_path.join("dibs-queries.styx"), &query_schema)
         .expect("Failed to write query schema");
-
-    // Write combined file for styx-embed (which embeds a single file)
-    let combined = format!(
-        "# dibs-config.styx\n{}\n\n# dibs-queries.styx\n{}",
-        config_schema, query_schema
-    );
-    std::fs::write(out_path.join("dibs-schemas.styx"), combined)
-        .expect("Failed to write combined schema");
 }

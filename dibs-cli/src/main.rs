@@ -22,7 +22,8 @@ mod tables;
 mod tui;
 
 // Embed Styx schemas for LSP extraction via `styx extract $(which dibs)`
-styx_embed::embed_outdir_file!("dibs-schemas.styx");
+styx_embed::embed_outdir_file!("dibs-config.styx");
+styx_embed::embed_outdir_file!("dibs-queries.styx");
 
 /// Postgres toolkit for Rust, powered by facet reflection.
 #[derive(Facet, Debug)]
