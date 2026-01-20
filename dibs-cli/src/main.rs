@@ -17,6 +17,7 @@ use ratatui::{
 
 mod config;
 mod highlight;
+mod lsp_extension;
 mod service;
 mod tables;
 mod tui;
@@ -63,6 +64,8 @@ enum Commands {
         #[facet(default, args::named)]
         sql: bool,
     },
+    /// Run as LSP extension (invoked by Styx LSP)
+    LspExtension,
 }
 
 fn main() {
@@ -127,6 +130,10 @@ fn run(cli: Cli) {
             } else {
                 print_schema_plain(&schema);
             }
+        }
+        Some(Commands::LspExtension) => {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(lsp_extension::run());
         }
         None => {
             // No subcommand: launch unified TUI (the default human interface)

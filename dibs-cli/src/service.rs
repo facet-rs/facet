@@ -13,7 +13,7 @@
 
 use crate::config::Config;
 use dibs_proto::DibsServiceClient;
-use roam_stream::{ConnectionHandle, Driver, HandshakeConfig, NoDispatcher, accept};
+use roam_stream::{ConnectionHandle, HandshakeConfig, NoDispatcher, accept};
 use std::process::{Child, Command, Stdio};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
@@ -115,7 +115,7 @@ pub async fn connect_to_service(config: &Config) -> Result<ServiceConnection, Se
         .map_err(|e| ServiceError::Connection(format!("Failed to accept connection: {}", e)))?;
 
     // Establish roam session (we're the acceptor)
-    let (handle, driver): (ConnectionHandle, Driver<_, NoDispatcher>) =
+    let (handle, _incoming, driver) =
         accept(stream, HandshakeConfig::default(), NoDispatcher)
             .await
             .map_err(|e| ServiceError::Connection(format!("Roam handshake failed: {}", e)))?;
@@ -218,7 +218,7 @@ impl BuildProcess {
         match timeout(Duration::from_millis(10), self.listener.accept()).await {
             Ok(Ok((stream, _peer_addr))) => {
                 // Establish roam session
-                let (handle, driver): (ConnectionHandle, Driver<_, NoDispatcher>) =
+                let (handle, _incoming, driver) =
                     accept(stream, HandshakeConfig::default(), NoDispatcher)
                         .await
                         .map_err(|e| {

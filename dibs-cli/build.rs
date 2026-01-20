@@ -7,6 +7,12 @@ fn main() {
     println!("cargo::rerun-if-changed=../dibs-config/src/lib.rs");
     println!("cargo::rerun-if-changed=../dibs-query-schema/src/lib.rs");
 
+    // LSP extension config for query files (dibs provides completions, hover, etc.)
+    let lsp_config = facet_styx::LspExtensionConfig {
+        launch: vec!["dibs".into(), "lsp-extension".into()],
+        capabilities: None,
+    };
+
     // Generate config schema
     let config_schema = facet_styx::GenerateSchema::<dibs_config::Config>::new()
         .crate_name("dibs")
@@ -14,11 +20,12 @@ fn main() {
         .cli("dibs")
         .generate();
 
-    // Generate query schema
+    // Generate query schema with LSP extension
     let query_schema = facet_styx::GenerateSchema::<dibs_query_schema::QueryFile>::new()
         .crate_name("dibs-queries")
         .version("1")
         .cli("dibs")
+        .lsp(lsp_config)
         .generate();
 
     // Write schemas to OUT_DIR for embedding

@@ -18,16 +18,22 @@ facet-styx.workspace = true
 
 [dependencies]
 styx-embed.workspace = true
+styx-tree.workspace = true
+styx-lsp-ext.workspace = true
 dibs.workspace = true
 dibs-config.workspace = true
 dibs-proto.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "io-util"] }
+dibs-query-schema.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "io-util", "io-std"] }
 tokio-postgres.workspace = true
 facet.workspace = true
 facet-args.workspace = true
 facet-styx.workspace = true
 roam.workspace = true
+roam-session.workspace = true
 roam-stream.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 jiff.workspace = true
 owo-colors.workspace = true
 ratatui.workspace = true
