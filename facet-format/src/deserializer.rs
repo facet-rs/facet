@@ -393,6 +393,26 @@ where
             return self.deserialize_spanned(wip);
         }
 
+        // Priority 4.5: Check for metadata containers (like Documented<T>)
+        // These deserialize transparently - metadata fields stay at defaults, value field gets the data
+        if shape.is_metadata_container() {
+            trace!("deserialize_into: metadata container detected, deserializing transparently");
+            if let Type::User(UserType::Struct(st)) = &shape.ty {
+                for field in st.fields {
+                    if field.metadata_kind().is_none() {
+                        // This is the value field - recurse into it with the current event stream
+                        wip = wip
+                            .begin_field(field.effective_name())
+                            .map_err(DeserializeError::reflect)?;
+                        wip = self.deserialize_into(wip)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                    }
+                    // Metadata fields stay at their defaults (None for doc)
+                }
+            }
+            return Ok(wip);
+        }
+
         // Priority 5: Check the Type for structs and enums
         match &shape.ty {
             Type::User(UserType::Struct(struct_def)) => {
@@ -998,7 +1018,7 @@ where
                         ParseEvent::FieldKey(key) => {
                             // Begin key
                             wip = wip.begin_key().map_err(DeserializeError::reflect)?;
-                            wip = self.deserialize_map_key(wip, key.name)?;
+                            wip = self.deserialize_map_key(wip, key.name, key.doc)?;
                             wip = wip.end().map_err(DeserializeError::reflect)?;
 
                             // Begin value
@@ -1176,14 +1196,57 @@ where
     /// - Integer types: parse the string as a number
     /// - Transparent newtypes: descend into the inner type
     /// - Option types: None key becomes None, Some(key) recurses into inner type
+    /// - Metadata containers (like Documented<T>): populate doc metadata and recurse into value
     fn deserialize_map_key(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         key: Option<Cow<'input, str>>,
+        doc: Option<Vec<Cow<'input, str>>>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let shape = wip.shape();
 
-        trace!(shape_name = %shape, shape_def = ?shape.def, ?key, "deserialize_map_key");
+        trace!(shape_name = %shape, shape_def = ?shape.def, ?key, ?doc, "deserialize_map_key");
+
+        // Handle metadata containers (like Documented<T>): populate doc metadata and recurse into value
+        if shape.is_metadata_container() {
+            trace!("deserialize_map_key: metadata container detected");
+
+            // Find field info from the shape's struct type
+            if let Type::User(UserType::Struct(st)) = &shape.ty {
+                for field in st.fields {
+                    if field.metadata_kind() == Some("doc") {
+                        // This is the doc field - set it from the doc parameter
+                        wip = wip
+                            .begin_field(field.effective_name())
+                            .map_err(DeserializeError::reflect)?;
+                        if let Some(ref doc_lines) = doc {
+                            // Set as Some(Vec<String>)
+                            wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                            wip = wip.init_list().map_err(DeserializeError::reflect)?;
+                            for line in doc_lines {
+                                wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
+                                wip = self.set_string_value(wip, line.clone())?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
+                            }
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        } else {
+                            // Set as None
+                            wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                        }
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                    } else if field.metadata_kind().is_none() {
+                        // This is the value field - recurse with the key
+                        wip = wip
+                            .begin_field(field.effective_name())
+                            .map_err(DeserializeError::reflect)?;
+                        wip = self.deserialize_map_key(wip, key.clone(), None)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                    }
+                }
+            }
+
+            return Ok(wip);
+        }
 
         // Handle Option<T> key types: None key -> None variant, Some(key) -> Some(inner)
         if let Def::Option(_) = &shape.def {
@@ -1196,7 +1259,7 @@ where
                 Some(inner_key) => {
                     // Named key -> Some(inner)
                     wip = wip.begin_some().map_err(DeserializeError::reflect)?;
-                    wip = self.deserialize_map_key(wip, Some(inner_key))?;
+                    wip = self.deserialize_map_key(wip, Some(inner_key), None)?;
                     wip = wip.end().map_err(DeserializeError::reflect)?;
                     return Ok(wip);
                 }
@@ -1217,7 +1280,7 @@ where
         let is_pointer = matches!(shape.def, Def::Pointer(_));
         if shape.inner.is_some() && !is_pointer {
             wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
-            wip = self.deserialize_map_key(wip, Some(key))?;
+            wip = self.deserialize_map_key(wip, Some(key), None)?;
             wip = wip.end().map_err(DeserializeError::reflect)?;
             return Ok(wip);
         }

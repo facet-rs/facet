@@ -26,6 +26,12 @@ pub struct FieldKey<'de> {
     pub name: Option<Cow<'de, str>>,
     /// Location hint.
     pub location: FieldLocationHint,
+    /// Documentation comments attached to this field (for formats that support them).
+    ///
+    /// Used by formats like Styx where `/// comment` before a field is preserved.
+    /// When deserializing into a `metadata_container` type like `Documented<T>`,
+    /// these doc lines are used to populate the metadata.
+    pub doc: Option<Vec<Cow<'de, str>>>,
 }
 
 impl<'de> FieldKey<'de> {
@@ -34,6 +40,20 @@ impl<'de> FieldKey<'de> {
         Self {
             name: Some(name.into()),
             location,
+            doc: None,
+        }
+    }
+
+    /// Create a new field key with a name and documentation.
+    pub fn with_doc(
+        name: impl Into<Cow<'de, str>>,
+        location: FieldLocationHint,
+        doc: Vec<Cow<'de, str>>,
+    ) -> Self {
+        Self {
+            name: Some(name.into()),
+            location,
+            doc: if doc.is_empty() { None } else { Some(doc) },
         }
     }
 
@@ -44,6 +64,16 @@ impl<'de> FieldKey<'de> {
         Self {
             name: None,
             location,
+            doc: None,
+        }
+    }
+
+    /// Create a unit field key with documentation.
+    pub fn unit_with_doc(location: FieldLocationHint, doc: Vec<Cow<'de, str>>) -> Self {
+        Self {
+            name: None,
+            location,
+            doc: if doc.is_empty() { None } else { Some(doc) },
         }
     }
 }
