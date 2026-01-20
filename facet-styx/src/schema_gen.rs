@@ -19,6 +19,14 @@ use crate::schema_types::{
     Schema, SchemaFile, SeqSchema,
 };
 
+/// Strip exactly one leading space from a doc line if present.
+///
+/// Rust doc comments like `/// text` produce doc strings with a leading space: `" text"`.
+/// This function normalizes them to `"text"`.
+fn strip_doc_leading_space(s: &str) -> String {
+    s.strip_prefix(' ').unwrap_or(s).to_string()
+}
+
 /// Try to get the default value for a field as a styx expression string.
 /// Returns None if the field has no default or if serialization fails.
 fn field_default_value(field: &Field) -> Option<String> {
@@ -391,7 +399,7 @@ impl SchemaGenerator {
                     let doc = if field.doc.is_empty() {
                         None
                     } else {
-                        Some(field.doc.iter().map(|s| s.to_string()).collect())
+                        Some(field.doc.iter().map(|s| strip_doc_leading_space(s)).collect())
                     };
 
                     // Handle catch-all field (empty name)
@@ -435,7 +443,7 @@ impl SchemaGenerator {
             let doc = if variant.doc.is_empty() {
                 None
             } else {
-                Some(variant.doc.iter().map(|s| s.to_string()).collect())
+                Some(variant.doc.iter().map(|s| strip_doc_leading_space(s)).collect())
             };
 
             variants.insert(
@@ -790,6 +798,42 @@ mod tests {
         assert!(
             schema_str.contains("@default"),
             "Inner schema should contain @default for fields with defaults"
+        );
+    }
+
+    #[test]
+    fn test_doc_comment_leading_space_trimmed() {
+        /// Configuration with documented fields.
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            /// The hostname to connect to.
+            host: String,
+            /// The port number.
+            /// Can be any valid port.
+            port: u16,
+        }
+
+        let schema = schema_from_type::<Config>();
+        tracing::debug!("Generated schema:\n{schema}");
+
+        // Doc comments should have exactly one space after ///
+        // NOT "///  The hostname" (double space)
+        assert!(
+            schema.contains("/// The hostname"),
+            "Doc comment should have single space after ///"
+        );
+        assert!(
+            !schema.contains("///  The hostname"),
+            "Doc comment should NOT have double space after ///"
+        );
+        assert!(
+            schema.contains("/// The port number"),
+            "First line of multi-line doc should have single space"
+        );
+        assert!(
+            schema.contains("/// Can be any valid port"),
+            "Second line of multi-line doc should have single space"
         );
     }
 }

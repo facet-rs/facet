@@ -85,7 +85,7 @@ pub fn semantic_token_legend() -> SemanticTokensLegend {
     }
 }
 
-/// A semantic token before encoding
+/// A semantic token before encoding (for LSP)
 #[derive(Debug)]
 struct RawToken {
     line: u32,
@@ -93,6 +93,19 @@ struct RawToken {
     length: u32,
     token_type: TokenType,
     modifiers: u32,
+}
+
+/// A highlight span with byte range (for CLI/terminal output)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HighlightSpan {
+    /// Byte offset where the span starts
+    pub start: usize,
+    /// Byte offset where the span ends (exclusive)
+    pub end: usize,
+    /// The type of token this span represents
+    pub token_type: TokenType,
+    /// Whether this is a doc comment
+    pub is_doc_comment: bool,
 }
 
 /// Context for semantic token collection
@@ -120,6 +133,229 @@ pub fn compute_semantic_tokens(parse: &Parse) -> Vec<SemanticToken> {
 
     // Encode as delta positions
     encode_tokens(&raw_tokens)
+}
+
+/// Compute highlight spans with byte ranges for terminal/CLI output
+pub fn compute_highlight_spans(parse: &Parse) -> Vec<HighlightSpan> {
+    let mut spans = Vec::new();
+    walk_node_for_spans(&parse.syntax(), &mut spans, WalkContext::default());
+
+    // Sort spans by start position
+    spans.sort_by_key(|s| s.start);
+    spans
+}
+
+/// Recursively walk a syntax node and collect highlight spans with byte ranges
+fn walk_node_for_spans(node: &SyntaxNode, spans: &mut Vec<HighlightSpan>, ctx: WalkContext) {
+    match node.kind() {
+        SyntaxKind::KEY => {
+            if ctx.in_sequence {
+                collect_key_spans_as_values(node, spans);
+            } else {
+                collect_key_spans(node, spans);
+            }
+        }
+        SyntaxKind::TAG => {
+            for child in node.children_with_tokens() {
+                if let Some(token) = child.as_token() {
+                    if token.kind() == SyntaxKind::AT {
+                        add_span_from_syntax(spans, token, TokenType::Operator, false);
+                    }
+                } else if let Some(child_node) = child.as_node() {
+                    if child_node.kind() == SyntaxKind::TAG_NAME {
+                        for t in child_node.children_with_tokens() {
+                            if let Some(token) = t.as_token()
+                                && is_scalar_token(token.kind())
+                            {
+                                add_span_from_syntax(spans, token, TokenType::Type, false);
+                            }
+                        }
+                    } else if child_node.kind() == SyntaxKind::TAG_PAYLOAD {
+                        walk_node_for_spans(child_node, spans, ctx);
+                    }
+                }
+            }
+        }
+        SyntaxKind::SEQUENCE => {
+            let seq_ctx = WalkContext { in_sequence: true };
+            for child in node.children_with_tokens() {
+                if let Some(child_node) = child.as_node() {
+                    walk_node_for_spans(child_node, spans, seq_ctx);
+                }
+            }
+        }
+        SyntaxKind::UNIT => {
+            for child in node.children_with_tokens() {
+                if let Some(token) = child.as_token()
+                    && token.kind() == SyntaxKind::AT
+                {
+                    add_span_from_syntax(spans, token, TokenType::Operator, false);
+                }
+            }
+        }
+        SyntaxKind::SCALAR => {
+            for child in node.children_with_tokens() {
+                if let Some(token) = child.as_token()
+                    && is_scalar_token(token.kind())
+                {
+                    add_span_from_syntax(spans, token, TokenType::String, false);
+                }
+            }
+        }
+        SyntaxKind::HEREDOC => {
+            for child in node.children_with_tokens() {
+                if let Some(token) = child.as_token() {
+                    match token.kind() {
+                        SyntaxKind::HEREDOC_START | SyntaxKind::HEREDOC_END => {
+                            add_span_from_syntax(spans, token, TokenType::Operator, false);
+                        }
+                        SyntaxKind::HEREDOC_CONTENT => {
+                            add_span_from_syntax(spans, token, TokenType::String, false);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        SyntaxKind::ATTRIBUTE => {
+            for child in node.children_with_tokens() {
+                if let Some(token) = child.as_token() {
+                    if token.kind() == SyntaxKind::GT {
+                        add_span_from_syntax(spans, token, TokenType::Operator, false);
+                    }
+                } else if let Some(child_node) = child.as_node() {
+                    if child_node.kind() == SyntaxKind::KEY {
+                        collect_key_spans(child_node, spans);
+                    } else {
+                        walk_node_for_spans(child_node, spans, ctx);
+                    }
+                }
+            }
+        }
+        _ => {
+            // Handle comments at token level
+            for child in node.children_with_tokens() {
+                if let Some(token) = child.as_token() {
+                    match token.kind() {
+                        SyntaxKind::LINE_COMMENT => {
+                            add_span_from_syntax(spans, token, TokenType::Comment, false);
+                        }
+                        SyntaxKind::DOC_COMMENT => {
+                            add_span_from_syntax(spans, token, TokenType::Comment, true);
+                        }
+                        _ => {}
+                    }
+                } else if let Some(child_node) = child.as_node() {
+                    walk_node_for_spans(child_node, spans, ctx);
+                }
+            }
+        }
+    }
+}
+
+/// Collect tokens from a KEY node (object property)
+fn collect_key_spans(node: &SyntaxNode, spans: &mut Vec<HighlightSpan>) {
+    for child in node.children_with_tokens() {
+        if let Some(child_node) = child.as_node() {
+            match child_node.kind() {
+                SyntaxKind::SCALAR => {
+                    for t in child_node.children_with_tokens() {
+                        if let Some(token) = t.as_token()
+                            && is_scalar_token(token.kind())
+                        {
+                            add_span_from_syntax(spans, token, TokenType::Property, false);
+                        }
+                    }
+                }
+                SyntaxKind::TAG => {
+                    // Tagged key like @schema
+                    for t in child_node.children_with_tokens() {
+                        if let Some(token) = t.as_token() {
+                            if token.kind() == SyntaxKind::AT {
+                                add_span_from_syntax(spans, token, TokenType::Operator, false);
+                            }
+                        } else if let Some(tag_child) = t.as_node()
+                            && tag_child.kind() == SyntaxKind::TAG_NAME
+                        {
+                            for name_token in tag_child.children_with_tokens() {
+                                if let Some(nt) = name_token.as_token()
+                                    && is_scalar_token(nt.kind())
+                                {
+                                    add_span_from_syntax(spans, nt, TokenType::Property, false);
+                                }
+                            }
+                        }
+                    }
+                }
+                SyntaxKind::UNIT => {
+                    for t in child_node.children_with_tokens() {
+                        if let Some(token) = t.as_token()
+                            && token.kind() == SyntaxKind::AT
+                        {
+                            add_span_from_syntax(spans, token, TokenType::Operator, false);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Collect tokens from a KEY node as values (in sequence context)
+fn collect_key_spans_as_values(node: &SyntaxNode, spans: &mut Vec<HighlightSpan>) {
+    for child in node.children_with_tokens() {
+        if let Some(child_node) = child.as_node() {
+            match child_node.kind() {
+                SyntaxKind::SCALAR => {
+                    for t in child_node.children_with_tokens() {
+                        if let Some(token) = t.as_token()
+                            && is_scalar_token(token.kind())
+                        {
+                            add_span_from_syntax(spans, token, TokenType::String, false);
+                        }
+                    }
+                }
+                SyntaxKind::TAG => {
+                    walk_node_for_spans(child_node, spans, WalkContext { in_sequence: true });
+                }
+                SyntaxKind::UNIT => {
+                    for t in child_node.children_with_tokens() {
+                        if let Some(token) = t.as_token()
+                            && token.kind() == SyntaxKind::AT
+                        {
+                            add_span_from_syntax(spans, token, TokenType::Operator, false);
+                        }
+                    }
+                }
+                SyntaxKind::SEQUENCE => {
+                    walk_node_for_spans(child_node, spans, WalkContext { in_sequence: true });
+                }
+                SyntaxKind::OBJECT => {
+                    walk_node_for_spans(child_node, spans, WalkContext::default());
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Add a highlight span from a syntax token
+fn add_span_from_syntax(
+    spans: &mut Vec<HighlightSpan>,
+    token: &SyntaxToken,
+    token_type: TokenType,
+    is_doc_comment: bool,
+) {
+    let start: usize = token.text_range().start().into();
+    let end: usize = token.text_range().end().into();
+
+    spans.push(HighlightSpan {
+        start,
+        end,
+        token_type,
+        is_doc_comment,
+    });
 }
 
 /// Recursively walk a syntax node and collect semantic tokens

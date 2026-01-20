@@ -12,13 +12,14 @@
 //!   styx lsp                      - subcommand (bare word)
 //!   styx tree config.styx         - subcommand with file arg
 
-use std::io::{self, Read};
+use std::io::{self, IsTerminal, Read};
 use std::path::Path;
 
 use facet::Facet;
 use facet_args as args;
 use facet_styx::{SchemaFile, validate};
 use styx_format::{FormatOptions, format_source};
+use styx_lsp::{TokenType, compute_highlight_spans};
 use styx_tree::{Payload, Value};
 
 // ============================================================================
@@ -355,7 +356,7 @@ fn run_file_mode(args: &[String]) -> Result<(), CliError> {
         } else if let Some(ref out_path) = opts.output {
             write_output(out_path, &output)?;
         } else {
-            print!("{output}");
+            print_styx(&output);
         }
     }
 
@@ -527,7 +528,11 @@ fn run_extract(binary: &str) -> Result<(), CliError> {
         if schemas.len() > 1 {
             eprintln!("--- schema {} ---", i + 1);
         }
-        println!("{schema}");
+        print_styx(schema);
+        // Ensure newline after schema (print_styx doesn't add one)
+        if !schema.ends_with('\n') {
+            println!();
+        }
     }
 
     Ok(())
@@ -812,6 +817,85 @@ fn write_output(path: &str, content: &str) -> Result<(), io::Error> {
         Ok(())
     } else {
         std::fs::write(path, content)
+    }
+}
+
+// ============================================================================
+// Semantic highlighting for terminal output
+// ============================================================================
+
+/// ANSI color codes for different token types
+mod ansi {
+    pub const RESET: &str = "\x1b[0m";
+    pub const COMMENT: &str = "\x1b[38;5;243m"; // Gray
+    pub const DOC_COMMENT: &str = "\x1b[38;5;71m"; // Green (like doc strings)
+    pub const STRING: &str = "\x1b[38;5;214m"; // Orange
+    pub const NUMBER: &str = "\x1b[38;5;141m"; // Purple
+    pub const KEYWORD: &str = "\x1b[38;5;203m"; // Red
+    pub const TYPE: &str = "\x1b[38;5;80m"; // Cyan
+    pub const ENUM_MEMBER: &str = "\x1b[38;5;80m"; // Cyan
+    pub const PROPERTY: &str = "\x1b[38;5;75m"; // Blue
+    pub const OPERATOR: &str = "\x1b[38;5;203m"; // Red
+}
+
+/// Get ANSI color code for a token type
+fn ansi_color_for_token(token_type: TokenType, is_doc_comment: bool) -> &'static str {
+    if is_doc_comment {
+        return ansi::DOC_COMMENT;
+    }
+    match token_type {
+        TokenType::Comment => ansi::COMMENT,
+        TokenType::String => ansi::STRING,
+        TokenType::Number => ansi::NUMBER,
+        TokenType::Keyword => ansi::KEYWORD,
+        TokenType::Type => ansi::TYPE,
+        TokenType::EnumMember => ansi::ENUM_MEMBER,
+        TokenType::Property => ansi::PROPERTY,
+        TokenType::Operator => ansi::OPERATOR,
+    }
+}
+
+/// Apply semantic highlighting to Styx source using ANSI escape codes
+fn highlight_styx(source: &str) -> String {
+    let parse = styx_cst::parse(source);
+    let spans = compute_highlight_spans(&parse);
+
+    if spans.is_empty() {
+        return source.to_string();
+    }
+
+    let mut result = String::with_capacity(source.len() * 2);
+    let mut last_end = 0;
+
+    for span in &spans {
+        // Add unhighlighted text before this span
+        if span.start > last_end {
+            result.push_str(&source[last_end..span.start]);
+        }
+
+        // Add highlighted span
+        let color = ansi_color_for_token(span.token_type, span.is_doc_comment);
+        result.push_str(color);
+        result.push_str(&source[span.start..span.end]);
+        result.push_str(ansi::RESET);
+
+        last_end = span.end;
+    }
+
+    // Add remaining unhighlighted text
+    if last_end < source.len() {
+        result.push_str(&source[last_end..]);
+    }
+
+    result
+}
+
+/// Print Styx source with highlighting if stdout is a TTY
+fn print_styx(source: &str) {
+    if std::io::stdout().is_terminal() {
+        print!("{}", highlight_styx(source));
+    } else {
+        print!("{source}");
     }
 }
 
@@ -1743,4 +1827,88 @@ fn extract_enum_variants(value: &Value) -> Vec<String> {
     }
 
     variants
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_highlight_styx_produces_ansi_codes() {
+        let source = "name value";
+        let highlighted = highlight_styx(source);
+
+        // Should contain ANSI escape codes
+        assert!(
+            highlighted.contains("\x1b["),
+            "Highlighted output should contain ANSI escape codes"
+        );
+        assert!(
+            highlighted.contains(ansi::RESET),
+            "Highlighted output should contain reset code"
+        );
+    }
+
+    #[test]
+    fn test_highlight_styx_preserves_content() {
+        let source = "name value\nother 123";
+        let highlighted = highlight_styx(source);
+
+        // Strip ANSI codes and verify content is preserved
+        let stripped = strip_ansi_codes(&highlighted);
+        assert_eq!(stripped, source);
+    }
+
+    #[test]
+    fn test_highlight_different_token_types() {
+        let source = r#"/// doc comment
+// line comment
+key "string value"
+other @type{inner value}"#;
+        let highlighted = highlight_styx(source);
+
+        // Should have multiple different colors
+        assert!(highlighted.contains(ansi::DOC_COMMENT));
+        assert!(highlighted.contains(ansi::COMMENT));
+        assert!(highlighted.contains(ansi::PROPERTY));
+        assert!(highlighted.contains(ansi::STRING));
+        assert!(highlighted.contains(ansi::OPERATOR)); // @ symbol
+        assert!(highlighted.contains(ansi::TYPE)); // type in value position
+    }
+
+    #[test]
+    fn test_highlight_empty_source() {
+        let source = "";
+        let highlighted = highlight_styx(source);
+        assert_eq!(highlighted, "");
+    }
+
+    #[test]
+    fn test_highlight_whitespace_only() {
+        let source = "   \n\n   ";
+        let highlighted = highlight_styx(source);
+        assert_eq!(highlighted, source);
+    }
+
+    /// Helper to strip ANSI escape codes for testing
+    fn strip_ansi_codes(s: &str) -> String {
+        let mut result = String::new();
+        let mut chars = s.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                // Skip until we find 'm' (end of ANSI sequence)
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                result.push(c);
+            }
+        }
+
+        result
+    }
 }

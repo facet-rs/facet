@@ -9,8 +9,9 @@
 
 pub mod cache;
 pub mod schema_hints;
+pub mod semantic_tokens;
 mod schema_validation;
-mod semantic_tokens;
 mod server;
 
 pub use server::run;
+pub use semantic_tokens::{compute_highlight_spans, HighlightSpan, TokenType};
