@@ -162,3 +162,213 @@ fn test_format_proxy_field_metadata() {
         "JSON and XML should use different proxies"
     );
 }
+
+// =============================================================================
+// Container-level format-specific proxy tests
+// =============================================================================
+
+/// A wrapper type that serializes to JSON as a hex string representation.
+/// The container itself uses a proxy for the entire type.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(transparent)]
+pub struct JsonHexNumber(pub u32);
+
+/// Proxy type for container-level JSON serialization.
+#[derive(Facet, Clone, Debug)]
+#[facet(transparent)]
+pub struct JsonNumberProxy(pub String);
+
+/// Proxy type for container-level fallback serialization.
+#[derive(Facet, Clone, Debug)]
+#[facet(transparent)]
+pub struct DefaultNumberProxy(pub String);
+
+/// A container type that uses different proxies at the container level.
+/// - For JSON format: uses JsonNumberProxy (hex representation)
+/// - For other formats: uses DefaultNumberProxy (decimal representation)
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(json::proxy = JsonNumberProxy)]
+#[facet(proxy = DefaultNumberProxy)]
+pub struct ContainerFormatProxy {
+    pub inner: u32,
+}
+
+// Container-level JSON proxy conversions: ContainerFormatProxy <-> JsonNumberProxy
+impl TryFrom<JsonNumberProxy> for ContainerFormatProxy {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: JsonNumberProxy) -> Result<Self, Self::Error> {
+        let s = proxy.0.trim_start_matches("0x").trim_start_matches("0X");
+        let inner = u32::from_str_radix(s, 16)?;
+        Ok(ContainerFormatProxy { inner })
+    }
+}
+
+impl From<&ContainerFormatProxy> for JsonNumberProxy {
+    fn from(v: &ContainerFormatProxy) -> Self {
+        JsonNumberProxy(format!("0x{:x}", v.inner))
+    }
+}
+
+// Container-level default proxy conversions: ContainerFormatProxy <-> DefaultNumberProxy
+impl TryFrom<DefaultNumberProxy> for ContainerFormatProxy {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: DefaultNumberProxy) -> Result<Self, Self::Error> {
+        let inner = proxy.0.parse::<u32>()?;
+        Ok(ContainerFormatProxy { inner })
+    }
+}
+
+impl From<&ContainerFormatProxy> for DefaultNumberProxy {
+    fn from(v: &ContainerFormatProxy) -> Self {
+        DefaultNumberProxy(format!("{}", v.inner))
+    }
+}
+
+#[test]
+fn test_container_format_specific_proxy_serialization() {
+    let data = ContainerFormatProxy { inner: 255 };
+
+    // JSON should use the container-level json::proxy (hex format)
+    let json = to_string(&data).unwrap();
+    assert!(
+        json.contains("0xff"),
+        "JSON should use hex format via container proxy, got: {json}"
+    );
+}
+
+#[test]
+fn test_container_format_specific_proxy_deserialization() {
+    let json = r#""0x1a""#;
+    let data: ContainerFormatProxy = from_str(json).unwrap();
+
+    assert_eq!(data.inner, 0x1a);
+}
+
+#[test]
+fn test_container_format_specific_proxy_roundtrip() {
+    let original = ContainerFormatProxy { inner: 0xbeef };
+
+    let json = to_string(&original).unwrap();
+    assert!(
+        json.contains("0xbeef"),
+        "JSON should use hex format, got: {json}"
+    );
+
+    let roundtripped: ContainerFormatProxy = from_str(&json).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_container_format_proxy_shape_metadata() {
+    use facet::Facet;
+
+    let shape = <ContainerFormatProxy as Facet>::SHAPE;
+
+    // Should have format_proxies at the Shape level
+    assert!(
+        !shape.format_proxies.is_empty(),
+        "Should have container-level format-specific proxies"
+    );
+
+    // Should have one for "json"
+    let json_proxy = shape.format_proxy("json");
+    assert!(
+        json_proxy.is_some(),
+        "Should have json proxy at container level"
+    );
+
+    // Should also have the default proxy
+    assert!(
+        shape.proxy.is_some(),
+        "Should have default container-level proxy"
+    );
+
+    // effective_proxy with "json" should return the json-specific one
+    let effective_json = shape.effective_proxy(Some("json"));
+    assert!(effective_json.is_some());
+
+    // effective_proxy with "xml" (no specific proxy) should fall back to default
+    let effective_xml = shape.effective_proxy(Some("xml"));
+    assert!(effective_xml.is_some(), "Should fall back to default proxy");
+
+    // They should be different (json-specific vs default)
+    assert_ne!(
+        effective_json.map(|p| p.shape.id),
+        effective_xml.map(|p| p.shape.id),
+        "JSON and XML should use different container proxies"
+    );
+}
+
+/// A container with only a format-specific proxy (no default).
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(json::proxy = JsonNumberProxy)]
+pub struct JsonOnlyContainerProxy {
+    pub inner: u32,
+}
+
+// Conversions for JsonOnlyContainerProxy
+impl TryFrom<JsonNumberProxy> for JsonOnlyContainerProxy {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: JsonNumberProxy) -> Result<Self, Self::Error> {
+        let s = proxy.0.trim_start_matches("0x").trim_start_matches("0X");
+        let inner = u32::from_str_radix(s, 16)?;
+        Ok(JsonOnlyContainerProxy { inner })
+    }
+}
+
+impl From<&JsonOnlyContainerProxy> for JsonNumberProxy {
+    fn from(v: &JsonOnlyContainerProxy) -> Self {
+        JsonNumberProxy(format!("0x{:x}", v.inner))
+    }
+}
+
+#[test]
+fn test_json_only_container_proxy_roundtrip() {
+    let original = JsonOnlyContainerProxy { inner: 0xcafe };
+
+    let json = to_string(&original).unwrap();
+    assert!(
+        json.contains("0xcafe"),
+        "JSON should use hex format, got: {json}"
+    );
+
+    let roundtripped: JsonOnlyContainerProxy = from_str(&json).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_json_only_container_proxy_metadata() {
+    use facet::Facet;
+
+    let shape = <JsonOnlyContainerProxy as Facet>::SHAPE;
+
+    // Should have format_proxies at the Shape level
+    assert!(
+        !shape.format_proxies.is_empty(),
+        "Should have container-level format-specific proxies"
+    );
+
+    // Should have one for "json"
+    let json_proxy = shape.format_proxy("json");
+    assert!(
+        json_proxy.is_some(),
+        "Should have json proxy at container level"
+    );
+
+    // Should NOT have a default proxy
+    assert!(
+        shape.proxy.is_none(),
+        "Should NOT have default container-level proxy"
+    );
+
+    // effective_proxy with "json" should return the json-specific one
+    let effective_json = shape.effective_proxy(Some("json"));
+    assert!(effective_json.is_some());
+
+    // effective_proxy with "xml" (no specific proxy) should return None (no fallback)
+    let effective_xml = shape.effective_proxy(Some("xml"));
+    assert!(
+        effective_xml.is_none(),
+        "Should NOT have fallback proxy for xml"
+    );
+}
