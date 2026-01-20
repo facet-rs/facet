@@ -391,7 +391,7 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
             let handler = self.handler.clone();
             #dispatch_call(payload, channels, request_id, registry, move |args: #tuple_type| async move {
                 use #roam::facet_pretty::FacetPretty;
-                #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, args = %#args_log, "handling");
+                if #method_name_str != "emit_tracing" { #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, args = %#args_log, "handling"); }
                 #args_binding
                 handler.#method_name(#args_call).await
             })
