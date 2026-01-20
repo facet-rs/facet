@@ -707,17 +707,26 @@ impl<'a> Validator<'a> {
         schema: &OptionalSchema,
         path: &str,
     ) -> ValidationResult {
-        // Optional always passes for present values - just validate the inner type
+        // Unit value represents None - always valid for Optional
+        if value.is_unit() {
+            return ValidationResult::ok();
+        }
+        // Otherwise validate the inner type
         self.validate_value(value, &schema.0.0.value, path)
     }
 
     fn validate_enum(&self, value: &Value, schema: &EnumSchema, path: &str) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
-        // An enum value must have a tag
+        // An enum value must have a tag, OR match a fallback variant
         let tag = match &value.tag {
             Some(t) => t.name.as_str(),
             None => {
+                // No tag - try to find a fallback variant that accepts this value type
+                if let Some(fallback_schema) = self.find_enum_fallback(value, schema) {
+                    // Validate against the fallback variant's schema
+                    return self.validate_value(value, fallback_schema, path);
+                }
                 result.error(
                     ValidationError::new(
                         path,
@@ -796,6 +805,32 @@ impl<'a> Validator<'a> {
         }
 
         result
+    }
+
+    /// Find a fallback variant in an enum that can accept an untagged value.
+    ///
+    /// For example, if the enum has `eq @string` variant and the value is a bare string,
+    /// this returns the `@string` schema so the value can be validated against it.
+    fn find_enum_fallback<'s>(&self, value: &Value, schema: &'s EnumSchema) -> Option<&'s Schema> {
+        // Only scalars can fall back
+        let text = value.scalar_text()?;
+
+        // Look for a variant whose schema matches this value
+        for (_variant_name, variant_schema) in &schema.0 {
+            match variant_schema {
+                // @string accepts any scalar
+                Schema::String(_) => return Some(variant_schema),
+                // @int accepts scalars that parse as integers
+                Schema::Int(_) if text.parse::<i64>().is_ok() => return Some(variant_schema),
+                // @float accepts scalars that parse as floats
+                Schema::Float(_) if text.parse::<f64>().is_ok() => return Some(variant_schema),
+                // @bool accepts "true" or "false"
+                Schema::Bool if text == "true" || text == "false" => return Some(variant_schema),
+                _ => continue,
+            }
+        }
+
+        None
     }
 
     fn validate_one_of(
@@ -1105,6 +1140,54 @@ bar 123"#;
         assert!(
             result.is_valid(),
             "Document should validate. Errors: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_enum_with_fallback_variant() {
+        // Schema: enum with explicit variants + fallback `eq @string`
+        let schema_source = r#"meta {id test}
+schema {
+    @ @object{
+        filter @enum{
+            gt @string
+            lt @string
+            eq @string
+        }
+    }
+}"#;
+        let schema: SchemaFile = crate::from_str(schema_source).expect("should parse schema");
+
+        // Document: bare string should match `eq @string` fallback
+        let doc = styx_tree::parse(r#"filter "published""#).expect("should parse doc");
+
+        let result = validate(&doc, &schema);
+        assert!(
+            result.is_valid(),
+            "Bare string should fall back to eq variant. Errors: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_optional_accepts_unit() {
+        // Schema: field is @optional(@string)
+        let schema_source = r#"meta {id test}
+schema {
+    @ @object{
+        name @optional(@string)
+    }
+}"#;
+        let schema: SchemaFile = crate::from_str(schema_source).expect("should parse schema");
+
+        // Document: field has unit value (represents None)
+        let doc = styx_tree::parse("name").expect("should parse doc");
+
+        let result = validate(&doc, &schema);
+        assert!(
+            result.is_valid(),
+            "Unit value should be valid for @optional. Errors: {:?}",
             result.errors
         );
     }
