@@ -59,9 +59,9 @@ use crate::schema_error::{
     ValidationWarningKind,
 };
 use crate::schema_types::{
-    DefaultSchema, DeprecatedSchema, EnumSchema, FlattenSchema, FloatConstraints, IntConstraints,
-    MapSchema, ObjectSchema, OptionalSchema, Schema, SchemaFile, SeqSchema, StringConstraints,
-    UnionSchema,
+    DefaultSchema, DeprecatedSchema, Documented, EnumSchema, FlattenSchema, FloatConstraints,
+    IntConstraints, MapSchema, ObjectSchema, OptionalSchema, Schema, SchemaFile, SeqSchema,
+    StringConstraints, UnionSchema,
 };
 
 /// Validator for Styx documents.
@@ -449,7 +449,8 @@ impl<'a> Validator<'a> {
         };
 
         let mut seen_fields: HashSet<Option<&str>> = HashSet::new();
-        let additional_schema = schema.0.get(&None);
+        // Look up catch-all schema using Documented key (Hash/Eq only compares inner value)
+        let additional_schema = schema.0.get(&Documented::new(None));
 
         for entry in &obj.entries {
             let key_opt: Option<&str> = if entry.key.is_unit() {
@@ -479,15 +480,16 @@ impl<'a> Validator<'a> {
 
             seen_fields.insert(key_opt);
 
-            // Look up by Option<String> key
-            let lookup_key = key_opt.map(|s| s.to_string());
+            // Look up by Documented<Option<String>> key (Hash/Eq only compares inner value)
+            let lookup_key = Documented::new(key_opt.map(|s| s.to_string()));
             if let Some(field_schema) = schema.0.get(&lookup_key) {
                 result.merge(self.validate_value(&entry.value, field_schema, &field_path));
             } else if let Some(add_schema) = additional_schema {
                 result.merge(self.validate_value(&entry.value, add_schema, &field_path));
             } else {
                 // Collect valid field names for error message
-                let valid_fields: Vec<String> = schema.0.keys().filter_map(|k| k.clone()).collect();
+                let valid_fields: Vec<String> =
+                    schema.0.keys().filter_map(|k| k.value.clone()).collect();
 
                 // Try to find a similar field name (typo detection)
                 let suggestion = suggest_similar(key_display, &valid_fields).map(String::from);
@@ -508,9 +510,9 @@ impl<'a> Validator<'a> {
         }
 
         // Check for missing required fields
-        for (field_name, field_schema) in &schema.0 {
+        for (field_name_doc, field_schema) in &schema.0 {
             // Skip the catch-all "@" field
-            let Some(name) = field_name else {
+            let Some(name) = &field_name_doc.value else {
                 continue;
             };
 
@@ -558,7 +560,7 @@ impl<'a> Validator<'a> {
         };
 
         // Validate each element against the inner schema
-        let inner_schema = &schema.0.0;
+        let inner_schema = &*schema.0.0.value;
         for (i, item) in seq.items.iter().enumerate() {
             let item_path = format!("{path}[{i}]");
             result.merge(self.validate_value(item, inner_schema, &item_path));
@@ -587,8 +589,8 @@ impl<'a> Validator<'a> {
 
         // @map(@V) has 1 element, @map(@K @V) has 2
         let (key_schema, value_schema) = match schema.0.len() {
-            1 => (None, &schema.0[0]),
-            2 => (Some(&schema.0[0]), &schema.0[1]),
+            1 => (None, &schema.0[0].value),
+            2 => (Some(&schema.0[0].value), &schema.0[1].value),
             n => {
                 result.error(
                     ValidationError::new(
@@ -662,11 +664,11 @@ impl<'a> Validator<'a> {
 
         let mut tried = Vec::new();
         for variant in &schema.0 {
-            let variant_result = self.validate_value(value, variant, path);
+            let variant_result = self.validate_value(value, &variant.value, path);
             if variant_result.is_valid() {
                 return ValidationResult::ok();
             }
-            tried.push(schema_type_name(variant));
+            tried.push(schema_type_name(&variant.value));
         }
 
         result.error(
@@ -678,7 +680,7 @@ impl<'a> Validator<'a> {
                     schema
                         .0
                         .iter()
-                        .map(schema_type_name)
+                        .map(|d| schema_type_name(&d.value))
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
@@ -696,7 +698,7 @@ impl<'a> Validator<'a> {
         path: &str,
     ) -> ValidationResult {
         // Optional always passes for present values - just validate the inner type
-        self.validate_value(value, &schema.0.0, path)
+        self.validate_value(value, &schema.0.0.value, path)
     }
 
     fn validate_enum(&self, value: &Value, schema: &EnumSchema, path: &str) -> ValidationResult {
@@ -728,9 +730,9 @@ impl<'a> Validator<'a> {
             span: None,
         });
 
-        let expected_variants: Vec<String> = schema.0.keys().cloned().collect();
+        let expected_variants: Vec<String> = schema.0.keys().map(|k| k.value.clone()).collect();
 
-        match schema.0.get(tag) {
+        match schema.0.get(&Documented::new(tag.to_string())) {
             Some(variant_schema) => {
                 match (&payload_value, variant_schema) {
                     (None, Schema::Unit) => {
@@ -770,12 +772,12 @@ impl<'a> Validator<'a> {
                     ValidationError::new(
                         path,
                         ValidationErrorKind::InvalidVariant {
-                            expected: expected_variants,
+                            expected: expected_variants.clone(),
                             got: tag.into(),
                         },
                         format!(
                             "unknown enum variant '{tag}' (expected one of: {})",
-                            schema.0.keys().cloned().collect::<Vec<_>>().join(", ")
+                            expected_variants.join(", ")
                         ),
                     )
                     .with_span(value.span),
@@ -793,7 +795,7 @@ impl<'a> Validator<'a> {
         path: &str,
     ) -> ValidationResult {
         // Flatten just validates against the inner type
-        self.validate_value(value, &schema.0.0, path)
+        self.validate_value(value, &schema.0.0.value, path)
     }
 
     // =========================================================================
@@ -808,7 +810,7 @@ impl<'a> Validator<'a> {
     ) -> ValidationResult {
         // Default just validates against the inner type
         // (the default value is used at deserialization time, not validation time)
-        self.validate_value(value, &schema.0.1, path)
+        self.validate_value(value, &schema.0.1.value, path)
     }
 
     fn validate_deprecated(
@@ -818,7 +820,7 @@ impl<'a> Validator<'a> {
         path: &str,
     ) -> ValidationResult {
         let (reason, inner) = &schema.0;
-        let mut result = self.validate_value(value, inner, path);
+        let mut result = self.validate_value(value, &inner.value, path);
 
         // Add deprecation warning
         result.warning(

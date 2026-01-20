@@ -15,8 +15,8 @@ use std::ptr::NonNull;
 
 use crate::peek_to_string_expr;
 use crate::schema_types::{
-    DefaultSchema, EnumSchema, MapSchema, Meta, ObjectSchema, OptionalSchema, RawStyx, Schema,
-    SchemaFile, SeqSchema,
+    DefaultSchema, Documented, EnumSchema, MapSchema, Meta, ObjectSchema, OptionalSchema, RawStyx,
+    Schema, SchemaFile, SeqSchema,
 };
 
 /// Try to get the default value for a field as a styx expression string.
@@ -151,40 +151,7 @@ impl<T: facet_core::Facet<'static>> GenerateSchema<T> {
             .expect("version is required - call .version(\"...\")");
 
         let id = format!("crate:{crate_name}@{version}");
-        let shape = T::SHAPE;
-
-        let mut generator = SchemaGenerator::new();
-        let root_schema = generator.shape_to_schema(shape);
-
-        let description = if shape.doc.is_empty() {
-            None
-        } else {
-            Some(
-                shape
-                    .doc
-                    .iter()
-                    .map(|s| s.trim())
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            )
-        };
-
-        let schema_file = SchemaFile {
-            meta: Meta {
-                id,
-                version: None,
-                cli: self.cli,
-                description,
-            },
-            imports: None,
-            schema: {
-                let mut map = HashMap::new();
-                map.insert(None, root_schema);
-                map
-            },
-        };
-
-        crate::to_string(&schema_file).expect("failed to serialize schema")
+        generate_schema_inner::<T>(id, self.cli)
     }
 }
 
@@ -197,7 +164,13 @@ impl<T: facet_core::Facet<'static>> Default for GenerateSchema<T> {
 /// Generate a Styx schema string from a Facet type.
 pub fn schema_from_type<T: facet_core::Facet<'static>>() -> String {
     let shape = T::SHAPE;
-    let id = shape.type_identifier;
+    let id = shape.type_identifier.to_string();
+    generate_schema_inner::<T>(id, None)
+}
+
+/// Internal function that generates a schema with the given id and optional cli.
+fn generate_schema_inner<T: facet_core::Facet<'static>>(id: String, cli: Option<String>) -> String {
+    let shape = T::SHAPE;
 
     let mut generator = SchemaGenerator::new();
     let root_schema = generator.shape_to_schema(shape);
@@ -217,9 +190,9 @@ pub fn schema_from_type<T: facet_core::Facet<'static>>() -> String {
 
     let schema_file = SchemaFile {
         meta: Meta {
-            id: id.to_string(),
+            id,
             version: None,
-            cli: None,
+            cli,
             description,
         },
         imports: None,
@@ -252,31 +225,34 @@ impl SchemaGenerator {
             Def::Scalar => self.scalar_to_schema(shape),
             Def::Option(opt_def) => {
                 let inner = self.shape_to_schema(opt_def.t);
-                Schema::Optional(OptionalSchema((Box::new(inner),)))
+                Schema::Optional(OptionalSchema((Documented::new(Box::new(inner)),)))
             }
             Def::List(list_def) => {
                 let inner = self.shape_to_schema(list_def.t);
-                Schema::Seq(SeqSchema((Box::new(inner),)))
+                Schema::Seq(SeqSchema((Documented::new(Box::new(inner)),)))
             }
             Def::Array(array_def) => {
                 let inner = self.shape_to_schema(array_def.t);
-                Schema::Seq(SeqSchema((Box::new(inner),)))
+                Schema::Seq(SeqSchema((Documented::new(Box::new(inner)),)))
             }
             Def::Map(map_def) => {
                 let key = self.shape_to_schema(map_def.k);
                 let value = self.shape_to_schema(map_def.v);
-                Schema::Map(MapSchema(vec![key, value]))
+                Schema::Map(MapSchema(vec![
+                    Documented::new(key),
+                    Documented::new(value),
+                ]))
             }
             Def::Set(set_def) => {
                 let inner = self.shape_to_schema(set_def.t);
-                Schema::Seq(SeqSchema((Box::new(inner),)))
+                Schema::Seq(SeqSchema((Documented::new(Box::new(inner)),)))
             }
             Def::Result(result_def) => {
                 let ok = self.shape_to_schema(result_def.t);
                 let err = self.shape_to_schema(result_def.e);
                 let mut variants = HashMap::new();
-                variants.insert("ok".to_string(), ok);
-                variants.insert("err".to_string(), err);
+                variants.insert(Documented::new("ok".to_string()), ok);
+                variants.insert(Documented::new("err".to_string()), err);
                 Schema::Enum(EnumSchema(variants))
             }
             Def::Pointer(ptr_def) => {
@@ -288,7 +264,7 @@ impl SchemaGenerator {
             }
             Def::Slice(slice_def) => {
                 let inner = self.shape_to_schema(slice_def.t);
-                Schema::Seq(SeqSchema((Box::new(inner),)))
+                Schema::Seq(SeqSchema((Documented::new(Box::new(inner)),)))
             }
             Def::Undefined | Def::NdArray(_) | Def::DynamicValue(_) => self.type_to_schema(shape),
             _ => self.type_to_schema(shape),
@@ -304,11 +280,11 @@ impl SchemaGenerator {
                 match seq {
                     SequenceType::Array(arr) => {
                         let inner = self.shape_to_schema(arr.t);
-                        Schema::Seq(SeqSchema((Box::new(inner),)))
+                        Schema::Seq(SeqSchema((Documented::new(Box::new(inner)),)))
                     }
                     SequenceType::Slice(slice) => {
                         let inner = self.shape_to_schema(slice.t);
-                        Schema::Seq(SeqSchema((Box::new(inner),)))
+                        Schema::Seq(SeqSchema((Documented::new(Box::new(inner)),)))
                     }
                 }
             }
@@ -396,7 +372,7 @@ impl SchemaGenerator {
                 }
             }
             StructKind::Struct => {
-                let mut fields: HashMap<Option<String>, Schema> = HashMap::new();
+                let mut fields: HashMap<Documented<Option<String>>, Schema> = HashMap::new();
 
                 for field in struct_type.fields {
                     let field_name = field.effective_name();
@@ -405,15 +381,27 @@ impl SchemaGenerator {
                     // Wrap with @default if field has a default value
                     if let Some(default_value_str) = field_default_value(field) {
                         let default_value = RawStyx::new(default_value_str);
-                        field_schema =
-                            Schema::Default(DefaultSchema((default_value, Box::new(field_schema))));
+                        field_schema = Schema::Default(DefaultSchema((
+                            default_value,
+                            Documented::new(Box::new(field_schema)),
+                        )));
                     }
+
+                    // Extract doc comments from field
+                    let doc = if field.doc.is_empty() {
+                        None
+                    } else {
+                        Some(field.doc.iter().map(|s| s.to_string()).collect())
+                    };
 
                     // Handle catch-all field (empty name)
                     let key = if field_name.is_empty() {
-                        None
+                        Documented { value: None, doc }
                     } else {
-                        Some(field_name.to_string())
+                        Documented {
+                            value: Some(field_name.to_string()),
+                            doc,
+                        }
                     };
 
                     fields.insert(key, field_schema);
@@ -427,7 +415,7 @@ impl SchemaGenerator {
     fn enum_to_schema(&mut self, enum_type: &facet_core::EnumType) -> Schema {
         use facet_core::StructKind;
 
-        let mut variants: HashMap<String, Schema> = HashMap::new();
+        let mut variants: HashMap<Documented<String>, Schema> = HashMap::new();
 
         for variant in enum_type.variants {
             let variant_name = variant.effective_name().to_string();
@@ -443,7 +431,20 @@ impl SchemaGenerator {
                 StructKind::Struct => self.struct_to_schema(&variant.data),
             };
 
-            variants.insert(variant_name, variant_schema);
+            // Extract doc comments from variant
+            let doc = if variant.doc.is_empty() {
+                None
+            } else {
+                Some(variant.doc.iter().map(|s| s.to_string()).collect())
+            };
+
+            variants.insert(
+                Documented {
+                    value: variant_name,
+                    doc,
+                },
+                variant_schema,
+            );
         }
 
         Schema::Enum(EnumSchema(variants))
@@ -571,8 +572,14 @@ mod tests {
 
         let root_schema = parsed.schema.get(&None).expect("missing root schema");
         if let Schema::Object(obj) = root_schema {
-            assert!(obj.0.contains_key(&Some("name".to_string())));
-            assert!(obj.0.contains_key(&Some("port".to_string())));
+            assert!(
+                obj.0
+                    .contains_key(&Documented::new(Some("name".to_string())))
+            );
+            assert!(
+                obj.0
+                    .contains_key(&Documented::new(Some("port".to_string())))
+            );
         } else {
             panic!("expected root schema to be Object, got {:?}", root_schema);
         }
@@ -597,7 +604,7 @@ mod tests {
         if let Schema::Object(obj) = root_schema {
             let debug_schema = obj
                 .0
-                .get(&Some("debug".to_string()))
+                .get(&Documented::new(Some("debug".to_string())))
                 .expect("missing debug field");
             assert!(
                 matches!(debug_schema, Schema::Optional(_)),
@@ -627,7 +634,7 @@ mod tests {
         if let Schema::Object(obj) = root_schema {
             let items_schema = obj
                 .0
-                .get(&Some("items".to_string()))
+                .get(&Documented::new(Some("items".to_string())))
                 .expect("missing items field");
             assert!(
                 matches!(items_schema, Schema::Seq(_)),
@@ -659,7 +666,7 @@ mod tests {
         if let Schema::Object(obj) = root_schema {
             let port_schema = obj
                 .0
-                .get(&Some("port".to_string()))
+                .get(&Documented::new(Some("port".to_string())))
                 .expect("missing port field");
             if let Schema::Default(default_schema) = port_schema {
                 assert_eq!(
@@ -702,14 +709,14 @@ mod tests {
         if let Schema::Object(obj) = root_schema {
             let inner_schema = obj
                 .0
-                .get(&Some("inner".to_string()))
+                .get(&Documented::new(Some("inner".to_string())))
                 .expect("missing inner field");
             // Inner is an object with fields that have defaults
             if let Schema::Object(inner_obj) = inner_schema {
                 // Check that the inner object has fields with @default wrappers
                 let enabled_schema = inner_obj
                     .0
-                    .get(&Some("enabled".to_string()))
+                    .get(&Documented::new(Some("enabled".to_string())))
                     .expect("missing enabled field");
                 assert!(
                     matches!(enabled_schema, Schema::Default(_)),
@@ -717,7 +724,7 @@ mod tests {
                 );
                 let port_schema = inner_obj
                     .0
-                    .get(&Some("port".to_string()))
+                    .get(&Documented::new(Some("port".to_string())))
                     .expect("missing port field");
                 assert!(
                     matches!(port_schema, Schema::Default(_)),

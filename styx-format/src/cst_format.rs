@@ -799,6 +799,33 @@ schema {
         let output = format(input);
         insta::assert_snapshot!(output);
     }
+
+    #[test]
+    fn test_schema_with_doc_comments_in_inline_object() {
+        // Regression test: doc comments inside an inline object must be preserved
+        // and the object must be expanded to multiline format
+        let input = include_str!("fixtures/before-format.styx");
+        let output = format(input);
+
+        // The doc comments must be preserved
+        assert!(
+            output.contains("/// Features to use for clippy"),
+            "Doc comment for clippy-features was lost!\nOutput:\n{}",
+            output
+        );
+        assert!(
+            output.contains("/// Features to use for docs"),
+            "Doc comment for docs-features was lost!\nOutput:\n{}",
+            output
+        );
+        assert!(
+            output.contains("/// Features to use for doc tests"),
+            "Doc comment for doc-test-features was lost!\nOutput:\n{}",
+            output
+        );
+
+        insta::assert_snapshot!(output);
+    }
 }
 
 #[cfg(test)]

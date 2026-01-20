@@ -36,6 +36,8 @@ pub struct StyxParser<'de> {
     expr_mode: bool,
     /// Start offset of the value being peeked (for capture_raw).
     peek_start_offset: Option<usize>,
+    /// Buffered doc comments for the next field key.
+    pending_doc: Vec<Cow<'de, str>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,6 +64,7 @@ impl<'de> StyxParser<'de> {
             expecting_value: false,
             expr_mode: false,
             peek_start_offset: None,
+            pending_doc: Vec::new(),
         }
     }
 
@@ -83,6 +86,7 @@ impl<'de> StyxParser<'de> {
             expecting_value: true, // Start expecting a value immediately
             expr_mode: true,
             peek_start_offset: None,
+            pending_doc: Vec::new(),
         }
     }
 
@@ -477,8 +481,12 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                     return self.next_event();
                 }
                 TokenKind::DocComment => {
-                    // Skip doc comments for now
-                    self.next_token();
+                    // Buffer doc comments to attach to the next field key
+                    let token = self.next_token();
+                    // Doc comment text is "/// comment" - strip the "/// " prefix
+                    let text = token.text.strip_prefix("///").unwrap_or(token.text);
+                    let text = text.strip_prefix(' ').unwrap_or(text);
+                    self.pending_doc.push(Cow::Borrowed(text));
                     return self.next_event();
                 }
                 _ => {}
@@ -501,10 +509,14 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         self.pending_key = Some(key.clone());
                         self.expecting_value = true;
 
-                        trace!(?key, "next_event: FieldKey");
-                        return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
+                        // Take any buffered doc comments
+                        let doc = std::mem::take(&mut self.pending_doc);
+
+                        trace!(?key, ?doc, "next_event: FieldKey");
+                        return Ok(Some(ParseEvent::FieldKey(FieldKey::with_doc(
                             key,
                             FieldLocationHint::KeyValue,
+                            doc,
                         ))));
                     }
                     TokenKind::At => {
@@ -563,19 +575,23 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                             let key = format!("@{}", name_token.text);
                             self.pending_key = Some(Cow::Owned(key.clone()));
                             self.expecting_value = true;
-                            trace!(?key, "next_event: FieldKey (tagged)");
-                            return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
+                            let doc = std::mem::take(&mut self.pending_doc);
+                            trace!(?key, ?doc, "next_event: FieldKey (tagged)");
+                            return Ok(Some(ParseEvent::FieldKey(FieldKey::with_doc(
                                 Cow::Owned(key),
                                 FieldLocationHint::KeyValue,
+                                doc,
                             ))));
                         }
 
                         // @ alone or @ followed by space/newline = unit key (None)
                         self.pending_key = Some(Cow::Borrowed("@"));
                         self.expecting_value = true;
-                        trace!("next_event: FieldKey (unit)");
-                        return Ok(Some(ParseEvent::FieldKey(FieldKey::unit(
+                        let doc = std::mem::take(&mut self.pending_doc);
+                        trace!(?doc, "next_event: FieldKey (unit)");
+                        return Ok(Some(ParseEvent::FieldKey(FieldKey::unit_with_doc(
                             FieldLocationHint::KeyValue,
+                            doc,
                         ))));
                     }
                     _ => {}

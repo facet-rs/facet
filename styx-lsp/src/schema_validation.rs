@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use facet_styx::{Schema, SchemaFile, ValidationResult, validate};
+use facet_styx::{Documented, Schema, SchemaFile, ValidationResult, validate};
 use styx_tree::Value;
 use tower_lsp::lsp_types::Url;
 
@@ -332,7 +332,7 @@ fn collect_object_fields(schema: &Schema, fields: &mut Vec<SchemaField>) {
         Schema::Object(obj) => {
             for (key, field_schema) in &obj.0 {
                 // Skip the catch-all @ field
-                let Some(name) = key else { continue };
+                let Some(name) = &key.value else { continue };
 
                 let (optional, default_value, inner_schema) =
                     unwrap_field_modifiers(field_schema.clone());
@@ -361,15 +361,15 @@ fn collect_object_fields(schema: &Schema, fields: &mut Vec<SchemaField>) {
 fn unwrap_field_modifiers(schema: Schema) -> (bool, Option<String>, Schema) {
     match schema {
         Schema::Optional(opt) => {
-            let (_, default, inner) = unwrap_field_modifiers(*opt.0.0);
+            let (_, default, inner) = unwrap_field_modifiers(*opt.0.0.value);
             (true, default, inner)
         }
         Schema::Default(def) => {
             let default_value = def.0.0.to_string();
-            let (optional, _, inner) = unwrap_field_modifiers(*def.0.1);
+            let (optional, _, inner) = unwrap_field_modifiers(*def.0.1.value);
             (optional, Some(default_value), inner)
         }
-        Schema::Deprecated(dep) => unwrap_field_modifiers(*dep.0.1),
+        Schema::Deprecated(dep) => unwrap_field_modifiers(*dep.0.1.value),
         other => (false, None, other),
     }
 }
@@ -386,21 +386,21 @@ pub fn generate_placeholder(schema: &Schema) -> String {
         Schema::Seq(_) => "[]".to_string(),
         Schema::Map(_) => "{}".to_string(),
         Schema::Object(_) => "{}".to_string(),
-        Schema::Optional(opt) => generate_placeholder(&opt.0.0),
+        Schema::Optional(opt) => generate_placeholder(&opt.0.0.value),
         Schema::Default(def) => def.0.0.to_string(),
-        Schema::Deprecated(dep) => generate_placeholder(&dep.0.1),
+        Schema::Deprecated(dep) => generate_placeholder(&dep.0.1.value),
         Schema::Union(u) => {
             u.0.first()
-                .map(generate_placeholder)
+                .map(|d| generate_placeholder(&d.value))
                 .unwrap_or_else(|| "@".to_string())
         }
         Schema::Enum(e) => {
             e.0.keys()
                 .next()
-                .map(|k| format!("@{}", k))
+                .map(|k| format!("@{}", k.value))
                 .unwrap_or_else(|| "@".to_string())
         }
-        Schema::Flatten(f) => generate_placeholder(&f.0.0),
+        Schema::Flatten(f) => generate_placeholder(&f.0.0.value),
         Schema::Literal(lit) => lit.clone(),
         Schema::Type { name } => name
             .as_ref()
@@ -509,7 +509,7 @@ fn get_schema_at_path_recursive(
 
     match schema {
         Schema::Object(obj) => {
-            let field_schema = obj.0.get(&Some(field_name.clone()))?;
+            let field_schema = obj.0.get(&Documented::new(Some(field_name.clone())))?;
             get_schema_at_path_recursive(field_schema, rest, schema_file)
         }
         Schema::Optional(opt) => get_schema_at_path_recursive(&opt.0.0, path, schema_file),

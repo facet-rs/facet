@@ -332,7 +332,6 @@ port 8080"#;
     #[test]
     fn test_documented_basic() {
         // Documented<T> should have the metadata_container flag
-        use facet::Shape;
         let shape = <Documented<String>>::SHAPE;
         assert!(shape.is_metadata_container());
     }

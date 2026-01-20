@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use crate::trace;
 use facet_core::Facet;
 use facet_format::{FormatSerializer, ScalarValue, SerializeError, serialize_root};
 use facet_reflect::{HasFields, Peek};
@@ -71,30 +72,36 @@ impl FormatSerializer for StyxSerializer {
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
         let is_root = self.at_root;
+        trace!(is_root, "begin_struct");
         self.at_root = false;
         self.writer.begin_struct(is_root);
         Ok(())
     }
 
     fn field_key(&mut self, key: &str) -> Result<(), Self::Error> {
+        trace!(key, "field_key");
         self.writer.field_key(key).map_err(StyxSerializeError::new)
     }
 
     fn end_struct(&mut self) -> Result<(), Self::Error> {
+        trace!("end_struct");
         self.writer.end_struct().map_err(StyxSerializeError::new)
     }
 
     fn begin_seq(&mut self) -> Result<(), Self::Error> {
+        trace!("begin_seq");
         self.at_root = false;
         self.writer.begin_seq();
         Ok(())
     }
 
     fn end_seq(&mut self) -> Result<(), Self::Error> {
+        trace!("end_seq");
         self.writer.end_seq().map_err(StyxSerializeError::new)
     }
 
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
+        trace!(?scalar, "scalar");
         self.at_root = false;
         self.just_wrote_tag = false;
         match scalar {
@@ -113,6 +120,7 @@ impl FormatSerializer for StyxSerializer {
     }
 
     fn serialize_none(&mut self) -> Result<(), Self::Error> {
+        trace!(just_wrote_tag = self.just_wrote_tag, "serialize_none");
         // If we just wrote a tag, skip the None payload (e.g., @string instead of @string@)
         if self.just_wrote_tag {
             self.just_wrote_tag = false;
@@ -124,6 +132,7 @@ impl FormatSerializer for StyxSerializer {
     }
 
     fn write_variant_tag(&mut self, variant_name: &str) -> Result<bool, Self::Error> {
+        trace!(variant_name, "write_variant_tag");
         self.at_root = false;
         self.just_wrote_tag = true;
         self.writer.write_tag(variant_name);
@@ -131,12 +140,14 @@ impl FormatSerializer for StyxSerializer {
     }
 
     fn begin_struct_after_tag(&mut self) -> Result<(), Self::Error> {
+        trace!("begin_struct_after_tag");
         self.just_wrote_tag = false;
         self.writer.begin_struct_after_tag(false);
         Ok(())
     }
 
     fn begin_seq_after_tag(&mut self) -> Result<(), Self::Error> {
+        trace!("begin_seq_after_tag");
         self.just_wrote_tag = false;
         self.writer.begin_seq_after_tag();
         Ok(())
@@ -147,6 +158,7 @@ impl FormatSerializer for StyxSerializer {
     }
 
     fn raw_scalar(&mut self, content: &str) -> Result<(), Self::Error> {
+        trace!(content, "raw_scalar");
         // For RawStyx, output the content directly without quoting
         self.at_root = false;
         self.just_wrote_tag = false;
@@ -156,18 +168,97 @@ impl FormatSerializer for StyxSerializer {
     }
 
     fn serialize_map_key(&mut self, key: Peek<'_, '_>) -> Result<bool, Self::Error> {
+        trace!(shape = key.shape().type_identifier, "serialize_map_key");
+
+        // Handle metadata containers (like Documented<K>) - extract doc and inner key
+        if key.shape().is_metadata_container() {
+            if let Ok(container) = key.into_struct() {
+                trace!("serialize_map_key: metadata container detected");
+
+                // Extract doc lines and inner value
+                let mut doc_lines: Vec<&str> = Vec::new();
+                let mut inner_key: Option<Peek<'_, '_>> = None;
+
+                for (f, field_value) in container.fields() {
+                    if f.metadata_kind() == Some("doc") {
+                        // This is the doc field
+                        if let Ok(opt) = field_value.into_option()
+                            && let Some(inner) = opt.value()
+                            && let Ok(list) = inner.into_list_like()
+                        {
+                            for item in list.iter() {
+                                if let Some(line) = item.as_str() {
+                                    doc_lines.push(line);
+                                }
+                            }
+                        }
+                    } else if f.metadata_kind().is_none() {
+                        // This is the value field (not metadata)
+                        inner_key = Some(field_value);
+                    }
+                }
+
+                if let Some(inner) = inner_key {
+                    // Get the key string from the inner value
+                    let key_str = if let Some(s) = inner.as_str() {
+                        s.to_string()
+                    } else if let Ok(opt) = inner.into_option() {
+                        // Handle Documented<Option<String>>
+                        match opt.value() {
+                            Some(inner_inner) => {
+                                if let Some(s) = inner_inner.as_str() {
+                                    s.to_string()
+                                } else {
+                                    return Ok(false);
+                                }
+                            }
+                            None => {
+                                // None key -> @
+                                if !doc_lines.is_empty() {
+                                    let doc = doc_lines.join("\n");
+                                    self.writer.write_doc_comment_and_key(&doc, "@");
+                                } else {
+                                    self.writer
+                                        .field_key_raw("@")
+                                        .map_err(StyxSerializeError::new)?;
+                                }
+                                return Ok(true);
+                            }
+                        }
+                    } else {
+                        return Ok(false);
+                    };
+
+                    // Emit doc comment + key
+                    if !doc_lines.is_empty() {
+                        trace!(doc_lines = ?doc_lines, key = %key_str, "serialize_map_key: emitting doc comment");
+                        let doc = doc_lines.join("\n");
+                        self.writer.write_doc_comment_and_key(&doc, &key_str);
+                    } else {
+                        trace!(key = %key_str, "serialize_map_key: no doc, just key");
+                        self.writer
+                            .field_key(&key_str)
+                            .map_err(StyxSerializeError::new)?;
+                    }
+                    return Ok(true);
+                }
+            }
+        }
+
         // Handle Option<String> keys specially: None becomes @ (unit)
         if let Ok(opt) = key.into_option() {
             match opt.value() {
                 Some(inner) => {
                     // Some(string) - use the string as the key
                     if let Some(s) = inner.as_str() {
+                        trace!(key = s, "serialize_map_key: Option<String> Some");
                         self.writer.field_key(s).map_err(StyxSerializeError::new)?;
                         return Ok(true);
                     }
                 }
                 None => {
                     // None - write @ as a raw key
+                    trace!("serialize_map_key: Option<String> None -> @");
                     self.writer
                         .field_key_raw("@")
                         .map_err(StyxSerializeError::new)?;
@@ -176,6 +267,7 @@ impl FormatSerializer for StyxSerializer {
             }
         }
         // Fall back to default behavior for other key types
+        trace!("serialize_map_key: falling back to default");
         Ok(false)
     }
 
@@ -184,14 +276,25 @@ impl FormatSerializer for StyxSerializer {
         field_item: &facet_reflect::FieldItem,
         value: Peek<'_, '_>,
     ) -> Result<bool, Self::Error> {
+        let is_metadata_container = value.shape().is_metadata_container();
+        trace!(
+            field_name = field_item.effective_name(),
+            is_metadata_container,
+            value_shape = value.shape().type_identifier,
+            "field_metadata_with_value"
+        );
+
         // First, check if the field value is a metadata container (like Documented<T>)
         // This takes precedence over Field::doc since it's runtime data
-        if value.shape().is_metadata_container()
-            && let Ok(container) = value.into_struct()
-        {
+        if is_metadata_container && let Ok(container) = value.into_struct() {
             // Collect doc lines from the metadata container
             let mut doc_lines: Vec<&str> = Vec::new();
             for (f, field_value) in container.fields() {
+                trace!(
+                    metadata_kind = ?f.metadata_kind(),
+                    field = f.effective_name(),
+                    "field_metadata_with_value: inspecting container field"
+                );
                 if f.metadata_kind() == Some("doc")
                     && let Ok(opt) = field_value.into_option()
                     && let Some(inner) = opt.value()
@@ -207,6 +310,7 @@ impl FormatSerializer for StyxSerializer {
 
             // If we have doc lines from the container, use them
             if !doc_lines.is_empty() {
+                trace!(doc_lines = ?doc_lines, "field_metadata_with_value: emitting doc comment");
                 let doc = doc_lines.join("\n");
                 self.writer
                     .write_doc_comment_and_key(&doc, field_item.effective_name());
@@ -214,23 +318,11 @@ impl FormatSerializer for StyxSerializer {
             }
         }
 
-        // Second, check Field::doc for static doc comments from Rust source
-        if let Some(field) = field_item.field
-            && !field.doc.is_empty()
-        {
-            // Field::doc lines have a leading space from `/// comment` format - strip exactly one
-            let doc: Vec<&str> = field
-                .doc
-                .iter()
-                .map(|s| s.strip_prefix(' ').unwrap_or(s))
-                .collect();
-            let doc = doc.join("\n");
-            self.writer
-                .write_doc_comment_and_key(&doc, field_item.effective_name());
-            return Ok(true);
-        }
+        // Note: We intentionally do NOT emit Field::doc (Rust doc comments) when serializing
+        // regular values. Doc comments should only be emitted when:
+        // 1. The field value is a metadata container (like Documented<T>) - checked above
+        // 2. When serializing schemas (where we use Documented<Schema> to carry the docs)
 
-        // No doc comments found
         Ok(false)
     }
 }
@@ -742,8 +834,9 @@ mod tests {
     }
 
     #[test]
-    fn test_field_doc_comments() {
-        // Doc comments on Rust fields should be emitted in Styx output
+    fn test_field_doc_comments_not_emitted_for_regular_values() {
+        // Doc comments on Rust fields should NOT be emitted when serializing regular values.
+        // Only Documented<T> (metadata containers) should emit doc comments.
         #[derive(Facet, Debug)]
         struct Server {
             /// The hostname to bind to
@@ -759,8 +852,81 @@ mod tests {
 
         let serialized = to_string(&server).unwrap();
 
-        // Field doc comments should appear before the field key
-        assert!(serialized.contains("/// The hostname to bind to\nhost localhost"));
-        assert!(serialized.contains("/// The port number (1-65535)\nport 8080"));
+        // Doc comments should NOT appear - we're serializing a value, not a schema
+        assert!(!serialized.contains("///"));
+        assert!(serialized.contains("host localhost"));
+        assert!(serialized.contains("port 8080"));
+    }
+
+    #[test]
+    fn test_hashmap_with_documented_keys_serialize() {
+        use crate::schema_types::Documented;
+        use std::collections::HashMap;
+
+        // A HashMap with Documented keys - doc comments are attached to keys, not values
+        let mut map: HashMap<Documented<String>, i32> = HashMap::new();
+        map.insert(
+            Documented::with_doc_line("port".to_string(), "The port to listen on"),
+            8080,
+        );
+        map.insert(
+            Documented::with_doc_line("timeout".to_string(), "Timeout in seconds"),
+            30,
+        );
+
+        let serialized = to_string(&map).unwrap();
+        tracing::debug!("Serialized HashMap:\n{}", serialized);
+
+        // Doc comments should appear before each key
+        assert!(serialized.contains("/// The port to listen on\nport 8080"));
+        assert!(serialized.contains("/// Timeout in seconds\ntimeout 30"));
+    }
+
+    #[test]
+    fn test_hashmap_with_documented_keys_roundtrip() {
+        use crate::schema_types::Documented;
+        use std::collections::HashMap;
+
+        // Parse a styx document with doc comments into HashMap<Documented<String>, i32>
+        let input = r#"
+/// The port to listen on
+port 8080
+/// Timeout in seconds
+timeout 30
+"#;
+
+        let parsed: HashMap<Documented<String>, i32> =
+            crate::from_str(input).expect("should parse");
+
+        tracing::debug!("Parsed HashMap: {:?}", parsed);
+
+        // Check we got the right values
+        assert_eq!(
+            parsed.get(&Documented::new("port".to_string())),
+            Some(&8080)
+        );
+        assert_eq!(
+            parsed.get(&Documented::new("timeout".to_string())),
+            Some(&30)
+        );
+
+        // Check we got the doc comments
+        let port_key = parsed
+            .keys()
+            .find(|k| k.value == "port")
+            .expect("should have port key");
+        assert_eq!(
+            port_key.doc(),
+            Some(&["The port to listen on".to_string()][..])
+        );
+
+        let timeout_key = parsed
+            .keys()
+            .find(|k| k.value == "timeout")
+            .expect("should have timeout key");
+        assert_eq!(
+            timeout_key.doc(),
+            Some(&["Timeout in seconds".to_string()][..])
+        );
     }
 }

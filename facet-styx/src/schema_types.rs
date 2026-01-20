@@ -157,21 +157,22 @@ pub struct FloatConstraints {
 /// Object schema: @object{field @Schema, @ @Schema}.
 /// Maps field names to their type constraints.
 /// The key `None` represents additional fields (catch-all `@`).
+/// Keys are `Documented<Option<String>>` to carry field documentation.
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct ObjectSchema(pub HashMap<Option<String>, Schema>);
+pub struct ObjectSchema(pub HashMap<Documented<Option<String>>, Schema>);
 
 /// Sequence schema: @seq(@Schema).
 /// All elements must match the inner schema.
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct SeqSchema(pub (Box<Schema>,));
+pub struct SeqSchema(pub (Documented<Box<Schema>>,));
 
 /// Map schema: @map(@V) or @map(@K @V).
 /// Vec contains 1 element (value type, key defaults to @string) or 2 elements (key, value).
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct MapSchema(pub Vec<Schema>);
+pub struct MapSchema(pub Vec<Documented<Schema>>);
 
 // =============================================================================
 // Combinator schema types
@@ -181,25 +182,25 @@ pub struct MapSchema(pub Vec<Schema>);
 /// Value must match one of the listed types.
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct UnionSchema(pub Vec<Schema>);
+pub struct UnionSchema(pub Vec<Documented<Schema>>);
 
 /// Optional schema: @optional(@T).
 /// Field can be absent or match the inner type.
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct OptionalSchema(pub (Box<Schema>,));
+pub struct OptionalSchema(pub (Documented<Box<Schema>>,));
 
 /// Enum schema: @enum{variant @Type, variant @object{...}}.
 /// Maps variant names to their payload schemas.
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct EnumSchema(pub HashMap<String, Schema>);
+pub struct EnumSchema(pub HashMap<Documented<String>, Schema>);
 
 /// Flatten schema: @flatten(@Type).
 /// Inlines fields from another type into the containing object.
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct FlattenSchema(pub (Box<Schema>,));
+pub struct FlattenSchema(pub (Documented<Box<Schema>>,));
 
 // =============================================================================
 // Wrapper schema types
@@ -232,14 +233,14 @@ impl std::fmt::Display for RawStyx {
 /// Tuple is (default_value, inner_schema).
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct DefaultSchema(pub (RawStyx, Box<Schema>));
+pub struct DefaultSchema(pub (RawStyx, Documented<Box<Schema>>));
 
 /// Deprecated wrapper: @deprecated("reason" @type).
 /// Marks a field as deprecated; validation warns but doesn't fail.
 /// Tuple is (reason, inner_schema).
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct DeprecatedSchema(pub (String, Box<Schema>));
+pub struct DeprecatedSchema(pub (String, Documented<Box<Schema>>));
 
 // =============================================================================
 // Metadata container types
@@ -354,3 +355,20 @@ impl<T> From<T> for Documented<T> {
         Self::new(value)
     }
 }
+
+// Hash and Eq only consider the value, not the documentation.
+// Documentation is metadata and doesn't affect identity.
+
+impl<T: std::hash::Hash> std::hash::Hash for Documented<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.value.hash(state);
+    }
+}
+
+impl<T: PartialEq> PartialEq for Documented<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl<T: Eq> Eq for Documented<T> {}
