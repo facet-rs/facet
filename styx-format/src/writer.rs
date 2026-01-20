@@ -661,10 +661,59 @@ impl StyxWriter {
     /// Propagate multiline formatting up to all parent structs that started inline.
     /// This is called when doc comments force the current struct to be multiline.
     fn propagate_multiline_to_parents(&mut self) {
-        // Collect positions and effective depths of structs that need fixing
+        // First, collect all comma positions from parent structs that will go multiline
+        // We need to fix these before inserting newlines
+        let mut all_comma_positions: Vec<usize> = Vec::new();
+        let mut structs_to_fix: Vec<usize> = Vec::new(); // indices in stack
+
+        for (idx, ctx) in self.stack.iter().enumerate() {
+            if let Context::Struct {
+                inline_start,
+                force_multiline,
+                is_root,
+                comma_positions,
+                ..
+            } = ctx
+            {
+                if !*is_root && *inline_start && !*force_multiline {
+                    structs_to_fix.push(idx);
+                    all_comma_positions.extend(comma_positions.iter().copied());
+                }
+            }
+        }
+
+        // Fix all comma separators first (before we insert newlines which would shift positions)
+        if !all_comma_positions.is_empty() {
+            // Sort and process from end to start
+            all_comma_positions.sort_unstable();
+            for &comma_pos in all_comma_positions.iter().rev() {
+                // Replace ", " with newline + appropriate indent
+                if comma_pos + 2 <= self.out.len()
+                    && self.out[comma_pos] == b','
+                    && self.out[comma_pos + 1] == b' '
+                {
+                    // Calculate indent for this position
+                    let indent = self.options.indent.repeat(self.indent_depth());
+                    let newline_indent = format!("\n{}", indent);
+                    self.out.drain(comma_pos..comma_pos + 2);
+                    let bytes = newline_indent.as_bytes();
+                    for (i, &b) in bytes.iter().enumerate() {
+                        self.out.insert(comma_pos + i, b);
+                    }
+                }
+            }
+        }
+
+        // Clear comma positions from structs we're fixing
+        for &idx in &structs_to_fix {
+            if let Some(Context::Struct { comma_positions, .. }) = self.stack.get_mut(idx) {
+                comma_positions.clear();
+            }
+        }
+
+        // Now collect positions and effective depths of structs that need newline after brace
         let mut fixes: Vec<(usize, usize)> = Vec::new(); // (open_brace_pos, effective_depth)
 
-        // Calculate effective depth for each struct that needs fixing
         let mut effective_depth = 0;
         for ctx in self.stack.iter_mut() {
             if let Context::Struct {

@@ -181,7 +181,27 @@ fn generate_schema_inner<T: facet_core::Facet<'static>>(id: String, cli: Option<
     let shape = T::SHAPE;
 
     let mut generator = SchemaGenerator::new();
-    let root_schema = generator.shape_to_schema(shape);
+
+    // Generate the root schema - inline it directly at @ (None key)
+    // Use generate_type_definition to inline the root, while nested types get references
+    let root_schema = generator
+        .generate_type_definition(shape)
+        .unwrap_or_else(|| generator.shape_to_schema(shape));
+
+    // Build the schema map with root and all named type definitions
+    let mut schema_map: HashMap<Option<String>, Schema> = HashMap::new();
+    schema_map.insert(None, root_schema);
+
+    // Process all pending types (types that were referenced but need definitions)
+    while let Some(pending_shape) = generator.take_pending() {
+        let type_name = pending_shape.type_identifier.to_string();
+        // Only add if not already defined
+        if !schema_map.contains_key(&Some(type_name.clone())) {
+            if let Some(type_schema) = generator.generate_type_definition(pending_shape) {
+                schema_map.insert(Some(type_name), type_schema);
+            }
+        }
+    }
 
     let description = if shape.doc.is_empty() {
         None
@@ -204,11 +224,7 @@ fn generate_schema_inner<T: facet_core::Facet<'static>>(id: String, cli: Option<
             description,
         },
         imports: None,
-        schema: {
-            let mut map = HashMap::new();
-            map.insert(None, root_schema);
-            map
-        },
+        schema: schema_map,
     };
 
     crate::to_string(&schema_file).expect("failed to serialize schema")
@@ -244,12 +260,51 @@ fn schema_to_tag_name(schema: &Schema) -> String {
 struct SchemaGenerator {
     /// Types currently being generated (for cycle detection)
     generating: HashSet<&'static str>,
+    /// Types that have been queued for definition
+    queued_types: HashSet<&'static str>,
+    /// Types pending generation (shapes to process)
+    pending_types: Vec<&'static Shape>,
 }
 
 impl SchemaGenerator {
     fn new() -> Self {
         Self {
             generating: HashSet::new(),
+            queued_types: HashSet::new(),
+            pending_types: Vec::new(),
+        }
+    }
+
+    /// Queue a type for definition if not already queued.
+    fn queue_type(&mut self, shape: &'static Shape) {
+        let type_id = shape.type_identifier;
+        if !self.queued_types.contains(type_id) {
+            self.queued_types.insert(type_id);
+            self.pending_types.push(shape);
+        }
+    }
+
+    /// Take the next pending type to generate, if any.
+    fn take_pending(&mut self) -> Option<&'static Shape> {
+        self.pending_types.pop()
+    }
+
+    /// Generate the schema definition for a user type (struct or enum).
+    /// This is used when generating named type definitions.
+    fn generate_type_definition(&mut self, shape: &'static Shape) -> Option<Schema> {
+        match &shape.ty {
+            Type::User(user) => {
+                let type_id = shape.type_identifier;
+                self.generating.insert(type_id);
+                let result = match user {
+                    UserType::Struct(struct_type) => Some(self.struct_to_schema(struct_type)),
+                    UserType::Enum(enum_type) => Some(self.enum_to_schema(enum_type)),
+                    _ => None,
+                };
+                self.generating.remove(type_id);
+                result
+            }
+            _ => None,
         }
     }
 
@@ -361,25 +416,22 @@ impl SchemaGenerator {
     fn user_type_to_schema(&mut self, user: &UserType, shape: &'static Shape) -> Schema {
         let type_id = shape.type_identifier;
 
-        // Cycle detection
+        // Cycle detection - if we're already generating this type, return a reference
         if self.generating.contains(type_id) {
+            self.queue_type(shape);
             return Schema::Type {
                 name: Some(type_id.to_string()),
             };
         }
 
         match user {
-            UserType::Struct(struct_type) => {
-                self.generating.insert(type_id);
-                let result = self.struct_to_schema(struct_type);
-                self.generating.remove(type_id);
-                result
-            }
-            UserType::Enum(enum_type) => {
-                self.generating.insert(type_id);
-                let result = self.enum_to_schema(enum_type);
-                self.generating.remove(type_id);
-                result
+            // For structs and enums, always emit a type reference and queue for definition
+            // This gives all complex types their own named definitions
+            UserType::Struct(_) | UserType::Enum(_) => {
+                self.queue_type(shape);
+                Schema::Type {
+                    name: Some(type_id.to_string()),
+                }
             }
             UserType::Union(_) => Schema::Any,
             UserType::Opaque => match type_id {
@@ -787,36 +839,48 @@ mod tests {
         let parsed: SchemaFile =
             crate::from_str(&schema_str).expect("failed to parse generated schema");
 
+        // Root schema should reference @Inner
         let root_schema = parsed.schema.get(&None).expect("missing root schema");
         if let Schema::Object(obj) = root_schema {
             let inner_schema = obj
                 .0
                 .get(&Documented::new(ObjectKey::named("inner")))
                 .expect("missing inner field");
-            // Inner is an object with fields that have defaults
-            if let Schema::Object(inner_obj) = inner_schema {
-                // Check that the inner object has fields with @default wrappers
-                let enabled_schema = inner_obj
-                    .0
-                    .get(&Documented::new(ObjectKey::named("enabled")))
-                    .expect("missing enabled field");
-                assert!(
-                    matches!(enabled_schema, Schema::Default(_)),
-                    "enabled should have @default wrapper"
-                );
-                let port_schema = inner_obj
-                    .0
-                    .get(&Documented::new(ObjectKey::named("port")))
-                    .expect("missing port field");
-                assert!(
-                    matches!(port_schema, Schema::Default(_)),
-                    "port should have @default wrapper"
-                );
-            } else {
-                panic!("inner should be Object, got {:?}", inner_schema);
-            }
+            // Inner should be a type reference now
+            assert!(
+                matches!(inner_schema, Schema::Type { name: Some(n) } if n == "Inner"),
+                "inner should be Type reference, got {:?}",
+                inner_schema
+            );
         } else {
             panic!("expected root schema to be Object");
+        }
+
+        // Inner type should have its own definition with defaults
+        let inner_def = parsed
+            .schema
+            .get(&Some("Inner".to_string()))
+            .expect("missing Inner type definition");
+        if let Schema::Object(inner_obj) = inner_def {
+            // Check that the inner object has fields with @default wrappers
+            let enabled_schema = inner_obj
+                .0
+                .get(&Documented::new(ObjectKey::named("enabled")))
+                .expect("missing enabled field");
+            assert!(
+                matches!(enabled_schema, Schema::Default(_)),
+                "enabled should have @default wrapper"
+            );
+            let port_schema = inner_obj
+                .0
+                .get(&Documented::new(ObjectKey::named("port")))
+                .expect("missing port field");
+            assert!(
+                matches!(port_schema, Schema::Default(_)),
+                "port should have @default wrapper"
+            );
+        } else {
+            panic!("Inner should be Object, got {:?}", inner_def);
         }
     }
 
@@ -937,16 +1001,22 @@ mod tests {
             "schema should NOT contain 'decls' key for flattened HashMap. Got:\n{}",
             schema
         );
-        // Should have typed catch-all @string with the value type (Decl's object schema)
+        // Should have typed catch-all @string with the value type (now a @Decl reference)
         assert!(
-            schema.contains("@string @object"),
-            "schema should have typed catch-all @string entry with value type. Got:\n{}",
+            schema.contains("@string @Decl"),
+            "schema should have typed catch-all @string entry with @Decl reference. Got:\n{}",
             schema
         );
-        // Should contain the Decl's field
+        // Decl should have its own definition
+        assert!(
+            schema.contains("Decl @object"),
+            "schema should contain Decl type definition. Got:\n{}",
+            schema
+        );
+        // Decl should contain the 'value' field
         assert!(
             schema.contains("value @string"),
-            "schema should contain Decl's 'value' field. Got:\n{}",
+            "Decl should contain 'value' field. Got:\n{}",
             schema
         );
     }
@@ -1023,6 +1093,79 @@ mod tests {
             !schema.contains("\"@\""),
             "schema should NOT contain quoted @ key. Got:\n{}",
             schema
+        );
+    }
+
+    #[test]
+    fn test_recursive_types_get_definitions() {
+        /// A node in a tree structure.
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct TreeNode {
+            value: String,
+            children: Vec<TreeNode>,
+        }
+
+        let schema = schema_from_type::<TreeNode>();
+        tracing::debug!("Generated schema:\n{schema}");
+
+        // The schema should contain a named definition for TreeNode
+        // because it references itself recursively
+        assert!(
+            schema.contains("TreeNode @object"),
+            "schema should have named TreeNode definition. Got:\n{}",
+            schema
+        );
+
+        // The children field should reference @TreeNode
+        assert!(
+            schema.contains("@TreeNode"),
+            "schema should reference @TreeNode. Got:\n{}",
+            schema
+        );
+
+        // Parse and verify structure
+        let parsed: SchemaFile =
+            crate::from_str(&schema).expect("failed to parse generated schema");
+
+        // Should have root definition and TreeNode definition
+        assert!(
+            parsed.schema.contains_key(&Some("TreeNode".to_string())),
+            "schema should have TreeNode type definition"
+        );
+    }
+
+    #[test]
+    fn test_mutually_recursive_types_get_definitions() {
+        /// A container that can hold items.
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Container {
+            name: String,
+            items: Vec<Item>,
+        }
+
+        /// An item that can contain other containers.
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Item {
+            id: u32,
+            nested: Option<Container>,
+        }
+
+        let schema = schema_from_type::<Container>();
+        tracing::debug!("Generated schema:\n{schema}");
+
+        // Parse and verify both types have definitions
+        let parsed: SchemaFile =
+            crate::from_str(&schema).expect("failed to parse generated schema");
+
+        // Should have definitions for both Container and Item
+        // Note: Container is the root so it's at None, Item should be at Some("Item")
+        assert!(
+            parsed.schema.contains_key(&Some("Item".to_string())),
+            "schema should have Item type definition. Keys: {:?}",
+            parsed.schema.keys().collect::<Vec<_>>()
         );
     }
 }
