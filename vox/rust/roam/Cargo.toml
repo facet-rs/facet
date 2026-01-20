@@ -29,3 +29,7 @@ roam-service-macros.workspace = true
 # Serialization
 facet.workspace = true
 facet-postcard.workspace = true
+facet-pretty.workspace = true
+
+# Logging (re-exported for macro-generated code)
+tracing.workspace = true

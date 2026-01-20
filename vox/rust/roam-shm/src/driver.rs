@@ -157,24 +157,24 @@ where
                 // Handle all driver messages (Call/Data/Close/Response).
                 // Single channel ensures FIFO ordering.
                 Some(msg) = self.driver_rx.recv() => {
-                    debug!("driver: received driver message");
+                    trace!("driver: received driver message");
                     self.handle_driver_message(msg).await?;
                 }
 
                 // Handle incoming messages from peer (waits on doorbell, no timeout)
                 result = MessageTransport::recv(&mut self.io) => {
-                    debug!("driver: received message from peer");
+                    trace!("driver: received message from peer");
                     match self.handle_recv(result).await {
                         Ok(true) => {
-                            debug!("driver: handle_recv returned Ok(true), continuing");
+                            trace!("driver: handle_recv returned Ok(true), continuing");
                             continue;
                         }
                         Ok(false) => {
-                            debug!("driver: handle_recv returned Ok(false), shutting down");
+                            trace!("driver: handle_recv returned Ok(false), shutting down");
                             return Ok(());
                         }
                         Err(e) => {
-                            debug!("driver: handle_recv returned Err, shutting down");
+                            trace!("driver: handle_recv returned Err, shutting down");
                             return Err(e);
                         }
                     }
@@ -197,7 +197,7 @@ where
                 payload,
                 response_tx,
             } => {
-                debug!("handle_driver_message: Call req={}", request_id);
+                trace!("handle_driver_message: Call req={}", request_id);
                 // Store the response channel
                 self.pending_responses.insert(request_id, response_tx);
 
@@ -214,7 +214,7 @@ where
                 channel_id,
                 payload,
             } => {
-                debug!(
+                trace!(
                     "handle_driver_message: Data ch={}, {} bytes",
                     channel_id,
                     payload.len()
@@ -225,7 +225,7 @@ where
                 }
             }
             DriverMessage::Close { channel_id } => {
-                debug!("handle_driver_message: Close ch={}", channel_id);
+                trace!("handle_driver_message: Close ch={}", channel_id);
                 Message::Close { channel_id }
             }
             DriverMessage::Response {
@@ -246,9 +246,9 @@ where
                 }
             }
         };
-        debug!("handle_driver_message: sending wire message");
+        trace!("handle_driver_message: sending wire message");
         MessageTransport::send(&mut self.io, &wire_msg).await?;
-        debug!("handle_driver_message: wire message sent");
+        trace!("handle_driver_message: wire message sent");
         Ok(())
     }
 

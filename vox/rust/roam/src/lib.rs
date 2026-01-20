@@ -43,6 +43,12 @@ pub use roam_hash as hash;
 // Re-export facet for derive macros in service types
 pub use facet;
 
+// Re-export facet-pretty for macro-generated logging
+pub use facet_pretty;
+
+// Re-export tracing for macro-generated logging
+pub use tracing;
+
 /// Private module for proc-macro re-exports. Not part of the public API.
 #[doc(hidden)]
 pub mod __private {
