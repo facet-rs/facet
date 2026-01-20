@@ -95,6 +95,11 @@ impl CellTracingLayer {
     }
 
     fn should_emit(&self, level: Level, target: &str) -> bool {
+        // Never forward roam crate events - doing so would cause infinite recursion
+        // since emit_tracing() itself goes through roam RPC
+        if target.starts_with("roam") {
+            return false;
+        }
         let filter = self.filter.read().unwrap();
         filter.targets.would_enable(target, &level.to_tracing())
     }
