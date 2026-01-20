@@ -662,13 +662,17 @@ impl StyxWriter {
         }
 
         // Extract state first to avoid borrow conflicts
-        let (is_seq, is_first) = match self.stack.last() {
-            Some(Context::Seq { first, .. }) => (true, *first),
-            _ => (false, true),
+        let (is_seq, is_first, inline_start) = match self.stack.last() {
+            Some(Context::Seq {
+                first,
+                inline_start,
+            }) => (true, *first, *inline_start),
+            _ => (false, true, false),
         };
 
         if is_seq && !is_first {
-            if self.should_inline() {
+            // Sequence stays inline if it started inline
+            if inline_start || self.should_inline() {
                 self.out.push(b' ');
             } else {
                 self.write_newline_indent();
