@@ -18,6 +18,8 @@ pub enum Context {
         inline_start: bool,
         /// Positions of comma separators written in this struct (for fixing mixed separators)
         comma_positions: Vec<usize>,
+        /// Position right after the opening `{` (for inserting newline when going multiline)
+        open_brace_pos: Option<usize>,
     },
     /// Inside a sequence - tracks if we've written any items
     Seq {
@@ -59,6 +61,15 @@ impl StyxWriter {
 
     /// Consume the writer and return the output bytes.
     pub fn finish(self) -> Vec<u8> {
+        self.out
+    }
+
+    /// Consume the writer and return the output bytes, ensuring a trailing newline.
+    /// This matches CST formatter behavior for standalone documents.
+    pub fn finish_document(mut self) -> Vec<u8> {
+        if !self.out.is_empty() && !self.out.ends_with(b"\n") {
+            self.out.push(b'\n');
+        }
         self.out
     }
 
@@ -191,15 +202,18 @@ impl StyxWriter {
                 force_multiline,
                 inline_start: false,
                 comma_positions: Vec::new(),
+                open_brace_pos: None,
             });
         } else {
             self.out.push(b'{');
+            let open_pos = self.out.len(); // Position right after '{'
             self.stack.push(Context::Struct {
                 first: true,
                 is_root: false,
                 force_multiline,
                 inline_start,
                 comma_positions: Vec::new(),
+                open_brace_pos: Some(open_pos),
             });
         }
     }
@@ -208,12 +222,14 @@ impl StyxWriter {
     pub fn begin_struct_after_tag(&mut self, force_multiline: bool) {
         // Don't call before_value() - we want no space after the tag
         self.out.push(b'{');
+        let open_pos = self.out.len(); // Position right after '{'
         self.stack.push(Context::Struct {
             first: true,
             is_root: false,
             force_multiline,
             inline_start: true,
             comma_positions: Vec::new(),
+            open_brace_pos: Some(open_pos),
         });
     }
 
@@ -251,6 +267,10 @@ impl StyxWriter {
                     comma_positions.push(comma_pos);
                 }
             } else {
+                // At root level, add blank line between records
+                if is_root {
+                    self.out.push(b'\n');
+                }
                 self.write_newline_indent();
             }
         } else {
@@ -305,6 +325,10 @@ impl StyxWriter {
                     comma_positions.push(comma_pos);
                 }
             } else {
+                // At root level, add blank line between records
+                if is_root {
+                    self.out.push(b'\n');
+                }
                 self.write_newline_indent();
             }
         } else {
@@ -537,6 +561,16 @@ impl StyxWriter {
         // Fix any commas we wrote before this doc comment (they need to become newlines)
         self.fix_comma_separators();
 
+        // Propagate multiline to all parent structs that started inline
+        self.propagate_multiline_to_parents();
+
+        // For non-first fields at root level, add a blank line before doc comment
+        // This matches the CST formatter behavior for top-level documented entries
+        if !is_first && is_root {
+            // Add blank line (extra newline) before doc comment
+            self.out.push(b'\n');
+        }
+
         // For non-first fields, or non-root structs, add newline before doc
         let need_leading_newline = !is_first || !is_root;
 
@@ -587,6 +621,16 @@ impl StyxWriter {
         // Fix any commas we wrote before this doc comment (they need to become newlines)
         self.fix_comma_separators();
 
+        // Propagate multiline to all parent structs that started inline
+        self.propagate_multiline_to_parents();
+
+        // For non-first fields at root level, add a blank line before doc comment
+        // This matches the CST formatter behavior for top-level documented entries
+        if !is_first && is_root {
+            // Add blank line (extra newline) before doc comment
+            self.out.push(b'\n');
+        }
+
         // For non-first fields, or non-root structs, add newline before doc
         let need_leading_newline = !is_first || !is_root;
 
@@ -613,6 +657,67 @@ impl StyxWriter {
     // ─────────────────────────────────────────────────────────────────────────
     // Internal helpers
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// Propagate multiline formatting up to all parent structs that started inline.
+    /// This is called when doc comments force the current struct to be multiline.
+    fn propagate_multiline_to_parents(&mut self) {
+        // Collect positions and effective depths of structs that need fixing
+        let mut fixes: Vec<(usize, usize)> = Vec::new(); // (open_brace_pos, effective_depth)
+
+        // Calculate effective depth for each struct that needs fixing
+        let mut effective_depth = 0;
+        for ctx in self.stack.iter_mut() {
+            if let Context::Struct {
+                inline_start,
+                force_multiline,
+                is_root,
+                open_brace_pos: Some(pos),
+                ..
+            } = ctx
+            {
+                // Root doesn't add depth
+                if !*is_root {
+                    // If this struct started inline but hasn't been fixed yet
+                    if *inline_start && !*force_multiline {
+                        *force_multiline = true;
+                        // Content inside this struct should be at effective_depth + 1
+                        fixes.push((*pos, effective_depth + 1));
+                    }
+                    // After forcing multiline, this struct now contributes to depth
+                    effective_depth += 1;
+                }
+            }
+        }
+
+        // Apply fixes from end to start (so positions stay valid)
+        for (pos, indent_depth) in fixes.into_iter().rev() {
+            // Insert newline + indent after the opening brace
+            let indent = self.options.indent.repeat(indent_depth);
+            let insert = format!("\n{}", indent);
+            for (i, b) in insert.bytes().enumerate() {
+                self.out.insert(pos + i, b);
+            }
+
+            // Update all positions in the stack that come after this insertion
+            for ctx in self.stack.iter_mut() {
+                if let Context::Struct {
+                    open_brace_pos: Some(p),
+                    comma_positions,
+                    ..
+                } = ctx
+                {
+                    if *p > pos {
+                        *p += insert.len();
+                    }
+                    for cp in comma_positions.iter_mut() {
+                        if *cp >= pos {
+                            *cp += insert.len();
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// Fix any comma separators in the current struct by replacing them with newlines.
     /// Call this when switching from inline to multiline formatting mid-struct.

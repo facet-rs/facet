@@ -3,5 +3,7 @@ source: crates/styx-format/src/value_format.rs
 expression: result
 ---
 normal-key value1
-key with
+
+"key with spaces" value2
+
 123numeric value3

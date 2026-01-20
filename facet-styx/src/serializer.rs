@@ -55,9 +55,9 @@ impl StyxSerializer {
         }
     }
 
-    /// Consume the serializer and return the output bytes.
+    /// Consume the serializer and return the output bytes, ensuring trailing newline.
     pub fn finish(self) -> Vec<u8> {
-        self.writer.finish()
+        self.writer.finish_document()
     }
 }
 
@@ -449,6 +449,7 @@ impl CompactStyxSerializer {
     }
 
     fn finish(self) -> Vec<u8> {
+        // Compact mode is for inline embedding - no trailing newline
         self.writer.finish()
     }
 }

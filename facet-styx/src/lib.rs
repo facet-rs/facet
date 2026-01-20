@@ -41,6 +41,8 @@
 
 mod error;
 #[cfg(test)]
+mod idempotency_test;
+#[cfg(test)]
 mod other_variant_test;
 mod parser;
 mod schema_error;

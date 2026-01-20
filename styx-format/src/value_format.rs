@@ -2,21 +2,16 @@
 
 use styx_tree::{Entry, Object, Payload, Sequence, Value};
 
-use crate::{FormatOptions, StyxWriter, format_source};
+use crate::{FormatOptions, StyxWriter};
 
 /// Format a Value as a Styx document string.
 ///
 /// The value is treated as the root of a document, so if it's an Object,
 /// it will be formatted without braces (implicit root object).
-///
-/// This first serializes the Value to text, then pipes through the CST-based
-/// formatter to normalize whitespace and indentation.
 pub fn format_value(value: &Value, options: FormatOptions) -> String {
-    let mut formatter = ValueFormatter::new(options.clone());
+    let mut formatter = ValueFormatter::new(options);
     formatter.format_root(value);
-    let raw = formatter.finish();
-    // Normalize through CST formatter
-    format_source(&raw, options)
+    formatter.finish_document()
 }
 
 /// Format a Value as a Styx document string with default options.
@@ -29,10 +24,9 @@ pub fn format_value_default(value: &Value) -> String {
 /// This is useful for code actions that need to format a single object
 /// while respecting its separator style.
 pub fn format_object_braced(obj: &Object, options: FormatOptions) -> String {
-    let mut formatter = ValueFormatter::new(options.clone());
+    let mut formatter = ValueFormatter::new(options);
     formatter.format_object(obj);
-    let raw = formatter.finish();
-    format_source(&raw, options)
+    formatter.finish()
 }
 
 struct ValueFormatter {
@@ -46,8 +40,15 @@ impl ValueFormatter {
         }
     }
 
+    /// Finish and return output without trailing newline.
     fn finish(self) -> String {
         self.writer.finish_string()
+    }
+
+    /// Finish and return output with trailing newline (for documents).
+    fn finish_document(self) -> String {
+        String::from_utf8(self.writer.finish_document())
+            .expect("Styx output should always be valid UTF-8")
     }
 
     fn format_root(&mut self, value: &Value) {
@@ -133,20 +134,8 @@ impl ValueFormatter {
     }
 
     fn format_object_entries(&mut self, obj: &Object) {
-        let entry_count = obj.entries.len();
-        for (i, entry) in obj.entries.iter().enumerate() {
+        for entry in &obj.entries {
             self.format_entry(entry);
-
-            // Add blank lines for readability at root level
-            if self.writer.depth() == 1 && i < entry_count - 1 {
-                // Blank line after:
-                // - schema declaration (@schema path/to/schema.styx)
-                // - entries with doc comments (type definitions)
-                let is_schema_decl = i == 0 && entry.key.is_schema_tag();
-                if is_schema_decl || entry.doc_comment.is_some() {
-                    self.writer.write_str("\n");
-                }
-            }
         }
     }
 
@@ -185,27 +174,13 @@ impl ValueFormatter {
                 // If tagged with no payload, tag is already written (e.g., @schema)
             }
             Some(Payload::Scalar(s)) => {
-                // Format scalar based on its kind
-                use styx_parse::ScalarKind;
-                match s.kind {
-                    ScalarKind::Bare => result.push_str(&s.text),
-                    ScalarKind::Quoted => {
-                        result.push('"');
-                        result.push_str(&crate::scalar::escape_quoted(&s.text));
-                        result.push('"');
-                    }
-                    ScalarKind::Raw => {
-                        // For raw strings, just quote them normally for simplicity
-                        result.push('"');
-                        result.push_str(&crate::scalar::escape_quoted(&s.text));
-                        result.push('"');
-                    }
-                    ScalarKind::Heredoc => {
-                        // Heredocs can't be keys, but format as quoted if somehow here
-                        result.push('"');
-                        result.push_str(&crate::scalar::escape_quoted(&s.text));
-                        result.push('"');
-                    }
+                // Always check if the text can be bare, regardless of original ScalarKind
+                if crate::scalar::can_be_bare(&s.text) {
+                    result.push_str(&s.text);
+                } else {
+                    result.push('"');
+                    result.push_str(&crate::scalar::escape_quoted(&s.text));
+                    result.push('"');
                 }
             }
             Some(Payload::Sequence(_) | Payload::Object(_)) => {
@@ -755,5 +730,258 @@ mod tests {
 
         let result = format_value_default(&root);
         insta::assert_snapshot!(result);
+    }
+
+    // =========================================================================
+    // Blank line behavior tests - testing against CST formatter as source of truth
+    // =========================================================================
+
+    /// Test that ValueFormatter output matches CST formatter for the same input.
+    /// This is the key idempotency property we need.
+    fn assert_matches_cst_formatter(value: &Value, description: &str) {
+        let value_output = format_value_default(value);
+        let cst_output = crate::format_source(&value_output, crate::FormatOptions::default());
+        assert_eq!(
+            value_output, cst_output,
+            "{}: ValueFormatter output should match CST formatter.\n\
+             ValueFormatter produced:\n{}\n\
+             CST formatter would produce:\n{}",
+            description, value_output, cst_output
+        );
+    }
+
+    #[test]
+    fn blank_line_01_two_scalars_at_root() {
+        // Two scalar entries at root - no blank line needed
+        let obj = obj_multiline(vec![
+            entry("name", scalar("Alice")),
+            entry("age", scalar("30")),
+        ]);
+        assert_matches_cst_formatter(&obj, "two scalars at root");
+    }
+
+    #[test]
+    fn blank_line_02_three_scalars_at_root() {
+        let obj = obj_multiline(vec![
+            entry("a", scalar("1")),
+            entry("b", scalar("2")),
+            entry("c", scalar("3")),
+        ]);
+        assert_matches_cst_formatter(&obj, "three scalars at root");
+    }
+
+    #[test]
+    fn blank_line_03_scalar_then_block() {
+        // Scalar followed by block object - needs blank line before block
+        let block = obj_multiline(vec![
+            entry("host", scalar("localhost")),
+            entry("port", scalar("8080")),
+        ]);
+        let obj = obj_multiline(vec![
+            entry("name", scalar("myapp")),
+            entry("server", block),
+        ]);
+        assert_matches_cst_formatter(&obj, "scalar then block");
+    }
+
+    #[test]
+    fn blank_line_04_block_then_scalar() {
+        // Block followed by scalar - needs blank line after block
+        let block = obj_multiline(vec![
+            entry("host", scalar("localhost")),
+        ]);
+        let obj = obj_multiline(vec![
+            entry("server", block),
+            entry("name", scalar("myapp")),
+        ]);
+        assert_matches_cst_formatter(&obj, "block then scalar");
+    }
+
+    #[test]
+    fn blank_line_05_two_blocks() {
+        // Two block objects - needs blank line between them
+        let block1 = obj_multiline(vec![entry("a", scalar("1"))]);
+        let block2 = obj_multiline(vec![entry("b", scalar("2"))]);
+        let obj = obj_multiline(vec![
+            entry("first", block1),
+            entry("second", block2),
+        ]);
+        assert_matches_cst_formatter(&obj, "two blocks");
+    }
+
+    #[test]
+    fn blank_line_06_inline_objects_at_root() {
+        // Inline objects at root - no blank line needed
+        let inline1 = obj_inline(vec![entry("x", scalar("1"))]);
+        let inline2 = obj_inline(vec![entry("y", scalar("2"))]);
+        let obj = obj_multiline(vec![
+            entry("point1", inline1),
+            entry("point2", inline2),
+        ]);
+        assert_matches_cst_formatter(&obj, "inline objects at root");
+    }
+
+    #[test]
+    fn blank_line_07_scalar_inline_scalar() {
+        let inline = obj_inline(vec![entry("x", scalar("1"))]);
+        let obj = obj_multiline(vec![
+            entry("name", scalar("test")),
+            entry("point", inline),
+            entry("count", scalar("5")),
+        ]);
+        assert_matches_cst_formatter(&obj, "scalar inline scalar");
+    }
+
+    #[test]
+    fn blank_line_08_doc_comment_entries() {
+        // Entries with doc comments
+        let obj = obj_multiline(vec![
+            entry_with_doc("name", scalar("Alice"), "The user's name"),
+            entry_with_doc("age", scalar("30"), "Age in years"),
+        ]);
+        assert_matches_cst_formatter(&obj, "doc comment entries");
+    }
+
+    #[test]
+    fn blank_line_09_mixed_doc_and_plain() {
+        let obj = obj_multiline(vec![
+            entry("plain", scalar("1")),
+            entry_with_doc("documented", scalar("2"), "Has docs"),
+            entry("another_plain", scalar("3")),
+        ]);
+        assert_matches_cst_formatter(&obj, "mixed doc and plain");
+    }
+
+    #[test]
+    fn blank_line_10_schema_declaration_first() {
+        // Schema declaration at start should have blank line after
+        let obj = obj_multiline(vec![
+            schema_entry(scalar("schema.styx")),
+            entry("name", scalar("test")),
+        ]);
+        assert_matches_cst_formatter(&obj, "schema declaration first");
+    }
+
+    #[test]
+    fn blank_line_11_nested_blocks_dont_get_extra_blanks() {
+        // Inside a non-root object, no extra blank lines
+        let inner = obj_multiline(vec![
+            entry("a", scalar("1")),
+            entry("b", scalar("2")),
+        ]);
+        let obj = obj_multiline(vec![entry("wrapper", inner)]);
+        assert_matches_cst_formatter(&obj, "nested block internal");
+    }
+
+    #[test]
+    fn blank_line_12_deeply_nested() {
+        let level3 = obj_multiline(vec![entry("deep", scalar("value"))]);
+        let level2 = obj_multiline(vec![entry("inner", level3)]);
+        let obj = obj_multiline(vec![
+            entry("outer", level2),
+            entry("sibling", scalar("test")),
+        ]);
+        assert_matches_cst_formatter(&obj, "deeply nested");
+    }
+
+    #[test]
+    fn blank_line_13_tagged_block() {
+        let tagged_block = tagged_obj(
+            "object",
+            vec![entry("field", tagged("string"))],
+            Separator::Newline,
+        );
+        let obj = obj_multiline(vec![
+            entry("name", scalar("test")),
+            entry("schema", tagged_block),
+        ]);
+        assert_matches_cst_formatter(&obj, "tagged block");
+    }
+
+    #[test]
+    fn blank_line_14_sequence_of_scalars() {
+        let seq = seq_value(vec![scalar("a"), scalar("b"), scalar("c")]);
+        let obj = obj_multiline(vec![
+            entry("items", seq),
+            entry("count", scalar("3")),
+        ]);
+        assert_matches_cst_formatter(&obj, "sequence of scalars");
+    }
+
+    #[test]
+    fn blank_line_15_meta_then_schema_block() {
+        // Real-world pattern: meta block followed by schema block
+        let meta = obj_multiline(vec![
+            entry("id", scalar("test")),
+            entry("version", scalar("1")),
+        ]);
+        let schema_content = tagged_obj(
+            "object",
+            vec![entry("name", tagged("string"))],
+            Separator::Newline,
+        );
+        let schema = obj_multiline(vec![unit_entry(schema_content)]);
+        let obj = obj_multiline(vec![
+            entry("meta", meta),
+            entry("schema", schema),
+        ]);
+        assert_matches_cst_formatter(&obj, "meta then schema block");
+    }
+
+    #[test]
+    fn blank_line_16_three_blocks() {
+        let b1 = obj_multiline(vec![entry("a", scalar("1"))]);
+        let b2 = obj_multiline(vec![entry("b", scalar("2"))]);
+        let b3 = obj_multiline(vec![entry("c", scalar("3"))]);
+        let obj = obj_multiline(vec![
+            entry("first", b1),
+            entry("second", b2),
+            entry("third", b3),
+        ]);
+        assert_matches_cst_formatter(&obj, "three blocks");
+    }
+
+    #[test]
+    fn blank_line_17_block_with_doc_comment() {
+        let block = obj_multiline(vec![entry("inner", scalar("value"))]);
+        let obj = obj_multiline(vec![
+            entry_with_doc("config", block, "Configuration section"),
+            entry("name", scalar("test")),
+        ]);
+        assert_matches_cst_formatter(&obj, "block with doc comment");
+    }
+
+    #[test]
+    fn blank_line_18_empty_inline_objects() {
+        let empty1 = obj_inline(vec![]);
+        let empty2 = obj_inline(vec![]);
+        let obj = obj_multiline(vec![
+            entry("a", empty1),
+            entry("b", empty2),
+        ]);
+        assert_matches_cst_formatter(&obj, "empty inline objects");
+    }
+
+    #[test]
+    fn blank_line_19_single_entry_block() {
+        let block = obj_multiline(vec![entry("only", scalar("one"))]);
+        let obj = obj_multiline(vec![
+            entry("wrapper", block),
+        ]);
+        assert_matches_cst_formatter(&obj, "single entry block");
+    }
+
+    #[test]
+    fn blank_line_20_alternating_scalar_block() {
+        let b1 = obj_multiline(vec![entry("x", scalar("1"))]);
+        let b2 = obj_multiline(vec![entry("y", scalar("2"))]);
+        let obj = obj_multiline(vec![
+            entry("s1", scalar("a")),
+            entry("block1", b1),
+            entry("s2", scalar("b")),
+            entry("block2", b2),
+            entry("s3", scalar("c")),
+        ]);
+        assert_matches_cst_formatter(&obj, "alternating scalar block");
     }
 }
