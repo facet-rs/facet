@@ -1774,6 +1774,37 @@ fn get_field_info_in_type(
         }
     }
 
+    // Check if value is an @object{@KeyType @ValueType} (catch-all pattern)
+    // This handles schemas like `@ @object{@string @Decl}` where any string key is valid
+    if let Some(catchall_value_type) = extract_object_catchall_value_type(value) {
+        if remaining_path.is_empty() {
+            // We're hovering on a catch-all key - return the value type
+            return Some(FieldInfo {
+                type_str: format_type_concise(catchall_value_type),
+                doc_comment: None, // Catch-all keys don't have individual doc comments
+            });
+        } else {
+            // Need to go deeper into the catch-all value type
+            let resolved = resolve_type_reference(catchall_value_type, schema_defs);
+            return get_field_info_in_type(resolved, remaining_path, schema_defs);
+        }
+    }
+
+    // Check if value is an @enum type - if so, search all variants for the field
+    // This handles cases like `Decl @enum{query @Query}` where we need to look
+    // inside variant types (like @Query) to find nested fields (like `from`)
+    if let Some(enum_obj) = extract_enum_object(value) {
+        // Search all enum variants for the field
+        for entry in &enum_obj.entries {
+            // Resolve the variant's value type and recurse
+            let resolved = resolve_type_reference(&entry.value, schema_defs);
+            if let Some(info) = get_field_info_in_type(resolved, path, schema_defs) {
+                return Some(info);
+            }
+        }
+        return None;
+    }
+
     // Try to get the object - handle various wrappings (also resolves type refs)
     let obj = extract_object_from_value_with_defs(value, schema_defs)?;
 
@@ -1867,6 +1898,49 @@ fn extract_map_value_type(value: &Value) -> Option<&Value> {
         2 => Some(&seq.items[1]), // @map(@K @V) - second is value type
         _ => None,
     }
+}
+
+/// Extract the inner object from an `@enum{...}` type.
+///
+/// In Styx schemas, `@enum{variant1 @Type1, variant2 @Type2}` defines an enum
+/// with named variants. Each entry in the object is a variant name -> type mapping.
+///
+/// Returns Some(object) if the value is an @enum with object payload, None otherwise.
+fn extract_enum_object(value: &Value) -> Option<&styx_tree::Object> {
+    let tag = value.tag.as_ref()?;
+    if tag.name != "enum" {
+        return None;
+    }
+    value.as_object()
+}
+
+/// Extract the catch-all value type from an `@object{@KeyType @ValueType}` pattern.
+///
+/// In Styx schemas, `@object{@string @Decl}` means "an object where any string key
+/// maps to a value of type @Decl". The key entry has a tagged key (like `@string`)
+/// rather than a scalar key.
+///
+/// Returns Some(value_type) if the object has exactly one entry with a tagged key
+/// (indicating a catch-all pattern), None otherwise.
+fn extract_object_catchall_value_type(value: &Value) -> Option<&Value> {
+    // Must be @object{...}
+    let tag = value.tag.as_ref()?;
+    if tag.name != "object" {
+        return None;
+    }
+
+    let obj = value.as_object()?;
+
+    // Catch-all pattern: exactly one entry with a tagged key (like @string)
+    if obj.entries.len() == 1 {
+        let entry = &obj.entries[0];
+        // Key must be tagged (e.g., @string), not a scalar
+        if entry.key.tag.is_some() && entry.key.payload.is_none() {
+            return Some(&entry.value);
+        }
+    }
+
+    None
 }
 
 /// Extract an object from a value, unwrapping wrappers like @optional, @default, etc.
@@ -3240,6 +3314,57 @@ schema {
             vec!["syntax_highlight".to_string()],
             "Path should be ['syntax_highlight'], got: {:?}",
             ctx.path
+        );
+    }
+
+    #[test]
+    fn test_hover_with_catchall_key_schema() {
+        // Schema where root is @object{@string @Decl} - a map with typed catch-all keys
+        // This is used by dibs-queries where any string key maps to a @Decl
+        let schema_source = r#"meta {id test}
+schema {
+    Decl @enum{
+        /// A query declaration.
+        query @Query
+    }
+    Query @object{
+        /// Source table to query from.
+        from @optional(@string)
+        /// Filter conditions.
+        where @optional(@object{@string @string})
+    }
+    @ @object{@string @Decl}
+}"#;
+
+        // Hovering on "AllProducts" in a document like:
+        //   AllProducts @query{from product}
+        // Should return type info: @Decl
+        let info = get_field_info_from_schema(schema_source, &["AllProducts"]);
+        assert!(
+            info.is_some(),
+            "Should find field info for dynamic key 'AllProducts' in catch-all schema"
+        );
+        let info = info.unwrap();
+        // The type should be @Decl (the value type of the catch-all)
+        assert!(
+            info.type_str.contains("Decl"),
+            "Type should reference Decl, got: {}",
+            info.type_str
+        );
+
+        // Hovering on nested field "from" inside a query:
+        //   AllProducts @query{from product}
+        // Path would be ["AllProducts", "from"]
+        let info = get_field_info_from_schema(schema_source, &["AllProducts", "from"]);
+        assert!(
+            info.is_some(),
+            "Should find field info for 'from' inside a query"
+        );
+        let info = info.unwrap();
+        assert!(
+            info.type_str.contains("string"),
+            "Type of 'from' should be string, got: {}",
+            info.type_str
         );
     }
 }
