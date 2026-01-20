@@ -389,10 +389,14 @@ where
                     field_item.name.clone()
                 };
 
-                // Check for field-level proxy (format-specific or format-agnostic)
-                if let Some(field) = field_item.field
-                    && let Some(proxy_def) = field.effective_proxy(serializer.format_namespace())
-                {
+                // Check for proxy: first field-level, then container-level on the value's shape
+                let format_ns = serializer.format_namespace();
+                let proxy_def = field_item
+                    .field
+                    .and_then(|f| f.effective_proxy(format_ns))
+                    .or_else(|| field_value.shape().effective_proxy(format_ns));
+
+                if let Some(proxy_def) = proxy_def {
                     match field_value.custom_serialization_with_proxy(proxy_def) {
                         Ok(proxy_peek) => {
                             serializer
@@ -477,11 +481,15 @@ where
                     Some(to_element_name(&field_item.name))
                 };
 
-            // Check for field-level proxy (format-specific or format-agnostic)
-            if let Some(field) = field_item.field
-                && let Some(proxy_def) = field.effective_proxy(serializer.format_namespace())
-            {
-                // Use custom_serialization_with_proxy for field-level proxy
+            // Check for proxy: first field-level, then container-level on the value's shape
+            let format_ns = serializer.format_namespace();
+            let proxy_def = field_item
+                .field
+                .and_then(|f| f.effective_proxy(format_ns))
+                .or_else(|| field_value.shape().effective_proxy(format_ns));
+
+            if let Some(proxy_def) = proxy_def {
+                // Use custom_serialization_with_proxy for proxy
                 match field_value.custom_serialization_with_proxy(proxy_def) {
                     Ok(proxy_peek) => {
                         serialize_value(

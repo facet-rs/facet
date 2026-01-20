@@ -766,15 +766,23 @@ where
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         // Check if the field has a proxy (format-specific or format-agnostic)
         let format_ns = self.parser.format_namespace();
-        let has_proxy = wip
+        let field_proxy = wip
             .parent_field()
-            .and_then(|f| f.effective_proxy(format_ns))
-            .is_some();
+            .and_then(|f| f.effective_proxy(format_ns));
 
-        if has_proxy {
-            // Use custom deserialization through the proxy
+        if field_proxy.is_some() {
+            // Use custom deserialization through the field-level proxy
             // The format-aware version will select the right proxy
             wip = wip.begin_custom_deserialization_with_format(format_ns)?;
+            wip = self.set_string_value(wip, value)?;
+            wip = wip.end()?;
+            Ok(wip)
+        } else if wip.shape().effective_proxy(format_ns).is_some() {
+            // The target shape has a container-level proxy
+            // Use begin_custom_deserialization_from_shape_with_format
+            let (new_wip, _) =
+                wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
+            wip = new_wip;
             wip = self.set_string_value(wip, value)?;
             wip = wip.end()?;
             Ok(wip)
