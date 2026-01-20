@@ -41,9 +41,28 @@ impl quote::ToTokens for Body {
     }
 }
 
+/// Test attribute macro that sets up tracing before running the test.
+///
+/// # Usage
+///
+/// Basic usage (uses `#[test]`):
+/// ```ignore
+/// #[facet_testhelpers::test]
+/// fn my_test() {
+///     // tracing is set up automatically
+/// }
+/// ```
+///
+/// With a custom test attribute (e.g., for async tests):
+/// ```ignore
+/// #[facet_testhelpers::test(tokio::test)]
+/// async fn my_async_test() {
+///     // tracing is set up automatically
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn test(
-    _attr: proc_macro::TokenStream,
+    attr: proc_macro::TokenStream,
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
     let item = TokenStream::from(item);
@@ -58,8 +77,17 @@ pub fn test(
         body,
     } = fdecl;
 
+    // If an attribute argument is provided, use it as the test attribute
+    // e.g., #[facet_testhelpers::test(tokio::test)] -> #[tokio::test]
+    let test_attr = if attr.is_empty() {
+        quote::quote! { #[::core::prelude::rust_2024::test] }
+    } else {
+        let attr = TokenStream::from(attr);
+        quote::quote! { #[#attr] }
+    };
+
     quote::quote! {
-        #[::core::prelude::rust_2024::test]
+        #test_attr
         #until_fn fn #name #until_body {
             ::facet_testhelpers::setup();
 
