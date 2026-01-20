@@ -1524,6 +1524,7 @@ fn collect_channel_ids_recursive(peek: facet::Peek<'_, '_>, ids: &mut Vec<u64>) 
 /// Overwrites channel_id fields in Rx/Tx in declaration order.
 /// Used by the server to apply the authoritative `channels` vec from Request.
 pub fn patch_channel_ids<T: Facet<'static>>(args: &mut T, channels: &[u64]) {
+    debug!(channels = ?channels, "patch_channel_ids: patching channels from wire");
     let mut idx = 0;
     let poke = facet::Poke::new(args);
     patch_channel_ids_recursive(poke, channels, &mut idx);
@@ -2348,10 +2349,16 @@ impl ConnectionHandle {
         // Walk args and bind any streams (allocates channel IDs)
         // This collects receivers that need to be drained but does NOT spawn
         let mut drains = Vec::new();
+        debug!("ConnectionHandle::call: binding streams");
         self.bind_streams(args, &mut drains);
 
         // Collect channel IDs for the Request message
         let channels = collect_channel_ids(args);
+        debug!(
+            channels = ?channels,
+            drain_count = drains.len(),
+            "ConnectionHandle::call: collected channels after bind_streams"
+        );
 
         let payload = facet_postcard::to_vec(args).map_err(TransportError::Encode)?;
 
@@ -2480,12 +2487,14 @@ impl ConnectionHandle {
         drains: &mut Vec<(ChannelId, Receiver<Vec<u8>>)>,
     ) {
         let channel_id = self.alloc_channel_id();
+        debug!(channel_id, "OutgoingBinder::bind_rx_stream: allocated channel_id for Rx");
 
         if let Ok(mut ps) = poke.into_struct() {
             // Set channel_id field by getting mutable access to the u64
             if let Ok(mut channel_id_field) = ps.field_by_name("channel_id")
                 && let Ok(id_ref) = channel_id_field.get_mut::<ChannelId>()
             {
+                debug!(old_id = *id_ref, new_id = channel_id, "OutgoingBinder::bind_rx_stream: overwriting channel_id");
                 *id_ref = channel_id;
             }
 
@@ -2494,6 +2503,7 @@ impl ConnectionHandle {
                 && let Ok(slot) = receiver_field.get_mut::<ReceiverSlot>()
                 && let Some(rx) = slot.take()
             {
+                debug!(channel_id, "OutgoingBinder::bind_rx_stream: took receiver, adding to drains");
                 drains.push((channel_id, rx));
             }
         }
@@ -2503,12 +2513,14 @@ impl ConnectionHandle {
     /// We take the sender and register for incoming Data routing.
     fn bind_tx_stream(&self, poke: facet::Poke<'_, '_>) {
         let channel_id = self.alloc_channel_id();
+        debug!(channel_id, "OutgoingBinder::bind_tx_stream: allocated channel_id for Tx");
 
         if let Ok(mut ps) = poke.into_struct() {
             // Set channel_id field by getting mutable access to the u64
             if let Ok(mut channel_id_field) = ps.field_by_name("channel_id")
                 && let Ok(id_ref) = channel_id_field.get_mut::<ChannelId>()
             {
+                debug!(old_id = *id_ref, new_id = channel_id, "OutgoingBinder::bind_tx_stream: overwriting channel_id");
                 *id_ref = channel_id;
             }
 
@@ -2517,6 +2529,7 @@ impl ConnectionHandle {
                 && let Ok(slot) = sender_field.get_mut::<SenderSlot>()
                 && let Some(tx) = slot.take()
             {
+                debug!(channel_id, "OutgoingBinder::bind_tx_stream: took sender, registering for incoming");
                 // Register for incoming Data routing
                 self.register_incoming(channel_id, tx);
             }
