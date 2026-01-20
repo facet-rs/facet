@@ -1,0 +1,7 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"sql @raw(<<EOF\\nSELECT *\\nEOF)\")"
+---
+sql @raw(<<EOF
+SELECT *
+EOF)

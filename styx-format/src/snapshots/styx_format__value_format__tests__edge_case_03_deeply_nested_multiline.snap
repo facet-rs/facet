@@ -3,6 +3,7 @@ source: crates/styx-format/src/value_format.rs
 expression: result
 ---
 name myapp
+
 server {
     host localhost
     tls {

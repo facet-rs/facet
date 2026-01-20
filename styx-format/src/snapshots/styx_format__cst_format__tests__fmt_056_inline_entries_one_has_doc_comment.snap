@@ -1,0 +1,10 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"config {a @unit, /// doc\\nb @unit, c @unit}\")"
+---
+config {
+    a @unit
+    /// doc
+    b @unit
+    c @unit
+}

@@ -1,0 +1,10 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"config {\\n  // group 1\\n\\n  // group 2\\n  a 1\\n}\")"
+---
+config {
+    // group 1
+
+    // group 2
+    a 1
+}

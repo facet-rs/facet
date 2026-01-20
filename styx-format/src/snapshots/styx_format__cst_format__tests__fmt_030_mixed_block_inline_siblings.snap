@@ -1,0 +1,9 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"a {x 1}\\nb {\\n  y 2\\n}\")"
+---
+a {x 1}
+
+b {
+    y 2
+}

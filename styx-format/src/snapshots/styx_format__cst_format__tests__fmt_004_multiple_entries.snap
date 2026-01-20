@@ -1,0 +1,6 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"foo bar\\nbaz qux\")"
+---
+foo bar
+baz qux

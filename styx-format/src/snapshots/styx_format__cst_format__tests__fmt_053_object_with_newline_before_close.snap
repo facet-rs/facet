@@ -1,0 +1,7 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"foo @object{a @string\\n}\")"
+---
+foo @object{
+    a @string
+}

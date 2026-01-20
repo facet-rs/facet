@@ -3,16 +3,22 @@ source: crates/styx-format/src/cst_format.rs
 expression: output
 ---
 meta {id "crate:captain-config@1", cli captain, description "Configuration read from `.config/captain/config.styx`"}
-schema {@ @object{pre-push @default({clippy true, clippy-features @, nextest true, doc-tests false, doc-test-features @, docs true, docs-features @, cargo-shear true} @object{
-    clippy @default(true @bool)
-    cargo-shear @default(true @bool)
-    /// Features to use for clippy. If None, uses --all-features.
-    clippy-features @default(@ @optional(@seq(@string)))
-    doc-tests @default(false @bool)
-    /// Features to use for docs. If None, uses --all-features.
-    docs-features @default(@ @optional(@seq(@string)))
-    nextest @default(true @bool)
-    docs @default(true @bool)
-    /// Features to use for doc tests. If None, uses --all-features.
-    doc-test-features @default(@ @optional(@seq(@string)))
-}), pre-commit @default({generate-readmes true, rustfmt true, cargo-lock true, arborium true, edition-2024 true} @object{arborium @default(true @bool), generate-readmes @default(true @bool), cargo-lock @default(true @bool), edition-2024 @default(true @bool), rustfmt @default(true @bool)})}}
+
+schema {
+    @ @object{
+        pre-push @default({clippy true, clippy-features @, nextest true, doc-tests false, doc-test-features @, docs true, docs-features @, cargo-shear true} @object{
+            clippy @default(true @bool)
+            cargo-shear @default(true @bool)
+            /// Features to use for clippy. If None, uses --all-features.
+            clippy-features @default(@ @optional(@seq(@string)))
+            doc-tests @default(false @bool)
+            /// Features to use for docs. If None, uses --all-features.
+            docs-features @default(@ @optional(@seq(@string)))
+            nextest @default(true @bool)
+            docs @default(true @bool)
+            /// Features to use for doc tests. If None, uses --all-features.
+            doc-test-features @default(@ @optional(@seq(@string)))
+        })
+        pre-commit @default({generate-readmes true, rustfmt true, cargo-lock true, arborium true, edition-2024 true} @object{arborium @default(true @bool), generate-readmes @default(true @bool), cargo-lock @default(true @bool), edition-2024 @default(true @bool), rustfmt @default(true @bool)})
+    }
+}

@@ -1,0 +1,6 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"empty <<EOF\\nEOF\")"
+---
+empty <<EOF
+EOF

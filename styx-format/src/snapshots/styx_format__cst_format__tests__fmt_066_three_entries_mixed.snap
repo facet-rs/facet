@@ -1,0 +1,11 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"a 1\\nb {\\n  x 1\\n}\\nc 3\")"
+---
+a 1
+
+b {
+    x 1
+}
+
+c 3

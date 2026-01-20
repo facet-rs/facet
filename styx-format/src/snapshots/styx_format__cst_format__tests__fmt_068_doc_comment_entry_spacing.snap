@@ -1,0 +1,9 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"/// doc for a\\na 1\\n/// doc for b\\nb 2\")"
+---
+/// doc for a
+a 1
+
+/// doc for b
+b 2

@@ -1,0 +1,5 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"limits cpu>500m memory>256Mi\")"
+---
+limits cpu>500m memory>256Mi

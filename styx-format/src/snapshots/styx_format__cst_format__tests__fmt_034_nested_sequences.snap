@@ -1,0 +1,5 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"matrix ((1 2) (3 4))\")"
+---
+matrix ((1 2) (3 4))

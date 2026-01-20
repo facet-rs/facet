@@ -1,0 +1,10 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(r#\"type @enum{\n    /// A simple variant\n    simple @unit\n    /// Complex variant\n    complex @object{x @int, y @int}\n}\"#)"
+---
+type @enum{
+    /// A simple variant
+    simple @unit
+    /// Complex variant
+    complex @object{x @int, y @int}
+}

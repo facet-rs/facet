@@ -1,0 +1,9 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"config {\\n  a 1\\n  // middle\\n  b 2\\n}\")"
+---
+config {
+    a 1
+    // middle
+    b 2
+}

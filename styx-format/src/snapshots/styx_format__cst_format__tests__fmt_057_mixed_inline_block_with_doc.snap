@@ -1,0 +1,11 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"schema {@ @object{a @unit, /// doc\\nb @string}}\")"
+---
+schema {
+    @ @object{
+        a @unit
+        /// doc
+        b @string
+    }
+}

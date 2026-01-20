@@ -1,0 +1,5 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(r#\"config {bare word, quoted \"str\", raw r\"path\"}\"#)"
+---
+config {bare word, quoted "str", raw r"path"}

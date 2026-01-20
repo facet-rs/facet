@@ -1,0 +1,5 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"config {a 1, b 2 c 3}\")"
+---
+config {a 1, b 2 c 3}

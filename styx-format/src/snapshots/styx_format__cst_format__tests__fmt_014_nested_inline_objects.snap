@@ -1,0 +1,5 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"outer {inner {value 42}}\")"
+---
+outer {inner {value 42}}

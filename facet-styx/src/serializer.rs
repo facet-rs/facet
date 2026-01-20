@@ -124,6 +124,8 @@ impl FormatSerializer for StyxSerializer {
         // If we just wrote a tag, skip the None payload (e.g., @string instead of @string@)
         if self.just_wrote_tag {
             self.just_wrote_tag = false;
+            // Clear the skip flag so the next element gets proper spacing
+            self.writer.clear_skip_before_value();
             return Ok(());
         }
         self.at_root = false;

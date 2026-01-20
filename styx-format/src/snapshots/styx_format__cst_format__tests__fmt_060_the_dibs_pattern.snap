@@ -1,0 +1,20 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(r#\"schema {@ @object{decls @map(@string@enum{\n    /// A query\n    query @object{\n        params @optional(@object{params @map(@string@enum{uuid @unit, /// doc\n            optional @seq(@type{name T})\n        })})\n    }\n})}}\"#)"
+---
+schema {
+    @ @object{
+        decls @map(@string@enum{
+            /// A query
+            query @object{
+                params @optional(@object{
+                    params @map(@string@enum{
+                        uuid @unit
+                        /// doc
+                        optional @seq(@type{name T})
+                    })
+                })
+            }
+        })
+    }
+}

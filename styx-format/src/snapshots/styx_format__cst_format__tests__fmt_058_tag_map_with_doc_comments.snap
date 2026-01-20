@@ -1,0 +1,10 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"fields @map(@string@enum{/// variant a\\na @unit, /// variant b\\nb @unit})\")"
+---
+fields @map(@string@enum{
+    /// variant a
+    a @unit
+    /// variant b
+    b @unit
+})

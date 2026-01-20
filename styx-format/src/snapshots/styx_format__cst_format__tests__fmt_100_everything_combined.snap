@@ -1,0 +1,31 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(r#\"// Top level comment\nmeta {id \"test@1\"}\n\n/// Schema documentation\nschema {@ @object{\n    /// A string field\n    name @string\n\n    /// An enum with variants\n    kind @enum{\n        /// Simple kind\n        simple @unit\n        /// Complex kind\n        complex @object{\n            /// Nested value\n            value @optional(@int)\n        }\n    }\n\n    /// A sequence\n    items @seq(@string)\n\n    /// A map\n    data @map(@string@object{x @int, y @int})\n}}\"#)"
+---
+// Top level comment
+meta {id "test@1"}
+
+/// Schema documentation
+schema {
+    @ @object{
+        /// A string field
+        name @string
+
+        /// An enum with variants
+        kind @enum{
+            /// Simple kind
+            simple @unit
+            /// Complex kind
+            complex @object{
+                /// Nested value
+                value @optional(@int)
+            }
+        }
+
+        /// A sequence
+        items @seq(@string)
+
+        /// A map
+        data @map(@string@object{x @int, y @int})
+    }
+}

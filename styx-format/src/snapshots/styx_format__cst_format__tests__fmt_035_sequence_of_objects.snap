@@ -1,0 +1,5 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"points ({x 1} {x 2})\")"
+---
+points ({x 1} {x 2})

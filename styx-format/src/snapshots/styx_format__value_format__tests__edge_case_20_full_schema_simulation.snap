@@ -7,6 +7,7 @@ meta {
     version 2024-01-01
     description "\"A test schema\""
 }
+
 schema {
     @ @object{
         name @string

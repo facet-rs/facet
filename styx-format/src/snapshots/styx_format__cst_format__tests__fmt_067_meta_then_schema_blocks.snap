@@ -1,0 +1,11 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"meta {\\n  id test\\n}\\nschema {\\n  @ @string\\n}\")"
+---
+meta {
+    id test
+}
+
+schema {
+    @ @string
+}

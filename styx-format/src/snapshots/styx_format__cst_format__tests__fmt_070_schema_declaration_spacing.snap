@@ -1,0 +1,7 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"@schema foo.styx\\nname test\")"
+---
+@schema foo.styx
+
+name test

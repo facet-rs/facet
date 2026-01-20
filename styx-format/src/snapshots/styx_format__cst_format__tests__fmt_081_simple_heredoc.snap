@@ -1,0 +1,8 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"text <<EOF\\nhello\\nworld\\nEOF\")"
+---
+text <<EOF
+hello
+world
+EOF

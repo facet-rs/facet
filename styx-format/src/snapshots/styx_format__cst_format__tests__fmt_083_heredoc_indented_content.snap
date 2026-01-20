@@ -1,0 +1,8 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"code <<END\\n  indented\\n    more\\nEND\")"
+---
+code <<END
+  indented
+    more
+END

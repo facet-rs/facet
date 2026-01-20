@@ -1,0 +1,7 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"config {\\n  only_one value\\n}\")"
+---
+config {
+    only_one value
+}

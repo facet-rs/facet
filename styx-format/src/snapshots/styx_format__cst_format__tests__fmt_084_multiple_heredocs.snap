@@ -1,0 +1,10 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"a <<A\\nfirst\\nA\\nb <<B\\nsecond\\nB\")"
+---
+a <<A
+first
+A
+b <<B
+second
+B

@@ -1,0 +1,5 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"flags {debug @, verbose @}\")"
+---
+flags {debug @, verbose @}

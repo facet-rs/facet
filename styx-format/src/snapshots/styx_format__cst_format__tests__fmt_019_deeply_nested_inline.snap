@@ -1,0 +1,5 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"a {b {c {d {e 1}}}}\")"
+---
+a {b {c {d {e 1}}}}

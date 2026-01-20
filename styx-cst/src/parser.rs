@@ -258,16 +258,31 @@ impl<'src> CstParser<'src> {
             self.skip_whitespace();
 
             // Parse remaining atoms/attributes as values
+            let mut value_count = 0;
             while !self.at_entry_end(closing) {
                 // Check if we have attributes next
                 if self.at_attribute() {
                     self.builder.start_node(SyntaxKind::VALUE.into());
                     self.parse_attributes(closing);
                     self.builder.finish_node();
+                    value_count += 1;
                 } else {
+                    // If we're in an inline object (closing is RBrace) and we already have a value,
+                    // seeing another bare scalar likely means a missing comma
+                    if closing == Some(TokenKind::RBrace)
+                        && value_count > 0
+                        && self.peek() == TokenKind::BareScalar
+                    {
+                        let pos = self.current_pos();
+                        self.errors.push(ParseError::new(
+                            pos,
+                            "unexpected atom after value (missing comma between entries?)".to_string(),
+                        ));
+                    }
                     self.builder.start_node(SyntaxKind::VALUE.into());
                     self.parse_atom();
                     self.builder.finish_node();
+                    value_count += 1;
                 }
                 self.skip_whitespace();
             }

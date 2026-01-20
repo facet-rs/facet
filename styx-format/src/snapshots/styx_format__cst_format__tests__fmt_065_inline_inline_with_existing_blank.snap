@@ -1,0 +1,7 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"a 1\\n\\nb 2\")"
+---
+a 1
+
+b 2

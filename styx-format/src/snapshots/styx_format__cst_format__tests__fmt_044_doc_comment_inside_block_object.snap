@@ -1,0 +1,8 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"config {\\n  /// doc\\n  foo bar\\n}\")"
+---
+config {
+    /// doc
+    foo bar
+}

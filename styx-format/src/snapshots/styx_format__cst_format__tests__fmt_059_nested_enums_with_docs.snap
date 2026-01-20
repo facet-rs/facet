@@ -1,0 +1,12 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"type @enum{/// first\\na @object{/// inner\\nx @int}, b @unit}\")"
+---
+type @enum{
+    /// first
+    a @object{
+        /// inner
+        x @int
+    }
+    b @unit
+}

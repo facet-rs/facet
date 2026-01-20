@@ -1,0 +1,9 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"config {\\n  sql <<SQL\\nSELECT *\\nSQL\\n}\")"
+---
+config {
+    sql <<SQL
+SELECT *
+SQL
+}

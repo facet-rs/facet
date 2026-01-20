@@ -1,0 +1,5 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"types {s @string, i @int, b @bool, f @float, u @unit}\")"
+---
+types {s @string, i @int, b @bool, f @float, u @unit}

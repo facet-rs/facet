@@ -6,6 +6,7 @@ meta {
     id https://example.com/schema
     version 1.0
 }
+
 schema {
     @ @object{
         name @string

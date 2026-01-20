@@ -1,0 +1,12 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(r#\"meta {id \"app:config@1\", cli myapp}\nschema {@ @object{\n    name @string\n    port @default(8080 @int)\n}}\"#)"
+---
+meta {id "app:config@1", cli myapp}
+
+schema {
+    @ @object{
+        name @string
+        port @default(8080 @int)
+    }
+}

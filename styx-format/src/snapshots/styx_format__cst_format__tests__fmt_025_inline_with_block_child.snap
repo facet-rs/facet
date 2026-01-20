@@ -1,0 +1,9 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"config {nested {\\n  a 1\\n}}\")"
+---
+config {
+    nested {
+        a 1
+    }
+}

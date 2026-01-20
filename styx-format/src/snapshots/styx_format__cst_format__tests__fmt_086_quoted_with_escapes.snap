@@ -1,0 +1,5 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(r#\"msg \"hello\\nworld\\ttab\"\"#)"
+---
+msg "hello\nworld\ttab"

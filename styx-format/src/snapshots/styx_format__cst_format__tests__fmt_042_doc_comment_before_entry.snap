@@ -1,0 +1,6 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"/// doc comment\\nfoo bar\")"
+---
+/// doc comment
+foo bar

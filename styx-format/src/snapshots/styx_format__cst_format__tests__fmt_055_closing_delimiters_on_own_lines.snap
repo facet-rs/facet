@@ -1,0 +1,7 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"foo @a(@b{x 1\\n}\\n)\")"
+---
+foo @a(@b{
+    x 1
+})

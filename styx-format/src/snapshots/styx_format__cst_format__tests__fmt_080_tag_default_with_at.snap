@@ -1,0 +1,5 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"opt @default(@ @optional(@string))\")"
+---
+opt @default(@ @optional(@string))

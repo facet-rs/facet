@@ -7,7 +7,7 @@ use crate::options::{ForceStyle, FormatOptions};
 use crate::scalar::{can_be_bare, count_escapes, count_newlines, escape_quoted};
 
 /// Context for tracking serialization state.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Context {
     /// Inside a struct/object - tracks if we've written any fields
     Struct {
@@ -16,6 +16,8 @@ pub enum Context {
         force_multiline: bool,
         /// True if this struct started on the same line as its key (inline start)
         inline_start: bool,
+        /// Positions of comma separators written in this struct (for fixing mixed separators)
+        comma_positions: Vec<usize>,
     },
     /// Inside a sequence - tracks if we've written any items
     Seq {
@@ -188,6 +190,7 @@ impl StyxWriter {
                 is_root: true,
                 force_multiline,
                 inline_start: false,
+                comma_positions: Vec::new(),
             });
         } else {
             self.out.push(b'{');
@@ -196,6 +199,7 @@ impl StyxWriter {
                 is_root: false,
                 force_multiline,
                 inline_start,
+                comma_positions: Vec::new(),
             });
         }
     }
@@ -209,6 +213,7 @@ impl StyxWriter {
             is_root: false,
             force_multiline,
             inline_start: true,
+            comma_positions: Vec::new(),
         });
     }
 
@@ -230,7 +235,12 @@ impl StyxWriter {
 
         if !is_first {
             if should_inline && !is_root {
+                // Record comma position for potential later fixing
+                let comma_pos = self.out.len();
                 self.out.extend_from_slice(b", ");
+                if let Some(Context::Struct { comma_positions, .. }) = self.stack.last_mut() {
+                    comma_positions.push(comma_pos);
+                }
             } else {
                 self.write_newline_indent();
             }
@@ -270,7 +280,12 @@ impl StyxWriter {
 
         if !is_first {
             if should_inline && !is_root {
+                // Record comma position for potential later fixing
+                let comma_pos = self.out.len();
                 self.out.extend_from_slice(b", ");
+                if let Some(Context::Struct { comma_positions, .. }) = self.stack.last_mut() {
+                    comma_positions.push(comma_pos);
+                }
             } else {
                 self.write_newline_indent();
             }
@@ -449,6 +464,12 @@ impl StyxWriter {
         self.write_variant_tag(name);
     }
 
+    /// Clear the skip_next_before_value flag.
+    /// Call this when a tag's payload is skipped (e.g., None for a unit variant).
+    pub fn clear_skip_before_value(&mut self) {
+        self.skip_next_before_value = false;
+    }
+
     /// Begin a sequence directly after a tag (no space before the paren).
     pub fn begin_seq_after_tag(&mut self) {
         self.out.push(b'(');
@@ -478,6 +499,9 @@ impl StyxWriter {
             *first = false;
             *force_multiline = true;
         }
+
+        // Fix any commas we wrote before this doc comment (they need to become newlines)
+        self.fix_comma_separators();
 
         // For non-first fields, or non-root structs, add newline before doc
         let need_leading_newline = !is_first || !is_root;
@@ -526,6 +550,9 @@ impl StyxWriter {
             *force_multiline = true;
         }
 
+        // Fix any commas we wrote before this doc comment (they need to become newlines)
+        self.fix_comma_separators();
+
         // For non-first fields, or non-root structs, add newline before doc
         let need_leading_newline = !is_first || !is_root;
 
@@ -552,6 +579,41 @@ impl StyxWriter {
     // ─────────────────────────────────────────────────────────────────────────
     // Internal helpers
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// Fix any comma separators in the current struct by replacing them with newlines.
+    /// Call this when switching from inline to multiline formatting mid-struct.
+    fn fix_comma_separators(&mut self) {
+        // Extract comma positions from current struct context
+        let comma_positions = match self.stack.last_mut() {
+            Some(Context::Struct { comma_positions, .. }) => std::mem::take(comma_positions),
+            _ => return,
+        };
+
+        if comma_positions.is_empty() {
+            return;
+        }
+
+        // Calculate the indentation string for this struct
+        let indent = self.options.indent.repeat(self.indent_depth());
+        let newline_indent = format!("\n{}", indent);
+
+        // Process comma positions from end to start (so earlier positions stay valid)
+        for &comma_pos in comma_positions.iter().rev() {
+            // Replace ", " (2 bytes) with "\n" + indent
+            // First, verify this position has ", " (sanity check)
+            if comma_pos + 2 <= self.out.len()
+                && self.out[comma_pos] == b','
+                && self.out[comma_pos + 1] == b' '
+            {
+                // Remove ", " and insert newline+indent
+                self.out.drain(comma_pos..comma_pos + 2);
+                let bytes = newline_indent.as_bytes();
+                for (i, &b) in bytes.iter().enumerate() {
+                    self.out.insert(comma_pos + i, b);
+                }
+            }
+        }
+    }
 
     /// Handle separator before a value in a container.
     pub fn before_value(&mut self) {
@@ -745,5 +807,31 @@ mod tests {
 
         let result = w.finish_string();
         assert_eq!(result, "{a 1, b 2}");
+    }
+
+    #[test]
+    fn test_doc_comment_fixes_commas() {
+        // When a doc comment is added mid-struct, any previously written
+        // commas should be replaced with newlines to avoid mixed separators.
+        let mut w = StyxWriter::with_options(FormatOptions::default().inline());
+        w.begin_struct(false);
+        w.field_key("a").unwrap();
+        w.write_i64(1);
+        w.field_key("b").unwrap();
+        w.write_i64(2);
+        // This doc comment should trigger comma -> newline conversion
+        w.write_doc_comment_and_key("A documented field", "c");
+        w.write_i64(3);
+        w.end_struct().unwrap();
+
+        let result = w.finish_string();
+        // Should NOT contain ", " since commas were replaced with newlines
+        assert!(
+            !result.contains(", "),
+            "Result should not contain commas after doc comment: {}",
+            result
+        );
+        // Should contain newline-separated entries
+        assert!(result.contains("a 1\n"), "Expected newline after a: {}", result);
     }
 }

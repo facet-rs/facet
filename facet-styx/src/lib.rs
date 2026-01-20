@@ -392,4 +392,31 @@ port 8080"#;
         assert_eq!(result.fields.get("foo"), Some(&None));
         assert_eq!(result.fields.get("bar"), Some(&Some("baz".to_string())));
     }
+
+    #[test]
+    fn test_map_schema_spacing() {
+        // When serializing a map with a unit-payload tag key (like @string)
+        // followed by another type, there should be proper spacing.
+        // i.e., `@map(@string @enum{...})` NOT `@map(@string@enum{...})`
+        use crate::schema_types::{Documented, EnumSchema, MapSchema, Schema};
+        use std::collections::HashMap;
+
+        let mut enum_variants = HashMap::new();
+        enum_variants.insert(Documented::new("a".to_string()), Schema::Unit);
+        enum_variants.insert(Documented::new("b".to_string()), Schema::Unit);
+
+        let map_schema = Schema::Map(MapSchema(vec![
+            Documented::new(Schema::String(None)), // Key type: @string (no payload)
+            Documented::new(Schema::Enum(EnumSchema(enum_variants))), // Value type: @enum{...}
+        ]));
+
+        let output = to_string(&map_schema).unwrap();
+
+        // Check that there's a space between @string and @enum
+        assert!(
+            output.contains("@string @enum"),
+            "Expected space between @string and @enum, got: {}",
+            output
+        );
+    }
 }

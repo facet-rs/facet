@@ -1,0 +1,125 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: output
+---
+# dibs-config.styx
+meta {id "crate:dibs@1", cli dibs, description "Configuration loaded from `dibs.styx`."}
+
+schema {
+    @ @object{
+        ///  Database crate configuration.
+        db @object{
+            ///  Name of the crate containing schema definitions (e.g., "my-app-db").
+            crate @optional(@string)
+            ///  Path to a pre-built binary (for faster iteration).
+            ///  If not specified, we'll use `cargo run -p <crate_name>`.
+            binary @optional(@string)
+        }
+    }
+}
+
+# dibs-queries.styx
+meta {id "crate:dibs-queries@1", cli dibs, description "A query file - top level is a map of declaration names to declarations."}
+
+schema {
+    @ @object{
+        decls @map(@string@enum{
+            ///  A query declaration.
+            query @object{
+                ///  Query parameters.
+                params @optional(@object{
+                    params @map(@string@enum{
+                        uuid @unit
+                        bool @unit
+                        int @unit
+                        timestamp @unit
+                        ///  Optional type: @optional(@string) -> Optional(vec![String])
+                        optional @seq(@type{name ParamType})
+                        decimal @unit
+                        string @unit
+                    })
+                })
+                ///  Return only the first result.
+                first @optional(@bool)
+                ///  Raw SQL query string (for raw SQL queries).
+                sql @optional(@string)
+                ///  Limit clause (number or param reference like $limit).
+                limit @optional(@string)
+                ///  Return type specification (for raw SQL queries).
+                returns @optional(@object{
+                    fields @map(@string@enum{
+                        uuid @unit
+                        decimal @unit
+                        bool @unit
+                        timestamp @unit
+                        ///  Optional type: @optional(@string) -> Optional(vec![String])
+                        optional @seq(@type{name ParamType})
+                        int @unit
+                        string @unit
+                    })
+                })
+                ///  Offset clause (number or param reference like $offset).
+                offset @optional(@string)
+                ///  Filter conditions.
+                where @optional(@object{
+                    filters @map(@string@enum{
+                        ///  Equality - bare scalar fallback (e.g., `$handle` or `"value"`)
+                        eq @string
+                        ///  Less than (@lt($param) or @lt(value))
+                        lt @seq(@string)
+                        ///  Greater than (@gt($param) or @gt(value))
+                        gt @seq(@string)
+                        ///  LIKE pattern matching (@like($param) or @like("pattern"))
+                        like @seq(@string)
+                        ///  NULL check (@null)
+                        null @unit
+                        ///  ILIKE pattern matching (@ilike($param) or @ilike("pattern"))
+                        ilike @seq(@string)
+                    })
+                })
+                ///  Order by clause.
+                order_by @optional(@object{
+                    ///  Column name -> direction ("asc" or "desc", None means asc)
+                    columns @map(@string@optional(@string))
+                })
+                ///  Source table to query from (for structured queries).
+                from @optional(@string)
+                ///  Fields to select (for structured queries).
+                select @optional(@object{
+                    fields @map(@string@optional(@enum{
+                        ///  A relation field (`@rel{...}`).
+                        rel @object{
+                            ///  Optional explicit table name.
+                            from @optional(@string)
+                            ///  Filter conditions.
+                            where @optional(@object{
+                                filters @map(@string@enum{
+                                    ///  LIKE pattern matching (@like($param) or @like("pattern"))
+                                    like @seq(@string)
+                                    ///  Less than (@lt($param) or @lt(value))
+                                    lt @seq(@string)
+                                    ///  NULL check (@null)
+                                    null @unit
+                                    ///  Equality - bare scalar fallback (e.g., `$handle` or `"value"`)
+                                    eq @string
+                                    ///  ILIKE pattern matching (@ilike($param) or @ilike("pattern"))
+                                    ilike @seq(@string)
+                                    ///  Greater than (@gt($param) or @gt(value))
+                                    gt @seq(@string)
+                                })
+                            })
+                            ///  Return only the first result.
+                            first @optional(@bool)
+                            ///  Fields to select from the relation.
+                            select @optional(@type{
+                                name Select
+                            })
+                        }
+                        ///  A count aggregation (`@count(table_name)`).
+                        count @seq(@string)
+                    }))
+                })
+            }
+        })
+    }
+}

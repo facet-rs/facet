@@ -1,0 +1,9 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(\"items (\\n  // comment\\n  a\\n  b\\n)\")"
+---
+items (
+    // comment
+    a
+    b
+)

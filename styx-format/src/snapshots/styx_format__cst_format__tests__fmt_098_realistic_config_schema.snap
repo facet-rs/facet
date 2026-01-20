@@ -1,0 +1,22 @@
+---
+source: crates/styx-format/src/cst_format.rs
+expression: "format(r#\"meta {id \"crate:myapp@1\", cli myapp, description \"My application config\"}\nschema {@ @object{\n    /// Server configuration\n    server @object{\n        /// Hostname to bind\n        host @default(\"localhost\" @string)\n        /// Port number\n        port @default(8080 @int)\n    }\n    /// Database settings\n    database @optional(@object{\n        url @string\n        pool_size @default(10 @int)\n    })\n}}\"#)"
+---
+meta {id "crate:myapp@1", cli myapp, description "My application config"}
+
+schema {
+    @ @object{
+        /// Server configuration
+        server @object{
+            /// Hostname to bind
+            host @default("localhost" @string)
+            /// Port number
+            port @default(8080 @int)
+        }
+        /// Database settings
+        database @optional(@object{
+            url @string
+            pool_size @default(10 @int)
+        })
+    }
+}
