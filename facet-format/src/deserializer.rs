@@ -1196,7 +1196,7 @@ where
     /// - Integer types: parse the string as a number
     /// - Transparent newtypes: descend into the inner type
     /// - Option types: None key becomes None, Some(key) recurses into inner type
-    /// - Metadata containers (like Documented<T>): populate doc metadata and recurse into value
+    /// - Metadata containers (like `Documented<T>`): populate doc metadata and recurse into value
     fn deserialize_map_key(
         &mut self,
         mut wip: Partial<'input, BORROW>,
