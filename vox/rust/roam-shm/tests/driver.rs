@@ -1442,9 +1442,69 @@ async fn recursive_calls_with_slot_exhaustion() {
             }
         }
 
-        async fn process_streaming(&self, depth: u32, _data: Rx<String>) -> u32 {
-            // TODO: implement streaming version
-            depth
+        async fn process_streaming(&self, depth: u32, mut data: Rx<String>) -> u32 {
+            eprintln!("GUEST: process_streaming(depth={})", depth);
+
+            // Consume incoming stream in background while we recurse
+            let consumer = tokio::spawn(async move {
+                let mut count = 0u32;
+                while let Ok(Some(msg)) = data.recv().await {
+                    eprintln!("GUEST[depth={}]: received '{}'", depth, msg);
+                    count += 1;
+                }
+                eprintln!("GUEST[depth={}]: stream ended after {} messages", depth, count);
+                count
+            });
+
+            let nested_result = if depth == 0 {
+                0
+            } else if let Some(handle) = self.to_host.get() {
+                // Create a NEW stream to send to the host
+                let (tx, rx) = roam::channel::<String>();
+
+                // Spawn sender that feeds data while we wait for nested call
+                let sender_depth = depth;
+                tokio::spawn(async move {
+                    for i in 0..3 {
+                        let msg = format!("guest_depth{}_msg{}", sender_depth, i);
+                        if tx.send(&msg).await.is_err() {
+                            eprintln!("GUEST[depth={}]: send {} failed", sender_depth, i);
+                            break;
+                        }
+                        // Small delay to spread out slot usage
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    }
+                    eprintln!("GUEST[depth={}]: done sending", sender_depth);
+                });
+
+                let client = HostServiceClient::new(handle.clone());
+                eprintln!("GUEST: calling host.host_process_streaming({})", depth - 1);
+
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    client.host_process_streaming(depth - 1, rx)
+                ).await {
+                    Ok(Ok(r)) => {
+                        eprintln!("GUEST: nested streaming result {} for depth {}", r, depth);
+                        r + 1
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("GUEST: streaming call failed at depth {}: {:?}", depth, e);
+                        1000 + depth
+                    }
+                    Err(_) => {
+                        eprintln!("GUEST: streaming call timeout at depth {}", depth);
+                        2000 + depth
+                    }
+                }
+            } else {
+                eprintln!("GUEST: no host handle!");
+                depth
+            };
+
+            // Wait for our incoming stream to finish
+            let _consumed = consumer.await.unwrap_or(0);
+            nested_result
         }
     }
 
@@ -1488,9 +1548,69 @@ async fn recursive_calls_with_slot_exhaustion() {
             }
         }
 
-        async fn host_process_streaming(&self, depth: u32, _data: Rx<String>) -> u32 {
-            // TODO: implement streaming version
-            depth
+        async fn host_process_streaming(&self, depth: u32, mut data: Rx<String>) -> u32 {
+            eprintln!("HOST: host_process_streaming(depth={})", depth);
+
+            // Consume incoming stream in background while we recurse
+            let consumer = tokio::spawn(async move {
+                let mut count = 0u32;
+                while let Ok(Some(msg)) = data.recv().await {
+                    eprintln!("HOST[depth={}]: received '{}'", depth, msg);
+                    count += 1;
+                }
+                eprintln!("HOST[depth={}]: stream ended after {} messages", depth, count);
+                count
+            });
+
+            let nested_result = if depth == 0 {
+                0
+            } else if let Some(handle) = self.to_guest.get() {
+                // Create a NEW stream to send to the guest
+                let (tx, rx) = roam::channel::<String>();
+
+                // Spawn sender that feeds data while we wait for nested call
+                let sender_depth = depth;
+                tokio::spawn(async move {
+                    for i in 0..3 {
+                        let msg = format!("host_depth{}_msg{}", sender_depth, i);
+                        if tx.send(&msg).await.is_err() {
+                            eprintln!("HOST[depth={}]: send {} failed", sender_depth, i);
+                            break;
+                        }
+                        // Small delay to spread out slot usage
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    }
+                    eprintln!("HOST[depth={}]: done sending", sender_depth);
+                });
+
+                let client = CellServiceClient::new(handle.clone());
+                eprintln!("HOST: calling guest.process_streaming({})", depth - 1);
+
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    client.process_streaming(depth - 1, rx)
+                ).await {
+                    Ok(Ok(r)) => {
+                        eprintln!("HOST: nested streaming result {} for depth {}", r, depth);
+                        r + 1
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("HOST: streaming call failed at depth {}: {:?}", depth, e);
+                        1000 + depth
+                    }
+                    Err(_) => {
+                        eprintln!("HOST: streaming call timeout at depth {}", depth);
+                        2000 + depth
+                    }
+                }
+            } else {
+                eprintln!("HOST: no guest handle!");
+                depth
+            };
+
+            // Wait for our incoming stream to finish
+            let _consumed = consumer.await.unwrap_or(0);
+            nested_result
         }
     }
 
@@ -1578,6 +1698,330 @@ async fn recursive_calls_with_slot_exhaustion() {
             }
             Ok((i, Err(_))) => eprintln!("task {} timed out", i),
             Err(e) => panic!("task panicked: {:?}", e),
+        }
+    }
+
+    // Check if drivers are still alive
+    let guest_alive = !guest_driver_handle.is_finished();
+    let host_alive = !host_driver_handle.is_finished();
+
+    eprintln!("\n=== Driver status ===");
+    eprintln!("Guest driver alive: {}", guest_alive);
+    eprintln!("Host driver alive: {}", host_alive);
+
+    assert!(guest_alive, "Guest driver crashed - likely protocol violation");
+    assert!(host_alive, "Host driver crashed - likely protocol violation");
+}
+
+/// Test recursive STREAMING calls: each level holds an open stream while making nested calls.
+///
+/// This is more aggressive than plain recursive calls because:
+/// 1. Each call level has an active incoming stream being consumed
+/// 2. Each call level creates a NEW outgoing stream to the nested call
+/// 3. With depth=N, we have 2*N active channels simultaneously
+/// 4. With limited slots, this should stress the channel/slot management
+///
+/// The "streaming.unknown" bug might manifest here if channel state gets corrupted
+/// when many channels are open simultaneously across recursion levels.
+#[test(tokio::test)]
+async fn recursive_streaming_calls_with_slot_exhaustion() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("recursive_streaming.shm");
+
+    // Very few slots - streaming recursive calls will exhaust them quickly
+    let config = SegmentConfig {
+        slots_per_guest: 4,
+        ring_size: 64,
+        max_guests: 4,
+        ..SegmentConfig::default()
+    };
+    let mut host = ShmHost::create(&path, config).unwrap();
+
+    let ticket = host
+        .add_peer(roam_shm::spawn::AddPeerOptions {
+            peer_name: Some("recursive-streaming-test".to_string()),
+            on_death: None,
+        })
+        .unwrap();
+    let peer_id = ticket.peer_id;
+    let spawn_args = ticket.into_spawn_args();
+
+    // Lazy handles for bidirectional calls
+    let guest_to_host: std::sync::Arc<std::sync::OnceLock<roam_session::ConnectionHandle>> =
+        std::sync::Arc::new(std::sync::OnceLock::new());
+    let host_to_guest: std::sync::Arc<std::sync::OnceLock<roam_session::ConnectionHandle>> =
+        std::sync::Arc::new(std::sync::OnceLock::new());
+
+    // Guest-side implementation of CellService
+    #[derive(Clone)]
+    struct CellServiceImpl {
+        to_host: std::sync::Arc<std::sync::OnceLock<roam_session::ConnectionHandle>>,
+    }
+
+    impl CellService for CellServiceImpl {
+        async fn process(&self, depth: u32) -> u32 {
+            depth // Not used in this test
+        }
+
+        async fn process_streaming(&self, depth: u32, mut data: Rx<String>) -> u32 {
+            eprintln!("GUEST: process_streaming(depth={})", depth);
+
+            // Consume incoming stream in background while we recurse
+            let consumer = tokio::spawn(async move {
+                let mut count = 0u32;
+                while let Ok(Some(msg)) = data.recv().await {
+                    eprintln!("GUEST[depth={}]: received '{}'", depth, msg);
+                    count += 1;
+                }
+                eprintln!("GUEST[depth={}]: stream ended after {} messages", depth, count);
+                count
+            });
+
+            let nested_result = if depth == 0 {
+                0
+            } else if let Some(handle) = self.to_host.get() {
+                // Create a NEW stream to send to the host
+                let (tx, rx) = roam::channel::<String>();
+
+                // Spawn sender that feeds data while we wait for nested call
+                let sender_depth = depth;
+                tokio::spawn(async move {
+                    for i in 0..3 {
+                        let msg = format!("guest_depth{}_msg{}", sender_depth, i);
+                        if tx.send(&msg).await.is_err() {
+                            eprintln!("GUEST[depth={}]: send {} failed", sender_depth, i);
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    }
+                    eprintln!("GUEST[depth={}]: done sending", sender_depth);
+                });
+
+                let client = HostServiceClient::new(handle.clone());
+                eprintln!("GUEST: calling host.host_process_streaming({})", depth - 1);
+
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    client.host_process_streaming(depth - 1, rx)
+                ).await {
+                    Ok(Ok(r)) => {
+                        eprintln!("GUEST: nested streaming result {} for depth {}", r, depth);
+                        r + 1
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("GUEST: streaming call failed at depth {}: {:?}", depth, e);
+                        1000 + depth
+                    }
+                    Err(_) => {
+                        eprintln!("GUEST: streaming call timeout at depth {}", depth);
+                        2000 + depth
+                    }
+                }
+            } else {
+                eprintln!("GUEST: no host handle!");
+                depth
+            };
+
+            let _consumed = consumer.await.unwrap_or(0);
+            nested_result
+        }
+    }
+
+    // Host-side implementation of HostService
+    #[derive(Clone)]
+    struct HostServiceImpl {
+        to_guest: std::sync::Arc<std::sync::OnceLock<roam_session::ConnectionHandle>>,
+    }
+
+    impl HostService for HostServiceImpl {
+        async fn host_process(&self, depth: u32) -> u32 {
+            depth // Not used in this test
+        }
+
+        async fn host_process_streaming(&self, depth: u32, mut data: Rx<String>) -> u32 {
+            eprintln!("HOST: host_process_streaming(depth={})", depth);
+
+            // Consume incoming stream in background while we recurse
+            let consumer = tokio::spawn(async move {
+                let mut count = 0u32;
+                while let Ok(Some(msg)) = data.recv().await {
+                    eprintln!("HOST[depth={}]: received '{}'", depth, msg);
+                    count += 1;
+                }
+                eprintln!("HOST[depth={}]: stream ended after {} messages", depth, count);
+                count
+            });
+
+            let nested_result = if depth == 0 {
+                0
+            } else if let Some(handle) = self.to_guest.get() {
+                // Create a NEW stream to send to the guest
+                let (tx, rx) = roam::channel::<String>();
+
+                // Spawn sender that feeds data while we wait for nested call
+                let sender_depth = depth;
+                tokio::spawn(async move {
+                    for i in 0..3 {
+                        let msg = format!("host_depth{}_msg{}", sender_depth, i);
+                        if tx.send(&msg).await.is_err() {
+                            eprintln!("HOST[depth={}]: send {} failed", sender_depth, i);
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    }
+                    eprintln!("HOST[depth={}]: done sending", sender_depth);
+                });
+
+                let client = CellServiceClient::new(handle.clone());
+                eprintln!("HOST: calling guest.process_streaming({})", depth - 1);
+
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    client.process_streaming(depth - 1, rx)
+                ).await {
+                    Ok(Ok(r)) => {
+                        eprintln!("HOST: nested streaming result {} for depth {}", r, depth);
+                        r + 1
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("HOST: streaming call failed at depth {}: {:?}", depth, e);
+                        1000 + depth
+                    }
+                    Err(_) => {
+                        eprintln!("HOST: streaming call timeout at depth {}", depth);
+                        2000 + depth
+                    }
+                }
+            } else {
+                eprintln!("HOST: no guest handle!");
+                depth
+            };
+
+            let _consumed = consumer.await.unwrap_or(0);
+            nested_result
+        }
+    }
+
+    let cell_impl = CellServiceImpl { to_host: guest_to_host.clone() };
+    let host_impl = HostServiceImpl { to_guest: host_to_guest.clone() };
+
+    let guest_transport = ShmGuestTransport::from_spawn_args(spawn_args).unwrap();
+    let (guest_outbound, guest_driver) = establish_guest(
+        guest_transport,
+        CellServiceDispatcher::new(cell_impl)
+    );
+
+    let (host_driver, mut handles, _driver_handle) =
+        establish_multi_peer_host(host, vec![(peer_id, HostServiceDispatcher::new(host_impl))]);
+    let host_outbound = handles.remove(&peer_id).unwrap();
+
+    // Wire up the callbacks
+    let _ = guest_to_host.set(guest_outbound.clone());
+    let _ = host_to_guest.set(host_outbound.clone());
+
+    let guest_driver_handle = tokio::spawn(guest_driver.run());
+    let host_driver_handle = tokio::spawn(host_driver.run());
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    // Test 1: Simple streaming recursive call (should work)
+    eprintln!("\n=== Streaming Test 1: depth=2 (should succeed) ===");
+    let (tx, rx) = roam::channel::<String>();
+    tokio::spawn(async move {
+        for i in 0..3 {
+            let msg = format!("initial_msg{}", i);
+            if tx.send(&msg).await.is_err() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    });
+
+    let client = CellServiceClient::new(host_outbound.clone());
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        client.process_streaming(2, rx)
+    ).await;
+
+    match &result {
+        Ok(Ok(n)) => eprintln!("streaming depth=2 returned {}", n),
+        Ok(Err(e)) => {
+            let err_str = format!("{:?}", e);
+            eprintln!("streaming depth=2 failed: {}", err_str);
+            // Any error in the streaming recursive test is likely the bug we're hunting
+            panic!("BUG: streaming recursive calls failed: {}", err_str);
+        }
+        Err(_) => panic!("streaming depth=2 timed out - likely deadlock or protocol violation"),
+    }
+
+    // Test 2: Deeper streaming recursion - more channels open simultaneously
+    eprintln!("\n=== Streaming Test 2: depth=6 (many concurrent streams) ===");
+    let (tx2, rx2) = roam::channel::<String>();
+    tokio::spawn(async move {
+        for i in 0..5 {
+            let msg = format!("deep_msg{}", i);
+            if tx2.send(&msg).await.is_err() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    });
+
+    let result2 = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        client.process_streaming(6, rx2)
+    ).await;
+
+    match &result2 {
+        Ok(Ok(n)) => eprintln!("streaming depth=6 returned {}", n),
+        Ok(Err(e)) => {
+            let err_str = format!("{:?}", e);
+            eprintln!("streaming depth=6 failed: {}", err_str);
+            if err_str.contains("streaming.unknown") {
+                panic!("BUG: deep streaming recursive calls caused protocol violation: {}", err_str);
+            }
+        }
+        Err(_) => eprintln!("streaming depth=6 timed out (may be expected with slot exhaustion)"),
+    }
+
+    // Test 3: Multiple concurrent streaming recursive calls
+    eprintln!("\n=== Streaming Test 3: 3 concurrent streaming depth=3 calls ===");
+    let mut tasks = Vec::new();
+    for i in 0..3 {
+        let client = CellServiceClient::new(host_outbound.clone());
+        let (tx, rx) = roam::channel::<String>();
+        let task_i = i;
+        tokio::spawn(async move {
+            for j in 0..3 {
+                let msg = format!("concurrent_{}_msg{}", task_i, j);
+                if tx.send(&msg).await.is_err() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        });
+        tasks.push(tokio::spawn(async move {
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                client.process_streaming(3, rx)
+            ).await;
+            (i, result)
+        }));
+    }
+
+    let results = futures::future::join_all(tasks).await;
+    for result in results {
+        match result {
+            Ok((i, Ok(Ok(n)))) => eprintln!("streaming task {} returned {}", i, n),
+            Ok((i, Ok(Err(e)))) => {
+                let err_str = format!("{:?}", e);
+                eprintln!("streaming task {} failed: {}", i, err_str);
+                if err_str.contains("streaming.unknown") {
+                    panic!("BUG: concurrent streaming recursive calls caused protocol violation");
+                }
+            }
+            Ok((i, Err(_))) => eprintln!("streaming task {} timed out", i),
+            Err(e) => panic!("streaming task panicked: {:?}", e),
         }
     }
 
