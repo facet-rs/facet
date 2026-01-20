@@ -35,5 +35,23 @@ hints {
         )
         schema {id crate:tracey-config@1, cli tracey}
     }
+    dibs {
+        title "Dibs"
+        description "Postgres toolkit for Rust"
+        homepage "https://github.com/bearcove/dibs"
+        patterns (
+            "{git_root}/.config/dibs.styx"
+        )
+        schema {id crate:dibs@1, cli dibs}
+    }
+    dibs-queries {
+        title "Dibs Queries"
+        description "Query DSL for dibs"
+        homepage "https://github.com/bearcove/dibs"
+        patterns (
+            "{git_root}/.dibs-queries/*.styx"
+        )
+        schema {id crate:dibs-queries@1, cli dibs}
+    }
 }
 
