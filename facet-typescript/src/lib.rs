@@ -327,7 +327,22 @@ impl TypeScriptGenerator {
             Def::Undefined => {
                 // User-defined types - queue for generation and return name
                 match &shape.ty {
-                    Type::User(UserType::Struct(_) | UserType::Enum(_)) => {
+                    Type::User(UserType::Struct(st)) => {
+                        // Handle tuples specially - inline them as [T1, T2, ...] since their
+                        // type_identifier "(…)" is not a valid TypeScript identifier
+                        if st.kind == StructKind::Tuple {
+                            let types: Vec<String> = st
+                                .fields
+                                .iter()
+                                .map(|f| self.type_for_shape(f.shape.get()))
+                                .collect();
+                            format!("[{}]", types.join(", "))
+                        } else {
+                            self.add_shape(shape);
+                            shape.type_identifier.to_string()
+                        }
+                    }
+                    Type::User(UserType::Enum(_)) => {
                         self.add_shape(shape);
                         shape.type_identifier.to_string()
                     }
@@ -516,6 +531,43 @@ mod tests {
         }
 
         let ts = to_typescript::<Message>();
+        insta::assert_snapshot!(ts);
+    }
+
+    #[test]
+    fn test_struct_with_tuple_field() {
+        #[derive(Facet)]
+        struct Container {
+            coordinates: (i32, i32),
+        }
+
+        let ts = to_typescript::<Container>();
+        insta::assert_snapshot!(ts);
+    }
+
+    #[test]
+    fn test_struct_with_single_element_tuple() {
+        #[derive(Facet)]
+        struct Wrapper {
+            value: (String,),
+        }
+
+        let ts = to_typescript::<Wrapper>();
+        insta::assert_snapshot!(ts);
+    }
+
+    #[test]
+    fn test_enum_with_tuple_variant() {
+        #[derive(Facet)]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum Event {
+            Click { x: i32, y: i32 },
+            Move((i32, i32)),
+            Resize { dimensions: (u32, u32) },
+        }
+
+        let ts = to_typescript::<Event>();
         insta::assert_snapshot!(ts);
     }
 }
