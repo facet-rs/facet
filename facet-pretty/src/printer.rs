@@ -120,6 +120,8 @@ pub struct PrettyPrinter {
     minimal_option_names: bool,
     /// Whether to show doc comments in output
     show_doc_comments: bool,
+    /// Maximum length for strings/bytes before truncating the middle (None = no limit)
+    max_content_len: Option<usize>,
 }
 
 impl Default for PrettyPrinter {
@@ -139,6 +141,7 @@ impl PrettyPrinter {
             list_u8_as_bytes: true,
             minimal_option_names: false,
             show_doc_comments: false,
+            max_content_len: None,
         }
     }
 
@@ -175,6 +178,15 @@ impl PrettyPrinter {
     /// Enable or disable doc comments in output
     pub const fn with_doc_comments(mut self, show: bool) -> Self {
         self.show_doc_comments = show;
+        self
+    }
+
+    /// Set the maximum length for strings and byte arrays before truncating
+    ///
+    /// When set, strings and byte arrays longer than this limit will be
+    /// truncated in the middle, showing the beginning and end with `...` between.
+    pub const fn with_max_content_len(mut self, max_len: usize) -> Self {
+        self.max_content_len = Some(max_len);
         self
     }
 
@@ -304,44 +316,12 @@ impl PrettyPrinter {
         match (shape.def, shape.ty) {
             (_, Type::Primitive(PrimitiveType::Textual(TextualType::Str))) => {
                 let value = value.get::<str>().unwrap();
-                let mut hashes = 0usize;
-
-                let mut rest = value;
-                while let Some(idx) = rest.find('"') {
-                    rest = &rest[idx + 1..];
-                    let before = rest.len();
-                    rest = rest.trim_start_matches('#');
-                    let after = rest.len();
-                    let count = before - after;
-                    hashes = Ord::max(hashes, 1 + count);
-                }
-
-                let pad = "";
-                let width = hashes.saturating_sub(1);
-                if hashes > 0 {
-                    write!(f, "r{pad:#<width$}")?;
-                }
-                write!(f, "\"")?;
-                if self.use_colors() {
-                    write!(f, "{}", value.color(tokyo_night::STRING))?;
-                } else {
-                    write!(f, "{value}")?;
-                }
-                write!(f, "\"")?;
-                if hashes > 0 {
-                    write!(f, "{pad:#<width$}")?;
-                }
+                self.format_str_value(f, value)?;
             }
             // Handle String specially to add quotes (like &str)
             (Def::Scalar, _) if value.shape().id == <alloc::string::String as Facet>::SHAPE.id => {
                 let s = value.get::<alloc::string::String>().unwrap();
-                write!(f, "\"")?;
-                if self.use_colors() {
-                    write!(f, "{}", s.color(tokyo_night::STRING))?;
-                } else {
-                    write!(f, "{s}")?;
-                }
-                write!(f, "\"")?;
+                self.format_str_value(f, s)?;
             }
             (Def::Scalar, _) => self.format_scalar(value, f)?,
             (Def::Option(_), _) => {
@@ -547,26 +527,87 @@ impl PrettyPrinter {
 
                 if !list.is_empty() {
                     if list.def().t().is_type::<u8>() && self.list_u8_as_bytes {
+                        let total_len = list.len();
+                        let truncate = self.max_content_len.is_some_and(|max| total_len > max);
+
                         self.write_punctuation(f, " [")?;
-                        for (idx, item) in list.iter().enumerate() {
-                            if !short && idx % 16 == 0 {
+
+                        if truncate {
+                            let max = self.max_content_len.unwrap();
+                            let half = max / 2;
+                            let start_count = half;
+                            let end_count = half;
+
+                            // Show beginning
+                            for (idx, item) in list.iter().enumerate().take(start_count) {
+                                if !short && idx % 16 == 0 {
+                                    writeln!(f)?;
+                                    self.indent(f, format_depth + 1)?;
+                                }
+                                write!(f, " ")?;
+                                let byte = *item.get::<u8>().unwrap();
+                                if self.use_colors() {
+                                    let mut hasher = DefaultHasher::new();
+                                    byte.hash(&mut hasher);
+                                    let hash = hasher.finish();
+                                    let color = self.color_generator.generate_color(hash);
+                                    let rgb = Rgb(color.r, color.g, color.b);
+                                    write!(f, "{}", format!("{byte:02x}").color(rgb))?;
+                                } else {
+                                    write!(f, "{byte:02x}")?;
+                                }
+                            }
+
+                            // Show ellipsis
+                            let omitted = total_len - start_count - end_count;
+                            if !short {
                                 writeln!(f)?;
                                 self.indent(f, format_depth + 1)?;
                             }
-                            write!(f, " ")?;
+                            write!(f, " ...({omitted} bytes)...")?;
 
-                            let byte = *item.get::<u8>().unwrap();
-                            if self.use_colors() {
-                                let mut hasher = DefaultHasher::new();
-                                byte.hash(&mut hasher);
-                                let hash = hasher.finish();
-                                let color = self.color_generator.generate_color(hash);
-                                let rgb = Rgb(color.r, color.g, color.b);
-                                write!(f, "{}", format!("{byte:02x}").color(rgb))?;
-                            } else {
-                                write!(f, "{byte:02x}")?;
+                            // Show end
+                            for (idx, item) in list.iter().enumerate().skip(total_len - end_count) {
+                                let display_idx = start_count + 1 + (idx - (total_len - end_count));
+                                if !short && display_idx.is_multiple_of(16) {
+                                    writeln!(f)?;
+                                    self.indent(f, format_depth + 1)?;
+                                }
+                                write!(f, " ")?;
+                                let byte = *item.get::<u8>().unwrap();
+                                if self.use_colors() {
+                                    let mut hasher = DefaultHasher::new();
+                                    byte.hash(&mut hasher);
+                                    let hash = hasher.finish();
+                                    let color = self.color_generator.generate_color(hash);
+                                    let rgb = Rgb(color.r, color.g, color.b);
+                                    write!(f, "{}", format!("{byte:02x}").color(rgb))?;
+                                } else {
+                                    write!(f, "{byte:02x}")?;
+                                }
+                            }
+                        } else {
+                            for (idx, item) in list.iter().enumerate() {
+                                if !short && idx % 16 == 0 {
+                                    writeln!(f)?;
+                                    self.indent(f, format_depth + 1)?;
+                                }
+                                write!(f, " ")?;
+
+                                let byte = *item.get::<u8>().unwrap();
+                                if self.use_colors() {
+                                    let mut hasher = DefaultHasher::new();
+                                    byte.hash(&mut hasher);
+                                    let hash = hasher.finish();
+                                    let color = self.color_generator.generate_color(hash);
+                                    let rgb = Rgb(color.r, color.g, color.b);
+                                    write!(f, "{}", format!("{byte:02x}").color(rgb))?;
+                                } else {
+                                    write!(f, "{byte:02x}")?;
+                                }
                             }
                         }
+
                         if !short {
                             writeln!(f)?;
                             self.indent(f, format_depth)?;
@@ -1235,8 +1276,90 @@ impl PrettyPrinter {
         }
     }
 
-    /// Format a string for dynamic values
+    /// Format a &str or String value with optional truncation and raw string handling
+    fn format_str_value(&self, f: &mut dyn Write, value: &str) -> fmt::Result {
+        // Check if truncation is needed
+        if let Some(max) = self.max_content_len
+            && value.len() > max
+        {
+            return self.format_truncated_str(f, value, max);
+        }
+
+        // Normal formatting with raw string handling for quotes
+        let mut hashes = 0usize;
+        let mut rest = value;
+        while let Some(idx) = rest.find('"') {
+            rest = &rest[idx + 1..];
+            let before = rest.len();
+            rest = rest.trim_start_matches('#');
+            let after = rest.len();
+            let count = before - after;
+            hashes = Ord::max(hashes, 1 + count);
+        }
+
+        let pad = "";
+        let width = hashes.saturating_sub(1);
+        if hashes > 0 {
+            write!(f, "r{pad:#<width$}")?;
+        }
+        write!(f, "\"")?;
+        if self.use_colors() {
+            write!(f, "{}", value.color(tokyo_night::STRING))?;
+        } else {
+            write!(f, "{value}")?;
+        }
+        write!(f, "\"")?;
+        if hashes > 0 {
+            write!(f, "{pad:#<width$}")?;
+        }
+        Ok(())
+    }
+
+    /// Format a truncated string showing beginning...end
+    fn format_truncated_str(&self, f: &mut dyn Write, s: &str, max: usize) -> fmt::Result {
+        let half = max / 2;
+
+        // Find char boundary for start portion
+        let start_end = s
+            .char_indices()
+            .take_while(|(i, _)| *i < half)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+
+        // Find char boundary for end portion
+        let end_start = s
+            .char_indices()
+            .rev()
+            .take_while(|(i, _)| s.len() - *i <= half)
+            .last()
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
+
+        let omitted = s[start_end..end_start].chars().count();
+        let start_part = &s[..start_end];
+        let end_part = &s[end_start..];
+
+        if self.use_colors() {
+            write!(
+                f,
+                "\"{}\"...({omitted} chars)...\"{}\"",
+                start_part.color(tokyo_night::STRING),
+                end_part.color(tokyo_night::STRING)
+            )
+        } else {
+            write!(f, "\"{start_part}\"...({omitted} chars)...\"{end_part}\"")
+        }
+    }
+
+    /// Format a string for dynamic values (uses debug escaping for special chars)
     fn format_string(&self, f: &mut dyn Write, s: &str) -> fmt::Result {
+        if let Some(max) = self.max_content_len
+            && s.len() > max
+        {
+            return self.format_truncated_str(f, s, max);
+        }
+
         if self.use_colors() {
             write!(f, "\"{}\"", s.color(tokyo_night::STRING))
         } else {
@@ -1247,9 +1370,30 @@ impl PrettyPrinter {
     /// Format bytes for dynamic values
     fn format_bytes(&self, f: &mut dyn Write, bytes: &[u8]) -> fmt::Result {
         write!(f, "b\"")?;
-        for byte in bytes {
-            write!(f, "\\x{byte:02x}")?;
+
+        match self.max_content_len {
+            Some(max) if bytes.len() > max => {
+                // Show beginning ... end
+                let half = max / 2;
+                let start = half;
+                let end = half;
+
+                for byte in &bytes[..start] {
+                    write!(f, "\\x{byte:02x}")?;
+                }
+                let omitted = bytes.len() - start - end;
+                write!(f, "\"...({omitted} bytes)...b\"")?;
+                for byte in &bytes[bytes.len() - end..] {
+                    write!(f, "\\x{byte:02x}")?;
+                }
+            }
+            _ => {
+                for byte in bytes {
+                    write!(f, "\\x{byte:02x}")?;
+                }
+            }
         }
+
         write!(f, "\"")
     }
 
@@ -1340,6 +1484,7 @@ impl PrettyPrinter {
             list_u8_as_bytes: self.list_u8_as_bytes,
             minimal_option_names: self.minimal_option_names,
             show_doc_comments: self.show_doc_comments,
+            max_content_len: self.max_content_len,
         };
         printer
             .format_unified(
@@ -2043,5 +2188,43 @@ mod tests {
             formatted.spans.contains_key(&idx1_path),
             "index 1 span not found"
         );
+    }
+
+    #[test]
+    fn test_max_content_len_string() {
+        let printer = PrettyPrinter::new()
+            .with_colors(ColorMode::Never)
+            .with_max_content_len(20);
+
+        // Short string - no truncation
+        let short = "hello";
+        let output = printer.format(&short);
+        assert_eq!(output, "\"hello\"");
+
+        // Long string - should truncate middle
+        let long = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let output = printer.format(&long);
+        assert!(output.contains("..."), "should contain ellipsis: {}", output);
+        assert!(output.contains("chars"), "should mention chars: {}", output);
+        assert!(output.starts_with("\"abc"), "should start with beginning: {}", output);
+        assert!(output.ends_with("89\""), "should end with ending: {}", output);
+    }
+
+    #[test]
+    fn test_max_content_len_bytes() {
+        let printer = PrettyPrinter::new()
+            .with_colors(ColorMode::Never)
+            .with_max_content_len(10);
+
+        // Short bytes - no truncation
+        let short: Vec<u8> = vec![1, 2, 3];
+        let output = printer.format(&short);
+        assert!(output.contains("01 02 03"), "should show all bytes: {}", output);
+
+        // Long bytes - should truncate middle
+        let long: Vec<u8> = (0..50).collect();
+        let output = printer.format(&long);
+        assert!(output.contains("..."), "should contain ellipsis: {}", output);
+        assert!(output.contains("bytes"), "should mention bytes: {}", output);
     }
 }
