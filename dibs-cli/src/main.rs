@@ -17,7 +17,6 @@ use ratatui::{
 
 mod config;
 mod highlight;
-mod query_schema;
 mod service;
 mod tables;
 mod tui;
@@ -132,7 +131,7 @@ fn run(cli: Cli) {
             // No subcommand: launch unified TUI (the default human interface)
             if stdout().is_terminal() {
                 // Try to load config for roam connection
-                let config = config::Config::load().ok();
+                let config = config::load().ok();
                 let app = tui::App::new();
                 if let Err(e) = app.run(config.as_ref().map(|(c, _)| c)) {
                     eprintln!("TUI error: {}", e);
@@ -857,7 +856,7 @@ fn run_migrate() {
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
     // Try to load dibs.toml - if present, use roam
-    if let Ok((cfg, config_path)) = config::Config::load() {
+    if let Ok((cfg, config_path)) = config::load() {
         rt.block_on(run_migrate_via_roam(&cfg, &config_path, &url));
     } else {
         // No dibs.toml - use local migration runner
@@ -1001,7 +1000,7 @@ fn run_status() {
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
     // Try to load dibs.toml - if present, use roam
-    if let Ok((cfg, config_path)) = config::Config::load() {
+    if let Ok((cfg, config_path)) = config::load() {
         rt.block_on(run_status_via_roam(&cfg, &config_path, &url));
     } else {
         // No dibs.toml - use local migration status
@@ -1146,7 +1145,7 @@ fn run_diff() {
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
     // Try to load dibs.toml - if present, use roam to call the db crate
-    if let Ok((cfg, config_path)) = config::Config::load() {
+    if let Ok((cfg, config_path)) = config::load() {
         rt.block_on(run_diff_via_roam(&cfg, &config_path, &url));
     } else {
         // No dibs.toml - use local schema collection (legacy mode)

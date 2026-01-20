@@ -12,12 +12,14 @@ name = "dibs"
 path = "src/main.rs"
 
 [build-dependencies]
-facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
+dibs-config = { path = "../dibs-config" }
+dibs-query-schema = { path = "../dibs-query-schema" }
 facet-styx = { git = "https://github.com/bearcove/styx", branch = "main" }
 
 [dependencies]
 styx-embed = { git = "https://github.com/bearcove/styx", branch = "main" }
 dibs = { path = "../dibs" }
+dibs-config = { path = "../dibs-config" }
 dibs-proto = { path = "../dibs-proto" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util"] }
 tokio-postgres = "0.7"

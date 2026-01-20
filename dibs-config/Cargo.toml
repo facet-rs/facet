@@ -1,0 +1,8 @@
+[package]
+name = "dibs-config"
+version = "0.1.0"
+edition = "2024"
+description = "Facet types for the dibs configuration schema"
+
+[dependencies]
+facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
