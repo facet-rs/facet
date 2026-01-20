@@ -53,7 +53,7 @@ mod serializer;
 mod tag_events_test;
 mod tracing_macros;
 
-pub use error::{StyxError, StyxErrorKind};
+pub use error::{RenderError, StyxError, StyxErrorKind};
 pub use facet_format::DeserializeError;
 pub use facet_format::SerializeError;
 pub use parser::StyxParser;
