@@ -1,0 +1,8 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts
+---
+export type Event =
+  | { Click: { x: number; y: number } }
+  | { Move: [number, number] }
+  | { Resize: { dimensions: [number, number] } };
