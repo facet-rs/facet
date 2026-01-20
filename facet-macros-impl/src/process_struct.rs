@@ -1859,6 +1859,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 // - traits: compile-time directive for vtable generation
                 // - auto_traits: compile-time directive for vtable generation
                 // - proxy: sets Shape::proxy for container-level proxy
+                // - ns::proxy: sets Shape::format_proxies for format-specific container-level proxy
                 // - where: compile-time directive for custom generic bounds
                 if attr.is_builtin() {
                     let key = attr.key_str();
@@ -1874,7 +1875,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                             | "where"
                     )
                 } else {
-                    true
+                    // Non-builtin (namespaced) attributes: filter out format-specific proxy
+                    // which is handled specially like the builtin proxy
+                    let key = attr.key_str();
+                    key != "proxy"
                 }
             })
             .map(|attr| {
@@ -2013,6 +2017,119 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             (proxy_impl, proxy_ref)
         } else {
             (quote! {}, quote! {})
+        }
+    };
+
+    // Container-level format-specific proxies from PStruct
+    // Similar to the format-agnostic proxy, but for namespaced attrs like #[facet(json::proxy = ProxyType)]
+    //
+    // For generic types, we need to use inherent impl methods (like proxy_inherent_impl above).
+    // Each format-specific proxy gets its own set of helper functions with unique names.
+    let (format_proxies_inherent_impl, format_proxies_call) = {
+        // Collect all format-specific proxy attributes (namespaced, key == "proxy")
+        let format_proxy_attrs: Vec<_> = ps
+            .container
+            .attrs
+            .facet
+            .iter()
+            .filter(|a| !a.is_builtin() && a.key_str() == "proxy")
+            .collect();
+
+        if format_proxy_attrs.is_empty() {
+            (quote! {}, quote! {})
+        } else {
+            let struct_type = &struct_name_ident;
+            let bgp_display = ps.container.bgp.display_without_bounds();
+            let helper_bgp = ps
+                .container
+                .bgp
+                .with_lifetime(LifetimeName(format_ident!("ʄ")));
+            let bgp_def_for_helper = helper_bgp.display_with_bounds();
+
+            // Generate helper methods for each format-specific proxy
+            let mut proxy_methods = Vec::new();
+            let mut format_proxy_items = Vec::new();
+
+            for (idx, attr) in format_proxy_attrs.iter().enumerate() {
+                let proxy_type = &attr.args;
+                let ns = attr.ns.as_ref().expect("namespaced attr should have ns");
+                let ns_str = ns.to_string();
+
+                // Unique method names for this format proxy
+                let convert_in_name = format_ident!("__facet_format_proxy_convert_in_{}", idx);
+                let convert_out_name = format_ident!("__facet_format_proxy_convert_out_{}", idx);
+                let shape_name = format_ident!("__facet_format_proxy_shape_{}", idx);
+
+                // Build the where clause with proxy Facet bound
+                let proxy_where = {
+                    let additional_clauses = quote! { #proxy_type: #facet_crate::Facet<'ʄ> };
+                    if where_clauses.is_empty() {
+                        quote! { where #additional_clauses }
+                    } else {
+                        quote! { #where_clauses, #additional_clauses }
+                    }
+                };
+
+                // Generate the helper methods
+                proxy_methods.push(quote! {
+                    #[doc(hidden)]
+                    impl #bgp_def_for_helper #struct_type #bgp_display
+                    #proxy_where
+                    {
+                        #[doc(hidden)]
+                        unsafe fn #convert_in_name(
+                            proxy_ptr: #facet_crate::PtrConst,
+                            field_ptr: #facet_crate::PtrUninit,
+                        ) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
+                            extern crate alloc as __alloc;
+                            let proxy: #proxy_type = proxy_ptr.read();
+                            match <#struct_type #bgp_display as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
+                                #facet_crate::𝟋::𝟋Ok(value) => #facet_crate::𝟋::𝟋Ok(field_ptr.put(value)),
+                                #facet_crate::𝟋::𝟋Err(e) => #facet_crate::𝟋::𝟋Err(__alloc::string::ToString::to_string(&e)),
+                            }
+                        }
+
+                        #[doc(hidden)]
+                        unsafe fn #convert_out_name(
+                            field_ptr: #facet_crate::PtrConst,
+                            proxy_ptr: #facet_crate::PtrUninit,
+                        ) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
+                            extern crate alloc as __alloc;
+                            let field_ref: &#struct_type #bgp_display = field_ptr.get();
+                            match <#proxy_type as ::core::convert::TryFrom<&#struct_type #bgp_display>>::try_from(field_ref) {
+                                #facet_crate::𝟋::𝟋Ok(proxy) => #facet_crate::𝟋::𝟋Ok(proxy_ptr.put(proxy)),
+                                #facet_crate::𝟋::𝟋Err(e) => #facet_crate::𝟋::𝟋Err(__alloc::string::ToString::to_string(&e)),
+                            }
+                        }
+
+                        #[doc(hidden)]
+                        const fn #shape_name() -> &'static #facet_crate::Shape {
+                            <#proxy_type as #facet_crate::Facet>::SHAPE
+                        }
+                    }
+                });
+
+                // Generate the FormatProxy item that references the helper methods
+                format_proxy_items.push(quote! {
+                    #facet_crate::FormatProxy {
+                        format: #ns_str,
+                        proxy: &const {
+                            #facet_crate::ProxyDef {
+                                shape: <Self>::#shape_name(),
+                                convert_in: <Self>::#convert_in_name,
+                                convert_out: <Self>::#convert_out_name,
+                            }
+                        },
+                    }
+                });
+            }
+
+            let inherent_impl = quote! { #(#proxy_methods)* };
+            let format_proxies_ref = quote! {
+                .format_proxies(&const {[#(#format_proxy_items),*]})
+            };
+
+            (inherent_impl, format_proxies_ref)
         }
     };
 
@@ -2267,6 +2384,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     #attributes_call
                     #type_tag_call
                     #proxy_call
+                    #format_proxies_call
                     #inner_call
                     #variance_call
                     #pod_call
@@ -2303,6 +2421,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
         // Proxy inherent impl (outside the Facet impl so generic params are in scope)
         #proxy_inherent_impl
+
+        // Format-specific proxy inherent impls
+        #format_proxies_inherent_impl
 
         // from_ref inherent impl
         #from_ref_inherent_impl
