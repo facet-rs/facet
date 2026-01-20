@@ -15,6 +15,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = []
+matching-stats = ["cinereus/matching-stats"]
 
 [dependencies]
 cinereus = { path = "../cinereus", version = "0.42.0" }

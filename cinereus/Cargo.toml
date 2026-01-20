@@ -13,8 +13,13 @@ homepage = "https://facet.rs"
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[features]
+matching-stats = []
+
 [dependencies]
 indextree = { workspace = true }
+rapidhash = "1"
+rayon = "1"
 
 [dev-dependencies]
 

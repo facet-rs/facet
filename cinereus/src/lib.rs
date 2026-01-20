@@ -40,7 +40,8 @@
 pub use indextree;
 
 mod chawathe;
-mod matching;
+/// GumTree matching algorithm
+pub mod matching;
 mod simplify;
 mod tree;
 
@@ -78,10 +79,29 @@ pub fn diff_trees<K, L>(
     config: &MatchingConfig,
 ) -> Vec<EditOp<K, L>>
 where
-    K: Clone + Eq + Hash,
-    L: Clone + Eq,
+    K: Clone + Eq + Hash + Send + Sync,
+    L: Clone + Eq + Send + Sync,
+{
+    let (ops, _matching) = diff_trees_with_matching(tree_a, tree_b, config);
+    ops
+}
+
+/// Like [`diff_trees`], but also returns the node matching.
+///
+/// This is useful when you need to translate NodeId-based operations
+/// into path-based operations, as you need to track which nodes in
+/// tree_a correspond to nodes in tree_b.
+pub fn diff_trees_with_matching<K, L>(
+    tree_a: &Tree<K, L>,
+    tree_b: &Tree<K, L>,
+    config: &MatchingConfig,
+) -> (Vec<EditOp<K, L>>, Matching)
+where
+    K: Clone + Eq + Hash + Send + Sync,
+    L: Clone + Eq + Send + Sync,
 {
     let matching = compute_matching(tree_a, tree_b, config);
     let ops = generate_edit_script(tree_a, tree_b, &matching);
-    simplify_edit_script(ops, tree_a, tree_b)
+    let ops = simplify_edit_script(ops, tree_a, tree_b);
+    (ops, matching)
 }

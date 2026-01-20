@@ -3,11 +3,18 @@
 //! This module provides the bridge between facet-reflect's `Peek` and
 //! cinereus's tree diffing algorithm.
 
+#[cfg(feature = "matching-stats")]
+pub use cinereus::matching::{get_stats as get_matching_stats, reset_stats as reset_matching_stats};
+
 use core::hash::Hasher;
 use std::borrow::Cow;
 use std::hash::DefaultHasher;
 
-use cinereus::{EditOp as CinereusEditOp, MatchingConfig, NodeData, Tree, diff_trees};
+use cinereus::{
+    EditOp as CinereusEditOp, Matching, MatchingConfig, NodeData, Tree, diff_trees_with_matching,
+    indextree::{self, NodeId},
+};
+use std::collections::HashMap;
 use facet_core::{Def, StructKind, Type, UserType};
 use facet_diff_core::{Path, PathSegment};
 use facet_reflect::{HasFields, Peek};
@@ -236,85 +243,274 @@ pub fn tree_diff<'a, 'f, A: facet_core::Facet<'f>, B: facet_core::Facet<'f>>(
     let tree_b = build_tree(peek_b);
 
     let config = MatchingConfig::default();
-    let cinereus_ops = diff_trees(&tree_a, &tree_b, &config);
+    let (cinereus_ops, matching) = diff_trees_with_matching(&tree_a, &tree_b, &config);
 
-    // Convert cinereus ops to our EditOp format, filtering out no-op moves
-    cinereus_ops
-        .into_iter()
-        .map(|op| convert_op(op, &tree_a, &tree_b))
-        .filter(|op| {
-            // Filter out MOVE operations where old and new paths are the same
-            // (these are no-ops from the user's perspective)
-            if let EditOp::Move {
-                old_path, new_path, ..
-            } = op
-            {
-                old_path != new_path
-            } else {
-                true
-            }
-        })
-        .collect()
+    // Convert cinereus ops to path-based EditOps using a shadow tree
+    // to track index shifts as operations are applied
+    convert_ops_with_shadow(cinereus_ops, &tree_a, &tree_b, &matching)
 }
 
-fn convert_op(
-    op: CinereusEditOp<NodeKind, NodeLabel>,
+/// Convert cinereus ops to path-based EditOps.
+///
+/// This uses a "shadow tree" approach: we maintain a mutable copy of tree_a
+/// and simulate applying each operation to it. This lets us compute correct
+/// paths that account for index shifts from earlier operations.
+fn convert_ops_with_shadow(
+    ops: Vec<CinereusEditOp<NodeKind, NodeLabel>>,
     tree_a: &FacetTree,
     tree_b: &FacetTree,
-) -> EditOp {
-    match op {
-        CinereusEditOp::Update {
-            node_a,
-            node_b,
-            old_label,
-            new_label: _,
-        } => {
-            let path = old_label.map(|l| l.path).unwrap_or_else(Path::new);
-            EditOp::Update {
-                path,
-                old_hash: tree_a.get(node_a).hash,
-                new_hash: tree_b.get(node_b).hash,
+    matching: &Matching,
+) -> Vec<EditOp> {
+    // Shadow tree: mutable clone of tree_a's structure
+    let mut shadow_arena = tree_a.arena.clone();
+    let shadow_root = tree_a.root;
+
+    // Map from tree_b NodeIds to shadow tree NodeIds
+    // Initially populated from matching (matched nodes)
+    let mut b_to_shadow: HashMap<NodeId, NodeId> = HashMap::new();
+    for (a_id, b_id) in matching.pairs() {
+        b_to_shadow.insert(b_id, a_id);
+    }
+
+    let mut result = Vec::new();
+
+    for op in ops {
+        match op {
+            CinereusEditOp::Update {
+                node_a,
+                node_b,
+                old_label: _,
+                new_label: _,
+            } => {
+                // Path is the current location in shadow tree
+                let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+                result.push(EditOp::Update {
+                    path,
+                    old_hash: tree_a.get(node_a).hash,
+                    new_hash: tree_b.get(node_b).hash,
+                });
+                // No structural change for Update
             }
-        }
-        CinereusEditOp::Insert { node_b, label, .. } => {
-            let path = label.map(|l| l.path).unwrap_or_else(Path::new);
-            EditOp::Insert {
-                path,
-                hash: tree_b.get(node_b).hash,
+
+            CinereusEditOp::Insert {
+                node_b,
+                parent_b,
+                position,
+                label,
+                ..
+            } => {
+                // Find the parent in our shadow tree
+                let shadow_parent = b_to_shadow.get(&parent_b).copied().unwrap_or(shadow_root);
+
+                // Compute the path for the insertion point
+                let parent_path =
+                    compute_path_in_shadow(&shadow_arena, shadow_root, shadow_parent, tree_a);
+                let mut path = parent_path;
+
+                // Add the position segment from the label (which has the full path info)
+                if let Some(ref lbl) = label {
+                    // The label's path contains the full path including the final segment
+                    // We want to use its structure but with our computed parent path
+                    if let Some(last_segment) = lbl.path.0.last() {
+                        path.0.push(last_segment.clone());
+                    }
+                }
+
+                result.push(EditOp::Insert {
+                    path: path.clone(),
+                    hash: tree_b.get(node_b).hash,
+                });
+
+                // Create a new node in shadow tree and add to b_to_shadow
+                let new_data: NodeData<NodeKind, NodeLabel> = NodeData {
+                    hash: 0,
+                    kind: NodeKind::Scalar("inserted"),
+                    label,
+                };
+                let new_node = shadow_arena.new_node(new_data);
+
+                // Insert at the correct position among siblings
+                let children: Vec<_> = shadow_parent.children(&shadow_arena).collect();
+                if position == 0 {
+                    if let Some(&first_child) = children.first() {
+                        first_child.insert_before(new_node, &mut shadow_arena);
+                    } else {
+                        shadow_parent.append(new_node, &mut shadow_arena);
+                    }
+                } else if position >= children.len() {
+                    shadow_parent.append(new_node, &mut shadow_arena);
+                } else {
+                    children[position].insert_before(new_node, &mut shadow_arena);
+                }
+
+                b_to_shadow.insert(node_b, new_node);
             }
-        }
-        CinereusEditOp::Delete { node_a } => {
-            let data = tree_a.get(node_a);
-            let path = data
-                .label
-                .as_ref()
-                .map(|l| l.path.clone())
-                .unwrap_or_default();
-            EditOp::Delete {
-                path,
-                hash: data.hash,
+
+            CinereusEditOp::Delete { node_a } => {
+                // Path is current location before deletion
+                let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+                result.push(EditOp::Delete {
+                    path,
+                    hash: tree_a.get(node_a).hash,
+                });
+
+                // Remove from shadow tree
+                node_a.remove(&mut shadow_arena);
             }
-        }
-        CinereusEditOp::Move { node_a, node_b, .. } => {
-            let old_path = tree_a
-                .get(node_a)
-                .label
-                .as_ref()
-                .map(|l| l.path.clone())
-                .unwrap_or_default();
-            let new_path = tree_b
-                .get(node_b)
-                .label
-                .as_ref()
-                .map(|l| l.path.clone())
-                .unwrap_or_default();
-            EditOp::Move {
-                old_path,
-                new_path,
-                hash: tree_b.get(node_b).hash,
+
+            CinereusEditOp::Move {
+                node_a,
+                node_b,
+                new_parent_b,
+                new_position,
+            } => {
+                // Old path is current location
+                let old_path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+
+                // Detach from current parent
+                node_a.detach(&mut shadow_arena);
+
+                // Find new parent in shadow tree
+                let shadow_new_parent = b_to_shadow.get(&new_parent_b).copied().unwrap_or(shadow_root);
+
+                // Insert at new position
+                let children: Vec<_> = shadow_new_parent.children(&shadow_arena).collect();
+                if new_position == 0 {
+                    if let Some(&first_child) = children.first() {
+                        first_child.insert_before(node_a, &mut shadow_arena);
+                    } else {
+                        shadow_new_parent.append(node_a, &mut shadow_arena);
+                    }
+                } else if new_position >= children.len() {
+                    shadow_new_parent.append(node_a, &mut shadow_arena);
+                } else {
+                    children[new_position].insert_before(node_a, &mut shadow_arena);
+                }
+
+                // New path is location after move
+                let new_path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+
+                // Only emit if paths differ
+                if old_path != new_path {
+                    result.push(EditOp::Move {
+                        old_path,
+                        new_path,
+                        hash: tree_b.get(node_b).hash,
+                    });
+                }
+
+                // Update b_to_shadow
+                b_to_shadow.insert(node_b, node_a);
             }
         }
     }
+
+    result
+}
+
+/// Compute the path from root to a node in the shadow tree.
+///
+/// For nodes that have a label (original tree_a nodes), we use the stored path.
+/// For inserted nodes, we compute the path by walking up and determining
+/// the position at each level.
+fn compute_path_in_shadow(
+    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel>>,
+    shadow_root: NodeId,
+    node: NodeId,
+    _tree_a: &FacetTree,
+) -> Path {
+    // If this node has a label, it came from tree_a and we can use its stored path
+    // But we need to account for any index shifts from insertions/deletions
+    // For now, let's compute the path by walking up and using labels where available
+
+    if let Some(node_ref) = shadow_arena.get(node) {
+        if let Some(label) = &node_ref.get().label {
+            // Original node from tree_a - use its stored path
+            // But we need to update any indices that may have shifted
+            return compute_adjusted_path(shadow_arena, shadow_root, node, &label.path);
+        }
+    }
+
+    // Inserted node - compute path by walking up
+    compute_path_by_walking(shadow_arena, shadow_root, node)
+}
+
+/// Compute an adjusted path for a node that may have shifted due to insertions/deletions.
+/// For now, we just use the stored path since the shadow tree structure reflects
+/// the actual positions.
+fn compute_adjusted_path(
+    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel>>,
+    shadow_root: NodeId,
+    node: NodeId,
+    original_path: &Path,
+) -> Path {
+    // Walk up to find the actual position indices
+    let mut indices_from_walk = Vec::new();
+    let mut current = node;
+
+    while current != shadow_root {
+        if let Some(parent_id) = shadow_arena.get(current).and_then(|n| n.parent()) {
+            // Get actual position among siblings
+            let pos = parent_id
+                .children(shadow_arena)
+                .position(|c| c == current)
+                .unwrap_or(0);
+            indices_from_walk.push(pos);
+            current = parent_id;
+        } else {
+            break;
+        }
+    }
+    indices_from_walk.reverse();
+
+    // Now merge with the original path structure, using walked indices where appropriate
+    let mut result_segments = Vec::new();
+    let mut index_iter = indices_from_walk.iter();
+
+    for segment in &original_path.0 {
+        match segment {
+            PathSegment::Index(_) => {
+                // Use the actual position from our walk
+                if let Some(&actual_pos) = index_iter.next() {
+                    result_segments.push(PathSegment::Index(actual_pos));
+                } else {
+                    result_segments.push(segment.clone());
+                }
+            }
+            _ => {
+                result_segments.push(segment.clone());
+            }
+        }
+    }
+
+    Path(result_segments)
+}
+
+/// Compute path for a node by walking up the tree.
+fn compute_path_by_walking(
+    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel>>,
+    shadow_root: NodeId,
+    node: NodeId,
+) -> Path {
+    let mut segments = Vec::new();
+    let mut current = node;
+
+    while current != shadow_root {
+        if let Some(parent_id) = shadow_arena.get(current).and_then(|n| n.parent()) {
+            // For inserted nodes, just use index
+            let pos = parent_id
+                .children(shadow_arena)
+                .position(|c| c == current)
+                .unwrap_or(0);
+            segments.push(PathSegment::Index(pos));
+            current = parent_id;
+        } else {
+            break;
+        }
+    }
+
+    segments.reverse();
+    Path(segments)
 }
 
 #[cfg(test)]
@@ -427,7 +623,7 @@ pub fn compute_element_similarity<'mem, 'facet>(
     let default_config = MatchingConfig::default();
     let config = config.unwrap_or(&default_config);
 
-    let matching = cinereus::compute_matching(&tree_a, &tree_b, config);
+    let (cinereus_ops, matching) = diff_trees_with_matching(&tree_a, &tree_b, config);
 
     // Count nodes in each tree
     let nodes_a = tree_a.arena.count();
@@ -441,23 +637,8 @@ pub fn compute_element_similarity<'mem, 'facet>(
         matching.len() as f64 / max_nodes as f64
     };
 
-    // Generate edit operations
-    let cinereus_ops = diff_trees(&tree_a, &tree_b, config);
-    let edit_ops = cinereus_ops
-        .into_iter()
-        .map(|op| convert_op(op, &tree_a, &tree_b))
-        .filter(|op| {
-            // Filter out no-op moves
-            if let EditOp::Move {
-                old_path, new_path, ..
-            } = op
-            {
-                old_path != new_path
-            } else {
-                true
-            }
-        })
-        .collect();
+    // Generate edit operations using shadow tree
+    let edit_ops = convert_ops_with_shadow(cinereus_ops, &tree_a, &tree_b, &matching);
 
     SimilarityResult {
         score,
