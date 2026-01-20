@@ -15,8 +15,8 @@ use std::ptr::NonNull;
 
 use crate::peek_to_string_expr;
 use crate::schema_types::{
-    DefaultSchema, Documented, EnumSchema, MapSchema, Meta, ObjectKey, ObjectSchema,
-    OptionalSchema, RawStyx, Schema, SchemaFile, SeqSchema,
+    DefaultSchema, Documented, EnumSchema, LspExtensionConfig, MapSchema, Meta, ObjectKey,
+    ObjectSchema, OptionalSchema, RawStyx, Schema, SchemaFile, SeqSchema,
 };
 
 /// Strip exactly one leading space from a doc line if present.
@@ -107,6 +107,7 @@ pub struct GenerateSchema<T: facet_core::Facet<'static>> {
     crate_name: Option<String>,
     version: Option<String>,
     cli: Option<String>,
+    lsp: Option<LspExtensionConfig>,
     _marker: PhantomData<T>,
 }
 
@@ -117,6 +118,7 @@ impl<T: facet_core::Facet<'static>> GenerateSchema<T> {
             crate_name: None,
             version: None,
             cli: None,
+            lsp: None,
             _marker: PhantomData,
         }
     }
@@ -136,6 +138,30 @@ impl<T: facet_core::Facet<'static>> GenerateSchema<T> {
     /// Set the CLI binary name.
     pub fn cli(mut self, cli: impl Into<String>) -> Self {
         self.cli = Some(cli.into());
+        self
+    }
+
+    /// Set the LSP extension configuration.
+    ///
+    /// When set, the generated schema will include this configuration in `meta.lsp`.
+    /// The Styx LSP will spawn this extension process to provide domain-specific
+    /// completions, hover info, and diagnostics.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// GenerateSchema::<Config>::new()
+    ///     .crate_name("my-tool")
+    ///     .version("1")
+    ///     .cli("my-tool")
+    ///     .lsp(LspExtensionConfig {
+    ///         launch: vec!["my-tool".into(), "lsp-extension".into()],
+    ///         capabilities: None,
+    ///     })
+    ///     .write("config.styx");
+    /// ```
+    pub fn lsp(mut self, lsp: LspExtensionConfig) -> Self {
+        self.lsp = Some(lsp);
         self
     }
 
@@ -159,7 +185,7 @@ impl<T: facet_core::Facet<'static>> GenerateSchema<T> {
             .expect("version is required - call .version(\"...\")");
 
         let id = format!("crate:{crate_name}@{version}");
-        generate_schema_inner::<T>(id, self.cli)
+        generate_schema_inner::<T>(id, self.cli, self.lsp)
     }
 }
 
@@ -173,11 +199,15 @@ impl<T: facet_core::Facet<'static>> Default for GenerateSchema<T> {
 pub fn schema_from_type<T: facet_core::Facet<'static>>() -> String {
     let shape = T::SHAPE;
     let id = shape.type_identifier.to_string();
-    generate_schema_inner::<T>(id, None)
+    generate_schema_inner::<T>(id, None, None)
 }
 
-/// Internal function that generates a schema with the given id and optional cli.
-fn generate_schema_inner<T: facet_core::Facet<'static>>(id: String, cli: Option<String>) -> String {
+/// Internal function that generates a schema with the given id and optional cli/lsp.
+fn generate_schema_inner<T: facet_core::Facet<'static>>(
+    id: String,
+    cli: Option<String>,
+    lsp: Option<LspExtensionConfig>,
+) -> String {
     let shape = T::SHAPE;
 
     let mut generator = SchemaGenerator::new();
@@ -222,7 +252,7 @@ fn generate_schema_inner<T: facet_core::Facet<'static>>(id: String, cli: Option<
             version: None,
             cli,
             description,
-            lsp: None,
+            lsp,
         },
         imports: None,
         schema: schema_map,
