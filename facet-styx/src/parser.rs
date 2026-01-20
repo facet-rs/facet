@@ -389,8 +389,11 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
             return Ok(None);
         }
 
-        // Skip newlines between entries
-        self.skip_newlines();
+        // Skip newlines between entries, but NOT when expecting a value.
+        // A newline after a key means the key has unit value.
+        if !self.expecting_value {
+            self.skip_newlines();
+        }
 
         // Handle root struct start (skip in expression mode)
         if !self.root_started && !self.expr_mode {

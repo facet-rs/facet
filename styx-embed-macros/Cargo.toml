@@ -14,3 +14,4 @@ lz4_flex = "0.11"
 blake3 = "1"
 unsynn = "0.3"
 proc-macro2 = "1"
+styx-tree.workspace = true

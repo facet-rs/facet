@@ -372,4 +372,24 @@ port 8080"#;
         assert_eq!(*mapped.value(), "42");
         assert_eq!(mapped.doc(), Some(&["The answer".to_string()][..]));
     }
+
+    #[test]
+    fn test_unit_field_followed_by_another_field() {
+        // When a field has unit value (no explicit value), followed by
+        // another field on the next line, both should be parsed correctly.
+        use std::collections::HashMap;
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Fields {
+            #[facet(flatten)]
+            fields: HashMap<String, Option<String>>,
+        }
+
+        let input = "foo\nbar baz";
+        let result: Fields = from_str(input).unwrap();
+
+        assert_eq!(result.fields.len(), 2);
+        assert_eq!(result.fields.get("foo"), Some(&None));
+        assert_eq!(result.fields.get("bar"), Some(&Some("baz".to_string())));
+    }
 }
