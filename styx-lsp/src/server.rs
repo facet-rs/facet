@@ -303,6 +303,11 @@ impl LanguageServer for StyxLanguageServer {
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 // Document formatting
                 document_formatting_provider: Some(OneOf::Left(true)),
+                // On-type formatting (for auto-indent on Enter)
+                document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
+                    first_trigger_character: "\n".to_string(),
+                    more_trigger_character: None,
+                }),
                 // Document symbols (outline)
                 document_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
@@ -1328,6 +1333,79 @@ impl LanguageServer for StyxLanguageServer {
         } else {
             Ok(Some(DocumentSymbolResponse::Nested(symbols)))
         }
+    }
+
+    async fn on_type_formatting(
+        &self,
+        params: DocumentOnTypeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        let docs = self.documents.read().await;
+        let Some(doc) = docs.get(&uri) else {
+            return Ok(None);
+        };
+
+        // Only handle newline character
+        if params.ch != "\n" {
+            return Ok(None);
+        }
+
+        // The position is where the cursor is AFTER typing the newline
+        // So we need to look at the previous line to determine indentation
+        let lines: Vec<&str> = doc.content.lines().collect();
+
+        // If we're on line 0 or beyond content, no indentation needed
+        if position.line == 0 || position.line as usize > lines.len() {
+            return Ok(None);
+        }
+
+        let prev_line_idx = (position.line - 1) as usize;
+        let prev_line = lines.get(prev_line_idx).unwrap_or(&"");
+
+        // Count existing indentation on previous line
+        let prev_indent = prev_line.len() - prev_line.trim_start().len();
+
+        // Check if previous line ends with an opener that needs more indentation
+        let trimmed = prev_line.trim_end();
+        let needs_extra_indent = trimmed.ends_with('{') || trimmed.ends_with('(');
+
+        // Build indent string from editor preferences
+        let indent_unit = if params.options.insert_spaces {
+            " ".repeat(params.options.tab_size as usize)
+        } else {
+            "\t".to_string()
+        };
+
+        // Calculate target indentation
+        let target_indent = if needs_extra_indent {
+            prev_indent + indent_unit.len()
+        } else {
+            prev_indent
+        };
+
+        // Build the indentation string
+        let indent_str = if params.options.insert_spaces {
+            " ".repeat(target_indent)
+        } else {
+            "\t".repeat(target_indent / indent_unit.len())
+        };
+
+        // Insert indentation at the start of the current line
+        Ok(Some(vec![TextEdit {
+            range: Range {
+                start: Position {
+                    line: position.line,
+                    character: 0,
+                },
+                end: Position {
+                    line: position.line,
+                    character: 0,
+                },
+            },
+            new_text: indent_str,
+        }]))
     }
 }
 
