@@ -72,6 +72,7 @@ pub mod peer;
 pub(crate) mod slot_pool;
 pub mod var_slot_pool;
 
+pub mod auditable;
 pub mod cleanup;
 pub mod diagnostic;
 pub mod driver;
@@ -98,6 +99,7 @@ pub use roam_frame::{Frame, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT, MsgDesc, Pa
 // Re-export FileCleanup from shm-primitives
 pub use shm_primitives::FileCleanup;
 
+pub use auditable::dump_all_channels;
 pub use diagnostic::{ShmDiagnosticView, ShmDiagnostics};
 pub use host::{PollResult, ShmHost};
 
