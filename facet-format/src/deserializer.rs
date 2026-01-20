@@ -1018,7 +1018,7 @@ where
                         ParseEvent::FieldKey(key) => {
                             // Begin key
                             wip = wip.begin_key().map_err(DeserializeError::reflect)?;
-                            wip = self.deserialize_map_key(wip, key.name, key.doc)?;
+                            wip = self.deserialize_map_key(wip, key.name, key.doc, key.tag)?;
                             wip = wip.end().map_err(DeserializeError::reflect)?;
 
                             // Begin value
@@ -1187,7 +1187,7 @@ where
         }
     }
 
-    /// Deserialize a map key from a string.
+    /// Deserialize a map key from a string or tag.
     ///
     /// Format parsers typically emit string keys, but the target map might have non-string key types
     /// (e.g., integers, enums). This function parses the string key into the appropriate type:
@@ -1196,18 +1196,22 @@ where
     /// - Integer types: parse the string as a number
     /// - Transparent newtypes: descend into the inner type
     /// - Option types: None key becomes None, Some(key) recurses into inner type
-    /// - Metadata containers (like `Documented<T>`): populate doc metadata and recurse into value
+    /// - Metadata containers (like `Documented<T>`): populate doc/tag metadata and recurse into value
+    ///
+    /// The `tag` parameter is for formats like Styx where keys can be type patterns (e.g., `@string`).
+    /// When present, it indicates the key was a tag rather than a bare identifier.
     fn deserialize_map_key(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         key: Option<Cow<'input, str>>,
         doc: Option<Vec<Cow<'input, str>>>,
+        tag: Option<Cow<'input, str>>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let shape = wip.shape();
 
-        trace!(shape_name = %shape, shape_def = ?shape.def, ?key, ?doc, "deserialize_map_key");
+        trace!(shape_name = %shape, shape_def = ?shape.def, ?key, ?doc, ?tag, "deserialize_map_key");
 
-        // Handle metadata containers (like Documented<T>): populate doc metadata and recurse into value
+        // Handle metadata containers (like Documented<T> or ObjectKey): populate metadata and recurse into value
         if shape.is_metadata_container() {
             trace!("deserialize_map_key: metadata container detected");
 
@@ -1234,12 +1238,29 @@ where
                             wip = wip.set_default().map_err(DeserializeError::reflect)?;
                         }
                         wip = wip.end().map_err(DeserializeError::reflect)?;
-                    } else if field.metadata_kind().is_none() {
-                        // This is the value field - recurse with the key
+                    } else if field.metadata_kind() == Some("tag") {
+                        // This is the tag field - set it from the tag parameter
                         wip = wip
                             .begin_field(field.effective_name())
                             .map_err(DeserializeError::reflect)?;
-                        wip = self.deserialize_map_key(wip, key.clone(), None)?;
+                        if let Some(ref tag_name) = tag {
+                            // Set as Some(String)
+                            wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                            wip = self.set_string_value(wip, tag_name.clone())?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        } else {
+                            // Set as None (not a tagged key)
+                            wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                        }
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                    } else if field.metadata_kind().is_none() {
+                        // This is the value field - recurse with the key and tag.
+                        // Doc is already consumed by this container, but tag may be needed
+                        // by a nested metadata container (e.g., Documented<ObjectKey>).
+                        wip = wip
+                            .begin_field(field.effective_name())
+                            .map_err(DeserializeError::reflect)?;
+                        wip = self.deserialize_map_key(wip, key.clone(), None, tag.clone())?;
                         wip = wip.end().map_err(DeserializeError::reflect)?;
                     }
                 }
@@ -1259,7 +1280,7 @@ where
                 Some(inner_key) => {
                     // Named key -> Some(inner)
                     wip = wip.begin_some().map_err(DeserializeError::reflect)?;
-                    wip = self.deserialize_map_key(wip, Some(inner_key), None)?;
+                    wip = self.deserialize_map_key(wip, Some(inner_key), None, None)?;
                     wip = wip.end().map_err(DeserializeError::reflect)?;
                     return Ok(wip);
                 }
@@ -1280,7 +1301,7 @@ where
         let is_pointer = matches!(shape.def, Def::Pointer(_));
         if shape.inner.is_some() && !is_pointer {
             wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
-            wip = self.deserialize_map_key(wip, Some(key), None)?;
+            wip = self.deserialize_map_key(wip, Some(key), None, None)?;
             wip = wip.end().map_err(DeserializeError::reflect)?;
             return Ok(wip);
         }

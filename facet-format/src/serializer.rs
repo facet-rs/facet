@@ -95,6 +95,18 @@ pub trait FormatSerializer {
     fn begin_struct(&mut self) -> Result<(), Self::Error>;
     /// Emit a field key within a struct.
     fn field_key(&mut self, key: &str) -> Result<(), Self::Error>;
+    /// Emit a rich field key with optional tag and documentation.
+    ///
+    /// This is called when serializing map keys that have been extracted from
+    /// metadata containers (like `ObjectKey` with tag support).
+    ///
+    /// Default implementation ignores tag and doc, just emits the name.
+    /// Formats that support tags (like Styx) should override this.
+    fn emit_field_key(&mut self, key: &crate::FieldKey<'_>) -> Result<(), Self::Error> {
+        // Default: ignore tag and doc, just emit the name (empty string if None)
+        let name = key.name.as_deref().unwrap_or("");
+        self.field_key(name)
+    }
     /// End a map/object/struct.
     fn end_struct(&mut self) -> Result<(), Self::Error>;
 
