@@ -7,50 +7,41 @@
 // the editor suggests adding one.
 //
 // PRs welcome! See docs/content/tools/schema-registry.md for details.
+
 hints {
     captain {
         title "Captain"
         description "Git hooks manager for Rust projects"
         homepage "https://github.com/bearcove/captain"
-        patterns (
-            "{git_root}/.config/captain/config.styx"
-        )
+        patterns ("**/.config/captain/config.styx")
         schema {id crate:captain-cli@1, cli captain}
     }
     dodeca {
         title "Dodeca"
         description "Static site generator"
         homepage "https://github.com/bearcove/home"
-        patterns (
-            "{git_root}/.config/dodeca.styx"
-        )
+        patterns ("**/.config/dodeca.styx")
         schema {id crate:dodeca-config@1, cli ddc}
     }
     tracey {
         title "Tracey"
         description "Spec coverage tracking tool"
         homepage "https://github.com/bearcove/tracey"
-        patterns (
-            "{git_root}/.config/tracey/config.styx"
-        )
+        patterns ("**/.config/tracey/config.styx")
         schema {id crate:tracey-config@1, cli tracey}
     }
     dibs {
         title "Dibs"
         description "Postgres toolkit for Rust"
         homepage "https://github.com/bearcove/dibs"
-        patterns (
-            "{git_root}/.config/dibs.styx"
-        )
+        patterns ("**/.config/dibs.styx")
         schema {id crate:dibs@1, cli dibs}
     }
     dibs-queries {
         title "Dibs Queries"
         description "Query DSL for dibs"
         homepage "https://github.com/bearcove/dibs"
-        patterns (
-            "{git_root}/.dibs-queries/*.styx"
-        )
+        patterns ("**/.dibs-queries/*.styx")
         schema {id crate:dibs-queries@1, cli dibs}
     }
 }

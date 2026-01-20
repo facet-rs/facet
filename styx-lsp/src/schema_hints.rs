@@ -200,8 +200,13 @@ mod tests {
     fn test_expand_pattern() {
         let git_root = Path::new("/home/user/project");
 
+        // Test {git_root} expansion (still supported for custom patterns)
         let expanded = expand_pattern("{git_root}/.config/tracey/config.styx", Some(git_root));
         assert_eq!(expanded, "/home/user/project/.config/tracey/config.styx");
+
+        // Glob patterns pass through unchanged
+        let expanded = expand_pattern("**/.config/tracey/config.styx", Some(git_root));
+        assert_eq!(expanded, "**/.config/tracey/config.styx");
     }
 
     #[test]
