@@ -65,6 +65,8 @@ Schema @enum{
     optional @Schema
     /// Enum: @enum{variant @type, ...}
     enum @map(@Schema)
+    /// Value constraint: @one-of(@type (value1 value2 ...))
+    one-of @seq(@Schema @seq(@any))
     /// Flatten: @flatten(@Type) - inline fields from another type
     flatten @Schema
     /// Default value: @default(value @type)

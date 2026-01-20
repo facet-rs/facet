@@ -89,6 +89,11 @@ pub enum Schema {
     /// Enum: @enum{variant @type, ...}
     Enum(EnumSchema),
 
+    /// Value constraint: @one-of(@type value1 value2 ...)
+    /// Constrains values to a finite set. First element is base type, rest are allowed values.
+    #[facet(rename = "one-of")]
+    OneOf(OneOfSchema),
+
     /// Flatten: @flatten(@Type) - inline fields from another type
     Flatten(FlattenSchema),
 
@@ -195,6 +200,12 @@ pub struct OptionalSchema(pub (Documented<Box<Schema>>,));
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
 pub struct EnumSchema(pub HashMap<Documented<String>, Schema>);
+
+/// One-of schema: @one-of(@type value1 value2 ...).
+/// Constrains values to a finite set. Tuple is (base_type, allowed_values).
+#[derive(Facet, Debug, Clone)]
+#[repr(transparent)]
+pub struct OneOfSchema(pub (Documented<Box<Schema>>, Vec<RawStyx>));
 
 /// Flatten schema: @flatten(@Type).
 /// Inlines fields from another type into the containing object.

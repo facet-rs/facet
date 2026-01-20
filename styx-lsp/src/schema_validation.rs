@@ -434,6 +434,13 @@ pub fn generate_placeholder(schema: &Schema) -> String {
                 .map(|k| format!("@{}", k.value))
                 .unwrap_or_else(|| "@".to_string())
         }
+        Schema::OneOf(o) => {
+            // Use first allowed value if available, otherwise generate from base type
+            o.0.1
+                .first()
+                .map(|v| v.0.clone())
+                .unwrap_or_else(|| generate_placeholder(&o.0.0.value))
+        }
         Schema::Flatten(f) => generate_placeholder(&f.0.0.value),
         Schema::Literal(lit) => lit.clone(),
         Schema::Type { name } => name

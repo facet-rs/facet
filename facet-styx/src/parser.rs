@@ -780,8 +780,8 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         // Extract the raw slice
         let raw_str = &self.input[start_offset..end_offset];
 
-        // Trim trailing whitespace/newlines
-        let raw_str = raw_str.trim_end();
+        // Trim surrounding whitespace/newlines
+        let raw_str = raw_str.trim();
 
         Ok(Some(raw_str))
     }

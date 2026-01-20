@@ -60,8 +60,8 @@ use crate::schema_error::{
 };
 use crate::schema_types::{
     DefaultSchema, DeprecatedSchema, Documented, EnumSchema, FlattenSchema, FloatConstraints,
-    IntConstraints, MapSchema, ObjectSchema, OptionalSchema, Schema, SchemaFile, SeqSchema,
-    StringConstraints, UnionSchema,
+    IntConstraints, MapSchema, ObjectSchema, OneOfSchema, OptionalSchema, Schema, SchemaFile,
+    SeqSchema, StringConstraints, UnionSchema,
 };
 
 /// Validator for Styx documents.
@@ -139,6 +139,7 @@ impl<'a> Validator<'a> {
             Schema::Union(union_schema) => self.validate_union(value, union_schema, path),
             Schema::Optional(opt_schema) => self.validate_optional(value, opt_schema, path),
             Schema::Enum(enum_schema) => self.validate_enum(value, enum_schema, path),
+            Schema::OneOf(oneof_schema) => self.validate_one_of(value, oneof_schema, path),
             Schema::Flatten(flatten_schema) => self.validate_flatten(value, flatten_schema, path),
 
             // Wrappers
@@ -788,6 +789,82 @@ impl<'a> Validator<'a> {
         result
     }
 
+    fn validate_one_of(
+        &self,
+        value: &Value,
+        schema: &OneOfSchema,
+        path: &str,
+    ) -> ValidationResult {
+        let mut result = ValidationResult::ok();
+
+        // First validate against the base type
+        let base_type = &schema.0.0.value;
+        let base_result = self.validate_value(value, base_type, path);
+        if !base_result.is_valid() {
+            return base_result;
+        }
+
+        // Then check if the value matches one of the allowed values
+        let allowed_values = &schema.0.1;
+        if allowed_values.is_empty() {
+            // No values specified means any value of the base type is allowed
+            return result;
+        }
+
+        // Get the string representation of the value for comparison
+        let value_text = match value.scalar_text() {
+            Some(t) => t,
+            None => {
+                // Non-scalar values can't be compared to allowed values
+                result.error(
+                    ValidationError::new(
+                        path,
+                        ValidationErrorKind::ExpectedScalar,
+                        format!(
+                            "expected scalar value for one-of constraint, got {}",
+                            value_type_name(value)
+                        ),
+                    )
+                    .with_span(value.span),
+                );
+                return result;
+            }
+        };
+
+        // Check if the value is in the allowed list
+        let allowed_strings: Vec<&str> = allowed_values.iter().map(|v| v.as_str()).collect();
+        if !allowed_strings.contains(&value_text) {
+            // Try to find a similar value for suggestions
+            let allowed_owned: Vec<String> =
+                allowed_values.iter().map(|v| v.0.clone()).collect();
+            let suggestion = suggest_similar(value_text, &allowed_owned).map(String::from);
+
+            result.error(
+                ValidationError::new(
+                    path,
+                    ValidationErrorKind::InvalidValue {
+                        reason: format!(
+                            "value '{}' not in allowed set: {}",
+                            value_text,
+                            allowed_strings.join(", ")
+                        ),
+                    },
+                    format!(
+                        "'{}' is not one of: {}{}",
+                        value_text,
+                        allowed_strings.join(", "),
+                        suggestion
+                            .map(|s| format!(" (did you mean '{}'?)", s))
+                            .unwrap_or_default()
+                    ),
+                )
+                .with_span(value.span),
+            );
+        }
+
+        result
+    }
+
     fn validate_flatten(
         &self,
         value: &Value,
@@ -950,6 +1027,7 @@ fn schema_type_name(schema: &Schema) -> String {
         Schema::Union(_) => "union".into(),
         Schema::Optional(_) => "optional".into(),
         Schema::Enum(_) => "enum".into(),
+        Schema::OneOf(_) => "one-of".into(),
         Schema::Flatten(_) => "flatten".into(),
         Schema::Default(_) => "default".into(),
         Schema::Deprecated(_) => "deprecated".into(),

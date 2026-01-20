@@ -281,16 +281,8 @@ mod tests {
     #[test]
     fn test_invalid_escape_diagnostic() {
         let source = r#"name "hello\qworld""#;
-        let parser = styx_parse::Parser::new(source);
-        let mut events = Vec::new();
-        parser.parse(&mut events);
-        eprintln!("Events for invalid escape: {:?}", events);
         let errors = parse_with_errors(source);
-        if errors.is_empty() {
-            // Parser doesn't emit InvalidEscape error for this case - skip for now
-            // TODO: parser should detect invalid escapes
-            return;
-        }
+        assert!(!errors.is_empty(), "expected InvalidEscape error");
 
         let rendered = errors[0].render("test.styx", source);
         insta::assert_snapshot!(rendered);
@@ -299,16 +291,8 @@ mod tests {
     #[test]
     fn test_unclosed_object_diagnostic() {
         let source = "server {\n  host localhost";
-        let parser = styx_parse::Parser::new(source);
-        let mut events = Vec::new();
-        parser.parse(&mut events);
-        eprintln!("Events for unclosed object: {:?}", events);
         let errors = parse_with_errors(source);
-        if errors.is_empty() {
-            // Parser doesn't emit UnclosedObject error - skip for now
-            // TODO: parser should detect unclosed delimiters
-            return;
-        }
+        assert!(!errors.is_empty(), "expected UnclosedObject error");
 
         let rendered = errors[0].render("test.styx", source);
         insta::assert_snapshot!(rendered);
