@@ -306,6 +306,12 @@ where
                 channels,
                 payload,
             } => {
+                debug!(
+                    request_id,
+                    method_id,
+                    channels = ?channels,
+                    "ShmDriver: received Request with channels"
+                );
                 self.handle_incoming_request(request_id, method_id, metadata, channels, payload)
                     .await?;
             }
@@ -1063,6 +1069,12 @@ impl MultiPeerHostDriver {
                 payload,
                 response_tx,
             } => {
+                debug!(
+                    request_id,
+                    method_id,
+                    channels = ?channels,
+                    "MultiPeerHostDriver: sending Request with channels"
+                );
                 // Store the response channel
                 if let Some(state) = self.peers.get_mut(&peer_id) {
                     state.pending_responses.insert(request_id, response_tx);
@@ -1144,6 +1156,12 @@ impl MultiPeerHostDriver {
                 channels,
                 payload,
             } => {
+                debug!(
+                    request_id,
+                    method_id,
+                    channels = ?channels,
+                    "MultiPeerHostDriver: received Request with channels"
+                );
                 self.handle_incoming_request(
                     peer_id, request_id, method_id, metadata, channels, payload,
                 )
