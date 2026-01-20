@@ -384,7 +384,45 @@ impl SchemaGenerator {
 
                 for field in struct_type.fields {
                     let field_name = field.effective_name();
-                    let mut field_schema = self.shape_to_schema(field.shape());
+                    let field_schema = self.shape_to_schema(field.shape());
+
+                    // Extract doc comments from field
+                    let doc = if field.doc.is_empty() {
+                        None
+                    } else {
+                        Some(field.doc.iter().map(|s| strip_doc_leading_space(s)).collect())
+                    };
+
+                    // Handle flattened fields - inline their contents
+                    if field.is_flattened() {
+                        match field_schema {
+                            // Flattened map: add catch-all entry with the value type
+                            Schema::Map(MapSchema(types)) => {
+                                // @map(@V) has 1 type, @map(@K @V) has 2 - we want the value type
+                                let value_schema = if types.len() == 1 {
+                                    types.into_iter().next().unwrap().value
+                                } else {
+                                    types.into_iter().nth(1).unwrap().value
+                                };
+                                let key = Documented { value: None, doc };
+                                fields.insert(key, value_schema);
+                            }
+                            // Flattened object: merge its fields into parent
+                            Schema::Object(ObjectSchema(inner_fields)) => {
+                                for (inner_key, inner_schema) in inner_fields {
+                                    fields.insert(inner_key, inner_schema);
+                                }
+                            }
+                            // Other flattened types: use catch-all
+                            other => {
+                                let key = Documented { value: None, doc };
+                                fields.insert(key, other);
+                            }
+                        }
+                        continue;
+                    }
+
+                    let mut field_schema = field_schema;
 
                     // Wrap with @default if field has a default value
                     if let Some(default_value_str) = field_default_value(field) {
@@ -394,13 +432,6 @@ impl SchemaGenerator {
                             Documented::new(Box::new(field_schema)),
                         )));
                     }
-
-                    // Extract doc comments from field
-                    let doc = if field.doc.is_empty() {
-                        None
-                    } else {
-                        Some(field.doc.iter().map(|s| strip_doc_leading_space(s)).collect())
-                    };
 
                     // Handle catch-all field (empty name)
                     let key = if field_name.is_empty() {
@@ -834,6 +865,91 @@ mod tests {
         assert!(
             schema.contains("/// Can be any valid port"),
             "Second line of multi-line doc should have single space"
+        );
+    }
+
+    #[test]
+    fn test_flatten_hashmap() {
+        use std::collections::HashMap;
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Decl {
+            value: String,
+        }
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct QueryFile {
+            #[facet(flatten)]
+            decls: HashMap<String, Decl>,
+        }
+
+        let schema = schema_from_type::<QueryFile>();
+        tracing::debug!("Generated schema:\n{schema}");
+
+        // Flattened HashMap should NOT have a "decls" key
+        assert!(
+            !schema.contains("decls"),
+            "schema should NOT contain 'decls' key for flattened HashMap. Got:\n{}",
+            schema
+        );
+        // Should have catch-all @ with the value type (Decl's object schema)
+        assert!(
+            schema.contains("@ @object"),
+            "schema should have catch-all @ entry with value type. Got:\n{}",
+            schema
+        );
+        // Should contain the Decl's field
+        assert!(
+            schema.contains("value @string"),
+            "schema should contain Decl's 'value' field. Got:\n{}",
+            schema
+        );
+    }
+
+    #[test]
+    fn test_flatten_struct() {
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Common {
+            name: String,
+            id: u64,
+        }
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Extended {
+            #[facet(flatten)]
+            common: Common,
+            extra: String,
+        }
+
+        let schema = schema_from_type::<Extended>();
+        tracing::debug!("Generated schema:\n{schema}");
+
+        // Flattened struct should NOT have a "common" key
+        assert!(
+            !schema.contains("common"),
+            "schema should NOT contain 'common' key for flattened struct. Got:\n{}",
+            schema
+        );
+        // Should have the flattened struct's fields directly
+        assert!(
+            schema.contains("name @string"),
+            "schema should contain 'name' field from Common. Got:\n{}",
+            schema
+        );
+        assert!(
+            schema.contains("id @int"),
+            "schema should contain 'id' field from Common. Got:\n{}",
+            schema
+        );
+        // Should still have the regular field
+        assert!(
+            schema.contains("extra @string"),
+            "schema should contain 'extra' field. Got:\n{}",
+            schema
         );
     }
 }
