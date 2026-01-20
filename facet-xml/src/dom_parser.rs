@@ -250,10 +250,11 @@ impl<'de> XmlParser<'de> {
                         Event::Decl(_) => {
                             // XML declaration - skip
                         }
-                        Event::DocType(e) => {
-                            let text =
-                                core::str::from_utf8(e.as_ref()).map_err(XmlError::InvalidUtf8)?;
-                            return Ok(Some(DomEvent::Doctype(Cow::Owned(text.to_string()))));
+                        Event::DocType(_e) => {
+                            // Skip the DocType until there is support in facet-dom. facet-html is able to inject the
+                            // doctype onto a root node but that is a good option for XML.
+                            // let text = core::str::from_utf8(e.as_ref()).map_err(XmlError::InvalidUtf8)?;
+                            // return Ok(Some(DomEvent::Doctype(Cow::Owned(text.to_string()))));
                         }
                         Event::Eof => {
                             self.state = ParserState::Done;
