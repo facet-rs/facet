@@ -25,7 +25,12 @@ impl<'a> ArgType<'a> {
                 ArgType::LongFlag(key)
             }
         } else if let Some(key) = arg.strip_prefix('-') {
-            ArgType::ShortFlag(key)
+            if key.is_empty() {
+                // Bare `-` is treated as positional (commonly means stdin)
+                ArgType::Positional
+            } else {
+                ArgType::ShortFlag(key)
+            }
         } else if !arg.is_empty() {
             ArgType::Positional
         } else {
