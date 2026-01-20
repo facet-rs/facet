@@ -5,6 +5,7 @@
 //! no changes. This ensures StyxWriter follows the same formatting rules as
 //! the CST formatter.
 
+use facet_testhelpers::test;
 use std::collections::HashMap;
 
 use crate::schema_types::Documented;
@@ -943,7 +944,7 @@ fn idempotent_object_key_deeply_nested() {
 #[test]
 fn idempotent_object_key_empty_object() {
     // Empty object (edge case)
-    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+    use crate::schema_types::{ObjectSchema, Schema};
 
     let fields = HashMap::new();
     let schema = Schema::Object(ObjectSchema(fields));
@@ -1266,4 +1267,38 @@ fn idempotent_object_key_realistic_api_schema() {
 
     let schema = Schema::Object(ObjectSchema(response_fields));
     assert_idempotent(&schema, "ObjectKey realistic API schema");
+}
+
+#[test]
+fn idempotent_named_type_reference() {
+    // Named type reference: @Select should serialize as @Select, not @type{name Select}
+    // Test within an object context where type references are actually used
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::named("select")),
+        Schema::Type {
+            name: Some("Select".to_string()),
+        },
+    );
+    let schema = Schema::Object(ObjectSchema(fields));
+
+    let serialized = to_string(&schema).expect("serialization should succeed");
+    tracing::trace!(serialized = %serialized, "serialized schema");
+
+    // Should contain @Select, not @type{name Select}
+    assert!(
+        serialized.contains("@Select"),
+        "Schema::Type should serialize as @TypeName, got: {}",
+        serialized
+    );
+    assert!(
+        !serialized.contains("@type"),
+        "Should not serialize as @type{{...}}, got: {}",
+        serialized
+    );
+
+    // Full roundtrip: use assert_idempotent which handles the wrapping properly
+    assert_idempotent(&schema, "named type reference");
 }
