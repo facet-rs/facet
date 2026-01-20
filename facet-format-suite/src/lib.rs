@@ -838,7 +838,10 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
         #[cfg(feature = "iddqd")]
         SuiteCase::new::<S, IddqdBiHashMapWrapper>(&CASE_IDDQD_BI_HASH_MAP, S::iddqd_bi_hash_map),
         #[cfg(feature = "iddqd")]
-        SuiteCase::new::<S, IddqdTriHashMapWrapper>(&CASE_IDDQD_TRI_HASH_MAP, S::iddqd_tri_hash_map),
+        SuiteCase::new::<S, IddqdTriHashMapWrapper>(
+            &CASE_IDDQD_TRI_HASH_MAP,
+            S::iddqd_tri_hash_map,
+        ),
         // Dynamic value cases
         #[cfg(feature = "facet-value")]
         SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_NULL, S::value_null),

@@ -50,7 +50,7 @@ where
     B: facet::Facet<'a>,
 {
     let printer = PrettyPrinter::default()
-        .with_colors(true)
+        .with_colors(facet_pretty::ColorMode::Always)
         .with_minimal_option_names(true);
 
     let before_str = printer.format_peek(Peek::new(before));

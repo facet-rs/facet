@@ -42,7 +42,9 @@ impl From<&ProxyInt> for IntAsString {
 #[test]
 fn test_proxy_container_pretty_print() {
     let proxy_int = ProxyInt { value: 42 };
-    let output = PrettyPrinter::new().with_colors(false).format(&proxy_int);
+    let output = PrettyPrinter::new()
+        .with_colors(false.into())
+        .format(&proxy_int);
 
     assert_snapshot!(output, @r#""42""#);
 }
@@ -76,7 +78,7 @@ fn test_proxy_field_level_pretty_print() {
         name: "test".to_string(),
         count: 100,
     };
-    let output = PrettyPrinter::new().with_colors(false).format(&data);
+    let output = PrettyPrinter::new().with_colors(false.into()).format(&data);
 
     assert_snapshot!(output, @r#"
     ProxyFieldLevel {

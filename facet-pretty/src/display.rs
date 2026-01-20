@@ -30,7 +30,7 @@ impl<'a, T: Facet<'a>> FacetPretty<'a> for T {
     fn pretty(&'a self) -> PrettyDisplay<'a, Self> {
         PrettyDisplay {
             value: self,
-            printer: PrettyPrinter::default(),
+            printer: PrettyPrinter::new(),
         }
     }
 
@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn test_pretty_with_custom_printer() {
         let test = TestStruct { field: 42 };
-        let printer = PrettyPrinter::new().with_colors(false);
+        let printer = PrettyPrinter::new().with_colors(false.into());
         let display = test.pretty_with(printer);
 
         let mut output = String::new();

@@ -32,7 +32,7 @@ impl RGB {
 }
 
 /// A color generator that produces unique colors based on a hash value
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ColorGenerator {
     base_hue: f32,
     saturation: f32,
@@ -41,18 +41,18 @@ pub struct ColorGenerator {
 
 impl Default for ColorGenerator {
     fn default() -> Self {
-        Self {
-            base_hue: 210.0,
-            saturation: 0.7,
-            lightness: 0.6,
-        }
+        Self::new()
     }
 }
 
 impl ColorGenerator {
     /// Create a new color generator with default settings
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            base_hue: 210.0,
+            saturation: 0.7,
+            lightness: 0.6,
+        }
     }
 
     /// Set the base hue (0-360)
@@ -74,7 +74,7 @@ impl ColorGenerator {
     }
 
     /// Generate an RGB color based on a hash value
-    pub fn generate_color(&self, hash: u64) -> RGB {
+    pub const fn generate_color(&self, hash: u64) -> RGB {
         // Use the hash to generate a hue offset
         let hue_offset = (hash % 360) as f32;
         let hue = (self.base_hue + hue_offset) % 360.0;
@@ -92,7 +92,7 @@ impl ColorGenerator {
     }
 
     /// Convert HSL color values to RGB
-    fn hsl_to_rgb(&self, h: f32, s: f32, l: f32) -> RGB {
+    const fn hsl_to_rgb(&self, h: f32, s: f32, l: f32) -> RGB {
         let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
         let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
         let m = l - c / 2.0;

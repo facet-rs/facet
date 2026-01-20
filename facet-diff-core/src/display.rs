@@ -89,7 +89,7 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
             }
             Diff::Replace { from, to } => {
                 let printer = PrettyPrinter::default()
-                    .with_colors(false)
+                    .with_colors(facet_pretty::ColorMode::Never)
                     .with_minimal_option_names(true);
 
                 // Check if both values are strings and visually confusable
@@ -124,7 +124,7 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 value,
             } => {
                 let printer = PrettyPrinter::default()
-                    .with_colors(false)
+                    .with_colors(facet_pretty::ColorMode::Never)
                     .with_minimal_option_names(true);
 
                 // Show variant if present (e.g., "Some" for Option::Some)
@@ -284,7 +284,7 @@ impl<'mem, 'facet> Display for Updates<'mem, 'facet> {
 impl<'mem, 'facet> Display for ReplaceGroup<'mem, 'facet> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let printer = PrettyPrinter::default()
-            .with_colors(false)
+            .with_colors(facet_pretty::ColorMode::Never)
             .with_minimal_option_names(true);
 
         // If it's a 1-to-1 replacement, check for equality
