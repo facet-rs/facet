@@ -13,6 +13,7 @@ use crate::error::{StyxError, StyxErrorKind};
 use crate::trace;
 
 /// Streaming Styx parser implementing FormatParser.
+#[derive(Clone)]
 pub struct StyxParser<'de> {
     input: &'de str,
     lexer: Lexer<'de>,
@@ -256,6 +257,64 @@ impl<'de> StyxParser<'de> {
         StyxError::new(kind, self.current_span)
     }
 
+    /// Build probe evidence by cloning the parser and scanning for field keys.
+    /// Does not modify the main parser's state.
+    fn build_probe(&self) -> Result<Vec<FieldEvidence<'de>>, StyxError> {
+        // Clone the parser so we can advance without affecting the original
+        let mut probe_parser = self.clone();
+
+        let mut evidence = Vec::new();
+        let mut depth = 1usize;
+
+        loop {
+            let event = probe_parser.next_event()?;
+            match event {
+                Some(ParseEvent::FieldKey(key)) if depth == 1 => {
+                    // At top level, collect field name evidence
+                    let name = key.name.unwrap_or(Cow::Borrowed(""));
+                    evidence.push(FieldEvidence::new(
+                        name,
+                        FieldLocationHint::KeyValue,
+                        Some(ValueTypeHint::Map),
+                    ));
+                    // Skip the field's value
+                    probe_parser.skip_value()?;
+                }
+                Some(ParseEvent::FieldKey(_)) => {
+                    // Nested field, skip its value
+                    probe_parser.skip_value()?;
+                }
+                Some(ParseEvent::StructStart(_)) => {
+                    depth += 1;
+                }
+                Some(ParseEvent::SequenceStart(_)) => {
+                    depth += 1;
+                }
+                Some(ParseEvent::StructEnd) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                Some(ParseEvent::SequenceEnd) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                Some(ParseEvent::Scalar(_)) | Some(ParseEvent::VariantTag(_)) => {
+                    // Skip scalars and variant tags
+                }
+                Some(ParseEvent::OrderedField) => {
+                    // Skip ordered fields
+                }
+                None => break,
+            }
+        }
+
+        Ok(evidence)
+    }
+
     /// Parse a tag and emit appropriate events.
     /// Called after consuming the @ token.
     /// Returns the first event to emit (others are queued in peeked_events).
@@ -309,7 +368,7 @@ impl<'de> StyxParser<'de> {
 impl<'de> FormatParser<'de> for StyxParser<'de> {
     type Error = StyxError;
     type Probe<'a>
-        = StyxProbe<'a, 'de>
+        = StyxProbe<'de>
     where
         Self: 'a;
 
@@ -688,7 +747,8 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
     }
 
     fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        Ok(StyxProbe { parser: self })
+        let evidence = self.build_probe()?;
+        Ok(StyxProbe { evidence, idx: 0 })
     }
 
     fn current_span(&self) -> Option<facet_reflect::Span> {
@@ -725,54 +785,25 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
 }
 
 /// Probe for untagged enum resolution.
-pub struct StyxProbe<'a, 'de> {
-    parser: &'a mut StyxParser<'de>,
+///
+/// Pre-collects evidence from a fresh parser scan without modifying the main parser.
+pub struct StyxProbe<'de> {
+    /// Pre-collected evidence.
+    evidence: Vec<FieldEvidence<'de>>,
+    /// Current index into evidence.
+    idx: usize,
 }
 
-impl<'a, 'de> ProbeStream<'de> for StyxProbe<'a, 'de> {
+impl<'de> ProbeStream<'de> for StyxProbe<'de> {
     type Error = StyxError;
 
     fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
-        // Peek at next event to gather evidence
-        let event = self.parser.peek_event()?;
-        match event {
-            Some(ParseEvent::FieldKey(key)) => Ok(Some(FieldEvidence::new(
-                // For evidence, unit keys become empty strings (evidence is for enum disambiguation)
-                key.name.unwrap_or(Cow::Borrowed("")),
-                FieldLocationHint::KeyValue,
-                Some(ValueTypeHint::Map),
-            ))),
-            Some(ParseEvent::Scalar(ScalarValue::Bool(_))) => Ok(Some(FieldEvidence::new(
-                "",
-                FieldLocationHint::KeyValue,
-                Some(ValueTypeHint::Bool),
-            ))),
-            Some(ParseEvent::Scalar(
-                ScalarValue::I64(_) | ScalarValue::U64(_) | ScalarValue::F64(_),
-            )) => Ok(Some(FieldEvidence::new(
-                "",
-                FieldLocationHint::KeyValue,
-                Some(ValueTypeHint::Number),
-            ))),
-            Some(ParseEvent::Scalar(ScalarValue::Str(_))) => Ok(Some(FieldEvidence::new(
-                "",
-                FieldLocationHint::KeyValue,
-                Some(ValueTypeHint::String),
-            ))),
-            Some(ParseEvent::Scalar(ScalarValue::Unit | ScalarValue::Null)) => Ok(Some(
-                FieldEvidence::new("", FieldLocationHint::KeyValue, Some(ValueTypeHint::Null)),
-            )),
-            Some(ParseEvent::SequenceStart(_)) => Ok(Some(FieldEvidence::new(
-                "",
-                FieldLocationHint::KeyValue,
-                Some(ValueTypeHint::Sequence),
-            ))),
-            Some(ParseEvent::StructStart(_)) => Ok(Some(FieldEvidence::new(
-                "",
-                FieldLocationHint::KeyValue,
-                Some(ValueTypeHint::Map),
-            ))),
-            _ => Ok(None),
+        if self.idx >= self.evidence.len() {
+            Ok(None)
+        } else {
+            let ev = self.evidence[self.idx].clone();
+            self.idx += 1;
+            Ok(Some(ev))
         }
     }
 }

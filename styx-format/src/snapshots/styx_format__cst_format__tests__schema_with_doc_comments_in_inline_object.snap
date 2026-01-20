@@ -1,6 +1,5 @@
 ---
 source: crates/styx-format/src/cst_format.rs
-assertion_line: 827
 expression: output
 ---
 meta {id "crate:captain-config@1", cli captain, description "Configuration read from `.config/captain/config.styx`"}

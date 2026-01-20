@@ -5,6 +5,7 @@ use crate::trace;
 use crate::{Span, Token, TokenKind};
 
 /// A lexer that produces tokens from Styx source text.
+#[derive(Clone)]
 pub struct Lexer<'src> {
     /// The source text being lexed.
     source: &'src str,
