@@ -45,6 +45,7 @@ pub use facet;
 
 // Re-export facet-pretty for macro-generated logging
 pub use facet_pretty;
+pub use facet_pretty::PrettyPrinter;
 
 // Re-export tracing for macro-generated logging
 pub use tracing;

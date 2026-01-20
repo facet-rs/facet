@@ -358,11 +358,11 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
 
     let method_name_str = method.name();
 
-    // For logging, we need to reference the args tuple
+    // For logging, we need to reference the args tuple (no colors for log output)
     let args_log = if arg_names.is_empty() {
         quote! { "()" }
     } else {
-        quote! { args.pretty() }
+        quote! { args.pretty_with(#roam::PrettyPrinter::new().with_colors(false)) }
     };
 
     // Build a let binding to capture args for logging
@@ -476,12 +476,12 @@ fn generate_client_method(
         pub async fn #method_name(&self, #(#params),*) -> #client_return {
             use #roam::facet_pretty::FacetPretty;
             let mut args = #args_tuple;
-            #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, args = %args.pretty(), "calling");
+            #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, args = %args.pretty_with(#roam::PrettyPrinter::new().with_colors(false)), "calling");
             let response = #roam::session::Caller::call(&self.caller, #method_id_mod::#method_name(), &mut args)
                 .await
                 .map_err(#roam::session::CallError::from)?;
             let mut result = #roam::session::decode_response::<#ok_ty, #err_ty>(&response.payload)?;
-            #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, result = %result.pretty(), "response");
+            #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, result = %result.pretty_with(#roam::PrettyPrinter::new().with_colors(false)), "response");
             // Bind any Rx<T> streams in the response so data can be received
             #roam::session::Caller::bind_response_streams(&self.caller, &mut result, &response.channels);
             Ok(result)
