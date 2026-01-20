@@ -633,14 +633,15 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                                 }
                             }
 
-                            // @name with space after = "@name" is the key
-                            let key = format!("@{}", name_token.text);
-                            self.pending_key = Some(Cow::Owned(key.clone()));
+                            // @name with space after = tagged key with tag name
+                            let tag_name_str = name_token.text;
+                            // Still store "@name" as pending_key for error reporting
+                            self.pending_key = Some(Cow::Owned(format!("@{}", tag_name_str)));
                             self.expecting_value = true;
                             let doc = std::mem::take(&mut self.pending_doc);
-                            trace!(?key, ?doc, "next_event: FieldKey (tagged)");
-                            return Ok(Some(ParseEvent::FieldKey(FieldKey::with_doc(
-                                Cow::Owned(key),
+                            trace!(tag = tag_name_str, ?doc, "next_event: FieldKey (tagged)");
+                            return Ok(Some(ParseEvent::FieldKey(FieldKey::tagged_with_doc(
+                                tag_name_str,
                                 FieldLocationHint::KeyValue,
                                 doc,
                             ))));

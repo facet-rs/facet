@@ -159,13 +159,99 @@ pub struct FloatConstraints {
 // Structural schema types
 // =============================================================================
 
-/// Object schema: @object{field @Schema, @ @Schema}.
-/// Maps field names to their type constraints.
-/// The key `None` represents additional fields (catch-all `@`).
-/// Keys are `Documented<Option<String>>` to carry field documentation.
+/// A key in an object schema.
+///
+/// Object keys can be:
+/// - Named fields: `name` → value = Some("name"), tag = None
+/// - Type patterns: `@string` → value = None, tag = Some("string")
+/// - Unit catch-all: `@` → value = None, tag = Some("")
+///
+/// This is a metadata container - `tag` is captured from the parser's FieldKey
+/// via `#[facet(metadata = "tag")]`.
+#[derive(Facet, Debug, Clone)]
+#[facet(metadata_container)]
+pub struct ObjectKey {
+    /// The field name for named keys, or None for tag-based keys.
+    pub value: Option<String>,
+    /// The tag name for type patterns (`@string` → "string", `@` → "").
+    #[facet(metadata = "tag")]
+    pub tag: Option<String>,
+}
+
+impl ObjectKey {
+    /// Create a named field key.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            value: Some(name.into()),
+            tag: None,
+        }
+    }
+
+    /// Create a type pattern key (e.g., `@string`).
+    pub fn typed(tag: impl Into<String>) -> Self {
+        Self {
+            value: None,
+            tag: Some(tag.into()),
+        }
+    }
+
+    /// Create a unit catch-all key (`@`).
+    pub fn unit() -> Self {
+        Self {
+            value: None,
+            tag: Some(String::new()),
+        }
+    }
+
+    /// Returns true if this is a named field (not a tag pattern).
+    pub fn is_named(&self) -> bool {
+        self.value.is_some()
+    }
+
+    /// Returns true if this is a type pattern (e.g., `@string`).
+    pub fn is_typed(&self) -> bool {
+        self.tag.is_some() && !self.tag.as_ref().unwrap().is_empty()
+    }
+
+    /// Returns true if this is the unit catch-all (`@`).
+    pub fn is_unit(&self) -> bool {
+        self.tag.as_ref().map_or(false, |t| t.is_empty())
+    }
+
+    /// Get the field name if this is a named key.
+    pub fn name(&self) -> Option<&str> {
+        self.value.as_deref()
+    }
+
+    /// Get the tag name if this is a type pattern.
+    pub fn tag_name(&self) -> Option<&str> {
+        self.tag.as_deref().filter(|t| !t.is_empty())
+    }
+}
+
+// Hash and Eq based on both value and tag
+impl std::hash::Hash for ObjectKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.value.hash(state);
+        self.tag.hash(state);
+    }
+}
+
+impl PartialEq for ObjectKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value && self.tag == other.tag
+    }
+}
+
+impl Eq for ObjectKey {}
+
+/// Object schema: @object{field @Schema, @string @Schema}.
+/// Maps field keys to their type constraints.
+/// Keys can be named fields or type patterns (like `@string` for catch-all).
+/// Keys are wrapped in `Documented<ObjectKey>` to carry field documentation.
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct ObjectSchema(pub HashMap<Documented<Option<String>>, Schema>);
+pub struct ObjectSchema(pub HashMap<Documented<ObjectKey>, Schema>);
 
 /// Sequence schema: @seq(@Schema).
 /// All elements must match the inner schema.

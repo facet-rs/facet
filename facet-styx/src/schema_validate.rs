@@ -60,8 +60,8 @@ use crate::schema_error::{
 };
 use crate::schema_types::{
     DefaultSchema, DeprecatedSchema, Documented, EnumSchema, FlattenSchema, FloatConstraints,
-    IntConstraints, MapSchema, ObjectSchema, OneOfSchema, OptionalSchema, Schema, SchemaFile,
-    SeqSchema, StringConstraints, UnionSchema,
+    IntConstraints, MapSchema, ObjectKey, ObjectSchema, OneOfSchema, OptionalSchema, Schema,
+    SchemaFile, SeqSchema, StringConstraints, UnionSchema,
 };
 
 /// Validator for Styx documents.
@@ -450,8 +450,14 @@ impl<'a> Validator<'a> {
         };
 
         let mut seen_fields: HashSet<Option<&str>> = HashSet::new();
-        // Look up catch-all schema using Documented key (Hash/Eq only compares inner value)
-        let additional_schema = schema.0.get(&Documented::new(None));
+        // Look up catch-all schema - find any key that is a typed pattern or unit
+        let additional_schema = schema.0.iter().find_map(|(k, v)| {
+            if k.value.tag.is_some() {
+                Some(v)
+            } else {
+                None
+            }
+        });
 
         for entry in &obj.entries {
             let key_opt: Option<&str> = if entry.key.is_unit() {
@@ -481,16 +487,19 @@ impl<'a> Validator<'a> {
 
             seen_fields.insert(key_opt);
 
-            // Look up by Documented<Option<String>> key (Hash/Eq only compares inner value)
-            let lookup_key = Documented::new(key_opt.map(|s| s.to_string()));
+            // Look up by Documented<ObjectKey> - for named fields
+            let lookup_key = Documented::new(ObjectKey::named(key_opt.unwrap_or("")));
             if let Some(field_schema) = schema.0.get(&lookup_key) {
                 result.merge(self.validate_value(&entry.value, field_schema, &field_path));
             } else if let Some(add_schema) = additional_schema {
                 result.merge(self.validate_value(&entry.value, add_schema, &field_path));
             } else {
                 // Collect valid field names for error message
-                let valid_fields: Vec<String> =
-                    schema.0.keys().filter_map(|k| k.value.clone()).collect();
+                let valid_fields: Vec<String> = schema
+                    .0
+                    .keys()
+                    .filter_map(|k| k.value.name().map(|s| s.to_string()))
+                    .collect();
 
                 // Try to find a similar field name (typo detection)
                 let suggestion = suggest_similar(key_display, &valid_fields).map(String::from);
@@ -512,16 +521,16 @@ impl<'a> Validator<'a> {
 
         // Check for missing required fields
         for (field_name_doc, field_schema) in &schema.0 {
-            // Skip the catch-all "@" field
-            let Some(name) = &field_name_doc.value else {
+            // Skip catch-all fields (typed patterns like @string)
+            let Some(name) = field_name_doc.value.name() else {
                 continue;
             };
 
-            if !seen_fields.contains(&Some(name.as_str())) {
+            if !seen_fields.contains(&Some(name)) {
                 // Optional and Default fields are not required
                 if !matches!(field_schema, Schema::Optional(_) | Schema::Default(_)) {
                     let field_path = if path.is_empty() {
-                        name.clone()
+                        name.to_string()
                     } else {
                         format!("{path}.{name}")
                     };
@@ -529,7 +538,7 @@ impl<'a> Validator<'a> {
                         ValidationError::new(
                             &field_path,
                             ValidationErrorKind::MissingField {
-                                field: name.clone(),
+                                field: name.to_string(),
                             },
                             format!("missing required field '{name}'"),
                         )
@@ -1047,4 +1056,56 @@ pub fn validate(doc: &Value, schema: &SchemaFile) -> ValidationResult {
 pub fn validate_as(value: &Value, schema: &SchemaFile, type_name: &str) -> ValidationResult {
     let validator = Validator::new(schema);
     validator.validate_as_type(value, type_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_typed_catchall_validation() {
+        // Schema with @string catch-all (like HashMap<String, i32>)
+        let schema_source = r#"meta {id test}
+schema {
+    @ @object{
+        @string @int
+    }
+}"#;
+        let schema: SchemaFile = crate::from_str(schema_source).expect("should parse schema");
+
+        // Check the parsed schema structure
+        let root = schema.schema.get(&None).expect("should have root");
+        if let Schema::Object(obj) = root {
+            tracing::debug!("Object schema has {} entries", obj.0.len());
+            for (key, value) in &obj.0 {
+                tracing::debug!(
+                    "Key: value={:?}, tag={:?} -> {:?}",
+                    key.value.value,
+                    key.value.tag,
+                    value
+                );
+            }
+            // Check if catch-all is found
+            let catchall = obj.0.iter().find(|(k, _)| k.value.tag.is_some());
+            assert!(
+                catchall.is_some(),
+                "Schema should have a typed catch-all entry. Keys: {:?}",
+                obj.0.keys().map(|k| (&k.value.value, &k.value.tag)).collect::<Vec<_>>()
+            );
+        } else {
+            panic!("Root should be an object schema, got {:?}", root);
+        }
+
+        // Document with arbitrary keys
+        let doc_source = r#"foo 42
+bar 123"#;
+        let doc = styx_tree::parse(doc_source).expect("should parse doc");
+
+        let result = validate(&doc, &schema);
+        assert!(
+            result.is_valid(),
+            "Document should validate. Errors: {:?}",
+            result.errors
+        );
+    }
 }

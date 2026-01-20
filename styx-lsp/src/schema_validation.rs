@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use facet_styx::{Documented, Schema, SchemaFile, ValidationResult, validate};
+use facet_styx::{Documented, ObjectKey, Schema, SchemaFile, ValidationResult, validate};
 use styx_tree::Value;
 use tower_lsp::lsp_types::Url;
 
@@ -365,14 +365,14 @@ fn collect_object_fields(schema: &Schema, fields: &mut Vec<SchemaField>) {
     match schema {
         Schema::Object(obj) => {
             for (key, field_schema) in &obj.0 {
-                // Skip the catch-all @ field
-                let Some(name) = &key.value else { continue };
+                // Skip the catch-all @ field (those with no name)
+                let Some(name) = key.name() else { continue };
 
                 let (optional, default_value, inner_schema) =
                     unwrap_field_modifiers(field_schema.clone());
 
                 fields.push(SchemaField {
-                    name: name.clone(),
+                    name: name.to_string(),
                     optional,
                     default_value,
                     schema: inner_schema,
@@ -550,7 +550,7 @@ fn get_schema_at_path_recursive(
 
     match schema {
         Schema::Object(obj) => {
-            let field_schema = obj.0.get(&Documented::new(Some(field_name.clone())))?;
+            let field_schema = obj.0.get(&Documented::new(ObjectKey::named(field_name.clone())))?;
             get_schema_at_path_recursive(field_schema, rest, schema_file)
         }
         Schema::Optional(opt) => get_schema_at_path_recursive(&opt.0.0, path, schema_file),

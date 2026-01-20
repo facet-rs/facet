@@ -4,12 +4,153 @@ use std::borrow::Cow;
 
 use crate::trace;
 use facet_core::Facet;
-use facet_format::{FormatSerializer, ScalarValue, SerializeError, serialize_root};
+use facet_format::{FieldKey, FieldLocationHint, FormatSerializer, ScalarValue, SerializeError, serialize_root};
 use facet_reflect::{HasFields, Peek};
 use styx_format::{FormatOptions, StyxWriter};
 
 // Re-export FormatOptions as SerializeOptions for backwards compatibility
 pub use styx_format::FormatOptions as SerializeOptions;
+
+/// Extract a FieldKey from a Peek value (typically a map key).
+///
+/// Handles metadata containers like `Documented<ObjectKey>` by extracting
+/// doc comments, tag, and the actual key name.
+fn extract_field_key<'mem, 'facet>(key: Peek<'mem, 'facet>) -> Option<FieldKey<'mem>> {
+    // Try to extract from metadata container
+    if key.shape().is_metadata_container() {
+        if let Ok(container) = key.into_struct() {
+            let mut doc_lines: Vec<Cow<'mem, str>> = Vec::new();
+            let mut tag_value: Option<Cow<'mem, str>> = None;
+            let mut name_value: Option<Cow<'mem, str>> = None;
+
+            for (f, field_value) in container.fields() {
+                if f.metadata_kind() == Some("doc") {
+                    // Extract doc lines
+                    if let Ok(opt) = field_value.into_option()
+                        && let Some(inner) = opt.value()
+                        && let Ok(list) = inner.into_list_like()
+                    {
+                        for item in list.iter() {
+                            if let Some(line) = item.as_str() {
+                                doc_lines.push(Cow::Borrowed(line));
+                            }
+                        }
+                    }
+                } else if f.metadata_kind() == Some("tag") {
+                    // Extract tag
+                    if let Ok(opt) = field_value.into_option()
+                        && let Some(inner) = opt.value()
+                        && let Some(s) = inner.as_str()
+                    {
+                        tag_value = Some(Cow::Borrowed(s));
+                    }
+                } else if f.metadata_kind().is_none() {
+                    // This is the value field - might be another metadata container
+                    let (inner_name, inner_tag) = extract_name_and_tag(field_value);
+                    if inner_name.is_some() {
+                        name_value = inner_name;
+                    }
+                    if inner_tag.is_some() {
+                        tag_value = inner_tag;
+                    }
+                }
+            }
+
+            return Some(FieldKey {
+                name: name_value,
+                tag: tag_value,
+                doc: if doc_lines.is_empty() {
+                    None
+                } else {
+                    Some(doc_lines)
+                },
+                location: FieldLocationHint::KeyValue,
+            });
+        }
+    }
+
+    // Try Option<String> - None becomes unit key (@)
+    if let Ok(opt) = key.into_option() {
+        return match opt.value() {
+            Some(inner) => {
+                if let Some(s) = inner.as_str() {
+                    Some(FieldKey::new(s, FieldLocationHint::KeyValue))
+                } else {
+                    None
+                }
+            }
+            None => {
+                // None -> unit key (@)
+                Some(FieldKey::unit(FieldLocationHint::KeyValue))
+            }
+        };
+    }
+
+    // Try direct string
+    if let Some(s) = key.as_str() {
+        return Some(FieldKey::new(s, FieldLocationHint::KeyValue));
+    }
+
+    None
+}
+
+/// Extract name and tag from a value (possibly a nested metadata container).
+fn extract_name_and_tag<'mem, 'facet>(
+    value: Peek<'mem, 'facet>,
+) -> (Option<Cow<'mem, str>>, Option<Cow<'mem, str>>) {
+    // Direct string
+    if let Some(s) = value.as_str() {
+        return (Some(Cow::Borrowed(s)), None);
+    }
+
+    // Option<String>
+    if let Ok(opt) = value.into_option() {
+        return match opt.value() {
+            Some(inner) => {
+                if let Some(s) = inner.as_str() {
+                    (Some(Cow::Borrowed(s)), None)
+                } else {
+                    (None, None)
+                }
+            }
+            None => (None, None),
+        };
+    }
+
+    // Nested metadata container (like ObjectKey)
+    if value.shape().is_metadata_container() {
+        if let Ok(container) = value.into_struct() {
+            let mut name: Option<Cow<'mem, str>> = None;
+            let mut tag: Option<Cow<'mem, str>> = None;
+
+            for (f, field_value) in container.fields() {
+                if f.metadata_kind() == Some("tag") {
+                    if let Ok(opt) = field_value.into_option()
+                        && let Some(inner) = opt.value()
+                        && let Some(s) = inner.as_str()
+                    {
+                        tag = Some(Cow::Borrowed(s));
+                    }
+                } else if f.metadata_kind().is_none() {
+                    // Value field
+                    if let Some(s) = field_value.as_str() {
+                        name = Some(Cow::Borrowed(s));
+                    } else if let Ok(opt) = field_value.into_option() {
+                        if let Some(inner) = opt.value() {
+                            if let Some(s) = inner.as_str() {
+                                name = Some(Cow::Borrowed(s));
+                            }
+                        }
+                    }
+                }
+            }
+
+            return (name, tag);
+        }
+    }
+
+    (None, None)
+}
 
 /// Error type for Styx serialization.
 #[derive(Debug)]
@@ -81,6 +222,76 @@ impl FormatSerializer for StyxSerializer {
     fn field_key(&mut self, key: &str) -> Result<(), Self::Error> {
         trace!(key, "field_key");
         self.writer.field_key(key).map_err(StyxSerializeError::new)
+    }
+
+    fn emit_field_key(&mut self, key: &facet_format::FieldKey<'_>) -> Result<(), Self::Error> {
+        trace!(?key, "emit_field_key");
+
+        let doc_lines: Vec<&str> = key
+            .doc
+            .as_ref()
+            .map(|d| d.iter().map(|s| s.as_ref()).collect())
+            .unwrap_or_default();
+
+        // Build the key based on tag and name:
+        // - `@` → tag=Some(""), name=None
+        // - `@tag` → tag=Some("tag"), name=None
+        // - `name` → tag=None, name=Some("name")
+        // - `@tag"name"` → tag=Some("tag"), name=Some("name")
+        match (key.tag.as_deref(), key.name.as_deref()) {
+            (Some(tag), Some(name)) => {
+                // @tag"name" - tagged with value
+                let key_str = if tag.is_empty() {
+                    format!("@\"{}\"", name)
+                } else {
+                    format!("@{}\"{}\"", tag, name)
+                };
+                if !doc_lines.is_empty() {
+                    self.writer
+                        .write_doc_comment_and_key_raw(&doc_lines.join("\n"), &key_str);
+                } else {
+                    self.writer
+                        .field_key_raw(&key_str)
+                        .map_err(StyxSerializeError::new)?;
+                }
+            }
+            (Some(tag), None) => {
+                // @tag or @ - typed catch-all or unit
+                let key_str = if tag.is_empty() {
+                    "@".to_string()
+                } else {
+                    format!("@{}", tag)
+                };
+                if !doc_lines.is_empty() {
+                    self.writer
+                        .write_doc_comment_and_key_raw(&doc_lines.join("\n"), &key_str);
+                } else {
+                    self.writer
+                        .field_key_raw(&key_str)
+                        .map_err(StyxSerializeError::new)?;
+                }
+            }
+            (None, Some(name)) => {
+                // name - regular named field
+                if !doc_lines.is_empty() {
+                    self.writer
+                        .write_doc_comment_and_key(&doc_lines.join("\n"), name);
+                } else {
+                    self.writer.field_key(name).map_err(StyxSerializeError::new)?;
+                }
+            }
+            (None, None) => {
+                // Shouldn't happen, but fall back to @
+                if !doc_lines.is_empty() {
+                    self.writer.write_doc_comment_and_key_raw(&doc_lines.join("\n"), "@");
+                } else {
+                    self.writer
+                        .field_key_raw("@")
+                        .map_err(StyxSerializeError::new)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn end_struct(&mut self) -> Result<(), Self::Error> {
@@ -172,102 +383,13 @@ impl FormatSerializer for StyxSerializer {
     fn serialize_map_key(&mut self, key: Peek<'_, '_>) -> Result<bool, Self::Error> {
         trace!(shape = key.shape().type_identifier, "serialize_map_key");
 
-        // Handle metadata containers (like Documented<K>) - extract doc and inner key
-        if key.shape().is_metadata_container() {
-            if let Ok(container) = key.into_struct() {
-                trace!("serialize_map_key: metadata container detected");
-
-                // Extract doc lines and inner value
-                let mut doc_lines: Vec<&str> = Vec::new();
-                let mut inner_key: Option<Peek<'_, '_>> = None;
-
-                for (f, field_value) in container.fields() {
-                    if f.metadata_kind() == Some("doc") {
-                        // This is the doc field
-                        if let Ok(opt) = field_value.into_option()
-                            && let Some(inner) = opt.value()
-                            && let Ok(list) = inner.into_list_like()
-                        {
-                            for item in list.iter() {
-                                if let Some(line) = item.as_str() {
-                                    doc_lines.push(line);
-                                }
-                            }
-                        }
-                    } else if f.metadata_kind().is_none() {
-                        // This is the value field (not metadata)
-                        inner_key = Some(field_value);
-                    }
-                }
-
-                if let Some(inner) = inner_key {
-                    // Get the key string from the inner value
-                    let key_str = if let Some(s) = inner.as_str() {
-                        s.to_string()
-                    } else if let Ok(opt) = inner.into_option() {
-                        // Handle Documented<Option<String>>
-                        match opt.value() {
-                            Some(inner_inner) => {
-                                if let Some(s) = inner_inner.as_str() {
-                                    s.to_string()
-                                } else {
-                                    return Ok(false);
-                                }
-                            }
-                            None => {
-                                // None key -> @
-                                if !doc_lines.is_empty() {
-                                    let doc = doc_lines.join("\n");
-                                    self.writer.write_doc_comment_and_key(&doc, "@");
-                                } else {
-                                    self.writer
-                                        .field_key_raw("@")
-                                        .map_err(StyxSerializeError::new)?;
-                                }
-                                return Ok(true);
-                            }
-                        }
-                    } else {
-                        return Ok(false);
-                    };
-
-                    // Emit doc comment + key
-                    if !doc_lines.is_empty() {
-                        trace!(doc_lines = ?doc_lines, key = %key_str, "serialize_map_key: emitting doc comment");
-                        let doc = doc_lines.join("\n");
-                        self.writer.write_doc_comment_and_key(&doc, &key_str);
-                    } else {
-                        trace!(key = %key_str, "serialize_map_key: no doc, just key");
-                        self.writer
-                            .field_key(&key_str)
-                            .map_err(StyxSerializeError::new)?;
-                    }
-                    return Ok(true);
-                }
-            }
+        // Try to extract a FieldKey from the map key
+        if let Some(field_key) = extract_field_key(key) {
+            trace!(?field_key, "serialize_map_key: extracted FieldKey");
+            self.emit_field_key(&field_key)?;
+            return Ok(true);
         }
 
-        // Handle Option<String> keys specially: None becomes @ (unit)
-        if let Ok(opt) = key.into_option() {
-            match opt.value() {
-                Some(inner) => {
-                    // Some(string) - use the string as the key
-                    if let Some(s) = inner.as_str() {
-                        trace!(key = s, "serialize_map_key: Option<String> Some");
-                        self.writer.field_key(s).map_err(StyxSerializeError::new)?;
-                        return Ok(true);
-                    }
-                }
-                None => {
-                    // None - write @ as a raw key
-                    trace!("serialize_map_key: Option<String> None -> @");
-                    self.writer
-                        .field_key_raw("@")
-                        .map_err(StyxSerializeError::new)?;
-                    return Ok(true);
-                }
-            }
-        }
         // Fall back to default behavior for other key types
         trace!("serialize_map_key: falling back to default");
         Ok(false)

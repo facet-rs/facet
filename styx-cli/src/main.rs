@@ -644,7 +644,7 @@ fn run_validation(
                 let resolved = resolve_schema_path(&path, Some(filename))?;
                 load_schema_file(&resolved)?
             }
-            SchemaRef::Embedded { cli } => extract_embedded_schema(&cli)?,
+            SchemaRef::Embedded { id, cli } => extract_embedded_schema(&cli, id.as_deref())?,
         }
     };
 
@@ -668,7 +668,7 @@ fn run_validation(
 
 enum SchemaRef {
     External(String),
-    Embedded { cli: String },
+    Embedded { id: Option<String>, cli: String },
 }
 
 fn strip_schema_declaration(value: &Value) -> Value {
@@ -708,7 +708,13 @@ fn find_schema_declaration(value: &Value) -> Result<SchemaRef, CliError> {
                 if let Some(cli_value) = schema_obj.get("cli")
                     && let Some(cli_name) = cli_value.as_str()
                 {
+                    // Also extract the optional schema ID
+                    let id = schema_obj
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     return Ok(SchemaRef::Embedded {
+                        id,
                         cli: cli_name.to_string(),
                     });
                 }
@@ -763,7 +769,7 @@ fn load_schema_file(path: &str) -> Result<SchemaFile, CliError> {
         .map_err(|e| CliError::Parse(format!("failed to parse schema '{}': {}", path, e)))
 }
 
-fn extract_embedded_schema(cli_name: &str) -> Result<SchemaFile, CliError> {
+fn extract_embedded_schema(cli_name: &str, schema_id: Option<&str>) -> Result<SchemaFile, CliError> {
     let binary_path = which::which(cli_name).map_err(|_| {
         CliError::Validation(format!(
             "binary '{}' not found in PATH\nhint: ensure the binary is installed and in your PATH",
@@ -786,7 +792,54 @@ fn extract_embedded_schema(cli_name: &str) -> Result<SchemaFile, CliError> {
         )));
     }
 
-    let schema_source = &schemas[0];
+    // If a schema ID is specified, find the matching schema
+    let schema_source = if let Some(target_id) = schema_id {
+        schemas
+            .iter()
+            .find(|schema| {
+                // Parse the schema to check its meta.id
+                if let Ok(parsed) = styx_tree::parse(schema) {
+                    if let Some(obj) = parsed.as_object() {
+                        if let Some(meta) = obj.get("meta") {
+                            if let Some(meta_obj) = meta.as_object() {
+                                if let Some(id_value) = meta_obj.get("id") {
+                                    if let Some(id) = id_value.as_str() {
+                                        return id == target_id;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                false
+            })
+            .ok_or_else(|| {
+                let available_ids: Vec<_> = schemas
+                    .iter()
+                    .filter_map(|schema| {
+                        styx_tree::parse(schema).ok().and_then(|parsed| {
+                            parsed.as_object().and_then(|obj| {
+                                obj.get("meta").and_then(|meta| {
+                                    meta.as_object()
+                                        .and_then(|m| m.get("id").and_then(|v| v.as_str()))
+                                        .map(|s| s.to_string())
+                                })
+                            })
+                        })
+                    })
+                    .collect();
+                CliError::Validation(format!(
+                    "schema '{}' not found in '{}'\navailable schemas: {}",
+                    target_id,
+                    binary_path.display(),
+                    available_ids.join(", ")
+                ))
+            })?
+    } else {
+        // No ID specified, use the first schema
+        &schemas[0]
+    };
+
     facet_styx::from_str(schema_source).map_err(|e| {
         CliError::Parse(format!(
             "failed to parse embedded schema from '{}': {}",

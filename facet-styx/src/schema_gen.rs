@@ -15,8 +15,8 @@ use std::ptr::NonNull;
 
 use crate::peek_to_string_expr;
 use crate::schema_types::{
-    DefaultSchema, Documented, EnumSchema, MapSchema, Meta, ObjectSchema, OptionalSchema, RawStyx,
-    Schema, SchemaFile, SeqSchema,
+    DefaultSchema, Documented, EnumSchema, MapSchema, Meta, ObjectKey, ObjectSchema,
+    OptionalSchema, RawStyx, Schema, SchemaFile, SeqSchema,
 };
 
 /// Strip exactly one leading space from a doc line if present.
@@ -214,6 +214,32 @@ fn generate_schema_inner<T: facet_core::Facet<'static>>(id: String, cli: Option<
     crate::to_string(&schema_file).expect("failed to serialize schema")
 }
 
+/// Convert a Schema to a tag name for use in ObjectKey.
+///
+/// Maps built-in types to their tag names:
+/// - Schema::String(_) → "string"
+/// - Schema::Int(_) → "int"
+/// - Schema::Float(_) → "float"
+/// - Schema::Bool → "bool"
+/// - Schema::Unit → "unit"
+/// - Schema::Any → "any"
+/// - Schema::Type { name } → the type name
+/// - Complex types → serialized form (for future extensibility)
+fn schema_to_tag_name(schema: &Schema) -> String {
+    match schema {
+        Schema::String(_) => "string".to_string(),
+        Schema::Int(_) => "int".to_string(),
+        Schema::Float(_) => "float".to_string(),
+        Schema::Bool => "bool".to_string(),
+        Schema::Unit => "unit".to_string(),
+        Schema::Any => "any".to_string(),
+        Schema::Type { name } => name.clone().unwrap_or_default(),
+        // For complex types, we could serialize them, but for now use "any"
+        // This handles cases like @object, @seq, @map, etc. being used as keys
+        _ => "any".to_string(),
+    }
+}
+
 /// Internal schema generator that builds typed Schema structs.
 struct SchemaGenerator {
     /// Types currently being generated (for cycle detection)
@@ -380,7 +406,7 @@ impl SchemaGenerator {
                 }
             }
             StructKind::Struct => {
-                let mut fields: HashMap<Documented<Option<String>>, Schema> = HashMap::new();
+                let mut fields: HashMap<Documented<ObjectKey>, Schema> = HashMap::new();
 
                 for field in struct_type.fields {
                     let field_name = field.effective_name();
@@ -398,13 +424,24 @@ impl SchemaGenerator {
                         match field_schema {
                             // Flattened map: add catch-all entry with the value type
                             Schema::Map(MapSchema(types)) => {
-                                // @map(@V) has 1 type, @map(@K @V) has 2 - we want the value type
-                                let value_schema = if types.len() == 1 {
-                                    types.into_iter().next().unwrap().value
+                                // @map(@V) has 1 type, @map(@K @V) has 2
+                                // Get key type tag and value schema
+                                let (key_tag, value_schema) = if types.len() == 1 {
+                                    // Only value type, key defaults to @string
+                                    ("string".to_string(), types.into_iter().next().unwrap().value)
                                 } else {
-                                    types.into_iter().nth(1).unwrap().value
+                                    // Key and value types
+                                    let mut iter = types.into_iter();
+                                    let key_schema = iter.next().unwrap().value;
+                                    let value_schema = iter.next().unwrap().value;
+                                    // Convert key schema to tag name
+                                    let key_tag = schema_to_tag_name(&key_schema);
+                                    (key_tag, value_schema)
                                 };
-                                let key = Documented { value: None, doc };
+                                let key = Documented {
+                                    value: ObjectKey::typed(key_tag),
+                                    doc,
+                                };
                                 fields.insert(key, value_schema);
                             }
                             // Flattened object: merge its fields into parent
@@ -413,9 +450,12 @@ impl SchemaGenerator {
                                     fields.insert(inner_key, inner_schema);
                                 }
                             }
-                            // Other flattened types: use catch-all
+                            // Other flattened types: use unit catch-all
                             other => {
-                                let key = Documented { value: None, doc };
+                                let key = Documented {
+                                    value: ObjectKey::unit(),
+                                    doc,
+                                };
                                 fields.insert(key, other);
                             }
                         }
@@ -433,12 +473,15 @@ impl SchemaGenerator {
                         )));
                     }
 
-                    // Handle catch-all field (empty name)
+                    // Handle catch-all field (empty name) vs regular named field
                     let key = if field_name.is_empty() {
-                        Documented { value: None, doc }
+                        Documented {
+                            value: ObjectKey::unit(),
+                            doc,
+                        }
                     } else {
                         Documented {
-                            value: Some(field_name.to_string()),
+                            value: ObjectKey::named(field_name),
                             doc,
                         }
                     };
@@ -613,11 +656,11 @@ mod tests {
         if let Schema::Object(obj) = root_schema {
             assert!(
                 obj.0
-                    .contains_key(&Documented::new(Some("name".to_string())))
+                    .contains_key(&Documented::new(ObjectKey::named("name")))
             );
             assert!(
                 obj.0
-                    .contains_key(&Documented::new(Some("port".to_string())))
+                    .contains_key(&Documented::new(ObjectKey::named("port")))
             );
         } else {
             panic!("expected root schema to be Object, got {:?}", root_schema);
@@ -643,7 +686,7 @@ mod tests {
         if let Schema::Object(obj) = root_schema {
             let debug_schema = obj
                 .0
-                .get(&Documented::new(Some("debug".to_string())))
+                .get(&Documented::new(ObjectKey::named("debug")))
                 .expect("missing debug field");
             assert!(
                 matches!(debug_schema, Schema::Optional(_)),
@@ -673,7 +716,7 @@ mod tests {
         if let Schema::Object(obj) = root_schema {
             let items_schema = obj
                 .0
-                .get(&Documented::new(Some("items".to_string())))
+                .get(&Documented::new(ObjectKey::named("items")))
                 .expect("missing items field");
             assert!(
                 matches!(items_schema, Schema::Seq(_)),
@@ -705,7 +748,7 @@ mod tests {
         if let Schema::Object(obj) = root_schema {
             let port_schema = obj
                 .0
-                .get(&Documented::new(Some("port".to_string())))
+                .get(&Documented::new(ObjectKey::named("port")))
                 .expect("missing port field");
             if let Schema::Default(default_schema) = port_schema {
                 assert_eq!(
@@ -748,14 +791,14 @@ mod tests {
         if let Schema::Object(obj) = root_schema {
             let inner_schema = obj
                 .0
-                .get(&Documented::new(Some("inner".to_string())))
+                .get(&Documented::new(ObjectKey::named("inner")))
                 .expect("missing inner field");
             // Inner is an object with fields that have defaults
             if let Schema::Object(inner_obj) = inner_schema {
                 // Check that the inner object has fields with @default wrappers
                 let enabled_schema = inner_obj
                     .0
-                    .get(&Documented::new(Some("enabled".to_string())))
+                    .get(&Documented::new(ObjectKey::named("enabled")))
                     .expect("missing enabled field");
                 assert!(
                     matches!(enabled_schema, Schema::Default(_)),
@@ -763,7 +806,7 @@ mod tests {
                 );
                 let port_schema = inner_obj
                     .0
-                    .get(&Documented::new(Some("port".to_string())))
+                    .get(&Documented::new(ObjectKey::named("port")))
                     .expect("missing port field");
                 assert!(
                     matches!(port_schema, Schema::Default(_)),
@@ -894,10 +937,10 @@ mod tests {
             "schema should NOT contain 'decls' key for flattened HashMap. Got:\n{}",
             schema
         );
-        // Should have catch-all @ with the value type (Decl's object schema)
+        // Should have typed catch-all @string with the value type (Decl's object schema)
         assert!(
-            schema.contains("@ @object"),
-            "schema should have catch-all @ entry with value type. Got:\n{}",
+            schema.contains("@string @object"),
+            "schema should have typed catch-all @string entry with value type. Got:\n{}",
             schema
         );
         // Should contain the Decl's field
@@ -949,6 +992,36 @@ mod tests {
         assert!(
             schema.contains("extra @string"),
             "schema should contain 'extra' field. Got:\n{}",
+            schema
+        );
+    }
+
+    #[test]
+    fn test_flatten_hashmap_with_optional_value() {
+        use std::collections::HashMap;
+
+        /// ORDER BY clause.
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct OrderBy {
+            /// Column name -> direction ("asc" or "desc", None means asc)
+            #[facet(flatten)]
+            pub columns: HashMap<String, Option<String>>,
+        }
+
+        let schema = schema_from_type::<OrderBy>();
+        tracing::debug!("Generated schema:\n{schema}");
+
+        // Flattened HashMap<String, Option<String>> should produce @string @optional(@string)
+        // NOT "@" @optional(@string) or "\"@\"" @optional(@string)
+        assert!(
+            schema.contains("@string @optional"),
+            "schema should have typed catch-all @string with @optional value. Got:\n{}",
+            schema
+        );
+        assert!(
+            !schema.contains("\"@\""),
+            "schema should NOT contain quoted @ key. Got:\n{}",
             schema
         );
     }

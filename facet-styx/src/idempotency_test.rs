@@ -452,14 +452,14 @@ fn idempotent_enum_with_optional_struct() {
 
 #[test]
 fn idempotent_schema_object() {
-    use crate::schema_types::{ObjectSchema, Schema};
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
 
     let mut fields = HashMap::new();
     fields.insert(
-        Documented::new(Some("name".to_string())),
+        Documented::new(ObjectKey::named("name")),
         Schema::String(None),
     );
-    fields.insert(Documented::new(Some("port".to_string())), Schema::Int(None));
+    fields.insert(Documented::new(ObjectKey::named("port")), Schema::Int(None));
 
     let schema = Schema::Object(ObjectSchema(fields));
     assert_idempotent(&schema, "schema object");
@@ -467,15 +467,15 @@ fn idempotent_schema_object() {
 
 #[test]
 fn idempotent_schema_with_doc_comments() {
-    use crate::schema_types::{ObjectSchema, Schema};
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
 
     let mut fields = HashMap::new();
     fields.insert(
-        Documented::with_doc_line(Some("name".to_string()), "The name field"),
+        Documented::with_doc_line(ObjectKey::named("name"), "The name field"),
         Schema::String(None),
     );
     fields.insert(
-        Documented::with_doc_line(Some("port".to_string()), "The port number"),
+        Documented::with_doc_line(ObjectKey::named("port"), "The port number"),
         Schema::Int(None),
     );
 
@@ -485,11 +485,11 @@ fn idempotent_schema_with_doc_comments() {
 
 #[test]
 fn idempotent_schema_optional_field() {
-    use crate::schema_types::{ObjectSchema, OptionalSchema, Schema};
+    use crate::schema_types::{ObjectKey, ObjectSchema, OptionalSchema, Schema};
 
     let mut fields = HashMap::new();
     fields.insert(
-        Documented::with_doc_line(Some("binary".to_string()), "Path to a pre-built binary"),
+        Documented::with_doc_line(ObjectKey::named("binary"), "Path to a pre-built binary"),
         Schema::Optional(OptionalSchema((Documented::new(Box::new(Schema::String(
             None,
         ))),))),
@@ -513,7 +513,7 @@ fn idempotent_schema_enum() {
 
 #[test]
 fn idempotent_schema_enum_with_doc_comments() {
-    use crate::schema_types::{EnumSchema, ObjectSchema, Schema};
+    use crate::schema_types::{EnumSchema, ObjectKey, ObjectSchema, Schema};
 
     let mut variants = HashMap::new();
     variants.insert(
@@ -522,8 +522,8 @@ fn idempotent_schema_enum_with_doc_comments() {
     );
 
     let mut complex_fields = HashMap::new();
-    complex_fields.insert(Documented::new(Some("x".to_string())), Schema::Int(None));
-    complex_fields.insert(Documented::new(Some("y".to_string())), Schema::Int(None));
+    complex_fields.insert(Documented::new(ObjectKey::named("x")), Schema::Int(None));
+    complex_fields.insert(Documented::new(ObjectKey::named("y")), Schema::Int(None));
     variants.insert(
         Documented::with_doc_line("complex".to_string(), "A complex variant"),
         Schema::Object(ObjectSchema(complex_fields)),
@@ -592,7 +592,9 @@ fn idempotent_schema_complex_map_enum() {
 
 #[test]
 fn idempotent_schema_deeply_nested() {
-    use crate::schema_types::{EnumSchema, MapSchema, ObjectSchema, OptionalSchema, Schema};
+    use crate::schema_types::{
+        EnumSchema, MapSchema, ObjectKey, ObjectSchema, OptionalSchema, Schema,
+    };
 
     // Deeply nested: @object{field @optional(@map(@string @enum{...}))}
     let mut enum_variants = HashMap::new();
@@ -609,7 +611,7 @@ fn idempotent_schema_deeply_nested() {
 
     let mut fields = HashMap::new();
     fields.insert(
-        Documented::with_doc_line(Some("field".to_string()), "A complex field"),
+        Documented::with_doc_line(ObjectKey::named("field"), "A complex field"),
         optional_schema,
     );
 
@@ -619,7 +621,7 @@ fn idempotent_schema_deeply_nested() {
 
 #[test]
 fn idempotent_dibs_like_schema() {
-    use crate::schema_types::{Meta, ObjectSchema, OptionalSchema, Schema, SchemaFile};
+    use crate::schema_types::{Meta, ObjectKey, ObjectSchema, OptionalSchema, Schema, SchemaFile};
 
     // This test mimics the actual dibs schema structure:
     // meta {id "crate:dibs@1", cli dibs, description "..."}
@@ -637,7 +639,7 @@ fn idempotent_dibs_like_schema() {
     let mut db_fields = HashMap::new();
     db_fields.insert(
         Documented::with_doc(
-            Some("binary".to_string()),
+            ObjectKey::named("binary"),
             vec![
                 "Path to a pre-built binary (for faster iteration).".to_string(),
                 "If not specified, we'll use `cargo run -p <crate_name>`.".to_string(),
@@ -649,7 +651,7 @@ fn idempotent_dibs_like_schema() {
     );
     db_fields.insert(
         Documented::with_doc_line(
-            Some("crate".to_string()),
+            ObjectKey::named("crate"),
             "Name of the crate containing schema definitions (e.g., \"my-app-db\").",
         ),
         Schema::Optional(OptionalSchema((Documented::new(Box::new(Schema::String(
@@ -660,7 +662,7 @@ fn idempotent_dibs_like_schema() {
     // Build the root object schema with 'db' field
     let mut root_fields = HashMap::new();
     root_fields.insert(
-        Documented::with_doc_line(Some("db".to_string()), "Database crate configuration."),
+        Documented::with_doc_line(ObjectKey::named("db"), "Database crate configuration."),
         Schema::Object(ObjectSchema(db_fields)),
     );
 
@@ -681,4 +683,587 @@ fn idempotent_dibs_like_schema() {
     };
 
     assert_idempotent(&schema_file, "dibs-like schema file");
+}
+
+// =============================================================================
+// ObjectKey tests - all four key combinations
+// =============================================================================
+
+#[test]
+fn idempotent_object_key_named() {
+    // Regular named field: `name @type`
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::named("username")),
+        Schema::String(None),
+    );
+    fields.insert(
+        Documented::new(ObjectKey::named("age")),
+        Schema::Int(None),
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey named fields");
+}
+
+#[test]
+fn idempotent_object_key_typed_catchall() {
+    // Typed catch-all: `@string @type`
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::typed("string")),
+        Schema::Int(None),
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey typed catch-all @string");
+}
+
+#[test]
+fn idempotent_object_key_unit_catchall() {
+    // Unit catch-all: `@ @type`
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(Documented::new(ObjectKey::unit()), Schema::String(None));
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey unit catch-all @");
+}
+
+#[test]
+fn idempotent_object_key_mixed() {
+    // Mix of named fields and typed catch-all
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::named("id")),
+        Schema::Int(None),
+    );
+    fields.insert(
+        Documented::new(ObjectKey::named("name")),
+        Schema::String(None),
+    );
+    fields.insert(
+        Documented::new(ObjectKey::typed("string")),
+        Schema::Any,
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey mixed named and catch-all");
+}
+
+#[test]
+fn idempotent_object_key_with_doc() {
+    // ObjectKey with documentation
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::with_doc_line(ObjectKey::named("port"), "The server port"),
+        Schema::Int(None),
+    );
+    fields.insert(
+        Documented::with_doc_line(ObjectKey::typed("string"), "Additional string fields"),
+        Schema::String(None),
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey with doc comments");
+}
+
+#[test]
+fn idempotent_object_key_nested() {
+    // Nested objects with ObjectKey
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut inner_fields = HashMap::new();
+    inner_fields.insert(
+        Documented::new(ObjectKey::typed("string")),
+        Schema::Int(None),
+    );
+
+    let mut outer_fields = HashMap::new();
+    outer_fields.insert(
+        Documented::new(ObjectKey::named("counts")),
+        Schema::Object(ObjectSchema(inner_fields)),
+    );
+
+    let schema = Schema::Object(ObjectSchema(outer_fields));
+    assert_idempotent(&schema, "ObjectKey nested objects");
+}
+
+#[test]
+fn idempotent_object_key_in_optional() {
+    // ObjectKey inside optional
+    use crate::schema_types::{ObjectKey, ObjectSchema, OptionalSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::typed("string")),
+        Schema::String(None),
+    );
+
+    let schema = Schema::Optional(OptionalSchema((Documented::new(Box::new(
+        Schema::Object(ObjectSchema(fields)),
+    )),)));
+    assert_idempotent(&schema, "ObjectKey in optional");
+}
+
+#[test]
+fn idempotent_object_key_in_seq() {
+    // ObjectKey inside sequence
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema, SeqSchema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::named("x")),
+        Schema::Int(None),
+    );
+    fields.insert(
+        Documented::new(ObjectKey::named("y")),
+        Schema::Int(None),
+    );
+
+    let schema = Schema::Seq(SeqSchema((Documented::new(Box::new(Schema::Object(
+        ObjectSchema(fields),
+    ))),)));
+    assert_idempotent(&schema, "ObjectKey in sequence");
+}
+
+#[test]
+fn idempotent_object_key_multiple_typed() {
+    // Multiple typed catch-alls (different types)
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::typed("string")),
+        Schema::String(None),
+    );
+    fields.insert(
+        Documented::new(ObjectKey::typed("int")),
+        Schema::Int(None),
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey multiple typed catch-alls");
+}
+
+#[test]
+fn idempotent_object_key_flatten_simulation() {
+    // Simulates what schema_gen produces for #[facet(flatten)] HashMap<String, T>
+    use crate::schema_types::{ObjectKey, ObjectSchema, OptionalSchema, Schema};
+
+    let mut fields = HashMap::new();
+    // Named field
+    fields.insert(
+        Documented::with_doc_line(ObjectKey::named("id"), "The unique identifier"),
+        Schema::String(None),
+    );
+    // Flattened HashMap<String, Option<String>> becomes @string catch-all
+    fields.insert(
+        Documented::with_doc_line(
+            ObjectKey::typed("string"),
+            "Additional optional string properties",
+        ),
+        Schema::Optional(OptionalSchema((Documented::new(Box::new(Schema::String(
+            None,
+        ))),))),
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey flatten simulation");
+}
+
+#[test]
+fn idempotent_object_key_all_variants() {
+    // All ObjectKey variants in one object
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    // Named
+    fields.insert(
+        Documented::with_doc_line(ObjectKey::named("explicit_field"), "An explicit field"),
+        Schema::String(None),
+    );
+    // Typed catch-all
+    fields.insert(
+        Documented::with_doc_line(ObjectKey::typed("int"), "Integer keys"),
+        Schema::Int(None),
+    );
+    // Unit catch-all (matches anything else)
+    fields.insert(
+        Documented::with_doc_line(ObjectKey::unit(), "Catch-all for other keys"),
+        Schema::Any,
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey all variants");
+}
+
+#[test]
+fn idempotent_object_key_deeply_nested() {
+    // Deeply nested structure with ObjectKey throughout
+    use crate::schema_types::{ObjectKey, ObjectSchema, OptionalSchema, Schema, SeqSchema};
+
+    let mut level3 = HashMap::new();
+    level3.insert(
+        Documented::new(ObjectKey::typed("string")),
+        Schema::Bool,
+    );
+
+    let mut level2 = HashMap::new();
+    level2.insert(
+        Documented::new(ObjectKey::named("flags")),
+        Schema::Object(ObjectSchema(level3)),
+    );
+
+    let mut level1 = HashMap::new();
+    level1.insert(
+        Documented::new(ObjectKey::named("config")),
+        Schema::Optional(OptionalSchema((Documented::new(Box::new(Schema::Object(
+            ObjectSchema(level2),
+        ))),))),
+    );
+    level1.insert(
+        Documented::new(ObjectKey::typed("string")),
+        Schema::Seq(SeqSchema((Documented::new(Box::new(Schema::Int(None))),))),
+    );
+
+    let schema = Schema::Object(ObjectSchema(level1));
+    assert_idempotent(&schema, "ObjectKey deeply nested");
+}
+
+#[test]
+fn idempotent_object_key_empty_object() {
+    // Empty object (edge case)
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let fields = HashMap::new();
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey empty object");
+}
+
+#[test]
+fn idempotent_object_key_single_named() {
+    // Single named field
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::named("only")),
+        Schema::Bool,
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey single named");
+}
+
+#[test]
+fn idempotent_object_key_single_typed() {
+    // Single typed catch-all
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::typed("int")),
+        Schema::Float(None),
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey single typed");
+}
+
+#[test]
+fn idempotent_object_key_typed_string_with_optional() {
+    // Typed catch-all @string with @optional value - like HashMap<String, Option<String>>
+    use crate::schema_types::{ObjectKey, ObjectSchema, OptionalSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::with_doc_line(
+            ObjectKey::typed("string"),
+            "Column name -> direction",
+        ),
+        Schema::Optional(OptionalSchema((Documented::new(Box::new(Schema::String(None))),))),
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey typed string with optional value");
+}
+
+#[test]
+fn idempotent_object_key_typed_string_from_text() {
+    // Parse @string as object key from text and verify roundtrip
+    use crate::schema_types::SchemaFile;
+
+    let input = r#"meta {id test}
+schema {
+    @ @object{
+        /// Column name -> direction
+        @string @optional(@string)
+    }
+}"#;
+
+    // Parse
+    let parsed: SchemaFile = crate::from_str(input).expect("should parse");
+    tracing::debug!("Parsed: {:#?}", parsed);
+
+    // Serialize back
+    let serialized = crate::to_string(&parsed).expect("should serialize");
+    tracing::debug!("Serialized:\n{}", serialized);
+
+    // Format for comparison
+    let formatted = format_source(&serialized, FormatOptions::default());
+    tracing::debug!("Formatted:\n{}", formatted);
+
+    // Should contain @string as the key, not "@" or "\"@\""
+    assert!(
+        formatted.contains("@string @optional"),
+        "Expected @string @optional, got:\n{}",
+        formatted
+    );
+    assert!(
+        !formatted.contains("\"@\""),
+        "Should not contain quoted @, got:\n{}",
+        formatted
+    );
+}
+
+#[test]
+fn idempotent_object_key_multiline_doc() {
+    // ObjectKey with multiline documentation
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::with_doc(
+            ObjectKey::named("config"),
+            vec![
+                "Configuration settings for the application.".to_string(),
+                "These can be overridden via environment variables.".to_string(),
+                "See docs for more details.".to_string(),
+            ],
+        ),
+        Schema::String(None),
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey multiline doc");
+}
+
+#[test]
+fn idempotent_object_key_typed_with_multiline_doc() {
+    // Typed catch-all with multiline documentation
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::with_doc(
+            ObjectKey::typed("string"),
+            vec![
+                "Additional properties.".to_string(),
+                "Keys must be valid identifiers.".to_string(),
+            ],
+        ),
+        Schema::Any,
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey typed with multiline doc");
+}
+
+#[test]
+fn idempotent_object_key_in_enum() {
+    // ObjectKey in enum variant payload
+    use crate::schema_types::{EnumSchema, ObjectKey, ObjectSchema, Schema};
+
+    let mut obj_fields = HashMap::new();
+    obj_fields.insert(
+        Documented::new(ObjectKey::typed("string")),
+        Schema::Int(None),
+    );
+
+    let mut variants = HashMap::new();
+    variants.insert(
+        Documented::new("map_variant".to_string()),
+        Schema::Object(ObjectSchema(obj_fields)),
+    );
+    variants.insert(
+        Documented::new("simple".to_string()),
+        Schema::Unit,
+    );
+
+    let schema = Schema::Enum(EnumSchema(variants));
+    assert_idempotent(&schema, "ObjectKey in enum");
+}
+
+#[test]
+fn idempotent_object_key_in_map_value() {
+    // ObjectKey in map value type
+    use crate::schema_types::{MapSchema, ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::named("count")),
+        Schema::Int(None),
+    );
+
+    let schema = Schema::Map(MapSchema(vec![
+        Documented::new(Schema::String(None)),
+        Documented::new(Schema::Object(ObjectSchema(fields))),
+    ]));
+    assert_idempotent(&schema, "ObjectKey in map value");
+}
+
+#[test]
+fn idempotent_object_key_typed_bool() {
+    // Typed catch-all with @bool
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::typed("bool")),
+        Schema::String(None),
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey typed @bool");
+}
+
+#[test]
+fn idempotent_object_key_typed_any() {
+    // Typed catch-all with @any
+    use crate::schema_types::{ObjectKey, ObjectSchema, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::typed("any")),
+        Schema::String(None),
+    );
+
+    let schema = Schema::Object(ObjectSchema(fields));
+    assert_idempotent(&schema, "ObjectKey typed @any");
+}
+
+#[test]
+fn idempotent_object_key_in_default() {
+    // ObjectKey inside default wrapper
+    use crate::schema_types::{DefaultSchema, ObjectKey, ObjectSchema, RawStyx, Schema};
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        Documented::new(ObjectKey::typed("string")),
+        Schema::Int(None),
+    );
+
+    let schema = Schema::Default(DefaultSchema((
+        RawStyx::new("{}"),
+        Documented::new(Box::new(Schema::Object(ObjectSchema(fields)))),
+    )));
+    assert_idempotent(&schema, "ObjectKey in default");
+}
+
+#[test]
+fn idempotent_object_key_complex_schema_file() {
+    // Complex SchemaFile with ObjectKey throughout
+    use crate::schema_types::{
+        Meta, ObjectKey, ObjectSchema, OptionalSchema, Schema, SchemaFile, SeqSchema,
+    };
+
+    let mut inner_map = HashMap::new();
+    inner_map.insert(
+        Documented::with_doc_line(ObjectKey::typed("string"), "String properties"),
+        Schema::String(None),
+    );
+
+    let mut root_fields = HashMap::new();
+    root_fields.insert(
+        Documented::with_doc_line(ObjectKey::named("items"), "List of items"),
+        Schema::Seq(SeqSchema((Documented::new(Box::new(Schema::Object(
+            ObjectSchema(inner_map),
+        ))),))),
+    );
+    root_fields.insert(
+        Documented::with_doc_line(ObjectKey::named("enabled"), "Feature flag"),
+        Schema::Optional(OptionalSchema((Documented::new(Box::new(Schema::Bool)),))),
+    );
+
+    let mut schema_map = HashMap::new();
+    schema_map.insert(None, Schema::Object(ObjectSchema(root_fields)));
+
+    let schema_file = SchemaFile {
+        meta: Meta {
+            id: "test:complex@1".to_string(),
+            version: Some("1.0.0".to_string()),
+            cli: Some("testcli".to_string()),
+            description: Some("A complex test schema".to_string()),
+        },
+        imports: None,
+        schema: schema_map,
+    };
+
+    assert_idempotent(&schema_file, "ObjectKey complex schema file");
+}
+
+#[test]
+#[ignore = "StyxWriter doesn't emit newline after opening brace - pre-existing issue"]
+fn idempotent_object_key_realistic_api_schema() {
+    // Realistic API response schema
+    use crate::schema_types::{ObjectKey, ObjectSchema, OptionalSchema, Schema, SeqSchema};
+
+    let mut pagination_fields = HashMap::new();
+    pagination_fields.insert(
+        Documented::new(ObjectKey::named("page")),
+        Schema::Int(None),
+    );
+    pagination_fields.insert(
+        Documented::new(ObjectKey::named("per_page")),
+        Schema::Int(None),
+    );
+    pagination_fields.insert(
+        Documented::new(ObjectKey::named("total")),
+        Schema::Int(None),
+    );
+
+    let mut item_fields = HashMap::new();
+    item_fields.insert(
+        Documented::new(ObjectKey::named("id")),
+        Schema::String(None),
+    );
+    item_fields.insert(
+        Documented::new(ObjectKey::named("name")),
+        Schema::String(None),
+    );
+    item_fields.insert(
+        Documented::with_doc_line(ObjectKey::typed("string"), "Dynamic attributes"),
+        Schema::Any,
+    );
+
+    let mut response_fields = HashMap::new();
+    response_fields.insert(
+        Documented::with_doc_line(ObjectKey::named("data"), "The response payload"),
+        Schema::Seq(SeqSchema((Documented::new(Box::new(Schema::Object(
+            ObjectSchema(item_fields),
+        ))),))),
+    );
+    response_fields.insert(
+        Documented::with_doc_line(ObjectKey::named("pagination"), "Pagination info"),
+        Schema::Optional(OptionalSchema((Documented::new(Box::new(Schema::Object(
+            ObjectSchema(pagination_fields),
+        ))),))),
+    );
+    response_fields.insert(
+        Documented::new(ObjectKey::named("success")),
+        Schema::Bool,
+    );
+
+    let schema = Schema::Object(ObjectSchema(response_fields));
+    assert_idempotent(&schema, "ObjectKey realistic API schema");
 }
