@@ -222,16 +222,25 @@ impl StyxWriter {
     /// Use this for keys that should be written exactly as-is, like `@` for unit keys.
     pub fn field_key_raw(&mut self, key: &str) -> Result<(), &'static str> {
         // Extract state first to avoid borrow conflicts
-        let (is_struct, is_first, is_root) = match self.stack.last() {
-            Some(Context::Struct { first, is_root, .. }) => (true, *first, *is_root),
-            _ => (false, true, false),
+        let (is_struct, is_first, is_root, inline_start, force_multiline) = match self.stack.last()
+        {
+            Some(Context::Struct {
+                first,
+                is_root,
+                inline_start,
+                force_multiline,
+                ..
+            }) => (true, *first, *is_root, *inline_start, *force_multiline),
+            _ => (false, true, false, false, false),
         };
 
         if !is_struct {
             return Err("field_key_raw called outside of struct");
         }
 
-        let should_inline = self.should_inline();
+        // Struct should be inline if it started inline AND isn't forced multiline
+        let struct_is_inline = inline_start && !force_multiline;
+        let should_inline = struct_is_inline || self.should_inline();
 
         if !is_first {
             if should_inline && !is_root {
@@ -245,7 +254,7 @@ impl StyxWriter {
                 self.write_newline_indent();
             }
         } else {
-            // First field
+            // First field - only add newline if we need multiline and didn't start inline
             if !is_root && !should_inline {
                 self.write_newline_indent();
             }
@@ -267,16 +276,25 @@ impl StyxWriter {
     /// Returns an error message if called outside of a struct context.
     pub fn field_key(&mut self, key: &str) -> Result<(), &'static str> {
         // Extract state first to avoid borrow conflicts
-        let (is_struct, is_first, is_root) = match self.stack.last() {
-            Some(Context::Struct { first, is_root, .. }) => (true, *first, *is_root),
-            _ => (false, true, false),
+        let (is_struct, is_first, is_root, inline_start, force_multiline) = match self.stack.last()
+        {
+            Some(Context::Struct {
+                first,
+                is_root,
+                inline_start,
+                force_multiline,
+                ..
+            }) => (true, *first, *is_root, *inline_start, *force_multiline),
+            _ => (false, true, false, false, false),
         };
 
         if !is_struct {
             return Err("field_key called outside of struct");
         }
 
-        let should_inline = self.should_inline();
+        // Struct should be inline if it started inline AND isn't forced multiline
+        let struct_is_inline = inline_start && !force_multiline;
+        let should_inline = struct_is_inline || self.should_inline();
 
         if !is_first {
             if should_inline && !is_root {
@@ -290,7 +308,7 @@ impl StyxWriter {
                 self.write_newline_indent();
             }
         } else {
-            // First field
+            // First field - only add newline if we need multiline and didn't start inline
             if !is_root && !should_inline {
                 self.write_newline_indent();
             }
