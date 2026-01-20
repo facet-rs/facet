@@ -13,7 +13,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = ["tracing"]
-tracing = ["dep:tracing"]
+tracing = ["dep:tracing", "roam-session/tracing"]
 
 [dependencies]
 shm-primitives.workspace = true

@@ -303,16 +303,26 @@ impl<T: 'static> Tx<T> {
     /// r[impl channeling.data] - Data messages carry serialized values.
     ///
     /// Works in two modes:
+    /// - Client-side (or passthrough): sends raw bytes to intermediate channel (drained by connection)
     /// - Server-side: sends `DriverMessage::Data` directly to connection driver
-    /// - Client-side: sends raw bytes to intermediate channel (drained by connection)
+    ///
+    /// IMPORTANT: We prefer sender over driver_tx because when a channel created during
+    /// dispatch is passed to a callback, the rx gets a NEW channel_id allocated by the
+    /// caller's bind_streams. The drain task uses that new channel_id, while self.channel_id
+    /// still has the old dispatch-context channel_id. By using sender, data flows through
+    /// the drain task which uses the correct channel_id.
     pub async fn send(&self, value: &T) -> Result<(), TxError>
     where
         T: Facet<'static>,
     {
         let bytes = facet_postcard::to_vec(value).map_err(TxError::Serialize)?;
 
-        // Server-side mode: send DriverMessage::Data directly
-        if let Some(task_tx) = self.driver_tx.inner.as_ref() {
+        // Prefer sender - data flows through drain task which has correct channel_id
+        if let Some(tx) = self.sender.inner.as_ref() {
+            tx.send(bytes).await.map_err(|_| TxError::Closed)
+        }
+        // Fallback to direct driver_tx (sender was taken or never set)
+        else if let Some(task_tx) = self.driver_tx.inner.as_ref() {
             task_tx
                 .send(DriverMessage::Data {
                     channel_id: self.channel_id,
@@ -320,22 +330,30 @@ impl<T: 'static> Tx<T> {
                 })
                 .await
                 .map_err(|_| TxError::Closed)
-        }
-        // Client-side mode: send raw bytes to drain task
-        else if let Some(tx) = self.sender.inner.as_ref() {
-            tx.send(bytes).await.map_err(|_| TxError::Closed)
         } else {
             Err(TxError::Taken)
         }
     }
 }
 
-/// When a Tx is dropped, send a Close message if in server-side mode.
+/// When a Tx is dropped, send a Close message.
 ///
 /// r[impl channeling.close] - Close terminates the stream.
+///
+/// The Close path depends on how data was sent:
+/// - If sender is present: data went through drain task, drain task sends Close when channel closes
+/// - If only driver_tx is present: data went directly to driver, we send Close via driver_tx
 impl<T: 'static> Drop for Tx<T> {
     fn drop(&mut self) {
-        // Only send Close in server-side mode (task_tx is set)
+        // If sender is still present, the drain task will handle Close when
+        // the internal channel closes. Don't send Close via driver_tx because
+        // it would use the wrong channel_id (dispatch-context id vs caller-allocated id).
+        if self.sender.inner.is_some() {
+            // Just drop the sender - drain task handles Close
+            return;
+        }
+
+        // Sender was taken or never set - send Close via driver_tx if available
         if let Some(task_tx) = self.driver_tx.inner.take() {
             let channel_id = self.channel_id;
             // Use try_send for synchronous Close delivery.
@@ -356,8 +374,6 @@ impl<T: 'static> Drop for Tx<T> {
                 });
             }
         }
-        // Client-side mode: dropping the sender closes the channel,
-        // which signals the drain task to finish and send Close
     }
 }
 
@@ -1010,12 +1026,20 @@ impl ChannelRegistry {
     fn bind_streams_recursive(&mut self, poke: facet::Poke<'_, '_>) {
         let shape = poke.shape();
 
+        trace!(
+            module_path = ?shape.module_path,
+            type_identifier = shape.type_identifier,
+            "bind_streams_recursive: visiting type"
+        );
+
         // Check if this is an Rx or Tx type
         if shape.module_path == Some("roam_session") {
             if shape.type_identifier == "Rx" {
+                debug!("bind_streams_recursive: found Rx, binding");
                 self.bind_rx_stream(poke);
                 return;
             } else if shape.type_identifier == "Tx" {
+                debug!("bind_streams_recursive: found Tx, binding");
                 self.bind_tx_stream(poke);
                 return;
             }
@@ -1025,6 +1049,7 @@ impl ChannelRegistry {
         // (Tuples are represented as structs with numeric field indices in facet)
         if let Ok(mut ps) = poke.into_struct() {
             let field_count = ps.field_count();
+            trace!(field_count, "bind_streams_recursive: recursing into struct");
             for i in 0..field_count {
                 if let Ok(field_poke) = ps.field(i) {
                     self.bind_streams_recursive(field_poke);
@@ -1046,8 +1071,11 @@ impl ChannelRegistry {
             {
                 *id_ref
             } else {
+                warn!("bind_rx_stream: could not get channel_id field");
                 return;
             };
+
+            debug!(channel_id, "bind_rx_stream: registering incoming channel");
 
             // Create channel and set receiver slot
             let (tx, rx) = crate::runtime::channel(RX_STREAM_BUFFER_SIZE);
@@ -1060,6 +1088,9 @@ impl ChannelRegistry {
 
             // Register for incoming data routing
             self.register_incoming(channel_id, tx);
+            debug!(channel_id, "bind_rx_stream: channel registered");
+        } else {
+            warn!("bind_rx_stream: could not convert poke to struct");
         }
     }
 
@@ -1272,10 +1303,13 @@ where
     };
 
     // Patch channel IDs from Request framing into deserialized args
+    debug!(channels = ?channels, "dispatch_call: patching channel IDs");
     patch_channel_ids(&mut args, &channels);
 
-    // Bind streams via reflection
+    // Bind streams via reflection - THIS MUST HAPPEN SYNCHRONOUSLY
+    debug!("dispatch_call: binding streams SYNC");
     registry.bind_streams(&mut args);
+    debug!("dispatch_call: streams bound SYNC - channels should now be registered");
 
     let task_tx = registry.driver_tx();
     let dispatch_ctx = registry.dispatch_context();
@@ -1284,7 +1318,9 @@ where
         // Set dispatch context so roam::channel() creates bound channels
         let _guard = set_dispatch_context(dispatch_ctx);
 
+        debug!("dispatch_call: handler ASYNC starting");
         let result = handler(args).await;
+        debug!("dispatch_call: handler ASYNC finished");
         let (payload, response_channels) = match result {
             Ok(ref ok_result) => {
                 // Collect channel IDs from the result (e.g., Rx<T> in return type)

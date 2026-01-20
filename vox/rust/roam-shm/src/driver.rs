@@ -1219,6 +1219,12 @@ impl MultiPeerHostDriver {
         }
 
         // Dispatch - spawn as a task so message loop can continue.
+        debug!(
+            method_id,
+            request_id,
+            channels = ?channels,
+            "handle_incoming_request: dispatching with channels"
+        );
         let handler_fut = state.dispatcher.dispatch(
             method_id,
             payload,
@@ -1251,14 +1257,27 @@ impl MultiPeerHostDriver {
         };
 
         // Try server registry first, then client registry
-        let result = if state.server_channel_registry.contains_incoming(channel_id) {
+        let in_server = state.server_channel_registry.contains_incoming(channel_id);
+        let in_client = state.handle.contains_channel(channel_id);
+        trace!(
+            channel_id,
+            in_server,
+            in_client,
+            "handle_data: checking channel registries"
+        );
+
+        let result = if in_server {
             state
                 .server_channel_registry
                 .route_data(channel_id, payload)
                 .await
-        } else if state.handle.contains_channel(channel_id) {
+        } else if in_client {
             state.handle.route_data(channel_id, payload).await
         } else {
+            warn!(
+                channel_id,
+                "handle_data: channel not found in either registry"
+            );
             Err(ChannelError::Unknown)
         };
 
