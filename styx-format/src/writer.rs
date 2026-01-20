@@ -319,14 +319,25 @@ impl StyxWriter {
         let should_inline = self.should_inline();
 
         match self.stack.pop() {
-            Some(Context::Struct { first, is_root, .. }) => {
+            Some(Context::Struct {
+                first,
+                is_root,
+                force_multiline,
+                inline_start,
+                ..
+            }) => {
                 if is_root {
                     // Root struct: add trailing newline if we wrote anything
                     if !first {
                         self.out.push(b'\n');
                     }
                 } else {
-                    if !first && !should_inline {
+                    // Add newline before closing brace only if:
+                    // - We wrote at least one field, AND
+                    // - Either forced multiline OR (not inline start AND not should_inline)
+                    let needs_newline =
+                        !first && (force_multiline || (!inline_start && !should_inline));
+                    if needs_newline {
                         // Newline before closing brace
                         self.out.push(b'\n');
                         // Indent at the PARENT level (we already popped)
