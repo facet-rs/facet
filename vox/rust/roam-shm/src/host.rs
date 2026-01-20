@@ -72,28 +72,29 @@ pub struct ShmHost {
     /// Computed layout
     layout: SegmentLayout,
     /// Per-guest state tracked by the host
-    guests: HashMap<PeerId, GuestState>,
+    pub(crate) guests: HashMap<PeerId, GuestState>,
     /// Host's slot pool
-    host_slots: SlotPool,
+    pub(crate) host_slots: SlotPool,
     /// Host's local head for each guest's H→G ring
     host_to_guest_heads: HashMap<PeerId, u64>,
 }
 
 /// Host-side state for a single guest.
-struct GuestState {
+pub(crate) struct GuestState {
     /// Human-readable name for debugging
-    #[allow(dead_code)]
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     /// Last observed epoch
-    last_epoch: u32,
+    pub(crate) last_epoch: u32,
     /// Slots we've allocated for messages to this guest
-    pending_slots: Vec<SlotHandle>,
+    pub(crate) pending_slots: Vec<SlotHandle>,
     /// Host's doorbell for this peer (if spawned via add_peer)
-    doorbell: Option<Doorbell>,
+    pub(crate) doorbell: Option<Doorbell>,
     /// Death callback (if registered via add_peer)
-    on_death: Option<DeathCallback>,
+    pub(crate) on_death: Option<DeathCallback>,
     /// Whether we've already notified death for this peer
-    death_notified: bool,
+    pub(crate) death_notified: bool,
+    /// Call statistics for diagnostics
+    pub(crate) stats: crate::diagnostic::PeerCallStats,
 }
 
 impl ShmHost {
@@ -223,6 +224,7 @@ impl ShmHost {
                 doorbell: Some(host_doorbell),
                 on_death: options.on_death,
                 death_notified: false,
+                stats: crate::diagnostic::PeerCallStats::new(),
             },
         );
         tracing::debug!("add_peer: doorbell stored for {:?}", peer_id);
@@ -469,6 +471,7 @@ impl ShmHost {
                     doorbell: None,
                     on_death: None,
                     death_notified: false,
+                    stats: crate::diagnostic::PeerCallStats::new(),
                 })
                 .last_epoch = current_epoch;
         }
@@ -640,6 +643,7 @@ impl ShmHost {
                         doorbell: None,
                         on_death: None,
                         death_notified: false,
+                        stats: crate::diagnostic::PeerCallStats::new(),
                     });
                     state.pending_slots.push(handle);
                     state
@@ -694,6 +698,7 @@ impl ShmHost {
                         doorbell: None,
                         on_death: None,
                         death_notified: false,
+                        stats: crate::diagnostic::PeerCallStats::new(),
                     });
                     state.pending_slots.push(handle);
                     state

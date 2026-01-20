@@ -17,6 +17,7 @@ tracing = ["dep:tracing"]
 [dependencies]
 facet.workspace = true
 facet-postcard.workspace = true
+facet-pretty.workspace = true
 roam-frame.workspace = true
 roam-wire.workspace = true
 roam-task-local.workspace = true

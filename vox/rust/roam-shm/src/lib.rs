@@ -69,10 +69,11 @@ pub mod channel;
 pub mod layout;
 pub mod msg;
 pub mod peer;
-mod slot_pool;
+pub(crate) mod slot_pool;
 pub mod var_slot_pool;
 
 pub mod cleanup;
+pub mod diagnostic;
 pub mod driver;
 pub mod guest;
 pub mod host;
@@ -97,6 +98,7 @@ pub use roam_frame::{Frame, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT, MsgDesc, Pa
 // Re-export FileCleanup from shm-primitives
 pub use shm_primitives::FileCleanup;
 
+pub use diagnostic::{ShmDiagnosticView, ShmDiagnostics};
 pub use host::{PollResult, ShmHost};
 
 pub use guest::ShmGuest;

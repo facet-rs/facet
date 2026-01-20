@@ -2355,6 +2355,7 @@ dependencies = [
  "async-channel",
  "facet",
  "facet-postcard",
+ "facet-pretty",
  "futures-channel",
  "futures-util",
  "gloo-timers",

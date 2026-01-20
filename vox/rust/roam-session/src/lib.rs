@@ -8,6 +8,7 @@
 #[macro_use]
 mod macros;
 
+pub mod diagnostic;
 pub mod driver;
 pub mod runtime;
 pub mod transport;
@@ -1772,7 +1773,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
 
             Box::pin(async move {
                 let response = upstream
-                    .call_raw_with_channels(method_id, vec![], payload)
+                    .call_raw_with_channels(method_id, vec![], payload, None)
                     .await;
 
                 let (response_payload, upstream_response_channels) = match response {
@@ -1895,7 +1896,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
                 // Send the upstream Request - this queues the Request command
                 // which will be sent before any Data we forward
                 let response_future =
-                    upstream.call_raw_with_channels(method_id, upstream_channels, payload);
+                    upstream.call_raw_with_channels(method_id, upstream_channels, payload, None);
 
                 // Now spawn forwarding tasks - safe because Request is queued first
                 // and command_tx/task_tx are processed in order by the driver
@@ -2257,6 +2258,8 @@ struct HandleShared {
     /// Stream registry for routing incoming data.
     /// Protected by a mutex since handles may create streams concurrently.
     channel_registry: std::sync::Mutex<ChannelRegistry>,
+    /// Optional diagnostic state for SIGUSR1 dumps.
+    diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>>,
 }
 
 /// Handle for making outgoing RPC calls.
@@ -2284,6 +2287,19 @@ impl ConnectionHandle {
     /// All messages (Call/Data/Close/Response) go through a single unified channel
     /// to ensure FIFO ordering.
     pub fn new(driver_tx: Sender<DriverMessage>, role: Role, initial_credit: u32) -> Self {
+        Self::new_with_diagnostics(driver_tx, role, initial_credit, None)
+    }
+
+    /// Create a new handle with optional diagnostic state for SIGUSR1 dumps.
+    ///
+    /// If `diagnostic_state` is provided, all RPC calls and channels will be tracked
+    /// for debugging purposes.
+    pub fn new_with_diagnostics(
+        driver_tx: Sender<DriverMessage>,
+        role: Role,
+        initial_credit: u32,
+        diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>>,
+    ) -> Self {
         let channel_registry = ChannelRegistry::new_with_credit(initial_credit, driver_tx.clone());
         Self {
             shared: Arc::new(HandleShared {
@@ -2291,8 +2307,14 @@ impl ConnectionHandle {
                 request_ids: RequestIdGenerator::new(),
                 channel_ids: ChannelIdAllocator::new(role),
                 channel_registry: std::sync::Mutex::new(channel_registry),
+                diagnostic_state,
             }),
         }
+    }
+
+    /// Get the diagnostic state, if any.
+    pub fn diagnostic_state(&self) -> Option<&Arc<crate::diagnostic::DiagnosticState>> {
+        self.shared.diagnostic_state.as_ref()
     }
 
     /// Make a typed RPC call with automatic serialization and stream binding.
@@ -2347,9 +2369,21 @@ impl ConnectionHandle {
 
         let payload = facet_postcard::to_vec(args).map_err(TransportError::Encode)?;
 
+        // Generate args debug info for diagnostics when enabled
+        let args_debug = if diagnostic::debug_enabled() {
+            Some(
+                facet_pretty::PrettyPrinter::new()
+                    .with_colors(facet_pretty::ColorMode::Never)
+                    .with_max_content_len(64)
+                    .format(args),
+            )
+        } else {
+            None
+        };
+
         if drains.is_empty() {
             // No Rx streams - simple call
-            self.call_raw_with_channels(method_id, channels, payload)
+            self.call_raw_with_channels(method_id, channels, payload, args_debug)
                 .await
         } else {
             // Has Rx streams - spawn tasks to drain them
@@ -2358,6 +2392,18 @@ impl ConnectionHandle {
             // before spawning drains, not just create the future.
             let request_id = self.shared.request_ids.next();
             let (response_tx, response_rx) = oneshot();
+
+            // Track outgoing request for diagnostics
+            if let Some(diag) = &self.shared.diagnostic_state {
+                let args = args_debug.map(|s| {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert("args".to_string(), s);
+                    map
+                });
+                diag.record_outgoing_request(request_id, method_id, args);
+                // Associate channels with this request
+                diag.associate_channels_with_request(&channels, request_id);
+            }
 
             let msg = DriverMessage::Call {
                 request_id,
@@ -2415,10 +2461,17 @@ impl ConnectionHandle {
             }
 
             // Just await the response - drain tasks run independently
-            response_rx
+            let result = response_rx
                 .await
                 .map_err(|_| TransportError::DriverGone)?
-                .map_err(|_| TransportError::ConnectionClosed)
+                .map_err(|_| TransportError::ConnectionClosed);
+
+            // Mark request as complete
+            if let Some(diag) = &self.shared.diagnostic_state {
+                diag.complete_request(request_id);
+            }
+
+            result
         }
     }
 
@@ -2530,7 +2583,7 @@ impl ConnectionHandle {
         method_id: u64,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, TransportError> {
-        self.call_raw_full(method_id, Vec::new(), Vec::new(), payload)
+        self.call_raw_full(method_id, Vec::new(), Vec::new(), payload, None)
             .await
             .map(|r| r.payload)
     }
@@ -2539,13 +2592,14 @@ impl ConnectionHandle {
     ///
     /// Used internally by `call()` after binding streams.
     /// Returns ResponseData so caller can handle response channels.
-    pub async fn call_raw_with_channels(
+    async fn call_raw_with_channels(
         &self,
         method_id: u64,
         channels: Vec<u64>,
         payload: Vec<u8>,
+        args_debug: Option<String>,
     ) -> Result<ResponseData, TransportError> {
-        self.call_raw_full(method_id, Vec::new(), channels, payload)
+        self.call_raw_full(method_id, Vec::new(), channels, payload, args_debug)
             .await
     }
 
@@ -2558,7 +2612,7 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         metadata: Vec<(String, roam_wire::MetadataValue)>,
     ) -> Result<Vec<u8>, TransportError> {
-        self.call_raw_full(method_id, metadata, Vec::new(), payload)
+        self.call_raw_full(method_id, metadata, Vec::new(), payload, None)
             .await
             .map(|r| r.payload)
     }
@@ -2572,9 +2626,22 @@ impl ConnectionHandle {
         metadata: Vec<(String, roam_wire::MetadataValue)>,
         channels: Vec<u64>,
         payload: Vec<u8>,
+        args_debug: Option<String>,
     ) -> Result<ResponseData, TransportError> {
         let request_id = self.shared.request_ids.next();
         let (response_tx, response_rx) = oneshot();
+
+        // Track outgoing request for diagnostics
+        if let Some(diag) = &self.shared.diagnostic_state {
+            let args = args_debug.map(|s| {
+                let mut map = std::collections::HashMap::new();
+                map.insert("args".to_string(), s);
+                map
+            });
+            diag.record_outgoing_request(request_id, method_id, args);
+            // Associate channels with this request
+            diag.associate_channels_with_request(&channels, request_id);
+        }
 
         let msg = DriverMessage::Call {
             request_id,
@@ -2591,10 +2658,17 @@ impl ConnectionHandle {
             .await
             .map_err(|_| TransportError::DriverGone)?;
 
-        response_rx
+        let result = response_rx
             .await
             .map_err(|_| TransportError::DriverGone)?
-            .map_err(|_| TransportError::ConnectionClosed)
+            .map_err(|_| TransportError::ConnectionClosed);
+
+        // Mark request as complete
+        if let Some(diag) = &self.shared.diagnostic_state {
+            diag.complete_request(request_id);
+        }
+
+        result
     }
 
     /// Allocate a stream ID for an outgoing stream.
@@ -2615,6 +2689,10 @@ impl ConnectionHandle {
     ///
     /// Used when schema has `Tx<T>` (callee sends to caller) - we receive that data.
     pub fn register_incoming(&self, channel_id: ChannelId, tx: Sender<Vec<u8>>) {
+        // Track channel for diagnostics (request_id not available here)
+        if let Some(diag) = &self.shared.diagnostic_state {
+            diag.record_channel_open(channel_id, crate::diagnostic::ChannelDirection::Rx, None);
+        }
         self.shared
             .channel_registry
             .lock()
@@ -2626,6 +2704,10 @@ impl ConnectionHandle {
     ///
     /// The actual receiver is owned by the driver, not the registry.
     pub fn register_outgoing_credit(&self, channel_id: ChannelId) {
+        // Track channel for diagnostics (request_id not available here)
+        if let Some(diag) = &self.shared.diagnostic_state {
+            diag.record_channel_open(channel_id, crate::diagnostic::ChannelDirection::Tx, None);
+        }
         self.shared
             .channel_registry
             .lock()
@@ -2653,6 +2735,10 @@ impl ConnectionHandle {
 
     /// Close an incoming stream.
     pub fn close_channel(&self, channel_id: ChannelId) {
+        // Track channel close for diagnostics
+        if let Some(diag) = &self.shared.diagnostic_state {
+            diag.record_channel_close(channel_id);
+        }
         self.shared
             .channel_registry
             .lock()
@@ -2662,6 +2748,10 @@ impl ConnectionHandle {
 
     /// Reset a stream.
     pub fn reset_channel(&self, channel_id: ChannelId) {
+        // Track channel close for diagnostics
+        if let Some(diag) = &self.shared.diagnostic_state {
+            diag.record_channel_close(channel_id);
+        }
         self.shared
             .channel_registry
             .lock()

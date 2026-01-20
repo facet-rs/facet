@@ -28,6 +28,21 @@ use crate::host::ShmHost;
 use crate::peer::PeerId;
 use crate::transport::{ShmGuestTransport, frame_to_message, message_to_frame};
 
+/// Get a human-readable name for a message type.
+fn msg_type_name(msg: &Message) -> &'static str {
+    match msg {
+        Message::Hello(_) => "Hello",
+        Message::Goodbye { .. } => "Goodbye",
+        Message::Request { .. } => "Request",
+        Message::Response { .. } => "Response",
+        Message::Cancel { .. } => "Cancel",
+        Message::Data { .. } => "Data",
+        Message::Close { .. } => "Close",
+        Message::Reset { .. } => "Reset",
+        Message::Credit { .. } => "Credit",
+    }
+}
+
 /// Negotiated connection parameters from SHM segment header.
 ///
 /// shm[impl shm.handshake.no-negotiation]
@@ -114,6 +129,9 @@ pub struct ShmDriver<T, D> {
 
     /// In-flight requests we're serving (to detect duplicates).
     in_flight_server_requests: std::collections::HashSet<u64>,
+
+    /// Diagnostic state for tracking in-flight requests (for SIGUSR1 dumps).
+    diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
 }
 
 impl<T, D> ShmDriver<T, D>
@@ -130,6 +148,7 @@ where
         handle: ConnectionHandle,
         driver_tx: mpsc::Sender<DriverMessage>,
         driver_rx: mpsc::Receiver<DriverMessage>,
+        diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
     ) -> Self {
         // Use infinite credit for now - proper SHM flow control via channel table
         // atomics will be implemented in a future phase. This matches the current
@@ -144,6 +163,7 @@ where
             server_channel_registry: ChannelRegistry::new(driver_tx),
             pending_responses: HashMap::new(),
             in_flight_server_requests: std::collections::HashSet::new(),
+            diagnostic_state,
         }
     }
 
@@ -237,6 +257,11 @@ where
                 if !self.in_flight_server_requests.remove(&request_id) {
                     // Request was cancelled or already completed, skip
                     return Ok(());
+                }
+                // Mark request completed for diagnostics
+                if let Some(diag) = &self.diagnostic_state {
+                    trace!(request_id, name = %diag.name, "completing incoming request");
+                    diag.complete_request(request_id);
                 }
                 Message::Response {
                     request_id,
@@ -395,9 +420,18 @@ where
                 .await);
         }
 
+        // Track incoming request for diagnostics
+        if let Some(diag) = &self.diagnostic_state {
+            trace!(request_id, method_id, name = %diag.name, "recording incoming request");
+            diag.record_incoming_request(request_id, method_id, None);
+        }
+
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
             self.in_flight_server_requests.remove(&request_id);
+            if let Some(diag) = &self.diagnostic_state {
+                diag.complete_request(request_id);
+            }
             return Err(self
                 .goodbye(rule_id, format!("Invalid metadata for request_id={}", request_id))
                 .await);
@@ -406,6 +440,9 @@ where
         // Validate payload size
         if payload.len() as u32 > self.negotiated.max_payload_size {
             self.in_flight_server_requests.remove(&request_id);
+            if let Some(diag) = &self.diagnostic_state {
+                diag.complete_request(request_id);
+            }
             return Err(self
                 .goodbye(
                     "flow.call.payload-limit",
@@ -612,6 +649,21 @@ pub fn establish_guest<D>(
 where
     D: ServiceDispatcher,
 {
+    establish_guest_with_diagnostics(transport, dispatcher, None)
+}
+
+/// Create a guest connection with optional diagnostic state for SIGUSR1 dumps.
+///
+/// Same as [`establish_guest`] but allows passing a [`roam_session::diagnostic::DiagnosticState`]
+/// for tracking in-flight requests and channels.
+pub fn establish_guest_with_diagnostics<D>(
+    transport: ShmGuestTransport,
+    dispatcher: D,
+    diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
+) -> (ConnectionHandle, ShmDriver<ShmGuestTransport, D>)
+where
+    D: ServiceDispatcher,
+{
     // Get config from segment header (already read during attach)
     let config = transport.config();
     let negotiated = ShmNegotiated {
@@ -626,7 +678,12 @@ where
     // Guest is initiator (uses odd stream IDs)
     // Use infinite credit for now (matches current roam-stream behavior).
     let initial_credit = u32::MAX;
-    let handle = ConnectionHandle::new(driver_tx.clone(), Role::Initiator, initial_credit);
+    let handle = ConnectionHandle::new_with_diagnostics(
+        driver_tx.clone(),
+        Role::Initiator,
+        initial_credit,
+        diagnostic_state.clone(),
+    );
 
     let driver = ShmDriver::new(
         transport,
@@ -636,6 +693,7 @@ where
         handle.clone(),
         driver_tx,
         driver_rx,
+        diagnostic_state,
     );
 
     (handle, driver)
@@ -665,6 +723,9 @@ struct PeerConnectionState {
 
     /// The connection handle (kept for stream routing).
     handle: ConnectionHandle,
+
+    /// Diagnostic state for tracking in-flight requests (for SIGUSR1 dumps).
+    diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
 }
 
 /// Command to control the multi-peer host driver.
@@ -678,6 +739,7 @@ enum ControlCommand {
     AddPeer {
         peer_id: PeerId,
         dispatcher: Box<dyn ServiceDispatcher>,
+        diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
         response: oneshot::Sender<ConnectionHandle>,
     },
 }
@@ -840,6 +902,7 @@ impl MultiPeerHostDriverBuilder {
                     pending_responses: HashMap::new(),
                     in_flight_server_requests: std::collections::HashSet::new(),
                     handle,
+                    diagnostic_state: None,
                 },
             );
 
@@ -1007,7 +1070,7 @@ impl MultiPeerHostDriver {
                             }
                         };
 
-                        trace!("MultiPeerHostDriver: handling SHM message from peer {:?}: {:?}", pid, std::mem::discriminant(&msg));
+                        trace!("MultiPeerHostDriver: handling SHM message from peer {:?}: {}", pid, msg_type_name(&msg));
                         if let Err(e) = self.handle_message(pid, msg).await {
                             warn!("MultiPeerHostDriver: error handling message from peer {:?}: {:?}", pid, e);
                             // Continue processing other peers - don't let one peer's error crash the driver
@@ -1048,6 +1111,7 @@ impl MultiPeerHostDriver {
             ControlCommand::AddPeer {
                 peer_id,
                 dispatcher,
+                diagnostic_state,
                 response,
             } => {
                 trace!("MultiPeerHostDriver: adding peer {:?} dynamically", peer_id);
@@ -1056,8 +1120,12 @@ impl MultiPeerHostDriver {
 
                 // Host is acceptor (uses even stream IDs)
                 let initial_credit = u32::MAX;
-                let handle =
-                    ConnectionHandle::new(driver_tx.clone(), Role::Acceptor, initial_credit);
+                let handle = ConnectionHandle::new_with_diagnostics(
+                    driver_tx.clone(),
+                    Role::Acceptor,
+                    initial_credit,
+                    diagnostic_state.clone(),
+                );
 
                 self.peers.insert(
                     peer_id,
@@ -1067,6 +1135,7 @@ impl MultiPeerHostDriver {
                         pending_responses: HashMap::new(),
                         in_flight_server_requests: std::collections::HashSet::new(),
                         handle: handle.clone(),
+                        diagnostic_state,
                     },
                 );
                 trace!("MultiPeerHostDriver: {} peers now active", self.peers.len());
@@ -1196,10 +1265,15 @@ impl MultiPeerHostDriver {
                 payload,
             } => {
                 // Only send if this request is still in-flight
-                if let Some(state) = self.peers.get_mut(&peer_id)
-                    && !state.in_flight_server_requests.remove(&request_id)
-                {
-                    return Ok(());
+                if let Some(state) = self.peers.get_mut(&peer_id) {
+                    if !state.in_flight_server_requests.remove(&request_id) {
+                        return Ok(());
+                    }
+                    // Mark request completed for diagnostics
+                    if let Some(diag) = &state.diagnostic_state {
+                        trace!(request_id, name = %diag.name, "completing incoming request");
+                        diag.complete_request(request_id);
+                    }
                 }
                 Message::Response {
                     request_id,
@@ -1333,9 +1407,20 @@ impl MultiPeerHostDriver {
                 .await);
         }
 
+        // Track incoming request for diagnostics
+        if let Some(diag) = &state.diagnostic_state {
+            trace!(request_id, method_id, name = %diag.name, "recording incoming request");
+            diag.record_incoming_request(request_id, method_id, None);
+        } else {
+            trace!(request_id, method_id, "diagnostic_state is None, not tracking incoming request");
+        }
+
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
             state.in_flight_server_requests.remove(&request_id);
+            if let Some(diag) = &state.diagnostic_state {
+                diag.complete_request(request_id);
+            }
             return Err(self
                 .goodbye(
                     peer_id,
@@ -1348,6 +1433,9 @@ impl MultiPeerHostDriver {
         // Validate payload size
         if payload.len() as u32 > self.negotiated.max_payload_size {
             state.in_flight_server_requests.remove(&request_id);
+            if let Some(diag) = &state.diagnostic_state {
+                diag.complete_request(request_id);
+            }
             return Err(self
                 .goodbye(
                     peer_id,
@@ -1776,11 +1864,29 @@ impl MultiPeerHostDriverHandle {
     where
         D: ServiceDispatcher + 'static,
     {
+        self.add_peer_with_diagnostics(peer_id, dispatcher, None)
+            .await
+    }
+
+    /// Register a peer after it's ready, with optional diagnostic state for SIGUSR1 dumps.
+    ///
+    /// Same as [`add_peer`] but allows passing a [`DiagnosticState`] to track
+    /// in-flight requests for debugging.
+    pub async fn add_peer_with_diagnostics<D>(
+        &self,
+        peer_id: PeerId,
+        dispatcher: D,
+        diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
+    ) -> Result<ConnectionHandle, ShmConnectionError>
+    where
+        D: ServiceDispatcher + 'static,
+    {
         let (response_tx, response_rx) = oneshot::channel();
 
         let cmd = ControlCommand::AddPeer {
             peer_id,
             dispatcher: Box::new(dispatcher),
+            diagnostic_state,
             response: response_tx,
         };
 

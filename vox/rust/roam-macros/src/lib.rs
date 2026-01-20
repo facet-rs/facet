@@ -155,15 +155,20 @@ fn generate_method_id_fn(
     let return_ty_tokens = return_type.to_token_stream();
     let return_shape = quote! { <#return_ty_tokens as #roam::facet::Facet>::SHAPE };
 
+    let full_method_name = format!("{}.{}", service_name, method_name);
     quote! {
         pub fn #fn_name() -> u64 {
             static ID: LazyLock<u64> = LazyLock::new(|| {
-                #roam::hash::method_id_from_shapes(
+                let id = #roam::hash::method_id_from_shapes(
                     #service_name,
                     #method_name,
                     #args_array,
                     #return_shape,
-                )
+                );
+                // Register method name for diagnostics (string literal from macro)
+                static METHOD_NAME: &str = #full_method_name;
+                #roam::session::diagnostic::register_method_name(id, METHOD_NAME);
+                id
             });
             *ID
         }

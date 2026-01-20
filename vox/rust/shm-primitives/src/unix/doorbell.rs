@@ -187,8 +187,18 @@ impl Doorbell {
         }
 
         let err = io::Error::last_os_error();
+        let raw_err = err.raw_os_error();
+
+        // ENOBUFS (55 on macOS/BSD, 105 on Linux) means socket buffer is full
+        // This is fine - there's already a pending signal, so we can drop this one
+        let is_buffer_full = err.kind() == ErrorKind::WouldBlock
+            || raw_err == Some(libc::ENOBUFS);
+
+        if is_buffer_full {
+            return SignalResult::BufferFull;
+        }
+
         match err.kind() {
-            ErrorKind::WouldBlock => SignalResult::BufferFull,
             // These all indicate the peer is gone
             ErrorKind::BrokenPipe | ErrorKind::ConnectionReset | ErrorKind::NotConnected => {
                 SignalResult::PeerDead
