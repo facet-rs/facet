@@ -1,5 +1,5 @@
 meta {
-  id https://styx-lang.org/schemas/schema
+  id https://styx.bearcove.eu/schemas/schema
   version 2026-01-11
   description "Schema for STYX schema files"
 }

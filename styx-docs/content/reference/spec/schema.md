@@ -483,7 +483,7 @@ The schema for Styx schema files.
 
 ```styx
 meta {
-  id https://styx-lang.org/schemas/schema
+  id https://styx.bearcove.eu/schemas/schema
   version 2026-01-16
   description "Schema for Styx schema files"
 }
