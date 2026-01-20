@@ -1011,9 +1011,35 @@ where
         }
 
         // Externally tagged (default).
+        // For #[facet(other)] variants with a #[facet(metadata = "tag")] field,
+        // use the field's value as the tag name instead of the variant name.
+        trace!(variant_name = variant.name, is_other = variant.is_other(), "serializing enum variant");
+        let tag_name: Cow<'_, str> = if variant.is_other() {
+            // Look for a tag field in the variant's data
+            let mut tag_value: Option<Cow<'_, str>> = None;
+            for (field_item, field_value) in enum_.fields_for_serialize() {
+                if let Some(field) = field_item.field {
+                    trace!(field_name = field.name, is_variant_tag = field.is_variant_tag(), "checking field for tag");
+                    if field.is_variant_tag() {
+                        // Extract the tag value - handle Option<String>
+                        if let Ok(opt) = field_value.into_option()
+                            && let Some(inner) = opt.value()
+                            && let Some(s) = inner.as_str()
+                        {
+                            tag_value = Some(Cow::Borrowed(s));
+                        }
+                        break;
+                    }
+                }
+            }
+            tag_value.unwrap_or_else(|| Cow::Borrowed(variant.effective_name()))
+        } else {
+            Cow::Borrowed(variant.effective_name())
+        };
+
         // First, check if the format wants to handle this with tag syntax (e.g., Styx's @tag)
         let use_tag_syntax = serializer
-            .write_variant_tag(variant.effective_name())
+            .write_variant_tag(&tag_name)
             .map_err(SerializeError::Backend)?;
 
         if use_tag_syntax {
@@ -1062,10 +1088,31 @@ where
                 }
                 StructKind::Struct => {
                     // Struct variant - use struct after tag
+                    // For #[facet(other)] variants, skip metadata fields (like tag) from payload
+                    let is_other = variant.is_other();
+                    let mut fields: alloc::vec::Vec<_> = enum_
+                        .fields_for_serialize()
+                        .filter(|(field_item, _)| {
+                            if is_other {
+                                // Skip metadata fields and tag fields for other variants
+                                field_item
+                                    .field
+                                    .map(|f| f.metadata_kind().is_none() && !f.is_variant_tag())
+                                    .unwrap_or(true)
+                            } else {
+                                true
+                            }
+                        })
+                        .collect();
+
+                    // If no non-metadata fields remain, don't emit a struct at all
+                    if fields.is_empty() {
+                        return Ok(());
+                    }
+
                     serializer
                         .begin_struct_after_tag()
                         .map_err(SerializeError::Backend)?;
-                    let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
                     sort_fields_if_needed(serializer, &mut fields);
                     let field_mode = serializer.struct_field_mode();
                     for (field_item, field_value) in fields {
