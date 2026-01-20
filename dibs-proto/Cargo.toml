@@ -8,5 +8,5 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/bearcove/dibs"
 
 [dependencies]
-facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
-roam = { git = "https://github.com/bearcove/roam", branch = "main" }
+facet.workspace = true
+roam.workspace = true

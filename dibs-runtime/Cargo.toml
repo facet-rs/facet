@@ -6,9 +6,9 @@ description = "Runtime types for dibs-generated query code"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-tokio-postgres = "0.7"
-facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-tokio-postgres = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["jiff02", "rust_decimal", "uuid"] }
-jiff = "0.2"
-uuid = "1"
-rust_decimal = { version = "1", default-features = false, features = ["std"] }
+tokio-postgres.workspace = true
+facet.workspace = true
+facet-tokio-postgres = { workspace = true, features = ["jiff02", "rust_decimal", "uuid"] }
+jiff.workspace = true
+uuid.workspace = true
+rust_decimal.workspace = true

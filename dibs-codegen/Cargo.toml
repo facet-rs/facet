@@ -8,6 +8,6 @@ name = "dibs-codegen"
 path = "src/main.rs"
 
 [dependencies]
-dibs-proto = { path = "../dibs-proto" }
-roam-codegen = { git = "https://github.com/bearcove/roam", branch = "main" }
-clap = { version = "4", features = ["derive"] }
+dibs-proto.workspace = true
+roam-codegen.workspace = true
+clap.workspace = true

@@ -10,22 +10,22 @@ keywords = ["postgres", "database", "migrations", "facet"]
 categories = ["database"]
 
 [dependencies]
-bytes = "1"
-tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
-chrono = "0.4"
-rust_decimal = { version = "1", default-features = false, features = ["std", "db-tokio-postgres"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-inventory = "0.3"
-thiserror = "2"
-facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
-dibs-macros = { path = "../dibs-macros" }
-dibs-proto = { path = "../dibs-proto" }
-dibs-query-gen = { path = "../dibs-query-gen" }
-roam = { git = "https://github.com/bearcove/roam", branch = "main" }
-roam-stream = { git = "https://github.com/bearcove/roam", branch = "main" }
+bytes.workspace = true
+tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
+chrono.workspace = true
+rust_decimal = { workspace = true, features = ["db-tokio-postgres"] }
+tokio.workspace = true
+inventory.workspace = true
+thiserror.workspace = true
+facet.workspace = true
+dibs-macros.workspace = true
+dibs-proto.workspace = true
+dibs-query-gen.workspace = true
+roam.workspace = true
+roam-stream.workspace = true
 
 [dev-dependencies]
-insta = "1"
-proptest = "1.9.0"
-dockside = { path = "../dockside" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+insta.workspace = true
+proptest.workspace = true
+dockside.workspace = true
+tokio.workspace = true
