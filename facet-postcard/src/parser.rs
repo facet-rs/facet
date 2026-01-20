@@ -394,10 +394,10 @@ impl<'de> PostcardParser<'de> {
                     {
                         *field_key_emitted = true;
                     }
-                    Ok(ParseEvent::FieldKey(FieldKey {
-                        name: Some(Cow::Owned(variant_name.clone())),
-                        location: FieldLocationHint::KeyValue,
-                    }))
+                    Ok(ParseEvent::FieldKey(FieldKey::new(
+                        Cow::Owned(variant_name.clone()),
+                        FieldLocationHint::KeyValue,
+                    )))
                 } else if !wrapper_start_emitted {
                     // Step 2: After FieldKey, emit wrapper start (if needed)
                     match variant_kind {
@@ -540,10 +540,10 @@ impl<'de> PostcardParser<'de> {
                     {
                         *expecting_key = false;
                     }
-                    Ok(ParseEvent::FieldKey(FieldKey {
-                        name: Some(Cow::Borrowed(key)),
-                        location: FieldLocationHint::KeyValue,
-                    }))
+                    Ok(ParseEvent::FieldKey(FieldKey::new(
+                        Cow::Borrowed(key),
+                        FieldLocationHint::KeyValue,
+                    )))
                 } else {
                     self.parse_dynamic_tag_event()
                 }

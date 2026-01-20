@@ -312,10 +312,10 @@ impl<'de> XdrParser<'de> {
                     {
                         *field_key_emitted = true;
                     }
-                    Ok(ParseEvent::FieldKey(facet_format::FieldKey {
-                        name: Some(Cow::Owned(variant_name)),
-                        location: facet_format::FieldLocationHint::KeyValue,
-                    }))
+                    Ok(ParseEvent::FieldKey(facet_format::FieldKey::new(
+                        Cow::Owned(variant_name),
+                        facet_format::FieldLocationHint::KeyValue,
+                    )))
                 } else if !wrapper_start_emitted {
                     match variant_kind {
                         StructKind::Unit => {
