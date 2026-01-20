@@ -7,7 +7,7 @@ extern crate alloc;
 
 use std::borrow::Cow;
 
-use facet_core::{Def, KnownPointer};
+use facet_core::{Def, KnownPointer, Type, UserType};
 use facet_reflect::{Partial, ReflectError, Span};
 
 /// Result of checking if a pointer type needs special handling.
@@ -135,12 +135,14 @@ impl From<ReflectError> for DessertError {
     }
 }
 
-/// Set a string value, handling `Option<T>`, parseable types, and string types.
+/// Set a string value, handling `Option<T>`, parseable types, enums, and string types.
 ///
 /// This function handles:
 /// 1. `Option<T>` - unwraps to Some and recurses
 /// 2. Types with `parse_from_str` (numbers, bools, etc.)
-/// 3. String types (`&str`, `Cow<str>`, `String`)
+/// 3. Enums - selects variant by name (externally tagged) or by discriminant (numeric)
+/// 4. Transparent structs (newtypes) - recurses into inner type
+/// 5. String types (`&str`, `Cow<str>`, `String`)
 pub fn set_string_value<'input, const BORROW: bool>(
     mut wip: Partial<'input, BORROW>,
     s: Cow<'input, str>,
@@ -158,6 +160,38 @@ pub fn set_string_value<'input, const BORROW: bool>(
     if shape.vtable.has_parse() {
         wip = wip.parse_from_str(s.as_ref())?;
         return Ok(wip);
+    }
+
+    // Handle enums by selecting a variant by name (or by discriminant for numeric enums)
+    if let Type::User(UserType::Enum(enum_def)) = &shape.ty {
+        // For numeric enums (e.g., #[repr(u8)]), try parsing the string as a discriminant
+        if shape.is_numeric()
+            && let Ok(discriminant) = s.parse::<i64>()
+        {
+            wip = wip.select_variant(discriminant)?;
+            return Ok(wip);
+        }
+        // Fall through to try name-based lookup
+
+        // Try to find a variant by effective name (respects #[facet(rename = "...")])
+        if let Some((_, variant)) = enum_def
+            .variants
+            .iter()
+            .enumerate()
+            .find(|(_, v)| v.effective_name() == s.as_ref())
+        {
+            wip = wip.select_variant_named(variant.effective_name())?;
+            return Ok(wip);
+        }
+
+        // No variant found - return an error
+        return Err(DessertError::Reflect {
+            error: ReflectError::OperationFailed {
+                shape,
+                operation: "no matching enum variant found for string value",
+            },
+            span,
+        });
     }
 
     // Handle transparent structs (newtypes) by unwrapping to the inner type
