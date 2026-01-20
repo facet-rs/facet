@@ -265,13 +265,28 @@ where
                 // Check for protocol errors
                 let raw = MessageTransport::last_decoded(&self.io);
                 if raw.len() >= 2 && raw[0] == 0x00 && raw[1] != 0x00 {
-                    return Err(self.goodbye("message.hello.unknown-version").await);
+                    return Err(self
+                        .goodbye(
+                            "message.hello.unknown-version",
+                            format!("Unknown Hello version: {:02x}", raw[1]),
+                        )
+                        .await);
                 }
                 if !raw.is_empty() && raw[0] >= 9 {
-                    return Err(self.goodbye("message.unknown-variant").await);
+                    return Err(self
+                        .goodbye(
+                            "message.unknown-variant",
+                            format!("Unknown message variant: {:02x}", raw[0]),
+                        )
+                        .await);
                 }
                 if e.kind() == std::io::ErrorKind::InvalidData {
-                    return Err(self.goodbye("message.decode-error").await);
+                    return Err(self
+                        .goodbye(
+                            "message.decode-error",
+                            format!("Failed to decode message: {}", e),
+                        )
+                        .await);
                 }
                 return Err(ShmConnectionError::Io(e));
             }
@@ -290,7 +305,12 @@ where
             Message::Hello(_) => {
                 // shm[impl shm.handshake]
                 // SHM doesn't use Hello - this shouldn't happen as transport rejects it
-                return Err(self.goodbye("shm.handshake").await);
+                return Err(self
+                    .goodbye(
+                        "shm.handshake",
+                        "Received Hello message over SHM (not supported)".into(),
+                    )
+                    .await);
             }
             Message::Goodbye { .. } => {
                 // Fail all pending responses
@@ -345,7 +365,12 @@ where
             Message::Credit { .. } => {
                 // shm[impl shm.flow.no-credit-message]
                 // SHM doesn't use Credit messages - this shouldn't happen
-                return Err(self.goodbye("shm.flow.no-credit-message").await);
+                return Err(self
+                    .goodbye(
+                        "shm.flow.no-credit-message",
+                        "Received Credit message over SHM (not supported)".into(),
+                    )
+                    .await);
             }
         }
         Ok(())
@@ -362,19 +387,36 @@ where
     ) -> Result<(), ShmConnectionError> {
         // Duplicate detection
         if !self.in_flight_server_requests.insert(request_id) {
-            return Err(self.goodbye("call.request-id.duplicate-detection").await);
+            return Err(self
+                .goodbye(
+                    "call.request-id.duplicate-detection",
+                    format!("Duplicate request_id={}", request_id),
+                )
+                .await);
         }
 
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
             self.in_flight_server_requests.remove(&request_id);
-            return Err(self.goodbye(rule_id).await);
+            return Err(self
+                .goodbye(rule_id, format!("Invalid metadata for request_id={}", request_id))
+                .await);
         }
 
         // Validate payload size
         if payload.len() as u32 > self.negotiated.max_payload_size {
             self.in_flight_server_requests.remove(&request_id);
-            return Err(self.goodbye("flow.call.payload-limit").await);
+            return Err(self
+                .goodbye(
+                    "flow.call.payload-limit",
+                    format!(
+                        "Request payload too large: {} bytes (max {}) for request_id={}",
+                        payload.len(),
+                        self.negotiated.max_payload_size,
+                        request_id
+                    ),
+                )
+                .await);
         }
 
         // Dispatch - spawn as a task so message loop can continue.
@@ -401,15 +443,33 @@ where
             payload.len()
         );
         if channel_id == 0 {
-            return Err(self.goodbye("streaming.id.zero-reserved").await);
+            return Err(self
+                .goodbye(
+                    "streaming.id.zero-reserved",
+                    "Data message with channel_id=0 (reserved)".into(),
+                )
+                .await);
         }
 
         if payload.len() as u32 > self.negotiated.max_payload_size {
-            return Err(self.goodbye("flow.call.payload-limit").await);
+            return Err(self
+                .goodbye(
+                    "flow.call.payload-limit",
+                    format!(
+                        "Data payload too large: {} bytes (max {})",
+                        payload.len(),
+                        self.negotiated.max_payload_size
+                    ),
+                )
+                .await);
         }
 
         // Try server registry first, then client registry
-        let result = if self.server_channel_registry.contains_incoming(channel_id) {
+        let in_server = self.server_channel_registry.contains_incoming(channel_id);
+        let in_client = self.handle.contains_channel(channel_id);
+        let payload_len = payload.len();
+
+        let result = if in_server {
             trace!("routing to server_channel_registry");
             let res = self
                 .server_channel_registry
@@ -417,7 +477,7 @@ where
                 .await;
             trace!("server_channel_registry.route_data returned {:?}", res);
             res
-        } else if self.handle.contains_channel(channel_id) {
+        } else if in_client {
             trace!("routing to client handle");
             self.handle.route_data(channel_id, payload).await
         } else {
@@ -427,12 +487,32 @@ where
 
         match result {
             Ok(()) => Ok(()),
-            Err(ChannelError::Unknown) => Err(self.goodbye("streaming.unknown").await),
+            Err(ChannelError::Unknown) => {
+                Err(self
+                    .goodbye(
+                        "streaming.unknown",
+                        format!(
+                            "Data for unknown channel_id={} (in_server={}, in_client={}, payload_len={})",
+                            channel_id, in_server, in_client, payload_len
+                        ),
+                    )
+                    .await)
+            }
             Err(ChannelError::DataAfterClose) => {
-                Err(self.goodbye("streaming.data-after-close").await)
+                Err(self
+                    .goodbye(
+                        "streaming.data-after-close",
+                        format!("Data after close on channel_id={}", channel_id),
+                    )
+                    .await)
             }
             Err(ChannelError::CreditOverrun) => {
-                Err(self.goodbye("flow.stream.credit-overrun").await)
+                Err(self
+                    .goodbye(
+                        "flow.stream.credit-overrun",
+                        format!("Credit overrun on channel_id={}", channel_id),
+                    )
+                    .await)
             }
         }
     }
@@ -440,16 +520,32 @@ where
     /// Handle incoming Close message.
     async fn handle_close(&mut self, channel_id: u64) -> Result<(), ShmConnectionError> {
         if channel_id == 0 {
-            return Err(self.goodbye("streaming.id.zero-reserved").await);
+            return Err(self
+                .goodbye(
+                    "streaming.id.zero-reserved",
+                    "Close message with channel_id=0 (reserved)".into(),
+                )
+                .await);
         }
 
         // Try server registry first, then client registry
-        if self.server_channel_registry.contains(channel_id) {
+        let in_server = self.server_channel_registry.contains(channel_id);
+        let in_client = self.handle.contains_channel(channel_id);
+
+        if in_server {
             self.server_channel_registry.close(channel_id);
-        } else if self.handle.contains_channel(channel_id) {
+        } else if in_client {
             self.handle.close_channel(channel_id);
         } else {
-            return Err(self.goodbye("streaming.unknown").await);
+            return Err(self
+                .goodbye(
+                    "streaming.unknown",
+                    format!(
+                        "Close for unknown channel_id={} (in_server={}, in_client={})",
+                        channel_id, in_server, in_client
+                    ),
+                )
+                .await);
         }
         Ok(())
     }
@@ -467,7 +563,7 @@ where
     }
 
     /// Send Goodbye and return error.
-    async fn goodbye(&mut self, rule_id: &'static str) -> ShmConnectionError {
+    async fn goodbye(&mut self, rule_id: &'static str, context: String) -> ShmConnectionError {
         // Fail all pending responses
         for (_, tx) in self.pending_responses.drain() {
             let _ = tx.send(Err(TransportError::ConnectionClosed));
@@ -484,10 +580,7 @@ where
             // Goodbye message failed - peer likely already disconnected
         }
 
-        ShmConnectionError::ProtocolViolation {
-            rule_id,
-            context: format!("SHM protocol violation: {}", rule_id),
-        }
+        ShmConnectionError::ProtocolViolation { rule_id, context }
     }
 }
 
@@ -1128,7 +1221,13 @@ impl MultiPeerHostDriver {
     ) -> Result<(), ShmConnectionError> {
         match msg {
             Message::Hello(_) => {
-                return Err(self.goodbye(peer_id, "shm.handshake").await);
+                return Err(self
+                    .goodbye(
+                        peer_id,
+                        "shm.handshake",
+                        "Received Hello message over SHM (not supported)".into(),
+                    )
+                    .await);
             }
             Message::Goodbye { .. } => {
                 // Fail all pending responses for this peer
@@ -1196,7 +1295,13 @@ impl MultiPeerHostDriver {
                 self.handle_reset(peer_id, channel_id)?;
             }
             Message::Credit { .. } => {
-                return Err(self.goodbye(peer_id, "shm.flow.no-credit-message").await);
+                return Err(self
+                    .goodbye(
+                        peer_id,
+                        "shm.flow.no-credit-message",
+                        "Received Credit message over SHM (not supported)".into(),
+                    )
+                    .await);
             }
         }
         Ok(())
@@ -1220,20 +1325,41 @@ impl MultiPeerHostDriver {
         // Duplicate detection
         if !state.in_flight_server_requests.insert(request_id) {
             return Err(self
-                .goodbye(peer_id, "call.request-id.duplicate-detection")
+                .goodbye(
+                    peer_id,
+                    "call.request-id.duplicate-detection",
+                    format!("Duplicate request_id={}", request_id),
+                )
                 .await);
         }
 
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
             state.in_flight_server_requests.remove(&request_id);
-            return Err(self.goodbye(peer_id, rule_id).await);
+            return Err(self
+                .goodbye(
+                    peer_id,
+                    rule_id,
+                    format!("Invalid metadata for request_id={}", request_id),
+                )
+                .await);
         }
 
         // Validate payload size
         if payload.len() as u32 > self.negotiated.max_payload_size {
             state.in_flight_server_requests.remove(&request_id);
-            return Err(self.goodbye(peer_id, "flow.call.payload-limit").await);
+            return Err(self
+                .goodbye(
+                    peer_id,
+                    "flow.call.payload-limit",
+                    format!(
+                        "Request payload too large: {} bytes (max {}) for request_id={}",
+                        payload.len(),
+                        self.negotiated.max_payload_size,
+                        request_id
+                    ),
+                )
+                .await);
         }
 
         // Dispatch - spawn as a task so message loop can continue.
@@ -1262,11 +1388,27 @@ impl MultiPeerHostDriver {
         payload: Vec<u8>,
     ) -> Result<(), ShmConnectionError> {
         if channel_id == 0 {
-            return Err(self.goodbye(peer_id, "streaming.id.zero-reserved").await);
+            return Err(self
+                .goodbye(
+                    peer_id,
+                    "streaming.id.zero-reserved",
+                    "Data message with channel_id=0 (reserved)".into(),
+                )
+                .await);
         }
 
         if payload.len() as u32 > self.negotiated.max_payload_size {
-            return Err(self.goodbye(peer_id, "flow.call.payload-limit").await);
+            return Err(self
+                .goodbye(
+                    peer_id,
+                    "flow.call.payload-limit",
+                    format!(
+                        "Data payload too large: {} bytes (max {})",
+                        payload.len(),
+                        self.negotiated.max_payload_size
+                    ),
+                )
+                .await);
         }
 
         let state = match self.peers.get_mut(&peer_id) {
@@ -1287,10 +1429,10 @@ impl MultiPeerHostDriver {
         let result = if in_server {
             state
                 .server_channel_registry
-                .route_data(channel_id, payload)
+                .route_data(channel_id, payload.clone())
                 .await
         } else if in_client {
-            state.handle.route_data(channel_id, payload).await
+            state.handle.route_data(channel_id, payload.clone()).await
         } else {
             warn!(
                 channel_id,
@@ -1301,12 +1443,35 @@ impl MultiPeerHostDriver {
 
         match result {
             Ok(()) => Ok(()),
-            Err(ChannelError::Unknown) => Err(self.goodbye(peer_id, "streaming.unknown").await),
+            Err(ChannelError::Unknown) => {
+                Err(self
+                    .goodbye(
+                        peer_id,
+                        "streaming.unknown",
+                        format!(
+                            "Data for unknown channel_id={} (in_server={}, in_client={}, payload_len={})",
+                            channel_id, in_server, in_client, payload.len()
+                        ),
+                    )
+                    .await)
+            }
             Err(ChannelError::DataAfterClose) => {
-                Err(self.goodbye(peer_id, "streaming.data-after-close").await)
+                Err(self
+                    .goodbye(
+                        peer_id,
+                        "streaming.data-after-close",
+                        format!("Data after close on channel_id={}", channel_id),
+                    )
+                    .await)
             }
             Err(ChannelError::CreditOverrun) => {
-                Err(self.goodbye(peer_id, "flow.stream.credit-overrun").await)
+                Err(self
+                    .goodbye(
+                        peer_id,
+                        "flow.stream.credit-overrun",
+                        format!("Credit overrun on channel_id={}", channel_id),
+                    )
+                    .await)
             }
         }
     }
@@ -1318,7 +1483,13 @@ impl MultiPeerHostDriver {
         channel_id: u64,
     ) -> Result<(), ShmConnectionError> {
         if channel_id == 0 {
-            return Err(self.goodbye(peer_id, "streaming.id.zero-reserved").await);
+            return Err(self
+                .goodbye(
+                    peer_id,
+                    "streaming.id.zero-reserved",
+                    format!("Close for reserved channel_id=0"),
+                )
+                .await);
         }
 
         let state = match self.peers.get_mut(&peer_id) {
@@ -1326,12 +1497,24 @@ impl MultiPeerHostDriver {
             None => return Ok(()),
         };
 
-        if state.server_channel_registry.contains(channel_id) {
+        let in_server = state.server_channel_registry.contains(channel_id);
+        let in_client = state.handle.contains_channel(channel_id);
+
+        if in_server {
             state.server_channel_registry.close(channel_id);
-        } else if state.handle.contains_channel(channel_id) {
+        } else if in_client {
             state.handle.close_channel(channel_id);
         } else {
-            return Err(self.goodbye(peer_id, "streaming.unknown").await);
+            return Err(self
+                .goodbye(
+                    peer_id,
+                    "streaming.unknown",
+                    format!(
+                        "Close for unknown channel_id={} (in_server={}, in_client={})",
+                        channel_id, in_server, in_client
+                    ),
+                )
+                .await);
         }
         Ok(())
     }
@@ -1489,7 +1672,12 @@ impl MultiPeerHostDriver {
     }
 
     /// Send Goodbye to a peer and return error.
-    async fn goodbye(&mut self, peer_id: PeerId, rule_id: &'static str) -> ShmConnectionError {
+    async fn goodbye(
+        &mut self,
+        peer_id: PeerId,
+        rule_id: &'static str,
+        context: String,
+    ) -> ShmConnectionError {
         // Fail all pending responses for this peer
         if let Some(state) = self.peers.get_mut(&peer_id) {
             for (_, tx) in state.pending_responses.drain() {
@@ -1508,10 +1696,7 @@ impl MultiPeerHostDriver {
 
         ShmConnectionError::ProtocolViolation {
             rule_id,
-            context: format!(
-                "SHM protocol violation from peer {:?}: {}",
-                peer_id, rule_id
-            ),
+            context: format!("peer {:?}: {}", peer_id, context),
         }
     }
 }
