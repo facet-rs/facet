@@ -26,7 +26,7 @@ camino = ["alloc", "facet-core/camino"]
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.42.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
-owo-colors = "4"
+owo-colors = { version = "4", features = ["supports-colors"] }
 
 [dev-dependencies]
 camino = { workspace = true }

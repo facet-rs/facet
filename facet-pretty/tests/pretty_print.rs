@@ -79,7 +79,7 @@ fn test_pretty_print_simple() {
     let custom_printer = PrettyPrinter::new()
         .with_indent_size(4)
         .with_max_depth(3)
-        .with_colors(false);
+        .with_colors(false.into());
 
     let custom_output = custom_printer.format(&person);
 
@@ -138,7 +138,7 @@ fn test_sensitive_fields() {
 
 #[test]
 fn test_tuple() {
-    let printer = PrettyPrinter::new().with_colors(false);
+    let printer = PrettyPrinter::new().with_colors(false.into());
     assert_eq!(
         printer.format(&(1, 2)),
         r#"
@@ -153,41 +153,41 @@ fn test_tuple() {
 
 #[test]
 fn test_str() {
-    let printer = PrettyPrinter::new().with_colors(false);
+    let printer = PrettyPrinter::new().with_colors(false.into());
     assert_snapshot!(printer.format(&"hello"));
 }
 
 #[test]
 fn test_vec_u8() {
-    let printer = PrettyPrinter::new().with_colors(false);
+    let printer = PrettyPrinter::new().with_colors(false.into());
     let bytes = vec![1u8, 2u8, 3u8, 4u8];
     assert_snapshot!(printer.format(&bytes));
 }
 
 #[test]
 fn test_byte_slice() {
-    let printer = PrettyPrinter::new().with_colors(false);
+    let printer = PrettyPrinter::new().with_colors(false.into());
     let bytes = [1, 2, 3, 4];
     assert_snapshot!(printer.format(&bytes[..]));
 }
 
 #[test]
 fn test_vec_u32() {
-    let printer = PrettyPrinter::new().with_colors(false);
+    let printer = PrettyPrinter::new().with_colors(false.into());
     let nums = vec![1u32, 2u32, 3u32, 4u32];
     assert_snapshot!(printer.format(&nums));
 }
 
 #[test]
 fn test_u32_slice() {
-    let printer = PrettyPrinter::new().with_colors(false);
+    let printer = PrettyPrinter::new().with_colors(false.into());
     let nums = [1u32, 2u32, 3u32, 4u32];
     assert_snapshot!(printer.format(&nums[..]));
 }
 
 #[test]
 fn test_map() {
-    let printer = PrettyPrinter::new().with_colors(false);
+    let printer = PrettyPrinter::new().with_colors(false.into());
     let map = BTreeMap::from([("abc", 1), ("def", 2)]);
     assert_snapshot!(printer.format(&map));
 }
@@ -207,6 +207,6 @@ fn test_shared_static_str_not_cycle() {
         a: "same",
         b: "same",
     };
-    let printer = PrettyPrinter::new().with_colors(false);
+    let printer = PrettyPrinter::new().with_colors(false.into());
     assert_snapshot!(printer.format(&val));
 }

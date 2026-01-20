@@ -7,7 +7,7 @@ use core::{
     hash::{Hash, Hasher},
     str,
 };
-use std::hash::DefaultHasher;
+use std::{hash::DefaultHasher, sync::LazyLock};
 
 use facet_core::{
     Def, DynDateTimeKind, DynValueKind, Facet, Field, PointerType, PrimitiveType, PtrUninit,
@@ -108,12 +108,13 @@ pub mod tokyo_night {
 }
 
 /// A formatter for pretty-printing Facet types
+#[derive(Clone, PartialEq)]
 pub struct PrettyPrinter {
     /// usize::MAX is a special value that means indenting with tabs instead of spaces
     indent_size: usize,
     max_depth: Option<usize>,
     color_generator: ColorGenerator,
-    use_colors: bool,
+    colors: ColorMode,
     list_u8_as_bytes: bool,
     /// Skip type names for Options (show `Some(x)` instead of `Option<T>::Some(x)`)
     minimal_option_names: bool,
@@ -123,22 +124,22 @@ pub struct PrettyPrinter {
 
 impl Default for PrettyPrinter {
     fn default() -> Self {
-        Self {
-            indent_size: 2,
-            max_depth: None,
-            color_generator: ColorGenerator::default(),
-            use_colors: std::env::var_os("NO_COLOR").is_none(),
-            list_u8_as_bytes: true,
-            minimal_option_names: false,
-            show_doc_comments: false,
-        }
+        Self::new()
     }
 }
 
 impl PrettyPrinter {
     /// Create a new PrettyPrinter with default settings
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            indent_size: 2,
+            max_depth: None,
+            color_generator: ColorGenerator::new(),
+            colors: ColorMode::Auto,
+            list_u8_as_bytes: true,
+            minimal_option_names: false,
+            show_doc_comments: false,
+        }
     }
 
     /// Set the indentation size
@@ -159,9 +160,9 @@ impl PrettyPrinter {
         self
     }
 
-    /// Enable or disable colors
-    pub const fn with_colors(mut self, use_colors: bool) -> Self {
-        self.use_colors = use_colors;
+    /// Enable or disable colors. Use `None` to automatically detect color support based on the `NO_COLOR` environment variable.
+    pub const fn with_colors(mut self, enable_colors: ColorMode) -> Self {
+        self.colors = enable_colors;
         self
     }
 
@@ -245,6 +246,11 @@ impl PrettyPrinter {
         }
     }
 
+    #[inline]
+    fn use_colors(&self) -> bool {
+        self.colors.enabled()
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn format_peek_internal_(
         &self,
@@ -316,7 +322,7 @@ impl PrettyPrinter {
                     write!(f, "r{pad:#<width$}")?;
                 }
                 write!(f, "\"")?;
-                if self.use_colors {
+                if self.use_colors() {
                     write!(f, "{}", value.color(tokyo_night::STRING))?;
                 } else {
                     write!(f, "{value}")?;
@@ -330,7 +336,7 @@ impl PrettyPrinter {
             (Def::Scalar, _) if value.shape().id == <alloc::string::String as Facet>::SHAPE.id => {
                 let s = value.get::<alloc::string::String>().unwrap();
                 write!(f, "\"")?;
-                if self.use_colors {
+                if self.use_colors() {
                     write!(f, "{}", s.color(tokyo_night::STRING))?;
                 } else {
                     write!(f, "{s}")?;
@@ -495,7 +501,7 @@ impl PrettyPrinter {
                         // This is the same variant, but we're repeating the code here to ensure consistency
 
                         // Apply color for variant name
-                        if self.use_colors {
+                        if self.use_colors() {
                             write!(f, "{}", variant.name.bold())?;
                         } else {
                             write!(f, "{}", variant.name)?;
@@ -550,7 +556,7 @@ impl PrettyPrinter {
                             write!(f, " ")?;
 
                             let byte = *item.get::<u8>().unwrap();
-                            if self.use_colors {
+                            if self.use_colors() {
                                 let mut hasher = DefaultHasher::new();
                                 byte.hash(&mut hasher);
                                 let hash = hasher.finish();
@@ -1201,7 +1207,7 @@ impl PrettyPrinter {
         }
 
         // Apply color if needed and display
-        if self.use_colors {
+        if self.use_colors() {
             let rgb = Rgb(color.r, color.g, color.b);
             write!(f, "{}", DisplayWrapper(&value).color(rgb))?;
         } else {
@@ -1213,7 +1219,7 @@ impl PrettyPrinter {
 
     /// Write a keyword (null, true, false) with coloring
     fn write_keyword(&self, f: &mut dyn Write, keyword: &str) -> fmt::Result {
-        if self.use_colors {
+        if self.use_colors() {
             write!(f, "{}", keyword.color(tokyo_night::KEYWORD))
         } else {
             write!(f, "{keyword}")
@@ -1222,7 +1228,7 @@ impl PrettyPrinter {
 
     /// Format a number for dynamic values
     fn format_number(&self, f: &mut dyn Write, s: &str) -> fmt::Result {
-        if self.use_colors {
+        if self.use_colors() {
             write!(f, "{}", s.color(tokyo_night::NUMBER))
         } else {
             write!(f, "{s}")
@@ -1231,7 +1237,7 @@ impl PrettyPrinter {
 
     /// Format a string for dynamic values
     fn format_string(&self, f: &mut dyn Write, s: &str) -> fmt::Result {
-        if self.use_colors {
+        if self.use_colors() {
             write!(f, "\"{}\"", s.color(tokyo_night::STRING))
         } else {
             write!(f, "{s:?}")
@@ -1258,7 +1264,7 @@ impl PrettyPrinter {
         }
         let type_name = TypeNameWriter(peek);
 
-        if self.use_colors {
+        if self.use_colors() {
             write!(f, "{}", type_name.color(tokyo_night::TYPE_NAME).bold())
         } else {
             write!(f, "{type_name}")
@@ -1275,7 +1281,7 @@ impl PrettyPrinter {
 
     /// Write styled field name to formatter
     fn write_field_name(&self, f: &mut dyn Write, name: &str) -> fmt::Result {
-        if self.use_colors {
+        if self.use_colors() {
             write!(f, "{}", name.color(tokyo_night::FIELD_NAME))
         } else {
             write!(f, "{name}")
@@ -1284,7 +1290,7 @@ impl PrettyPrinter {
 
     /// Write styled punctuation to formatter
     fn write_punctuation(&self, f: &mut dyn Write, text: &str) -> fmt::Result {
-        if self.use_colors {
+        if self.use_colors() {
             write!(f, "{}", text.dimmed())
         } else {
             write!(f, "{text}")
@@ -1293,7 +1299,7 @@ impl PrettyPrinter {
 
     /// Write styled comment to formatter
     fn write_comment(&self, f: &mut dyn Write, text: &str) -> fmt::Result {
-        if self.use_colors {
+        if self.use_colors() {
             write!(f, "{}", text.color(tokyo_night::MUTED))
         } else {
             write!(f, "{text}")
@@ -1302,7 +1308,7 @@ impl PrettyPrinter {
 
     /// Write styled redacted value to formatter
     fn write_redacted(&self, f: &mut dyn Write, text: &str) -> fmt::Result {
-        if self.use_colors {
+        if self.use_colors() {
             write!(f, "{}", text.color(tokyo_night::ERROR).bold())
         } else {
             write!(f, "{text}")
@@ -1327,7 +1333,7 @@ impl PrettyPrinter {
     pub fn format_peek_with_spans(&self, value: Peek<'_, '_>) -> FormattedValue {
         let mut output = SpanTrackingOutput::new();
         let printer = Self {
-            use_colors: false, // Always disable colors for span tracking
+            colors: ColorMode::Never, // Always disable colors for span tracking
             indent_size: self.indent_size,
             max_depth: self.max_depth,
             color_generator: self.color_generator.clone(),
@@ -1826,6 +1832,49 @@ impl PrettyPrinter {
     }
 }
 
+/// Color mode for the pretty printer.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ColorMode {
+    /// Automtically detect whether colors are desired through the `NO_COLOR` environment variable.
+    Auto,
+    /// Always enable colors.
+    Always,
+    /// Never enable colors.
+    Never,
+}
+
+impl ColorMode {
+    /// Convert the color mode to an option of a boolean.
+    pub fn enabled(&self) -> bool {
+        static NO_COLOR: LazyLock<bool> = LazyLock::new(|| std::env::var_os("NO_COLOR").is_some());
+        match self {
+            ColorMode::Auto => !*NO_COLOR,
+            ColorMode::Always => true,
+            ColorMode::Never => false,
+        }
+    }
+}
+
+impl From<bool> for ColorMode {
+    fn from(value: bool) -> Self {
+        if value {
+            ColorMode::Always
+        } else {
+            ColorMode::Never
+        }
+    }
+}
+
+impl From<ColorMode> for Option<bool> {
+    fn from(value: ColorMode) -> Self {
+        match value {
+            ColorMode::Auto => None,
+            ColorMode::Always => Some(true),
+            ColorMode::Never => Some(false),
+        }
+    }
+}
+
 /// Result of formatting a value with span tracking
 #[derive(Debug)]
 pub struct FormattedValue {
@@ -1946,7 +1995,7 @@ mod tests {
         assert_eq!(printer.max_depth, None);
         // use_colors defaults to true unless NO_COLOR is set
         // In tests, NO_COLOR=1 is set via nextest config for consistent snapshots
-        assert_eq!(printer.use_colors, std::env::var_os("NO_COLOR").is_none());
+        assert_eq!(printer.use_colors(), std::env::var_os("NO_COLOR").is_none());
     }
 
     #[test]
@@ -1954,11 +2003,11 @@ mod tests {
         let printer = PrettyPrinter::new()
             .with_indent_size(4)
             .with_max_depth(3)
-            .with_colors(false);
+            .with_colors(ColorMode::Never);
 
         assert_eq!(printer.indent_size, 4);
         assert_eq!(printer.max_depth, Some(3));
-        assert!(!printer.use_colors);
+        assert!(!printer.use_colors());
     }
 
     #[test]

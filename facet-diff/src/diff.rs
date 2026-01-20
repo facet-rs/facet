@@ -1107,7 +1107,7 @@ impl<'mem, 'facet> LeafChange<'mem, 'facet> {
         use facet_pretty::PrettyPrinter;
 
         let printer = PrettyPrinter::default()
-            .with_colors(false)
+            .with_colors(facet_pretty::ColorMode::Never)
             .with_minimal_option_names(true);
 
         let mut out = String::new();
@@ -1142,7 +1142,7 @@ impl<'mem, 'facet> LeafChange<'mem, 'facet> {
         use owo_colors::OwoColorize;
 
         let printer = PrettyPrinter::default()
-            .with_colors(false)
+            .with_colors(facet_pretty::ColorMode::Never)
             .with_minimal_option_names(true);
 
         let mut out = String::new();
