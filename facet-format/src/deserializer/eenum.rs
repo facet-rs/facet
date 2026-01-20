@@ -69,13 +69,86 @@ where
         trace!("deserialize_enum_externally_tagged called");
         let event = self.expect_peek("value")?;
         trace!(?event, "peeked event");
-        // Check for unit variant (just a string)
-        if let ParseEvent::Scalar(ScalarValue::Str(variant_name)) = &event {
-            self.expect_event("value")?;
-            wip = wip
-                .select_variant_named(variant_name)
-                .map_err(DeserializeError::reflect)?;
-            return Ok(wip);
+
+        // Check for any bare scalar (string, bool, int, etc.)
+        // This handles cases like bare identifiers that should fall back to #[facet(other)]
+        if let ParseEvent::Scalar(scalar) = &event {
+            let enum_def = match &wip.shape().ty {
+                Type::User(UserType::Enum(e)) => e,
+                _ => return Err(DeserializeError::Unsupported("expected enum".into())),
+            };
+
+            // For string scalars, first try to match as a unit variant name
+            if let ScalarValue::Str(variant_name) = scalar {
+                let matched_variant = Self::find_variant_by_display_name(enum_def, variant_name);
+
+                if let Some(matched_name) = matched_variant {
+                    // Found a matching unit variant
+                    self.expect_event("value")?;
+                    wip = wip
+                        .select_variant_named(matched_name)
+                        .map_err(DeserializeError::reflect)?;
+                    return Ok(wip);
+                }
+            }
+
+            // No matching variant - check for #[facet(other)] fallback
+            if let Some(other_variant) = enum_def.variants.iter().find(|v| v.is_other()) {
+                // Convert any scalar to its string representation
+                let scalar_as_string = match scalar {
+                    ScalarValue::Str(s) => s.to_string(),
+                    ScalarValue::Bool(b) => b.to_string(),
+                    ScalarValue::I64(i) => i.to_string(),
+                    ScalarValue::U64(u) => u.to_string(),
+                    ScalarValue::I128(i) => i.to_string(),
+                    ScalarValue::U128(u) => u.to_string(),
+                    ScalarValue::F64(f) => f.to_string(),
+                    ScalarValue::Char(c) => c.to_string(),
+                    ScalarValue::Null => "null".to_string(),
+                    ScalarValue::Bytes(_) => {
+                        return Err(DeserializeError::TypeMismatch {
+                            expected: "string or struct for enum",
+                            got: "bytes".to_string(),
+                            span: self.last_span,
+                            path: None,
+                        });
+                    }
+                    ScalarValue::Unit => "".to_string(),
+                };
+
+                self.expect_event("value")?; // consume the scalar
+                wip = wip
+                    .select_variant_named(other_variant.effective_name())
+                    .map_err(DeserializeError::reflect)?;
+
+                // The other variant should be a newtype (single field)
+                // Set the string value into that field
+                wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
+                wip = self.set_string_value(wip, Cow::Owned(scalar_as_string))?;
+                wip = wip.end().map_err(DeserializeError::reflect)?;
+                return Ok(wip);
+            }
+
+            // No fallback available - error
+            let got = match scalar {
+                ScalarValue::Str(s) => s.to_string(),
+                ScalarValue::Bool(b) => format!("bool({})", b),
+                ScalarValue::I64(i) => format!("i64({})", i),
+                ScalarValue::U64(u) => format!("u64({})", u),
+                ScalarValue::I128(i) => format!("i128({})", i),
+                ScalarValue::U128(u) => format!("u128({})", u),
+                ScalarValue::F64(f) => format!("f64({})", f),
+                ScalarValue::Char(c) => format!("char({})", c),
+                ScalarValue::Bytes(_) => "bytes".to_string(),
+                ScalarValue::Null => "null".to_string(),
+                ScalarValue::Unit => "unit".to_string(),
+            };
+            return Err(DeserializeError::TypeMismatch {
+                expected: "known enum variant",
+                got,
+                span: self.last_span,
+                path: None,
+            });
         }
 
         // Check for VariantTag (self-describing formats like Styx)
