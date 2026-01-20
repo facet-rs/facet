@@ -18,8 +18,8 @@ use roam_wire::{Message, MetadataValue};
 use crate::guest::{SendError, ShmGuest};
 use crate::msg::msg_type;
 
-/// Decoded metadata and payload from a Response message.
-type DecodedResponsePayload = Result<(Vec<(String, MetadataValue)>, Vec<u8>), String>;
+/// Decoded metadata, channels, and payload from a Response message.
+type DecodedResponsePayload = Result<(Vec<(String, MetadataValue)>, Vec<u64>, Vec<u8>), String>;
 
 /// Decoded metadata, channels, and payload from a Request message.
 type DecodedRequestPayload = Result<(Vec<(String, MetadataValue)>, Vec<u64>, Vec<u8>), String>;
@@ -118,10 +118,11 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
         Message::Response {
             request_id,
             metadata,
+            channels,
             payload,
         } => {
             // shm[impl shm.metadata.in-payload]
-            let combined = encode_response_payload(metadata, payload);
+            let combined = encode_response_payload(metadata, channels, payload);
 
             let mut desc = MsgDesc::new(msg_type::RESPONSE, *request_id as u32, 0);
 
@@ -221,12 +222,13 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
         }
 
         msg_type::RESPONSE => {
-            let (metadata, payload) = decode_response_payload(payload_bytes)
+            let (metadata, channels, payload) = decode_response_payload(payload_bytes)
                 .map_err(|e| ConvertError::DecodeError(e.to_string()))?;
 
             Ok(Message::Response {
                 request_id: frame.desc.id as u64,
                 metadata,
+                channels,
                 payload,
             })
         }
@@ -320,17 +322,35 @@ fn encode_request_payload(
     combined
 }
 
-/// Encode metadata + payload for Response messages.
+/// Encode metadata + channels + payload for Response messages.
 ///
-/// Format: [metadata_len: varint][metadata: postcard][payload: raw bytes]
-fn encode_response_payload(metadata: &[(String, MetadataValue)], payload: &[u8]) -> Vec<u8> {
+/// Format: [metadata_len: varint][metadata: postcard][channels_len: varint][channels: postcard][payload: raw bytes]
+fn encode_response_payload(
+    metadata: &[(String, MetadataValue)],
+    channels: &[u64],
+    payload: &[u8],
+) -> Vec<u8> {
+    // Encode metadata with postcard
     let metadata_vec: Vec<(String, MetadataValue)> = metadata.to_vec();
     let metadata_bytes = facet_postcard::to_vec(&metadata_vec).unwrap_or_default();
 
-    let mut combined = Vec::with_capacity(5 + metadata_bytes.len() + payload.len());
+    // Encode channels with postcard
+    let channels_vec: Vec<u64> = channels.to_vec();
+    let channels_bytes = facet_postcard::to_vec(&channels_vec).unwrap_or_default();
 
+    // Build combined payload
+    let mut combined =
+        Vec::with_capacity(10 + metadata_bytes.len() + channels_bytes.len() + payload.len());
+
+    // Write metadata length and data
     write_varint(&mut combined, metadata_bytes.len());
     combined.extend_from_slice(&metadata_bytes);
+
+    // Write channels length and data
+    write_varint(&mut combined, channels_bytes.len());
+    combined.extend_from_slice(&channels_bytes);
+
+    // Write payload
     combined.extend_from_slice(payload);
 
     combined
@@ -386,10 +406,10 @@ fn decode_request_payload(data: &[u8]) -> DecodedRequestPayload {
     Ok((metadata, channels, payload))
 }
 
-/// Decode metadata + payload for Response messages.
+/// Decode metadata + channels + payload for Response messages.
 fn decode_response_payload(data: &[u8]) -> DecodedResponsePayload {
     if data.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), Vec::new()));
     }
 
     let mut pos = 0;
@@ -412,10 +432,28 @@ fn decode_response_payload(data: &[u8]) -> DecodedResponsePayload {
             .map_err(|e| format!("metadata decode error: {}", e))?
     };
 
+    // Read channels
+    let (channels_len, consumed) = read_varint(&data[pos..])?;
+    pos += consumed;
+
+    if pos + channels_len > data.len() {
+        return Err("channels extends past end of data".to_string());
+    }
+
+    let channels_bytes = &data[pos..pos + channels_len];
+    pos += channels_len;
+
+    let channels: Vec<u64> = if channels_len == 0 {
+        Vec::new()
+    } else {
+        facet_postcard::from_slice(channels_bytes)
+            .map_err(|e| format!("channels decode error: {}", e))?
+    };
+
     // Rest is payload
     let payload = data[pos..].to_vec();
 
-    Ok((metadata, payload))
+    Ok((metadata, channels, payload))
 }
 
 /// Guest-side transport wrapper implementing `MessageTransport`.
@@ -813,6 +851,22 @@ mod tests {
         let msg = Message::Response {
             request_id: 99,
             metadata: vec![],
+            channels: vec![],
+            payload: b"response data".to_vec(),
+        };
+
+        let frame = message_to_frame(&msg).unwrap();
+        let decoded = frame_to_message(frame).unwrap();
+
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn roundtrip_response_with_channels() {
+        let msg = Message::Response {
+            request_id: 99,
+            metadata: vec![],
+            channels: vec![2, 4, 6],
             payload: b"response data".to_vec(),
         };
 

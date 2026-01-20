@@ -100,6 +100,7 @@ async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::
                 io.send(&Message::Response {
                     request_id,
                     metadata: vec![],
+                    channels: vec![],
                     payload: response_payload,
                 })
                 .await?;

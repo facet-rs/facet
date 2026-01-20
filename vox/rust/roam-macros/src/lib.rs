@@ -461,10 +461,13 @@ fn generate_client_method(
         #method_doc
         pub async fn #method_name(&self, #(#params),*) -> #client_return {
             let mut args = #args_tuple;
-            let payload = #roam::session::Caller::call(&self.caller, #method_id_mod::#method_name(), &mut args)
+            let response = #roam::session::Caller::call(&self.caller, #method_id_mod::#method_name(), &mut args)
                 .await
                 .map_err(#roam::session::CallError::from)?;
-            #roam::session::decode_response::<#ok_ty, #err_ty>(&payload)
+            let mut result = #roam::session::decode_response::<#ok_ty, #err_ty>(&response.payload)?;
+            // Bind any Rx<T> streams in the response so data can be received
+            #roam::session::Caller::bind_response_streams(&self.caller, &mut result, &response.channels);
+            Ok(result)
         }
     }
 }

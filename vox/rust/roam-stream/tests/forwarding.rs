@@ -265,7 +265,7 @@ async fn test_forwarding_client_to_server_streaming() {
     // Make the streaming call: sum(numbers: Rx<i32>) -> i64
     let mut args = rx;
     let response = handle.call(METHOD_SUM, &mut args).await.unwrap();
-    let result: Result<i64, RoamError<()>> = decode_result(response);
+    let result: Result<i64, RoamError<()>> = decode_result(response.payload);
 
     // 1 + 2 + 3 + 4 + 5 = 15
     assert_eq!(result.unwrap(), 15);
@@ -307,7 +307,7 @@ async fn test_forwarding_server_to_client_streaming() {
     let count: u32 = 5;
     let mut args = (count, tx);
     let response = handle.call(METHOD_GENERATE, &mut args).await.unwrap();
-    let result: Result<(), RoamError<()>> = decode_result(response);
+    let result: Result<(), RoamError<()>> = decode_result(response.payload);
     assert!(result.is_ok());
 
     // Wait for receiver to complete
@@ -363,7 +363,7 @@ async fn test_forwarding_bidirectional_streaming() {
     // Make the bidirectional streaming call: transform(input: Rx<String>, output: Tx<String>)
     let mut args = (input_rx, output_tx);
     let response = handle.call(METHOD_TRANSFORM, &mut args).await.unwrap();
-    let result: Result<(), RoamError<()>> = decode_result(response);
+    let result: Result<(), RoamError<()>> = decode_result(response.payload);
     assert!(result.is_ok());
 
     // Wait for receiver to complete
@@ -414,7 +414,7 @@ async fn test_forwarding_multiple_streaming_calls() {
             // Call sum
             let mut args = rx;
             let response = conn_handle.call(METHOD_SUM, &mut args).await.unwrap();
-            let result: Result<i64, RoamError<()>> = decode_result(response);
+            let result: Result<i64, RoamError<()>> = decode_result(response.payload);
 
             // Expected: (i*10+1) + (i*10+2) + (i*10+3) = i*30 + 6
             let expected = (i as i64) * 30 + 6;

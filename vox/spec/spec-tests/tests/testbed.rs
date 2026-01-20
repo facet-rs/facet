@@ -126,8 +126,8 @@ fn rpc_echo_roundtrip() {
         let payload = match resp {
             Message::Response {
                 request_id,
-                metadata: _,
                 payload,
+                ..
             } => {
                 if request_id != 1 {
                     return Err(format!("response request_id mismatch: {request_id}"));
@@ -195,8 +195,8 @@ fn rpc_user_error_roundtrip() {
         let payload = match resp {
             Message::Response {
                 request_id,
-                metadata: _,
                 payload,
+                ..
             } => {
                 if request_id != 100 {
                     return Err(format!("response request_id mismatch: {request_id}"));
@@ -271,8 +271,8 @@ fn rpc_unknown_method_returns_unknownmethod_error() {
         let payload = match resp {
             Message::Response {
                 request_id,
-                metadata: _,
                 payload,
+                ..
             } => {
                 if request_id != 2 {
                     return Err(format!("response request_id mismatch: {request_id}"));
@@ -335,8 +335,8 @@ fn rpc_invalid_payload_returns_invalidpayload_error() {
         let payload = match resp {
             Message::Response {
                 request_id,
-                metadata: _,
                 payload,
+                ..
             } => {
                 if request_id != 3 {
                     return Err(format!("response request_id mismatch: {request_id}"));

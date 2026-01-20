@@ -121,9 +121,13 @@ pub enum Message {
     } = 2,
     /// r[impl core.metadata] - Response carries metadata key-value pairs.
     /// r[impl call.metadata.unknown] - Unknown keys are ignored.
+    /// r[impl channeling.response.channels] - Channel IDs for streams returned by the method.
     Response {
         request_id: u64,
         metadata: Vec<(String, MetadataValue)>,
+        /// Channel IDs for streams in the response, in return type declaration order.
+        /// Client uses these to bind receivers for incoming Data messages.
+        channels: Vec<u64>,
         payload: Vec<u8>,
     } = 3,
     /// r[impl call.cancel.message] - Cancel message requests callee stop processing.

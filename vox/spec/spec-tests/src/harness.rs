@@ -342,6 +342,7 @@ pub mod wire_server {
                         io.send(&Message::Response {
                             request_id,
                             metadata: metadata_empty(),
+                            channels: vec![],
                             payload: response_payload,
                         })
                         .await
@@ -355,6 +356,7 @@ pub mod wire_server {
                         io.send(&Message::Response {
                             request_id,
                             metadata: metadata_empty(),
+                            channels: vec![],
                             payload: response_payload,
                         })
                         .await
@@ -397,6 +399,7 @@ pub mod wire_server {
                         io.send(&Message::Response {
                             request_id,
                             metadata: metadata_empty(),
+                            channels: vec![],
                             payload: response_payload,
                         })
                         .await
@@ -411,6 +414,7 @@ pub mod wire_server {
                         io.send(&Message::Response {
                             request_id,
                             metadata: metadata_empty(),
+                            channels: vec![],
                             payload: response_payload,
                         })
                         .await
@@ -441,6 +445,7 @@ pub mod wire_server {
                         io.send(&Message::Response {
                             request_id,
                             metadata: metadata_empty(),
+                            channels: vec![],
                             payload: response_payload,
                         })
                         .await

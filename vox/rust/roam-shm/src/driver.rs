@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use roam_session::{
-    ChannelError, ChannelRegistry, ConnectionHandle, DriverMessage, Role, ServiceDispatcher,
-    TransportError,
+    ChannelError, ChannelRegistry, ConnectionHandle, DriverMessage, ResponseData, Role,
+    ServiceDispatcher, TransportError,
 };
 use roam_stream::MessageTransport;
 use roam_wire::Message;
@@ -110,7 +110,7 @@ pub struct ShmDriver<T, D> {
 
     /// Pending responses for outgoing calls we made.
     /// request_id → oneshot sender for the response.
-    pending_responses: HashMap<u64, oneshot::Sender<Result<Vec<u8>, TransportError>>>,
+    pending_responses: HashMap<u64, oneshot::Sender<Result<ResponseData, TransportError>>>,
 
     /// In-flight requests we're serving (to detect duplicates).
     in_flight_server_requests: std::collections::HashSet<u64>,
@@ -230,6 +230,7 @@ where
             }
             DriverMessage::Response {
                 request_id,
+                channels,
                 payload,
             } => {
                 // Only send if this request is still in-flight
@@ -240,6 +241,7 @@ where
                 Message::Response {
                     request_id,
                     metadata: Vec::new(),
+                    channels,
                     payload,
                 }
             }
@@ -310,11 +312,12 @@ where
             Message::Response {
                 request_id,
                 metadata: _,
+                channels,
                 payload,
             } => {
                 // Route to waiting caller
                 if let Some(tx) = self.pending_responses.remove(&request_id) {
-                    let _ = tx.send(Ok(payload));
+                    let _ = tx.send(Ok(ResponseData { payload, channels }));
                 }
                 // Unknown response IDs are ignored per spec
             }
@@ -556,7 +559,7 @@ struct PeerConnectionState {
     server_channel_registry: ChannelRegistry,
 
     /// Pending responses for outgoing calls we made to this peer.
-    pending_responses: HashMap<u64, oneshot::Sender<Result<Vec<u8>, TransportError>>>,
+    pending_responses: HashMap<u64, oneshot::Sender<Result<ResponseData, TransportError>>>,
 
     /// In-flight requests we're serving for this peer.
     in_flight_server_requests: std::collections::HashSet<u64>,
@@ -1084,6 +1087,7 @@ impl MultiPeerHostDriver {
             DriverMessage::Close { channel_id } => Message::Close { channel_id },
             DriverMessage::Response {
                 request_id,
+                channels,
                 payload,
             } => {
                 // Only send if this request is still in-flight
@@ -1095,6 +1099,7 @@ impl MultiPeerHostDriver {
                 Message::Response {
                     request_id,
                     metadata: Vec::new(),
+                    channels,
                     payload,
                 }
             }
@@ -1147,13 +1152,14 @@ impl MultiPeerHostDriver {
             Message::Response {
                 request_id,
                 metadata: _,
+                channels,
                 payload,
             } => {
                 // Route to waiting caller
                 if let Some(state) = self.peers.get_mut(&peer_id)
                     && let Some(tx) = state.pending_responses.remove(&request_id)
                 {
-                    let _ = tx.send(Ok(payload));
+                    let _ = tx.send(Ok(ResponseData { payload, channels }));
                 }
             }
             Message::Cancel { request_id: _ } => {

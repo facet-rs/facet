@@ -135,6 +135,7 @@ fn main() {
     let msg = Message::Response {
         request_id: 1,
         metadata: vec![],
+        channels: vec![],
         payload: vec![0x42],
     };
     write_vector(

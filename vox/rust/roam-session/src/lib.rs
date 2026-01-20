@@ -280,6 +280,19 @@ impl<T: 'static> Tx<T> {
         }
     }
 
+    /// Create a bound Tx with channel_id and driver_tx already set.
+    ///
+    /// Used by `roam::channel()` when called during dispatch to create
+    /// response channels that can send Data directly over the wire.
+    pub fn bound(channel_id: ChannelId, tx: Sender<Vec<u8>>, driver_tx: Sender<DriverMessage>) -> Self {
+        Self {
+            channel_id,
+            sender: SenderSlot::new(tx),
+            driver_tx: DriverTxSlot::new(driver_tx),
+            _marker: PhantomData,
+        }
+    }
+
     /// Get the stream ID.
     pub fn channel_id(&self) -> ChannelId {
         self.channel_id
@@ -504,6 +517,19 @@ impl<T: 'static> Rx<T> {
         }
     }
 
+    /// Create a bound Rx with channel_id already set.
+    ///
+    /// Used by `roam::channel()` when called during dispatch to create
+    /// response channels. The channel_id will be serialized and sent to
+    /// the client, who will bind a receiver for incoming Data.
+    pub fn bound(channel_id: ChannelId, rx: Receiver<Vec<u8>>) -> Self {
+        Self {
+            channel_id,
+            receiver: ReceiverSlot::new(rx),
+            _marker: PhantomData,
+        }
+    }
+
     /// Get the stream ID.
     pub fn channel_id(&self) -> ChannelId {
         self.channel_id
@@ -580,7 +606,59 @@ impl std::error::Error for RxError {}
 /// ```
 pub fn channel<T: 'static>() -> (Tx<T>, Rx<T>) {
     let (sender, receiver) = crate::runtime::channel(CHANNEL_SIZE);
-    (Tx::unbound(sender), Rx::unbound(receiver))
+
+    // Check if we're in a dispatch context - if so, create bound channels
+    if let Some(ctx) = DISPATCH_CONTEXT.with(|c| c.borrow().clone()) {
+        let channel_id = ctx.channel_ids.next();
+        debug!(channel_id, "roam::channel() creating bound channel pair");
+        (
+            Tx::bound(channel_id, sender, ctx.driver_tx.clone()),
+            Rx::bound(channel_id, receiver),
+        )
+    } else {
+        trace!("roam::channel() creating unbound channel pair (no dispatch context)");
+        (Tx::unbound(sender), Rx::unbound(receiver))
+    }
+}
+
+// ============================================================================
+// Dispatch Context (thread-local for response channel binding)
+// ============================================================================
+
+use std::cell::RefCell;
+
+/// Context for binding response channels during dispatch.
+///
+/// When a service handler creates a channel with `roam::channel()` and returns
+/// the Rx, the Tx needs to be bound to send Data over the wire. This context
+/// provides the channel ID allocator and driver_tx needed for binding.
+#[derive(Clone)]
+struct DispatchContext {
+    channel_ids: Arc<ChannelIdAllocator>,
+    driver_tx: Sender<DriverMessage>,
+}
+
+thread_local! {
+    static DISPATCH_CONTEXT: RefCell<Option<DispatchContext>> = const { RefCell::new(None) };
+}
+
+/// Set the dispatch context for the current thread.
+/// Returns a guard that clears the context when dropped.
+fn set_dispatch_context(ctx: DispatchContext) -> DispatchContextGuard {
+    DISPATCH_CONTEXT.with(|c| {
+        *c.borrow_mut() = Some(ctx);
+    });
+    DispatchContextGuard
+}
+
+struct DispatchContextGuard;
+
+impl Drop for DispatchContextGuard {
+    fn drop(&mut self) {
+        DISPATCH_CONTEXT.with(|c| {
+            *c.borrow_mut() = None;
+        });
+    }
 }
 
 // ============================================================================
@@ -588,6 +666,16 @@ pub fn channel<T: 'static>() -> (Tx<T>, Rx<T>) {
 // ============================================================================
 
 use std::collections::{HashMap, HashSet};
+
+/// Response data returned from a call, including any response stream channels.
+#[derive(Debug)]
+pub struct ResponseData {
+    /// The response payload bytes.
+    pub payload: Vec<u8>,
+    /// Channel IDs for streams in the response (Rx<T> returned by the method).
+    /// Client must register receivers for these channels.
+    pub channels: Vec<u64>,
+}
 
 /// All messages to the connection driver go through a single channel.
 ///
@@ -604,7 +692,7 @@ pub enum DriverMessage {
         /// Channel IDs used by this call (Tx/Rx), in declaration order.
         channels: Vec<u64>,
         payload: Vec<u8>,
-        response_tx: OneshotSender<Result<Vec<u8>, TransportError>>,
+        response_tx: OneshotSender<Result<ResponseData, TransportError>>,
     },
     /// Send a Data message on a stream.
     Data {
@@ -614,7 +702,12 @@ pub enum DriverMessage {
     /// Send a Close message to end a stream.
     Close { channel_id: ChannelId },
     /// Send a Response message (server-side call completed).
-    Response { request_id: u64, payload: Vec<u8> },
+    Response {
+        request_id: u64,
+        /// Channel IDs for streams in the response (Tx/Rx returned by the method).
+        channels: Vec<u64>,
+        payload: Vec<u8>,
+    },
 }
 
 /// Registry of active streams for a connection.
@@ -658,16 +751,28 @@ pub struct ChannelRegistry {
     /// The driver owns the receiving end and sends these on the wire.
     /// Using a single channel ensures FIFO ordering.
     driver_tx: Sender<DriverMessage>,
+
+    /// Channel ID allocator for response channels created during dispatch.
+    /// These are channels returned by service methods (e.g., `subscribe() -> Rx<Event>`).
+    response_channel_ids: Arc<ChannelIdAllocator>,
 }
 
 impl ChannelRegistry {
-    /// Create a new registry with the given initial credit and driver channel.
+    /// Create a new registry with the given initial credit, driver channel, and role.
     ///
     /// The `driver_tx` is used to send all messages (Call/Data/Close/Response)
     /// to the driver for transmission on the wire.
     ///
+    /// The `role` determines channel ID parity for response channels:
+    /// - Acceptor (server) uses even IDs
+    /// - Initiator (client) uses odd IDs
+    ///
     /// r[impl flow.channel.initial-credit] - Each stream starts with this credit.
-    pub fn new_with_credit(initial_credit: u32, driver_tx: Sender<DriverMessage>) -> Self {
+    pub fn new_with_credit_and_role(
+        initial_credit: u32,
+        driver_tx: Sender<DriverMessage>,
+        role: Role,
+    ) -> Self {
         Self {
             incoming: HashMap::new(),
             closed: HashSet::new(),
@@ -675,7 +780,16 @@ impl ChannelRegistry {
             outgoing_credit: HashMap::new(),
             initial_credit,
             driver_tx,
+            response_channel_ids: Arc::new(ChannelIdAllocator::new(role)),
         }
+    }
+
+    /// Create a new registry with the given initial credit and driver channel.
+    /// Uses Acceptor role for backward compatibility (server-side usage).
+    ///
+    /// r[impl flow.channel.initial-credit] - Each stream starts with this credit.
+    pub fn new_with_credit(initial_credit: u32, driver_tx: Sender<DriverMessage>) -> Self {
+        Self::new_with_credit_and_role(initial_credit, driver_tx, Role::Acceptor)
     }
 
     /// Create a new registry with default infinite credit.
@@ -687,11 +801,28 @@ impl ChannelRegistry {
         Self::new_with_credit(u32::MAX, driver_tx)
     }
 
+    /// Get the dispatch context for response channel binding.
+    ///
+    /// Used by `dispatch_call` and `dispatch_call_infallible` to set up
+    /// thread-local context so `roam::channel()` can create bound channels.
+    pub(crate) fn dispatch_context(&self) -> DispatchContext {
+        DispatchContext {
+            channel_ids: self.response_channel_ids.clone(),
+            driver_tx: self.driver_tx.clone(),
+        }
+    }
+
     /// Get a clone of the driver message sender.
     ///
     /// Used by codegen to spawn tasks that send Data/Close/Response messages.
     pub fn driver_tx(&self) -> Sender<DriverMessage> {
         self.driver_tx.clone()
+    }
+
+    /// Get the response channel ID allocator.
+    /// Used by ForwardingDispatcher to allocate downstream channel IDs for response channels.
+    pub fn response_channel_ids(&self) -> Arc<ChannelIdAllocator> {
+        self.response_channel_ids.clone()
     }
 
     /// Register an incoming stream.
@@ -1132,6 +1263,7 @@ where
                 let _ = task_tx
                     .send(DriverMessage::Response {
                         request_id,
+                        channels: Vec::new(),
                         payload: vec![1, 2],
                     })
                     .await;
@@ -1146,18 +1278,24 @@ where
     registry.bind_streams(&mut args);
 
     let task_tx = registry.driver_tx();
+    let dispatch_ctx = registry.dispatch_context();
 
     Box::pin(async move {
+        // Set dispatch context so roam::channel() creates bound channels
+        let _guard = set_dispatch_context(dispatch_ctx);
+
         let result = handler(args).await;
-        let payload = match result {
-            Ok(result) => {
+        let (payload, response_channels) = match result {
+            Ok(ref ok_result) => {
+                // Collect channel IDs from the result (e.g., Rx<T> in return type)
+                let channels = collect_channel_ids(ok_result);
                 // Result::Ok(0) + serialized value
                 let mut out = vec![0u8];
-                match facet_postcard::to_vec(&result) {
+                match facet_postcard::to_vec(ok_result) {
                     Ok(bytes) => out.extend(bytes),
                     Err(_) => return,
                 }
-                out
+                (out, channels)
             }
             Err(user_error) => {
                 // Result::Err(1) + RoamError::User(0) + serialized user error
@@ -1166,12 +1304,16 @@ where
                     Ok(bytes) => out.extend(bytes),
                     Err(_) => return,
                 }
-                out
+                (out, Vec::new())
             }
         };
+
+        // Send Response with channel IDs for any Rx<T> in the result.
+        // ForwardingDispatcher uses these to set up Data forwarding.
         let _ = task_tx
             .send(DriverMessage::Response {
                 request_id,
+                channels: response_channels,
                 payload,
             })
             .await;
@@ -1204,6 +1346,7 @@ where
                 let _ = task_tx
                     .send(DriverMessage::Response {
                         request_id,
+                        channels: Vec::new(),
                         payload: vec![1, 2],
                     })
                     .await;
@@ -1218,18 +1361,36 @@ where
     registry.bind_streams(&mut args);
 
     let task_tx = registry.driver_tx();
+    let dispatch_ctx = registry.dispatch_context();
 
     Box::pin(async move {
+        // Set dispatch context so roam::channel() creates bound channels
+        let _guard = set_dispatch_context(dispatch_ctx);
+
         let result = handler(args).await;
+
+        // Collect channel IDs from the result (e.g., Rx<T> in return type)
+        let response_channels = collect_channel_ids(&result);
+        if !response_channels.is_empty() {
+            debug!(
+                channels = ?response_channels,
+                "dispatch_call_infallible: collected response channels"
+            );
+        }
+
         // Result::Ok(0) + serialized value
         let mut payload = vec![0u8];
         match facet_postcard::to_vec(&result) {
             Ok(bytes) => payload.extend(bytes),
             Err(_) => return,
         }
+
+        // Send Response with channel IDs for any Rx<T> in the result.
+        // ForwardingDispatcher uses these to set up Data forwarding.
         let _ = task_tx
             .send(DriverMessage::Response {
                 request_id,
+                channels: response_channels,
                 payload,
             })
             .await;
@@ -1249,6 +1410,7 @@ pub fn dispatch_unknown_method(
         let _ = task_tx
             .send(DriverMessage::Response {
                 request_id,
+                channels: Vec::new(),
                 payload: vec![1, 1],
             })
             .await;
@@ -1579,27 +1741,94 @@ impl ServiceDispatcher for ForwardingDispatcher {
         let upstream = self.upstream.clone();
 
         if channels.is_empty() {
-            // Unary call - simple forwarding
+            // Unary call - but response may contain Rx<T> channels
+            // We need to set up forwarding for any response channels.
+            //
+            // IMPORTANT: Upstream and downstream use different channel ID spaces.
+            // The upstream channel IDs must be remapped to downstream channel IDs.
+            let downstream_channel_ids = registry.response_channel_ids();
+
             Box::pin(async move {
                 let response = upstream
                     .call_raw_with_channels(method_id, vec![], payload)
                     .await;
 
-                let response_payload = match response {
-                    Ok(bytes) => bytes,
+                let (response_payload, upstream_response_channels) = match response {
+                    Ok(data) => (data.payload, data.channels),
                     Err(TransportError::Encode(_)) => {
                         // Should not happen for raw call
-                        vec![1, 2] // Err(InvalidPayload)
+                        (vec![1, 2], Vec::new()) // Err(InvalidPayload)
                     }
                     Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                         // Connection to upstream failed - return Cancelled
-                        vec![1, 3] // Err(Cancelled)
+                        (vec![1, 3], Vec::new()) // Err(Cancelled)
                     }
                 };
+
+                // If response has channels (e.g., method returns Rx<T>),
+                // set up forwarding for Data from upstream to downstream.
+                // We allocate new downstream channel IDs and remap when forwarding.
+                let mut downstream_channels = Vec::new();
+                if !upstream_response_channels.is_empty() {
+                    debug!(
+                        upstream_channels = ?upstream_response_channels,
+                        "ForwardingDispatcher: setting up response channel forwarding"
+                    );
+                    for &upstream_id in &upstream_response_channels {
+                        // Allocate a downstream channel ID
+                        let downstream_id = downstream_channel_ids.next();
+                        downstream_channels.push(downstream_id);
+
+                        debug!(
+                            upstream_id,
+                            downstream_id,
+                            "ForwardingDispatcher: mapping channel IDs"
+                        );
+
+                        // Set up forwarding: upstream → downstream
+                        let (tx, mut rx) = crate::runtime::channel::<Vec<u8>>(64);
+                        upstream.register_incoming(upstream_id, tx);
+
+                        let task_tx_clone = task_tx.clone();
+                        crate::runtime::spawn(async move {
+                            debug!(
+                                upstream_id,
+                                downstream_id,
+                                "ForwardingDispatcher: forwarding task started"
+                            );
+                            while let Some(data) = rx.recv().await {
+                                debug!(
+                                    upstream_id,
+                                    downstream_id,
+                                    data_len = data.len(),
+                                    "ForwardingDispatcher: forwarding data"
+                                );
+                                let _ = task_tx_clone
+                                    .send(DriverMessage::Data {
+                                        channel_id: downstream_id,
+                                        payload: data,
+                                    })
+                                    .await;
+                            }
+                            debug!(
+                                upstream_id,
+                                downstream_id,
+                                "ForwardingDispatcher: forwarding task ended, sending Close"
+                            );
+                            // Channel closed
+                            let _ = task_tx_clone
+                                .send(DriverMessage::Close {
+                                    channel_id: downstream_id,
+                                })
+                                .await;
+                        });
+                    }
+                }
 
                 let _ = task_tx
                     .send(DriverMessage::Response {
                         request_id,
+                        channels: downstream_channels,
                         payload: response_payload,
                     })
                     .await;
@@ -1693,19 +1922,33 @@ impl ServiceDispatcher for ForwardingDispatcher {
                 // Wait for upstream response
                 let response = response_future.await;
 
-                let response_payload = match response {
-                    Ok(bytes) => bytes,
+                let (response_payload, upstream_response_channels) = match response {
+                    Ok(data) => (data.payload, data.channels),
                     Err(TransportError::Encode(_)) => {
-                        vec![1, 2] // Err(InvalidPayload)
+                        (vec![1, 2], Vec::new()) // Err(InvalidPayload)
                     }
                     Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
-                        vec![1, 3] // Err(Cancelled)
+                        (vec![1, 3], Vec::new()) // Err(Cancelled)
                     }
                 };
+
+                // Map upstream response channels back to downstream channel IDs.
+                // The downstream client allocated the original IDs and expects them
+                // in the Response, not the upstream IDs we allocated for forwarding.
+                let downstream_response_channels: Vec<u64> = upstream_response_channels
+                    .iter()
+                    .filter_map(|&upstream_id| {
+                        channel_map
+                            .iter()
+                            .find(|(_, us)| *us == upstream_id)
+                            .map(|(ds, _)| *ds)
+                    })
+                    .collect();
 
                 let _ = task_tx
                     .send(DriverMessage::Response {
                         request_id,
+                        channels: downstream_response_channels,
                         payload: response_payload,
                     })
                     .await;
@@ -1951,12 +2194,20 @@ pub trait Caller: Clone + Send + Sync + 'static {
     /// The arguments are mutable because stream bindings (Tx/Rx) need to be
     /// assigned channel IDs before serialization.
     ///
-    /// Returns the raw response bytes on success.
+    /// Returns ResponseData containing the payload and any response channel IDs.
     async fn call<T: Facet<'static>>(
         &self,
         method_id: u64,
         args: &mut T,
-    ) -> Result<Vec<u8>, TransportError>;
+    ) -> Result<ResponseData, TransportError>;
+
+    /// Bind receivers for Rx<T> streams in the response.
+    ///
+    /// After deserializing a response, any Rx<T> values in it are "hollow" -
+    /// they have channel IDs but no actual receiver. This method walks the
+    /// response and binds receivers for each Rx using the channel IDs from
+    /// the Response message.
+    fn bind_response_streams<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]);
 }
 
 impl Caller for ConnectionHandle {
@@ -1964,8 +2215,12 @@ impl Caller for ConnectionHandle {
         &self,
         method_id: u64,
         args: &mut T,
-    ) -> Result<Vec<u8>, TransportError> {
+    ) -> Result<ResponseData, TransportError> {
         ConnectionHandle::call(self, method_id, args).await
+    }
+
+    fn bind_response_streams<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]) {
+        ConnectionHandle::bind_response_streams(self, response, channels)
     }
 }
 
@@ -2053,7 +2308,7 @@ impl ConnectionHandle {
         &self,
         method_id: u64,
         args: &mut T,
-    ) -> Result<Vec<u8>, TransportError> {
+    ) -> Result<ResponseData, TransportError> {
         // Walk args and bind any streams (allocates channel IDs)
         // This collects receivers that need to be drained but does NOT spawn
         let mut drains = Vec::new();
@@ -2243,17 +2498,19 @@ impl ConnectionHandle {
     ) -> Result<Vec<u8>, TransportError> {
         self.call_raw_full(method_id, Vec::new(), Vec::new(), payload)
             .await
+            .map(|r| r.payload)
     }
 
     /// Make a raw RPC call with pre-serialized payload and channel IDs.
     ///
     /// Used internally by `call()` after binding streams.
+    /// Returns ResponseData so caller can handle response channels.
     pub async fn call_raw_with_channels(
         &self,
         method_id: u64,
         channels: Vec<u64>,
         payload: Vec<u8>,
-    ) -> Result<Vec<u8>, TransportError> {
+    ) -> Result<ResponseData, TransportError> {
         self.call_raw_full(method_id, Vec::new(), channels, payload)
             .await
     }
@@ -2269,16 +2526,19 @@ impl ConnectionHandle {
     ) -> Result<Vec<u8>, TransportError> {
         self.call_raw_full(method_id, metadata, Vec::new(), payload)
             .await
+            .map(|r| r.payload)
     }
 
     /// Make a raw RPC call with all options.
+    ///
+    /// Returns ResponseData containing the payload and any response channel IDs.
     async fn call_raw_full(
         &self,
         method_id: u64,
         metadata: Vec<(String, roam_wire::MetadataValue)>,
         channels: Vec<u64>,
         payload: Vec<u8>,
-    ) -> Result<Vec<u8>, TransportError> {
+    ) -> Result<ResponseData, TransportError> {
         let request_id = self.shared.request_ids.next();
         let (response_tx, response_rx) = oneshot();
 
@@ -2399,6 +2659,86 @@ impl ConnectionHandle {
     /// on this connection's wire.
     pub fn driver_tx(&self) -> Sender<DriverMessage> {
         self.shared.channel_registry.lock().unwrap().driver_tx()
+    }
+
+    /// Bind receivers for Rx<T> streams in a deserialized response.
+    ///
+    /// After deserializing a response, any `Rx<T>` values are "hollow" - they have
+    /// channel IDs but no actual receiver. This method walks the response using
+    /// reflection and binds receivers for each Rx<T> so data can be received.
+    ///
+    /// # How it works
+    ///
+    /// For each `Rx<T>` found in the response:
+    /// 1. Read the channel_id that was set during deserialization
+    /// 2. Create a new channel (tx, rx)
+    /// 3. Set the receiver slot on the Rx
+    /// 4. Register the sender with the channel registry for incoming data routing
+    ///
+    /// This mirrors server-side `ChannelRegistry::bind_streams` but for responses.
+    ///
+    /// IMPORTANT: The `channels` parameter contains the authoritative channel IDs
+    /// from the Response framing. For forwarded connections (via ForwardingDispatcher),
+    /// these IDs may differ from the IDs serialized in the payload. We patch them first.
+    pub fn bind_response_streams<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]) {
+        // Patch channel IDs from Response.channels into the deserialized response.
+        // This is critical for ForwardingDispatcher where the payload contains upstream
+        // channel IDs but channels[] contains the remapped downstream IDs.
+        patch_channel_ids(response, channels);
+
+        let poke = facet::Poke::new(response);
+        self.bind_response_streams_recursive(poke);
+    }
+
+    /// Recursively walk a Poke value looking for Rx streams to bind in responses.
+    fn bind_response_streams_recursive(&self, poke: facet::Poke<'_, '_>) {
+        let shape = poke.shape();
+
+        // Check if this is an Rx type - only Rx needs binding in responses
+        // (Tx in responses would be outgoing, but that's uncommon for return types)
+        if shape.module_path == Some("roam_session") && shape.type_identifier == "Rx" {
+            self.bind_rx_response_stream(poke);
+            return;
+        }
+
+        // Recurse into struct/tuple fields
+        if let Ok(mut ps) = poke.into_struct() {
+            let field_count = ps.field_count();
+            for i in 0..field_count {
+                if let Ok(field_poke) = ps.field(i) {
+                    self.bind_response_streams_recursive(field_poke);
+                }
+            }
+        }
+        // TODO: Handle enums, arrays, etc. if needed
+    }
+
+    /// Bind a single Rx<T> stream from a response.
+    ///
+    /// Creates a channel, sets the receiver slot, and registers for incoming data.
+    fn bind_rx_response_stream(&self, poke: facet::Poke<'_, '_>) {
+        if let Ok(mut ps) = poke.into_struct() {
+            // Get the channel_id that was deserialized from the wire
+            let channel_id = if let Ok(channel_id_field) = ps.field_by_name("channel_id")
+                && let Ok(id_ref) = channel_id_field.get::<ChannelId>()
+            {
+                *id_ref
+            } else {
+                return;
+            };
+
+            // Create channel and set receiver slot
+            let (tx, rx) = crate::runtime::channel(RX_STREAM_BUFFER_SIZE);
+
+            if let Ok(mut receiver_field) = ps.field_by_name("receiver")
+                && let Ok(slot) = receiver_field.get_mut::<ReceiverSlot>()
+            {
+                slot.set(rx);
+            }
+
+            // Register for incoming data routing
+            self.register_incoming(channel_id, tx);
+        }
     }
 }
 

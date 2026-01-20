@@ -11,7 +11,7 @@ use facet_core::{Def, Shape};
 use futures_util::{SinkExt, StreamExt};
 #[allow(unused_imports)]
 use roam_schema::{MethodDetail, contains_stream, is_rx, is_tx};
-use roam_session::TransportError;
+use roam_session::{ResponseData, TransportError};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{BridgeError, BridgeService, ProtocolErrorKind};
@@ -310,7 +310,7 @@ struct StreamingCallState {
     roam_to_ws_tx_map: HashMap<u64, (u64, &'static Shape)>,
     roam_receivers: Vec<(u64, mpsc::Receiver<Vec<u8>>)>,
     /// Response receiver - the call has already been sent when this is set
-    response_rx: oneshot::Receiver<Result<Vec<u8>, TransportError>>,
+    response_rx: oneshot::Receiver<Result<ResponseData, TransportError>>,
     return_shape: &'static Shape,
     error_shape: Option<&'static Shape>,
 }
@@ -531,7 +531,8 @@ async fn run_streaming_call(
     // Send the response
     let session_guard = session.lock().await;
     match response {
-        Ok(response_bytes) => {
+        Ok(response_data) => {
+            let response_bytes = &response_data.payload;
             if response_bytes.is_empty() {
                 return session_guard
                     .send(ServerMessage::protocol_error(request_id, "empty_response"))

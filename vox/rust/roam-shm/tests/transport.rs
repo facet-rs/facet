@@ -69,6 +69,7 @@ async fn guest_transport_recv_response() {
     let msg = Message::Response {
         request_id: 42,
         metadata: vec![],
+        channels: vec![],
         payload: b"response body".to_vec(),
     };
 
@@ -113,6 +114,7 @@ async fn host_guest_transport_roundtrip() {
     let response = Message::Response {
         request_id: 1,
         metadata: vec![],
+        channels: vec![],
         payload: b"hello client".to_vec(),
     };
     let response_frame = message_to_frame(&response).unwrap();

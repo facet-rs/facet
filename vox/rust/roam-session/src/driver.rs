@@ -36,8 +36,8 @@ use facet::Facet;
 
 use crate::runtime::{Mutex, Receiver, channel, sleep, spawn};
 use crate::{
-    ChannelError, ChannelRegistry, ConnectionHandle, DriverMessage, MessageTransport, RoamError,
-    Role, ServiceDispatcher, TransportError,
+    ChannelError, ChannelRegistry, ConnectionHandle, DriverMessage, MessageTransport, ResponseData,
+    RoamError, Role, ServiceDispatcher, TransportError,
 };
 use roam_wire::{Hello, Message};
 
@@ -436,7 +436,7 @@ where
         &self,
         method_id: u64,
         args: &mut T,
-    ) -> Result<Vec<u8>, TransportError> {
+    ) -> Result<ResponseData, TransportError> {
         let mut attempt = 0u32;
 
         loop {
@@ -479,6 +479,16 @@ where
             }
         }
     }
+
+    fn bind_response_streams<R: Facet<'static>>(&self, response: &mut R, channels: &[u64]) {
+        // FramedClient wraps a ConnectionHandle, but we don't have direct access to it
+        // during bind_response_streams. For reconnecting clients, response stream binding
+        // would need to be handled at a higher level or the client would need to store
+        // the current handle.
+        // For now, this is a no-op - FramedClient users should use ConnectionHandle
+        // directly if they need response stream binding.
+        let _ = (response, channels);
+    }
 }
 
 fn connection_error_to_io(e: ConnectionError) -> io::Error {
@@ -513,7 +523,7 @@ pub struct Driver<T, D> {
     driver_rx: Receiver<DriverMessage>,
     server_channel_registry: ChannelRegistry,
     pending_responses:
-        HashMap<u64, crate::runtime::OneshotSender<Result<Vec<u8>, TransportError>>>,
+        HashMap<u64, crate::runtime::OneshotSender<Result<ResponseData, TransportError>>>,
     in_flight_server_requests: std::collections::HashSet<u64>,
 }
 
@@ -581,6 +591,7 @@ where
             }
             DriverMessage::Response {
                 request_id,
+                channels,
                 payload,
             } => {
                 if !self.in_flight_server_requests.remove(&request_id) {
@@ -589,6 +600,7 @@ where
                 let wire_msg = Message::Response {
                     request_id,
                     metadata: vec![],
+                    channels,
                     payload,
                 };
                 self.io.send(&wire_msg).await?;
@@ -647,11 +659,12 @@ where
             }
             Message::Response {
                 request_id,
+                channels,
                 payload,
                 ..
             } => {
                 if let Some(tx) = self.pending_responses.remove(&request_id) {
-                    let _ = tx.send(Ok(payload));
+                    let _ = tx.send(Ok(ResponseData { payload, channels }));
                 }
             }
             Message::Cancel { .. } => {}
@@ -940,6 +953,7 @@ impl ServiceDispatcher for NoDispatcher {
             let _ = driver_tx
                 .send(DriverMessage::Response {
                     request_id,
+                    channels: Vec::new(),
                     payload,
                 })
                 .await;

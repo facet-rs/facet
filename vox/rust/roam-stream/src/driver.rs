@@ -17,7 +17,7 @@ use tokio::task::JoinHandle;
 use crate::framing::CobsFramed;
 use roam_session::{
     Caller, ConnectError, ConnectionError, ConnectionHandle, Driver, HandshakeConfig,
-    RetryPolicy, ServiceDispatcher, TransportError,
+    ResponseData, RetryPolicy, ServiceDispatcher, TransportError,
 };
 
 /// A factory that creates new byte-stream connections on demand.
@@ -265,7 +265,7 @@ where
         &self,
         method_id: u64,
         args: &mut T,
-    ) -> Result<Vec<u8>, TransportError> {
+    ) -> Result<ResponseData, TransportError> {
         let mut attempt = 0u32;
 
         loop {
@@ -307,6 +307,16 @@ where
                 }
             }
         }
+    }
+
+    fn bind_response_streams<R: Facet<'static>>(&self, response: &mut R, channels: &[u64]) {
+        // Client wraps a ConnectionHandle, but we don't have direct access to it
+        // during bind_response_streams. For reconnecting clients, response stream binding
+        // would need to be handled at a higher level or the client would need to store
+        // the current handle.
+        // For now, this is a no-op - Client users should use ConnectionHandle
+        // directly if they need response stream binding.
+        let _ = (response, channels);
     }
 }
 
