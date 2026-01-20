@@ -1,12 +1,12 @@
 //! Configuration file handling for dibs.
 //!
-//! Looks for `dibs.styx` in the current directory or any parent directory.
+//! Looks for `.config/dibs.styx` in the current directory or any parent directory.
 
-pub use dibs_config::{Config, DbConfig};
+pub use dibs_config::Config;
 
 use std::path::{Path, PathBuf};
 
-/// Load configuration from `dibs.styx`, searching up the directory tree.
+/// Load configuration from `.config/dibs.styx`, searching up the directory tree.
 pub fn load() -> Result<(Config, PathBuf), ConfigError> {
     let cwd = std::env::current_dir().map_err(|e| ConfigError::Io(e.to_string()))?;
     load_from(&cwd)
@@ -24,12 +24,12 @@ pub fn load_from(start: &Path) -> Result<(Config, PathBuf), ConfigError> {
     Ok((config, config_path))
 }
 
-/// Find `dibs.styx` by searching up the directory tree.
+/// Find `.config/dibs.styx` by searching up the directory tree.
 fn find_config_file(start: &Path) -> Result<PathBuf, ConfigError> {
     let mut current = start.to_path_buf();
 
     loop {
-        let config_path = current.join("dibs.styx");
+        let config_path = current.join(".config/dibs.styx");
         if config_path.exists() {
             return Ok(config_path);
         }
@@ -43,7 +43,7 @@ fn find_config_file(start: &Path) -> Result<PathBuf, ConfigError> {
 /// Errors that can occur when loading configuration.
 #[derive(Debug)]
 pub enum ConfigError {
-    /// No `dibs.styx` found in any parent directory
+    /// No `.config/dibs.styx` found in any parent directory
     NotFound,
     /// I/O error reading the file
     Io(String),
@@ -55,10 +55,10 @@ impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConfigError::NotFound => {
-                write!(f, "No dibs.styx found in current directory or any parent")
+                write!(f, "No .config/dibs.styx found in current directory or any parent")
             }
-            ConfigError::Io(e) => write!(f, "Failed to read dibs.styx: {}", e),
-            ConfigError::Parse(e) => write!(f, "Failed to parse dibs.styx: {}", e),
+            ConfigError::Io(e) => write!(f, "Failed to read .config/dibs.styx: {}", e),
+            ConfigError::Parse(e) => write!(f, "Failed to parse .config/dibs.styx: {}", e),
         }
     }
 }

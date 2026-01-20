@@ -559,7 +559,7 @@ impl App {
         let result = if let Some(cfg) = config {
             self.run_with_build(&mut terminal, &rt, cfg)
         } else {
-            self.phase = AppPhase::Failed("No dibs.styx config found".to_string());
+            self.phase = AppPhase::Failed("No .config/dibs.styx config found".to_string());
             self.main_loop(&mut terminal, &rt)
         };
 
