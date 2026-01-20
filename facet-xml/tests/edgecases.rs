@@ -6,7 +6,7 @@ use facet_xml::{self as xml, from_str, to_string};
 
 #[test]
 fn test_deserialize_attribute_when_element_with_the_same_name_is_present() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     #[facet(rename = "root")]
     struct Root<'a> {
         #[facet(xml::attribute)]
@@ -19,7 +19,7 @@ fn test_deserialize_attribute_when_element_with_the_same_name_is_present() {
 
 #[test]
 fn test_deserialize_element_when_attribute_with_the_same_name_is_present() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     #[facet(rename = "root")]
     struct Root<'a> {
         #[facet(xml::element)]
@@ -53,7 +53,7 @@ fn test_deserialize_attribute_and_element_with_the_same_name() {
 
 #[test]
 fn test_serialize_attribute_and_element_with_the_same_name() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     #[facet(rename = "root")]
     struct Root<'a> {
         #[facet(xml::attribute, rename = "id")]

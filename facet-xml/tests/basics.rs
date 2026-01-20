@@ -10,12 +10,12 @@ use facet_xml as xml;
 
 #[test]
 fn xml_element_single_child() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Inner {
         value: String,
     }
 
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Outer {
         #[facet(xml::element)]
         inner: Inner,
@@ -32,7 +32,7 @@ fn xml_element_single_child() {
 
 #[test]
 fn xml_tag_captures_element_name() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct AnyElement {
         #[facet(xml::tag)]
         tag: String,
@@ -47,7 +47,7 @@ fn xml_tag_captures_element_name() {
 
 #[test]
 fn xml_tag_captures_different_tags() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct AnyElement {
         #[facet(xml::tag)]
         tag: String,
@@ -66,7 +66,7 @@ fn xml_tag_captures_different_tags() {
 
 #[test]
 fn default_for_missing_element() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Config {
         #[facet(default)]
         name: String,
@@ -81,7 +81,7 @@ fn default_for_missing_element() {
 
 #[test]
 fn default_for_missing_attribute() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Element {
         #[facet(xml::attribute, default)]
         id: String,
@@ -100,7 +100,7 @@ fn default_with_custom_value() {
         "unnamed".to_string()
     }
 
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Item {
         #[facet(default = default_name())]
         name: String,
@@ -116,7 +116,7 @@ fn default_with_custom_value() {
 
 #[test]
 fn alias_matches_alternative_name() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Person {
         #[facet(alias = "fullName")]
         name: String,
@@ -133,7 +133,7 @@ fn alias_matches_alternative_name() {
 
 #[test]
 fn alias_for_attribute() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Element {
         #[facet(xml::attribute, alias = "identifier")]
         id: String,
@@ -154,7 +154,7 @@ fn alias_for_attribute() {
 
 #[test]
 fn deny_unknown_fields_rejects_unknown_element() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     #[facet(deny_unknown_fields)]
     struct Strict {
         name: String,
@@ -167,7 +167,7 @@ fn deny_unknown_fields_rejects_unknown_element() {
 
 #[test]
 fn deny_unknown_fields_rejects_unknown_attribute() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     #[facet(deny_unknown_fields)]
     struct Strict {
         #[facet(xml::attribute)]
@@ -180,7 +180,7 @@ fn deny_unknown_fields_rejects_unknown_attribute() {
 
 #[test]
 fn without_deny_unknown_fields_ignores_extra() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Lenient {
         name: String,
     }
@@ -197,7 +197,7 @@ fn without_deny_unknown_fields_ignores_extra() {
 
 #[test]
 fn optional_attribute_present() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Element {
         #[facet(xml::attribute)]
         id: Option<String>,
@@ -209,7 +209,7 @@ fn optional_attribute_present() {
 
 #[test]
 fn optional_attribute_absent() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Element {
         #[facet(xml::attribute)]
         id: Option<String>,
@@ -221,7 +221,7 @@ fn optional_attribute_absent() {
 
 #[test]
 fn optional_child_element_present() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Container {
         child: Option<String>,
     }
@@ -233,7 +233,7 @@ fn optional_child_element_present() {
 
 #[test]
 fn optional_child_element_absent() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Container {
         child: Option<String>,
     }
@@ -244,7 +244,7 @@ fn optional_child_element_absent() {
 
 #[test]
 fn empty_self_closing_element() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Empty {
         #[facet(xml::attribute)]
         flag: Option<String>,
@@ -260,7 +260,7 @@ fn empty_self_closing_element() {
 
 #[test]
 fn struct_name_defaults_to_lower_camel_case() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Banana {
         taste: String,
     }
@@ -272,7 +272,7 @@ fn struct_name_defaults_to_lower_camel_case() {
 
 #[test]
 fn struct_name_rejects_wrong_case() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Banana {
         taste: String,
     }
@@ -287,7 +287,7 @@ fn struct_name_rejects_wrong_case() {
 
 #[test]
 fn struct_name_rejects_completely_wrong_tag() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Banana {
         taste: String,
     }
@@ -302,7 +302,7 @@ fn struct_name_rejects_completely_wrong_tag() {
 
 #[test]
 fn rename_overrides_default() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     #[facet(rename = "Banana")]
     struct Banana {
         taste: String,
@@ -319,7 +319,7 @@ fn rename_overrides_default() {
 
 #[test]
 fn field_name_snake_case_becomes_lower_camel() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Config {
         user_name: String, // expects <userName>
         max_retries: u32,  // expects <maxRetries>
@@ -335,7 +335,7 @@ fn field_name_snake_case_becomes_lower_camel() {
 
 #[test]
 fn field_name_already_lower_camel_unchanged() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     #[allow(non_snake_case)]
     struct Config {
         userName: String, // already lowerCamelCase
@@ -347,7 +347,7 @@ fn field_name_already_lower_camel_unchanged() {
 
 #[test]
 fn field_rename_overrides_conversion() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Config {
         #[facet(rename = "USER_NAME")]
         user_name: String, // expects <USER_NAME> not <userName>
@@ -360,7 +360,7 @@ fn field_rename_overrides_conversion() {
 
 #[test]
 fn attribute_name_snake_case_becomes_lower_camel() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Element {
         #[facet(xml::attribute)]
         data_id: String, // expects data-id? or dataId?
@@ -375,7 +375,7 @@ fn attribute_name_snake_case_becomes_lower_camel() {
 
 #[test]
 fn multi_word_struct_name_becomes_lower_camel() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct MyPlaylist {
         name: String,
     }
@@ -388,7 +388,7 @@ fn multi_word_struct_name_becomes_lower_camel() {
 
 #[test]
 fn serialization_uses_lower_camel_case() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Config {
         user_name: String,
         max_retries: u32,
@@ -411,7 +411,7 @@ fn serialization_uses_lower_camel_case() {
 
 #[test]
 fn vec_defaults_to_singularized_element_name() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Playlist {
         tracks: Vec<String>, // "tracks" → expects <track> elements
     }
@@ -424,7 +424,7 @@ fn vec_defaults_to_singularized_element_name() {
 
 #[test]
 fn vec_rename_overrides_singularization() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Playlist {
         #[facet(rename = "song")]
         tracks: Vec<String>, // expects <song> instead of <track>
@@ -441,7 +441,7 @@ fn vec_rename_overrides_singularization() {
 
 #[test]
 fn vec_with_xml_text_collects_text_nodes() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Message {
         #[facet(xml::text)]
         parts: Vec<String>,
@@ -453,7 +453,7 @@ fn vec_with_xml_text_collects_text_nodes() {
 
 #[test]
 fn vec_with_xml_text_collects_multiple_text_nodes() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     struct Message {
         #[facet(xml::text)]
         parts: Vec<String>,
@@ -470,7 +470,7 @@ fn vec_with_xml_text_collects_multiple_text_nodes() {
 
 #[test]
 fn vec_with_xml_attribute_collects_all_values() {
-    #[derive(Facet, Debug, PartialEq)]
+    #[derive(Facet, Debug)]
     #[facet(rename = "element")]
     struct Element {
         #[facet(xml::attribute)]
