@@ -59,4 +59,4 @@ pub use syntax_kind::{StyxLanguage, SyntaxElement, SyntaxKind, SyntaxNode, Synta
 pub use validation::{Diagnostic, Severity, validate};
 
 // Re-export rowan types for convenience
-pub use rowan::{TextRange, TextSize};
+pub use rowan::{TextRange, TextSize, TokenAtOffset};

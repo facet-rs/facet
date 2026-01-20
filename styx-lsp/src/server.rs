@@ -1352,24 +1352,11 @@ impl LanguageServer for StyxLanguageServer {
             return Ok(None);
         }
 
-        // The position is where the cursor is AFTER typing the newline
-        // So we need to look at the previous line to determine indentation
-        let lines: Vec<&str> = doc.content.lines().collect();
+        // Convert position to byte offset
+        let offset = position_to_offset(&doc.content, position);
 
-        // If we're on line 0 or beyond content, no indentation needed
-        if position.line == 0 || position.line as usize > lines.len() {
-            return Ok(None);
-        }
-
-        let prev_line_idx = (position.line - 1) as usize;
-        let prev_line = lines.get(prev_line_idx).unwrap_or(&"");
-
-        // Count existing indentation on previous line
-        let prev_indent = prev_line.len() - prev_line.trim_start().len();
-
-        // Check if previous line ends with an opener that needs more indentation
-        let trimmed = prev_line.trim_end();
-        let needs_extra_indent = trimmed.ends_with('{') || trimmed.ends_with('(');
+        // Find the nesting depth at this offset using the CST
+        let depth = find_nesting_depth_cst(&doc.parse, offset);
 
         // Build indent string from editor preferences
         let indent_unit = if params.options.insert_spaces {
@@ -1378,19 +1365,8 @@ impl LanguageServer for StyxLanguageServer {
             "\t".to_string()
         };
 
-        // Calculate target indentation
-        let target_indent = if needs_extra_indent {
-            prev_indent + indent_unit.len()
-        } else {
-            prev_indent
-        };
-
-        // Build the indentation string
-        let indent_str = if params.options.insert_spaces {
-            " ".repeat(target_indent)
-        } else {
-            "\t".repeat(target_indent / indent_unit.len())
-        };
+        // Build the indentation string based on nesting depth
+        let indent_str = indent_unit.repeat(depth);
 
         // Insert indentation at the start of the current line
         Ok(Some(vec![TextEdit {
@@ -1407,6 +1383,66 @@ impl LanguageServer for StyxLanguageServer {
             new_text: indent_str,
         }]))
     }
+}
+
+/// Find the nesting depth (number of objects/sequences) containing the given offset.
+///
+/// Uses the CST for accurate position information. Counts OBJECT and SEQUENCE
+/// nodes in the ancestor chain from the given offset.
+fn find_nesting_depth_cst(parse: &styx_cst::Parse, offset: usize) -> usize {
+    use styx_cst::{SyntaxKind, TextSize, TokenAtOffset};
+
+    let root = parse.syntax();
+    let offset = TextSize::new(offset as u32);
+
+    // Find the token at this offset
+    let token = match root.token_at_offset(offset) {
+        TokenAtOffset::None => return 0,
+        TokenAtOffset::Single(t) => {
+            // If we're exactly at the end of a closing delimiter, we're semantically outside
+            if matches!(t.kind(), SyntaxKind::R_BRACE | SyntaxKind::R_PAREN)
+                && t.text_range().end() == offset
+            {
+                // We're at the end of a closing brace - count depth excluding this container
+                let mut depth: usize = 0;
+                let mut node = t.parent();
+                while let Some(n) = node {
+                    if matches!(n.kind(), SyntaxKind::OBJECT | SyntaxKind::SEQUENCE) {
+                        depth += 1;
+                    }
+                    node = n.parent();
+                }
+                // Subtract 1 because we're outside the innermost container
+                return depth.saturating_sub(1);
+            }
+            t
+        }
+        TokenAtOffset::Between(left, right) => {
+            // When between two tokens, choose based on what makes semantic sense:
+            // - If left is a closing delimiter (} or )), cursor is OUTSIDE, prefer right
+            // - Otherwise prefer left (e.g., after newline inside a block)
+            match left.kind() {
+                SyntaxKind::R_BRACE | SyntaxKind::R_PAREN => right,
+                _ => left,
+            }
+        }
+    };
+
+    // Walk up the ancestor chain, counting OBJECT and SEQUENCE nodes
+    let mut depth = 0;
+    let mut node = token.parent();
+
+    while let Some(n) = node {
+        match n.kind() {
+            SyntaxKind::OBJECT | SyntaxKind::SEQUENCE => {
+                depth += 1;
+            }
+            _ => {}
+        }
+        node = n.parent();
+    }
+
+    depth
 }
 
 /// Collect document symbols recursively from a value tree
@@ -3444,5 +3480,220 @@ schema {
             "Type of 'from' should be string, got: {}",
             info.type_str
         );
+    }
+
+    /// Test helper: parse content with `⏐` as cursor position marker,
+    /// return (content_without_marker, cursor_offset)
+    fn parse_cursor(input: &str) -> (String, usize) {
+        let cursor_pos = input.find('⏐').expect("test input must contain ⏐ cursor marker");
+        let content = input.replace('⏐', "");
+        (content, cursor_pos)
+    }
+
+    #[test]
+    fn test_nesting_depth_at_root() {
+        // Cursor at root level, outside any braces
+        let (content, offset) = parse_cursor("⏐name value");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 0);
+    }
+
+    #[test]
+    fn test_nesting_depth_after_root_entry() {
+        // Cursor at root level after an entry
+        let (content, offset) = parse_cursor("name value\n⏐");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 0);
+    }
+
+    #[test]
+    fn test_nesting_depth_inside_object() {
+        // Cursor inside a top-level object
+        let (content, offset) = parse_cursor("server {\n    ⏐\n}");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 1);
+    }
+
+    #[test]
+    fn test_nesting_depth_inside_object_with_content() {
+        // Cursor inside object that has content
+        let (content, offset) = parse_cursor("server {\n    host localhost\n    ⏐\n}");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 1);
+    }
+
+    #[test]
+    fn test_nesting_depth_nested_object() {
+        // Cursor inside a nested object (depth 2)
+        let (content, offset) = parse_cursor("server {\n    tls {\n        ⏐\n    }\n}");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 2);
+    }
+
+    #[test]
+    fn test_nesting_depth_deeply_nested() {
+        // Cursor at depth 3
+        let (content, offset) = parse_cursor(
+            "a {\n    b {\n        c {\n            ⏐\n        }\n    }\n}",
+        );
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 3);
+    }
+
+    #[test]
+    fn test_nesting_depth_inside_sequence() {
+        // Cursor inside a sequence
+        let (content, offset) = parse_cursor("items (\n    ⏐\n)");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 1);
+    }
+
+    #[test]
+    fn test_nesting_depth_object_inside_sequence() {
+        // Cursor inside an object that's inside a sequence
+        let (content, offset) = parse_cursor("items (\n    {\n        ⏐\n    }\n)");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 2);
+    }
+
+    #[test]
+    fn test_nesting_depth_sequence_inside_object() {
+        // Cursor inside a sequence that's inside an object
+        let (content, offset) = parse_cursor("server {\n    ports (\n        ⏐\n    )\n}");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 2);
+    }
+
+    #[test]
+    fn test_nesting_depth_between_siblings() {
+        // Cursor between two sibling entries at root
+        let (content, offset) = parse_cursor("first {\n    a 1\n}\n⏐\nsecond {\n    b 2\n}");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 0);
+    }
+
+    #[test]
+    fn test_nesting_depth_just_after_open_brace() {
+        // Cursor right after opening brace
+        let (content, offset) = parse_cursor("server {⏐}");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 1);
+    }
+
+    #[test]
+    fn test_nesting_depth_just_before_close_brace() {
+        // Cursor right before closing brace
+        let (content, offset) = parse_cursor("server {\n    host localhost\n⏐}");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 1);
+    }
+
+    #[test]
+    fn test_nesting_depth_inline_object() {
+        // Cursor inside inline object
+        let (content, offset) = parse_cursor("server {host localhost, ⏐}");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 1);
+    }
+
+    #[test]
+    fn test_nesting_depth_tagged_object() {
+        // Cursor inside a tagged object like @query{...}
+        let (content, offset) = parse_cursor("AllProducts @query{\n    ⏐\n}");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 1);
+    }
+
+    #[test]
+    fn test_nesting_depth_nested_tagged_objects() {
+        // Cursor inside nested tagged objects
+        let (content, offset) = parse_cursor(
+            "AllProducts @query{\n    select {\n        ⏐\n    }\n}",
+        );
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 2);
+    }
+
+    // === Edge case tests ===
+
+    #[test]
+    fn test_nesting_depth_empty_object() {
+        // Cursor inside empty object
+        let (content, offset) = parse_cursor("empty {⏐}");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 1);
+    }
+
+    #[test]
+    fn test_nesting_depth_empty_sequence() {
+        // Cursor inside empty sequence
+        let (content, offset) = parse_cursor("empty (⏐)");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 1);
+    }
+
+    #[test]
+    fn test_nesting_depth_after_closing_brace() {
+        // Cursor right after closing brace (back to root)
+        let (content, offset) = parse_cursor("server { host localhost }⏐");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 0);
+    }
+
+    #[test]
+    fn test_nesting_depth_empty_document() {
+        // Empty document
+        let (content, offset) = parse_cursor("⏐");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 0);
+    }
+
+    #[test]
+    fn test_nesting_depth_whitespace_only() {
+        // Document with only whitespace
+        let (content, offset) = parse_cursor("   ⏐   ");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 0);
+    }
+
+    #[test]
+    fn test_nesting_depth_multiline_sequence_elements() {
+        // Cursor between sequence elements
+        let (content, offset) = parse_cursor("items (\n    a\n    ⏐\n    b\n)");
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 1);
+    }
+
+    #[test]
+    fn test_nesting_depth_complex_dibs_like() {
+        // Real-world-like dibs query structure
+        let (content, offset) = parse_cursor(
+            r#"AllProducts @query{
+    from product
+    where {deleted_at @null}
+    select {
+        id
+        handle
+        ⏐
+    }
+}"#,
+        );
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 2);
+    }
+
+    #[test]
+    fn test_nesting_depth_inside_where_clause() {
+        // Cursor inside where clause object
+        let (content, offset) = parse_cursor(
+            r#"Query @query{
+    where {
+        status "published"
+        ⏐
+    }
+}"#,
+        );
+        let parse = styx_cst::parse(&content);
+        assert_eq!(find_nesting_depth_cst(&parse, offset), 2);
     }
 }
