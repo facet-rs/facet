@@ -709,6 +709,13 @@ where
             return Ok(wip);
         }
 
+        // Special case: unit type () can accept Scalar(Unit) directly
+        // This enables patterns like styx bare identifiers: { id, name } -> IndexMap<String, ()>
+        if field_count == 0 && matches!(self.expect_peek("value")?, ParseEvent::Scalar(ScalarValue::Unit)) {
+            self.expect_event("value")?; // consume the unit scalar
+            return Ok(wip);
+        }
+
         let event = self.expect_event("value")?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (for
