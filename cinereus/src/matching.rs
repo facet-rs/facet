@@ -4,6 +4,18 @@
 //! 1. Top-down: Match identical subtrees by hash
 //! 2. Bottom-up: Match remaining nodes by structural similarity
 
+#[cfg(feature = "tracing")]
+use tracing::{debug, trace};
+
+#[cfg(not(feature = "tracing"))]
+macro_rules! debug {
+    ($($arg:tt)*) => {};
+}
+#[cfg(not(feature = "tracing"))]
+macro_rules! trace {
+    ($($arg:tt)*) => {};
+}
+
 use crate::tree::Tree;
 use core::hash::Hash;
 use indextree::NodeId;
@@ -168,13 +180,16 @@ where
     K: Clone + Eq + Hash + Send + Sync,
     L: Clone + Send + Sync,
 {
+    debug!(nodes_a = tree_a.arena.count(), nodes_b = tree_b.arena.count(), "compute_matching start");
     let mut matching = Matching::new();
 
     // Phase 1: Top-down matching (identical subtrees by hash)
     top_down_phase(tree_a, tree_b, &mut matching, config);
+    debug!(matched = matching.len(), "after top_down_phase");
 
     // Phase 2: Bottom-up matching (similar nodes by Dice coefficient)
     bottom_up_phase(tree_a, tree_b, &mut matching, config);
+    debug!(matched = matching.len(), "after bottom_up_phase");
 
     matching
 }
@@ -193,6 +208,7 @@ fn top_down_phase<K, L>(
     K: Clone + Eq + Hash,
     L: Clone,
 {
+    debug!("top_down_phase start");
     // Build hash -> nodes index for tree B
     let mut b_by_hash: HashMap<u64, Vec<NodeId>> = HashMap::default();
     for b_id in tree_b.iter() {
@@ -227,8 +243,10 @@ fn top_down_phase<K, L>(
 
         // If hashes match, these subtrees are identical
         if a_data.hash == b_data.hash && a_data.kind == b_data.kind {
+            debug!(a = usize::from(a_id), b = usize::from(b_id), hash = a_data.hash, "top_down: hash match");
             match_subtrees(tree_a, tree_b, a_id, b_id, matching);
         } else {
+            trace!(a = usize::from(a_id), b = usize::from(b_id), a_hash = a_data.hash, b_hash = b_data.hash, "top_down: no hash match");
             // Hashes differ - try to match children
             for a_child in tree_a.children(a_id) {
                 let a_child_data = tree_a.get(a_child);
@@ -376,6 +394,7 @@ fn bottom_up_phase<K, L>(
             if let Some(candidates) = b_by_kind_hash.get(&key) {
                 for &b_id in candidates {
                     if !matching.contains_b(b_id) {
+                        debug!(a = usize::from(a_id), b = usize::from(b_id), hash = a_data.hash, "bottom_up: leaf match by hash");
                         matching.add(a_id, b_id);
                         break; // Take the first available match
                     }
@@ -384,6 +403,7 @@ fn bottom_up_phase<K, L>(
         } else {
             // For internal nodes, use Dice coefficient
             let candidates = b_by_kind.get(&a_data.kind).cloned().unwrap_or_default();
+            let num_candidates = candidates.len();
 
             let mut best: Option<(NodeId, f64)> = None;
             for b_id in candidates {
@@ -397,6 +417,7 @@ fn bottom_up_phase<K, L>(
                 }
 
                 let score = dice_coefficient(a_id, b_id, matching, &desc_a, &desc_b);
+                trace!(a = usize::from(a_id), b = usize::from(b_id), score, "bottom_up: dice score");
                 if score >= config.similarity_threshold
                     && (best.is_none() || score > best.unwrap().1)
                 {
@@ -404,8 +425,11 @@ fn bottom_up_phase<K, L>(
                 }
             }
 
-            if let Some((b_id, _)) = best {
+            if let Some((b_id, score)) = best {
+                debug!(a = usize::from(a_id), b = usize::from(b_id), score, "bottom_up: internal match by dice");
                 matching.add(a_id, b_id);
+            } else {
+                trace!(a = usize::from(a_id), num_candidates, "bottom_up: no match found");
             }
         }
     }

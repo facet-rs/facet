@@ -10,6 +10,14 @@
 //! 4. MOVE: Relocate nodes to new parents
 //! 5. DELETE: Remove nodes that exist only in the source tree
 
+#[cfg(feature = "tracing")]
+use tracing::debug;
+
+#[cfg(not(feature = "tracing"))]
+macro_rules! debug {
+    ($($arg:tt)*) => {};
+}
+
 use crate::matching::Matching;
 use crate::tree::Tree;
 use core::hash::Hash;
@@ -75,6 +83,7 @@ where
     K: Clone + Eq + Hash,
     L: Clone + Eq,
 {
+    debug!(matched_pairs = matching.len(), "generate_edit_script start");
     let mut ops = Vec::new();
 
     // Phase 1: UPDATE - matched nodes where hash differs (content changed)
@@ -85,6 +94,7 @@ where
         let b_data = tree_b.get(b_id);
 
         if a_data.hash != b_data.hash {
+            debug!(a = usize::from(a_id), b = usize::from(b_id), a_hash = a_data.hash, b_hash = b_data.hash, "emit UPDATE");
             ops.push(EditOp::Update {
                 node_a: a_id,
                 node_b: b_id,
@@ -102,10 +112,12 @@ where
             let parent_b = tree_b.parent(b_id);
 
             if let Some(parent_b) = parent_b {
+                let pos = tree_b.position(b_id);
+                debug!(b = usize::from(b_id), parent = usize::from(parent_b), pos, "emit INSERT");
                 ops.push(EditOp::Insert {
                     node_b: b_id,
                     parent_b,
-                    position: tree_b.position(b_id),
+                    position: pos,
                     kind: b_data.kind.clone(),
                     label: b_data.label.clone(),
                 });
@@ -134,6 +146,7 @@ where
         let position_changed = pos_a != pos_b;
 
         if parent_changed || position_changed {
+            debug!(a = usize::from(a_id), b = usize::from(b_id), parent_changed, pos_a, pos_b, "emit MOVE");
             ops.push(EditOp::Move {
                 node_a: a_id,
                 node_b: b_id,
@@ -147,10 +160,12 @@ where
     // Process in post-order so children are deleted before parents
     for a_id in tree_a.post_order() {
         if !matching.contains_a(a_id) {
+            debug!(a = usize::from(a_id), "emit DELETE");
             ops.push(EditOp::Delete { node_a: a_id });
         }
     }
 
+    debug!(total_ops = ops.len(), "generate_edit_script done");
     ops
 }
 
