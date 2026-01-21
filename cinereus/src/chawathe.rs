@@ -10,6 +10,7 @@
 //! 4. MOVE: Relocate nodes to new parents
 //! 5. DELETE: Remove nodes that exist only in the source tree
 
+use facet::Facet;
 #[cfg(any(test, feature = "tracing"))]
 use tracing::debug;
 
@@ -20,7 +21,9 @@ macro_rules! debug {
 
 use crate::matching::Matching;
 use crate::tree::{NoProperties, Properties, Tree};
+use core::fmt;
 use core::hash::Hash;
+use facet_pretty::FacetPretty;
 use indextree::NodeId;
 
 /// An edit operation in the diff.
@@ -85,12 +88,12 @@ pub enum EditOp<K, L, P: Properties = NoProperties> {
     },
 }
 
-impl<K: std::fmt::Debug, L: std::fmt::Debug, P: Properties> std::fmt::Display for EditOp<K, L, P>
+impl<K: fmt::Debug, L: fmt::Debug, P: Properties> fmt::Display for EditOp<K, L, P>
 where
-    P::Key: std::fmt::Debug,
-    P::Value: std::fmt::Debug,
+    P::Key: fmt::Debug,
+    P::Value: fmt::Debug,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EditOp::Update { node_a, node_b, .. } => {
                 write!(
@@ -156,14 +159,14 @@ where
 ///
 /// The edit script transforms tree A into tree B using INSERT, DELETE, UPDATE, MOVE,
 /// and UpdateProperty operations.
-pub fn generate_edit_script<K, L, P>(
-    tree_a: &Tree<K, L, P>,
-    tree_b: &Tree<K, L, P>,
+pub fn generate_edit_script<'a, K, L, P>(
+    tree_a: &'a Tree<K, L, P>,
+    tree_b: &'a Tree<K, L, P>,
     matching: &Matching,
 ) -> Vec<EditOp<K, L, P>>
 where
-    K: Clone + Eq + Hash,
-    L: Clone + Eq,
+    K: Clone + Eq + Hash + Facet<'a>,
+    L: Clone + Eq + Facet<'a>,
     P: Properties,
 {
     debug!(matched_pairs = matching.len(), "generate_edit_script start");
@@ -218,9 +221,14 @@ where
 
             if let Some(parent_b) = parent_b {
                 let pos = tree_b.position(b_id);
+                let parent_b_data = tree_b.get(parent_b);
                 debug!(
                     b = usize::from(b_id),
+                    b_kind = %b_data.kind.pretty(),
+                    b_label = %b_data.label.pretty(),
                     parent = usize::from(parent_b),
+                    parent_kind = %parent_b_data.kind.pretty(),
+                    parent_label = %parent_b_data.label.pretty(),
                     pos,
                     "emit INSERT"
                 );
@@ -277,7 +285,13 @@ where
     // Process in post-order so children are deleted before parents
     for a_id in tree_a.post_order() {
         if !matching.contains_a(a_id) {
-            debug!(a = usize::from(a_id), "emit DELETE");
+            let a_data = tree_a.get(a_id);
+            debug!(
+                a = usize::from(a_id),
+                a_kind = %a_data.kind.pretty(),
+                a_label = %a_data.label.pretty(),
+                "emit DELETE"
+            );
             ops.push(EditOp::Delete { node_a: a_id });
         }
     }

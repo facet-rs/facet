@@ -457,13 +457,10 @@ fn bottom_up_phase<'a, K, L, P>(
         if let Some(parent_b) = matched_parent_b {
             // Parent is matched - try position+kind matching among children of parent_b
             // This is the "unique type among children" heuristic from GumTree Simple
+            // Note: We don't require b to have children - a node can go from having children to empty
             let candidates: Vec<NodeId> = tree_b
                 .children(parent_b)
-                .filter(|&b_id| {
-                    !matching.contains_b(b_id)
-                        && tree_b.child_count(b_id) > 0 // Must be internal node
-                        && tree_b.get(b_id).kind == a_data.kind
-                })
+                .filter(|&b_id| !matching.contains_b(b_id) && tree_b.get(b_id).kind == a_data.kind)
                 .collect();
 
             // Prefer same position, otherwise take first match by kind

@@ -13,13 +13,18 @@ fn get_dom_paths(old: &str, new: &str) -> Vec<(String, NodePath)> {
         .map(|p| {
             let (kind, path) = match &p {
                 Patch::Replace { path, .. } => ("Replace", path.clone()),
-                Patch::ReplaceInnerHtml { node, .. } => match node {
-                    facet_html_diff::NodeRef::Path(path) => ("ReplaceInnerHtml", path.clone()),
+                Patch::InsertAt {
+                    parent, position, ..
+                } => match parent {
+                    facet_html_diff::NodeRef::Path(path) => {
+                        let mut p = path.0.clone();
+                        p.push(*position);
+                        ("InsertAt", NodePath(p))
+                    }
                     facet_html_diff::NodeRef::Slot(s) => {
-                        ("ReplaceInnerHtmlSlot", NodePath(vec![*s as usize]))
+                        ("InsertAtSlot", NodePath(vec![*s as usize, *position]))
                     }
                 },
-                Patch::InsertBefore { path, .. } => ("InsertBefore", path.clone()),
                 Patch::InsertAfter { path, .. } => ("InsertAfter", path.clone()),
                 Patch::AppendChild { path, .. } => ("AppendChild", path.clone()),
                 Patch::Remove { node } => match node {

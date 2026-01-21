@@ -447,66 +447,79 @@ fn apply_patch(
                 }
             }
         }
-        Patch::ReplaceInnerHtml {
-            node: node_ref,
-            html,
-        } => {
-            use crate::NodeRef;
-            // Replace all children of the node (either at path or in slot)
-            let new_children = parse_html_children(html)?;
-            let target_node = match node_ref {
-                NodeRef::Path(path) => root
-                    .get_mut(&path.0)
-                    .ok_or_else(|| format!("ReplaceInnerHtml: node not found at {:?}", path.0))?,
-                NodeRef::Slot(slot) => slots
-                    .get_mut(slot)
-                    .ok_or_else(|| format!("ReplaceInnerHtml: slot {slot} not found"))?,
-            };
-            match target_node {
-                Node::Element { children, .. } => {
-                    *children = new_children;
-                }
-                Node::Text(_) => {
-                    return Err(
-                        "ReplaceInnerHtml: cannot replace innerHTML of text node".to_string()
-                    );
-                }
-            }
-        }
-        Patch::InsertBefore {
-            path,
+        Patch::InsertAt {
+            parent,
+            position,
             html,
             detach_to_slot,
         } => {
+            use crate::NodeRef;
             let new_node = parse_html_fragment(html)?;
-            if path.0.is_empty() {
-                return Err("InsertBefore: cannot insert before root".to_string());
-            }
-            let parent_path = &path.0[..path.0.len() - 1];
-            let idx = path.0[path.0.len() - 1];
 
-            // In Chawathe semantics, Insert does NOT shift - it places at position
-            // and whatever was there gets displaced (detached to a slot).
-            if let Some(slot) = detach_to_slot {
-                let children = root
-                    .children_mut(parent_path)
-                    .ok_or_else(|| format!("InsertBefore: parent not found at {parent_path:?}"))?;
-                if idx < children.len() {
-                    // Swap with empty placeholder (no shifting!)
-                    let occupant = std::mem::replace(&mut children[idx], Node::Text(String::new()));
-                    slots.insert(*slot, occupant);
+            match parent {
+                NodeRef::Path(path) => {
+                    let children = root
+                        .children_mut(&path.0)
+                        .ok_or_else(|| format!("InsertAt: parent not found at {:?}", path.0))?;
+
+                    // In Chawathe semantics, Insert does NOT shift - it places at position
+                    // and whatever was there gets displaced (detached to a slot).
+                    if let Some(slot) = detach_to_slot {
+                        if *position < children.len() {
+                            let occupant = std::mem::replace(
+                                &mut children[*position],
+                                Node::Text(String::new()),
+                            );
+                            slots.insert(*slot, occupant);
+                        }
+                    }
+
+                    // Grow the array with empty text placeholders if needed
+                    while children.len() <= *position {
+                        children.push(Node::Text(String::new()));
+                    }
+                    children[*position] = new_node;
+                }
+                NodeRef::Slot(parent_slot) => {
+                    // Parent is in a slot - inserting into a detached subtree
+                    // First handle displacement if needed
+                    if let Some(slot) = detach_to_slot {
+                        let slot_node = slots
+                            .get_mut(parent_slot)
+                            .ok_or_else(|| format!("InsertAt: slot {parent_slot} not found"))?;
+                        let children = match slot_node {
+                            Node::Element { children, .. } => children,
+                            Node::Text(_) => {
+                                return Err("InsertAt: cannot insert into text node".to_string());
+                            }
+                        };
+                        if *position < children.len() {
+                            let occupant = std::mem::replace(
+                                &mut children[*position],
+                                Node::Text(String::new()),
+                            );
+                            slots.insert(*slot, occupant);
+                        }
+                    }
+
+                    // Now insert the new node
+                    let slot_node = slots
+                        .get_mut(parent_slot)
+                        .ok_or_else(|| format!("InsertAt: slot {parent_slot} not found"))?;
+                    let children = match slot_node {
+                        Node::Element { children, .. } => children,
+                        Node::Text(_) => {
+                            return Err("InsertAt: cannot insert into text node".to_string());
+                        }
+                    };
+
+                    // Grow the array with empty text placeholders if needed
+                    while children.len() <= *position {
+                        children.push(Node::Text(String::new()));
+                    }
+                    children[*position] = new_node;
                 }
             }
-
-            let children = root
-                .children_mut(parent_path)
-                .ok_or_else(|| format!("InsertBefore: parent not found at {parent_path:?}"))?;
-            // Grow the array with empty text placeholders if needed
-            while children.len() <= idx {
-                children.push(Node::Text(String::new()));
-            }
-            // Overwrite the placeholder at the target position
-            children[idx] = new_node;
         }
         Patch::AppendChild { path, html } => {
             let new_node = parse_html_fragment(html)?;
@@ -677,30 +690,6 @@ fn parse_html_fragment(html: &str) -> Result<Node, String> {
     Ok(Node::Text(html.to_string()))
 }
 
-/// Parse HTML into a list of child nodes (for ReplaceInnerHtml).
-fn parse_html_children(html: &str) -> Result<Vec<Node>, String> {
-    if html.is_empty() {
-        return Ok(vec![]);
-    }
-
-    // Wrap in a minimal document to parse
-    let full = format!("<html><body>{html}</body></html>");
-    let doc: facet_html_dom::Html =
-        facet_html::from_str(&full).map_err(|e| format!("Children parse error: {e}"))?;
-
-    // Return all children of body
-    if let Some(body) = &doc.body {
-        let mut children = Vec::new();
-        for child in &body.children {
-            if let Some(node) = convert_flow_content(child) {
-                children.push(node);
-            }
-        }
-        return Ok(children);
-    }
-    Ok(vec![])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -759,12 +748,13 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_insert_before() {
+    fn test_apply_insert_at() {
         let mut node = Node::parse("<html><body><p>First</p></body></html>").unwrap();
         apply_patches(
             &mut node,
-            &[Patch::InsertBefore {
-                path: NodePath(vec![0]),
+            &[Patch::InsertAt {
+                parent: crate::NodeRef::Path(NodePath(vec![])),
+                position: 0,
                 html: "<p>Zero</p>".to_string(),
                 detach_to_slot: Some(0), // Chawathe: displace First to slot 0
             }],
@@ -775,13 +765,14 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_insert_before_no_displacement() {
+    fn test_apply_insert_at_no_displacement() {
         // Insert at end (no occupant) - no displacement needed
         let mut node = Node::parse("<html><body><p>First</p></body></html>").unwrap();
         apply_patches(
             &mut node,
-            &[Patch::InsertBefore {
-                path: NodePath(vec![1]), // Insert at index 1 (past last element)
+            &[Patch::InsertAt {
+                parent: crate::NodeRef::Path(NodePath(vec![])),
+                position: 1, // Insert at index 1 (past last element)
                 html: "<p>Second</p>".to_string(),
                 detach_to_slot: None,
             }],

@@ -34,13 +34,11 @@ pub enum Patch {
     /// Replace node at path with new HTML
     Replace { path: NodePath, html: String },
 
-    /// Replace all children of node (either at a path or in a slot) with new HTML (innerHTML replacement).
-    ReplaceInnerHtml { node: NodeRef, html: String },
-
-    /// Insert HTML before the node at path.
-    /// If `detach_to_slot` is Some, the node at path is detached and stored in that slot.
-    InsertBefore {
-        path: NodePath,
+    /// Insert HTML at position within parent.
+    /// If `detach_to_slot` is Some, the node at that position is detached and stored in that slot.
+    InsertAt {
+        parent: NodeRef,
+        position: usize,
         html: String,
         detach_to_slot: Option<u32>,
     },
@@ -520,7 +518,7 @@ fn translate_insert(
     // Use label_segments for type navigation (has Variant info)
     let nav = navigate_path(label_segments, html_shape);
 
-    trace!(
+    debug!(
         "translate_insert: parent={parent:?}, position={position}, label_segments={label_segments:?}, target={:?}, value={value:?}",
         nav.target
     );
@@ -537,26 +535,12 @@ fn translate_insert(
             let node_peek = navigate_peek(peek, label_segments)?;
             let html = serialize_to_html(node_peek)?;
 
-            match parent_ref {
-                NodeRef::Path(parent_path) => {
-                    // Build full path: parent + position
-                    let mut dom_path = parent_path.0;
-                    dom_path.push(position);
-                    Some(Patch::InsertBefore {
-                        path: NodePath(dom_path),
-                        html,
-                        detach_to_slot,
-                    })
-                }
-                NodeRef::Slot(slot) => {
-                    // Parent is in a slot - emit ReplaceInnerHtml on the slot
-                    // (inserting into a slot's children = replacing its innerHTML)
-                    Some(Patch::ReplaceInnerHtml {
-                        node: NodeRef::Slot(slot),
-                        html,
-                    })
-                }
-            }
+            Some(Patch::InsertAt {
+                parent: parent_ref,
+                position,
+                html,
+                detach_to_slot,
+            })
         }
         PathTarget::Attribute(name) => {
             // Attributes go on the parent element
@@ -625,29 +609,7 @@ fn translate_insert(
             patches.into_iter().next()
         }
         PathTarget::FlattenedChildrenList => {
-            // This is inserting a new children list into a parent
-            let peek = Peek::new(new_doc);
-            if let Some(struct_peek) = navigate_peek(peek, label_segments) {
-                // The struct has flattened children - find and serialize them
-                if let Ok(s) = struct_peek.into_struct() {
-                    for (field, field_peek) in s.fields() {
-                        if field.is_flattened() {
-                            if let Ok(list) = field_peek.into_list_like() {
-                                let mut children_html = String::new();
-                                for child in list.iter() {
-                                    if let Some(html) = serialize_to_html(child) {
-                                        children_html.push_str(&html);
-                                    }
-                                }
-                                return Some(Patch::ReplaceInnerHtml {
-                                    node: parent_ref,
-                                    html: children_html,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+            // Individual children will be inserted separately by cinereus
             None
         }
         PathTarget::Other => None,

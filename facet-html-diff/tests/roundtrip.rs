@@ -541,3 +541,21 @@ fn proptest_minimal_failure_2() {
         r#"<html><body>0<div></div></body></html>"#,
     );
 }
+
+#[test]
+fn proptest_minimal_failure_3() {
+    // [Div(children: [Text("a")])] -> [Text("a"), Div(children: [P("a")])]
+    assert_roundtrip(
+        r#"<html><body><div>a</div></body></html>"#,
+        r#"<html><body>a<div><p>a</p></div></body></html>"#,
+    );
+}
+
+#[test]
+fn proptest_minimal_failure_4() {
+    // More complex: nested changes inside displaced div
+    assert_roundtrip(
+        r#"<html><body><div>a<p>0</p></div></body></html>"#,
+        r#"<html><body>a<div><div></div></div></body></html>"#,
+    );
+}

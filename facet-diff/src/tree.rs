@@ -308,10 +308,10 @@ impl TreeBuilder {
                     for (field, field_peek) in s.fields() {
                         if field.is_attribute() {
                             let value = self.extract_attribute_value(field_peek);
-                            trace!(field = field.name, ?value, "found attribute field");
+                            // trace!(field = field.name, ?value, "found attribute field");
                             props.set(field.name, value);
                         } else if field.is_flattened() {
-                            trace!(field = field.name, "recursing into flattened field");
+                            // trace!(field = field.name, "recursing into flattened field");
                             self.collect_properties_recursive(field_peek, props);
                         }
                     }
@@ -322,7 +322,7 @@ impl TreeBuilder {
                 if let Ok(e) = peek.into_enum() {
                     // Tuple variants have fields - get field 0 (the inner struct)
                     if let Ok(Some(inner)) = e.field(0) {
-                        trace!("recursing into enum variant inner value");
+                        // trace!("recursing into enum variant inner value");
                         self.collect_properties_recursive(inner, props);
                     }
                 }
@@ -832,8 +832,14 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 b_to_shadow.insert(node_b, new_node);
 
                 // Determine the parent reference - either a path or a slot
+                // We need to check if the parent OR any ancestor is detached
                 let parent = if let Some(&slot) = detached_nodes.get(&shadow_parent) {
-                    // Parent is in a slot
+                    // Parent is directly in a slot
+                    NodeRef::Slot(slot)
+                } else if let Some(slot) =
+                    find_detached_ancestor(&shadow_arena, shadow_parent, &detached_nodes)
+                {
+                    // An ancestor is in a slot
                     NodeRef::Slot(slot)
                 } else {
                     // Parent is in the tree - compute its path
@@ -869,9 +875,15 @@ fn convert_ops_with_shadow<'mem, 'facet>(
             }
 
             CinereusEditOp::Delete { node_a } => {
-                // Check if the node is currently detached (in a slot)
+                // Check if the node or any ancestor is currently detached (in a slot)
                 let node = if let Some(slot) = detached_nodes.remove(&node_a) {
-                    // Node is in a slot - delete from slot
+                    // Node is directly in a slot - delete from slot
+                    NodeRef::Slot(slot)
+                } else if let Some(slot) =
+                    find_detached_ancestor(&shadow_arena, node_a, &detached_nodes)
+                {
+                    // An ancestor is in a slot - the node is inside a detached subtree
+                    // It will be deleted when the slot is cleared or the subtree is replaced
                     NodeRef::Slot(slot)
                 } else {
                     // Node is in the tree - delete from path
@@ -1009,6 +1021,34 @@ fn convert_ops_with_shadow<'mem, 'facet>(
 }
 
 /// Compute the path from root to a node in the shadow tree.
+/// Check if any ancestor of a node is in the detached_nodes map.
+/// Returns the slot number if an ancestor is detached, None otherwise.
+fn find_detached_ancestor(
+    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    node: NodeId,
+    detached_nodes: &HashMap<NodeId, u32>,
+) -> Option<u32> {
+    let mut current = node;
+    debug!(?node, ?detached_nodes, "find_detached_ancestor: starting");
+    loop {
+        debug!(?current, "find_detached_ancestor: checking");
+        // Check if current node is detached
+        if let Some(&slot) = detached_nodes.get(&current) {
+            debug!(?current, slot, "find_detached_ancestor: found!");
+            return Some(slot);
+        }
+        // Move to parent
+        if let Some(parent_id) = shadow_arena.get(current).and_then(|n| n.parent()) {
+            current = parent_id;
+        } else {
+            debug!(?current, "find_detached_ancestor: no parent, stopping");
+            // No more parents
+            break;
+        }
+    }
+    None
+}
+
 ///
 /// For nodes that have a label (original tree_a nodes), we use the stored path.
 /// For inserted nodes, we compute the path by walking up and determining
