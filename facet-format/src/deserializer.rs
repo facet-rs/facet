@@ -684,24 +684,32 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Get field count for tuple hints (needed for non-self-describing formats like postcard)
-        let field_count = match &wip.shape().ty {
-            Type::User(UserType::Struct(def)) => def.fields.len(),
-            _ => 0, // Unit type or unknown - will be handled below
+        // Get field count and struct kind for tuple hints
+        let (field_count, is_tuple_struct) = match &wip.shape().ty {
+            Type::User(UserType::Struct(def)) => {
+                (def.fields.len(), def.kind == StructKind::TupleStruct)
+            }
+            _ => (0, false), // Unit type or unknown - will be handled below
         };
 
         // Hint to non-self-describing parsers how many fields to expect
         // Tuples are like positional structs, so we use hint_struct_fields
         self.parser.hint_struct_fields(field_count);
 
-        let event = self.expect_peek("value")?;
-
-        // Special case: newtype structs (single-field tuple structs) can accept scalar values
+        // Special case: newtype structs (single-field tuple structs) can accept values
         // directly without requiring a sequence wrapper. This enables patterns like:
         //   struct Wrapper(i32);
         //   toml: "value = 42"  ->  Wrapper(42)
-        if field_count == 1 && matches!(event, ParseEvent::Scalar(_)) {
-            // Unwrap into field "0" and deserialize the scalar
+        //   struct Wrapper(Vec<T>);
+        //   json: "value": [...]  ->  Wrapper(vec![...])
+        // This only applies to:
+        // - TupleStruct (named newtypes like `struct Foo(T)`), not plain Tuple types
+        //   like `(T,)` which should always use array syntax.
+        // - Self-describing formats (JSON, YAML, TOML) where newtypes are transparent.
+        //   Non-self-describing formats (ASN.1, postcard, msgpack) serialize newtypes
+        //   with a wrapper, so they must consume the wrapper during deserialization.
+        if field_count == 1 && is_tuple_struct && self.parser.is_self_describing() {
+            // Unwrap into field "0" and deserialize directly
             wip = wip.begin_field("0").map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
             wip = wip.end().map_err(DeserializeError::reflect)?;
