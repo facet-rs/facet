@@ -107,8 +107,8 @@ pub struct Where {
 pub enum FilterValue {
     /// NULL check (@null)
     Null,
-    /// NOT NULL check (@not_null)
-    #[facet(rename = "not_null")]
+    /// NOT NULL check (@not-null)
+    #[facet(rename = "not-null")]
     NotNull,
     /// ILIKE pattern matching (@ilike($param) or @ilike("pattern"))
     Ilike(Vec<String>),
