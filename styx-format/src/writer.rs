@@ -263,7 +263,10 @@ impl StyxWriter {
                 // Record comma position for potential later fixing
                 let comma_pos = self.out.len();
                 self.out.extend_from_slice(b", ");
-                if let Some(Context::Struct { comma_positions, .. }) = self.stack.last_mut() {
+                if let Some(Context::Struct {
+                    comma_positions, ..
+                }) = self.stack.last_mut()
+                {
                     comma_positions.push(comma_pos);
                 }
             } else {
@@ -321,7 +324,10 @@ impl StyxWriter {
                 // Record comma position for potential later fixing
                 let comma_pos = self.out.len();
                 self.out.extend_from_slice(b", ");
-                if let Some(Context::Struct { comma_positions, .. }) = self.stack.last_mut() {
+                if let Some(Context::Struct {
+                    comma_positions, ..
+                }) = self.stack.last_mut()
+                {
                     comma_positions.push(comma_pos);
                 }
             } else {
@@ -706,7 +712,10 @@ impl StyxWriter {
 
         // Clear comma positions from structs we're fixing
         for &idx in &structs_to_fix {
-            if let Some(Context::Struct { comma_positions, .. }) = self.stack.get_mut(idx) {
+            if let Some(Context::Struct {
+                comma_positions, ..
+            }) = self.stack.get_mut(idx)
+            {
                 comma_positions.clear();
             }
         }
@@ -773,7 +782,9 @@ impl StyxWriter {
     fn fix_comma_separators(&mut self) {
         // Extract comma positions from current struct context
         let comma_positions = match self.stack.last_mut() {
-            Some(Context::Struct { comma_positions, .. }) => std::mem::take(comma_positions),
+            Some(Context::Struct {
+                comma_positions, ..
+            }) => std::mem::take(comma_positions),
             _ => return,
         };
 
@@ -1024,6 +1035,10 @@ mod tests {
             result
         );
         // Should contain newline-separated entries
-        assert!(result.contains("a 1\n"), "Expected newline after a: {}", result);
+        assert!(
+            result.contains("a 1\n"),
+            "Expected newline after a: {}",
+            result
+        );
     }
 }

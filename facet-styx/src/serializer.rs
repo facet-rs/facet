@@ -4,7 +4,9 @@ use std::borrow::Cow;
 
 use crate::trace;
 use facet_core::Facet;
-use facet_format::{FieldKey, FieldLocationHint, FormatSerializer, ScalarValue, SerializeError, serialize_root};
+use facet_format::{
+    FieldKey, FieldLocationHint, FormatSerializer, ScalarValue, SerializeError, serialize_root,
+};
 use facet_reflect::{HasFields, Peek};
 use styx_format::{FormatOptions, StyxWriter};
 
@@ -277,13 +279,16 @@ impl FormatSerializer for StyxSerializer {
                     self.writer
                         .write_doc_comment_and_key(&doc_lines.join("\n"), name);
                 } else {
-                    self.writer.field_key(name).map_err(StyxSerializeError::new)?;
+                    self.writer
+                        .field_key(name)
+                        .map_err(StyxSerializeError::new)?;
                 }
             }
             (None, None) => {
                 // Shouldn't happen, but fall back to @
                 if !doc_lines.is_empty() {
-                    self.writer.write_doc_comment_and_key_raw(&doc_lines.join("\n"), "@");
+                    self.writer
+                        .write_doc_comment_and_key_raw(&doc_lines.join("\n"), "@");
                 } else {
                     self.writer
                         .field_key_raw("@")

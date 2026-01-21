@@ -769,7 +769,10 @@ fn load_schema_file(path: &str) -> Result<SchemaFile, CliError> {
         .map_err(|e| CliError::Parse(format!("failed to parse schema '{}': {}", path, e)))
 }
 
-fn extract_embedded_schema(cli_name: &str, schema_id: Option<&str>) -> Result<SchemaFile, CliError> {
+fn extract_embedded_schema(
+    cli_name: &str,
+    schema_id: Option<&str>,
+) -> Result<SchemaFile, CliError> {
     let binary_path = which::which(cli_name).map_err(|_| {
         CliError::Validation(format!(
             "binary '{}' not found in PATH\nhint: ensure the binary is installed and in your PATH",

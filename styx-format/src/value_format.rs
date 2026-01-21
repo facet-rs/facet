@@ -777,23 +777,15 @@ mod tests {
             entry("host", scalar("localhost")),
             entry("port", scalar("8080")),
         ]);
-        let obj = obj_multiline(vec![
-            entry("name", scalar("myapp")),
-            entry("server", block),
-        ]);
+        let obj = obj_multiline(vec![entry("name", scalar("myapp")), entry("server", block)]);
         assert_matches_cst_formatter(&obj, "scalar then block");
     }
 
     #[test]
     fn blank_line_04_block_then_scalar() {
         // Block followed by scalar - needs blank line after block
-        let block = obj_multiline(vec![
-            entry("host", scalar("localhost")),
-        ]);
-        let obj = obj_multiline(vec![
-            entry("server", block),
-            entry("name", scalar("myapp")),
-        ]);
+        let block = obj_multiline(vec![entry("host", scalar("localhost"))]);
+        let obj = obj_multiline(vec![entry("server", block), entry("name", scalar("myapp"))]);
         assert_matches_cst_formatter(&obj, "block then scalar");
     }
 
@@ -802,10 +794,7 @@ mod tests {
         // Two block objects - needs blank line between them
         let block1 = obj_multiline(vec![entry("a", scalar("1"))]);
         let block2 = obj_multiline(vec![entry("b", scalar("2"))]);
-        let obj = obj_multiline(vec![
-            entry("first", block1),
-            entry("second", block2),
-        ]);
+        let obj = obj_multiline(vec![entry("first", block1), entry("second", block2)]);
         assert_matches_cst_formatter(&obj, "two blocks");
     }
 
@@ -814,10 +803,7 @@ mod tests {
         // Inline objects at root - no blank line needed
         let inline1 = obj_inline(vec![entry("x", scalar("1"))]);
         let inline2 = obj_inline(vec![entry("y", scalar("2"))]);
-        let obj = obj_multiline(vec![
-            entry("point1", inline1),
-            entry("point2", inline2),
-        ]);
+        let obj = obj_multiline(vec![entry("point1", inline1), entry("point2", inline2)]);
         assert_matches_cst_formatter(&obj, "inline objects at root");
     }
 
@@ -865,10 +851,7 @@ mod tests {
     #[test]
     fn blank_line_11_nested_blocks_dont_get_extra_blanks() {
         // Inside a non-root object, no extra blank lines
-        let inner = obj_multiline(vec![
-            entry("a", scalar("1")),
-            entry("b", scalar("2")),
-        ]);
+        let inner = obj_multiline(vec![entry("a", scalar("1")), entry("b", scalar("2"))]);
         let obj = obj_multiline(vec![entry("wrapper", inner)]);
         assert_matches_cst_formatter(&obj, "nested block internal");
     }
@@ -901,10 +884,7 @@ mod tests {
     #[test]
     fn blank_line_14_sequence_of_scalars() {
         let seq = seq_value(vec![scalar("a"), scalar("b"), scalar("c")]);
-        let obj = obj_multiline(vec![
-            entry("items", seq),
-            entry("count", scalar("3")),
-        ]);
+        let obj = obj_multiline(vec![entry("items", seq), entry("count", scalar("3"))]);
         assert_matches_cst_formatter(&obj, "sequence of scalars");
     }
 
@@ -921,10 +901,7 @@ mod tests {
             Separator::Newline,
         );
         let schema = obj_multiline(vec![unit_entry(schema_content)]);
-        let obj = obj_multiline(vec![
-            entry("meta", meta),
-            entry("schema", schema),
-        ]);
+        let obj = obj_multiline(vec![entry("meta", meta), entry("schema", schema)]);
         assert_matches_cst_formatter(&obj, "meta then schema block");
     }
 
@@ -955,19 +932,14 @@ mod tests {
     fn blank_line_18_empty_inline_objects() {
         let empty1 = obj_inline(vec![]);
         let empty2 = obj_inline(vec![]);
-        let obj = obj_multiline(vec![
-            entry("a", empty1),
-            entry("b", empty2),
-        ]);
+        let obj = obj_multiline(vec![entry("a", empty1), entry("b", empty2)]);
         assert_matches_cst_formatter(&obj, "empty inline objects");
     }
 
     #[test]
     fn blank_line_19_single_entry_block() {
         let block = obj_multiline(vec![entry("only", scalar("one"))]);
-        let obj = obj_multiline(vec![
-            entry("wrapper", block),
-        ]);
+        let obj = obj_multiline(vec![entry("wrapper", block)]);
         assert_matches_cst_formatter(&obj, "single entry block");
     }
 

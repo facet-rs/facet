@@ -1,6 +1,6 @@
 //! Test @one-of schema constraint validation.
 
-use facet_styx::{from_str, validate, SchemaFile};
+use facet_styx::{SchemaFile, from_str, validate};
 use styx_tree::parse;
 
 fn main() {

@@ -276,7 +276,8 @@ impl<'src> CstParser<'src> {
                         let pos = self.current_pos();
                         self.errors.push(ParseError::new(
                             pos,
-                            "unexpected atom after value (missing comma between entries?)".to_string(),
+                            "unexpected atom after value (missing comma between entries?)"
+                                .to_string(),
                         ));
                     }
                     self.builder.start_node(SyntaxKind::VALUE.into());

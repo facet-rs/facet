@@ -451,13 +451,10 @@ impl<'a> Validator<'a> {
 
         let mut seen_fields: HashSet<Option<&str>> = HashSet::new();
         // Look up catch-all schema - find any key that is a typed pattern or unit
-        let additional_schema = schema.0.iter().find_map(|(k, v)| {
-            if k.value.tag.is_some() {
-                Some(v)
-            } else {
-                None
-            }
-        });
+        let additional_schema = schema
+            .0
+            .iter()
+            .find_map(|(k, v)| if k.value.tag.is_some() { Some(v) } else { None });
 
         for entry in &obj.entries {
             let key_opt: Option<&str> = if entry.key.is_unit() {
@@ -833,12 +830,7 @@ impl<'a> Validator<'a> {
         None
     }
 
-    fn validate_one_of(
-        &self,
-        value: &Value,
-        schema: &OneOfSchema,
-        path: &str,
-    ) -> ValidationResult {
+    fn validate_one_of(&self, value: &Value, schema: &OneOfSchema, path: &str) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
         // First validate against the base type
@@ -879,8 +871,7 @@ impl<'a> Validator<'a> {
         let allowed_strings: Vec<&str> = allowed_values.iter().map(|v| v.as_str()).collect();
         if !allowed_strings.contains(&value_text) {
             // Try to find a similar value for suggestions
-            let allowed_owned: Vec<String> =
-                allowed_values.iter().map(|v| v.0.clone()).collect();
+            let allowed_owned: Vec<String> = allowed_values.iter().map(|v| v.0.clone()).collect();
             let suggestion = suggest_similar(value_text, &allowed_owned).map(String::from);
 
             result.error(
@@ -1125,7 +1116,10 @@ schema {
             assert!(
                 catchall.is_some(),
                 "Schema should have a typed catch-all entry. Keys: {:?}",
-                obj.0.keys().map(|k| (&k.value.value, &k.value.tag)).collect::<Vec<_>>()
+                obj.0
+                    .keys()
+                    .map(|k| (&k.value.value, &k.value.tag))
+                    .collect::<Vec<_>>()
             );
         } else {
             panic!("Root should be an object schema, got {:?}", root);

@@ -373,17 +373,17 @@ impl CstFormatter {
 
         // Determine if we need multiline format
         // But collapse trivial sequences: single simple element should be inline
-        let should_collapse = !has_comments
-            && entries.len() == 1
-            && !contains_block_object(entries[0].syntax());
+        let should_collapse =
+            !has_comments && entries.len() == 1 && !contains_block_object(entries[0].syntax());
 
         // Special case: single entry that is a tag with block payload - format inline with paren
         // e.g., @optional(@object{...}) should format as (@object{\n...\n}) not (\n@object{...}\n)
-        let single_tag_with_block = !has_comments
-            && entries.len() == 1
-            && is_tag_with_block_payload(entries[0].syntax());
+        let single_tag_with_block =
+            !has_comments && entries.len() == 1 && is_tag_with_block_payload(entries[0].syntax());
 
-        let is_multiline = !should_collapse && !single_tag_with_block && (seq.is_multiline() || has_comments || entries.is_empty());
+        let is_multiline = !should_collapse
+            && !single_tag_with_block
+            && (seq.is_multiline() || has_comments || entries.is_empty());
 
         if single_tag_with_block {
             // Format the single entry inline with the paren - no newline after (
@@ -696,7 +696,10 @@ mod tests {
         );
         // Formatter should return original source for documents with errors
         let output = format(input);
-        assert_eq!(output, input, "Formatter should return original source for documents with parse errors");
+        assert_eq!(
+            output, input,
+            "Formatter should return original source for documents with parse errors"
+        );
     }
 
     #[test]
@@ -1311,25 +1314,31 @@ schema {
 
     #[test]
     fn fmt_058_tag_map_with_doc_comments() {
-        insta::assert_snapshot!(format("fields @map(@string@enum{/// variant a\na @unit, /// variant b\nb @unit})"));
+        insta::assert_snapshot!(format(
+            "fields @map(@string@enum{/// variant a\na @unit, /// variant b\nb @unit})"
+        ));
     }
 
     #[test]
     fn fmt_059_nested_enums_with_docs() {
-        insta::assert_snapshot!(format("type @enum{/// first\na @object{/// inner\nx @int}, b @unit}"));
+        insta::assert_snapshot!(format(
+            "type @enum{/// first\na @object{/// inner\nx @int}, b @unit}"
+        ));
     }
 
     #[test]
     fn fmt_060_the_dibs_pattern() {
         // Simplified version of dibs schema structure
-        insta::assert_snapshot!(format(r#"schema {@ @object{decls @map(@string@enum{
+        insta::assert_snapshot!(format(
+            r#"schema {@ @object{decls @map(@string@enum{
     /// A query
     query @object{
         params @optional(@object{params @map(@string@enum{uuid @unit, /// doc
             optional @seq(@type{name T})
         })})
     }
-})}}"#));
+})}}"#
+        ));
     }
 
     // --- 61-70: Top-level spacing (issue #28) ---
@@ -1494,21 +1503,25 @@ schema {
 
     #[test]
     fn fmt_091_schema_with_meta() {
-        insta::assert_snapshot!(format(r#"meta {id "app:config@1", cli myapp}
+        insta::assert_snapshot!(format(
+            r#"meta {id "app:config@1", cli myapp}
 schema {@ @object{
     name @string
     port @default(8080 @int)
-}}"#));
+}}"#
+        ));
     }
 
     #[test]
     fn fmt_092_enum_with_object_variants() {
-        insta::assert_snapshot!(format(r#"type @enum{
+        insta::assert_snapshot!(format(
+            r#"type @enum{
     /// A simple variant
     simple @unit
     /// Complex variant
     complex @object{x @int, y @int}
-}"#));
+}"#
+        ));
     }
 
     #[test]
@@ -1528,17 +1541,22 @@ schema {@ @object{
 
     #[test]
     fn fmt_096_all_builtin_types() {
-        insta::assert_snapshot!(format("types {s @string, i @int, b @bool, f @float, u @unit}"));
+        insta::assert_snapshot!(format(
+            "types {s @string, i @int, b @bool, f @float, u @unit}"
+        ));
     }
 
     #[test]
     fn fmt_097_deep_nesting_mixed() {
-        insta::assert_snapshot!(format("a @object{b @seq(@enum{c @object{d @optional(@map(@string@int))}})}"));
+        insta::assert_snapshot!(format(
+            "a @object{b @seq(@enum{c @object{d @optional(@map(@string@int))}})}"
+        ));
     }
 
     #[test]
     fn fmt_098_realistic_config_schema() {
-        insta::assert_snapshot!(format(r#"meta {id "crate:myapp@1", cli myapp, description "My application config"}
+        insta::assert_snapshot!(format(
+            r#"meta {id "crate:myapp@1", cli myapp, description "My application config"}
 schema {@ @object{
     /// Server configuration
     server @object{
@@ -1552,7 +1570,8 @@ schema {@ @object{
         url @string
         pool_size @default(10 @int)
     })
-}}"#));
+}}"#
+        ));
     }
 
     #[test]
@@ -1562,7 +1581,8 @@ schema {@ @object{
 
     #[test]
     fn fmt_100_everything_combined() {
-        insta::assert_snapshot!(format(r#"// Top level comment
+        insta::assert_snapshot!(format(
+            r#"// Top level comment
 meta {id "test@1"}
 
 /// Schema documentation
@@ -1586,7 +1606,8 @@ schema {@ @object{
 
     /// A map
     data @map(@string@object{x @int, y @int})
-}}"#));
+}}"#
+        ));
     }
 }
 

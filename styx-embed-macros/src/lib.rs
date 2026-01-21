@@ -213,7 +213,9 @@ pub fn embed_inline(input: TokenStream) -> TokenStream {
     let schema = match parse_string_literal(&literal) {
         Some(s) => s,
         None => {
-            return "compile_error!(\"expected string literal\")".parse().unwrap();
+            return "compile_error!(\"expected string literal\")"
+                .parse()
+                .unwrap();
         }
     };
 
@@ -325,7 +327,7 @@ pub fn embed_files(input: TokenStream) -> TokenStream {
             Err(e) => {
                 return format!("compile_error!(\"{}\")", e.replace('"', "\\\""))
                     .parse()
-                    .unwrap()
+                    .unwrap();
             }
         }
     }

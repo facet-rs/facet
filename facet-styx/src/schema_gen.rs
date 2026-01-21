@@ -499,7 +499,13 @@ impl SchemaGenerator {
                     let doc = if field.doc.is_empty() {
                         None
                     } else {
-                        Some(field.doc.iter().map(|s| strip_doc_leading_space(s)).collect())
+                        Some(
+                            field
+                                .doc
+                                .iter()
+                                .map(|s| strip_doc_leading_space(s))
+                                .collect(),
+                        )
                     };
 
                     // Handle flattened fields - inline their contents
@@ -511,7 +517,10 @@ impl SchemaGenerator {
                                 // Get key type tag and value schema
                                 let (key_tag, value_schema) = if types.len() == 1 {
                                     // Only value type, key defaults to @string
-                                    ("string".to_string(), types.into_iter().next().unwrap().value)
+                                    (
+                                        "string".to_string(),
+                                        types.into_iter().next().unwrap().value,
+                                    )
                                 } else {
                                     // Key and value types
                                     let mut iter = types.into_iter();
@@ -600,7 +609,13 @@ impl SchemaGenerator {
             let doc = if variant.doc.is_empty() {
                 None
             } else {
-                Some(variant.doc.iter().map(|s| strip_doc_leading_space(s)).collect())
+                Some(
+                    variant
+                        .doc
+                        .iter()
+                        .map(|s| strip_doc_leading_space(s))
+                        .collect(),
+                )
             };
 
             variants.insert(
