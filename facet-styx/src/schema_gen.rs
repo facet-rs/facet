@@ -4,8 +4,8 @@
 //! that implement `Facet`.
 
 use facet_core::{
-    Def, DefaultSource, Field, NumericType, PrimitiveType, PtrConst, PtrMut, PtrUninit, Shape,
-    ShapeLayout, Type, UserType,
+    Def, DefaultSource, Facet, Field, NumericType, PrimitiveType, PtrConst, PtrMut, PtrUninit,
+    Shape, ShapeLayout, Type, UserType,
 };
 use facet_reflect::Peek;
 use std::collections::{HashMap, HashSet};
@@ -463,6 +463,14 @@ impl SchemaGenerator {
 
     fn user_type_to_schema(&mut self, user: &UserType, shape: &'static Shape) -> Schema {
         let type_id = shape.type_identifier;
+
+        // Schema is a well-known built-in type - emit a reference without generating its definition.
+        // This avoids inlining the entire Schema enum (which describes types) into generated schemas.
+        if std::ptr::eq(shape, Schema::SHAPE) {
+            return Schema::Type {
+                name: Some("Schema".to_string()),
+            };
+        }
 
         // Cycle detection - if we're already generating this type, return a reference
         if self.generating.contains(type_id) {
