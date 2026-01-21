@@ -344,6 +344,10 @@ impl FormatSerializer for MsgPackSerializer {
         }
         Ok(())
     }
+
+    fn is_self_describing(&self) -> bool {
+        false
+    }
 }
 
 /// Serialize a value to MsgPack bytes.

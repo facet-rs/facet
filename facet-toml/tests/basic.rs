@@ -268,6 +268,7 @@ fn test_unit_struct_list() {
     }
 
     #[derive(Debug, Facet, PartialEq)]
+    #[facet(transparent)]
     struct Item(i32);
 
     assert_eq!(
@@ -415,6 +416,7 @@ fn test_unit_struct() {
     }
 
     #[derive(Debug, Facet, PartialEq)]
+    #[facet(transparent)]
     struct Unit(i32);
 
     assert_eq!(
@@ -441,9 +443,11 @@ fn test_nested_unit_struct() {
     }
 
     #[derive(Debug, Facet, PartialEq)]
+    #[facet(transparent)]
     struct NestedUnit(Unit);
 
     #[derive(Debug, Facet, PartialEq)]
+    #[facet(transparent)]
     struct Unit(i32);
 
     assert_eq!(

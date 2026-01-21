@@ -1,66 +1,43 @@
-# facet-python
+# facet-singularize
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-python/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-python.svg)](https://crates.io/crates/facet-python)
-[![documentation](https://docs.rs/facet-python/badge.svg)](https://docs.rs/facet-python)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-python.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-singularize/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-singularize.svg)](https://crates.io/crates/facet-singularize)
+[![documentation](https://docs.rs/facet-singularize/badge.svg)](https://docs.rs/facet-singularize)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-singularize.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Generate Python type definitions from facet type metadata.
+Fast, no-regex English singularization.
 
 ## Overview
 
-This crate uses facet's reflection capabilities to generate Python type hints
-and TypedDicts from any Rust type that implements `Facet`. This enables
-type-safe interop when your Rust code exchanges data with Python.
+This crate converts plural English words to their singular form without using regex.
+It's designed for use in deserialization where performance matters—for example, when
+mapping JSON field names like `"dependencies"` to Rust struct fields like `dependency`.
 
 ## Example
 
 ```rust
-use facet::Facet;
-use facet_python::to_python;
+use facet_singularize::singularize;
 
-#[derive(Facet)]
-struct User {
-    name: String,
-    age: u32,
-    email: Option<String>,
-}
-
-let python_code = to_python::<User>(false);
+assert_eq!(singularize("dependencies"), "dependency");
+assert_eq!(singularize("items"), "item");
+assert_eq!(singularize("children"), "child");
+assert_eq!(singularize("boxes"), "box");
+assert_eq!(singularize("matrices"), "matrix");
 ```
-
-This generates:
-
-```python
-from typing import TypedDict, Required, NotRequired
-
-class User(TypedDict, total=False):
-    name: Required[str]
-    age: Required[int]
-    email: str  # Optional fields become NotRequired
-```
-
-## Type Mappings
-
-| Rust Type | Python Type |
-|-----------|-------------|
-| `String`, `&str` | `str` |
-| `i32`, `u32`, etc. | `int` |
-| `f32`, `f64` | `float` |
-| `bool` | `bool` |
-| `Vec<T>` | `list[T]` |
-| `Option<T>` | `T` (NotRequired in TypedDict) |
-| `HashMap<K, V>` | `dict[K, V]` |
-| Struct | `TypedDict` |
-| Enum | `Union[...]` of variants |
 
 ## Features
 
-- **Recursive types**: Handles nested structs and enums
-- **Documentation**: Preserves doc comments as Python docstrings
-- **Reserved keywords**: Automatically handles Python reserved words as field names
-- **Generic support**: Maps Rust generics to Python type parameters
+- **No regex**: Uses simple suffix matching and table lookups
+- **no_std compatible**: Works without the standard library (with `alloc` feature)
+- **Irregular plurals**: Handles common exceptions like children→child, mice→mouse
+- **Latin/Greek plurals**: Supports -ices→-ix (matrices→matrix), -ae→-a (larvae→larva)
+
+## Performance
+
+Benchmarked to be fast enough for hot paths. The implementation prioritizes
+predictable performance over completeness—it handles the common cases well
+rather than trying to be a full linguistic library.
 
 ## LLM contribution policy
 

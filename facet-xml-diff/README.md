@@ -1,66 +1,78 @@
-# facet-python
+# facet-xml-diff
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-python/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-python.svg)](https://crates.io/crates/facet-python)
-[![documentation](https://docs.rs/facet-python/badge.svg)](https://docs.rs/facet-python)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-python.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-xml-diff/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-xml-diff.svg)](https://crates.io/crates/facet-xml-diff)
+[![documentation](https://docs.rs/facet-xml-diff/badge.svg)](https://docs.rs/facet-xml-diff)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-xml-diff.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Generate Python type definitions from facet type metadata.
+Diff-aware XML serialization—render structural diffs as readable XML.
 
 ## Overview
 
-This crate uses facet's reflection capabilities to generate Python type hints
-and TypedDicts from any Rust type that implements `Facet`. This enables
-type-safe interop when your Rust code exchanges data with Python.
+This crate renders diffs between facet values as XML with visual diff markers.
+It shows what changed between two values in a format that's easy to read,
+with proper alignment, colored output, and collapsing of unchanged regions.
 
 ## Example
 
 ```rust
 use facet::Facet;
-use facet_python::to_python;
+use facet_diff::tree_diff;
 
 #[derive(Facet)]
-struct User {
-    name: String,
-    age: u32,
-    email: Option<String>,
+struct Rect {
+    fill: String,
+    x: i32,
+    y: i32,
 }
 
-let python_code = to_python::<User>(false);
+let old = Rect { fill: "red".into(), x: 10, y: 20 };
+let new = Rect { fill: "blue".into(), x: 10, y: 20 };
+
+let xml = facet_xml_diff::diff_to_string(&old, &new)?;
 ```
 
-This generates:
+Output:
 
-```python
-from typing import TypedDict, Required, NotRequired
-
-class User(TypedDict, total=False):
-    name: Required[str]
-    age: Required[int]
-    email: str  # Optional fields become NotRequired
+```xml
+<rect
+← fill="red"
+→ fill="blue"
+  x="10" y="20"
+/>
 ```
-
-## Type Mappings
-
-| Rust Type | Python Type |
-|-----------|-------------|
-| `String`, `&str` | `str` |
-| `i32`, `u32`, etc. | `int` |
-| `f32`, `f64` | `float` |
-| `bool` | `bool` |
-| `Vec<T>` | `list[T]` |
-| `Option<T>` | `T` (NotRequired in TypedDict) |
-| `HashMap<K, V>` | `dict[K, V]` |
-| Struct | `TypedDict` |
-| Enum | `Union[...]` of variants |
 
 ## Features
 
-- **Recursive types**: Handles nested structs and enums
-- **Documentation**: Preserves doc comments as Python docstrings
-- **Reserved keywords**: Automatically handles Python reserved words as field names
-- **Generic support**: Maps Rust generics to Python type parameters
+- **Diff markers**: `←`/`→` (or `-`/`+`) prefix lines to show old vs new values
+- **Value-only coloring**: Only the changed values are colored, not the whole line
+- **Alignment**: Attributes align properly for readability
+- **Collapsing**: Long runs of unchanged content are collapsed with `...`
+- **ANSI colors**: Optional terminal colors for better visibility
+
+## Options
+
+```rust
+use facet_xml_diff::{DiffSerializeOptions, DiffSymbols, DiffTheme};
+
+let options = DiffSerializeOptions {
+    symbols: DiffSymbols::ascii(),  // Use -/+ instead of arrows
+    theme: DiffTheme::default(),
+    colors: true,
+    indent: "  ",
+    max_line_width: 80,
+    collapse_threshold: 3,
+    ..Default::default()
+};
+```
+
+## Use Cases
+
+- Debugging configuration changes
+- Displaying diffs in CLI tools
+- Generating human-readable change logs
+- Testing serialization by comparing expected vs actual output
 
 ## LLM contribution policy
 

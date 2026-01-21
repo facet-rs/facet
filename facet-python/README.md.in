@@ -1,0 +1,55 @@
+Generate Python type definitions from facet type metadata.
+
+## Overview
+
+This crate uses facet's reflection capabilities to generate Python type hints
+and TypedDicts from any Rust type that implements `Facet`. This enables
+type-safe interop when your Rust code exchanges data with Python.
+
+## Example
+
+```rust
+use facet::Facet;
+use facet_python::to_python;
+
+#[derive(Facet)]
+struct User {
+    name: String,
+    age: u32,
+    email: Option<String>,
+}
+
+let python_code = to_python::<User>(false);
+```
+
+This generates:
+
+```python
+from typing import TypedDict, Required, NotRequired
+
+class User(TypedDict, total=False):
+    name: Required[str]
+    age: Required[int]
+    email: str  # Optional fields become NotRequired
+```
+
+## Type Mappings
+
+| Rust Type | Python Type |
+|-----------|-------------|
+| `String`, `&str` | `str` |
+| `i32`, `u32`, etc. | `int` |
+| `f32`, `f64` | `float` |
+| `bool` | `bool` |
+| `Vec<T>` | `list[T]` |
+| `Option<T>` | `T` (NotRequired in TypedDict) |
+| `HashMap<K, V>` | `dict[K, V]` |
+| Struct | `TypedDict` |
+| Enum | `Union[...]` of variants |
+
+## Features
+
+- **Recursive types**: Handles nested structs and enums
+- **Documentation**: Preserves doc comments as Python docstrings
+- **Reserved keywords**: Automatically handles Python reserved words as field names
+- **Generic support**: Maps Rust generics to Python type parameters

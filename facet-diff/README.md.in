@@ -7,20 +7,20 @@ pipeline. Here's how it works, using HTML diffing as a concrete example.
 
 ### Example: Diffing HTML Documents
 
-```rust
-// Old HTML: <div>hello<p>world</p></div>
-// New HTML: <div><p>WORLD</p></div>
-//
-// Expected patches:
-// 1. Delete text node "hello"
-// 2. Update text "world" → "WORLD"
+```text
+Old HTML: <div>hello<p>world</p></div>
+New HTML: <div><p>WORLD</p></div>
+
+Expected patches:
+1. Delete text node "hello"
+2. Update text "world" → "WORLD"
 ```
 
 ### Phase 1: Tree Building (`build_tree`)
 
 Both values are converted to generic trees using `Peek` (facet's reflection API).
 
-```
+```text
 Input:  Peek<Html>  ──────►  Tree<NodeKind, NodeLabel>
 ```
 
@@ -37,7 +37,7 @@ and the path allows navigating back to the original value.
 The [cinereus](https://docs.rs/cinereus) crate implements the GumTree algorithm
 to find which nodes in tree A correspond to which nodes in tree B.
 
-```
+```text
 Input:  Tree A, Tree B  ──────►  Matching (A↔B node pairs)
 ```
 
@@ -49,7 +49,7 @@ Two-phase matching:
 
 Given the matching, generate a minimal edit script using the Chawathe algorithm.
 
-```
+```text
 Input:  Tree A, Tree B, Matching  ──────►  Vec<CinereusEditOp>
 ```
 
@@ -63,7 +63,7 @@ Operations reference NodeIds (valid only while both trees exist):
 
 Convert cinereus ops (with NodeIds) to facet-diff's public `EditOp` (with paths).
 
-```
+```text
 Input:  CinereusEditOp[], Tree A, Tree B, Peek A, Peek B
 Output: Vec<EditOp>  (self-contained, no tree references)
 ```
@@ -79,7 +79,7 @@ because consumers won't have access to the original trees.
 
 Consumers receive `Vec<EditOp>` and translate to domain-specific patches.
 
-```
+```text
 Input:  Vec<EditOp>  ──────►  Domain patches (e.g., DOM mutations)
 ```
 
@@ -90,7 +90,7 @@ be self-contained with all information needed to apply it.
 
 ### Data Flow Summary
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Peek A, Peek B  (original values with full data)                   │
 └──────────────┬──────────────────────────────────────────────────────┘
