@@ -139,6 +139,22 @@ This allows renaming types without breaking compatibility.
 
 Variants MUST be encoded in declaration order.
 
+## Recursive Types
+
+> r[signature.recursive]
+>
+> When encoding types that reference themselves (directly or indirectly),
+> implementations MUST detect cycles and emit a back-reference tag (`0x32`)
+> instead of infinitely recursing. Cycles can occur through any chain of
+> type references: containers, struct fields, enum variants, or combinations
+> thereof.
+>
+> The back-reference tag is a single byte that indicates "this type was
+> already encoded earlier in this signature". This ensures:
+> - No stack overflow during encoding
+> - Deterministic output (same type always produces same bytes)
+> - Finite signature size for recursive types
+
 ## Method Signature Encoding
 
 > r[signature.method]

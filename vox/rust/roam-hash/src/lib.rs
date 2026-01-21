@@ -4,6 +4,8 @@
 //!
 //! This crate encodes types using `facet::Shape` for signature hashing.
 
+use std::collections::HashSet;
+
 use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
 use heck::ToKebabCase;
 use roam_schema::{MethodDetail, is_rx, is_tx};
@@ -39,9 +41,10 @@ mod sig {
     pub const TX: u8 = 0x26;
     pub const RX: u8 = 0x27;
 
-    // Composite (0x30-0x31)
+    // Composite (0x30-0x32)
     pub const STRUCT: u8 = 0x30;
     pub const ENUM: u8 = 0x31;
+    pub const BACKREF: u8 = 0x32;
 
     // Variant payloads
     pub const VARIANT_UNIT: u8 = 0x00;
@@ -69,12 +72,23 @@ fn encode_string(s: &str, out: &mut Vec<u8>) {
 // rs[impl signature.struct] - encode struct types
 // rs[impl signature.enum] - encode enum types
 // rs[impl signature.stream] - encode Tx/Rx stream types
+// rs[impl signature.recursive] - handle recursive types with back-references
 pub fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
+    let mut visited = HashSet::new();
+    encode_shape_inner(shape, out, &mut visited);
+}
+
+/// Internal function that tracks visited shapes to handle recursive types.
+fn encode_shape_inner(
+    shape: &'static Shape,
+    out: &mut Vec<u8>,
+    visited: &mut HashSet<*const Shape>,
+) {
     // Check for roam streaming types first (marked with #[facet(roam::tx)] or #[facet(roam::rx)])
     if is_tx(shape) {
         out.push(sig::TX);
         if let Some(inner) = shape.type_params.first() {
-            encode_shape(inner.shape, out);
+            encode_shape_inner(inner.shape, out, visited);
         }
         return;
     }
@@ -82,7 +96,7 @@ pub fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
     if is_rx(shape) {
         out.push(sig::RX);
         if let Some(inner) = shape.type_params.first() {
-            encode_shape(inner.shape, out);
+            encode_shape_inner(inner.shape, out, visited);
         }
         return;
     }
@@ -92,7 +106,7 @@ pub fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
     if shape.is_transparent()
         && let Some(inner) = shape.inner
     {
-        encode_shape(inner, out);
+        encode_shape_inner(inner, out, visited);
         return;
     }
 
@@ -110,46 +124,54 @@ pub fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
                 out.push(sig::BYTES);
             } else {
                 out.push(sig::LIST);
-                encode_shape(list_def.t(), out);
+                encode_shape_inner(list_def.t(), out, visited);
             }
             return;
         }
         Def::Array(array_def) => {
             out.push(sig::ARRAY);
             encode_varint_u64(array_def.n as u64, out);
-            encode_shape(array_def.t(), out);
+            encode_shape_inner(array_def.t(), out, visited);
             return;
         }
         Def::Slice(slice_def) => {
             // Slices encode like lists
             out.push(sig::LIST);
-            encode_shape(slice_def.t(), out);
+            encode_shape_inner(slice_def.t(), out, visited);
             return;
         }
         Def::Map(map_def) => {
             out.push(sig::MAP);
-            encode_shape(map_def.k(), out);
-            encode_shape(map_def.v(), out);
+            encode_shape_inner(map_def.k(), out, visited);
+            encode_shape_inner(map_def.v(), out, visited);
             return;
         }
         Def::Set(set_def) => {
             out.push(sig::SET);
-            encode_shape(set_def.t(), out);
+            encode_shape_inner(set_def.t(), out, visited);
             return;
         }
         Def::Option(opt_def) => {
             out.push(sig::OPTION);
-            encode_shape(opt_def.t(), out);
+            encode_shape_inner(opt_def.t(), out, visited);
             return;
         }
         Def::Pointer(ptr_def) => {
             // Smart pointers are transparent - encode inner type
             if let Some(pointee) = ptr_def.pointee {
-                encode_shape(pointee, out);
+                encode_shape_inner(pointee, out, visited);
                 return;
             }
         }
         _ => {}
+    }
+
+    // For user-defined types, check for cycles before recursing into fields
+    let shape_ptr = shape as *const Shape;
+    if !visited.insert(shape_ptr) {
+        // Already visited this shape - emit a back-reference to prevent infinite recursion
+        out.push(sig::BACKREF);
+        return;
     }
 
     // Handle user-defined types (structs, enums)
@@ -164,7 +186,7 @@ pub fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
                     out.push(sig::TUPLE);
                     encode_varint_u64(struct_type.fields.len() as u64, out);
                     for field in struct_type.fields {
-                        encode_shape(field.shape(), out);
+                        encode_shape_inner(field.shape(), out, visited);
                     }
                 }
                 StructKind::Struct => {
@@ -172,7 +194,7 @@ pub fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
                     encode_varint_u64(struct_type.fields.len() as u64, out);
                     for field in struct_type.fields {
                         encode_string(field.name, out);
-                        encode_shape(field.shape(), out);
+                        encode_shape_inner(field.shape(), out, visited);
                     }
                 }
             }
@@ -190,14 +212,14 @@ pub fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
                         if variant.data.fields.len() == 1 {
                             // Single-field tuple variant = newtype
                             out.push(sig::VARIANT_NEWTYPE);
-                            encode_shape(variant.data.fields[0].shape(), out);
+                            encode_shape_inner(variant.data.fields[0].shape(), out, visited);
                         } else {
                             // Multi-field tuple variant encodes like struct with numeric keys
                             out.push(sig::VARIANT_STRUCT);
                             encode_varint_u64(variant.data.fields.len() as u64, out);
                             for (i, field) in variant.data.fields.iter().enumerate() {
                                 encode_string(&i.to_string(), out);
-                                encode_shape(field.shape(), out);
+                                encode_shape_inner(field.shape(), out, visited);
                             }
                         }
                     }
@@ -206,7 +228,7 @@ pub fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
                         encode_varint_u64(variant.data.fields.len() as u64, out);
                         for field in variant.data.fields {
                             encode_string(field.name, out);
-                            encode_shape(field.shape(), out);
+                            encode_shape_inner(field.shape(), out, visited);
                         }
                     }
                 }
@@ -215,7 +237,7 @@ pub fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
         Type::Pointer(_) => {
             // References are transparent - encode the inner type via type_params
             if let Some(inner) = shape.type_params.first() {
-                encode_shape(inner.shape, out);
+                encode_shape_inner(inner.shape, out, visited);
             } else {
                 out.push(sig::UNIT); // Fallback
             }
@@ -368,5 +390,76 @@ mod tests {
         let a = method_id("TemplateHost", "load_template", sig);
         let b = method_id("TemplateHost", "load_template", sig);
         assert_eq!(a, b);
+    }
+
+    // Test for recursive types - issue #50
+    // This test verifies that encode_shape handles recursive type definitions
+    // without causing a stack overflow.
+    #[test]
+    fn recursive_type_encoding_does_not_overflow() {
+        // A recursive tree-like structure
+        #[derive(Facet)]
+        struct Node {
+            value: i32,
+            children: Vec<Node>, // Recursive: Vec<Node> contains Node
+        }
+
+        // This would previously cause a stack overflow
+        let mut out = Vec::new();
+        encode_shape(<Node as Facet>::SHAPE, &mut out);
+
+        // The encoding should contain a BACKREF tag for the recursive reference
+        assert!(
+            out.contains(&sig::BACKREF),
+            "Expected BACKREF tag in encoding for recursive type"
+        );
+    }
+
+    #[test]
+    fn recursive_type_produces_deterministic_encoding() {
+        #[derive(Facet)]
+        struct TreeNode {
+            data: String,
+            left: Option<Box<TreeNode>>,
+            right: Option<Box<TreeNode>>,
+        }
+
+        let mut out1 = Vec::new();
+        encode_shape(<TreeNode as Facet>::SHAPE, &mut out1);
+
+        let mut out2 = Vec::new();
+        encode_shape(<TreeNode as Facet>::SHAPE, &mut out2);
+
+        assert_eq!(
+            out1, out2,
+            "Recursive type encoding should be deterministic"
+        );
+    }
+
+    #[test]
+    fn mutually_recursive_types_encoding() {
+        // Test mutually recursive types (A contains B, B contains A)
+        #[derive(Facet)]
+        struct Parent {
+            name: String,
+            children: Vec<Child>,
+        }
+
+        #[derive(Facet)]
+        struct Child {
+            name: String,
+            parent: Option<Box<Parent>>, // Refers back to Parent
+        }
+
+        // Both should encode without stack overflow
+        let mut out_parent = Vec::new();
+        encode_shape(<Parent as Facet>::SHAPE, &mut out_parent);
+
+        let mut out_child = Vec::new();
+        encode_shape(<Child as Facet>::SHAPE, &mut out_child);
+
+        // Both should complete and produce some output
+        assert!(!out_parent.is_empty());
+        assert!(!out_child.is_empty());
     }
 }
