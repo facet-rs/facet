@@ -25,6 +25,9 @@ jobs:
 
       - name: ✨ Run tests with coverage
         shell: bash
+        env:
+          # Only replay proptest regressions in CI
+          PROPTEST_CASES: 0
         run: |
           # Install nightly for coverage with doctests
           rustup toolchain install nightly
@@ -245,6 +248,9 @@ jobs:
 
       - name: ✨ Run nightly feature tests (simd auto-detected)
         shell: bash
+        env:
+          # Only replay proptest regressions in CI
+          PROPTEST_CASES: 0
         run: |
           cargo nextest run --package facet-core
 
@@ -325,6 +331,9 @@ jobs:
 
       - name: ✨ Run nextest tests (macOS)
         shell: bash
+        env:
+          # Only replay proptest regressions in CI
+          PROPTEST_CASES: 0
         run: |
           cargo nextest run --features ci
 
@@ -339,6 +348,9 @@ jobs:
 
       - name: ✨ Run nextest tests (Linux ARM64)
         shell: bash
+        env:
+          # Only replay proptest regressions in CI
+          PROPTEST_CASES: 0
         run: |
           cargo nextest run --features ci
 
@@ -357,6 +369,9 @@ jobs:
 
       - name: ✨ Run nextest tests (Windows)
         shell: bash
+        env:
+          # Only replay proptest regressions in CI
+          PROPTEST_CASES: 0
         run: |
           cargo nextest run --features ci
 
@@ -389,6 +404,8 @@ jobs:
 
       - name: ✨ Run facet-tokio-postgres tests
         env:
+          # Only replay proptest regressions in CI
+          PROPTEST_CASES: 0
           POSTGRES_HOST: localhost
           POSTGRES_PORT: 5432
           POSTGRES_USER: postgres
