@@ -3,6 +3,20 @@
 //! This module handles spawning and communicating with LSP extensions
 //! that provide domain-specific intelligence (completions, hover, etc.).
 
+/// Result of attempting to get or spawn an extension.
+#[derive(Debug, Clone)]
+pub enum ExtensionResult {
+    /// Extension is already running or was successfully spawned.
+    Running,
+    /// Extension is not in the allowlist and needs user approval.
+    NotAllowed {
+        /// The command that needs to be allowed.
+        command: String,
+    },
+    /// Extension failed to spawn for another reason.
+    Failed,
+}
+
 use std::collections::HashMap;
 use std::io;
 use std::pin::Pin;
@@ -14,9 +28,8 @@ use roam_session::{ConnectionHandle, HandshakeConfig};
 use roam_stream::CobsFramed;
 pub use styx_lsp_ext::StyxLspExtensionClient;
 use styx_lsp_ext::{
-    GetDocumentParams, GetSchemaParams, GetSourceParams, GetSubtreeParams,
-    OffsetToPositionParams, PositionToOffsetParams, SchemaInfo, StyxLspHost,
-    StyxLspHostDispatcher,
+    GetDocumentParams, GetSchemaParams, GetSourceParams, GetSubtreeParams, OffsetToPositionParams,
+    PositionToOffsetParams, SchemaInfo, StyxLspHost, StyxLspHostDispatcher,
 };
 use styx_tree::Value;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -124,39 +137,42 @@ impl ExtensionManager {
 
     /// Get or spawn an extension for a schema.
     ///
-    /// Returns `None` if the extension is not allowed or fails to spawn.
+    /// Returns the result of the operation, indicating whether the extension
+    /// is running, not allowed, or failed to spawn.
     pub async fn get_or_spawn(
         &self,
         schema_id: &str,
         config: &LspExtensionConfig,
-    ) -> Option<()> {
+    ) -> ExtensionResult {
         // Check if already spawned
         {
             let extensions = self.extensions.read().await;
             if extensions.contains_key(schema_id) {
-                return Some(());
+                return ExtensionResult::Running;
             }
         }
 
         // Check if allowed
-        let command = config.launch.first()?;
+        let Some(command) = config.launch.first() else {
+            return ExtensionResult::Failed;
+        };
         if !self.is_allowed(command).await {
-            info!(
-                schema_id,
-                command,
-                "Extension not in allowlist, skipping"
-            );
-            return None;
+            info!(schema_id, command, "Extension not in allowlist, skipping");
+            return ExtensionResult::NotAllowed {
+                command: command.clone(),
+            };
         }
 
         // Spawn the extension
-        let extension = self.spawn_extension(config).await?;
+        let Some(extension) = self.spawn_extension(config).await else {
+            return ExtensionResult::Failed;
+        };
 
         // Store it
         let mut extensions = self.extensions.write().await;
         extensions.insert(schema_id.to_string(), extension);
 
-        Some(())
+        ExtensionResult::Running
     }
 
     /// Get the connection handle for a schema's extension.
@@ -217,14 +233,13 @@ impl ExtensionManager {
         let dispatcher = StyxLspHostDispatcher::new(host_impl);
 
         // Use initiate_framed for the initiating side
-        let (handle, driver) =
-            roam_session::initiate_framed(framed, handshake_config, dispatcher)
-                .await
-                .map_err(|e| {
-                    warn!(command, error = %e, "Failed roam handshake with extension");
-                    e
-                })
-                .ok()?;
+        let (handle, driver) = roam_session::initiate_framed(framed, handshake_config, dispatcher)
+            .await
+            .map_err(|e| {
+                warn!(command, error = %e, "Failed roam handshake with extension");
+                e
+            })
+            .ok()?;
 
         debug!(command, "Roam session established with extension");
 
@@ -295,7 +310,10 @@ impl StyxLspHost for StyxLspHostImpl {
         let mut current = tree;
         for key in &params.path {
             let obj = current.as_object()?;
-            let entry = obj.entries.iter().find(|e| e.key.as_str() == Some(key.as_str()))?;
+            let entry = obj
+                .entries
+                .iter()
+                .find(|e| e.key.as_str() == Some(key.as_str()))?;
             current = &entry.value;
         }
 
@@ -329,7 +347,10 @@ impl StyxLspHost for StyxLspHostImpl {
         })
     }
 
-    async fn offset_to_position(&self, params: OffsetToPositionParams) -> Option<styx_lsp_ext::Position> {
+    async fn offset_to_position(
+        &self,
+        params: OffsetToPositionParams,
+    ) -> Option<styx_lsp_ext::Position> {
         let uri = Url::parse(&params.document_uri).ok()?;
         let docs = self.documents.read().await;
         let doc = docs.get(&uri)?;

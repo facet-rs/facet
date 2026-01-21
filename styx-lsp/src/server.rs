@@ -10,8 +10,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use crate::extensions::{ExtensionManager, get_extension_info};
-use styx_lsp_ext as ext;
+use crate::extensions::{ExtensionManager, ExtensionResult, get_extension_info};
 use crate::schema_hints::find_matching_hint;
 use crate::schema_validation::{
     find_object_at_offset, find_schema_declaration, get_document_fields, get_error_span,
@@ -19,6 +18,7 @@ use crate::schema_validation::{
     validate_against_schema,
 };
 use crate::semantic_tokens::{compute_semantic_tokens, semantic_token_legend};
+use styx_lsp_ext as ext;
 
 /// Document state tracked by the server
 pub(crate) struct DocumentState {
@@ -35,6 +35,14 @@ pub(crate) struct DocumentState {
 
 /// Shared document map type
 pub(crate) type DocumentMap = Arc<RwLock<HashMap<Url, DocumentState>>>;
+
+/// Information about a blocked LSP extension.
+struct BlockedExtensionInfo {
+    /// The schema ID that has the extension.
+    schema_id: String,
+    /// The command that needs to be allowed.
+    command: String,
+}
 
 /// The Styx language server
 pub struct StyxLanguageServer {
@@ -57,15 +65,17 @@ impl StyxLanguageServer {
     }
 
     /// Check if the document's schema has an LSP extension and spawn it if allowed.
-    async fn check_for_extension(&self, tree: &Value, uri: &Url) {
+    ///
+    /// Returns information about blocked extensions if not allowed.
+    async fn check_for_extension(&self, tree: &Value, uri: &Url) -> Option<BlockedExtensionInfo> {
         // Try to load the schema
         let Ok(schema) = load_document_schema(tree, uri) else {
-            return;
+            return None;
         };
 
         // Check if schema has an LSP extension
         let Some(ext_info) = get_extension_info(&schema) else {
-            return;
+            return None;
         };
 
         tracing::info!(
@@ -75,9 +85,18 @@ impl StyxLanguageServer {
         );
 
         // Try to spawn the extension (will check allowlist internally)
-        self.extensions
+        match self
+            .extensions
             .get_or_spawn(&ext_info.schema_id, &ext_info.config)
-            .await;
+            .await
+        {
+            ExtensionResult::Running => None,
+            ExtensionResult::NotAllowed { command } => Some(BlockedExtensionInfo {
+                schema_id: ext_info.schema_id,
+                command,
+            }),
+            ExtensionResult::Failed => None,
+        }
     }
 
     /// Publish diagnostics for a document
@@ -88,8 +107,36 @@ impl StyxLanguageServer {
         parsed: &Parse,
         tree: Option<&Value>,
         version: i32,
+        blocked_extension: Option<BlockedExtensionInfo>,
     ) {
-        let diagnostics = self.compute_diagnostics(&uri, content, parsed, tree);
+        let mut diagnostics = self.compute_diagnostics(&uri, content, parsed, tree);
+
+        // Add diagnostic for blocked extension if applicable
+        if let Some(blocked) = blocked_extension {
+            if let Some(tree) = tree {
+                if let Some(range) = find_schema_declaration_range(tree, content) {
+                    diagnostics.push(Diagnostic {
+                        range,
+                        severity: Some(DiagnosticSeverity::INFORMATION),
+                        code: None,
+                        code_description: None,
+                        source: Some("styx-extension".to_string()),
+                        message: format!(
+                            "LSP extension '{}' is not allowed. Use the code action to allow it.",
+                            blocked.command
+                        ),
+                        related_information: None,
+                        tags: None,
+                        data: Some(serde_json::json!({
+                            "type": "allow_extension",
+                            "schema_id": blocked.schema_id,
+                            "command": blocked.command,
+                        })),
+                    });
+                }
+            }
+        }
+
         self.client
             .publish_diagnostics(uri, diagnostics, Some(version))
             .await;
@@ -341,6 +388,11 @@ impl LanguageServer for StyxLanguageServer {
                 }),
                 // Document symbols (outline)
                 document_symbol_provider: Some(OneOf::Left(true)),
+                // Execute command (for code action commands)
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: vec!["styx.allowExtension".to_string()],
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -372,13 +424,22 @@ impl LanguageServer for StyxLanguageServer {
         let tree = styx_tree::parse(&content).ok();
 
         // Check for LSP extension in schema
-        if let Some(ref tree) = tree {
-            self.check_for_extension(tree, &uri).await;
-        }
+        let blocked_extension = if let Some(ref tree) = tree {
+            self.check_for_extension(tree, &uri).await
+        } else {
+            None
+        };
 
         // Publish diagnostics
-        self.publish_diagnostics(uri.clone(), &content, &parsed, tree.as_ref(), version)
-            .await;
+        self.publish_diagnostics(
+            uri.clone(),
+            &content,
+            &parsed,
+            tree.as_ref(),
+            version,
+            blocked_extension,
+        )
+        .await;
 
         // Store document
         {
@@ -409,9 +470,23 @@ impl LanguageServer for StyxLanguageServer {
             // Parse into tree for schema validation
             let tree = styx_tree::parse(&content).ok();
 
+            // Check for LSP extension in schema (might have changed)
+            let blocked_extension = if let Some(ref tree) = tree {
+                self.check_for_extension(tree, &uri).await
+            } else {
+                None
+            };
+
             // Publish diagnostics
-            self.publish_diagnostics(uri.clone(), &content, &parsed, tree.as_ref(), version)
-                .await;
+            self.publish_diagnostics(
+                uri.clone(),
+                &content,
+                &parsed,
+                tree.as_ref(),
+                version,
+                blocked_extension,
+            )
+            .await;
 
             // Update stored document
             {
@@ -941,6 +1016,32 @@ impl LanguageServer for StyxLanguageServer {
                 continue;
             }
 
+            // Handle extension allowlist diagnostics
+            if diag.source.as_deref() == Some("styx-extension") {
+                if let Some(data) = &diag.data
+                    && let Some(fix_type) = data.get("type").and_then(|v| v.as_str())
+                    && fix_type == "allow_extension"
+                    && let Some(command) = data.get("command").and_then(|v| v.as_str())
+                {
+                    // Code action that triggers the execute_command to allow the extension
+                    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                        title: format!("Allow LSP extension '{}'", command),
+                        kind: Some(CodeActionKind::QUICKFIX),
+                        diagnostics: Some(vec![diag.clone()]),
+                        command: Some(Command {
+                            title: format!("Allow LSP extension '{}'", command),
+                            command: "styx.allowExtension".to_string(),
+                            arguments: Some(vec![serde_json::json!({
+                                "command": command,
+                            })]),
+                        }),
+                        is_preferred: Some(true),
+                        ..Default::default()
+                    }));
+                }
+                continue;
+            }
+
             // Only process styx-schema diagnostics below
             if diag.source.as_deref() != Some("styx-schema") {
                 continue;
@@ -1212,6 +1313,56 @@ impl LanguageServer for StyxLanguageServer {
             Ok(None)
         } else {
             Ok(Some(actions))
+        }
+    }
+
+    async fn execute_command(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> Result<Option<serde_json::Value>> {
+        match params.command.as_str() {
+            "styx.allowExtension" => {
+                // Extract the command to allow from the arguments
+                if let Some(arg) = params.arguments.first() {
+                    if let Some(command) = arg.get("command").and_then(|v| v.as_str()) {
+                        tracing::info!(command, "Allowing LSP extension");
+                        self.extensions.allow(command.to_string()).await;
+
+                        // Notify the user
+                        self.client
+                            .log_message(
+                                MessageType::INFO,
+                                format!("Allowed LSP extension: {}", command),
+                            )
+                            .await;
+
+                        // Re-publish diagnostics for all open documents to clear the warning
+                        // and trigger extension spawning
+                        let docs = self.documents.read().await;
+                        for (uri, doc) in docs.iter() {
+                            let blocked_extension = if let Some(ref tree) = doc.tree {
+                                self.check_for_extension(tree, uri).await
+                            } else {
+                                None
+                            };
+                            self.publish_diagnostics(
+                                uri.clone(),
+                                &doc.content,
+                                &doc.parse,
+                                doc.tree.as_ref(),
+                                doc.version,
+                                blocked_extension,
+                            )
+                            .await;
+                        }
+                    }
+                }
+                Ok(None)
+            }
+            _ => {
+                tracing::warn!(command = %params.command, "Unknown command");
+                Ok(None)
+            }
         }
     }
 
@@ -2816,8 +2967,9 @@ fn generate_reorder_edit(
 
 /// Run the LSP server on stdin/stdout
 pub async fn run() -> eyre::Result<()> {
-    // Set up logging
+    // Set up logging (no ANSI colors since output goes to stderr for LSP)
     tracing_subscriber::fmt()
+        .with_ansi(false)
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive(tracing::Level::INFO.into()),
@@ -3631,7 +3783,9 @@ schema {
     /// Test helper: parse content with `⏐` as cursor position marker,
     /// return (content_without_marker, cursor_offset)
     fn parse_cursor(input: &str) -> (String, usize) {
-        let cursor_pos = input.find('⏐').expect("test input must contain ⏐ cursor marker");
+        let cursor_pos = input
+            .find('⏐')
+            .expect("test input must contain ⏐ cursor marker");
         let content = input.replace('⏐', "");
         (content, cursor_pos)
     }
@@ -3679,9 +3833,8 @@ schema {
     #[test]
     fn test_nesting_depth_deeply_nested() {
         // Cursor at depth 3
-        let (content, offset) = parse_cursor(
-            "a {\n    b {\n        c {\n            ⏐\n        }\n    }\n}",
-        );
+        let (content, offset) =
+            parse_cursor("a {\n    b {\n        c {\n            ⏐\n        }\n    }\n}");
         let parse = styx_cst::parse(&content);
         assert_eq!(find_nesting_depth_cst(&parse, offset), 3);
     }
@@ -3753,9 +3906,8 @@ schema {
     #[test]
     fn test_nesting_depth_nested_tagged_objects() {
         // Cursor inside nested tagged objects
-        let (content, offset) = parse_cursor(
-            "AllProducts @query{\n    select {\n        ⏐\n    }\n}",
-        );
+        let (content, offset) =
+            parse_cursor("AllProducts @query{\n    select {\n        ⏐\n    }\n}");
         let parse = styx_cst::parse(&content);
         assert_eq!(find_nesting_depth_cst(&parse, offset), 2);
     }
