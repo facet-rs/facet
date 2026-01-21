@@ -122,35 +122,46 @@ struct PathNavigation {
 
 /// Navigate a path through the type structure, using metadata to build DOM path.
 ///
-/// The key insight: we walk the type structure alongside the path segments.
-/// For each segment, the CURRENT TYPE tells us what that segment means:
-/// - Field on a struct: look up field metadata (is_attribute, is_text, is_flattened)
-/// - Index on an Option: unwrapping (not a DOM index)
-/// - Index on a flattened list: DOM child index
-/// - Index on an enum: tuple field access (not a DOM index)
-/// - Variant on an enum: selecting variant (check if text variant)
-/// - Key on a map: attribute access (for extra attrs)
-fn navigate_path(segments: &[PathSegment], root_shape: &facet_core::Shape) -> PathNavigation {
+/// facet-diff generates paths that SKIP Options and flattened field names.
+/// So `F(body), I(1), V(P)` means: body field → children[1] → P variant
+/// The Index(1) is NOT an Option unwrap - it's the children list index.
+///
+/// The rules:
+/// - Field: navigate to that field's type
+/// - Index at Option with flattened list inside: unwrap Option, use index on the list (DOM index)
+/// - Index at struct with flattened list: use index on the list (DOM index)
+/// - Index at enum (after Variant): tuple field access (NOT a DOM index)
+/// - Index at List: list access (DOM index if the list is children)
+/// - Variant at enum: select variant
+/// - Variant at struct: find flattened list containing that variant's enum
+fn navigate_path(
+    segments: &[PathSegment],
+    root_shape: &'static facet_core::Shape,
+) -> PathNavigation {
     let mut dom_path = Vec::new();
     let mut element_dom_path = Vec::new();
     let mut target = PathTarget::Other;
     let mut current_shape = root_shape;
-    let mut current_field: Option<&'static Field> = None;
+    let mut after_variant = false; // Track if previous segment was Variant
 
     for (i, segment) in segments.iter().enumerate() {
         let is_last = i == segments.len() - 1;
-        eprintln!(
-            "  navigate_path: i={i} segment={segment:?} shape={} def={:?}",
-            current_shape.type_identifier, current_shape.def
+        trace!(
+            i,
+            ?segment,
+            shape = current_shape.type_identifier,
+            ?after_variant,
+            "navigate_path"
         );
 
         match segment {
             PathSegment::Field(name) => {
-                // We must be at a struct type
-                if let Type::User(UserType::Struct(struct_def)) = &current_shape.ty {
-                    // Find the field - check direct fields and flattened structs
+                after_variant = false;
+                // Navigate through Option if needed
+                let struct_shape = unwrap_option(current_shape);
+
+                if let Type::User(UserType::Struct(struct_def)) = &struct_shape.ty {
                     if let Some((field, field_shape)) = find_field_in_struct(struct_def, name) {
-                        current_field = Some(field);
                         current_shape = field_shape;
 
                         if is_last {
@@ -159,7 +170,6 @@ fn navigate_path(segments: &[PathSegment], root_shape: &facet_core::Shape) -> Pa
                             } else if field.is_text() {
                                 target = PathTarget::Text;
                             } else if field.is_flattened() {
-                                // Flattened struct = attributes, flattened list = children
                                 if matches!(field_shape.ty, Type::User(UserType::Struct(_))) {
                                     target = PathTarget::FlattenedAttributeStruct;
                                 } else if is_list_type(field_shape) {
@@ -170,12 +180,10 @@ fn navigate_path(segments: &[PathSegment], root_shape: &facet_core::Shape) -> Pa
                             }
                         }
 
-                        // Track element path (before attribute/text access)
                         if !field.is_attribute() && !field.is_text() {
                             element_dom_path = dom_path.clone();
                         }
                     } else {
-                        // Field not found
                         break;
                     }
                 } else {
@@ -184,103 +192,67 @@ fn navigate_path(segments: &[PathSegment], root_shape: &facet_core::Shape) -> Pa
             }
 
             PathSegment::Index(idx) => {
-                // What we're indexing depends on current type's def
-                match &current_shape.def {
-                    Def::Option(opt_def) => {
-                        // Option unwrap - NOT a DOM index
-                        current_shape = opt_def.t;
-                        current_field = None;
-                    }
-
-                    Def::List(list_def) => {
-                        // List index - IS a DOM index if the list is flattened children
-                        let is_flattened_children =
-                            current_field.map_or(false, |f| f.is_flattened());
-
-                        if is_flattened_children {
-                            dom_path.push(*idx);
-                            element_dom_path = dom_path.clone();
-                        }
-
-                        current_shape = list_def.t;
-                        current_field = None;
-
-                        if is_last {
-                            target = PathTarget::Element;
-                        }
-                    }
-
-                    _ => {
-                        // Check if it's an enum (for tuple access)
-                        if let Type::User(UserType::Enum(enum_def)) = &current_shape.ty {
-                            // Enum tuple access - NOT a DOM index
-                            // Get the active variant's field shape
-                            if let Some(PathSegment::Variant(var_name)) =
-                                segments.get(i.wrapping_sub(1))
+                if after_variant {
+                    // Index after Variant = tuple field access, NOT a DOM index
+                    after_variant = false;
+                    if let Type::User(UserType::Enum(enum_def)) = &current_shape.ty {
+                        // Get the variant from the previous segment
+                        if let Some(PathSegment::Variant(var_name)) =
+                            segments.get(i.wrapping_sub(1))
+                        {
+                            if let Some(variant) =
+                                enum_def.variants.iter().find(|v| v.name == var_name)
                             {
-                                if let Some(variant) =
-                                    enum_def.variants.iter().find(|v| v.name == var_name)
-                                {
-                                    if let Some(field) = variant.data.fields.get(*idx) {
-                                        current_shape = field.shape();
-                                    }
-                                }
-                            } else if let Some(variant) = enum_def.variants.first() {
                                 if let Some(field) = variant.data.fields.get(*idx) {
                                     current_shape = field.shape();
-                                }
-                            }
-                            current_field = None;
-
-                            if is_last {
-                                // Check if we're at a text variant's content
-                                if let Some(PathSegment::Variant(var_name)) =
-                                    segments.get(i.wrapping_sub(1))
-                                {
-                                    if let Some(variant) =
-                                        enum_def.variants.iter().find(|v| v.name == var_name)
-                                    {
-                                        if variant.is_text() {
-                                            target = PathTarget::Text;
-                                        }
+                                    if is_last && variant.is_text() {
+                                        target = PathTarget::Text;
                                     }
                                 }
                             }
-                        } else if let Type::User(UserType::Struct(struct_def)) = &current_shape.ty {
-                            // We're at a struct but got an Index - look for a flattened list
-                            let mut found = false;
-                            for field in struct_def.fields.iter() {
-                                if field.is_flattened() {
-                                    if let Def::List(list_def) = &field.shape().def {
-                                        // Found flattened list - this index is a DOM child
-                                        dom_path.push(*idx);
-                                        element_dom_path = dom_path.clone();
-                                        current_shape = list_def.t;
-                                        current_field = Some(field);
-                                        found = true;
-
-                                        if is_last {
-                                            target = PathTarget::Element;
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                            if !found {
-                                break;
-                            }
-                        } else {
-                            // Unexpected type for Index
-                            break;
                         }
                     }
+                    continue;
+                }
+
+                // Try to find a flattened children list to index into
+                if let Some((list_elem_shape, is_children)) = find_flattened_list(current_shape) {
+                    if is_children {
+                        dom_path.push(*idx);
+                        element_dom_path = dom_path.clone();
+                    }
+                    current_shape = list_elem_shape;
+                    if is_last {
+                        target = PathTarget::Element;
+                    }
+                } else if let Def::List(list_def) = &current_shape.def {
+                    // Direct list access
+                    dom_path.push(*idx);
+                    element_dom_path = dom_path.clone();
+                    current_shape = list_def.t;
+                    if is_last {
+                        target = PathTarget::Element;
+                    }
+                } else {
+                    break;
                 }
             }
 
             PathSegment::Variant(name) => {
-                // Check if we're at an enum type
-                if let Type::User(UserType::Enum(enum_def)) = &current_shape.ty {
+                after_variant = true;
+
+                // Find the enum - might be directly here or in a flattened list
+                let enum_shape = if let Type::User(UserType::Enum(_)) = &current_shape.ty {
+                    current_shape
+                } else if let Some((list_elem_shape, _)) = find_flattened_list(current_shape) {
+                    list_elem_shape
+                } else {
+                    break;
+                };
+
+                if let Type::User(UserType::Enum(enum_def)) = &enum_shape.ty {
                     if let Some(variant) = enum_def.variants.iter().find(|v| v.name == name) {
+                        current_shape = enum_shape;
                         if is_last {
                             if variant.is_text() {
                                 target = PathTarget::Text;
@@ -288,57 +260,18 @@ fn navigate_path(segments: &[PathSegment], root_shape: &facet_core::Shape) -> Pa
                                 target = PathTarget::Element;
                             }
                         }
-                        // Stay at enum shape - next Index will access variant fields
                     }
-                } else if let Type::User(UserType::Struct(struct_def)) = &current_shape.ty {
-                    // We're at a struct but got a Variant - this means we need to navigate
-                    // into a flattened list field that contains enums with this variant
-                    let mut found = false;
-                    for field in struct_def.fields.iter() {
-                        if field.is_flattened() {
-                            if let Def::List(list_def) = &field.shape().def {
-                                if let Type::User(UserType::Enum(enum_def)) = &list_def.t.ty {
-                                    if enum_def.variants.iter().any(|v| v.name == name) {
-                                        // Found the flattened list containing this variant
-                                        current_shape = list_def.t;
-                                        current_field = Some(field);
-                                        found = true;
-
-                                        if let Some(variant) =
-                                            enum_def.variants.iter().find(|v| v.name == name)
-                                        {
-                                            if is_last {
-                                                if variant.is_text() {
-                                                    target = PathTarget::Text;
-                                                } else {
-                                                    target = PathTarget::Element;
-                                                }
-                                            }
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if !found {
-                        break;
-                    }
-                } else {
-                    break;
                 }
-                // Don't clear current_field here - we may have just set it
             }
 
             PathSegment::Key(key) => {
-                // Map key access - for extra attributes (BTreeMap<String, String>)
+                after_variant = false;
                 if let Def::Map(map_def) = &current_shape.def {
                     current_shape = map_def.v;
                     if is_last {
                         target = PathTarget::Attribute(key.to_string());
                     }
                 }
-                current_field = None;
             }
         }
     }
@@ -347,6 +280,57 @@ fn navigate_path(segments: &[PathSegment], root_shape: &facet_core::Shape) -> Pa
         dom_path,
         target,
         element_dom_path,
+    }
+}
+
+/// Unwrap Option type if present, otherwise return the shape as-is.
+fn unwrap_option(shape: &'static facet_core::Shape) -> &'static facet_core::Shape {
+    if let Def::Option(opt_def) = &shape.def {
+        opt_def.t
+    } else {
+        shape
+    }
+}
+
+/// Find a flattened list field in a shape (unwrapping Option if needed).
+/// Returns (element_shape, is_children) where is_children is true if the list
+/// contains DOM children (elements with structure, not just attributes).
+fn find_flattened_list(
+    shape: &'static facet_core::Shape,
+) -> Option<(&'static facet_core::Shape, bool)> {
+    let struct_shape = unwrap_option(shape);
+
+    if let Type::User(UserType::Struct(struct_def)) = &struct_shape.ty {
+        for field in struct_def.fields.iter() {
+            if field.is_flattened() {
+                let field_shape = field.shape();
+                if let Def::List(list_def) = &field_shape.def {
+                    // Check if items are children (elements) vs attributes
+                    // Children = items that have their own structure (not just attribute fields)
+                    let is_children = is_element_type(list_def.t);
+                    return Some((list_def.t, is_children));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Check if a type represents a DOM element (has structure beyond just attributes).
+/// An element type is a struct/enum that can have children or text content,
+/// not just a struct whose fields are all attributes.
+fn is_element_type(shape: &facet_core::Shape) -> bool {
+    match &shape.ty {
+        Type::User(UserType::Enum(_)) => {
+            // Enums like FlowContent, PhrasingContent are element containers
+            true
+        }
+        Type::User(UserType::Struct(struct_def)) => {
+            // A struct is an element if it has any non-attribute fields
+            // (i.e., it can have children or text content)
+            struct_def.fields.iter().any(|f| !f.is_attribute())
+        }
+        _ => false,
     }
 }
 

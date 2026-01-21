@@ -708,3 +708,309 @@ mod path_structure {
         );
     }
 }
+
+// =============================================================================
+// DOM Path Extraction Tests
+// =============================================================================
+//
+// These tests verify that we correctly extract DOM paths from facet-diff paths.
+// A DOM path is a sequence of child indices: [0, 2, 1] means "first child, then
+// third child, then second child".
+//
+// The key insight: we walk the TYPE STRUCTURE alongside the path segments.
+// The current type's shape tells us what each segment means:
+//
+// - Index on Def::Option → unwrap, NOT a DOM index
+// - Index on Def::List (flattened children) → IS a DOM index
+// - Index on enum (after Variant) → tuple field access, NOT a DOM index
+// - Field → navigate to field, check its attributes
+// - Variant → select enum variant
+//
+// What makes a list "children" vs "attributes"? Look at what's INSIDE:
+// - If items are elements (have structure/children) → DOM children
+// - If items' fields are all html::attribute → attributes
+
+mod dom_path_extraction {
+    use facet_html_diff::{NodePath, Patch, diff_html};
+
+    /// Extract DOM paths from patches for a given diff
+    fn get_dom_paths(old: &str, new: &str) -> Vec<(String, NodePath)> {
+        let patches = diff_html(old, new).unwrap();
+        patches
+            .into_iter()
+            .map(|p| {
+                let (kind, path) = match &p {
+                    Patch::Replace { path, .. } => ("Replace", path.clone()),
+                    Patch::ReplaceInnerHtml { path, .. } => ("ReplaceInnerHtml", path.clone()),
+                    Patch::InsertBefore { path, .. } => ("InsertBefore", path.clone()),
+                    Patch::InsertAfter { path, .. } => ("InsertAfter", path.clone()),
+                    Patch::AppendChild { path, .. } => ("AppendChild", path.clone()),
+                    Patch::Remove { path } => ("Remove", path.clone()),
+                    Patch::SetText { path, .. } => ("SetText", path.clone()),
+                    Patch::SetAttribute { path, .. } => ("SetAttribute", path.clone()),
+                    Patch::RemoveAttribute { path, .. } => ("RemoveAttribute", path.clone()),
+                    Patch::Move { to, .. } => ("Move", to.clone()),
+                };
+                (kind.to_string(), path)
+            })
+            .collect()
+    }
+
+    // =========================================================================
+    // SIMPLE TEXT CHANGES
+    // =========================================================================
+
+    #[test]
+    fn body_text_dom_path() {
+        // <body>Hello</body> -> <body>World</body>
+        // The text is body's first child (index 0)
+        // DOM path should be [0] - first child of body
+        let paths = get_dom_paths(
+            "<html><body>Hello</body></html>",
+            "<html><body>World</body></html>",
+        );
+
+        tracing::debug!("body_text_dom_path patches:");
+        for (kind, path) in &paths {
+            tracing::debug!("  {kind}: {:?}", path.0);
+        }
+
+        // Should have SetText with path [0] (first child of body)
+        let set_text = paths.iter().find(|(k, _)| k == "SetText");
+        assert!(set_text.is_some(), "Should have SetText patch");
+        assert_eq!(
+            set_text.unwrap().1.0,
+            vec![0],
+            "Text node should be at DOM path [0]"
+        );
+    }
+
+    #[test]
+    fn p_text_dom_path() {
+        // <body><p>A</p></body> -> <body><p>B</p></body>
+        // The P is body's first child (index 0)
+        // The text is P's first child (index 0)
+        // DOM path for text should be [0, 0]
+        let paths = get_dom_paths(
+            "<html><body><p>A</p></body></html>",
+            "<html><body><p>B</p></body></html>",
+        );
+
+        tracing::debug!("p_text_dom_path patches:");
+        for (kind, path) in &paths {
+            tracing::debug!("  {kind}: {:?}", path.0);
+        }
+
+        let set_text = paths.iter().find(|(k, _)| k == "SetText");
+        assert!(set_text.is_some(), "Should have SetText patch");
+        assert_eq!(
+            set_text.unwrap().1.0,
+            vec![0, 0],
+            "Text inside P should be at DOM path [0, 0]"
+        );
+    }
+
+    #[test]
+    fn second_p_text_dom_path() {
+        // <body><p>A</p><p>B</p></body> -> <body><p>A</p><p>X</p></body>
+        // Second P is at index 1, its text is at index 0
+        // DOM path should be [1, 0]
+        let paths = get_dom_paths(
+            "<html><body><p>A</p><p>B</p></body></html>",
+            "<html><body><p>A</p><p>X</p></body></html>",
+        );
+
+        tracing::debug!("second_p_text_dom_path patches:");
+        for (kind, path) in &paths {
+            tracing::debug!("  {kind}: {:?}", path.0);
+        }
+
+        let set_text = paths.iter().find(|(k, _)| k == "SetText");
+        assert!(set_text.is_some(), "Should have SetText patch");
+        assert_eq!(
+            set_text.unwrap().1.0,
+            vec![1, 0],
+            "Text inside second P should be at DOM path [1, 0]"
+        );
+    }
+
+    // =========================================================================
+    // NESTED ELEMENTS
+    // =========================================================================
+
+    #[test]
+    fn nested_div_p_text_dom_path() {
+        // <body><div><p>A</p></div></body> -> <body><div><p>B</p></div></body>
+        // Div is body[0], P is div[0], text is p[0]
+        // DOM path should be [0, 0, 0]
+        let paths = get_dom_paths(
+            "<html><body><div><p>A</p></div></body></html>",
+            "<html><body><div><p>B</p></div></body></html>",
+        );
+
+        tracing::debug!("nested_div_p_text_dom_path patches:");
+        for (kind, path) in &paths {
+            tracing::debug!("  {kind}: {:?}", path.0);
+        }
+
+        let set_text = paths.iter().find(|(k, _)| k == "SetText");
+        assert!(set_text.is_some(), "Should have SetText patch");
+        assert_eq!(
+            set_text.unwrap().1.0,
+            vec![0, 0, 0],
+            "Text inside nested P should be at DOM path [0, 0, 0]"
+        );
+    }
+
+    #[test]
+    fn second_child_of_div_dom_path() {
+        // <body><div><p>A</p><p>B</p></div></body> -> <body><div><p>A</p><p>X</p></div></body>
+        // Div is body[0], second P is div[1], text is p[0]
+        // DOM path should be [0, 1, 0]
+        let paths = get_dom_paths(
+            "<html><body><div><p>A</p><p>B</p></div></body></html>",
+            "<html><body><div><p>A</p><p>X</p></div></body></html>",
+        );
+
+        tracing::debug!("second_child_of_div_dom_path patches:");
+        for (kind, path) in &paths {
+            tracing::debug!("  {kind}: {:?}", path.0);
+        }
+
+        let set_text = paths.iter().find(|(k, _)| k == "SetText");
+        assert!(set_text.is_some(), "Should have SetText patch");
+        assert_eq!(
+            set_text.unwrap().1.0,
+            vec![0, 1, 0],
+            "Text inside second P of div should be at DOM path [0, 1, 0]"
+        );
+    }
+
+    // =========================================================================
+    // ATTRIBUTES
+    // =========================================================================
+
+    #[test]
+    fn attribute_on_first_child_dom_path() {
+        // <body><p>Text</p></body> -> <body><p class="foo">Text</p></body>
+        // The P is at body[0], attribute is ON that element
+        // DOM path for attribute should be [0]
+        let paths = get_dom_paths(
+            "<html><body><p>Text</p></body></html>",
+            r#"<html><body><p class="foo">Text</p></body></html>"#,
+        );
+
+        tracing::debug!("attribute_on_first_child_dom_path patches:");
+        for (kind, path) in &paths {
+            tracing::debug!("  {kind}: {:?}", path.0);
+        }
+
+        let set_attr = paths.iter().find(|(k, _)| k == "SetAttribute");
+        assert!(set_attr.is_some(), "Should have SetAttribute patch");
+        assert_eq!(
+            set_attr.unwrap().1.0,
+            vec![0],
+            "Attribute on P should target DOM path [0]"
+        );
+    }
+
+    #[test]
+    fn attribute_on_second_child_dom_path() {
+        // <body><p>A</p><p>B</p></body> -> <body><p>A</p><p id="x">B</p></body>
+        // Second P is at body[1]
+        // DOM path for attribute should be [1]
+        let paths = get_dom_paths(
+            "<html><body><p>A</p><p>B</p></body></html>",
+            r#"<html><body><p>A</p><p id="x">B</p></body></html>"#,
+        );
+
+        tracing::debug!("attribute_on_second_child_dom_path patches:");
+        for (kind, path) in &paths {
+            tracing::debug!("  {kind}: {:?}", path.0);
+        }
+
+        let set_attr = paths.iter().find(|(k, _)| k == "SetAttribute");
+        assert!(set_attr.is_some(), "Should have SetAttribute patch");
+        assert_eq!(
+            set_attr.unwrap().1.0,
+            vec![1],
+            "Attribute on second P should target DOM path [1]"
+        );
+    }
+
+    #[test]
+    fn attribute_on_nested_element_dom_path() {
+        // <body><div><p>Text</p></div></body> -> <body><div><p id="x">Text</p></div></body>
+        // Div is body[0], P is div[0]
+        // DOM path for attribute should be [0, 0]
+        let paths = get_dom_paths(
+            "<html><body><div><p>Text</p></div></body></html>",
+            r#"<html><body><div><p id="x">Text</p></div></body></html>"#,
+        );
+
+        tracing::debug!("attribute_on_nested_element_dom_path patches:");
+        for (kind, path) in &paths {
+            tracing::debug!("  {kind}: {:?}", path.0);
+        }
+
+        let set_attr = paths.iter().find(|(k, _)| k == "SetAttribute");
+        assert!(set_attr.is_some(), "Should have SetAttribute patch");
+        assert_eq!(
+            set_attr.unwrap().1.0,
+            vec![0, 0],
+            "Attribute on nested P should target DOM path [0, 0]"
+        );
+    }
+
+    // =========================================================================
+    // MIXED CONTENT
+    // =========================================================================
+
+    #[test]
+    fn text_before_element_dom_path() {
+        // <body>Hello<p>World</p></body> -> <body>Hi<p>World</p></body>
+        // Text is body[0], P is body[1]
+        // Changed text should be at [0]
+        let paths = get_dom_paths(
+            "<html><body>Hello<p>World</p></body></html>",
+            "<html><body>Hi<p>World</p></body></html>",
+        );
+
+        tracing::debug!("text_before_element_dom_path patches:");
+        for (kind, path) in &paths {
+            tracing::debug!("  {kind}: {:?}", path.0);
+        }
+
+        let set_text = paths.iter().find(|(k, _)| k == "SetText");
+        assert!(set_text.is_some(), "Should have SetText patch");
+        assert_eq!(
+            set_text.unwrap().1.0,
+            vec![0],
+            "Text before P should be at DOM path [0]"
+        );
+    }
+
+    #[test]
+    fn text_after_element_dom_path() {
+        // <body><p>First</p>Second</body> -> <body><p>First</p>Changed</body>
+        // P is body[0], text is body[1]
+        // Changed text should be at [1]
+        let paths = get_dom_paths(
+            "<html><body><p>First</p>Second</body></html>",
+            "<html><body><p>First</p>Changed</body></html>",
+        );
+
+        tracing::debug!("text_after_element_dom_path patches:");
+        for (kind, path) in &paths {
+            tracing::debug!("  {kind}: {:?}", path.0);
+        }
+
+        let set_text = paths.iter().find(|(k, _)| k == "SetText");
+        assert!(set_text.is_some(), "Should have SetText patch");
+        assert_eq!(
+            set_text.unwrap().1.0,
+            vec![1],
+            "Text after P should be at DOM path [1]"
+        );
+    }
+}
