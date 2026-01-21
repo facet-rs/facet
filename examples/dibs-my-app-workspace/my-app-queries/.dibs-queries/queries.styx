@@ -91,11 +91,11 @@ CreateProductWithDefaults @insert{
 UpsertProduct @upsert{
     params {handle @string, status @string}
     into product
-    values {handle $handle, status $status, created_at @now}
-    on_conflict {
+    on-conflict {
         target {handle}
         update {status, updated_at @now}
     }
+    values {handle $handle, status $status, created_at @now}
     returning {id, handle, status}
 }
 
@@ -127,4 +127,3 @@ DeleteProduct @delete{
     where {id $id}
     returning {id, handle}
 }
-

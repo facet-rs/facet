@@ -198,9 +198,10 @@ pub struct Upsert {
     pub params: Option<Params>,
     /// Target table.
     pub into: String,
-    /// Conflict target column(s).
-    pub conflict: Conflict,
-    /// Values to insert/update (column -> value expression).
+    /// ON CONFLICT clause.
+    #[facet(rename = "on-conflict")]
+    pub on_conflict: OnConflict,
+    /// Values to insert (column -> value expression).
     pub values: Values,
     /// Columns to return.
     pub returning: Option<Returning>,
@@ -257,11 +258,41 @@ pub enum ValueExpr {
     Expr(String),
 }
 
-/// Conflict target for UPSERT.
+/// ON CONFLICT clause for UPSERT.
 #[derive(Debug, Facet)]
-pub struct Conflict {
+pub struct OnConflict {
+    /// Target columns for conflict detection.
+    pub target: ConflictTarget,
+    /// Columns to update on conflict.
+    pub update: ConflictUpdate,
+}
+
+/// Conflict target columns.
+#[derive(Debug, Facet)]
+pub struct ConflictTarget {
     #[facet(flatten)]
     pub columns: IndexMap<String, ()>,
+}
+
+/// Columns to update on conflict.
+#[derive(Debug, Facet)]
+pub struct ConflictUpdate {
+    #[facet(flatten)]
+    pub columns: IndexMap<String, UpdateValue>,
+}
+
+/// Value for an update column - either a param reference or special value.
+#[derive(Debug, Facet)]
+#[facet(rename_all = "lowercase")]
+#[repr(u8)]
+pub enum UpdateValue {
+    /// Current timestamp (@now).
+    Now,
+    /// Default value (@default).
+    Default,
+    /// Parameter or literal - bare scalar fallback (just column name means use inserted value).
+    #[facet(other)]
+    Expr(Option<String>),
 }
 
 /// RETURNING clause.
