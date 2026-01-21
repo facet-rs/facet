@@ -61,7 +61,7 @@ use crate::schema_error::{
 use crate::schema_types::{
     DefaultSchema, DeprecatedSchema, Documented, EnumSchema, FlattenSchema, FloatConstraints,
     IntConstraints, MapSchema, ObjectKey, ObjectSchema, OneOfSchema, OptionalSchema, Schema,
-    SchemaFile, SeqSchema, StringConstraints, UnionSchema,
+    SchemaFile, SeqSchema, StringConstraints, TupleSchema, UnionSchema,
 };
 
 /// Validator for Styx documents.
@@ -133,6 +133,7 @@ impl<'a> Validator<'a> {
             // Structural types
             Schema::Object(obj_schema) => self.validate_object(value, obj_schema, path),
             Schema::Seq(seq_schema) => self.validate_seq(value, seq_schema, path),
+            Schema::Tuple(tuple_schema) => self.validate_tuple(value, tuple_schema, path),
             Schema::Map(map_schema) => self.validate_map(value, map_schema, path),
 
             // Combinators
@@ -571,6 +572,56 @@ impl<'a> Validator<'a> {
         for (i, item) in seq.items.iter().enumerate() {
             let item_path = format!("{path}[{i}]");
             result.merge(self.validate_value(item, inner_schema, &item_path));
+        }
+
+        result
+    }
+
+    fn validate_tuple(&self, value: &Value, schema: &TupleSchema, path: &str) -> ValidationResult {
+        let mut result = ValidationResult::ok();
+
+        let seq = match value.as_sequence() {
+            Some(s) => s,
+            None => {
+                result.error(
+                    ValidationError::new(
+                        path,
+                        ValidationErrorKind::ExpectedSequence,
+                        format!("expected tuple (sequence), got {}", value_type_name(value)),
+                    )
+                    .with_span(value.span),
+                );
+                return result;
+            }
+        };
+
+        let expected_len = schema.0.len();
+        let actual_len = seq.items.len();
+
+        if actual_len != expected_len {
+            result.error(
+                ValidationError::new(
+                    path,
+                    ValidationErrorKind::InvalidValue {
+                        reason: format!(
+                            "tuple has wrong number of elements: expected {}, got {}",
+                            expected_len, actual_len
+                        ),
+                    },
+                    format!(
+                        "tuple has wrong number of elements: expected {}, got {}",
+                        expected_len, actual_len
+                    ),
+                )
+                .with_span(value.span),
+            );
+            // Still validate the elements we have
+        }
+
+        // Validate each element against its corresponding schema
+        for (i, (item, element_schema)) in seq.items.iter().zip(schema.0.iter()).enumerate() {
+            let item_path = format!("{path}[{i}]");
+            result.merge(self.validate_value(item, &element_schema.value, &item_path));
         }
 
         result
@@ -1058,6 +1109,7 @@ fn schema_type_name(schema: &Schema) -> String {
         Schema::Any => "any".into(),
         Schema::Object(_) => "object".into(),
         Schema::Seq(_) => "seq".into(),
+        Schema::Tuple(_) => "tuple".into(),
         Schema::Map(_) => "map".into(),
         Schema::Union(_) => "union".into(),
         Schema::Optional(_) => "optional".into(),

@@ -16,7 +16,7 @@ use std::ptr::NonNull;
 use crate::peek_to_string_expr;
 use crate::schema_types::{
     DefaultSchema, Documented, EnumSchema, LspExtensionConfig, MapSchema, Meta, ObjectKey,
-    ObjectSchema, OptionalSchema, RawStyx, Schema, SchemaFile, SeqSchema,
+    ObjectSchema, OptionalSchema, RawStyx, Schema, SchemaFile, SeqSchema, TupleSchema,
 };
 
 /// Strip exactly one leading space from a doc line if present.
@@ -243,6 +243,11 @@ fn generate_schema_file_inner<T: facet_core::Facet<'static>>(
 
     // Process all pending types (types that were referenced but need definitions)
     while let Some(pending_shape) = generator.take_pending() {
+        // Schema is a well-known built-in type - don't generate its definition
+        if std::ptr::eq(pending_shape, Schema::SHAPE) {
+            continue;
+        }
+
         let type_name = pending_shape.type_identifier.to_string();
         // Only add if not already defined
         if !schema_map.contains_key(&Some(type_name.clone()))
@@ -509,8 +514,13 @@ impl SchemaGenerator {
                     // Newtype - unwrap
                     self.shape_to_schema(struct_type.fields[0].shape())
                 } else {
-                    // Tuple - not well supported, use Any
-                    Schema::Any
+                    // Tuple with multiple fields - each position has a distinct type
+                    let elements: Vec<Documented<Schema>> = struct_type
+                        .fields
+                        .iter()
+                        .map(|field| Documented::new(self.shape_to_schema(field.shape())))
+                        .collect();
+                    Schema::Tuple(TupleSchema(elements))
                 }
             }
             StructKind::Struct => {
@@ -624,7 +634,14 @@ impl SchemaGenerator {
                     if variant.data.fields.len() == 1 {
                         self.shape_to_schema(variant.data.fields[0].shape())
                     } else {
-                        Schema::Any
+                        // Tuple variant with multiple fields
+                        let elements: Vec<Documented<Schema>> = variant
+                            .data
+                            .fields
+                            .iter()
+                            .map(|field| Documented::new(self.shape_to_schema(field.shape())))
+                            .collect();
+                        Schema::Tuple(TupleSchema(elements))
                     }
                 }
                 StructKind::Struct => self.struct_to_schema(&variant.data),

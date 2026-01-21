@@ -88,6 +88,10 @@ pub enum Schema {
     /// Sequence schema: @seq(@type)
     Seq(SeqSchema),
 
+    /// Tuple schema: @tuple(@A @B @C ...)
+    /// Each position has a distinct type.
+    Tuple(TupleSchema),
+
     /// Map schema: @map(@V) or @map(@K @V)
     Map(MapSchema),
 
@@ -272,6 +276,12 @@ pub struct ObjectSchema(pub HashMap<Documented<ObjectKey>, Schema>);
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
 pub struct SeqSchema(pub (Documented<Box<Schema>>,));
+
+/// Tuple schema: @tuple(@A @B @C ...).
+/// Each position has a distinct type, unlike @seq which is homogeneous.
+#[derive(Facet, Debug, Clone)]
+#[repr(transparent)]
+pub struct TupleSchema(pub Vec<Documented<Schema>>);
 
 /// Map schema: @map(@V) or @map(@K @V).
 /// Vec contains 1 element (value type, key defaults to @string) or 2 elements (key, value).
