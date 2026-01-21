@@ -244,7 +244,7 @@ fn generate_schema_file_inner<T: facet_core::Facet<'static>>(
     // Process all pending types (types that were referenced but need definitions)
     while let Some(pending_shape) = generator.take_pending() {
         // Schema is a well-known built-in type - don't generate its definition
-        if std::ptr::eq(pending_shape, Schema::SHAPE) {
+        if pending_shape == Schema::SHAPE {
             continue;
         }
 
@@ -330,6 +330,11 @@ impl SchemaGenerator {
 
     /// Queue a type for definition if not already queued.
     fn queue_type(&mut self, shape: &'static Shape) {
+        // Schema is a well-known built-in type - don't queue it or its dependencies
+        if shape == Schema::SHAPE {
+            return;
+        }
+
         let type_id = shape.type_identifier;
         if !self.queued_types.contains(type_id) {
             self.queued_types.insert(type_id);
@@ -471,7 +476,7 @@ impl SchemaGenerator {
 
         // Schema is a well-known built-in type - emit a reference without generating its definition.
         // This avoids inlining the entire Schema enum (which describes types) into generated schemas.
-        if std::ptr::eq(shape, Schema::SHAPE) {
+        if shape == Schema::SHAPE {
             return Schema::Type {
                 name: Some("Schema".to_string()),
             };
