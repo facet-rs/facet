@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 043339cf3c49762c399e1e44bf4e899a219cdf9b53fecb2d5ae6878c8b7bd367 # shrinks to old_children = [Text(" "), Span { class: None, text: "A" }], new_children = [P { class: None, text: "a" }, Span { class: None, text: "A" }, P { class: None, text: "a" }]
+cc de49fea820545e9d8472d0b7b125320aa14d0609b953b22c9a7bd2ed5022ad17 # shrinks to node_a = Div { class: None, id: None, children: [Text("a")] }, node_b = Div { class: None, id: None, children: [] }

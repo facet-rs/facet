@@ -484,16 +484,50 @@ fn extract_value_at_path<'mem, 'facet>(
                 if let Ok(list) = peek.into_list() {
                     list.get(*idx)?
                 } else if let Ok(opt) = peek.into_option() {
-                    if *idx == 0 {
-                        opt.value()?
+                    // Option might contain a struct with flattened list
+                    if let Some(inner) = opt.value() {
+                        if let Ok(s) = inner.into_struct() {
+                            // Find flattened list field
+                            let mut found = None;
+                            for (field, field_peek) in s.fields() {
+                                if field.is_flattened() {
+                                    if let Ok(list) = field_peek.into_list() {
+                                        found = list.get(*idx);
+                                        break;
+                                    }
+                                }
+                            }
+                            found?
+                        } else if let Ok(list) = inner.into_list() {
+                            list.get(*idx)?
+                        } else if *idx == 0 {
+                            inner
+                        } else {
+                            debug!(
+                                "extract_value_at_path: option inner not struct/list, index != 0"
+                            );
+                            return None;
+                        }
                     } else {
-                        debug!("extract_value_at_path: option index != 0");
+                        debug!("extract_value_at_path: option is None");
                         return None;
                     }
+                } else if let Ok(s) = peek.into_struct() {
+                    // Struct with flattened list - find it and index
+                    let mut found = None;
+                    for (field, field_peek) in s.fields() {
+                        if field.is_flattened() {
+                            if let Ok(list) = field_peek.into_list() {
+                                found = list.get(*idx);
+                                break;
+                            }
+                        }
+                    }
+                    found?
                 } else if let Ok(e) = peek.into_enum() {
                     e.field(*idx).ok()??
                 } else {
-                    debug!("extract_value_at_path: not a list, option, or enum for Index");
+                    debug!("extract_value_at_path: not a list, option, struct, or enum for Index");
                     return None;
                 }
             }

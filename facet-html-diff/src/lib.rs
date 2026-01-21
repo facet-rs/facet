@@ -413,7 +413,7 @@ fn translate_insert(
     let nav = navigate_path(segments, html_shape);
 
     trace!(
-        "translate_insert: segments={segments:?}, dom_path={:?}, target={:?}, value={value:?}",
+        "translate_insert: segments={segments:?}, label_segments={label_segments:?}, dom_path={:?}, target={:?}, value={value:?}",
         nav.dom_path, nav.target
     );
 
@@ -773,11 +773,42 @@ fn navigate_peek<'mem, 'facet>(
                 if let Ok(list) = peek.into_list_like() {
                     list.get(*idx)?
                 } else if let Ok(opt) = peek.into_option() {
-                    if *idx == 0 {
-                        opt.value()?
+                    // Option might contain a struct with flattened list
+                    if let Some(inner) = opt.value() {
+                        if let Ok(s) = inner.into_struct() {
+                            // Find flattened list field and index into it
+                            let mut found = None;
+                            for (field, field_peek) in s.fields() {
+                                if field.is_flattened() {
+                                    if let Ok(list) = field_peek.into_list_like() {
+                                        found = list.get(*idx);
+                                        break;
+                                    }
+                                }
+                            }
+                            found?
+                        } else if let Ok(list) = inner.into_list_like() {
+                            list.get(*idx)?
+                        } else if *idx == 0 {
+                            inner
+                        } else {
+                            return None;
+                        }
                     } else {
                         return None;
                     }
+                } else if let Ok(s) = peek.into_struct() {
+                    // Struct with flattened list - find it and index
+                    let mut found = None;
+                    for (field, field_peek) in s.fields() {
+                        if field.is_flattened() {
+                            if let Ok(list) = field_peek.into_list_like() {
+                                found = list.get(*idx);
+                                break;
+                            }
+                        }
+                    }
+                    found?
                 } else if let Ok(e) = peek.into_enum() {
                     e.field(*idx).ok()??
                 } else {

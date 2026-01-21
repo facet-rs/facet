@@ -450,6 +450,40 @@ mod path_structure {
         );
     }
 
+    #[test]
+    fn update_op_contains_new_value_for_text() {
+        // EditOp::Update should have new_value populated for text changes
+        let ops = get_raw_ops(
+            "<html><body>Hello</body></html>",
+            "<html><body>World</body></html>",
+        );
+
+        // Find the deepest Update op (the one targeting the actual text)
+        let text_update = ops.iter().find(|op| {
+            if let EditOp::Update { path, .. } = op {
+                path.0
+                    .iter()
+                    .any(|s| matches!(s, PathSegment::Variant(v) if v == "Text"))
+            } else {
+                false
+            }
+        });
+
+        assert!(text_update.is_some(), "Should have Update op for text");
+
+        if let Some(EditOp::Update { new_value, .. }) = text_update {
+            assert!(
+                new_value.is_some(),
+                "Update op for text should have new_value populated, got None"
+            );
+            assert_eq!(
+                new_value.as_deref(),
+                Some("World"),
+                "new_value should be the new text"
+            );
+        }
+    }
+
     // =========================================================================
     // BODY DIRECT CHILDREN TESTS
     // =========================================================================
@@ -461,16 +495,8 @@ mod path_structure {
             "<html><body>World</body></html>",
         );
 
-        tracing::debug!("body_text_only ops:");
-        for (kind, p) in &ops {
-            tracing::debug!("  {kind}: {p}");
-        }
-
-        // The Update should target the text content
-        // Path ends with V(Text), I(0) - the Text variant's inner String
         assert_deepest_ends_with(&ops, "V(Text), I(0)");
 
-        // The children index is I(0) - first child of body (no Option unwrap in path)
         assert!(
             ops.iter()
                 .any(|(_, p)| p.contains("F(body), I(0), V(Text)")),
