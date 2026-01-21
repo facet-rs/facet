@@ -1,0 +1,6 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 679
+expression: py
+---
+type Status = Literal["Active"] | Literal["Inactive"] | Literal["Pending"]

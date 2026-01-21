@@ -1,0 +1,7 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+type String = str
+
+type UserId = str

@@ -1,0 +1,13 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+From = TypedDict(
+    "From",
+    {"from": Required[str]},
+    total=False,
+)
+type ImportSource = From | Url
+
+class Url(TypedDict, total=False):
+    url: Required[str]

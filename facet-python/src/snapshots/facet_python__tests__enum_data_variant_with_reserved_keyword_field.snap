@@ -1,0 +1,13 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class Move(TypedDict, total=False):
+    Move: Required[MoveData]
+
+MoveData = TypedDict(
+    "MoveData",
+    {"from": Required[str], "to": Required[str], "amount": Required[float]},
+    total=False,
+)
+type Transfer = Move | Literal["Cancel"]

@@ -2042,6 +2042,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-python"
+version = "0.42.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "insta",
+]
+
+[[package]]
 name = "facet-reflect"
 version = "0.42.0"
 dependencies = [

@@ -1,0 +1,9 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+ControlFlow = TypedDict(
+    "ControlFlow",
+    {"if": Required[bool], "else": Required[str], "return": Required[int]},
+    total=False,
+)

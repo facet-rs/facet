@@ -1,0 +1,18 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class ImageUpload(TypedDict, total=False):
+    image_upload: Required[ImageUploadData]
+
+class ImageUploadData(TypedDict, total=False):
+    url: Required[str]
+    width: Required[int]
+
+type Message = TextMessage | ImageUpload
+
+class TextMessage(TypedDict, total=False):
+    text_message: Required[TextMessageData]
+
+class TextMessageData(TypedDict, total=False):
+    content: Required[str]

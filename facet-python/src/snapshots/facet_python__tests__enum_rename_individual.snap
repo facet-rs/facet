@@ -1,0 +1,6 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 739
+expression: py
+---
+type GitStatus = Literal["dirty"] | Literal["staged"] | Literal["clean"]
