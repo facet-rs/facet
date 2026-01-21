@@ -5,17 +5,8 @@
 //! We generate random HTML trees, diff them, apply the patches,
 //! and verify the result matches the expected output.
 
-use facet_html_diff::apply::{apply_patches, body_to_html};
-use facet_html_diff::diff_html;
-use facet_html_dom::Body;
+use facet_html_diff::{Node, apply_patches, diff_html, parse_html};
 use proptest::prelude::*;
-
-/// Parse HTML and extract the body.
-fn parse_body(html: &str) -> Result<Body, String> {
-    let doc: facet_html_dom::Html =
-        facet_html::from_str(html).map_err(|e| format!("parse error: {e}"))?;
-    Ok(doc.body.unwrap_or_default())
-}
 
 /// Generate a random text string (no HTML special chars).
 fn arb_text() -> impl Strategy<Value = String> {
@@ -145,8 +136,8 @@ fn nodes_to_html(nodes: &[SimpleNode]) -> String {
 
 /// Normalize HTML for comparison by parsing and re-serializing.
 fn normalize_html(html: &str) -> Result<String, String> {
-    let body = parse_body(html)?;
-    Ok(body_to_html(&body))
+    let node = parse_html(html)?;
+    Ok(node.to_html())
 }
 
 proptest! {
@@ -166,15 +157,15 @@ proptest! {
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
         // Parse old into mutable tree
-        let mut body = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse old failed: {e}")))?;
 
         // Apply patches
-        apply_patches(&mut body, &patches)
+        apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
         // Get result
-        let result = body_to_html(&body);
+        let result = tree.to_html();
 
         // Normalize expected for comparison
         let expected = normalize_html(&new_html)
@@ -205,13 +196,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -230,13 +221,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -259,13 +250,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -290,13 +281,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -316,13 +307,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -341,13 +332,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -370,13 +361,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -395,13 +386,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -420,13 +411,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -452,13 +443,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -489,13 +480,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -528,13 +519,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -563,13 +554,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -594,13 +585,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -628,13 +619,13 @@ proptest! {
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
 
-        let mut tree = parse_body(&old_html)
+        let mut tree = parse_html(&old_html)
             .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
 
         apply_patches(&mut tree, &patches)
             .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(&new_html)
             .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
 
@@ -653,9 +644,9 @@ mod sanity_tests {
         let html = "<html><body><p>Hello</p></body></html>";
         let patches = diff_html(html, html).unwrap();
         // Might have some spurious patches but applying them should still work
-        let mut tree = parse_body(html).unwrap();
+        let mut tree = parse_html(html).unwrap();
         apply_patches(&mut tree, &patches).unwrap();
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(html).unwrap();
         assert_eq!(result, expected);
     }
@@ -667,10 +658,10 @@ mod sanity_tests {
         let new = "<html><body><p>Goodbye</p></body></html>";
 
         let patches = diff_html(old, new).unwrap();
-        let mut tree = parse_body(old).unwrap();
+        let mut tree = parse_html(old).unwrap();
         apply_patches(&mut tree, &patches).unwrap();
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(new).unwrap();
         assert_eq!(result, expected);
     }
@@ -682,10 +673,10 @@ mod sanity_tests {
         let new = "<html><body><p>First</p><p>Second</p></body></html>";
 
         let patches = diff_html(old, new).unwrap();
-        let mut tree = parse_body(old).unwrap();
+        let mut tree = parse_html(old).unwrap();
         apply_patches(&mut tree, &patches).unwrap();
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(new).unwrap();
         assert_eq!(result, expected);
     }
@@ -697,10 +688,10 @@ mod sanity_tests {
         let new = "<html><body><p>First</p></body></html>";
 
         let patches = diff_html(old, new).unwrap();
-        let mut tree = parse_body(old).unwrap();
+        let mut tree = parse_html(old).unwrap();
         apply_patches(&mut tree, &patches).unwrap();
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(new).unwrap();
         assert_eq!(result, expected);
     }
@@ -712,10 +703,10 @@ mod sanity_tests {
         let new = r#"<html><body><div class="new">Content</div></body></html>"#;
 
         let patches = diff_html(old, new).unwrap();
-        let mut tree = parse_body(old).unwrap();
+        let mut tree = parse_html(old).unwrap();
         apply_patches(&mut tree, &patches).unwrap();
 
-        let result = body_to_html(&tree);
+        let result = tree.to_html();
         let expected = normalize_html(new).unwrap();
         assert_eq!(result, expected);
     }

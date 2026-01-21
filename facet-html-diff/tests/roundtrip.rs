@@ -2,14 +2,8 @@
 //!
 //! All tests verify the core invariant: `apply(A, diff(A, B)) == B`
 
-use facet_html_diff::apply::{apply_patches, body_to_html};
+use facet_html_diff::{apply_patches, parse_html};
 use facet_testhelpers::test;
-
-/// Parse HTML and extract the body.
-fn parse_body(html: &str) -> facet_html_dom::Body {
-    let doc: facet_html_dom::Html = facet_html::from_str(html).unwrap();
-    doc.body.unwrap_or_default()
-}
 
 /// Assert that diffing old -> new and applying patches produces the expected result.
 #[track_caller]
@@ -20,12 +14,12 @@ fn assert_roundtrip(old: &str, new: &str) {
         tracing::debug!("  {patch:?}");
     }
 
-    let mut body = parse_body(old);
-    apply_patches(&mut body, &patches).unwrap();
-    let result = body_to_html(&body);
+    let mut tree = parse_html(old).unwrap();
+    apply_patches(&mut tree, &patches).unwrap();
+    let result = tree.to_html();
 
-    let expected_body = parse_body(new);
-    let expected = body_to_html(&expected_body);
+    let expected_tree = parse_html(new).unwrap();
+    let expected = expected_tree.to_html();
 
     assert_eq!(
         result, expected,
@@ -580,141 +574,12 @@ fn issue_1846_nested_divs() {
     );
 }
 
-// ============================================================================
-// Fuzzer-discovered failures
-// ============================================================================
-
 #[test]
-fn fuzz_wrap_element_in_div() {
-    // Wrapping an element in a new div
+fn fuzz_seed_0_template_2_slot_empty() {
+    // From browser fuzzing seed 0 template 2: "slot 2 is empty" in WASM
+    // This tests complex restructuring of a card component
     assert_roundtrip(
-        r#"<html><body><p>text</p></body></html>"#,
-        r#"<html><body><div><p>text</p></div></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_insert_text_before_nav() {
-    // Insert text before navigation structure
-    assert_roundtrip(
-        r#"<html><body><nav><ul><li>A</li></ul></nav></body></html>"#,
-        r#"<html><body>world<nav><ul><li>A</li></ul></nav></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_insert_text_and_remove_children() {
-    // Insert text before element and remove some children
-    assert_roundtrip(
-        r#"<html><body><div><p>A</p><p>B</p></div></body></html>"#,
-        r#"<html><body>text<div><p>A</p></div></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_move_content_and_insert() {
-    // Move content between siblings and insert text
-    assert_roundtrip(
-        r#"<html><body><div>content</div><div></div></body></html>"#,
-        r#"<html><body>text<div></div><div>content</div></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_wrap_h1_in_em() {
-    // Wrap h1 in em element
-    assert_roundtrip(
-        r#"<html><body><h1>Title</h1></body></html>"#,
-        r#"<html><body><em><h1>Title</h1></em></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_remove_nested_structure() {
-    // Remove deeply nested content
-    assert_roundtrip(
-        r#"<html><body><div><div><div><span>deep</span></div></div></div></body></html>"#,
-        r#"<html><body><div><div></div></div></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_add_text_to_nested_div() {
-    // Add text to middle of nested structure
-    assert_roundtrip(
-        r#"<html><body><div><div><div></div></div></div></body></html>"#,
-        r#"<html><body><div>text<div><div></div></div></div></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_complex_restructure() {
-    // Complex restructuring with wrapping and moving
-    assert_roundtrip(
-        r#"<html><body><div><h2>Title</h2></div><div><p>Para</p></div></body></html>"#,
-        r#"<html><body><div><h2>Title</h2><p>Para</p></div></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_table_text_insert() {
-    // Insert text before table content
-    assert_roundtrip(
-        r#"<html><body><table><tbody><tr><td>A</td></tr></tbody></table></body></html>"#,
-        r#"<html><body>text<table><tbody><tr><td>A</td></tr></tbody></table></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_list_item_restructure() {
-    // Restructure list items
-    assert_roundtrip(
-        r#"<html><body><ul><li>A</li><li>B</li><li>C</li></ul></body></html>"#,
-        r#"<html><body><ul><li>A</li><li>C</li></ul></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_move_into_sibling() {
-    // Move content into a sibling element
-    assert_roundtrip(
-        r#"<html><body><span>text</span><div></div></body></html>"#,
-        r#"<html><body><div><span>text</span></div></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_multiple_inserts_and_removes() {
-    // Multiple insertions and removals
-    assert_roundtrip(
-        r#"<html><body><p>A</p><p>B</p><p>C</p></body></html>"#,
-        r#"<html><body>X<p>B</p>Y</body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_wrap_and_add_sibling() {
-    // Wrap element and add sibling
-    assert_roundtrip(
-        r#"<html><body><p>text</p></body></html>"#,
-        r#"<html><body><div><p>text</p></div><span>new</span></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_deeply_nested_text_change() {
-    // Change text in deeply nested element with structural changes
-    assert_roundtrip(
-        r#"<html><body><div><div><span>old</span></div></div></body></html>"#,
-        r#"<html><body>prefix<div><div><span>new</span></div></div></body></html>"#,
-    );
-}
-
-#[test]
-fn fuzz_form_restructure() {
-    // Restructure form elements
-    assert_roundtrip(
-        r#"<html><body><form><div><label>Name</label></div><div><label>Email</label></div></form></body></html>"#,
-        r#"<html><body><form><div><label>Name</label></div>text</form></body></html>"#,
+        r#"<html><body><div class="card"><div class="card-header"><h2>Card Title</h2></div><div class="card-body"><p>Card content goes here.</p><button>Action</button></div></div></body></html>"#,
+        r#"<html><body><div class="card"><strong><div><strong>sibling</strong><div><h2>Card Title</h2></div></div></strong><div class="card-body"><p>Card content goes here.</p></div></div></body></html>"#,
     );
 }

@@ -8,8 +8,12 @@ mod macros;
 
 pub mod apply;
 
+// Re-export for convenience
+pub use apply::{Node, apply_patches, parse_html};
+
 use facet_core::{Def, Field, Type, UserType};
 use facet_diff::{EditOp, PathSegment, tree_diff};
+use facet_dom::naming::to_element_name;
 use facet_html_dom::*;
 use facet_reflect::{HasFields, Peek, PeekStruct};
 
@@ -31,41 +35,46 @@ pub enum NodeRef {
 }
 
 /// Operations to transform the DOM.
+///
+/// These follow Chawathe semantics: Insert/Move operations do NOT shift siblings.
+/// Instead, they displace whatever is at the target position to a slot.
 #[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
 #[repr(u8)]
 pub enum Patch {
-    /// Replace node at path with new HTML
-    Replace { path: NodePath, html: String },
-
-    /// Insert HTML at position within parent.
+    /// Insert an empty element at position within parent.
     /// If `detach_to_slot` is Some, the node at that position is detached and stored in that slot.
-    InsertAt {
+    /// Children are NOT included - they will be placed via separate Move/InsertElement/InsertText ops.
+    InsertElement {
         parent: NodeRef,
         position: usize,
-        html: String,
+        tag: String,
         detach_to_slot: Option<u32>,
     },
 
-    /// Insert HTML after the node at path
-    InsertAfter { path: NodePath, html: String },
-
-    /// Append HTML as last child of node at path
-    AppendChild { path: NodePath, html: String },
+    /// Insert a text node at position within parent.
+    /// If `detach_to_slot` is Some, the node at that position is detached and stored in that slot.
+    InsertText {
+        parent: NodeRef,
+        position: usize,
+        text: String,
+        detach_to_slot: Option<u32>,
+    },
 
     /// Remove a node (either at a path or in a slot)
     Remove { node: NodeRef },
 
-    /// Update text content of node at path
+    /// Update text content of a text node at path.
+    /// Path points to the text node itself, not the parent element.
     SetText { path: NodePath, text: String },
 
-    /// Set attribute on node at path
+    /// Set attribute on element at path
     SetAttribute {
         path: NodePath,
         name: String,
         value: String,
     },
 
-    /// Remove attribute from node at path
+    /// Remove attribute from element at path
     RemoveAttribute { path: NodePath, name: String },
 
     /// Move a node from one location to another.
@@ -545,14 +554,41 @@ fn translate_insert(
 
     match nav.target {
         PathTarget::Element => {
+            // Navigate to the actual node to determine its type
             let peek = Peek::new(new_doc);
             let node_peek = navigate_peek(peek, label_segments)?;
-            let html = serialize_to_html(node_peek)?;
 
-            Some(Patch::InsertAt {
+            // Check if this is actually a text variant in the enum
+            // (navigate_path may return Element for Index into enum lists where it can't know the variant)
+            if let Ok(enum_peek) = node_peek.into_enum() {
+                if let Ok(variant) = enum_peek.active_variant() {
+                    if variant.is_text() {
+                        // This is a text variant - extract the text value and emit InsertText
+                        let text = enum_peek
+                            .field(0)
+                            .ok()
+                            .flatten()
+                            .and_then(|p| p.as_str().map(|s| s.to_string()))
+                            .unwrap_or_default();
+                        return Some(Patch::InsertText {
+                            parent: parent_ref,
+                            position,
+                            text,
+                            detach_to_slot,
+                        });
+                    }
+                }
+            }
+
+            // Not a text variant - insert element
+            let peek2 = Peek::new(new_doc);
+            let node_peek2 = navigate_peek(peek2, label_segments)?;
+            let tag = get_element_tag(node_peek2);
+
+            Some(Patch::InsertElement {
                 parent: parent_ref,
                 position,
-                html,
+                tag,
                 detach_to_slot,
             })
         }
@@ -601,17 +637,13 @@ fn translate_insert(
             })
         }
         PathTarget::Text => {
-            let target_path = match parent_ref {
-                NodeRef::Path(mut p) => {
-                    p.0.push(position);
-                    p
-                }
-                NodeRef::Slot(..) => return None, // Can't set text on slot directly
-            };
+            // Insert a text node at the given position
             let text = value?.to_string();
-            Some(Patch::SetText {
-                path: target_path,
+            Some(Patch::InsertText {
+                parent: parent_ref,
+                position,
                 text,
+                detach_to_slot,
             })
         }
         PathTarget::FlattenedAttributeStruct => {
@@ -701,6 +733,8 @@ fn translate_update(segments: &[PathSegment], new_value: Option<&str>) -> Option
     match nav.target {
         PathTarget::Text => {
             let text = new_value?.to_string();
+            // Update just the specific text node at dom_path.
+            // dom_path points to the text node itself (e.g., [0, 1] means element at 0, text child at 1).
             Some(Patch::SetText {
                 path: NodePath(nav.dom_path),
                 text,
@@ -860,10 +894,105 @@ fn find_field_in_peek_struct<'mem, 'facet>(
     None
 }
 
-/// Serialize a Peek value to HTML.
-fn serialize_to_html(peek: Peek<'_, '_>) -> Option<String> {
-    let mut serializer = facet_html::HtmlSerializer::new();
-    facet_dom::serialize(&mut serializer, peek).ok()?;
-    let bytes = serializer.finish();
-    String::from_utf8(bytes).ok()
+/// Get the element tag name from a Peek value.
+///
+/// For enums (like FlowContent, PhrasingContent), this returns the variant's
+/// effective name (respecting `#[facet(rename = "...")]`).
+/// For structs, this returns the shape's rename or the type identifier with lowerCamelCase.
+fn get_element_tag(peek: Peek<'_, '_>) -> String {
+    use std::borrow::Cow;
+
+    // If it's an enum, use the active variant's name
+    if let Ok(enum_peek) = peek.into_enum() {
+        if let Ok(variant) = enum_peek.active_variant() {
+            // Check for rename attribute on the variant
+            let variant_name: Cow<'_, str> = variant
+                .get_builtin_attr("rename")
+                .and_then(|a| a.get_as::<&str>().copied())
+                .map(Cow::Borrowed)
+                .unwrap_or_else(|| to_element_name(variant.name));
+            return variant_name.into_owned();
+        }
+    }
+
+    // For structs, check rename attribute on shape, then fall back to type identifier
+    if let Some(rename) = peek.shape().get_builtin_attr_value::<&str>("rename") {
+        rename.to_string()
+    } else {
+        to_element_name(peek.shape().type_identifier).into_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add_element_with_text() {
+        // This tests adding a new element that has text content
+        let old = "<html><body><p>First</p></body></html>";
+        let new = "<html><body><p>First</p><p>Second</p></body></html>";
+
+        let old_doc: Html = facet_html::from_str(old).unwrap();
+        let new_doc: Html = facet_html::from_str(new).unwrap();
+        let ops = tree_diff(&old_doc, &new_doc);
+        eprintln!("EditOps for add_element_with_text:");
+        for op in &ops {
+            eprintln!("  {:?}", op);
+        }
+
+        let patches = diff_html(old, new).unwrap();
+
+        eprintln!("Patches:");
+        for p in &patches {
+            eprintln!("  {:?}", p);
+        }
+
+        // Apply patches and verify
+        let mut tree = apply::parse_html(old).unwrap();
+        apply::apply_patches(&mut tree, &patches).unwrap();
+        let result = tree.to_html();
+
+        assert_eq!(result, "<body><p>First</p><p>Second</p></body>");
+    }
+
+    #[test]
+    fn test_text_insert_generates_insert_text() {
+        // Old: empty div, New: div with text
+        let old = "<html><body><div></div></body></html>";
+        let new = "<html><body><div>a</div></body></html>";
+
+        // First, let's see what EditOps are generated
+        let old_doc: Html = facet_html::from_str(old).unwrap();
+        let new_doc: Html = facet_html::from_str(new).unwrap();
+        let ops = tree_diff(&old_doc, &new_doc);
+        eprintln!("EditOps:");
+        for op in &ops {
+            eprintln!("  {:?}", op);
+        }
+
+        let patches = diff_html(old, new).unwrap();
+
+        eprintln!("Patches:");
+        for p in &patches {
+            eprintln!("  {:?}", p);
+        }
+
+        // Should have InsertText, not InsertElement with tag "text"
+        let has_text_element = patches
+            .iter()
+            .any(|p| matches!(p, Patch::InsertElement { tag, .. } if tag == "text"));
+        assert!(
+            !has_text_element,
+            "Should not have InsertElement with tag 'text', got: {patches:?}"
+        );
+
+        let has_insert_text = patches
+            .iter()
+            .any(|p| matches!(p, Patch::InsertText { .. }));
+        assert!(
+            has_insert_text,
+            "Should have InsertText patch, got: {patches:?}"
+        );
+    }
 }

@@ -13,3 +13,6 @@ cc 79a22c47311b8a62e10521a6a0cfce3e8ee91becea6b161a798be30c28fb58ef # shrinks to
 cc d8df8316bd39664d86652fe4f8b792cd8d060994ac248a29e218df4dfb01608d # shrinks to old_children = [Div { class: None, id: None, children: [Text("a")] }], new_children = [Text("a"), Div { class: None, id: None, children: [P { class: None, text: "a" }] }]
 cc bb93a05565070d8f4018dabda8fdc125a888dd35c94a3cb9ba746917df28fed6 # shrinks to node_a = Div { class: None, id: None, children: [] }, node_b = Div { class: None, id: None, children: [Text("A")] }
 cc b3a5a95f7a8bbed81c99f849f202d47025c4b65d22a2074475c2ec9a5fa71e12 # shrinks to old_children = [Div { class: None, id: None, children: [] }], new_children = [Div { class: None, id: None, children: [Text("A")] }]
+cc 348027b651884c505a3f174e7032b506f6ebf09e98c1efdfb181143bf8205f8e # shrinks to old_children = [Text("0")], new_children = [P { class: None, text: "a" }, Text("a")]
+cc e4dced26487b1489ccd3d19f105706b44f5af0d105219e0c90b70707c0273c4d # shrinks to node_a = Div { class: None, id: None, children: [Text(" "), P { class: None, text: "A" }] }, node_b = Div { class: None, id: None, children: [Text("0")] }
+cc 6d0b5531ed5636a6cd48d7000de3bb28e169135854df1ff00b6be562b0b037b1 # shrinks to old_children = [P { class: None, text: "A" }, Text("A")], new_children = [Text("a")]

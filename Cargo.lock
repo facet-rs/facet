@@ -1911,6 +1911,7 @@ dependencies = [
  "facet-json",
  "facet-reflect",
  "facet-testhelpers",
+ "facet-xml-node",
  "proptest",
  "tracing",
 ]

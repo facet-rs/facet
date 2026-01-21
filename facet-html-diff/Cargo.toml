@@ -26,6 +26,7 @@ facet-dom = { path = "../facet-dom", version = "0.42.0" }
 facet-html = { path = "../facet-html", version = "0.42.0" }
 facet-html-dom = { path = "../facet-html-dom", version = "0.42.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
+facet-xml-node = { path = "../facet-xml-node", version = "0.42.0" }
 
 tracing = { workspace = true, optional = true }
 

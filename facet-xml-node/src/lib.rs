@@ -106,6 +106,81 @@ impl Element {
         }
         result
     }
+
+    /// Get a mutable reference to a descendant element by path.
+    /// Path is a sequence of child indices.
+    pub fn get_mut(&mut self, path: &[usize]) -> Option<&mut Element> {
+        if path.is_empty() {
+            return Some(self);
+        }
+
+        let idx = path[0];
+        let child = self.children.get_mut(idx)?;
+        match child {
+            Content::Element(e) => e.get_mut(&path[1..]),
+            Content::Text(_) => {
+                // Text nodes can't have children, so we can only
+                // reach them if this is the final index
+                if path.len() == 1 {
+                    None // Can't return &mut Element for a text node
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Get a mutable reference to the children vec at a path.
+    pub fn children_mut(&mut self, path: &[usize]) -> Option<&mut Vec<Content>> {
+        let node = self.get_mut(path)?;
+        Some(&mut node.children)
+    }
+
+    /// Get a mutable reference to the attrs at a path.
+    pub fn attrs_mut(&mut self, path: &[usize]) -> Option<&mut HashMap<String, String>> {
+        let node = self.get_mut(path)?;
+        Some(&mut node.attrs)
+    }
+
+    /// Serialize to HTML string.
+    pub fn to_html(&self) -> String {
+        let mut out = String::new();
+        self.write_html(&mut out);
+        out
+    }
+
+    /// Write HTML to a string buffer.
+    pub fn write_html(&self, out: &mut String) {
+        out.push('<');
+        out.push_str(&self.tag);
+        // Sort attrs for deterministic output
+        let mut attr_list: Vec<_> = self.attrs.iter().collect();
+        attr_list.sort_by_key(|(k, _)| *k);
+        for (k, v) in attr_list {
+            out.push(' ');
+            out.push_str(k);
+            out.push_str("=\"");
+            out.push_str(&html_escape(v));
+            out.push('"');
+        }
+        out.push('>');
+        for child in &self.children {
+            match child {
+                Content::Text(s) => out.push_str(s),
+                Content::Element(e) => e.write_html(out),
+            }
+        }
+        out.push_str("</");
+        out.push_str(&self.tag);
+        out.push('>');
+    }
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 impl From<Element> for Content {

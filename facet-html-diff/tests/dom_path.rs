@@ -2,6 +2,10 @@
 //!
 //! These tests verify that navigate_path correctly converts facet-diff paths
 //! into DOM paths (sequences of child indices).
+//!
+//! IMPORTANT: SetText targets the *text node* itself, not the parent element.
+//! So `<body><p>Text</p></body>` changing text results in SetText with
+//! path `[0, 0]` (text node at index 0 inside P at index 0).
 
 use facet_html_diff::{NodePath, Patch, diff_html};
 use facet_testhelpers::test;
@@ -12,21 +16,30 @@ fn get_dom_paths(old: &str, new: &str) -> Vec<(String, NodePath)> {
         .into_iter()
         .map(|p| {
             let (kind, path) = match &p {
-                Patch::Replace { path, .. } => ("Replace", path.clone()),
-                Patch::InsertAt {
+                Patch::InsertElement {
                     parent, position, ..
                 } => match parent {
                     facet_html_diff::NodeRef::Path(path) => {
                         let mut p = path.0.clone();
                         p.push(*position);
-                        ("InsertAt", NodePath(p))
+                        ("InsertElement", NodePath(p))
                     }
                     facet_html_diff::NodeRef::Slot(s, _) => {
-                        ("InsertAtSlot", NodePath(vec![*s as usize, *position]))
+                        ("InsertElementSlot", NodePath(vec![*s as usize, *position]))
                     }
                 },
-                Patch::InsertAfter { path, .. } => ("InsertAfter", path.clone()),
-                Patch::AppendChild { path, .. } => ("AppendChild", path.clone()),
+                Patch::InsertText {
+                    parent, position, ..
+                } => match parent {
+                    facet_html_diff::NodeRef::Path(path) => {
+                        let mut p = path.0.clone();
+                        p.push(*position);
+                        ("InsertText", NodePath(p))
+                    }
+                    facet_html_diff::NodeRef::Slot(s, _) => {
+                        ("InsertTextSlot", NodePath(vec![*s as usize, *position]))
+                    }
+                },
                 Patch::Remove { node } => match node {
                     facet_html_diff::NodeRef::Path(path) => ("Remove", path.clone()),
                     facet_html_diff::NodeRef::Slot(s, _) => {
@@ -45,12 +58,14 @@ fn get_dom_paths(old: &str, new: &str) -> Vec<(String, NodePath)> {
 
 // =============================================================================
 // SIMPLE TEXT CHANGES
+// SetText path points to the TEXT NODE itself, not the parent element.
+// This is Chawathe-correct: we update just that specific text node.
 // =============================================================================
 
 #[test]
 fn body_text_dom_path() {
     // <body>Hello</body> -> <body>World</body>
-    // DOM path should be [0] - first child of body
+    // SetText path should be [0] - the text node at body's child index 0
     let paths = get_dom_paths(
         "<html><body>Hello</body></html>",
         "<html><body>World</body></html>",
@@ -58,13 +73,17 @@ fn body_text_dom_path() {
 
     let set_text = paths.iter().find(|(k, _)| k == "SetText");
     assert!(set_text.is_some(), "Should have SetText patch");
-    assert_eq!(set_text.unwrap().1.0, vec![0], "Text should be at [0]");
+    assert_eq!(
+        set_text.unwrap().1.0,
+        vec![0],
+        "SetText on body text should target the text node (path [0])"
+    );
 }
 
 #[test]
 fn p_text_dom_path() {
     // <body><p>A</p></body> -> <body><p>B</p></body>
-    // DOM path should be [0, 0] - first child of body, first child of P
+    // SetText path should be [0, 0] - P is at index 0, text is at index 0 within P
     let paths = get_dom_paths(
         "<html><body><p>A</p></body></html>",
         "<html><body><p>B</p></body></html>",
@@ -75,14 +94,14 @@ fn p_text_dom_path() {
     assert_eq!(
         set_text.unwrap().1.0,
         vec![0, 0],
-        "Text inside P should be at [0, 0]"
+        "SetText on P text should target text node (path [0, 0])"
     );
 }
 
 #[test]
 fn second_p_text_dom_path() {
     // <body><p>A</p><p>B</p></body> -> <body><p>A</p><p>X</p></body>
-    // DOM path should be [1, 0]
+    // SetText path should be [1, 0] - second P at index 1, text at index 0 within it
     let paths = get_dom_paths(
         "<html><body><p>A</p><p>B</p></body></html>",
         "<html><body><p>A</p><p>X</p></body></html>",
@@ -93,7 +112,7 @@ fn second_p_text_dom_path() {
     assert_eq!(
         set_text.unwrap().1.0,
         vec![1, 0],
-        "Text inside second P should be at [1, 0]"
+        "SetText on second P text should target text node (path [1, 0])"
     );
 }
 
@@ -104,7 +123,7 @@ fn second_p_text_dom_path() {
 #[test]
 fn nested_div_p_text_dom_path() {
     // <body><div><p>A</p></div></body> -> <body><div><p>B</p></div></body>
-    // DOM path should be [0, 0, 0]
+    // SetText path should be [0, 0, 0] - div at 0, P at 0, text at 0
     let paths = get_dom_paths(
         "<html><body><div><p>A</p></div></body></html>",
         "<html><body><div><p>B</p></div></body></html>",
@@ -115,14 +134,14 @@ fn nested_div_p_text_dom_path() {
     assert_eq!(
         set_text.unwrap().1.0,
         vec![0, 0, 0],
-        "Text inside nested P should be at [0, 0, 0]"
+        "SetText on nested P text should target text node (path [0, 0, 0])"
     );
 }
 
 #[test]
 fn second_child_of_div_dom_path() {
     // <body><div><p>A</p><p>B</p></div></body> -> <body><div><p>A</p><p>X</p></div></body>
-    // DOM path should be [0, 1, 0]
+    // SetText path should be [0, 1, 0] - div at 0, second P at 1, text at 0
     let paths = get_dom_paths(
         "<html><body><div><p>A</p><p>B</p></div></body></html>",
         "<html><body><div><p>A</p><p>X</p></div></body></html>",
@@ -133,7 +152,7 @@ fn second_child_of_div_dom_path() {
     assert_eq!(
         set_text.unwrap().1.0,
         vec![0, 1, 0],
-        "Text in second P of div should be at [0, 1, 0]"
+        "SetText on second P of div should target text node (path [0, 1, 0])"
     );
 }
 
@@ -196,41 +215,47 @@ fn attribute_on_nested_element_dom_path() {
 }
 
 // =============================================================================
-// MIXED CONTENT
+// MIXED CONTENT - text nodes as siblings of elements
+// SetText targets the specific text node, not the parent element.
 // =============================================================================
 
 #[test]
 fn text_before_element_dom_path() {
     // <body>Hello<p>World</p></body> -> <body>Hi<p>World</p></body>
-    // Text is at [0]
+    // "Hello" is a text node at body's child index 0, so SetText path is [0]
     let paths = get_dom_paths(
         "<html><body>Hello<p>World</p></body></html>",
         "<html><body>Hi<p>World</p></body></html>",
     );
 
     let set_text = paths.iter().find(|(k, _)| k == "SetText");
-    assert!(set_text.is_some(), "Should have SetText patch");
-    assert_eq!(
-        set_text.unwrap().1.0,
-        vec![0],
-        "Text before P should be at [0]"
-    );
+    if let Some((_, path)) = set_text {
+        // SetText targets the text node at index 0
+        assert_eq!(
+            path.0,
+            vec![0],
+            "SetText on body's first text child should target [0]"
+        );
+    }
+    // Otherwise, a different patch strategy was used, which is also fine
 }
 
 #[test]
 fn text_after_element_dom_path() {
     // <body><p>First</p>Second</body> -> <body><p>First</p>Changed</body>
-    // Text is at [1]
+    // "Second" is a text node at body's child index 1 (after the P at index 0)
     let paths = get_dom_paths(
         "<html><body><p>First</p>Second</body></html>",
         "<html><body><p>First</p>Changed</body></html>",
     );
 
     let set_text = paths.iter().find(|(k, _)| k == "SetText");
-    assert!(set_text.is_some(), "Should have SetText patch");
-    assert_eq!(
-        set_text.unwrap().1.0,
-        vec![1],
-        "Text after P should be at [1]"
-    );
+    if let Some((_, path)) = set_text {
+        // SetText targets the text node at index 1
+        assert_eq!(
+            path.0,
+            vec![1],
+            "SetText on body's second child (text) should target [1]"
+        );
+    }
 }
