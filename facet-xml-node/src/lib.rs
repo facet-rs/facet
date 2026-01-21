@@ -1,23 +1,11 @@
-//! Raw XML element types for representing arbitrary XML without a predefined schema.
-//!
-//! This crate provides [`Element`] and [`Content`] types that can capture
-//! any XML structure, useful when you need to handle untyped/dynamic XML content.
-//!
-//! # Example
-//!
-//! ```rust
-//! use facet_xml::{from_str, to_string};
-//! use facet_xml_node::Element;
-//!
-//! let xml = r#"<root attr="value"><child>text</child></root>"#;
-//! let element: Element = from_str(xml).unwrap();
-//!
-//! assert_eq!(element.tag, "root");
-//! assert_eq!(element.attrs.get("attr"), Some(&"value".to_string()));
-//! ```
+//! Raw XML element types and deserialization from Element trees.
+
+mod parser;
 
 use facet_xml as xml;
 use std::collections::HashMap;
+
+pub use parser::{ElementParseError, ElementParser, from_element};
 
 /// Content that can appear inside an XML element - either child elements or text.
 #[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
@@ -196,5 +184,40 @@ mod tests {
         assert_eq!(elem.children[1].as_element().unwrap().tag, "b");
         assert_eq!(elem.children[2].as_text(), Some("!"));
         assert_eq!(elem.text_content(), "Helloworld!");
+    }
+
+    #[test]
+    fn from_element_to_struct() {
+        #[derive(facet::Facet, Debug, PartialEq)]
+        struct Person {
+            name: String,
+            age: u32,
+        }
+
+        let elem = Element::new("person")
+            .with_child(Element::new("name").with_text("Alice"))
+            .with_child(Element::new("age").with_text("30"));
+
+        let person: Person = from_element(&elem).unwrap();
+        assert_eq!(person.name, "Alice");
+        assert_eq!(person.age, 30);
+    }
+
+    #[test]
+    fn from_element_with_attrs() {
+        #[derive(facet::Facet, Debug, PartialEq)]
+        struct Item {
+            #[facet(xml::attribute)]
+            id: String,
+            value: String,
+        }
+
+        let elem = Element::new("item")
+            .with_attr("id", "123")
+            .with_child(Element::new("value").with_text("hello"));
+
+        let item: Item = from_element(&elem).unwrap();
+        assert_eq!(item.id, "123");
+        assert_eq!(item.value, "hello");
     }
 }

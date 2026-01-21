@@ -2295,6 +2295,8 @@ name = "facet-xml-node"
 version = "0.42.0"
 dependencies = [
  "facet",
+ "facet-core",
+ "facet-dom",
  "facet-xml",
 ]
 
