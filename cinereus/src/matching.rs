@@ -442,11 +442,6 @@ fn bottom_up_phase<'a, K, L, P>(
             continue;
         }
 
-        // Skip leaves in this pass
-        if tree_a.child_count(a_id) == 0 {
-            continue;
-        }
-
         let a_data = tree_a.get(a_id);
         let a_pos = tree_a.position(a_id);
 
