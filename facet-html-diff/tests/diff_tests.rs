@@ -8,7 +8,7 @@ use facet_testhelpers::test;
 /// Assert that diffing old -> new and applying patches produces the expected result.
 #[track_caller]
 fn assert_roundtrip(old: &str, new: &str) {
-    let patches = facet_html_diff::diff_html_debug(old, new).unwrap();
+    let patches = facet_html_diff::diff_html(old, new).unwrap();
     tracing::debug!("Patches for {old} -> {new}:");
     for patch in &patches {
         tracing::debug!("  {patch:?}");

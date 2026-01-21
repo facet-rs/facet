@@ -268,6 +268,7 @@ proptest! {
 #[cfg(test)]
 mod sanity_tests {
     use super::*;
+    use facet_testhelpers::test;
 
     /// Sanity check: identical documents produce no patches.
     #[test]

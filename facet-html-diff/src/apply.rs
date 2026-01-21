@@ -594,11 +594,10 @@ fn parse_html_fragment(html: &str) -> Result<Node, String> {
         facet_html::from_str(&full).map_err(|e| format!("Fragment parse error: {e}"))?;
 
     // Return the first child of body
-    if let Some(body) = &doc.body {
-        if let Some(first) = body.children.first() {
-            return convert_flow_content(first)
-                .ok_or_else(|| "Could not convert fragment".to_string());
-        }
+    if let Some(body) = &doc.body
+        && let Some(first) = body.children.first()
+    {
+        return convert_flow_content(first).ok_or_else(|| "Could not convert fragment".to_string());
     }
     // Might be just text
     Ok(Node::Text(html.to_string()))

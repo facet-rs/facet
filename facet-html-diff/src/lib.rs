@@ -82,29 +82,17 @@ pub fn diff_html(old_html: &str, new_html: &str) -> Result<Vec<Patch>, String> {
         facet_html::from_str(new_html).map_err(|e| format!("Failed to parse new HTML: {e}"))?;
 
     let edit_ops = tree_diff(&old_doc, &new_doc);
-    Ok(translate_to_patches(&edit_ops, &new_doc))
-}
 
-/// Diff with debug tracing of raw edit ops.
-#[cfg(feature = "tracing")]
-pub fn diff_html_debug(old_html: &str, new_html: &str) -> Result<Vec<Patch>, String> {
-    let old_doc: Html =
-        facet_html::from_str(old_html).map_err(|e| format!("Failed to parse old HTML: {e}"))?;
-    let new_doc: Html =
-        facet_html::from_str(new_html).map_err(|e| format!("Failed to parse new HTML: {e}"))?;
-
-    let edit_ops = tree_diff(&old_doc, &new_doc);
-
-    tracing::debug!(count = edit_ops.len(), "Edit ops from facet-diff");
+    debug!(count = edit_ops.len(), "Edit ops from facet-diff");
     for op in &edit_ops {
-        tracing::debug!(?op, "edit op");
+        debug!(?op, "edit op");
     }
 
     let patches = translate_to_patches(&edit_ops, &new_doc);
 
-    tracing::debug!(count = patches.len(), "Translated patches");
+    debug!(count = patches.len(), "Translated patches");
     for patch in &patches {
-        tracing::debug!(?patch, "patch");
+        debug!(?patch, "patch");
     }
 
     Ok(patches)
@@ -204,18 +192,17 @@ fn path_target(segments: &[PathSegment]) -> PathTarget {
         return PathTarget::Text;
     }
     // Also check Index(0) after Variant("Text")
-    if let (Some(PathSegment::Variant(name)), Some(PathSegment::Index(0))) = (second_last, last) {
-        if name == "Text" || name == "_text" {
-            return PathTarget::Text;
-        }
+    if let (Some(PathSegment::Variant(name)), Some(PathSegment::Index(0))) = (second_last, last)
+        && (name == "Text" || name == "_text")
+    {
+        return PathTarget::Text;
     }
 
     // Check for attribute: Field("attrs") followed by Field(attr_name)
     if let (Some(PathSegment::Field(parent)), Some(PathSegment::Field(attr))) = (second_last, last)
+        && parent == "attrs"
     {
-        if parent == "attrs" {
-            return PathTarget::Attribute(attr.to_string());
-        }
+        return PathTarget::Attribute(attr.to_string());
     }
 
     // Check for direct attributes (href, src, etc. flattened from attrs)
@@ -240,10 +227,9 @@ fn path_target(segments: &[PathSegment]) -> PathTarget {
     // If it ends with Index after children, it's an element in a children array
     if let Some(PathSegment::Index(_)) = last
         && let Some(PathSegment::Field(name)) = second_last
+        && (name == "children" || name == "li")
     {
-        if name == "children" || name == "li" {
-            return PathTarget::Element;
-        }
+        return PathTarget::Element;
     }
 
     PathTarget::Other
@@ -513,7 +499,7 @@ fn translate_delete(segments: &[PathSegment], new_doc: &Html) -> Option<Patch> {
                 let peek = Peek::new(new_doc);
                 if let Some(children_peek) = navigate_peek(peek, segments)
                     && let Ok(list) = children_peek.into_list()
-                    && list.len() > 0
+                    && !list.is_empty()
                 {
                     // new_doc has children - Insert will handle it
                     trace!("  skipping delete - children exist in new_doc");
@@ -595,13 +581,12 @@ fn translate_move(
 /// Some ops (like attrs struct inserts/moves/deletes) need to generate multiple patches.
 fn translate_op_multi(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
     // Check for attrs struct inserts that need special handling
-    if let EditOp::Insert { path, .. } = op {
-        if let Some(PathSegment::Field(name)) = path.0.last()
-            && name == "attrs"
-        {
-            // Inserting an attrs struct - sync all attributes from new_doc
-            return sync_attrs_from_new_doc(&path.0, &path.0, new_doc);
-        }
+    if let EditOp::Insert { path, .. } = op
+        && let Some(PathSegment::Field(name)) = path.0.last()
+        && name == "attrs"
+    {
+        // Inserting an attrs struct - sync all attributes from new_doc
+        return sync_attrs_from_new_doc(&path.0, &path.0, new_doc);
     }
 
     // For Move of attrs structs, skip entirely.
@@ -609,21 +594,19 @@ fn translate_op_multi(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
     // The actual attribute changes are handled by Insert and Delete ops.
     if let EditOp::Move { new_path, .. } = op
         && let Some(PathSegment::Field(name)) = new_path.0.last()
+        && name == "attrs"
     {
-        if name == "attrs" {
-            return vec![];
-        }
+        return vec![];
     }
 
     // Check for attrs struct deletes that need special handling
-    if let EditOp::Delete { path, .. } = op {
-        if let Some(PathSegment::Field(name)) = path.0.last()
-            && name == "attrs"
-        {
-            // Deleting an attrs struct - sync all attributes from new_doc
-            // The element at this position should have whatever attrs new_doc specifies
-            return sync_attrs_from_new_doc(&path.0, &path.0, new_doc);
-        }
+    if let EditOp::Delete { path, .. } = op
+        && let Some(PathSegment::Field(name)) = path.0.last()
+        && name == "attrs"
+    {
+        // Deleting an attrs struct - sync all attributes from new_doc
+        // The element at this position should have whatever attrs new_doc specifies
+        return sync_attrs_from_new_doc(&path.0, &path.0, new_doc);
     }
 
     // For all other ops, delegate to the single-patch translation

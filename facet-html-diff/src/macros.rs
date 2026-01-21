@@ -24,6 +24,7 @@ macro_rules! debug {
     ($($arg:tt)*) => {};
 }
 
+#[allow(unused_imports)]
 pub(crate) use trace;
 
 #[allow(unused_imports)]
