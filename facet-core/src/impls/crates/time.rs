@@ -4,7 +4,7 @@ use alloc::string::String;
 use time::{OffsetDateTime, UtcDateTime};
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
+    Def, Facet, OxPtrConst, OxPtrUninit, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
     Type, UserType, VTableIndirect,
 };
 
@@ -26,7 +26,7 @@ unsafe fn utc_display(
 }
 
 unsafe fn utc_try_from(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -35,7 +35,7 @@ unsafe fn utc_try_from(
             let source_str = src.read::<String>();
             match UtcDateTime::parse(&source_str, &time::format_description::well_known::Rfc3339) {
                 Ok(val) => {
-                    *target.as_mut::<UtcDateTime>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("could not parse date".into()),
@@ -46,13 +46,13 @@ unsafe fn utc_try_from(
     }
 }
 
-unsafe fn utc_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn utc_parse(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     unsafe {
         let parsed = UtcDateTime::parse(s, &time::format_description::well_known::Rfc3339)
             .map_err(|_| ParseError::from_str("could not parse date"));
         Some(match parsed {
             Ok(val) => {
-                *target.as_mut::<UtcDateTime>() = val;
+                target.put(val);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -105,7 +105,7 @@ unsafe fn offset_display(
 }
 
 unsafe fn offset_try_from(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -115,7 +115,7 @@ unsafe fn offset_try_from(
             match OffsetDateTime::parse(&source_str, &time::format_description::well_known::Rfc3339)
             {
                 Ok(val) => {
-                    *target.as_mut::<OffsetDateTime>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("could not parse date".into()),
@@ -126,13 +126,13 @@ unsafe fn offset_try_from(
     }
 }
 
-unsafe fn offset_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn offset_parse(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     unsafe {
         let parsed = OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
             .map_err(|_| ParseError::from_str("could not parse date"));
         Some(match parsed {
             Ok(val) => {
-                *target.as_mut::<OffsetDateTime>() = val;
+                target.put(val);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -181,10 +181,8 @@ mod tests {
 
         let target = OffsetDateTime::SHAPE.allocate().unwrap();
         unsafe {
-            // SAFETY: parse will initialize the memory, and PtrUninit/PtrMut have the same layout
-            let target_mut = core::mem::transmute::<crate::PtrUninit, crate::PtrMut>(target);
             OffsetDateTime::SHAPE
-                .call_parse("2023-03-14T15:09:26Z", target_mut)
+                .call_parse("2023-03-14T15:09:26Z", target)
                 .unwrap()
                 .unwrap();
         }

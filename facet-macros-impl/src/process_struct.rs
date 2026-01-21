@@ -509,10 +509,10 @@ fn gen_vtable_indirect(
     let parse_field = if sources.should_auto() {
         quote! {
             parse: 𝟋Some({
-                unsafe fn __parse(s: &str, target: #facet_crate::OxPtrMut) -> ::core::option::Option<::core::result::Result<(), #facet_crate::ParseError>> {
+                unsafe fn __parse(s: &str, target: #facet_crate::OxPtrUninit) -> ::core::option::Option<::core::result::Result<(), #facet_crate::ParseError>> {
                     if impls!(#struct_type: ::core::str::FromStr) {
                         𝟋Some(
-                            match (&&SpezEmpty::<#struct_type>::SPEZ).spez_parse(s, target.ptr().as_uninit()) {
+                            match (&&SpezEmpty::<#struct_type>::SPEZ).spez_parse(s, target.ptr()) {
                                 𝟋Ok(_) => 𝟋Ok(()),
                                 𝟋Err(e) => 𝟋Err(e),
                             }
@@ -1256,10 +1256,8 @@ pub(crate) fn gen_field_from_pfield(
                         let __src_ptr = #facet_crate::PtrConst::new(
                             &__src_value as *const _ as *const u8
                         );
-                        // Get destination pointer
-                        let __dst_ptr = #facet_crate::PtrMut::new(__ptr.as_byte_ptr() as *mut u8);
-                        // Call try_from via vtable
-                        match unsafe { __dst_shape.call_try_from(__src_shape, __src_ptr, __dst_ptr) } {
+                        // Call try_from via vtable (__ptr is already PtrUninit)
+                        match unsafe { __dst_shape.call_try_from(__src_shape, __src_ptr, __ptr) } {
                             Some(#facet_crate::TryFromOutcome::Converted) => {
                                 // Don't run destructor on source value since we consumed it
                                 𝟋forget(__src_value);
@@ -2224,15 +2222,15 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         #facet_crate::TryFromOutcome::Converted
                     }
 
-                    /// try_from wrapper for VTableIndirect (OxPtrMut signature)
+                    /// try_from wrapper for VTableIndirect (OxPtrUninit signature)
                     #[doc(hidden)]
                     unsafe fn __facet_try_from_ref_indirect(
-                        dst: #facet_crate::OxPtrMut,
+                        dst: #facet_crate::OxPtrUninit,
                         src_shape: &'static #facet_crate::Shape,
                         src: #facet_crate::PtrConst,
                     ) -> #facet_crate::TryFromOutcome {
                         Self::__facet_try_from_ref(
-                            dst.ptr().as_ptr::<Self>() as *mut Self,
+                            dst.ptr().as_mut_byte_ptr() as *mut Self,
                             src_shape,
                             src,
                         )

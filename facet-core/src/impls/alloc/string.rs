@@ -96,14 +96,15 @@ mod tests {
         let Some(ptr) = NonNull::new(ptr) else {
             alloc::alloc::handle_alloc_error(layout)
         };
-        let ptr_mut = crate::PtrMut::new(ptr.as_ptr());
+        let ptr_uninit = crate::PtrUninit::new(ptr.as_ptr());
 
         // Parse the string using the new API
-        let result = unsafe { shape.call_parse("hello world", ptr_mut) };
+        let result = unsafe { shape.call_parse("hello world", ptr_uninit) };
         assert!(result.is_some(), "String should have parse function");
         assert!(result.unwrap().is_ok());
 
         // Get the parsed value
+        let ptr_mut = unsafe { ptr_uninit.assume_init() };
         let parsed = unsafe { ptr_mut.get::<String>() };
         assert_eq!(parsed, &String::from("hello world"));
 

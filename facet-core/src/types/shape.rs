@@ -961,16 +961,16 @@ impl Shape {
     pub unsafe fn call_parse(
         &'static self,
         s: &str,
-        dst: crate::PtrMut,
+        dst: crate::PtrUninit,
     ) -> Option<Result<(), crate::ParseError>> {
         match self.vtable {
             VTableErased::Direct(vt) => {
                 let parse_fn = vt.parse?;
-                Some(unsafe { parse_fn(s, dst.data_ptr() as *mut ()) })
+                Some(unsafe { parse_fn(s, dst.as_mut_byte_ptr() as *mut ()) })
             }
             VTableErased::Indirect(vt) => {
                 let parse_fn = vt.parse?;
-                let ox = crate::OxPtrMut::new(dst, self);
+                let ox = crate::OxPtrUninit::new(dst, self);
                 unsafe { parse_fn(s, ox) }
             }
         }
@@ -986,16 +986,16 @@ impl Shape {
     pub unsafe fn call_parse_bytes(
         &'static self,
         bytes: &[u8],
-        dst: crate::PtrMut,
+        dst: crate::PtrUninit,
     ) -> Option<Result<(), crate::ParseError>> {
         match self.vtable {
             VTableErased::Direct(vt) => {
                 let parse_fn = vt.parse_bytes?;
-                Some(unsafe { parse_fn(bytes, dst.data_ptr() as *mut ()) })
+                Some(unsafe { parse_fn(bytes, dst.as_mut_byte_ptr() as *mut ()) })
             }
             VTableErased::Indirect(vt) => {
                 let parse_fn = vt.parse_bytes?;
-                let ox = crate::OxPtrMut::new(dst, self);
+                let ox = crate::OxPtrUninit::new(dst, self);
                 unsafe { parse_fn(bytes, ox) }
             }
         }
@@ -1011,16 +1011,16 @@ impl Shape {
         &'static self,
         src_shape: &'static Shape,
         src: crate::PtrConst,
-        dst: crate::PtrMut,
+        dst: crate::PtrUninit,
     ) -> Option<crate::TryFromOutcome> {
         match self.vtable {
             VTableErased::Direct(vt) => {
                 let try_from_fn = vt.try_from?;
-                Some(unsafe { try_from_fn(dst.data_ptr() as *mut (), src_shape, src) })
+                Some(unsafe { try_from_fn(dst.as_mut_byte_ptr() as *mut (), src_shape, src) })
             }
             VTableErased::Indirect(vt) => {
                 let try_from_fn = vt.try_from?;
-                let ox_dst = crate::OxPtrMut::new(dst, self);
+                let ox_dst = crate::OxPtrUninit::new(dst, self);
                 Some(unsafe { try_from_fn(ox_dst, src_shape, src) })
             }
         }

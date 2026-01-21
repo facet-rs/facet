@@ -4,7 +4,7 @@ use alloc::string::String;
 use jiff::{Timestamp, Zoned, civil::DateTime};
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
+    Def, Facet, OxPtrConst, OxPtrUninit, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
     Type, UserType, VTableIndirect,
 };
 
@@ -26,14 +26,13 @@ unsafe fn zoned_display(
 }
 
 /// Parse for Zoned
-unsafe fn zoned_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn zoned_parse(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     let parsed = s
         .parse::<Zoned>()
         .map_err(|_| ParseError::from_str(ZONED_ERROR));
     Some(match parsed {
         Ok(val) => unsafe {
-            let dst_ptr: *mut Zoned = core::mem::transmute(target.ptr().as_mut_byte_ptr());
-            dst_ptr.write(val);
+            target.put(val);
             Ok(())
         },
         Err(e) => Err(e),
@@ -42,7 +41,7 @@ unsafe fn zoned_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError
 
 /// TryFrom for Zoned (from String)
 unsafe fn zoned_try_from(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -51,8 +50,7 @@ unsafe fn zoned_try_from(
             let source_str = src.read::<String>();
             match source_str.parse::<Zoned>() {
                 Ok(val) => {
-                    let dst_ptr: *mut Zoned = core::mem::transmute(target.ptr().as_mut_byte_ptr());
-                    dst_ptr.write(val);
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed(ZONED_ERROR.into()),
@@ -108,14 +106,13 @@ unsafe fn timestamp_display(
 }
 
 /// Parse for Timestamp
-unsafe fn timestamp_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn timestamp_parse(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     let parsed = s
         .parse::<Timestamp>()
         .map_err(|_| ParseError::from_str(TIMESTAMP_ERROR));
     Some(match parsed {
         Ok(val) => unsafe {
-            let dst_ptr: *mut Timestamp = core::mem::transmute(target.ptr().as_mut_byte_ptr());
-            dst_ptr.write(val);
+            target.put(val);
             Ok(())
         },
         Err(e) => Err(e),
@@ -124,7 +121,7 @@ unsafe fn timestamp_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseE
 
 /// TryFrom for Timestamp (from String)
 unsafe fn timestamp_try_from(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -133,9 +130,7 @@ unsafe fn timestamp_try_from(
             let source_str = src.read::<String>();
             match source_str.parse::<Timestamp>() {
                 Ok(val) => {
-                    let dst_ptr: *mut Timestamp =
-                        core::mem::transmute(target.ptr().as_mut_byte_ptr());
-                    dst_ptr.write(val);
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed(TIMESTAMP_ERROR.into()),
@@ -191,14 +186,13 @@ unsafe fn datetime_display(
 }
 
 /// Parse for DateTime
-unsafe fn datetime_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn datetime_parse(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     let parsed = s
         .parse::<DateTime>()
         .map_err(|_| ParseError::from_str(DATETIME_ERROR));
     Some(match parsed {
         Ok(val) => unsafe {
-            let dst_ptr: *mut DateTime = core::mem::transmute(target.ptr().as_mut_byte_ptr());
-            dst_ptr.write(val);
+            target.put(val);
             Ok(())
         },
         Err(e) => Err(e),
@@ -207,7 +201,7 @@ unsafe fn datetime_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseEr
 
 /// TryFrom for DateTime (from String)
 unsafe fn datetime_try_from(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -216,9 +210,7 @@ unsafe fn datetime_try_from(
             let source_str = src.read::<String>();
             match source_str.parse::<DateTime>() {
                 Ok(val) => {
-                    let dst_ptr: *mut DateTime =
-                        core::mem::transmute(target.ptr().as_mut_byte_ptr());
-                    dst_ptr.write(val);
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed(DATETIME_ERROR.into()),
@@ -262,7 +254,7 @@ mod tests {
 
     use jiff::{Timestamp, civil::DateTime};
 
-    use crate::{Facet, PtrConst, PtrMut};
+    use crate::{Facet, PtrConst};
 
     #[test]
     #[cfg(not(miri))] // I don't think we can read time zones from miri, the test just fails
@@ -272,10 +264,9 @@ mod tests {
         facet_testhelpers::setup();
 
         let target = Zoned::SHAPE.allocate().unwrap();
-        let target_mut = PtrMut::new(target.as_mut_byte_ptr());
         unsafe {
             Zoned::SHAPE
-                .call_parse("2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]", target_mut)
+                .call_parse("2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]", target)
                 .unwrap()
                 .unwrap();
         }
@@ -311,10 +302,9 @@ mod tests {
         facet_testhelpers::setup();
 
         let target = Timestamp::SHAPE.allocate().unwrap();
-        let target_mut = PtrMut::new(target.as_mut_byte_ptr());
         unsafe {
             Timestamp::SHAPE
-                .call_parse("2024-06-19T15:22:45Z", target_mut)
+                .call_parse("2024-06-19T15:22:45Z", target)
                 .unwrap()
                 .unwrap();
         }
@@ -348,10 +338,9 @@ mod tests {
         facet_testhelpers::setup();
 
         let target = DateTime::SHAPE.allocate().unwrap();
-        let target_mut = PtrMut::new(target.as_mut_byte_ptr());
         unsafe {
             DateTime::SHAPE
-                .call_parse("2024-06-19T15:22:45", target_mut)
+                .call_parse("2024-06-19T15:22:45", target)
                 .unwrap()
                 .unwrap();
         }
