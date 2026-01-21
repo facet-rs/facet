@@ -19,8 +19,16 @@ pub struct QueryFile {
 #[facet(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum Decl {
-    /// A query declaration.
+    /// A SELECT query declaration.
     Query(Query),
+    /// An INSERT declaration.
+    Insert(Insert),
+    /// An UPSERT declaration.
+    Upsert(Upsert),
+    /// An UPDATE declaration.
+    Update(Update),
+    /// A DELETE declaration.
+    Delete(Delete),
 }
 
 /// A query definition.
@@ -165,4 +173,97 @@ pub struct Relation {
 
     /// Fields to select from the relation.
     pub select: Option<Select>,
+}
+
+/// An INSERT declaration.
+#[derive(Debug, Facet)]
+pub struct Insert {
+    /// Query parameters.
+    pub params: Option<Params>,
+    /// Target table.
+    pub into: String,
+    /// Values to insert (column -> value expression).
+    pub values: Values,
+    /// Columns to return.
+    pub returning: Option<Returning>,
+}
+
+/// An UPSERT declaration (INSERT ... ON CONFLICT ... DO UPDATE).
+#[derive(Debug, Facet)]
+pub struct Upsert {
+    /// Query parameters.
+    pub params: Option<Params>,
+    /// Target table.
+    pub into: String,
+    /// Conflict target column(s).
+    pub conflict: Conflict,
+    /// Values to insert/update (column -> value expression).
+    pub values: Values,
+    /// Columns to return.
+    pub returning: Option<Returning>,
+}
+
+/// An UPDATE declaration.
+#[derive(Debug, Facet)]
+pub struct Update {
+    /// Query parameters.
+    pub params: Option<Params>,
+    /// Target table.
+    pub table: String,
+    /// Values to set (column -> value expression).
+    pub set: Values,
+    /// Filter conditions.
+    #[facet(rename = "where")]
+    pub where_clause: Option<Where>,
+    /// Columns to return.
+    pub returning: Option<Returning>,
+}
+
+/// A DELETE declaration.
+#[derive(Debug, Facet)]
+pub struct Delete {
+    /// Query parameters.
+    pub params: Option<Params>,
+    /// Target table.
+    pub from: String,
+    /// Filter conditions.
+    #[facet(rename = "where")]
+    pub where_clause: Option<Where>,
+    /// Columns to return.
+    pub returning: Option<Returning>,
+}
+
+/// Values clause for INSERT/UPDATE.
+#[derive(Debug, Facet)]
+pub struct Values {
+    #[facet(flatten)]
+    pub columns: IndexMap<String, ValueExpr>,
+}
+
+/// A value expression in INSERT/UPDATE.
+#[derive(Debug, Facet)]
+#[facet(rename_all = "lowercase")]
+#[repr(u8)]
+pub enum ValueExpr {
+    /// Current timestamp (@now).
+    Now,
+    /// Default value (@default).
+    Default,
+    /// Parameter or literal - bare scalar fallback.
+    #[facet(other)]
+    Expr(String),
+}
+
+/// Conflict target for UPSERT.
+#[derive(Debug, Facet)]
+pub struct Conflict {
+    #[facet(flatten)]
+    pub columns: IndexMap<String, ()>,
+}
+
+/// RETURNING clause.
+#[derive(Debug, Facet)]
+pub struct Returning {
+    #[facet(flatten)]
+    pub columns: IndexMap<String, ()>,
 }
