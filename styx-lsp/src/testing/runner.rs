@@ -241,12 +241,13 @@ fn check_completions(
             }
             Some(item) => {
                 if let Some(ref expected_detail) = item_exp.detail
-                    && item.detail.as_deref() != Some(expected_detail.as_str()) {
-                        errors.push(format!(
-                            "completion '{}': expected detail '{}', got {:?}",
-                            item_exp.label, expected_detail, item.detail
-                        ));
-                    }
+                    && item.detail.as_deref() != Some(expected_detail.as_str())
+                {
+                    errors.push(format!(
+                        "completion '{}': expected detail '{}', got {:?}",
+                        item_exp.label, expected_detail, item.detail
+                    ));
+                }
                 if let Some(ref expected_doc) = item_exp.documentation {
                     let has_doc = item
                         .documentation
@@ -303,13 +304,14 @@ fn check_diagnostics(
 ) {
     // Check count if specified
     if let Some(count) = expected.count
-        && diagnostics.len() != count as usize {
-            errors.push(format!(
-                "expected {} diagnostics, got {}",
-                count,
-                diagnostics.len()
-            ));
-        }
+        && diagnostics.len() != count as usize
+    {
+        errors.push(format!(
+            "expected {} diagnostics, got {}",
+            count,
+            diagnostics.len()
+        ));
+    }
 
     // Check 'has' expectations
     for exp in &expected.has {
@@ -341,13 +343,14 @@ fn check_inlay_hints(
 ) {
     // Check count if specified
     if let Some(count) = expected.count
-        && hints.len() != count as usize {
-            errors.push(format!(
-                "expected {} inlay hints, got {}",
-                count,
-                hints.len()
-            ));
-        }
+        && hints.len() != count as usize
+    {
+        errors.push(format!(
+            "expected {} inlay hints, got {}",
+            count,
+            hints.len()
+        ));
+    }
 
     // Check 'has' expectations
     for exp in &expected.has {

@@ -20,62 +20,63 @@ pub use styx_format::FormatOptions as SerializeOptions;
 fn extract_field_key<'mem, 'facet>(key: Peek<'mem, 'facet>) -> Option<FieldKey<'mem>> {
     // Try to extract from metadata container
     if key.shape().is_metadata_container()
-        && let Ok(container) = key.into_struct() {
-            let mut doc_lines: Vec<Cow<'mem, str>> = Vec::new();
-            let mut tag_value: Option<Cow<'mem, str>> = None;
-            let mut name_value: Option<Cow<'mem, str>> = None;
+        && let Ok(container) = key.into_struct()
+    {
+        let mut doc_lines: Vec<Cow<'mem, str>> = Vec::new();
+        let mut tag_value: Option<Cow<'mem, str>> = None;
+        let mut name_value: Option<Cow<'mem, str>> = None;
 
-            for (f, field_value) in container.fields() {
-                if f.metadata_kind() == Some("doc") {
-                    // Extract doc lines
-                    if let Ok(opt) = field_value.into_option()
-                        && let Some(inner) = opt.value()
-                        && let Ok(list) = inner.into_list_like()
-                    {
-                        for item in list.iter() {
-                            if let Some(line) = item.as_str() {
-                                doc_lines.push(Cow::Borrowed(line));
-                            }
+        for (f, field_value) in container.fields() {
+            if f.metadata_kind() == Some("doc") {
+                // Extract doc lines
+                if let Ok(opt) = field_value.into_option()
+                    && let Some(inner) = opt.value()
+                    && let Ok(list) = inner.into_list_like()
+                {
+                    for item in list.iter() {
+                        if let Some(line) = item.as_str() {
+                            doc_lines.push(Cow::Borrowed(line));
                         }
                     }
-                } else if f.metadata_kind() == Some("tag") {
-                    // Extract tag
-                    if let Ok(opt) = field_value.into_option()
-                        && let Some(inner) = opt.value()
-                        && let Some(s) = inner.as_str()
-                    {
-                        tag_value = Some(Cow::Borrowed(s));
-                    }
-                } else if f.metadata_kind().is_none() {
-                    // This is the value field - might be another metadata container
-                    let (inner_name, inner_tag) = extract_name_and_tag(field_value);
-                    if inner_name.is_some() {
-                        name_value = inner_name;
-                    }
-                    if inner_tag.is_some() {
-                        tag_value = inner_tag;
-                    }
+                }
+            } else if f.metadata_kind() == Some("tag") {
+                // Extract tag
+                if let Ok(opt) = field_value.into_option()
+                    && let Some(inner) = opt.value()
+                    && let Some(s) = inner.as_str()
+                {
+                    tag_value = Some(Cow::Borrowed(s));
+                }
+            } else if f.metadata_kind().is_none() {
+                // This is the value field - might be another metadata container
+                let (inner_name, inner_tag) = extract_name_and_tag(field_value);
+                if inner_name.is_some() {
+                    name_value = inner_name;
+                }
+                if inner_tag.is_some() {
+                    tag_value = inner_tag;
                 }
             }
-
-            return Some(FieldKey {
-                name: name_value,
-                tag: tag_value,
-                doc: if doc_lines.is_empty() {
-                    None
-                } else {
-                    Some(doc_lines)
-                },
-                location: FieldLocationHint::KeyValue,
-            });
         }
+
+        return Some(FieldKey {
+            name: name_value,
+            tag: tag_value,
+            doc: if doc_lines.is_empty() {
+                None
+            } else {
+                Some(doc_lines)
+            },
+            location: FieldLocationHint::KeyValue,
+        });
+    }
 
     // Try Option<String> - None becomes unit key (@)
     if let Ok(opt) = key.into_option() {
         return match opt.value() {
-            Some(inner) => {
-                inner.as_str().map(|s| FieldKey::new(s, FieldLocationHint::KeyValue))
-            }
+            Some(inner) => inner
+                .as_str()
+                .map(|s| FieldKey::new(s, FieldLocationHint::KeyValue)),
             None => {
                 // None -> unit key (@)
                 Some(FieldKey::unit(FieldLocationHint::KeyValue))
@@ -116,32 +117,34 @@ fn extract_name_and_tag<'mem, 'facet>(
 
     // Nested metadata container (like ObjectKey)
     if value.shape().is_metadata_container()
-        && let Ok(container) = value.into_struct() {
-            let mut name: Option<Cow<'mem, str>> = None;
-            let mut tag: Option<Cow<'mem, str>> = None;
+        && let Ok(container) = value.into_struct()
+    {
+        let mut name: Option<Cow<'mem, str>> = None;
+        let mut tag: Option<Cow<'mem, str>> = None;
 
-            for (f, field_value) in container.fields() {
-                if f.metadata_kind() == Some("tag") {
-                    if let Ok(opt) = field_value.into_option()
-                        && let Some(inner) = opt.value()
-                        && let Some(s) = inner.as_str()
-                    {
-                        tag = Some(Cow::Borrowed(s));
-                    }
-                } else if f.metadata_kind().is_none() {
-                    // Value field
-                    if let Some(s) = field_value.as_str() {
-                        name = Some(Cow::Borrowed(s));
-                    } else if let Ok(opt) = field_value.into_option()
-                        && let Some(inner) = opt.value()
-                            && let Some(s) = inner.as_str() {
-                                name = Some(Cow::Borrowed(s));
-                            }
+        for (f, field_value) in container.fields() {
+            if f.metadata_kind() == Some("tag") {
+                if let Ok(opt) = field_value.into_option()
+                    && let Some(inner) = opt.value()
+                    && let Some(s) = inner.as_str()
+                {
+                    tag = Some(Cow::Borrowed(s));
+                }
+            } else if f.metadata_kind().is_none() {
+                // Value field
+                if let Some(s) = field_value.as_str() {
+                    name = Some(Cow::Borrowed(s));
+                } else if let Ok(opt) = field_value.into_option()
+                    && let Some(inner) = opt.value()
+                    && let Some(s) = inner.as_str()
+                {
+                    name = Some(Cow::Borrowed(s));
                 }
             }
-
-            return (name, tag);
         }
+
+        return (name, tag);
+    }
 
     (None, None)
 }

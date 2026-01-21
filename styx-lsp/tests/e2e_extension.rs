@@ -106,9 +106,10 @@ impl LspClient {
 
             // Check if this is the response we're waiting for
             if let Some(id) = msg.get("id")
-                && id.as_i64() == Some(expected_id as i64) {
-                    return msg;
-                }
+                && id.as_i64() == Some(expected_id as i64)
+            {
+                return msg;
+            }
 
             // Otherwise it's a notification or different response, skip it
         }

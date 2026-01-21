@@ -803,12 +803,13 @@ fn extract_embedded_schema(
                 // Parse the schema to check its meta.id
                 if let Ok(parsed) = styx_tree::parse(schema)
                     && let Some(obj) = parsed.as_object()
-                        && let Some(meta) = obj.get("meta")
-                            && let Some(meta_obj) = meta.as_object()
-                                && let Some(id_value) = meta_obj.get("id")
-                                    && let Some(id) = id_value.as_str() {
-                                        return id == target_id;
-                                    }
+                    && let Some(meta) = obj.get("meta")
+                    && let Some(meta_obj) = meta.as_object()
+                    && let Some(id_value) = meta_obj.get("id")
+                    && let Some(id) = id_value.as_str()
+                {
+                    return id == target_id;
+                }
                 false
             })
             .ok_or_else(|| {

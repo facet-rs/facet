@@ -457,28 +457,29 @@ fn find_path_at_offset(tree: &Value, offset: usize) -> Option<Vec<String>> {
         }
 
         if let Some(tag) = &value.tag
-            && let Some(styx_tree::Payload::Object(obj)) = &value.payload {
-                path.push(format!("@{}", tag.name));
-                for entry in &obj.entries {
-                    if let Some(key) = entry.key.as_str() {
-                        // Same logic for tagged objects
-                        let key_end = entry.key.span.as_ref().map(|s| s.end as usize).unwrap_or(0);
-                        let value_has_content = entry.value.payload.is_some();
+            && let Some(styx_tree::Payload::Object(obj)) = &value.payload
+        {
+            path.push(format!("@{}", tag.name));
+            for entry in &obj.entries {
+                if let Some(key) = entry.key.as_str() {
+                    // Same logic for tagged objects
+                    let key_end = entry.key.span.as_ref().map(|s| s.end as usize).unwrap_or(0);
+                    let value_has_content = entry.value.payload.is_some();
 
-                        if !value_has_content && offset > key_end && offset <= key_end + 10 {
-                            path.push(key.to_string());
-                            return true;
-                        }
-
+                    if !value_has_content && offset > key_end && offset <= key_end + 10 {
                         path.push(key.to_string());
-                        if recurse(&entry.value, offset, path) {
-                            return true;
-                        }
-                        path.pop();
+                        return true;
                     }
+
+                    path.push(key.to_string());
+                    if recurse(&entry.value, offset, path) {
+                        return true;
+                    }
+                    path.pop();
                 }
-                return true;
             }
+            return true;
+        }
 
         true
     }
@@ -510,13 +511,17 @@ fn find_context_at_offset(tree: &Value, offset: usize) -> Option<Value> {
                 }
                 // Also check if we're on the key or value
                 if let Some(key_span) = &entry.key.span
-                    && offset >= key_span.start as usize && offset <= key_span.end as usize {
-                        return Some(value.clone());
-                    }
+                    && offset >= key_span.start as usize
+                    && offset <= key_span.end as usize
+                {
+                    return Some(value.clone());
+                }
                 if let Some(val_span) = &entry.value.span
-                    && offset >= val_span.start as usize && offset <= val_span.end as usize {
-                        return Some(value.clone());
-                    }
+                    && offset >= val_span.start as usize
+                    && offset <= val_span.end as usize
+                {
+                    return Some(value.clone());
+                }
             }
             if in_span {
                 return Some(value.clone());
@@ -531,13 +536,17 @@ fn find_context_at_offset(tree: &Value, offset: usize) -> Option<Value> {
                 }
                 // Check if we're on key or value
                 if let Some(key_span) = &entry.key.span
-                    && offset >= key_span.start as usize && offset <= key_span.end as usize {
-                        return Some(value.clone());
-                    }
+                    && offset >= key_span.start as usize
+                    && offset <= key_span.end as usize
+                {
+                    return Some(value.clone());
+                }
                 if let Some(val_span) = &entry.value.span
-                    && offset >= val_span.start as usize && offset <= val_span.end as usize {
-                        return Some(value.clone());
-                    }
+                    && offset >= val_span.start as usize
+                    && offset <= val_span.end as usize
+                {
+                    return Some(value.clone());
+                }
             }
             if in_span {
                 return Some(value.clone());
