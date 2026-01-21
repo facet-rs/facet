@@ -6,7 +6,7 @@
 //! - When a subtree is moved, don't report individual child moves
 
 use crate::chawathe::EditOp;
-use crate::tree::Tree;
+use crate::tree::{Properties, Tree};
 use core::hash::Hash;
 use indextree::NodeId;
 use std::collections::HashSet;
@@ -15,14 +15,15 @@ use std::collections::HashSet;
 ///
 /// This removes redundant child operations when a parent operation already
 /// covers the entire subtree.
-pub fn simplify_edit_script<K, L>(
-    ops: Vec<EditOp<K, L>>,
-    tree_a: &Tree<K, L>,
-    tree_b: &Tree<K, L>,
-) -> Vec<EditOp<K, L>>
+pub fn simplify_edit_script<K, L, P>(
+    ops: Vec<EditOp<K, L, P>>,
+    tree_a: &Tree<K, L, P>,
+    tree_b: &Tree<K, L, P>,
+) -> Vec<EditOp<K, L, P>>
 where
     K: Clone + Eq + Hash,
     L: Clone + Eq,
+    P: Properties,
 {
     // Collect all nodes involved in each operation type
     let mut inserted_nodes: HashSet<NodeId> = HashSet::new();
@@ -40,7 +41,7 @@ where
             EditOp::Move { node_b, .. } => {
                 moved_nodes_b.insert(*node_b);
             }
-            EditOp::Update { .. } => {}
+            EditOp::Update { .. } | EditOp::UpdateProperty { .. } => {}
         }
     }
 
@@ -84,7 +85,7 @@ where
             EditOp::Insert { node_b, .. } => root_inserts.contains(node_b),
             EditOp::Delete { node_a } => root_deletes.contains(node_a),
             EditOp::Move { node_b, .. } => root_moves.contains(node_b),
-            EditOp::Update { .. } => true, // Always keep updates
+            EditOp::Update { .. } | EditOp::UpdateProperty { .. } => true, // Always keep updates
         })
         .collect()
 }

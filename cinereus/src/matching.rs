@@ -4,21 +4,21 @@
 //! 1. Top-down: Match identical subtrees by hash
 //! 2. Bottom-up: Match remaining nodes by structural similarity
 
-#[cfg(feature = "tracing")]
 use facet_pretty::FacetPretty;
-#[cfg(feature = "tracing")]
+
+#[cfg(any(test, feature = "tracing"))]
 use tracing::{debug, trace};
 
-#[cfg(not(feature = "tracing"))]
+#[cfg(not(any(test, feature = "tracing")))]
 macro_rules! debug {
     ($($arg:tt)*) => {};
 }
-#[cfg(not(feature = "tracing"))]
+#[cfg(not(any(test, feature = "tracing")))]
 macro_rules! trace {
     ($($arg:tt)*) => {};
 }
 
-use crate::tree::Tree;
+use crate::tree::{NoProperties, Properties, Tree};
 use core::hash::Hash;
 use facet_core::Facet;
 use indextree::NodeId;
@@ -174,14 +174,15 @@ impl Default for MatchingConfig {
 }
 
 /// Compute the matching between two trees using the GumTree algorithm.
-pub fn compute_matching<'a, K, L>(
-    tree_a: &'a Tree<K, L>,
-    tree_b: &'a Tree<K, L>,
+pub fn compute_matching<'a, K, L, P>(
+    tree_a: &'a Tree<K, L, P>,
+    tree_b: &'a Tree<K, L, P>,
     config: &MatchingConfig,
 ) -> Matching
 where
     K: Clone + Eq + Hash + Send + Sync + Facet<'a>,
     L: Clone + Send + Sync + Facet<'a>,
+    P: Properties + Send + Sync,
 {
     debug!(
         nodes_a = tree_a.arena.count(),
@@ -206,14 +207,15 @@ where
 /// Greedily matches nodes with identical subtree hashes, starting from the roots
 /// and working down. When two nodes have the same hash, their entire subtrees
 /// are identical and can be matched recursively.
-fn top_down_phase<'a, K, L>(
-    tree_a: &'a Tree<K, L>,
-    tree_b: &'a Tree<K, L>,
+fn top_down_phase<'a, K, L, P>(
+    tree_a: &'a Tree<K, L, P>,
+    tree_b: &'a Tree<K, L, P>,
     matching: &mut Matching,
     config: &MatchingConfig,
 ) where
     K: Clone + Eq + Hash + Facet<'a>,
     L: Clone + Facet<'a>,
+    P: Properties,
 {
     debug!("top_down_phase start");
 
@@ -274,15 +276,16 @@ fn top_down_phase<'a, K, L>(
 }
 
 /// Match two subtrees recursively (when their hashes match).
-fn match_subtrees<'a, K, L>(
-    tree_a: &'a Tree<K, L>,
-    tree_b: &'a Tree<K, L>,
+fn match_subtrees<'a, K, L, P>(
+    tree_a: &'a Tree<K, L, P>,
+    tree_b: &'a Tree<K, L, P>,
     a_id: NodeId,
     b_id: NodeId,
     matching: &mut Matching,
 ) where
     K: Clone + Eq + Hash + Facet<'a>,
     L: Clone + Facet<'a>,
+    P: Properties,
 {
     matching.add(a_id, b_id);
 
@@ -311,10 +314,11 @@ impl DescendantMap {
 }
 
 /// Precompute all descendant sets in parallel.
-fn precompute_descendants<'a, K, L>(tree: &'a Tree<K, L>) -> DescendantMap
+fn precompute_descendants<'a, K, L, P>(tree: &'a Tree<K, L, P>) -> DescendantMap
 where
     K: Clone + Eq + Hash + Send + Sync + Facet<'a>,
     L: Clone + Send + Sync + Facet<'a>,
+    P: Properties + Send + Sync,
 {
     let nodes: Vec<NodeId> = tree.iter().collect();
 
@@ -344,16 +348,17 @@ where
 ///
 /// If A's parent is matched to some node P_b, then B must be a descendant of P_b.
 /// This prevents matching nodes across incompatible tree locations.
-fn ancestry_compatible<'a, K, L>(
+fn ancestry_compatible<'a, K, L, P>(
     a_id: NodeId,
     b_id: NodeId,
-    tree_a: &'a Tree<K, L>,
-    tree_b: &'a Tree<K, L>,
+    tree_a: &'a Tree<K, L, P>,
+    tree_b: &'a Tree<K, L, P>,
     matching: &Matching,
 ) -> bool
 where
     K: Clone + Eq + Hash + Facet<'a>,
     L: Clone + Facet<'a>,
+    P: Properties,
 {
     // Check if A's parent is matched
     if let Some(a_parent) = tree_a.parent(a_id)
@@ -407,14 +412,15 @@ where
 /// 2. Second pass: Match leaf nodes (now ancestry constraints are established)
 ///
 /// This prevents cross-level matching of leaves that happen to have the same hash.
-fn bottom_up_phase<'a, K, L>(
-    tree_a: &'a Tree<K, L>,
-    tree_b: &'a Tree<K, L>,
+fn bottom_up_phase<'a, K, L, P>(
+    tree_a: &'a Tree<K, L, P>,
+    tree_b: &'a Tree<K, L, P>,
     matching: &mut Matching,
     config: &MatchingConfig,
 ) where
     K: Clone + Eq + Hash + Send + Sync + Facet<'a>,
     L: Clone + Send + Sync + Facet<'a>,
+    P: Properties + Send + Sync,
 {
     // Build index for tree B by kind
     let mut b_by_kind: HashMap<K, Vec<NodeId>> = HashMap::default();

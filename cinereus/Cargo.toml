@@ -15,7 +15,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 matching-stats = []
-tracing = ["dep:tracing", "dep:facet-pretty"]
+tracing = ["dep:tracing"]
 
 [dependencies]
 indextree = { workspace = true }
@@ -23,9 +23,12 @@ rapidhash = "1"
 rayon = "1"
 tracing = { version = "0.1", optional = true }
 facet-core = { workspace = true }
-facet-pretty = { workspace = true, optional = true }
+facet-pretty = { workspace = true }
 
 [dev-dependencies]
+tracing = { workspace = true }
+facet-testhelpers = { path = "../facet-testhelpers" }
+facet = { path = "../facet" }
 
 [lints]
 workspace = true
