@@ -5,4 +5,5 @@ edition = "2024"
 description = "Facet types for the dibs query DSL schema"
 
 [dependencies]
-facet.workspace = true
+facet = { workspace = true, features = ["indexmap"] }
+indexmap = "2"

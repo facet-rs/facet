@@ -5,13 +5,13 @@
 //! - Used to generate a styx schema via facet-styx's schema generation
 
 use facet::Facet;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 /// A query file - top level is a map of declaration names to declarations.
 #[derive(Debug, Facet)]
 pub struct QueryFile {
     #[facet(flatten)]
-    pub decls: HashMap<String, Decl>,
+    pub decls: IndexMap<String, Decl>,
 }
 
 /// A declaration in a query file.
@@ -65,7 +65,7 @@ pub struct Query {
 #[derive(Debug, Facet)]
 pub struct Returns {
     #[facet(flatten)]
-    pub fields: HashMap<String, ParamType>,
+    pub fields: IndexMap<String, ParamType>,
 }
 
 /// ORDER BY clause.
@@ -73,14 +73,14 @@ pub struct Returns {
 pub struct OrderBy {
     /// Column name -> direction ("asc" or "desc", None means asc)
     #[facet(flatten)]
-    pub columns: HashMap<String, Option<String>>,
+    pub columns: IndexMap<String, Option<String>>,
 }
 
 /// WHERE clause - filter conditions.
 #[derive(Debug, Facet)]
 pub struct Where {
     #[facet(flatten)]
-    pub filters: HashMap<String, FilterValue>,
+    pub filters: IndexMap<String, FilterValue>,
 }
 
 /// A filter value - tagged operators or bare scalars for where clauses.
@@ -114,7 +114,7 @@ pub enum FilterValue {
 #[derive(Debug, Facet)]
 pub struct Params {
     #[facet(flatten)]
-    pub params: HashMap<String, ParamType>,
+    pub params: IndexMap<String, ParamType>,
 }
 
 /// Parameter type.
@@ -136,7 +136,7 @@ pub enum ParamType {
 #[derive(Debug, Facet)]
 pub struct Select {
     #[facet(flatten)]
-    pub fields: HashMap<String, Option<FieldDef>>,
+    pub fields: IndexMap<String, Option<FieldDef>>,
 }
 
 /// A field definition - tagged values in select.
