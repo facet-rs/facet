@@ -1,9 +1,7 @@
 ; Indentation queries for Styx
 
-; Objects and sequences increase indent
-(object) @indent
-(sequence) @indent
+; Objects increase indent, with closing brace marking the end
+(object "}" @end) @indent
 
-; Closing brackets decrease indent
-"}" @outdent
-")" @outdent
+; Sequences increase indent, with closing paren marking the end
+(sequence ")" @end) @indent

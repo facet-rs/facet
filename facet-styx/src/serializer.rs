@@ -19,8 +19,8 @@ pub use styx_format::FormatOptions as SerializeOptions;
 /// doc comments, tag, and the actual key name.
 fn extract_field_key<'mem, 'facet>(key: Peek<'mem, 'facet>) -> Option<FieldKey<'mem>> {
     // Try to extract from metadata container
-    if key.shape().is_metadata_container() {
-        if let Ok(container) = key.into_struct() {
+    if key.shape().is_metadata_container()
+        && let Ok(container) = key.into_struct() {
             let mut doc_lines: Vec<Cow<'mem, str>> = Vec::new();
             let mut tag_value: Option<Cow<'mem, str>> = None;
             let mut name_value: Option<Cow<'mem, str>> = None;
@@ -69,17 +69,12 @@ fn extract_field_key<'mem, 'facet>(key: Peek<'mem, 'facet>) -> Option<FieldKey<'
                 location: FieldLocationHint::KeyValue,
             });
         }
-    }
 
     // Try Option<String> - None becomes unit key (@)
     if let Ok(opt) = key.into_option() {
         return match opt.value() {
             Some(inner) => {
-                if let Some(s) = inner.as_str() {
-                    Some(FieldKey::new(s, FieldLocationHint::KeyValue))
-                } else {
-                    None
-                }
+                inner.as_str().map(|s| FieldKey::new(s, FieldLocationHint::KeyValue))
             }
             None => {
                 // None -> unit key (@)
@@ -120,8 +115,8 @@ fn extract_name_and_tag<'mem, 'facet>(
     }
 
     // Nested metadata container (like ObjectKey)
-    if value.shape().is_metadata_container() {
-        if let Ok(container) = value.into_struct() {
+    if value.shape().is_metadata_container()
+        && let Ok(container) = value.into_struct() {
             let mut name: Option<Cow<'mem, str>> = None;
             let mut tag: Option<Cow<'mem, str>> = None;
 
@@ -137,19 +132,16 @@ fn extract_name_and_tag<'mem, 'facet>(
                     // Value field
                     if let Some(s) = field_value.as_str() {
                         name = Some(Cow::Borrowed(s));
-                    } else if let Ok(opt) = field_value.into_option() {
-                        if let Some(inner) = opt.value() {
-                            if let Some(s) = inner.as_str() {
+                    } else if let Ok(opt) = field_value.into_option()
+                        && let Some(inner) = opt.value()
+                            && let Some(s) = inner.as_str() {
                                 name = Some(Cow::Borrowed(s));
                             }
-                        }
-                    }
                 }
             }
 
             return (name, tag);
         }
-    }
 
     (None, None)
 }

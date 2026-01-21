@@ -630,19 +630,19 @@ fn is_tag_with_block_payload(entry_node: &SyntaxNode) -> bool {
 /// Objects with doc comments also need to be block-formatted.
 fn contains_block_object(node: &SyntaxNode) -> bool {
     // Check this node if it's an object
-    if node.kind() == SyntaxKind::OBJECT {
-        if let Some(obj) = Object::cast(node.clone()) {
-            let sep = obj.separator();
-            if matches!(sep, Separator::Newline | Separator::Mixed) {
-                return true;
-            }
-            // Also check if the object contains doc comments
-            if node
-                .children_with_tokens()
-                .any(|el| el.kind() == SyntaxKind::DOC_COMMENT)
-            {
-                return true;
-            }
+    if node.kind() == SyntaxKind::OBJECT
+        && let Some(obj) = Object::cast(node.clone())
+    {
+        let sep = obj.separator();
+        if matches!(sep, Separator::Newline | Separator::Mixed) {
+            return true;
+        }
+        // Also check if the object contains doc comments
+        if node
+            .children_with_tokens()
+            .any(|el| el.kind() == SyntaxKind::DOC_COMMENT)
+        {
+            return true;
         }
     }
 

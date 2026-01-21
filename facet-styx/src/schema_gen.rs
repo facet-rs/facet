@@ -226,11 +226,10 @@ fn generate_schema_inner<T: facet_core::Facet<'static>>(
     while let Some(pending_shape) = generator.take_pending() {
         let type_name = pending_shape.type_identifier.to_string();
         // Only add if not already defined
-        if !schema_map.contains_key(&Some(type_name.clone())) {
-            if let Some(type_schema) = generator.generate_type_definition(pending_shape) {
+        if !schema_map.contains_key(&Some(type_name.clone()))
+            && let Some(type_schema) = generator.generate_type_definition(pending_shape) {
                 schema_map.insert(Some(type_name), type_schema);
             }
-        }
     }
 
     let description = if shape.doc.is_empty() {

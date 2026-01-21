@@ -680,11 +680,12 @@ impl StyxWriter {
                 comma_positions,
                 ..
             } = ctx
+                && !*is_root
+                && *inline_start
+                && !*force_multiline
             {
-                if !*is_root && *inline_start && !*force_multiline {
-                    structs_to_fix.push(idx);
-                    all_comma_positions.extend(comma_positions.iter().copied());
-                }
+                structs_to_fix.push(idx);
+                all_comma_positions.extend(comma_positions.iter().copied());
             }
         }
 

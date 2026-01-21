@@ -105,11 +105,10 @@ impl LspClient {
             let msg: Value = serde_json::from_slice(&content).unwrap();
 
             // Check if this is the response we're waiting for
-            if let Some(id) = msg.get("id") {
-                if id.as_i64() == Some(expected_id as i64) {
+            if let Some(id) = msg.get("id")
+                && id.as_i64() == Some(expected_id as i64) {
                     return msg;
                 }
-            }
 
             // Otherwise it's a notification or different response, skip it
         }

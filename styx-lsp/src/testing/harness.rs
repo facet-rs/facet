@@ -357,7 +357,7 @@ impl TestHarness {
             .get(&uri)
             .ok_or_else(|| HarnessError::DocumentNotFound(document_uri.to_string()))?;
 
-        let tree = doc.tree.clone().unwrap_or_else(|| Value {
+        let tree = doc.tree.clone().unwrap_or(Value {
             tag: None,
             payload: None,
             span: None,
@@ -456,8 +456,8 @@ fn find_path_at_offset(tree: &Value, offset: usize) -> Option<Vec<String>> {
             }
         }
 
-        if let Some(tag) = &value.tag {
-            if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+        if let Some(tag) = &value.tag
+            && let Some(styx_tree::Payload::Object(obj)) = &value.payload {
                 path.push(format!("@{}", tag.name));
                 for entry in &obj.entries {
                     if let Some(key) = entry.key.as_str() {
@@ -479,7 +479,6 @@ fn find_path_at_offset(tree: &Value, offset: usize) -> Option<Vec<String>> {
                 }
                 return true;
             }
-        }
 
         true
     }
@@ -510,16 +509,14 @@ fn find_context_at_offset(tree: &Value, offset: usize) -> Option<Value> {
                     return Some(nested);
                 }
                 // Also check if we're on the key or value
-                if let Some(key_span) = &entry.key.span {
-                    if offset >= key_span.start as usize && offset <= key_span.end as usize {
+                if let Some(key_span) = &entry.key.span
+                    && offset >= key_span.start as usize && offset <= key_span.end as usize {
                         return Some(value.clone());
                     }
-                }
-                if let Some(val_span) = &entry.value.span {
-                    if offset >= val_span.start as usize && offset <= val_span.end as usize {
+                if let Some(val_span) = &entry.value.span
+                    && offset >= val_span.start as usize && offset <= val_span.end as usize {
                         return Some(value.clone());
                     }
-                }
             }
             if in_span {
                 return Some(value.clone());
@@ -533,16 +530,14 @@ fn find_context_at_offset(tree: &Value, offset: usize) -> Option<Value> {
                     return Some(nested);
                 }
                 // Check if we're on key or value
-                if let Some(key_span) = &entry.key.span {
-                    if offset >= key_span.start as usize && offset <= key_span.end as usize {
+                if let Some(key_span) = &entry.key.span
+                    && offset >= key_span.start as usize && offset <= key_span.end as usize {
                         return Some(value.clone());
                     }
-                }
-                if let Some(val_span) = &entry.value.span {
-                    if offset >= val_span.start as usize && offset <= val_span.end as usize {
+                if let Some(val_span) = &entry.value.span
+                    && offset >= val_span.start as usize && offset <= val_span.end as usize {
                         return Some(value.clone());
                     }
-                }
             }
             if in_span {
                 return Some(value.clone());

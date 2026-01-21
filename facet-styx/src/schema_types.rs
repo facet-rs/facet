@@ -229,7 +229,7 @@ impl ObjectKey {
 
     /// Returns true if this is the unit catch-all (`@`).
     pub fn is_unit(&self) -> bool {
-        self.tag.as_ref().map_or(false, |t| t.is_empty())
+        self.tag.as_ref().is_some_and(|t| t.is_empty())
     }
 
     /// Get the field name if this is a named key.

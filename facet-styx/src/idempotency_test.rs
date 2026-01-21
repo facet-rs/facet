@@ -5,6 +5,9 @@
 //! no changes. This ensures StyxWriter follows the same formatting rules as
 //! the CST formatter.
 
+// Test types are used for serialization, fields are read via reflection
+#![allow(dead_code)]
+
 use facet_testhelpers::test;
 use std::collections::HashMap;
 

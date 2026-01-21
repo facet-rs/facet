@@ -813,7 +813,7 @@ impl<'a> Validator<'a> {
         let text = value.scalar_text()?;
 
         // Look for a variant whose schema matches this value
-        for (_variant_name, variant_schema) in &schema.0 {
+        for variant_schema in schema.0.values() {
             match variant_schema {
                 // @string accepts any scalar
                 Schema::String(_) => return Some(variant_schema),

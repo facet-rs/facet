@@ -74,9 +74,7 @@ impl StyxLanguageServer {
         };
 
         // Check if schema has an LSP extension
-        let Some(ext_info) = get_extension_info(&schema) else {
-            return None;
-        };
+        let ext_info = get_extension_info(&schema)?;
 
         tracing::info!(
             schema_id = %ext_info.schema_id,
@@ -112,29 +110,28 @@ impl StyxLanguageServer {
         let mut diagnostics = self.compute_diagnostics(&uri, content, parsed, tree);
 
         // Add diagnostic for blocked extension if applicable
-        if let Some(blocked) = blocked_extension {
-            if let Some(tree) = tree {
-                if let Some(range) = find_schema_declaration_range(tree, content) {
-                    diagnostics.push(Diagnostic {
-                        range,
-                        severity: Some(DiagnosticSeverity::INFORMATION),
-                        code: None,
-                        code_description: None,
-                        source: Some("styx-extension".to_string()),
-                        message: format!(
-                            "LSP extension '{}' is not allowed. Use the code action to allow it.",
-                            blocked.command
-                        ),
-                        related_information: None,
-                        tags: None,
-                        data: Some(serde_json::json!({
-                            "type": "allow_extension",
-                            "schema_id": blocked.schema_id,
-                            "command": blocked.command,
-                        })),
-                    });
-                }
-            }
+        if let Some(blocked) = blocked_extension
+            && let Some(tree) = tree
+            && let Some(range) = find_schema_declaration_range(tree, content)
+        {
+            diagnostics.push(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::INFORMATION),
+                code: None,
+                code_description: None,
+                source: Some("styx-extension".to_string()),
+                message: format!(
+                    "LSP extension '{}' is not allowed. Use the code action to allow it.",
+                    blocked.command
+                ),
+                related_information: None,
+                tags: None,
+                data: Some(serde_json::json!({
+                    "type": "allow_extension",
+                    "schema_id": blocked.schema_id,
+                    "command": blocked.command,
+                })),
+            });
         }
 
         self.client
@@ -1377,42 +1374,42 @@ impl LanguageServer for StyxLanguageServer {
         match params.command.as_str() {
             "styx.allowExtension" => {
                 // Extract the command to allow from the arguments
-                if let Some(arg) = params.arguments.first() {
-                    if let Some(command) = arg.get("command").and_then(|v| v.as_str()) {
-                        tracing::info!(command, "Allowing LSP extension");
-                        self.extensions.allow(command.to_string()).await;
+                if let Some(arg) = params.arguments.first()
+                    && let Some(command) = arg.get("command").and_then(|v| v.as_str())
+                {
+                    tracing::info!(command, "Allowing LSP extension");
+                    self.extensions.allow(command.to_string()).await;
 
-                        // Notify the user
-                        self.client
-                            .log_message(
-                                MessageType::INFO,
-                                format!("Allowed LSP extension: {}", command),
-                            )
-                            .await;
+                    // Notify the user
+                    self.client
+                        .log_message(
+                            MessageType::INFO,
+                            format!("Allowed LSP extension: {}", command),
+                        )
+                        .await;
 
-                        // Re-publish diagnostics for all open documents to clear the warning
-                        // and trigger extension spawning
-                        let docs = self.documents.read().await;
-                        for (uri, doc) in docs.iter() {
-                            let blocked_extension = if let Some(ref tree) = doc.tree {
-                                self.check_for_extension(tree, uri).await
-                            } else {
-                                None
-                            };
-                            self.publish_diagnostics(
-                                uri.clone(),
-                                &doc.content,
-                                &doc.parse,
-                                doc.tree.as_ref(),
-                                doc.version,
-                                blocked_extension,
-                            )
-                            .await;
-                        }
-
-                        // Request inlay hint refresh so hints appear immediately
-                        let _ = self.client.inlay_hint_refresh().await;
+                    // Re-publish diagnostics for all open documents to clear the warning
+                    // and trigger extension spawning
+                    let docs = self.documents.read().await;
+                    for (uri, doc) in docs.iter() {
+                        let blocked_extension = if let Some(ref tree) = doc.tree {
+                            self.check_for_extension(tree, uri).await
+                        } else {
+                            None
+                        };
+                        self.publish_diagnostics(
+                            uri.clone(),
+                            &doc.content,
+                            &doc.parse,
+                            doc.tree.as_ref(),
+                            doc.version,
+                            blocked_extension,
+                        )
+                        .await;
                     }
+
+                    // Request inlay hint refresh so hints appear immediately
+                    let _ = self.client.inlay_hint_refresh().await;
                 }
                 Ok(None)
             }

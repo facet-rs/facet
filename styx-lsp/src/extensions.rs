@@ -417,16 +417,14 @@ impl StyxLspHost for StyxLspHostImpl {
 
         for ch in doc.content.chars() {
             if current_line == params.position.line {
-                let mut char_offset = 0;
-                for c in doc.content[offset..].chars() {
-                    if char_offset == params.position.character {
+                for (char_offset, c) in doc.content[offset..].chars().enumerate() {
+                    if char_offset == params.position.character as usize {
                         return Some(offset as u32);
                     }
                     if c == '\n' {
                         break;
                     }
                     offset += c.len_utf8();
-                    char_offset += 1;
                 }
                 return Some(offset as u32);
             }
