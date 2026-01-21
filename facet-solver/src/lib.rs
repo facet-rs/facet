@@ -914,6 +914,38 @@ impl<'a> Solver<'a> {
         }
     }
 
+    /// Hint that a variant is selected, but only if the field is actually a tag field
+    /// for an internally-tagged enum.
+    ///
+    /// This is safer than `hint_variant` because it validates that `tag_field_name`
+    /// is actually the tag field for an internally-tagged enum in at least one
+    /// candidate resolution before applying the hint.
+    ///
+    /// Returns `true` if the hint was applied (field was a valid tag field and
+    /// at least one candidate matches), `false` otherwise.
+    pub fn hint_variant_for_tag(&mut self, tag_field_name: &str, variant_name: &str) -> bool {
+        // First check if any candidate has this field as an internally-tagged enum tag field
+        let is_tag_field = self.candidates.iter().any(|idx| {
+            let config = &self.schema.resolutions[idx];
+            // Look for a field with the given name that is a tag field
+            config.fields().values().any(|field| {
+                field.serialized_name == tag_field_name
+                    && field
+                        .value_shape
+                        .get_tag_attr()
+                        .is_some_and(|tag| tag == tag_field_name)
+                    && field.value_shape.get_content_attr().is_none()
+            })
+        });
+
+        if !is_tag_field {
+            return false;
+        }
+
+        // Now apply the variant hint
+        self.hint_variant(variant_name)
+    }
+
     /// Mark a key as seen without filtering candidates.
     ///
     /// This is useful when the key is known to be present through means other than

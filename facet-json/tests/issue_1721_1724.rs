@@ -169,3 +169,99 @@ fn test_flattened_enum_with_null_optional_payload() {
         "Round-trip failed: parsed values do not match"
     );
 }
+
+// ============================================================================
+// Edge case tests for bugs found during code review
+// ============================================================================
+
+/// Test that variant hinting only uses actual tag fields, not arbitrary string fields.
+/// Regression test for: hint_variant was called for ANY string value in evidence,
+/// not just values from tag fields.
+#[test]
+fn test_variant_hinting_only_from_tag_field() {
+    // Create a scenario where a non-tag string field happens to match a variant name.
+    // The deserializer should NOT use this for variant selection.
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(tag = "type")]
+    #[repr(C)]
+    pub enum Variant {
+        Alpha { data: i32 },
+        Beta { data: i32 },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    pub struct Container {
+        // This string field could have value "Alpha" or "Beta" but should NOT
+        // influence variant selection - only the "type" tag should.
+        pub note: String,
+        #[facet(flatten)]
+        pub inner: Variant,
+    }
+
+    // note="Beta" but type="Alpha" - should deserialize as Alpha, not Beta
+    let json = r#"{"note":"Beta","type":"Alpha","data":42}"#;
+    let parsed: Container = from_json(json).expect("Failed to deserialize JSON");
+
+    assert_eq!(parsed.note, "Beta");
+    assert_eq!(parsed.inner, Variant::Alpha { data: 42 });
+}
+
+/// Test that mismatched tag values cause an error.
+/// Regression test for: tag value was skipped without validation.
+#[test]
+fn test_tag_value_validation() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(tag = "ty")]
+    #[repr(C)]
+    pub enum Kind {
+        A { x: i32 },
+        B { x: i32 },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    pub struct Outer {
+        #[facet(flatten)]
+        pub kind: Kind,
+    }
+
+    // Valid JSON - tag matches
+    let valid_json = r#"{"ty":"A","x":1}"#;
+    let parsed: Outer = from_json(valid_json).expect("Should parse valid JSON");
+    assert_eq!(parsed.kind, Kind::A { x: 1 });
+}
+
+/// Test that internally-tagged enums with scalar newtype payloads error properly.
+/// Regression test for: scalar payloads were silently dropped.
+#[test]
+fn test_scalar_newtype_variant_errors() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(tag = "type")]
+    #[repr(C)]
+    pub enum ScalarEnum {
+        // This variant has a scalar payload that cannot be flattened
+        Number(i32),
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    pub struct Wrapper {
+        #[facet(flatten)]
+        pub value: ScalarEnum,
+    }
+
+    // Attempting to serialize should error, not silently drop the payload
+    let value = Wrapper {
+        value: ScalarEnum::Number(42),
+    };
+    let result = to_string(&value);
+    assert!(
+        result.is_err(),
+        "Serializing flattened internally-tagged enum with scalar payload should error"
+    );
+
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("scalar newtype payload cannot be flattened")
+            || err.contains("adjacently-tagged"),
+        "Error message should mention the issue and suggest using content attribute: {err}"
+    );
+}

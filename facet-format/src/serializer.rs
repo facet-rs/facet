@@ -5,7 +5,7 @@ use alloc::string::String;
 use core::fmt::Debug;
 use core::fmt::Write as _;
 
-use facet_core::{Def, DynDateTimeKind, DynValueKind, ScalarType, Shape, StructKind};
+use facet_core::{Def, DynDateTimeKind, DynValueKind, ScalarType, Shape, StructKind, Type};
 use facet_reflect::{HasFields as _, Peek, ReflectError};
 
 use crate::ScalarValue;
@@ -889,6 +889,17 @@ where
                                 shared_serialize(serializer, inner_value)?;
                             }
                         }
+                    } else if matches!(field_value.shape().ty, Type::Primitive(_)) {
+                        // Scalar/primitive payload (e.g., A(i32))
+                        // Internally-tagged enums cannot flatten scalar payloads -
+                        // there's no field name to use for the value.
+                        // Use #[facet(content = "...")] for adjacently-tagged representation.
+                        return Err(SerializeError::Unsupported(
+                            "internally-tagged enum with scalar newtype payload cannot be \
+                             flattened; use #[facet(content = \"...\")] for adjacently-tagged \
+                             representation"
+                                .into(),
+                        ));
                     }
                     // Unit variants have no content fields to emit
                     continue;

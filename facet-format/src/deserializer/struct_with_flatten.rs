@@ -81,10 +81,13 @@ where
         // If still ambiguous, try to disambiguate using tag values from
         // internally-tagged enums. The evidence captures scalar values,
         // so we can look for tag fields and use their values to select variants.
+        // We use hint_variant_for_tag to ensure we only consider string values
+        // from actual tag fields, not arbitrary string fields that happen to
+        // match a variant name.
         if solver.candidates().len() > 1 {
             for ev in &evidence {
                 if let Some(ScalarValue::Str(variant_name)) = &ev.scalar_value
-                    && solver.hint_variant(variant_name)
+                    && solver.hint_variant_for_tag(&ev.name, variant_name)
                     && solver.candidates().len() == 1
                 {
                     break;
@@ -285,10 +288,34 @@ where
                                     .is_some_and(|tag| tag == field_info.serialized_name);
 
                                 if is_internally_tagged_tag {
-                                    // Consume the tag value (the variant name string)
-                                    // We don't need to verify it matches since the solver
-                                    // already determined the variant from probing.
-                                    self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                                    // Read and validate the tag value (the variant name string)
+                                    // The tag value MUST match the variant we're selecting.
+                                    let tag_event =
+                                        self.expect_event("internally-tagged enum tag value")?;
+                                    let actual_tag = match &tag_event {
+                                        ParseEvent::Scalar(ScalarValue::Str(s)) => s.as_ref(),
+                                        _ => {
+                                            return Err(DeserializeError::TypeMismatch {
+                                                expected: "string tag value",
+                                                got: format!("{tag_event:?}"),
+                                                span: self.last_span,
+                                                path: None,
+                                            });
+                                        }
+                                    };
+
+                                    if actual_tag != *variant_name {
+                                        return Err(DeserializeError::TypeMismatch {
+                                            expected: alloc::format!(
+                                                "tag value matching variant '{}'",
+                                                variant_name
+                                            )
+                                            .leak(),
+                                            got: actual_tag.to_string(),
+                                            span: self.last_span,
+                                            path: None,
+                                        });
+                                    }
 
                                     wip = wip
                                         .select_variant_named(variant_name)
