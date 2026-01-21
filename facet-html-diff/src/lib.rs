@@ -205,8 +205,18 @@ fn navigate_path(
                             {
                                 if let Some(field) = variant.data.fields.get(*idx) {
                                     current_shape = field.shape();
-                                    if is_last && variant.is_text() {
-                                        target = PathTarget::Text;
+                                    if is_last {
+                                        if variant.is_text() {
+                                            target = PathTarget::Text;
+                                        } else if is_transparent_element_struct(current_shape) {
+                                            // Struct with only flattened fields (attrs + children)
+                                            // This is the "content" of the element, not a DOM node
+                                            // Inserting this = replacing innerHTML
+                                            target = PathTarget::FlattenedChildrenList;
+                                        } else {
+                                            // Landing on struct/enum inside variant = element
+                                            target = PathTarget::Element;
+                                        }
                                     }
                                 }
                             }
@@ -334,6 +344,18 @@ fn is_element_type(shape: &facet_core::Shape) -> bool {
     }
 }
 
+/// Check if a struct is "transparent" - all fields are flattened.
+/// These structs (like Div, Span, P) contain attrs + children but don't
+/// represent a DOM node themselves. The DOM element is the enum variant.
+fn is_transparent_element_struct(shape: &facet_core::Shape) -> bool {
+    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+        // All fields must be flattened for it to be transparent
+        struct_def.fields.iter().all(|f| f.is_flattened())
+    } else {
+        false
+    }
+}
+
 /// Find a field in a struct, including checking flattened structs recursively.
 fn find_field_in_struct(
     struct_def: &facet_core::StructType,
@@ -364,6 +386,37 @@ fn is_list_type(shape: &facet_core::Shape) -> bool {
 fn to_dom_path(segments: &[PathSegment]) -> Vec<usize> {
     let html_shape = <Html as facet_core::Facet>::SHAPE;
     navigate_path(segments, html_shape).dom_path
+}
+
+/// Extract DOM indices from path segments.
+///
+/// Index segments that follow a Variant are tuple field accesses (not DOM indices).
+/// All other Index segments are DOM child indices.
+fn extract_dom_indices(segments: &[PathSegment]) -> Vec<usize> {
+    let mut result = Vec::new();
+    let mut after_variant = false;
+
+    for seg in segments {
+        match seg {
+            PathSegment::Index(idx) => {
+                if after_variant {
+                    // Tuple field access, not a DOM index
+                    after_variant = false;
+                } else {
+                    // DOM child index
+                    result.push(*idx);
+                }
+            }
+            PathSegment::Variant(_) => {
+                after_variant = true;
+            }
+            _ => {
+                after_variant = false;
+            }
+        }
+    }
+
+    result
 }
 
 /// Translate a single EditOp to DOM Patches.
@@ -403,6 +456,9 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
 }
 
 /// Translate an Insert operation.
+///
+/// `segments` is the path from EditOp - DOM position with Variants stripped.
+/// `label_segments` is the label_path - full type navigation path with Variants.
 fn translate_insert(
     segments: &[PathSegment],
     label_segments: &[PathSegment],
@@ -410,11 +466,15 @@ fn translate_insert(
     new_doc: &Html,
 ) -> Option<Patch> {
     let html_shape = <Html as facet_core::Facet>::SHAPE;
-    let nav = navigate_path(segments, html_shape);
+
+    // Use label_segments for type navigation (has Variant info)
+    let nav = navigate_path(label_segments, html_shape);
+    // Use segments for DOM path (Index segments = DOM indices)
+    let dom_path = extract_dom_indices(segments);
 
     trace!(
-        "translate_insert: segments={segments:?}, label_segments={label_segments:?}, dom_path={:?}, target={:?}, value={value:?}",
-        nav.dom_path, nav.target
+        "translate_insert: segments={segments:?}, label_segments={label_segments:?}, dom_path={dom_path:?}, target={:?}, value={value:?}",
+        nav.target
     );
 
     match nav.target {
@@ -423,19 +483,31 @@ fn translate_insert(
             let node_peek = navigate_peek(peek, label_segments)?;
             let html = serialize_to_html(node_peek)?;
 
-            if nav.dom_path.is_empty() {
+            if dom_path.is_empty() {
                 Some(Patch::AppendChild {
                     path: NodePath(vec![]),
                     html,
                 })
             } else {
                 Some(Patch::InsertBefore {
-                    path: NodePath(nav.dom_path),
+                    path: NodePath(dom_path),
                     html,
                 })
             }
         }
         PathTarget::Attribute(name) => {
+            // For attributes, DOM path is the element path (excluding the last index)
+            let element_dom_path: Vec<usize> = segments
+                .iter()
+                .filter_map(|seg| {
+                    if let PathSegment::Index(idx) = seg {
+                        Some(*idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             let peek = Peek::new(new_doc);
             if let Some(attr_peek) = navigate_peek(peek, label_segments) {
                 if let Ok(opt) = attr_peek.into_option() {
@@ -448,19 +520,19 @@ fn translate_insert(
                                 .and_then(|inner| inner.as_str().map(|s| s.to_string()))
                         })?;
                         return Some(Patch::SetAttribute {
-                            path: NodePath(nav.element_dom_path),
+                            path: NodePath(element_dom_path),
                             name,
                             value: attr_value,
                         });
                     } else {
                         return Some(Patch::RemoveAttribute {
-                            path: NodePath(nav.element_dom_path),
+                            path: NodePath(element_dom_path),
                             name,
                         });
                     }
                 } else if let Some(s) = attr_peek.as_str() {
                     return Some(Patch::SetAttribute {
-                        path: NodePath(nav.element_dom_path),
+                        path: NodePath(element_dom_path),
                         name,
                         value: s.to_string(),
                     });
@@ -468,36 +540,59 @@ fn translate_insert(
             }
 
             value.map(|v| Patch::SetAttribute {
-                path: NodePath(nav.element_dom_path),
-                name,
+                path: NodePath(element_dom_path),
+                name: name.clone(),
                 value: v.to_string(),
             })
         }
         PathTarget::Text => {
+            let element_dom_path = extract_dom_indices(segments);
             let text = value?.to_string();
             Some(Patch::SetText {
-                path: NodePath(nav.element_dom_path),
+                path: NodePath(element_dom_path),
                 text,
             })
         }
         PathTarget::FlattenedAttributeStruct => {
-            let patches = sync_attrs_from_new_doc(&nav.element_dom_path, label_segments, new_doc);
+            let element_dom_path = extract_dom_indices(segments);
+            let patches = sync_attrs_from_new_doc(&element_dom_path, label_segments, new_doc);
             patches.into_iter().next()
         }
         PathTarget::FlattenedChildrenList => {
+            // DOM path for the element (not including this "transparent" struct)
+            // The path segments before the last Index are the element indices
+            let element_dom_path: Vec<usize> = segments
+                .iter()
+                .filter_map(|seg| {
+                    if let PathSegment::Index(idx) = seg {
+                        Some(*idx)
+                    } else {
+                        None
+                    }
+                })
+                .take(dom_path.len().saturating_sub(1).max(1))
+                .collect();
+
             let peek = Peek::new(new_doc);
-            if let Some(children_peek) = navigate_peek(peek, label_segments) {
-                if let Ok(list) = children_peek.into_list_like() {
-                    let mut children_html = String::new();
-                    for child in list.iter() {
-                        if let Some(html) = serialize_to_html(child) {
-                            children_html.push_str(&html);
+            if let Some(struct_peek) = navigate_peek(peek, label_segments) {
+                // The struct has flattened children - find and serialize them
+                if let Ok(s) = struct_peek.into_struct() {
+                    for (field, field_peek) in s.fields() {
+                        if field.is_flattened() {
+                            if let Ok(list) = field_peek.into_list_like() {
+                                let mut children_html = String::new();
+                                for child in list.iter() {
+                                    if let Some(html) = serialize_to_html(child) {
+                                        children_html.push_str(&html);
+                                    }
+                                }
+                                return Some(Patch::ReplaceInnerHtml {
+                                    path: NodePath(element_dom_path),
+                                    html: children_html,
+                                });
+                            }
                         }
                     }
-                    return Some(Patch::ReplaceInnerHtml {
-                        path: NodePath(nav.dom_path),
-                        html: children_html,
-                    });
                 }
             }
             None

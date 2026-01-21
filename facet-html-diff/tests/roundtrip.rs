@@ -240,3 +240,12 @@ fn text_moves_into_div() {
         r#"<html><body><div>0</div></body></html>"#,
     );
 }
+
+#[test]
+fn insert_around_existing() {
+    // Proptest found this case: inserting elements before and after an existing element
+    assert_roundtrip(
+        r#"<html><body> <span>A</span></body></html>"#,
+        r#"<html><body><p>a</p><span>A</span><p>a</p></body></html>"#,
+    );
+}

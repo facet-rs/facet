@@ -150,6 +150,16 @@ fn add_id_and_child_generates_ops() {
         !ops.is_empty(),
         "Should generate edit ops for adding id and child"
     );
+
+    // Should have UpdateAttribute op for the id attribute
+    let has_update_attr = ops
+        .iter()
+        .any(|op| matches!(op, EditOp::UpdateAttribute { attr_name, .. } if *attr_name == "id"));
+    assert!(
+        has_update_attr,
+        "Should have UpdateAttribute op for id, got: {:?}",
+        ops
+    );
 }
 
 #[test]

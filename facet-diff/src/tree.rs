@@ -265,7 +265,7 @@ impl TreeBuilder {
         props
     }
 
-    /// Recursively collect attribute fields, including from flattened structs.
+    /// Recursively collect attribute fields, including from flattened structs and enum variants.
     fn collect_properties_recursive<'mem, 'facet>(
         &self,
         peek: Peek<'mem, 'facet>,
@@ -275,22 +275,33 @@ impl TreeBuilder {
             shape = peek.shape().type_identifier,
             "collect_properties_recursive"
         );
-        // Only structs have attribute fields
-        if let Type::User(UserType::Struct(_)) = peek.shape().ty
-            && let Ok(s) = peek.into_struct()
-        {
-            for (field, field_peek) in s.fields() {
-                if field.is_attribute() {
-                    // This field is an attribute - extract its value
-                    let value = self.extract_attribute_value(field_peek);
-                    debug!(field = field.name, ?value, "found attribute field");
-                    props.set(field.name, value);
-                } else if field.is_flattened() {
-                    // This field is flattened - recurse into it to find attributes
-                    debug!(field = field.name, "recursing into flattened field");
-                    self.collect_properties_recursive(field_peek, props);
+
+        match &peek.shape().ty {
+            Type::User(UserType::Struct(_)) => {
+                if let Ok(s) = peek.into_struct() {
+                    for (field, field_peek) in s.fields() {
+                        if field.is_attribute() {
+                            let value = self.extract_attribute_value(field_peek);
+                            debug!(field = field.name, ?value, "found attribute field");
+                            props.set(field.name, value);
+                        } else if field.is_flattened() {
+                            debug!(field = field.name, "recursing into flattened field");
+                            self.collect_properties_recursive(field_peek, props);
+                        }
+                    }
                 }
             }
+            Type::User(UserType::Enum(_)) => {
+                // For enums, get the active variant's inner value and recurse
+                if let Ok(e) = peek.into_enum() {
+                    // Tuple variants have fields - get field 0 (the inner struct)
+                    if let Ok(Some(inner)) = e.field(0) {
+                        debug!("recursing into enum variant inner value");
+                        self.collect_properties_recursive(inner, props);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -704,19 +715,54 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 // Find the parent in our shadow tree
                 let shadow_parent = b_to_shadow.get(&parent_b).copied().unwrap_or(shadow_root);
 
-                // Compute the path for the insertion point
-                let parent_path =
-                    compute_path_in_shadow(&shadow_arena, shadow_root, shadow_parent, tree_a);
-                let mut path = parent_path;
+                // Create a new node in shadow tree
+                let new_data: NodeData<NodeKind, NodeLabel, HtmlProperties> = NodeData {
+                    hash: 0,
+                    kind: NodeKind::Scalar("inserted"),
+                    label: label.clone(),
+                    properties: HtmlProperties::new(),
+                };
+                let new_node = shadow_arena.new_node(new_data);
 
-                // Add the position segment from the label (which has the full path info)
-                if let Some(ref lbl) = label {
-                    // The label's path contains the full path including the final segment
-                    // We want to use its structure but with our computed parent path
-                    if let Some(last_segment) = lbl.path.0.last() {
-                        path.0.push(last_segment.clone());
+                // Insert at the correct position among siblings.
+                //
+                // IMPORTANT: `position` is the index in tree_b, NOT the shadow tree.
+                // The shadow tree may have extra nodes (not yet deleted) or different
+                // ordering. We need to find where to insert by looking at the LEFT
+                // SIBLING in tree_b and finding its shadow equivalent.
+                let children: Vec<_> = shadow_parent.children(&shadow_arena).collect();
+                if position == 0 {
+                    // Insert at beginning
+                    if let Some(&first_child) = children.first() {
+                        first_child.insert_before(new_node, &mut shadow_arena);
+                    } else {
+                        shadow_parent.append(new_node, &mut shadow_arena);
+                    }
+                } else {
+                    // Find the left sibling in tree_b (at position - 1)
+                    let tree_b_siblings: Vec<_> = parent_b.children(&tree_b.arena).collect();
+                    let left_sibling_b = tree_b_siblings.get(position - 1).copied();
+
+                    if let Some(left_b) = left_sibling_b {
+                        // Find the shadow equivalent of the left sibling
+                        if let Some(&left_shadow) = b_to_shadow.get(&left_b) {
+                            // Insert after the left sibling in shadow tree
+                            left_shadow.insert_after(new_node, &mut shadow_arena);
+                        } else {
+                            // Left sibling not in shadow yet - append to end
+                            shadow_parent.append(new_node, &mut shadow_arena);
+                        }
+                    } else {
+                        // No left sibling found - append to end
+                        shadow_parent.append(new_node, &mut shadow_arena);
                     }
                 }
+
+                b_to_shadow.insert(node_b, new_node);
+
+                // NOW compute the path - after the node is in the shadow tree.
+                // This gives us the actual position where it ended up.
+                let path = compute_path_in_shadow(&shadow_arena, shadow_root, new_node, tree_a);
 
                 // Extract value for leaf nodes using the tree_b label path
                 let label_path = tree_b
@@ -735,36 +781,11 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     "INSERT op: computed path"
                 );
                 result.push(EditOp::Insert {
-                    path: path.clone(),
+                    path,
                     label_path,
                     value,
                     hash: tree_b.get(node_b).hash,
                 });
-
-                // Create a new node in shadow tree and add to b_to_shadow
-                let new_data: NodeData<NodeKind, NodeLabel, HtmlProperties> = NodeData {
-                    hash: 0,
-                    kind: NodeKind::Scalar("inserted"),
-                    label,
-                    properties: HtmlProperties::new(),
-                };
-                let new_node = shadow_arena.new_node(new_data);
-
-                // Insert at the correct position among siblings
-                let children: Vec<_> = shadow_parent.children(&shadow_arena).collect();
-                if position == 0 {
-                    if let Some(&first_child) = children.first() {
-                        first_child.insert_before(new_node, &mut shadow_arena);
-                    } else {
-                        shadow_parent.append(new_node, &mut shadow_arena);
-                    }
-                } else if position >= children.len() {
-                    shadow_parent.append(new_node, &mut shadow_arena);
-                } else {
-                    children[position].insert_before(new_node, &mut shadow_arena);
-                }
-
-                b_to_shadow.insert(node_b, new_node);
             }
 
             CinereusEditOp::Delete { node_a } => {
