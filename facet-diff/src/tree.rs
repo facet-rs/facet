@@ -137,8 +137,10 @@ pub enum EditOp {
 pub enum NodeRef {
     /// Node at a path in the tree
     Path(Path),
-    /// Node in a slot (previously detached)
-    Slot(u32),
+    /// Node in a slot (previously detached).
+    /// The optional path is relative to the slot root - used when the target
+    /// is nested inside the detached subtree.
+    Slot(u32, Option<Path>),
 }
 
 /// Properties for HTML/XML nodes: attribute key-value pairs.
@@ -839,12 +841,12 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 // We need to check if the parent OR any ancestor is detached
                 let parent = if let Some(&slot) = detached_nodes.get(&shadow_parent) {
                     // Parent is directly in a slot
-                    NodeRef::Slot(slot)
-                } else if let Some(slot) =
+                    NodeRef::Slot(slot, None)
+                } else if let Some((slot, relative_path)) =
                     find_detached_ancestor(&shadow_arena, shadow_parent, &detached_nodes)
                 {
-                    // An ancestor is in a slot
-                    NodeRef::Slot(slot)
+                    // An ancestor is in a slot - include the relative path to the parent
+                    NodeRef::Slot(slot, relative_path)
                 } else {
                     // Parent is in the tree - compute its path
                     let parent_path =
@@ -882,13 +884,13 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 // Check if the node or any ancestor is currently detached (in a slot)
                 let node = if let Some(slot) = detached_nodes.remove(&node_a) {
                     // Node is directly in a slot - delete from slot
-                    NodeRef::Slot(slot)
-                } else if let Some(slot) =
+                    NodeRef::Slot(slot, None)
+                } else if let Some((slot, relative_path)) =
                     find_detached_ancestor(&shadow_arena, node_a, &detached_nodes)
                 {
                     // An ancestor is in a slot - the node is inside a detached subtree
                     // It will be deleted when the slot is cleared or the subtree is replaced
-                    NodeRef::Slot(slot)
+                    NodeRef::Slot(slot, relative_path)
                 } else {
                     // Node is in the tree - delete from path
                     let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
@@ -946,7 +948,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 // Determine the source for the Move
                 let from = if is_detached {
                     let slot = detached_nodes.remove(&node_a).unwrap();
-                    NodeRef::Slot(slot)
+                    NodeRef::Slot(slot, None)
                 } else {
                     let old_path =
                         compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
@@ -1024,25 +1026,81 @@ fn convert_ops_with_shadow<'mem, 'facet>(
     result
 }
 
-/// Compute the path from root to a node in the shadow tree.
 /// Check if any ancestor of a node is in the detached_nodes map.
-/// Returns the slot number if an ancestor is detached, None otherwise.
+/// Returns (slot_number, relative_path) if an ancestor is detached, None otherwise.
+/// The relative_path is the path from the detached ancestor (slot root) to the node,
+/// preserving the actual PathSegments (including Variant segments) from the node labels.
 fn find_detached_ancestor(
     shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
     node: NodeId,
     detached_nodes: &HashMap<NodeId, u32>,
-) -> Option<u32> {
+) -> Option<(u32, Option<Path>)> {
     let mut current = node;
+    // Collect (child_node, parent_node) pairs as we traverse up
+    let mut traversal: Vec<(NodeId, NodeId)> = Vec::new();
     debug!(?node, ?detached_nodes, "find_detached_ancestor: starting");
+
     loop {
         debug!(?current, "find_detached_ancestor: checking");
         // Check if current node is detached
         if let Some(&slot) = detached_nodes.get(&current) {
-            debug!(?current, slot, "find_detached_ancestor: found!");
-            return Some(slot);
+            debug!(
+                ?current,
+                slot,
+                traversal_len = traversal.len(),
+                "find_detached_ancestor: found!"
+            );
+            // Build the relative path from slot root to the original node
+            // by using the label paths from each node
+            let relative_path = if traversal.is_empty() {
+                None // Node is directly the slot root
+            } else {
+                // Get the slot root's path (current node's label)
+                let slot_root_path_len = shadow_arena
+                    .get(current)
+                    .and_then(|n| n.get().label.as_ref())
+                    .map(|l| l.path.0.len())
+                    .unwrap_or(0);
+
+                // Get the target node's full path (original node's label)
+                let target_path = shadow_arena
+                    .get(node)
+                    .and_then(|n| n.get().label.as_ref())
+                    .map(|l| l.path.0.clone());
+
+                if let Some(full_path) = target_path {
+                    // The relative path is the suffix after the slot root's path
+                    if full_path.len() > slot_root_path_len {
+                        let relative_segments = full_path[slot_root_path_len..].to_vec();
+                        debug!(
+                            ?relative_segments,
+                            "find_detached_ancestor: relative path from labels"
+                        );
+                        Some(Path(relative_segments))
+                    } else {
+                        None
+                    }
+                } else {
+                    // Fallback: use position indices if labels aren't available
+                    // This preserves old behavior for nodes without labels
+                    let mut path_indices: Vec<usize> = Vec::new();
+                    for (child, parent) in traversal.iter().rev() {
+                        let pos = parent
+                            .children(shadow_arena)
+                            .position(|c| c == *child)
+                            .unwrap_or(0);
+                        path_indices.push(pos);
+                    }
+                    Some(Path(
+                        path_indices.into_iter().map(PathSegment::Index).collect(),
+                    ))
+                }
+            };
+            return Some((slot, relative_path));
         }
-        // Move to parent
+        // Move to parent, recording the traversal
         if let Some(parent_id) = shadow_arena.get(current).and_then(|n| n.parent()) {
+            traversal.push((current, parent_id));
             current = parent_id;
         } else {
             debug!(?current, "find_detached_ancestor: no parent, stopping");
@@ -1505,7 +1563,7 @@ mod tests {
                 EditOp::Insert { label_path, .. } => Some(label_path),
                 EditOp::Delete { node, .. } => match node {
                     NodeRef::Path(p) => Some(p),
-                    NodeRef::Slot(_) => None,
+                    NodeRef::Slot(..) => None,
                 },
                 EditOp::Move { to, .. } => Some(to),
                 EditOp::UpdateAttribute { path, .. } => Some(path),

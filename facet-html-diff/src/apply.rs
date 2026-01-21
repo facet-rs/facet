@@ -2,7 +2,7 @@
 //!
 //! For property testing: apply(A, diff(A, B)) == B
 
-use crate::Patch;
+use crate::{NodePath, Patch};
 use std::collections::HashMap;
 
 /// A mutable DOM node for patch application.
@@ -107,6 +107,32 @@ impl Node {
             Node::Element { attrs, .. } => Some(attrs),
             Node::Text(_) => None,
         }
+    }
+}
+
+/// Navigate within a node using a relative path and return the children vec.
+/// Used for operations on nodes within detached slots.
+fn navigate_to_children_in_slot<'a>(
+    slot_node: &'a mut Node,
+    rel_path: Option<&NodePath>,
+) -> Result<&'a mut Vec<Node>, String> {
+    // Navigate to the target node using relative path
+    let mut current = slot_node;
+    if let Some(path) = rel_path {
+        for &idx in &path.0 {
+            current = match current {
+                Node::Element { children, .. } => children
+                    .get_mut(idx)
+                    .ok_or_else(|| format!("path index {idx} out of bounds in slot"))?,
+                Node::Text(_) => {
+                    return Err("cannot navigate through text node".to_string());
+                }
+            };
+        }
+    }
+    match current {
+        Node::Element { children, .. } => Ok(children),
+        Node::Text(_) => Err("cannot insert into text node".to_string()),
     }
 }
 
@@ -478,19 +504,17 @@ fn apply_patch(
                     }
                     children[*position] = new_node;
                 }
-                NodeRef::Slot(parent_slot) => {
+                NodeRef::Slot(parent_slot, relative_path) => {
                     // Parent is in a slot - inserting into a detached subtree
+                    // Need to navigate to the right node within the slot using relative_path
+
                     // First handle displacement if needed
                     if let Some(slot) = detach_to_slot {
                         let slot_node = slots
                             .get_mut(parent_slot)
                             .ok_or_else(|| format!("InsertAt: slot {parent_slot} not found"))?;
-                        let children = match slot_node {
-                            Node::Element { children, .. } => children,
-                            Node::Text(_) => {
-                                return Err("InsertAt: cannot insert into text node".to_string());
-                            }
-                        };
+                        let children =
+                            navigate_to_children_in_slot(slot_node, relative_path.as_ref())?;
                         if *position < children.len() {
                             let occupant = std::mem::replace(
                                 &mut children[*position],
@@ -504,12 +528,7 @@ fn apply_patch(
                     let slot_node = slots
                         .get_mut(parent_slot)
                         .ok_or_else(|| format!("InsertAt: slot {parent_slot} not found"))?;
-                    let children = match slot_node {
-                        Node::Element { children, .. } => children,
-                        Node::Text(_) => {
-                            return Err("InsertAt: cannot insert into text node".to_string());
-                        }
-                    };
+                    let children = navigate_to_children_in_slot(slot_node, relative_path.as_ref())?;
 
                     // Grow the array with empty text placeholders if needed
                     while children.len() <= *position {
@@ -561,8 +580,9 @@ fn apply_patch(
                         return Err(format!("Remove: index {idx} out of bounds"));
                     }
                 }
-                NodeRef::Slot(slot) => {
+                NodeRef::Slot(slot, _relative_path) => {
                     // Just remove from slots - the node was already detached
+                    // Note: relative_path is ignored for Remove since we remove the whole slot
                     slots.remove(slot);
                 }
             }
@@ -618,9 +638,12 @@ fn apply_patch(
                     // Swap with placeholder instead of remove (no shifting!)
                     std::mem::replace(&mut from_children[from_idx], Node::Text(String::new()))
                 }
-                NodeRef::Slot(slot) => slots
-                    .remove(slot)
-                    .ok_or_else(|| format!("Move: slot {slot} not found"))?,
+                NodeRef::Slot(slot, _relative_path) => {
+                    // Note: relative_path is ignored for Move source since we take the whole slot
+                    slots
+                        .remove(slot)
+                        .ok_or_else(|| format!("Move: slot {slot} not found"))?
+                }
             };
 
             // Check if we need to detach the occupant at the target position

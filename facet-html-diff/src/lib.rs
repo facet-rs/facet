@@ -23,8 +23,10 @@ pub struct NodePath(pub Vec<usize>);
 pub enum NodeRef {
     /// Node at a path in the DOM
     Path(NodePath),
-    /// Node in a slot (previously detached)
-    Slot(u32),
+    /// Node in a slot (previously detached).
+    /// The optional path is relative to the slot root - used when the target
+    /// is nested inside the detached subtree.
+    Slot(u32, Option<NodePath>),
 }
 
 /// Operations to transform the DOM.
@@ -457,7 +459,12 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
         EditOp::Delete { node, .. } => {
             let node_ref = match node {
                 facet_diff::NodeRef::Path(p) => NodeRef::Path(NodePath(extract_dom_indices(&p.0))),
-                facet_diff::NodeRef::Slot(s) => NodeRef::Slot(*s),
+                facet_diff::NodeRef::Slot(s, rel_path) => NodeRef::Slot(
+                    *s,
+                    rel_path
+                        .as_ref()
+                        .map(|p| NodePath(extract_dom_indices(&p.0))),
+                ),
             };
             vec![Patch::Remove { node: node_ref }]
         }
@@ -474,7 +481,12 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
         } => {
             let from_ref = match from {
                 facet_diff::NodeRef::Path(p) => NodeRef::Path(NodePath(extract_dom_indices(&p.0))),
-                facet_diff::NodeRef::Slot(s) => NodeRef::Slot(*s),
+                facet_diff::NodeRef::Slot(s, rel_path) => NodeRef::Slot(
+                    *s,
+                    rel_path
+                        .as_ref()
+                        .map(|p| NodePath(extract_dom_indices(&p.0))),
+                ),
             };
             let to_path = NodePath(extract_dom_indices(&to.0));
             vec![Patch::Move {
@@ -522,7 +534,12 @@ fn translate_insert(
     // Convert parent NodeRef to our NodeRef, and compute target path/ref
     let parent_ref = match parent {
         facet_diff::NodeRef::Path(p) => NodeRef::Path(NodePath(extract_dom_indices(&p.0))),
-        facet_diff::NodeRef::Slot(s) => NodeRef::Slot(*s),
+        facet_diff::NodeRef::Slot(s, rel_path) => NodeRef::Slot(
+            *s,
+            rel_path
+                .as_ref()
+                .map(|p| NodePath(extract_dom_indices(&p.0))),
+        ),
     };
 
     match nav.target {
@@ -542,7 +559,7 @@ fn translate_insert(
             // Attributes go on the parent element
             let element_path = match &parent_ref {
                 NodeRef::Path(p) => p.clone(),
-                NodeRef::Slot(_) => return None, // Can't set attr on slot directly
+                NodeRef::Slot(..) => return None, // Can't set attr on slot directly
             };
 
             let peek = Peek::new(new_doc);
@@ -588,7 +605,7 @@ fn translate_insert(
                     p.0.push(position);
                     p
                 }
-                NodeRef::Slot(_) => return None, // Can't set text on slot directly
+                NodeRef::Slot(..) => return None, // Can't set text on slot directly
             };
             let text = value?.to_string();
             Some(Patch::SetText {
@@ -599,7 +616,7 @@ fn translate_insert(
         PathTarget::FlattenedAttributeStruct => {
             let element_path = match &parent_ref {
                 NodeRef::Path(p) => p.0.clone(),
-                NodeRef::Slot(_) => return None,
+                NodeRef::Slot(..) => return None,
             };
             let patches = sync_attrs_from_new_doc(&element_path, label_segments, new_doc);
             patches.into_iter().next()

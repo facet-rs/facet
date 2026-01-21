@@ -559,3 +559,17 @@ fn proptest_minimal_failure_4() {
         r#"<html><body>a<div><div></div></div></body></html>"#,
     );
 }
+
+#[test]
+fn issue_1846_nested_divs() {
+    // GitHub issue #1846: nested <div> structure is being lost during patch application
+    // Old: <html><body><div><div></div></div></body></html>
+    // New: <html><body>A<div><div> </div></div></body></html>
+    // Expected result: <body>A<div><div> </div></div></body>
+    // Actual result: <body>A<div> </div></body>
+    // The nested <div> structure is being lost.
+    assert_roundtrip(
+        r#"<html><body><div><div></div></div></body></html>"#,
+        r#"<html><body>A<div><div> </div></div></body></html>"#,
+    );
+}

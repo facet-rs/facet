@@ -21,7 +21,7 @@ fn get_dom_paths(old: &str, new: &str) -> Vec<(String, NodePath)> {
                         p.push(*position);
                         ("InsertAt", NodePath(p))
                     }
-                    facet_html_diff::NodeRef::Slot(s) => {
+                    facet_html_diff::NodeRef::Slot(s, _) => {
                         ("InsertAtSlot", NodePath(vec![*s as usize, *position]))
                     }
                 },
@@ -29,7 +29,7 @@ fn get_dom_paths(old: &str, new: &str) -> Vec<(String, NodePath)> {
                 Patch::AppendChild { path, .. } => ("AppendChild", path.clone()),
                 Patch::Remove { node } => match node {
                     facet_html_diff::NodeRef::Path(path) => ("Remove", path.clone()),
-                    facet_html_diff::NodeRef::Slot(s) => {
+                    facet_html_diff::NodeRef::Slot(s, _) => {
                         ("RemoveSlot", NodePath(vec![*s as usize]))
                     }
                 },
