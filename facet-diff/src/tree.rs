@@ -103,8 +103,8 @@ pub enum EditOp {
     },
     /// A node was deleted from tree A.
     Delete {
-        /// The path where the node was deleted
-        path: Path,
+        /// The node to delete - either at a path or in a slot
+        node: NodeRef,
         /// Hash of the deleted value
         hash: u64,
     },
@@ -112,7 +112,7 @@ pub enum EditOp {
     /// If `detach_to_slot` is Some, the node at `new_path` is detached and stored in that slot.
     Move {
         /// The source - either a path or a slot number
-        from: MoveSource,
+        from: NodeRef,
         /// The target path
         to: Path,
         /// If Some, the displaced node goes to this slot
@@ -122,12 +122,12 @@ pub enum EditOp {
     },
 }
 
-/// Source for a Move operation.
+/// Reference to a node - either by path or by slot number.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MoveSource {
-    /// Move from a path in the tree
+pub enum NodeRef {
+    /// Node at a path in the tree
     Path(Path),
-    /// Move from a slot (previously detached node)
+    /// Node in a slot (previously detached)
     Slot(u32),
 }
 
@@ -854,33 +854,24 @@ fn convert_ops_with_shadow<'mem, 'facet>(
             }
 
             CinereusEditOp::Delete { node_a } => {
-                // Path is current location before deletion
-                let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+                // Check if the node is currently detached (in a slot)
+                let node = if let Some(slot) = detached_nodes.remove(&node_a) {
+                    // Node is in a slot - delete from slot
+                    NodeRef::Slot(slot)
+                } else {
+                    // Node is in the tree - delete from path
+                    let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+                    // Remove from shadow tree
+                    node_a.detach(&mut shadow_arena);
+                    NodeRef::Path(path)
+                };
+
                 let edit_op = EditOp::Delete {
-                    path,
+                    node,
                     hash: tree_a.get(node_a).hash,
                 };
                 debug!(?edit_op, "emitting Delete");
                 result.push(edit_op);
-
-                // Remove from shadow tree
-                let parent_before = shadow_arena.get(node_a).and_then(|n| n.parent());
-                if let Some(p) = parent_before {
-                    let children_before: Vec<_> = p.children(&shadow_arena).collect();
-                    debug!(?node_a, ?p, ?children_before, "before remove");
-                }
-                node_a.detach(&mut shadow_arena);
-                let parent_after = shadow_arena.get(node_a).and_then(|n| n.parent());
-                if let Some(p) = parent_before {
-                    let children_after: Vec<_> = p.children(&shadow_arena).collect();
-                    debug!(
-                        ?node_a,
-                        ?parent_before,
-                        ?parent_after,
-                        ?children_after,
-                        "after remove"
-                    );
-                }
 
                 debug!(
                     "SHADOW TREE AFTER DELETE:\n{}",
@@ -914,13 +905,13 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 // Determine the source for the Move
                 let from = if is_detached {
                     let slot = detached_nodes.remove(&node_a).unwrap();
-                    MoveSource::Slot(slot)
+                    NodeRef::Slot(slot)
                 } else {
                     let old_path =
                         compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
                     // Detach node_a from its current position
                     node_a.detach(&mut shadow_arena);
-                    MoveSource::Path(old_path)
+                    NodeRef::Path(old_path)
                 };
 
                 // Check if something is at the target position that needs to be detached

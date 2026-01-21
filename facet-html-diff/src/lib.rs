@@ -17,13 +17,13 @@ use facet_reflect::{HasFields, Peek, PeekStruct};
 #[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
 pub struct NodePath(pub Vec<usize>);
 
-/// Source for a Move operation - either a path or a slot.
+/// Reference to a node - either by path or by slot number.
 #[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
 #[repr(u8)]
-pub enum MoveSource {
-    /// Move from a path in the DOM
+pub enum NodeRef {
+    /// Node at a path in the DOM
     Path(NodePath),
-    /// Move from a slot (previously detached node)
+    /// Node in a slot (previously detached)
     Slot(u32),
 }
 
@@ -51,8 +51,8 @@ pub enum Patch {
     /// Append HTML as last child of node at path
     AppendChild { path: NodePath, html: String },
 
-    /// Remove the node at path
-    Remove { path: NodePath },
+    /// Remove a node (either at a path or in a slot)
+    Remove { node: NodeRef },
 
     /// Update text content of node at path
     SetText { path: NodePath, text: String },
@@ -70,7 +70,7 @@ pub enum Patch {
     /// Move a node from one location to another.
     /// If `detach_to_slot` is Some, the node currently at `to` is detached and stored in that slot.
     Move {
-        from: MoveSource,
+        from: NodeRef,
         to: NodePath,
         detach_to_slot: Option<u32>,
     },
@@ -458,7 +458,13 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
         )
         .into_iter()
         .collect(),
-        EditOp::Delete { path, .. } => translate_delete(&path.0, new_doc).into_iter().collect(),
+        EditOp::Delete { node, .. } => {
+            let node_ref = match node {
+                facet_diff::NodeRef::Path(p) => NodeRef::Path(NodePath(extract_dom_indices(&p.0))),
+                facet_diff::NodeRef::Slot(s) => NodeRef::Slot(*s),
+            };
+            vec![Patch::Remove { node: node_ref }]
+        }
         EditOp::Update {
             path, new_value, ..
         } => translate_update(&path.0, new_value.as_deref())
@@ -470,15 +476,13 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
             detach_to_slot,
             ..
         } => {
-            let from_source = match from {
-                facet_diff::MoveSource::Path(p) => {
-                    MoveSource::Path(NodePath(extract_dom_indices(&p.0)))
-                }
-                facet_diff::MoveSource::Slot(s) => MoveSource::Slot(*s),
+            let from_ref = match from {
+                facet_diff::NodeRef::Path(p) => NodeRef::Path(NodePath(extract_dom_indices(&p.0))),
+                facet_diff::NodeRef::Slot(s) => NodeRef::Slot(*s),
             };
             let to_path = NodePath(extract_dom_indices(&to.0));
             vec![Patch::Move {
-                from: from_source,
+                from: from_ref,
                 to: to_path,
                 detach_to_slot: *detach_to_slot,
             }]
@@ -640,68 +644,6 @@ fn translate_insert(
                 }
             }
             None
-        }
-        PathTarget::Other => None,
-    }
-}
-
-/// Translate a Delete operation.
-fn translate_delete(segments: &[PathSegment], new_doc: &Html) -> Option<Patch> {
-    let html_shape = <Html as facet_core::Facet>::SHAPE;
-    let nav = navigate_path(segments, html_shape);
-
-    trace!(
-        "translate_delete: segments={segments:?}, dom_path={:?}, target={:?}",
-        nav.dom_path, nav.target
-    );
-
-    match nav.target {
-        PathTarget::Element => {
-            if nav.dom_path.is_empty() {
-                None
-            } else {
-                Some(Patch::Remove {
-                    path: NodePath(nav.dom_path),
-                })
-            }
-        }
-        PathTarget::Attribute(name) => {
-            // Check if attribute exists in new_doc - if so, don't delete
-            let peek = Peek::new(new_doc);
-            if let Some(attr_peek) = navigate_peek(peek, segments) {
-                if let Ok(opt) = attr_peek.into_option() {
-                    if opt.value().is_some() {
-                        return None;
-                    }
-                } else if attr_peek.as_str().is_some() {
-                    return None;
-                }
-            }
-
-            Some(Patch::RemoveAttribute {
-                path: NodePath(nav.element_dom_path),
-                name,
-            })
-        }
-        PathTarget::Text => None,
-        PathTarget::FlattenedAttributeStruct => {
-            let patches = sync_attrs_from_new_doc(&nav.element_dom_path, segments, new_doc);
-            patches.into_iter().next()
-        }
-        PathTarget::FlattenedChildrenList => {
-            let peek = Peek::new(new_doc);
-            if let Some(children_peek) = navigate_peek(peek, segments) {
-                if let Ok(list) = children_peek.into_list_like() {
-                    if !list.is_empty() {
-                        return None;
-                    }
-                }
-            }
-
-            Some(Patch::ReplaceInnerHtml {
-                path: NodePath(nav.dom_path),
-                html: String::new(),
-            })
         }
         PathTarget::Other => None,
     }

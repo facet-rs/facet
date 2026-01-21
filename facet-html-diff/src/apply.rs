@@ -522,19 +522,28 @@ fn apply_patch(
                 return Err(format!("InsertAfter: index {idx} out of bounds"));
             }
         }
-        Patch::Remove { path } => {
-            if path.0.is_empty() {
-                return Err("Remove: cannot remove root".to_string());
-            }
-            let parent_path = &path.0[..path.0.len() - 1];
-            let idx = path.0[path.0.len() - 1];
-            let children = root
-                .children_mut(parent_path)
-                .ok_or_else(|| format!("Remove: parent not found at {parent_path:?}"))?;
-            if idx < children.len() {
-                children.remove(idx);
-            } else {
-                return Err(format!("Remove: index {idx} out of bounds"));
+        Patch::Remove { node } => {
+            use crate::NodeRef;
+            match node {
+                NodeRef::Path(path) => {
+                    if path.0.is_empty() {
+                        return Err("Remove: cannot remove root".to_string());
+                    }
+                    let parent_path = &path.0[..path.0.len() - 1];
+                    let idx = path.0[path.0.len() - 1];
+                    let children = root
+                        .children_mut(parent_path)
+                        .ok_or_else(|| format!("Remove: parent not found at {parent_path:?}"))?;
+                    if idx < children.len() {
+                        children.remove(idx);
+                    } else {
+                        return Err(format!("Remove: index {idx} out of bounds"));
+                    }
+                }
+                NodeRef::Slot(slot) => {
+                    // Just remove from slots - the node was already detached
+                    slots.remove(slot);
+                }
             }
         }
         Patch::SetText { path, text } => {
@@ -568,11 +577,11 @@ fn apply_patch(
             to,
             detach_to_slot,
         } => {
-            use crate::MoveSource;
+            use crate::NodeRef;
 
             // Get the node to move (either from a path or from a slot)
             let node = match from {
-                MoveSource::Path(from_path) => {
+                NodeRef::Path(from_path) => {
                     if from_path.0.is_empty() {
                         return Err("Move: cannot move root".to_string());
                     }
@@ -586,7 +595,7 @@ fn apply_patch(
                     }
                     from_children.remove(from_idx)
                 }
-                MoveSource::Slot(slot) => slots
+                NodeRef::Slot(slot) => slots
                     .remove(slot)
                     .ok_or_else(|| format!("Move: slot {slot} not found"))?,
             };
@@ -730,7 +739,7 @@ mod tests {
         apply_patches(
             &mut node,
             &[Patch::Remove {
-                path: NodePath(vec![1]),
+                node: crate::NodeRef::Path(NodePath(vec![1])),
             }],
         )
         .unwrap();
