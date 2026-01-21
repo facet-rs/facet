@@ -5,7 +5,7 @@ use alloc::string::String;
 use core::fmt::Debug;
 use core::fmt::Write as _;
 
-use facet_core::{Def, DynDateTimeKind, DynValueKind, ScalarType, Shape, StructKind};
+use facet_core::{Def, DynDateTimeKind, DynValueKind, ScalarType, Shape, StructKind, Type};
 use facet_reflect::{HasFields as _, Peek, ReflectError};
 
 use crate::ScalarValue;
@@ -831,6 +831,80 @@ where
             sort_fields_if_needed(serializer, &mut fields);
 
             for (field_item, field_value) in fields {
+                // Check for flattened internally-tagged enum
+                // For these, we need to emit the tag field and flatten the content
+                if field_item.flattened
+                    && let Some(field) = field_item.field
+                    && let shape = field.shape()
+                    && let Some(tag_key) = shape.get_tag_attr()
+                    && shape.get_content_attr().is_none()
+                {
+                    // Internally-tagged: has tag but no content attribute
+                    let variant_name = field_item.effective_name();
+
+                    // Emit the tag field
+                    if field_mode == StructFieldMode::Named {
+                        serializer
+                            .field_key(tag_key)
+                            .map_err(SerializeError::Backend)?;
+                    }
+                    serializer
+                        .scalar(ScalarValue::Str(Cow::Borrowed(variant_name)))
+                        .map_err(SerializeError::Backend)?;
+
+                    // Emit the content fields (flattened)
+                    // For newtype variants, field_value is the inner struct
+                    // For struct variants, field_value is the enum itself
+                    if let Ok(inner_struct) = field_value.into_struct() {
+                        // Newtype variant - iterate inner struct's fields
+                        for (inner_item, inner_value) in inner_struct.fields_for_serialize() {
+                            if field_mode == StructFieldMode::Named {
+                                serializer
+                                    .field_key(inner_item.effective_name())
+                                    .map_err(SerializeError::Backend)?;
+                            }
+                            if let Some(proxy_def) = inner_item
+                                .field
+                                .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                            {
+                                serialize_via_proxy(serializer, inner_value, proxy_def)?;
+                            } else {
+                                shared_serialize(serializer, inner_value)?;
+                            }
+                        }
+                    } else if let Ok(enum_peek) = field_value.into_enum() {
+                        // Struct variant - iterate enum's fields (the variant's fields)
+                        for (inner_item, inner_value) in enum_peek.fields_for_serialize() {
+                            if field_mode == StructFieldMode::Named {
+                                serializer
+                                    .field_key(inner_item.effective_name())
+                                    .map_err(SerializeError::Backend)?;
+                            }
+                            if let Some(proxy_def) = inner_item
+                                .field
+                                .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                            {
+                                serialize_via_proxy(serializer, inner_value, proxy_def)?;
+                            } else {
+                                shared_serialize(serializer, inner_value)?;
+                            }
+                        }
+                    } else if matches!(field_value.shape().ty, Type::Primitive(_)) {
+                        // Scalar/primitive payload (e.g., A(i32))
+                        // Internally-tagged enums cannot flatten scalar payloads -
+                        // there's no field name to use for the value.
+                        // Use #[facet(content = "...")] for adjacently-tagged representation.
+                        return Err(SerializeError::Unsupported(
+                            "internally-tagged enum with scalar newtype payload cannot be \
+                             flattened; use #[facet(content = \"...\")] for adjacently-tagged \
+                             representation"
+                                .into(),
+                        ));
+                    }
+                    // Unit variants have no content fields to emit
+                    continue;
+                }
+
                 // Let format handle field metadata with value access (for metadata containers)
                 let key_written = serializer
                     .field_metadata_with_value(&field_item, field_value)
