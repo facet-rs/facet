@@ -358,6 +358,10 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
         EnumVariantEncoding::Index
     }
 
+    fn is_self_describing(&self) -> bool {
+        false
+    }
+
     fn dynamic_value_encoding(&self) -> DynamicValueEncoding {
         DynamicValueEncoding::Tagged
     }

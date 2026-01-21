@@ -1,66 +1,50 @@
-# facet-python
+# facet-html-diff
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-python/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-python.svg)](https://crates.io/crates/facet-python)
-[![documentation](https://docs.rs/facet-python/badge.svg)](https://docs.rs/facet-python)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-python.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-html-diff/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-html-diff.svg)](https://crates.io/crates/facet-html-diff)
+[![documentation](https://docs.rs/facet-html-diff/badge.svg)](https://docs.rs/facet-html-diff)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-html-diff.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Generate Python type definitions from facet type metadata.
+# facet-html-diff
 
-## Overview
+Diff two HTML documents and produce a series of DOM patches to morph one into the other in a browser.
 
-This crate uses facet's reflection capabilities to generate Python type hints
-and TypedDicts from any Rust type that implements `Facet`. This enables
-type-safe interop when your Rust code exchanges data with Python.
+## Purpose
+
+Given HTML documents A and B, this crate computes the minimal set of DOM operations needed to transform A into B. The patches can be serialized and sent to a browser, where they can be applied incrementally without replacing the entire document.
+
+This enables efficient live-reloading and hot-updating of web pages.
 
 ## Example
 
 ```rust
-use facet::Facet;
-use facet_python::to_python;
+use facet_html_diff::{diff_html, Patch, NodePath};
 
-#[derive(Facet)]
-struct User {
-    name: String,
-    age: u32,
-    email: Option<String>,
-}
+let old = "<html><body><p>Hello</p></body></html>";
+let new = "<html><body><p>Goodbye</p></body></html>";
 
-let python_code = to_python::<User>(false);
+let patches = diff_html(old, new).unwrap();
+// patches contains SetText operations to update "Hello" -> "Goodbye"
 ```
 
-This generates:
+## Patch Types
 
-```python
-from typing import TypedDict, Required, NotRequired
+- `Replace` - Replace a node with new HTML
+- `ReplaceInnerHtml` - Replace all children of a node
+- `InsertBefore` / `InsertAfter` - Insert HTML relative to a node
+- `AppendChild` - Append HTML as last child
+- `Remove` - Remove a node
+- `SetText` - Update text content
+- `SetAttribute` / `RemoveAttribute` - Modify attributes
+- `Move` - Move a node from one location to another
 
-class User(TypedDict, total=False):
-    name: Required[str]
-    age: Required[int]
-    email: str  # Optional fields become NotRequired
-```
+## How It Works
 
-## Type Mappings
-
-| Rust Type | Python Type |
-|-----------|-------------|
-| `String`, `&str` | `str` |
-| `i32`, `u32`, etc. | `int` |
-| `f32`, `f64` | `float` |
-| `bool` | `bool` |
-| `Vec<T>` | `list[T]` |
-| `Option<T>` | `T` (NotRequired in TypedDict) |
-| `HashMap<K, V>` | `dict[K, V]` |
-| Struct | `TypedDict` |
-| Enum | `Union[...]` of variants |
-
-## Features
-
-- **Recursive types**: Handles nested structs and enums
-- **Documentation**: Preserves doc comments as Python docstrings
-- **Reserved keywords**: Automatically handles Python reserved words as field names
-- **Generic support**: Maps Rust generics to Python type parameters
+1. Parse both HTML documents using `facet-html`
+2. Compute structural diff using `facet-diff` (GumTree/Chawathe algorithm)
+3. Translate the edit operations into DOM-specific patches
+4. Patches reference nodes by path (e.g., `[0, 2, 1]` = body's child 0, then child 2, then child 1)
 
 ## LLM contribution policy
 

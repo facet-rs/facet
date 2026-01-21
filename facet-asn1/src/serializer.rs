@@ -270,6 +270,10 @@ impl FormatSerializer for Asn1Serializer {
         Ok(())
     }
 
+    fn is_self_describing(&self) -> bool {
+        false
+    }
+
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
         match scalar {
             ScalarValue::Null | ScalarValue::Unit => self.write_null(),

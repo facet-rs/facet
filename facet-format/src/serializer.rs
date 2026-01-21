@@ -206,6 +206,17 @@ pub trait FormatSerializer {
         EnumVariantEncoding::Tagged
     }
 
+    /// Whether this format is self-describing (includes type information).
+    ///
+    /// Self-describing formats (JSON, YAML, TOML) can deserialize without hints
+    /// and treat newtypes transparently. Non-self-describing formats (ASN.1,
+    /// postcard, msgpack) require structural hints and wrap newtypes.
+    ///
+    /// Default is `true` for text-based formats.
+    fn is_self_describing(&self) -> bool {
+        true
+    }
+
     /// Preferred dynamic value encoding for this format.
     fn dynamic_value_encoding(&self) -> DynamicValueEncoding {
         DynamicValueEncoding::SelfDescribing
@@ -768,22 +779,39 @@ where
         let field_mode = serializer.struct_field_mode();
 
         if kind == StructKind::Tuple || kind == StructKind::TupleStruct {
-            // Serialize tuples as arrays without length prefixes.
-            // Tuples are positional, so use binary serialize to avoid skip predicates.
+            // Special case: transparent newtypes (marked with #[facet(transparent)] or
+            // #[repr(transparent)]) serialize as their inner value without wrapping.
             let fields: alloc::vec::Vec<_> = struct_.fields_for_binary_serialize().collect();
-            serializer.begin_seq().map_err(SerializeError::Backend)?;
-            for (field_item, field_value) in fields {
-                // Check for field-level proxy
+            let is_transparent = value.shape().is_transparent() && fields.len() == 1;
+
+            if is_transparent {
+                // Serialize the single field directly without array wrapper
+                let (field_item, field_value) = &fields[0];
                 if let Some(proxy_def) = field_item
                     .field
                     .and_then(|f| f.effective_proxy(serializer.format_namespace()))
                 {
-                    serialize_via_proxy(serializer, field_value, proxy_def)?;
+                    serialize_via_proxy(serializer, *field_value, proxy_def)?;
                 } else {
-                    shared_serialize(serializer, field_value)?;
+                    shared_serialize(serializer, *field_value)?;
                 }
+            } else {
+                // Serialize tuples as arrays without length prefixes.
+                // Tuples are positional, so use binary serialize to avoid skip predicates.
+                serializer.begin_seq().map_err(SerializeError::Backend)?;
+                for (field_item, field_value) in fields {
+                    // Check for field-level proxy
+                    if let Some(proxy_def) = field_item
+                        .field
+                        .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                    {
+                        serialize_via_proxy(serializer, field_value, proxy_def)?;
+                    } else {
+                        shared_serialize(serializer, field_value)?;
+                    }
+                }
+                serializer.end_seq().map_err(SerializeError::Backend)?;
             }
-            serializer.end_seq().map_err(SerializeError::Backend)?;
         } else {
             // Regular structs as objects
             serializer

@@ -34,10 +34,8 @@ facet-testhelpers = { path = "../facet-testhelpers" }
 facet-json = { path = "../facet-json" }
 proptest = "1.9"
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Enable tracing in tests for debugging
 facet-diff = { path = "../facet-diff", features = ["tracing"] }
-cinereus = { path = "../cinereus", features = ["tracing"] }
 
 [lints]
 workspace = true

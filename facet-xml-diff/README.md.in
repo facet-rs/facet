@@ -1,0 +1,67 @@
+Diff-aware XML serialization—render structural diffs as readable XML.
+
+## Overview
+
+This crate renders diffs between facet values as XML with visual diff markers.
+It shows what changed between two values in a format that's easy to read,
+with proper alignment, colored output, and collapsing of unchanged regions.
+
+## Example
+
+```rust
+use facet::Facet;
+use facet_diff::tree_diff;
+
+#[derive(Facet)]
+struct Rect {
+    fill: String,
+    x: i32,
+    y: i32,
+}
+
+let old = Rect { fill: "red".into(), x: 10, y: 20 };
+let new = Rect { fill: "blue".into(), x: 10, y: 20 };
+
+let xml = facet_xml_diff::diff_to_string(&old, &new)?;
+```
+
+Output:
+
+```xml
+<rect
+← fill="red"
+→ fill="blue"
+  x="10" y="20"
+/>
+```
+
+## Features
+
+- **Diff markers**: `←`/`→` (or `-`/`+`) prefix lines to show old vs new values
+- **Value-only coloring**: Only the changed values are colored, not the whole line
+- **Alignment**: Attributes align properly for readability
+- **Collapsing**: Long runs of unchanged content are collapsed with `...`
+- **ANSI colors**: Optional terminal colors for better visibility
+
+## Options
+
+```rust
+use facet_xml_diff::{DiffSerializeOptions, DiffSymbols, DiffTheme};
+
+let options = DiffSerializeOptions {
+    symbols: DiffSymbols::ascii(),  // Use -/+ instead of arrows
+    theme: DiffTheme::default(),
+    colors: true,
+    indent: "  ",
+    max_line_width: 80,
+    collapse_threshold: 3,
+    ..Default::default()
+};
+```
+
+## Use Cases
+
+- Debugging configuration changes
+- Displaying diffs in CLI tools
+- Generating human-readable change logs
+- Testing serialization by comparing expected vs actual output

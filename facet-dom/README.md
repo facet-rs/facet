@@ -1,66 +1,71 @@
-# facet-python
+# facet-dom
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-python/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-python.svg)](https://crates.io/crates/facet-python)
-[![documentation](https://docs.rs/facet-python/badge.svg)](https://docs.rs/facet-python)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-python.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-dom/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-dom.svg)](https://crates.io/crates/facet-dom)
+[![documentation](https://docs.rs/facet-dom/badge.svg)](https://docs.rs/facet-dom)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-dom.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Generate Python type definitions from facet type metadata.
+Tree-based (DOM) serialization and deserialization for facet.
 
 ## Overview
 
-This crate uses facet's reflection capabilities to generate Python type hints
-and TypedDicts from any Rust type that implements `Facet`. This enables
-type-safe interop when your Rust code exchanges data with Python.
+This crate provides the core serializers and deserializers for tree-structured
+documents like HTML and XML. It handles the DOM-specific concerns that don't
+apply to flat formats like JSON:
 
-## Example
+- **Tag names**: Elements have names (`<div>`, `<person>`)
+- **Attributes**: Key-value pairs on elements (`id="main"`, `class="active"`)
+- **Mixed content**: Text and child elements can be interleaved
+
+## Architecture
+
+`facet-dom` sits between the format-specific parsers (`facet-html`, `facet-xml`)
+and the generic facet reflection system:
+
+```text
+facet-html / facet-xml
+         ↓
+     facet-dom  (DOM events: StartElement, Attribute, Text, EndElement)
+         ↓
+   facet-reflect (Peek/Poke)
+         ↓
+    Your Rust types
+```
+
+## Key Types
+
+### DomDeserializer
+
+Consumes DOM events and builds Rust values:
 
 ```rust
-use facet::Facet;
-use facet_python::to_python;
+use facet_dom::{DomDeserializer, DomParser};
 
-#[derive(Facet)]
-struct User {
-    name: String,
-    age: u32,
-    email: Option<String>,
-}
-
-let python_code = to_python::<User>(false);
+// Parser emits events, deserializer consumes them
+let parser: impl DomParser = /* ... */;
+let value: MyType = DomDeserializer::new(parser).deserialize()?;
 ```
 
-This generates:
+### DomSerializer
 
-```python
-from typing import TypedDict, Required, NotRequired
+Converts Rust values to DOM events for output.
 
-class User(TypedDict, total=False):
-    name: Required[str]
-    age: Required[int]
-    email: str  # Optional fields become NotRequired
-```
+## Field Mappings
 
-## Type Mappings
+The deserializer maps DOM concepts to Rust types using facet attributes:
 
-| Rust Type | Python Type |
-|-----------|-------------|
-| `String`, `&str` | `str` |
-| `i32`, `u32`, etc. | `int` |
-| `f32`, `f64` | `float` |
-| `bool` | `bool` |
-| `Vec<T>` | `list[T]` |
-| `Option<T>` | `T` (NotRequired in TypedDict) |
-| `HashMap<K, V>` | `dict[K, V]` |
-| Struct | `TypedDict` |
-| Enum | `Union[...]` of variants |
+| DOM Concept | Rust Representation | Attribute |
+|-------------|---------------------|-----------|
+| Tag name | Struct variant | `#[facet(rename = "tag")]` |
+| Attribute | Field | `#[facet(html::attribute)]` |
+| Text content | String field | `#[facet(html::text)]` |
+| Child elements | Vec field | `#[facet(html::elements)]` |
 
-## Features
+## Naming Conventions
 
-- **Recursive types**: Handles nested structs and enums
-- **Documentation**: Preserves doc comments as Python docstrings
-- **Reserved keywords**: Automatically handles Python reserved words as field names
-- **Generic support**: Maps Rust generics to Python type parameters
+Handles automatic case conversion between DOM naming (kebab-case) and
+Rust naming (snake_case), plus singularization for collection fields.
 
 ## LLM contribution policy
 

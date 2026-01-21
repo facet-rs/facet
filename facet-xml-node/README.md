@@ -1,66 +1,63 @@
-# facet-python
+# facet-xml-node
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-python/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-python.svg)](https://crates.io/crates/facet-python)
-[![documentation](https://docs.rs/facet-python/badge.svg)](https://docs.rs/facet-python)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-python.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-xml-node/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-xml-node.svg)](https://crates.io/crates/facet-xml-node)
+[![documentation](https://docs.rs/facet-xml-node/badge.svg)](https://docs.rs/facet-xml-node)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-xml-node.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Generate Python type definitions from facet type metadata.
+Raw XML node types—represent arbitrary XML without a schema.
 
 ## Overview
 
-This crate uses facet's reflection capabilities to generate Python type hints
-and TypedDicts from any Rust type that implements `Facet`. This enables
-type-safe interop when your Rust code exchanges data with Python.
+This crate provides generic XML types (`Element`, `Content`) that can represent
+any XML document without needing predefined Rust structs. It's useful when you
+need to parse XML dynamically or work with XML of unknown structure.
 
-## Example
+## Types
+
+### Element
+
+Captures any XML element with its tag name, attributes, and children:
 
 ```rust
-use facet::Facet;
-use facet_python::to_python;
+use facet_xml_node::Element;
 
-#[derive(Facet)]
-struct User {
-    name: String,
-    age: u32,
-    email: Option<String>,
+let xml = r#"<item id="42" status="active">Hello <b>world</b></item>"#;
+let element: Element = facet_xml::from_str(xml)?;
+
+assert_eq!(element.tag, "item");
+assert_eq!(element.attrs.get("id"), Some(&"42".to_string()));
+```
+
+### Content
+
+Represents either text or a child element:
+
+```rust
+use facet_xml_node::{Element, Content};
+
+for child in &element.children {
+    match child {
+        Content::Text(t) => println!("Text: {}", t),
+        Content::Element(e) => println!("Element: <{}>", e.tag),
+    }
 }
-
-let python_code = to_python::<User>(false);
 ```
 
-This generates:
+## Use Cases
 
-```python
-from typing import TypedDict, Required, NotRequired
+- Parsing XML of unknown or variable structure
+- Building XML transformers or validators
+- Bridging between typed and untyped XML representations
+- Testing and debugging XML serialization
 
-class User(TypedDict, total=False):
-    name: Required[str]
-    age: Required[int]
-    email: str  # Optional fields become NotRequired
-```
+## Comparison
 
-## Type Mappings
-
-| Rust Type | Python Type |
-|-----------|-------------|
-| `String`, `&str` | `str` |
-| `i32`, `u32`, etc. | `int` |
-| `f32`, `f64` | `float` |
-| `bool` | `bool` |
-| `Vec<T>` | `list[T]` |
-| `Option<T>` | `T` (NotRequired in TypedDict) |
-| `HashMap<K, V>` | `dict[K, V]` |
-| Struct | `TypedDict` |
-| Enum | `Union[...]` of variants |
-
-## Features
-
-- **Recursive types**: Handles nested structs and enums
-- **Documentation**: Preserves doc comments as Python docstrings
-- **Reserved keywords**: Automatically handles Python reserved words as field names
-- **Generic support**: Maps Rust generics to Python type parameters
+| Approach | Use Case |
+|----------|----------|
+| Typed structs with `#[derive(Facet)]` | Known XML schema, compile-time safety |
+| `facet-xml-node::Element` | Unknown/dynamic XML, runtime flexibility |
 
 ## LLM contribution policy
 
