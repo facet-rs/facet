@@ -2358,6 +2358,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-dom",
+ "facet-html",
  "facet-xml",
 ]
 

@@ -15,6 +15,7 @@ use facet_reflect::{HasFields, Peek, PeekStruct};
 
 /// A path to a node in the DOM tree.
 #[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
+#[facet(transparent)]
 pub struct NodePath(pub Vec<usize>);
 
 /// Reference to a node - either by path or by slot number.
