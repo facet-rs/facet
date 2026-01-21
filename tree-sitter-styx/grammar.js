@@ -49,9 +49,9 @@ module.exports = grammar({
     // - key only = implicit unit value
     // - key + value = explicit value
     //
-    // Per r[entry.structure]:
+    // Per parser[entry.structure]:
     // An entry has exactly one key and at most one value.
-    // Sequences in key position are paths (r[entry.path]).
+    // Sequences in key position are paths (parser[entry.path]).
     entry: ($) =>
       prec.right(
         choice(
