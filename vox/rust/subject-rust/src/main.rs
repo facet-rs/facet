@@ -4,7 +4,7 @@
 //! using the roam-stream transport library.
 
 use roam::session::{Rx, Tx};
-use roam_stream::{Connector, HandshakeConfig, connect};
+use roam_stream::{CobsFramed, Connector, HandshakeConfig, connect, initiate_framed};
 use tokio::net::TcpStream;
 use tracing::{debug, error, info, instrument};
 
@@ -219,11 +219,24 @@ impl Connector for PeerConnector {
 
 async fn run_server() -> Result<(), String> {
     let addr = std::env::var("PEER_ADDR").map_err(|_| "PEER_ADDR env var not set".to_string())?;
+    let accept_connections = std::env::var("ACCEPT_CONNECTIONS").is_ok();
 
     info!("connecting to {addr}");
 
-    // Use connect() with our dispatcher - automatic reconnection
-    let connector = PeerConnector { addr };
+    if accept_connections {
+        // Use lower-level API to accept incoming virtual connections
+        run_server_with_incoming_connections(&addr).await
+    } else {
+        // Use connect() with our dispatcher - automatic reconnection
+        run_server_simple(&addr).await
+    }
+}
+
+/// Simple server mode - uses auto-reconnecting client, doesn't accept incoming connections.
+async fn run_server_simple(addr: &str) -> Result<(), String> {
+    let connector = PeerConnector {
+        addr: addr.to_string(),
+    };
     let dispatcher = testbed::TestbedDispatcher::new(TestbedService);
     let client = connect(connector, HandshakeConfig::default(), dispatcher);
 
@@ -233,15 +246,55 @@ async fn run_server() -> Result<(), String> {
     let _ = handle;
 
     // Keep the connection alive until peer disconnects
-    // In a real scenario, we'd have a proper shutdown mechanism
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        // Check if still connected by trying to get handle
         if client.handle().await.is_err() {
             info!("connection closed");
             break;
         }
     }
+
+    Ok(())
+}
+
+/// Server mode that accepts incoming virtual connections.
+async fn run_server_with_incoming_connections(addr: &str) -> Result<(), String> {
+    let stream = TcpStream::connect(addr)
+        .await
+        .map_err(|e| format!("connect failed: {e}"))?;
+    let framed = CobsFramed::new(stream);
+
+    let dispatcher = testbed::TestbedDispatcher::new(TestbedService);
+    let (handle, mut incoming, driver) =
+        initiate_framed(framed, HandshakeConfig::default(), dispatcher)
+            .await
+            .map_err(|e| format!("handshake failed: {e}"))?;
+
+    info!("connected, accepting incoming connections");
+    let _ = handle;
+
+    // Spawn task to handle incoming virtual connections
+    tokio::spawn(async move {
+        while let Some(incoming_conn) = incoming.recv().await {
+            info!("received incoming connection request");
+            // Accept all incoming connections with empty metadata
+            match incoming_conn.accept(vec![]).await {
+                Ok(_conn_handle) => {
+                    info!("accepted virtual connection");
+                }
+                Err(e) => {
+                    error!("failed to accept virtual connection: {e}");
+                }
+            }
+        }
+        info!("incoming connections channel closed");
+    });
+
+    // Run the driver until connection closes
+    driver
+        .run()
+        .await
+        .map_err(|e| format!("driver error: {e}"))?;
 
     Ok(())
 }

@@ -184,9 +184,11 @@ mod tests {
         let subscriber = tracing_subscriber::registry().with(layer);
 
         // Use the subscriber for this test
+        // NOTE: We use target: "test" to avoid the "roam" prefix filter that
+        // blocks roam_tracing events (to prevent infinite recursion in production)
         tracing::subscriber::with_default(subscriber, || {
-            tracing::info!("test message");
-            tracing::warn!(key = "value", "warning with field");
+            tracing::info!(target: "test", "test message");
+            tracing::warn!(target: "test", key = "value", "warning with field");
         });
 
         // Check that events were captured
@@ -220,9 +222,11 @@ mod tests {
 
         let subscriber = tracing_subscriber::registry().with(layer);
 
+        // NOTE: We use target: "test" to avoid the "roam" prefix filter that
+        // blocks roam_tracing events (to prevent infinite recursion in production)
         tracing::subscriber::with_default(subscriber, || {
-            let _span = tracing::info_span!("test_span", foo = 42).entered();
-            tracing::info!("inside span");
+            let _span = tracing::info_span!(target: "test", "test_span", foo = 42).entered();
+            tracing::info!(target: "test", "inside span");
         });
 
         // Check that we got span enter, event, and span close
@@ -270,11 +274,13 @@ mod tests {
 
         let subscriber = tracing_subscriber::registry().with(layer);
 
+        // NOTE: We use target: "test" to avoid the "roam" prefix filter that
+        // blocks roam_tracing events (to prevent infinite recursion in production)
         tracing::subscriber::with_default(subscriber, || {
-            tracing::debug!("debug message"); // Should be filtered
-            tracing::info!("info message"); // Should be filtered
-            tracing::warn!("warn message"); // Should pass
-            tracing::error!("error message"); // Should pass
+            tracing::debug!(target: "test", "debug message"); // Should be filtered
+            tracing::info!(target: "test", "info message"); // Should be filtered
+            tracing::warn!(target: "test", "warn message"); // Should pass
+            tracing::error!(target: "test", "error message"); // Should pass
         });
 
         let mut count = 0;

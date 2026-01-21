@@ -3,12 +3,7 @@
 // These schemas match the Rust definitions in roam-wire/src/lib.rs exactly.
 // The discriminants match the #[repr(u8)] values used in Rust.
 
-import type {
-  Schema,
-  SchemaRegistry,
-  EnumSchema,
-  TupleSchema,
-} from "@bearcove/roam-postcard";
+import type { Schema, SchemaRegistry, EnumSchema, TupleSchema } from "@bearcove/roam-postcard";
 
 // ============================================================================
 // Hello Schema
@@ -22,6 +17,7 @@ import type {
  * #[repr(u8)]
  * pub enum Hello {
  *     V1 { max_payload_size: u32, initial_channel_credit: u32 } = 0,
+ *     V2 { max_payload_size: u32, initial_channel_credit: u32 } = 1,
  * }
  * ```
  */
@@ -31,6 +27,14 @@ export const HelloSchema: EnumSchema = {
     {
       name: "V1",
       discriminant: 0,
+      fields: {
+        maxPayloadSize: { kind: "u32" },
+        initialChannelCredit: { kind: "u32" },
+      },
+    },
+    {
+      name: "V2",
+      discriminant: 1,
       fields: {
         maxPayloadSize: { kind: "u32" },
         initialChannelCredit: { kind: "u32" },
@@ -84,19 +88,22 @@ export const MetadataEntrySchema: TupleSchema = {
 /**
  * Schema for Message enum.
  *
- * Rust definition:
+ * Rust definition (v2.0.0):
  * ```rust
  * #[repr(u8)]
  * pub enum Message {
  *     Hello(Hello) = 0,
- *     Goodbye { reason: String } = 1,
- *     Request { request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> } = 2,
- *     Response { request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> } = 3,
- *     Cancel { request_id: u64 } = 4,
- *     Data { channel_id: u64, payload: Vec<u8> } = 5,
- *     Close { channel_id: u64 } = 6,
- *     Reset { channel_id: u64 } = 7,
- *     Credit { channel_id: u64, bytes: u32 } = 8,
+ *     Connect { request_id: u64, metadata: Vec<(String, MetadataValue)> } = 1,
+ *     Accept { request_id: u64, conn_id: u64, metadata: Vec<(String, MetadataValue)> } = 2,
+ *     Reject { request_id: u64, reason: String, metadata: Vec<(String, MetadataValue)> } = 3,
+ *     Goodbye { conn_id: u64, reason: String } = 4,
+ *     Request { conn_id: u64, request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> } = 5,
+ *     Response { conn_id: u64, request_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> } = 6,
+ *     Cancel { conn_id: u64, request_id: u64 } = 7,
+ *     Data { conn_id: u64, channel_id: u64, payload: Vec<u8> } = 8,
+ *     Close { conn_id: u64, channel_id: u64 } = 9,
+ *     Reset { conn_id: u64, channel_id: u64 } = 10,
+ *     Credit { conn_id: u64, channel_id: u64, bytes: u32 } = 11,
  * }
  * ```
  */
@@ -109,19 +116,50 @@ export const MessageSchema: EnumSchema = {
       discriminant: 0,
       fields: { kind: "ref", name: "Hello" },
     },
-    // Goodbye { reason: String } = 1
+    // Connect { request_id: u64, metadata: Vec<(String, MetadataValue)> } = 1
     {
-      name: "Goodbye",
+      name: "Connect",
       discriminant: 1,
       fields: {
+        requestId: { kind: "u64" },
+        metadata: { kind: "vec", element: { kind: "ref", name: "MetadataEntry" } },
+      },
+    },
+    // Accept { request_id: u64, conn_id: u64, metadata: Vec<(String, MetadataValue)> } = 2
+    {
+      name: "Accept",
+      discriminant: 2,
+      fields: {
+        requestId: { kind: "u64" },
+        connId: { kind: "u64" },
+        metadata: { kind: "vec", element: { kind: "ref", name: "MetadataEntry" } },
+      },
+    },
+    // Reject { request_id: u64, reason: String, metadata: Vec<(String, MetadataValue)> } = 3
+    {
+      name: "Reject",
+      discriminant: 3,
+      fields: {
+        requestId: { kind: "u64" },
+        reason: { kind: "string" },
+        metadata: { kind: "vec", element: { kind: "ref", name: "MetadataEntry" } },
+      },
+    },
+    // Goodbye { conn_id: u64, reason: String } = 4
+    {
+      name: "Goodbye",
+      discriminant: 4,
+      fields: {
+        connId: { kind: "u64" },
         reason: { kind: "string" },
       },
     },
-    // Request { request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> } = 2
+    // Request { conn_id: u64, request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> } = 5
     {
       name: "Request",
-      discriminant: 2,
+      discriminant: 5,
       fields: {
+        connId: { kind: "u64" },
         requestId: { kind: "u64" },
         methodId: { kind: "u64" },
         metadata: { kind: "vec", element: { kind: "ref", name: "MetadataEntry" } },
@@ -129,54 +167,61 @@ export const MessageSchema: EnumSchema = {
         payload: { kind: "bytes" },
       },
     },
-    // Response { request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> } = 3
+    // Response { conn_id: u64, request_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> } = 6
     {
       name: "Response",
-      discriminant: 3,
-      fields: {
-        requestId: { kind: "u64" },
-        metadata: { kind: "vec", element: { kind: "ref", name: "MetadataEntry" } },
-        payload: { kind: "bytes" },
-      },
-    },
-    // Cancel { request_id: u64 } = 4
-    {
-      name: "Cancel",
-      discriminant: 4,
-      fields: {
-        requestId: { kind: "u64" },
-      },
-    },
-    // Data { channel_id: u64, payload: Vec<u8> } = 5
-    {
-      name: "Data",
-      discriminant: 5,
-      fields: {
-        channelId: { kind: "u64" },
-        payload: { kind: "bytes" },
-      },
-    },
-    // Close { channel_id: u64 } = 6
-    {
-      name: "Close",
       discriminant: 6,
       fields: {
-        channelId: { kind: "u64" },
+        connId: { kind: "u64" },
+        requestId: { kind: "u64" },
+        metadata: { kind: "vec", element: { kind: "ref", name: "MetadataEntry" } },
+        channels: { kind: "vec", element: { kind: "u64" } },
+        payload: { kind: "bytes" },
       },
     },
-    // Reset { channel_id: u64 } = 7
+    // Cancel { conn_id: u64, request_id: u64 } = 7
     {
-      name: "Reset",
+      name: "Cancel",
       discriminant: 7,
       fields: {
+        connId: { kind: "u64" },
+        requestId: { kind: "u64" },
+      },
+    },
+    // Data { conn_id: u64, channel_id: u64, payload: Vec<u8> } = 8
+    {
+      name: "Data",
+      discriminant: 8,
+      fields: {
+        connId: { kind: "u64" },
+        channelId: { kind: "u64" },
+        payload: { kind: "bytes" },
+      },
+    },
+    // Close { conn_id: u64, channel_id: u64 } = 9
+    {
+      name: "Close",
+      discriminant: 9,
+      fields: {
+        connId: { kind: "u64" },
         channelId: { kind: "u64" },
       },
     },
-    // Credit { channel_id: u64, bytes: u32 } = 8
+    // Reset { conn_id: u64, channel_id: u64 } = 10
+    {
+      name: "Reset",
+      discriminant: 10,
+      fields: {
+        connId: { kind: "u64" },
+        channelId: { kind: "u64" },
+      },
+    },
+    // Credit { conn_id: u64, channel_id: u64, bytes: u32 } = 11
     {
       name: "Credit",
-      discriminant: 8,
+      discriminant: 11,
       fields: {
+        connId: { kind: "u64" },
         channelId: { kind: "u64" },
         bytes: { kind: "u32" },
       },

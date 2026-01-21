@@ -112,6 +112,24 @@ pub fn oneshot<T>() -> (OneshotSender<T>, OneshotReceiver<T>) {
     futures_channel::oneshot::channel()
 }
 
+/// Handle that can be used to abort a spawned task.
+///
+/// On WASM, abort is a no-op since there's no way to cancel fire-and-forget tasks.
+/// This is a placeholder for API compatibility with the native runtime.
+#[derive(Debug)]
+pub struct AbortHandle;
+
+impl AbortHandle {
+    /// Abort the associated task.
+    ///
+    /// On WASM, this is a no-op and always returns `false` since tasks can't
+    /// be cancelled.
+    pub fn abort(&self) -> bool {
+        // WASM tasks are fire-and-forget, can't be cancelled
+        false
+    }
+}
+
 /// Spawn a task that runs concurrently.
 ///
 /// On WASM, futures don't need to be `Send` since everything is single-threaded.
@@ -121,6 +139,18 @@ where
     F: Future<Output = ()> + 'static,
 {
     wasm_bindgen_futures::spawn_local(future);
+}
+
+/// Spawn a task and return an abort handle that can be used to cancel it.
+///
+/// On WASM, the abort handle is a no-op since tasks can't be cancelled.
+/// The task will still run to completion.
+pub fn spawn_with_abort<F>(future: F) -> AbortHandle
+where
+    F: Future<Output = ()> + 'static,
+{
+    wasm_bindgen_futures::spawn_local(future);
+    AbortHandle
 }
 
 /// Sleep for the given duration.

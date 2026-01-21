@@ -35,6 +35,7 @@ async fn guest_transport_send_request() {
 
     // Send a Request message through the transport
     let msg = Message::Request {
+        conn_id: roam_wire::ConnectionId::ROOT,
         request_id: 42,
         method_id: 123,
         metadata: vec![(
@@ -67,6 +68,7 @@ async fn guest_transport_recv_response() {
 
     // Host sends a Response message
     let msg = Message::Response {
+        conn_id: roam_wire::ConnectionId::ROOT,
         request_id: 42,
         metadata: vec![],
         channels: vec![],
@@ -89,6 +91,7 @@ async fn host_guest_transport_roundtrip() {
 
     // Guest sends request
     let request = Message::Request {
+        conn_id: roam_wire::ConnectionId::ROOT,
         request_id: 1,
         method_id: 100,
         metadata: vec![
@@ -112,6 +115,7 @@ async fn host_guest_transport_roundtrip() {
 
     // Host sends response
     let response = Message::Response {
+        conn_id: roam_wire::ConnectionId::ROOT,
         request_id: 1,
         metadata: vec![],
         channels: vec![],
@@ -134,6 +138,7 @@ async fn streaming_data_messages() {
     // Send multiple Data messages (simulating a stream)
     for i in 0..5 {
         let data = Message::Data {
+            conn_id: roam_wire::ConnectionId::ROOT,
             channel_id: 7,
             payload: format!("chunk {}", i).into_bytes(),
         };
@@ -141,7 +146,10 @@ async fn streaming_data_messages() {
     }
 
     // Send Close
-    let close = Message::Close { channel_id: 7 };
+    let close = Message::Close {
+        conn_id: roam_wire::ConnectionId::ROOT,
+        channel_id: 7,
+    };
     guest_transport.send(&close).await.unwrap();
 
     // Host receives all
@@ -161,7 +169,7 @@ async fn streaming_data_messages() {
 
     let (_, last_frame) = messages.pop().unwrap();
     let last_msg = frame_to_message(last_frame).unwrap();
-    assert!(matches!(last_msg, Message::Close { channel_id: 7 }));
+    assert!(matches!(last_msg, Message::Close { channel_id: 7, .. }));
 }
 
 #[tokio::test]
@@ -171,6 +179,7 @@ async fn cancel_message() {
 
     // Send a request, then cancel it
     let request = Message::Request {
+        conn_id: roam_wire::ConnectionId::ROOT,
         request_id: 99,
         method_id: 1,
         metadata: vec![],
@@ -179,7 +188,10 @@ async fn cancel_message() {
     };
     guest_transport.send(&request).await.unwrap();
 
-    let cancel = Message::Cancel { request_id: 99 };
+    let cancel = Message::Cancel {
+        conn_id: roam_wire::ConnectionId::ROOT,
+        request_id: 99,
+    };
     guest_transport.send(&cancel).await.unwrap();
 
     // Host receives both
@@ -193,7 +205,7 @@ async fn cancel_message() {
     let msg2 = frame_to_message(frame2).unwrap();
 
     assert!(matches!(msg1, Message::Request { request_id: 99, .. }));
-    assert!(matches!(msg2, Message::Cancel { request_id: 99 }));
+    assert!(matches!(msg2, Message::Cancel { request_id: 99, .. }));
 }
 
 #[tokio::test]
@@ -203,7 +215,10 @@ async fn reset_message() {
     let mut guest_transport = create_guest_transport(guest);
 
     // Host sends Reset to guest
-    let reset = Message::Reset { channel_id: 42 };
+    let reset = Message::Reset {
+        conn_id: roam_wire::ConnectionId::ROOT,
+        channel_id: 42,
+    };
     let frame = message_to_frame(&reset).unwrap();
     host.send(peer_id, frame).unwrap();
 
@@ -219,6 +234,7 @@ async fn goodbye_message() {
 
     // Guest sends Goodbye
     let goodbye = Message::Goodbye {
+        conn_id: roam_wire::ConnectionId::ROOT,
         reason: "shutting down".to_string(),
     };
     guest_transport.send(&goodbye).await.unwrap();
@@ -247,6 +263,7 @@ async fn large_metadata() {
     }
 
     let request = Message::Request {
+        conn_id: roam_wire::ConnectionId::ROOT,
         request_id: 1,
         method_id: 1,
         metadata,
@@ -270,6 +287,7 @@ async fn empty_metadata_and_payload() {
     let mut guest_transport = create_guest_transport(guest);
 
     let request = Message::Request {
+        conn_id: roam_wire::ConnectionId::ROOT,
         request_id: 1,
         method_id: 1,
         metadata: vec![],

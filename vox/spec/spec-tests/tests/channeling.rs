@@ -37,8 +37,12 @@ async fn hello_exchange(io: &mut spec_tests::harness::CobsFramed) -> Result<(), 
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "expected Hello from subject".to_string())?;
-    if !matches!(msg, Message::Hello(Hello::V1 { .. })) {
-        return Err(format!("first message must be Hello, got {msg:?}"));
+    match msg {
+        Message::Hello(Hello::V2 { .. }) => {}
+        Message::Hello(Hello::V1 { .. }) => {
+            return Err("received Hello::V1, but V1 is no longer supported".to_string());
+        }
+        _ => return Err(format!("first message must be Hello, got {msg:?}")),
     }
 
     io.send(&Message::Hello(our_hello(1024 * 1024)))
@@ -52,6 +56,8 @@ async fn hello_exchange(io: &mut spec_tests::harness::CobsFramed) -> Result<(), 
 // r[verify channeling.data] - Data messages carry stream payloads
 // r[verify channeling.close] - Close terminates stream gracefully
 // r[verify channeling.id.parity] - Client uses odd stream IDs (initiator)
+// r[verify channeling.caller-pov] - Rx<i32> means caller receives (server sends), but here caller transmits via the channel
+// r[verify channeling.allocation.caller] - Caller allocates channel ID (channel_id = 1)
 #[test]
 fn streaming_sum_client_to_server() {
     run_async(async {
@@ -69,6 +75,7 @@ fn streaming_sum_client_to_server() {
         let req_payload =
             facet_postcard::to_vec(&(channel_id,)).map_err(|e| format!("postcard args: {e}"))?;
         let req = Message::Request {
+            conn_id: roam_wire::ConnectionId::ROOT,
             request_id: 1,
             method_id,
             metadata: metadata_empty(),
@@ -82,6 +89,7 @@ fn streaming_sum_client_to_server() {
             let data_payload =
                 facet_postcard::to_vec(&n).map_err(|e| format!("postcard data: {e}"))?;
             io.send(&Message::Data {
+                conn_id: roam_wire::ConnectionId::ROOT,
                 channel_id,
                 payload: data_payload,
             })
@@ -90,9 +98,12 @@ fn streaming_sum_client_to_server() {
         }
 
         // Send Close to end the stream
-        io.send(&Message::Close { channel_id })
-            .await
-            .map_err(|e| e.to_string())?;
+        io.send(&Message::Close {
+            conn_id: roam_wire::ConnectionId::ROOT,
+            channel_id,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
         // Wait for Response
         let resp = io
@@ -112,7 +123,7 @@ fn streaming_sum_client_to_server() {
                 }
                 payload
             }
-            Message::Goodbye { reason } => return Err(format!("unexpected Goodbye: {reason}")),
+            Message::Goodbye { reason, .. } => return Err(format!("unexpected Goodbye: {reason}")),
             other => return Err(format!("expected Response, got {other:?}")),
         };
 
@@ -155,6 +166,7 @@ fn streaming_generate_server_to_client() {
         let req_payload = facet_postcard::to_vec(&(count, channel_id))
             .map_err(|e| format!("postcard args: {e}"))?;
         let req = Message::Request {
+            conn_id: roam_wire::ConnectionId::ROOT,
             request_id: 1,
             method_id,
             metadata: metadata_empty(),
@@ -180,7 +192,7 @@ fn streaming_generate_server_to_client() {
                 ))?;
 
             match msg {
-                Message::Data { channel_id: sid, payload } => {
+                Message::Data { channel_id: sid, payload, .. } => {
                     if sid != channel_id {
                         return Err(format!("unexpected channel_id {sid}, expected {channel_id}"));
                     }
@@ -192,7 +204,7 @@ fn streaming_generate_server_to_client() {
                         .map_err(|e| format!("postcard data: {e}"))?;
                     received.push(n);
                 }
-                Message::Close { channel_id: sid } => {
+                Message::Close { channel_id: sid, .. } => {
                     if sid != channel_id {
                         return Err(format!("close channel_id mismatch: {sid}"));
                     }
@@ -212,7 +224,7 @@ fn streaming_generate_server_to_client() {
                     }
                     got_response = true;
                 }
-                Message::Goodbye { reason } => {
+                Message::Goodbye { reason, .. } => {
                     return Err(format!("unexpected Goodbye: {reason}"));
                 }
                 other => {
@@ -252,6 +264,7 @@ fn streaming_transform_bidirectional() {
         let req_payload = facet_postcard::to_vec(&(input_channel_id, output_channel_id))
             .map_err(|e| format!("postcard args: {e}"))?;
         let req = Message::Request {
+            conn_id: roam_wire::ConnectionId::ROOT,
             request_id: 1,
             method_id,
             metadata: metadata_empty(),
@@ -269,6 +282,7 @@ fn streaming_transform_bidirectional() {
             let data_payload = facet_postcard::to_vec(&msg.to_string())
                 .map_err(|e| format!("postcard data: {e}"))?;
             io.send(&Message::Data {
+                conn_id: roam_wire::ConnectionId::ROOT,
                 channel_id: input_channel_id,
                 payload: data_payload,
             })
@@ -286,6 +300,7 @@ fn streaming_transform_bidirectional() {
                 Message::Data {
                     channel_id,
                     payload,
+                    ..
                 } => {
                     if channel_id != output_channel_id {
                         return Err(format!(
@@ -302,6 +317,7 @@ fn streaming_transform_bidirectional() {
 
         // Close input stream
         io.send(&Message::Close {
+            conn_id: roam_wire::ConnectionId::ROOT,
             channel_id: input_channel_id,
         })
         .await
@@ -319,7 +335,7 @@ fn streaming_transform_bidirectional() {
                 .ok_or_else(|| "expected Close/Response from subject".to_string())?;
 
             match msg {
-                Message::Close { channel_id } => {
+                Message::Close { channel_id, .. } => {
                     if channel_id != output_channel_id {
                         return Err(format!(
                             "close channel_id mismatch: {channel_id}, expected {output_channel_id}"

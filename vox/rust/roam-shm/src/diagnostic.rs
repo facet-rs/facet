@@ -97,7 +97,11 @@ impl ShmDiagnostics {
         let mut output = String::new();
 
         // Count active peers
-        let attached = self.peer_slots.iter().filter(|p| p.state == PeerState::Attached).count();
+        let attached = self
+            .peer_slots
+            .iter()
+            .filter(|p| p.state == PeerState::Attached)
+            .count();
         if attached == 0 {
             return String::new(); // Nothing to show
         }
@@ -118,14 +122,19 @@ impl ShmDiagnostics {
             let g2h = &peer.guest_to_host_ring;
 
             // Get name if available, otherwise use peer_id
-            let name = peer.tracked_state.as_ref()
+            let name = peer
+                .tracked_state
+                .as_ref()
                 .and_then(|t| t.name.as_ref())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("peer#{}", peer.peer_id.get()));
 
             // Compact format: [name] H→G:used/cap G→H:used/cap [bytes]
-            let _ = write!(output, "  [{}] H→G:{}/{} G→H:{}/{}",
-                name, h2g.used, h2g.capacity, g2h.used, g2h.capacity);
+            let _ = write!(
+                output,
+                "  [{}] H→G:{}/{} G→H:{}/{}",
+                name, h2g.used, h2g.capacity, g2h.used, g2h.capacity
+            );
 
             // Flag if G→H has pending messages (cell sent but host hasn't read)
             if g2h.used > 0 {
@@ -133,12 +142,15 @@ impl ShmDiagnostics {
             }
 
             // Show byte stats if available
-            if let Some(ref tracked) = peer.tracked_state {
-                if tracked.bytes_sent > 0 || tracked.bytes_received > 0 {
-                    let _ = write!(output, " ({}↑ {}↓)",
-                        format_bytes(tracked.bytes_sent),
-                        format_bytes(tracked.bytes_received));
-                }
+            if let Some(ref tracked) = peer.tracked_state
+                && (tracked.bytes_sent > 0 || tracked.bytes_received > 0)
+            {
+                let _ = write!(
+                    output,
+                    " ({}↑ {}↓)",
+                    format_bytes(tracked.bytes_sent),
+                    format_bytes(tracked.bytes_received)
+                );
             }
 
             let _ = writeln!(output);
@@ -159,7 +171,6 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1}G", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 }
-
 
 /// A read-only view of an SHM segment for diagnostic purposes.
 ///
@@ -215,7 +226,11 @@ impl ShmDiagnosticView {
 
         // Get host slot pool stats
         let host_slots = {
-            let pool = SlotPool::new(self.region, self.layout.host_slot_pool_offset(), &self.layout.config);
+            let pool = SlotPool::new(
+                self.region,
+                self.layout.host_slot_pool_offset(),
+                &self.layout.config,
+            );
             pool.stats()
         };
 

@@ -17,6 +17,7 @@ export { RpcError, RpcErrorCode, decodeRpcResult, decodeUserError } from "./rpc_
 export type {
   // Hello
   HelloV1,
+  HelloV2,
   Hello,
   // MetadataValue
   MetadataValueString,
@@ -26,6 +27,9 @@ export type {
   MetadataEntry,
   // Message
   MessageHello,
+  MessageConnect,
+  MessageAccept,
+  MessageReject,
   MessageGoodbye,
   MessageRequest,
   MessageResponse,
@@ -44,10 +48,14 @@ export {
   HelloDiscriminant,
   // Factory functions
   helloV1,
+  helloV2,
   metadataString,
   metadataBytes,
   metadataU64,
   messageHello,
+  messageConnect,
+  messageAccept,
+  messageReject,
   messageGoodbye,
   messageRequest,
   messageResponse,

@@ -2,7 +2,7 @@
 //!
 //! Writes binary files to a shared fixtures directory that Swift tests can read.
 
-use roam_wire::{Hello, Message, MetadataValue};
+use roam_wire::{ConnectionId, Hello, Message, MetadataValue};
 use std::fs;
 use std::path::Path;
 
@@ -28,24 +28,24 @@ fn main() {
     let wire_dir = out_dir.join("wire");
     fs::create_dir_all(&wire_dir).expect("failed to create wire directory");
 
-    // Hello messages
-    let hello_small = Hello::V1 {
+    // Hello messages (V2 for spec v2.0.0)
+    let hello_small = Hello::V2 {
         max_payload_size: 1024,
         initial_channel_credit: 64,
     };
     write_vector(
         &wire_dir,
-        "hello_v1_small",
+        "hello_v2_small",
         &facet_postcard::to_vec(&hello_small).unwrap(),
     );
 
-    let hello_typical = Hello::V1 {
+    let hello_typical = Hello::V2 {
         max_payload_size: 1024 * 1024,
         initial_channel_credit: 64 * 1024,
     };
     write_vector(
         &wire_dir,
-        "hello_v1_typical",
+        "hello_v2_typical",
         &facet_postcard::to_vec(&hello_typical).unwrap(),
     );
 
@@ -64,18 +64,76 @@ fn main() {
         &facet_postcard::to_vec(&msg).unwrap(),
     );
 
-    // Goodbye
+    // Connect/Accept/Reject (new in v2)
+    let msg = Message::Connect {
+        request_id: 1,
+        metadata: vec![],
+    };
+    write_vector(
+        &wire_dir,
+        "message_connect_empty",
+        &facet_postcard::to_vec(&msg).unwrap(),
+    );
+
+    let msg = Message::Connect {
+        request_id: 2,
+        metadata: vec![(
+            "auth".to_string(),
+            MetadataValue::String("token123".to_string()),
+        )],
+    };
+    write_vector(
+        &wire_dir,
+        "message_connect_with_metadata",
+        &facet_postcard::to_vec(&msg).unwrap(),
+    );
+
+    let msg = Message::Accept {
+        request_id: 1,
+        conn_id: ConnectionId::new(1),
+        metadata: vec![],
+    };
+    write_vector(
+        &wire_dir,
+        "message_accept",
+        &facet_postcard::to_vec(&msg).unwrap(),
+    );
+
+    let msg = Message::Reject {
+        request_id: 1,
+        reason: "not listening".to_string(),
+        metadata: vec![],
+    };
+    write_vector(
+        &wire_dir,
+        "message_reject",
+        &facet_postcard::to_vec(&msg).unwrap(),
+    );
+
+    // Goodbye (now has conn_id)
     let msg = Message::Goodbye {
+        conn_id: ConnectionId::ROOT,
         reason: "test".to_string(),
     };
     write_vector(
         &wire_dir,
-        "message_goodbye",
+        "message_goodbye_conn0",
         &facet_postcard::to_vec(&msg).unwrap(),
     );
 
-    // Request variants
+    let msg = Message::Goodbye {
+        conn_id: ConnectionId::new(1),
+        reason: "done".to_string(),
+    };
+    write_vector(
+        &wire_dir,
+        "message_goodbye_conn1",
+        &facet_postcard::to_vec(&msg).unwrap(),
+    );
+
+    // Request variants (now has conn_id)
     let msg = Message::Request {
+        conn_id: ConnectionId::ROOT,
         request_id: 1,
         method_id: 42,
         metadata: vec![],
@@ -89,6 +147,7 @@ fn main() {
     );
 
     let msg = Message::Request {
+        conn_id: ConnectionId::ROOT,
         request_id: 1,
         method_id: 42,
         metadata: vec![],
@@ -102,6 +161,7 @@ fn main() {
     );
 
     let msg = Message::Request {
+        conn_id: ConnectionId::ROOT,
         request_id: 5,
         method_id: 100,
         metadata: vec![(
@@ -119,6 +179,7 @@ fn main() {
 
     // Request with channels (for proxy support)
     let msg = Message::Request {
+        conn_id: ConnectionId::ROOT,
         request_id: 6,
         method_id: 200,
         metadata: vec![],
@@ -131,8 +192,24 @@ fn main() {
         &facet_postcard::to_vec(&msg).unwrap(),
     );
 
-    // Response
+    // Request on virtual connection
+    let msg = Message::Request {
+        conn_id: ConnectionId::new(1),
+        request_id: 1,
+        method_id: 42,
+        metadata: vec![],
+        channels: vec![],
+        payload: vec![0x42],
+    };
+    write_vector(
+        &wire_dir,
+        "message_request_conn1",
+        &facet_postcard::to_vec(&msg).unwrap(),
+    );
+
+    // Response (now has conn_id)
     let msg = Message::Response {
+        conn_id: ConnectionId::ROOT,
         request_id: 1,
         metadata: vec![],
         channels: vec![],
@@ -144,16 +221,20 @@ fn main() {
         &facet_postcard::to_vec(&msg).unwrap(),
     );
 
-    // Cancel
-    let msg = Message::Cancel { request_id: 99 };
+    // Cancel (now has conn_id)
+    let msg = Message::Cancel {
+        conn_id: ConnectionId::ROOT,
+        request_id: 99,
+    };
     write_vector(
         &wire_dir,
         "message_cancel",
         &facet_postcard::to_vec(&msg).unwrap(),
     );
 
-    // Data
+    // Data (now has conn_id)
     let msg = Message::Data {
+        conn_id: ConnectionId::ROOT,
         channel_id: 1,
         payload: vec![1, 2, 3],
     };
@@ -163,24 +244,31 @@ fn main() {
         &facet_postcard::to_vec(&msg).unwrap(),
     );
 
-    // Close
-    let msg = Message::Close { channel_id: 7 };
+    // Close (now has conn_id)
+    let msg = Message::Close {
+        conn_id: ConnectionId::ROOT,
+        channel_id: 7,
+    };
     write_vector(
         &wire_dir,
         "message_close",
         &facet_postcard::to_vec(&msg).unwrap(),
     );
 
-    // Reset
-    let msg = Message::Reset { channel_id: 5 };
+    // Reset (now has conn_id)
+    let msg = Message::Reset {
+        conn_id: ConnectionId::ROOT,
+        channel_id: 5,
+    };
     write_vector(
         &wire_dir,
         "message_reset",
         &facet_postcard::to_vec(&msg).unwrap(),
     );
 
-    // Credit
+    // Credit (now has conn_id)
     let msg = Message::Credit {
+        conn_id: ConnectionId::ROOT,
         channel_id: 3,
         bytes: 4096,
     };
@@ -610,8 +698,8 @@ fn main() {
     write_vector(&cobs_dir, "multiple_zeros_encoded", &encoded);
     write_vector(&cobs_dir, "multiple_zeros_raw", &data);
 
-    // Hello message (the actual failing case)
-    let hello = Message::Hello(Hello::V1 {
+    // Hello message (v2)
+    let hello = Message::Hello(Hello::V2 {
         max_payload_size: 1024 * 1024,
         initial_channel_credit: 64 * 1024,
     });

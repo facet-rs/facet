@@ -149,9 +149,10 @@ async fn start_roam_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
             let dispatcher = TestbedDispatcher::new(TestbedImpl);
 
             tokio::spawn(async move {
-                let (handle, driver) = accept(stream, HandshakeConfig::default(), dispatcher)
-                    .await
-                    .unwrap();
+                let (handle, _incoming, driver) =
+                    accept(stream, HandshakeConfig::default(), dispatcher)
+                        .await
+                        .unwrap();
                 let _ = handle;
                 let _ = driver.run().await;
             });

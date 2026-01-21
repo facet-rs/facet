@@ -203,15 +203,20 @@ func runServer() async throws {
     let transport = try await connect(host: host, port: port)
     log("connected")
 
-    // Establish connection as acceptor (we're the server/handler, but we connected)
-    let hello = Hello.v1(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
+    // r[impl message.hello.version] - Use v2 for virtual connection support.
+    let hello = Hello.v2(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
+
+    // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
+    let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
+
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
 
     let (_, driver) = try await establishAcceptor(
         transport: transport,
         ourHello: hello,
-        dispatcher: dispatcher
+        dispatcher: dispatcher,
+        acceptConnections: acceptConnections
     )
 
     log("handshake complete, running driver")
@@ -244,8 +249,8 @@ func runClient() async throws {
     let transport = try await connect(host: host, port: port)
     log("connected")
 
-    // Establish connection as initiator
-    let hello = Hello.v1(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
+    // r[impl message.hello.version] - Use v2 for virtual connection support.
+    let hello = Hello.v2(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
 

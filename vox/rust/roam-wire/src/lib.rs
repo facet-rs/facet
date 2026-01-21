@@ -6,16 +6,68 @@
 
 use facet::Facet;
 
+/// Connection ID identifying a virtual connection on a link.
+///
+/// Connection 0 is the root connection, established implicitly when the link is created.
+/// Additional connections are opened via Connect/Accept messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Facet)]
+#[repr(transparent)]
+pub struct ConnectionId(pub u64);
+
+impl ConnectionId {
+    /// The root connection (always exists on a link).
+    pub const ROOT: Self = Self(0);
+
+    /// Create a new connection ID.
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    /// Get the raw u64 value.
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+
+    /// Check if this is the root connection.
+    pub const fn is_root(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl From<u64> for ConnectionId {
+    fn from(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+impl From<ConnectionId> for u64 {
+    fn from(id: ConnectionId) -> Self {
+        id.0
+    }
+}
+
+impl std::fmt::Display for ConnectionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "conn:{}", self.0)
+    }
+}
+
 /// Hello message for handshake.
 // r[impl message.hello.structure]
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum Hello {
-    /// Spec v1 Hello.
+    /// Spec v1 Hello - deprecated, will be rejected.
     V1 {
         max_payload_size: u32,
         initial_channel_credit: u32,
     } = 0,
+
+    /// Spec v2 Hello - supports virtual connections.
+    V2 {
+        max_payload_size: u32,
+        initial_channel_credit: u32,
+    } = 1,
 }
 
 /// Metadata value.
@@ -93,63 +145,120 @@ pub fn validate_metadata(metadata: &[(String, MetadataValue)]) -> Result<(), &'s
     Ok(())
 }
 
+/// Metadata type alias for convenience.
+pub type Metadata = Vec<(String, MetadataValue)>;
+
 /// Protocol message.
 ///
 /// Variant order is wire-significant (postcard enum discriminants).
+///
+/// # Virtual Connections (v2.0.0)
+///
+/// A link carries multiple virtual connections, each with its own request ID
+/// space, channel ID space, and dispatcher. Connection 0 is implicit on link
+/// establishment. Additional connections are opened via Connect/Accept/Reject.
+///
+/// All messages except Hello, Connect, Accept, and Reject include a `conn_id`
+/// field identifying which virtual connection they belong to.
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum Message {
-    // Control
+    // ========================================================================
+    // Link control (no conn_id - applies to entire link)
+    // ========================================================================
+    /// r[impl message.hello.timing] - Sent immediately after link establishment.
     Hello(Hello) = 0,
-    Goodbye {
-        reason: String,
-    } = 1,
 
-    // RPC
+    // ========================================================================
+    // Virtual connection control
+    // ========================================================================
+    /// r[impl message.connect.initiate] - Request a new virtual connection.
+    Connect { request_id: u64, metadata: Metadata } = 1,
+
+    /// r[impl message.accept.response] - Accept a virtual connection request.
+    Accept {
+        request_id: u64,
+        conn_id: ConnectionId,
+        metadata: Metadata,
+    } = 2,
+
+    /// r[impl message.reject.response] - Reject a virtual connection request.
+    Reject {
+        request_id: u64,
+        reason: String,
+        metadata: Metadata,
+    } = 3,
+
+    // ========================================================================
+    // Connection control (conn_id scoped)
+    // ========================================================================
+    /// r[impl message.goodbye.send] - Close a virtual connection.
+    /// r[impl message.goodbye.connection-zero] - Goodbye on conn 0 closes entire link.
+    Goodbye {
+        conn_id: ConnectionId,
+        reason: String,
+    } = 4,
+
+    // ========================================================================
+    // RPC (conn_id scoped)
+    // ========================================================================
     /// r[impl core.metadata] - Request carries metadata key-value pairs.
     /// r[impl call.metadata.unknown] - Unknown keys are ignored.
     /// r[impl channeling.request.channels] - Channel IDs listed explicitly for proxy support.
     Request {
+        conn_id: ConnectionId,
         request_id: u64,
         method_id: u64,
-        metadata: Vec<(String, MetadataValue)>,
+        metadata: Metadata,
         /// Channel IDs used by this call, in argument declaration order.
         /// This is the authoritative source - servers MUST use these IDs,
         /// not any IDs that may be embedded in the payload.
         channels: Vec<u64>,
         payload: Vec<u8>,
-    } = 2,
+    } = 5,
+
     /// r[impl core.metadata] - Response carries metadata key-value pairs.
     /// r[impl call.metadata.unknown] - Unknown keys are ignored.
-    /// r[impl channeling.response.channels] - Channel IDs for streams returned by the method.
     Response {
+        conn_id: ConnectionId,
         request_id: u64,
-        metadata: Vec<(String, MetadataValue)>,
+        metadata: Metadata,
         /// Channel IDs for streams in the response, in return type declaration order.
         /// Client uses these to bind receivers for incoming Data messages.
         channels: Vec<u64>,
         payload: Vec<u8>,
-    } = 3,
+    } = 6,
+
     /// r[impl call.cancel.message] - Cancel message requests callee stop processing.
     /// r[impl call.cancel.no-response-required] - Caller should timeout, not wait indefinitely.
     Cancel {
+        conn_id: ConnectionId,
         request_id: u64,
-    } = 4,
+    } = 7,
 
-    // Channels
-    // rs[impl wire.stream] - Tx<T>/Rx<T> encoded as u64 channel ID on wire
+    // ========================================================================
+    // Channels (conn_id scoped)
+    // ========================================================================
+    // r[impl wire.stream] - Tx<T>/Rx<T> encoded as u64 channel ID on wire
     Data {
+        conn_id: ConnectionId,
         channel_id: u64,
         payload: Vec<u8>,
-    } = 5,
+    } = 8,
+
     Close {
+        conn_id: ConnectionId,
         channel_id: u64,
-    } = 6,
+    } = 9,
+
     Reset {
+        conn_id: ConnectionId,
         channel_id: u64,
-    } = 7,
+    } = 10,
+
     Credit {
+        conn_id: ConnectionId,
         channel_id: u64,
         bytes: u32,
-    } = 8,
+    } = 11,
 }

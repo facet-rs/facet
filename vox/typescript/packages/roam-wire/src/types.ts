@@ -8,10 +8,19 @@
 // ============================================================================
 
 /**
- * Hello message variant V1.
+ * Hello message variant V1 (deprecated).
  */
 export interface HelloV1 {
   tag: "V1";
+  maxPayloadSize: number;
+  initialChannelCredit: number;
+}
+
+/**
+ * Hello message variant V2 (supports virtual connections).
+ */
+export interface HelloV2 {
+  tag: "V2";
   maxPayloadSize: number;
   initialChannelCredit: number;
 }
@@ -21,7 +30,7 @@ export interface HelloV1 {
  *
  * r[impl message.hello.structure]
  */
-export type Hello = HelloV1;
+export type Hello = HelloV1 | HelloV2;
 
 // ============================================================================
 // MetadataValue
@@ -69,6 +78,7 @@ export type MetadataEntry = [string, MetadataValue];
 
 /**
  * Hello message (discriminant = 0).
+ * Link control - no conn_id.
  */
 export interface MessageHello {
   tag: "Hello";
@@ -76,24 +86,63 @@ export interface MessageHello {
 }
 
 /**
- * Goodbye message (discriminant = 1).
+ * Connect message (discriminant = 1).
+ * Virtual connection control - no conn_id.
+ * r[impl message.connect.initiate] - Request a new virtual connection.
+ */
+export interface MessageConnect {
+  tag: "Connect";
+  requestId: bigint;
+  metadata: MetadataEntry[];
+}
+
+/**
+ * Accept message (discriminant = 2).
+ * Virtual connection control - no conn_id.
+ * r[impl message.accept.response] - Accept a virtual connection request.
+ */
+export interface MessageAccept {
+  tag: "Accept";
+  requestId: bigint;
+  connId: bigint;
+  metadata: MetadataEntry[];
+}
+
+/**
+ * Reject message (discriminant = 3).
+ * Virtual connection control - no conn_id.
+ * r[impl message.reject.response] - Reject a virtual connection request.
+ */
+export interface MessageReject {
+  tag: "Reject";
+  requestId: bigint;
+  reason: string;
+  metadata: MetadataEntry[];
+}
+
+/**
+ * Goodbye message (discriminant = 4).
+ * Connection control - scoped to conn_id.
+ * r[impl message.goodbye.send] - Close a virtual connection.
+ * r[impl message.goodbye.connection-zero] - Goodbye on conn 0 closes entire link.
  */
 export interface MessageGoodbye {
   tag: "Goodbye";
+  connId: bigint;
   reason: string;
 }
 
 /**
- * Request message (discriminant = 2).
+ * Request message (discriminant = 5).
+ * RPC - scoped to conn_id.
  *
  * r[impl core.metadata] - Request carries metadata key-value pairs.
  * r[impl call.metadata.unknown] - Unknown keys are ignored.
- */
-/**
  * r[impl channeling.request.channels] - Channel IDs listed explicitly for proxy support.
  */
 export interface MessageRequest {
   tag: "Request";
+  connId: bigint;
   requestId: bigint;
   methodId: bigint;
   metadata: MetadataEntry[];
@@ -103,61 +152,75 @@ export interface MessageRequest {
 }
 
 /**
- * Response message (discriminant = 3).
+ * Response message (discriminant = 6).
+ * RPC - scoped to conn_id.
  *
  * r[impl core.metadata] - Response carries metadata key-value pairs.
  * r[impl call.metadata.unknown] - Unknown keys are ignored.
  */
 export interface MessageResponse {
   tag: "Response";
+  connId: bigint;
   requestId: bigint;
   metadata: MetadataEntry[];
+  /** Channel IDs for streams in the response, in return type declaration order. */
+  channels: bigint[];
   payload: Uint8Array;
 }
 
 /**
- * Cancel message (discriminant = 4).
+ * Cancel message (discriminant = 7).
+ * RPC - scoped to conn_id.
  *
  * r[impl call.cancel.message] - Cancel message requests callee stop processing.
  * r[impl call.cancel.no-response-required] - Caller should timeout, not wait indefinitely.
  */
 export interface MessageCancel {
   tag: "Cancel";
+  connId: bigint;
   requestId: bigint;
 }
 
 /**
- * Data message (discriminant = 5).
+ * Data message (discriminant = 8).
+ * Channels - scoped to conn_id.
  *
  * r[impl channeling.type] - Tx<T>/Rx<T> encoded as u64 channel ID on wire
  */
 export interface MessageData {
   tag: "Data";
+  connId: bigint;
   channelId: bigint;
   payload: Uint8Array;
 }
 
 /**
- * Close message (discriminant = 6).
+ * Close message (discriminant = 9).
+ * Channels - scoped to conn_id.
  */
 export interface MessageClose {
   tag: "Close";
+  connId: bigint;
   channelId: bigint;
 }
 
 /**
- * Reset message (discriminant = 7).
+ * Reset message (discriminant = 10).
+ * Channels - scoped to conn_id.
  */
 export interface MessageReset {
   tag: "Reset";
+  connId: bigint;
   channelId: bigint;
 }
 
 /**
- * Credit message (discriminant = 8).
+ * Credit message (discriminant = 11).
+ * Channels - scoped to conn_id.
  */
 export interface MessageCredit {
   tag: "Credit";
+  connId: bigint;
   channelId: bigint;
   bytes: number;
 }
@@ -169,6 +232,9 @@ export interface MessageCredit {
  */
 export type Message =
   | MessageHello
+  | MessageConnect
+  | MessageAccept
+  | MessageReject
   | MessageGoodbye
   | MessageRequest
   | MessageResponse
@@ -188,14 +254,17 @@ export type Message =
  */
 export const MessageDiscriminant = {
   Hello: 0,
-  Goodbye: 1,
-  Request: 2,
-  Response: 3,
-  Cancel: 4,
-  Data: 5,
-  Close: 6,
-  Reset: 7,
-  Credit: 8,
+  Connect: 1,
+  Accept: 2,
+  Reject: 3,
+  Goodbye: 4,
+  Request: 5,
+  Response: 6,
+  Cancel: 7,
+  Data: 8,
+  Close: 9,
+  Reset: 10,
+  Credit: 11,
 } as const;
 
 /**
@@ -212,6 +281,7 @@ export const MetadataValueDiscriminant = {
  */
 export const HelloDiscriminant = {
   V1: 0,
+  V2: 1,
 } as const;
 
 // ============================================================================
@@ -219,10 +289,17 @@ export const HelloDiscriminant = {
 // ============================================================================
 
 /**
- * Create a Hello.V1 message.
+ * Create a Hello.V1 message (deprecated).
  */
-export function helloV1(maxPayloadSize: number, initialChannelCredit: number): Hello {
+export function helloV1(maxPayloadSize: number, initialChannelCredit: number): HelloV1 {
   return { tag: "V1", maxPayloadSize, initialChannelCredit };
+}
+
+/**
+ * Create a Hello.V2 message.
+ */
+export function helloV2(maxPayloadSize: number, initialChannelCredit: number): HelloV2 {
+  return { tag: "V2", maxPayloadSize, initialChannelCredit };
 }
 
 /**
@@ -254,10 +331,39 @@ export function messageHello(hello: Hello): Message {
 }
 
 /**
+ * Create a Message.Connect.
+ */
+export function messageConnect(requestId: bigint, metadata: MetadataEntry[] = []): Message {
+  return { tag: "Connect", requestId, metadata };
+}
+
+/**
+ * Create a Message.Accept.
+ */
+export function messageAccept(
+  requestId: bigint,
+  connId: bigint,
+  metadata: MetadataEntry[] = [],
+): Message {
+  return { tag: "Accept", requestId, connId, metadata };
+}
+
+/**
+ * Create a Message.Reject.
+ */
+export function messageReject(
+  requestId: bigint,
+  reason: string,
+  metadata: MetadataEntry[] = [],
+): Message {
+  return { tag: "Reject", requestId, reason, metadata };
+}
+
+/**
  * Create a Message.Goodbye.
  */
-export function messageGoodbye(reason: string): Message {
-  return { tag: "Goodbye", reason };
+export function messageGoodbye(reason: string, connId: bigint = 0n): Message {
+  return { tag: "Goodbye", connId, reason };
 }
 
 /**
@@ -269,8 +375,9 @@ export function messageRequest(
   payload: Uint8Array,
   metadata: MetadataEntry[] = [],
   channels: bigint[] = [],
+  connId: bigint = 0n,
 ): Message {
-  return { tag: "Request", requestId, methodId, metadata, channels, payload };
+  return { tag: "Request", connId, requestId, methodId, metadata, channels, payload };
 }
 
 /**
@@ -280,41 +387,43 @@ export function messageResponse(
   requestId: bigint,
   payload: Uint8Array,
   metadata: MetadataEntry[] = [],
+  channels: bigint[] = [],
+  connId: bigint = 0n,
 ): Message {
-  return { tag: "Response", requestId, metadata, payload };
+  return { tag: "Response", connId, requestId, metadata, channels, payload };
 }
 
 /**
  * Create a Message.Cancel.
  */
-export function messageCancel(requestId: bigint): Message {
-  return { tag: "Cancel", requestId };
+export function messageCancel(requestId: bigint, connId: bigint = 0n): Message {
+  return { tag: "Cancel", connId, requestId };
 }
 
 /**
  * Create a Message.Data.
  */
-export function messageData(channelId: bigint, payload: Uint8Array): Message {
-  return { tag: "Data", channelId, payload };
+export function messageData(channelId: bigint, payload: Uint8Array, connId: bigint = 0n): Message {
+  return { tag: "Data", connId, channelId, payload };
 }
 
 /**
  * Create a Message.Close.
  */
-export function messageClose(channelId: bigint): Message {
-  return { tag: "Close", channelId };
+export function messageClose(channelId: bigint, connId: bigint = 0n): Message {
+  return { tag: "Close", connId, channelId };
 }
 
 /**
  * Create a Message.Reset.
  */
-export function messageReset(channelId: bigint): Message {
-  return { tag: "Reset", channelId };
+export function messageReset(channelId: bigint, connId: bigint = 0n): Message {
+  return { tag: "Reset", connId, channelId };
 }
 
 /**
  * Create a Message.Credit.
  */
-export function messageCredit(channelId: bigint, bytes: number): Message {
-  return { tag: "Credit", channelId, bytes };
+export function messageCredit(channelId: bigint, bytes: number, connId: bigint = 0n): Message {
+  return { tag: "Credit", connId, channelId, bytes };
 }

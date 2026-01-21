@@ -7,6 +7,9 @@ use std::fmt::Write as _;
 use std::sync::{Arc, LazyLock, RwLock, Weak};
 use std::time::Instant;
 
+/// A callback that appends diagnostic info to a string.
+pub type DiagnosticCallback = Box<dyn Fn(&mut String) + Send + Sync>;
+
 /// Global registry of all diagnostic states.
 /// Each connection/driver registers its state here.
 static DIAGNOSTIC_REGISTRY: LazyLock<RwLock<Vec<Weak<DiagnosticState>>>> =
@@ -18,8 +21,7 @@ static METHOD_NAMES: LazyLock<RwLock<HashMap<u64, &'static str>>> =
 
 /// Whether to record extra debug info (checked once at startup).
 /// Set ROAM_DEBUG=1 to enable.
-static DEBUG_ENABLED: LazyLock<bool> =
-    LazyLock::new(|| std::env::var("ROAM_DEBUG").is_ok());
+static DEBUG_ENABLED: LazyLock<bool> = LazyLock::new(|| std::env::var("ROAM_DEBUG").is_ok());
 
 /// Check if debug recording is enabled.
 pub fn debug_enabled() -> bool {
@@ -54,7 +56,8 @@ pub fn dump_all_diagnostics() -> String {
     let states: Vec<Arc<DiagnosticState>> = {
         // Use try_read to avoid deadlocking if called from signal handler
         let Ok(registry) = DIAGNOSTIC_REGISTRY.try_read() else {
-            return "ERROR: Could not acquire diagnostic registry lock (held by another thread)\n".to_string();
+            return "ERROR: Could not acquire diagnostic registry lock (held by another thread)\n"
+                .to_string();
         };
         registry.iter().filter_map(|weak| weak.upgrade()).collect()
     };
@@ -124,7 +127,7 @@ pub struct DiagnosticState {
     channels: RwLock<HashMap<u64, OpenChannel>>,
 
     /// Custom diagnostic callbacks
-    custom_diagnostics: RwLock<Vec<Box<dyn Fn(&mut String) + Send + Sync>>>,
+    custom_diagnostics: RwLock<Vec<DiagnosticCallback>>,
 }
 
 impl DiagnosticState {
@@ -264,10 +267,13 @@ impl DiagnosticState {
                     let method_name = get_method_name(req.method_id).unwrap_or("?");
                     let mut line = format!(
                         "  ⬆#{} {} {:.1}s",
-                        req.request_id, method_name, elapsed.as_secs_f64()
+                        req.request_id,
+                        method_name,
+                        elapsed.as_secs_f64()
                     );
                     if let Some(args) = &req.args {
-                        let args_str: Vec<_> = args.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+                        let args_str: Vec<_> =
+                            args.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
                         if !args_str.is_empty() {
                             let _ = write!(line, " ({})", args_str.join(", "));
                         }
@@ -283,10 +289,13 @@ impl DiagnosticState {
                     let method_name = get_method_name(req.method_id).unwrap_or("?");
                     let mut line = format!(
                         "  ⬇#{} {} {:.1}s",
-                        req.request_id, method_name, elapsed.as_secs_f64()
+                        req.request_id,
+                        method_name,
+                        elapsed.as_secs_f64()
                     );
                     if let Some(args) = &req.args {
-                        let args_str: Vec<_> = args.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+                        let args_str: Vec<_> =
+                            args.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
                         if !args_str.is_empty() {
                             let _ = write!(line, " ({})", args_str.join(", "));
                         }
@@ -297,16 +306,22 @@ impl DiagnosticState {
         }
 
         // Check channels
-        if let Ok(channels) = self.channels.try_read() {
-            if !channels.is_empty() {
-                let tx_count = channels.values().filter(|c| c.direction == ChannelDirection::Tx).count();
-                let rx_count = channels.values().filter(|c| c.direction == ChannelDirection::Rx).count();
-                if tx_count > 0 {
-                    parts.push(format!("{}tx", tx_count));
-                }
-                if rx_count > 0 {
-                    parts.push(format!("{}rx", rx_count));
-                }
+        if let Ok(channels) = self.channels.try_read()
+            && !channels.is_empty()
+        {
+            let tx_count = channels
+                .values()
+                .filter(|c| c.direction == ChannelDirection::Tx)
+                .count();
+            let rx_count = channels
+                .values()
+                .filter(|c| c.direction == ChannelDirection::Rx)
+                .count();
+            if tx_count > 0 {
+                parts.push(format!("{}tx", tx_count));
+            }
+            if rx_count > 0 {
+                parts.push(format!("{}rx", rx_count));
             }
         }
 

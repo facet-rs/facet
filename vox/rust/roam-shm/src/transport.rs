@@ -18,12 +18,6 @@ use roam_wire::{Message, MetadataValue};
 use crate::guest::{SendError, ShmGuest};
 use crate::msg::msg_type;
 
-/// Decoded metadata, channels, and payload from a Response message.
-type DecodedResponsePayload = Result<(Vec<(String, MetadataValue)>, Vec<u64>, Vec<u8>), String>;
-
-/// Decoded metadata, channels, and payload from a Request message.
-type DecodedRequestPayload = Result<(Vec<(String, MetadataValue)>, Vec<u64>, Vec<u8>), String>;
-
 /// Conversion error when mapping between Message and Frame.
 #[derive(Debug)]
 pub enum ConvertError {
@@ -69,7 +63,7 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
             Err(ConvertError::HelloNotSupported)
         }
 
-        Message::Goodbye { reason } => {
+        Message::Goodbye { reason, .. } => {
             // Goodbye uses the payload for the reason string
             let mut desc = MsgDesc::new(msg_type::GOODBYE, 0, 0);
             let reason_bytes = reason.as_bytes();
@@ -87,6 +81,7 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
         }
 
         Message::Request {
+            conn_id,
             request_id,
             method_id,
             metadata,
@@ -94,8 +89,8 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
             payload,
         } => {
             // shm[impl shm.metadata.in-payload]
-            // Encode metadata + channels + payload together
-            let combined = encode_request_payload(metadata, channels, payload);
+            // Encode conn_id + metadata + channels + payload together
+            let combined = encode_request_payload(*conn_id, metadata, channels, payload);
 
             let mut desc = MsgDesc::new(msg_type::REQUEST, *request_id as u32, *method_id);
 
@@ -116,13 +111,14 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
         }
 
         Message::Response {
+            conn_id,
             request_id,
             metadata,
             channels,
             payload,
         } => {
             // shm[impl shm.metadata.in-payload]
-            let combined = encode_response_payload(metadata, channels, payload);
+            let combined = encode_response_payload(*conn_id, metadata, channels, payload);
 
             let mut desc = MsgDesc::new(msg_type::RESPONSE, *request_id as u32, 0);
 
@@ -142,8 +138,16 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
             })
         }
 
-        Message::Cancel { request_id } => {
-            let desc = MsgDesc::new(msg_type::CANCEL, *request_id as u32, 0);
+        Message::Cancel {
+            conn_id,
+            request_id,
+        } => {
+            let mut desc = MsgDesc::new(msg_type::CANCEL, *request_id as u32, 0);
+            // Encode conn_id in payload
+            let conn_id_bytes = conn_id.0.to_le_bytes();
+            desc.payload_slot = INLINE_PAYLOAD_SLOT;
+            desc.payload_len = conn_id_bytes.len() as u32;
+            desc.inline_payload[..conn_id_bytes.len()].copy_from_slice(&conn_id_bytes);
             Ok(Frame {
                 desc,
                 payload: Payload::Inline,
@@ -151,19 +155,28 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
         }
 
         Message::Data {
+            conn_id,
             channel_id,
             payload,
         } => {
             let mut desc = MsgDesc::new(msg_type::DATA, *channel_id as u32, 0);
 
-            let frame_payload = if payload.len() <= INLINE_PAYLOAD_LEN {
+            // Prepend conn_id to payload for virtual connection support
+            let conn_id_bytes = conn_id.0.to_le_bytes();
+            let total_len = conn_id_bytes.len() + payload.len();
+
+            let frame_payload = if total_len <= INLINE_PAYLOAD_LEN {
                 desc.payload_slot = INLINE_PAYLOAD_SLOT;
-                desc.payload_len = payload.len() as u32;
-                desc.inline_payload[..payload.len()].copy_from_slice(payload);
+                desc.payload_len = total_len as u32;
+                desc.inline_payload[..conn_id_bytes.len()].copy_from_slice(&conn_id_bytes);
+                desc.inline_payload[conn_id_bytes.len()..total_len].copy_from_slice(payload);
                 Payload::Inline
             } else {
-                desc.payload_len = payload.len() as u32;
-                Payload::Owned(payload.clone())
+                desc.payload_len = total_len as u32;
+                let mut combined = Vec::with_capacity(total_len);
+                combined.extend_from_slice(&conn_id_bytes);
+                combined.extend_from_slice(payload);
+                Payload::Owned(combined)
             };
 
             Ok(Frame {
@@ -172,19 +185,114 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
             })
         }
 
-        Message::Close { channel_id } => {
-            let desc = MsgDesc::new(msg_type::CLOSE, *channel_id as u32, 0);
+        Message::Close {
+            conn_id,
+            channel_id,
+        } => {
+            let mut desc = MsgDesc::new(msg_type::CLOSE, *channel_id as u32, 0);
+            // Encode conn_id in payload
+            let conn_id_bytes = conn_id.0.to_le_bytes();
+            desc.payload_slot = INLINE_PAYLOAD_SLOT;
+            desc.payload_len = conn_id_bytes.len() as u32;
+            desc.inline_payload[..conn_id_bytes.len()].copy_from_slice(&conn_id_bytes);
             Ok(Frame {
                 desc,
                 payload: Payload::Inline,
             })
         }
 
-        Message::Reset { channel_id } => {
-            let desc = MsgDesc::new(msg_type::RESET, *channel_id as u32, 0);
+        Message::Reset {
+            conn_id,
+            channel_id,
+        } => {
+            let mut desc = MsgDesc::new(msg_type::RESET, *channel_id as u32, 0);
+            // Encode conn_id in payload
+            let conn_id_bytes = conn_id.0.to_le_bytes();
+            desc.payload_slot = INLINE_PAYLOAD_SLOT;
+            desc.payload_len = conn_id_bytes.len() as u32;
+            desc.inline_payload[..conn_id_bytes.len()].copy_from_slice(&conn_id_bytes);
             Ok(Frame {
                 desc,
                 payload: Payload::Inline,
+            })
+        }
+
+        Message::Connect {
+            request_id,
+            metadata,
+        } => {
+            // Encode metadata in payload
+            let payload_bytes = facet_postcard::to_vec(metadata).unwrap_or_default();
+
+            let mut desc = MsgDesc::new(msg_type::CONNECT, *request_id as u32, 0);
+
+            let frame_payload = if payload_bytes.len() <= INLINE_PAYLOAD_LEN {
+                desc.payload_slot = INLINE_PAYLOAD_SLOT;
+                desc.payload_len = payload_bytes.len() as u32;
+                desc.inline_payload[..payload_bytes.len()].copy_from_slice(&payload_bytes);
+                Payload::Inline
+            } else {
+                desc.payload_len = payload_bytes.len() as u32;
+                Payload::Owned(payload_bytes)
+            };
+
+            Ok(Frame {
+                desc,
+                payload: frame_payload,
+            })
+        }
+
+        Message::Accept {
+            request_id,
+            conn_id,
+            metadata,
+        } => {
+            // Encode conn_id + metadata in payload (clone to satisfy lifetime requirements)
+            let payload_bytes =
+                facet_postcard::to_vec(&(conn_id.0, metadata.clone())).unwrap_or_default();
+
+            let mut desc = MsgDesc::new(msg_type::ACCEPT, *request_id as u32, 0);
+
+            let frame_payload = if payload_bytes.len() <= INLINE_PAYLOAD_LEN {
+                desc.payload_slot = INLINE_PAYLOAD_SLOT;
+                desc.payload_len = payload_bytes.len() as u32;
+                desc.inline_payload[..payload_bytes.len()].copy_from_slice(&payload_bytes);
+                Payload::Inline
+            } else {
+                desc.payload_len = payload_bytes.len() as u32;
+                Payload::Owned(payload_bytes)
+            };
+
+            Ok(Frame {
+                desc,
+                payload: frame_payload,
+            })
+        }
+
+        Message::Reject {
+            request_id,
+            reason,
+            metadata,
+        } => {
+            // Encode reason + metadata in payload (clone to satisfy lifetime requirements)
+            let payload_bytes =
+                facet_postcard::to_vec(&(reason.clone(), metadata.clone())).unwrap_or_default();
+
+            let mut desc = MsgDesc::new(msg_type::REJECT, *request_id as u32, 0);
+
+            let frame_payload = if payload_bytes.len() <= INLINE_PAYLOAD_LEN {
+                desc.payload_slot = INLINE_PAYLOAD_SLOT;
+                desc.payload_len = payload_bytes.len() as u32;
+                desc.inline_payload[..payload_bytes.len()].copy_from_slice(&payload_bytes);
+                Payload::Inline
+            } else {
+                desc.payload_len = payload_bytes.len() as u32;
+                Payload::Owned(payload_bytes)
+            };
+
+            Ok(Frame {
+                desc,
+                payload: frame_payload,
             })
         }
 
@@ -202,17 +310,22 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
 pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
     let payload_bytes = frame.payload_bytes();
 
+    // SHM transport always uses ROOT connection ID since it's a 1:1 mapping
+    let conn_id = roam_wire::ConnectionId::ROOT;
+
     match frame.desc.msg_type {
         msg_type::GOODBYE => {
             let reason = String::from_utf8_lossy(payload_bytes).into_owned();
-            Ok(Message::Goodbye { reason })
+            Ok(Message::Goodbye { conn_id, reason })
         }
 
         msg_type::REQUEST => {
-            let (metadata, channels, payload) = decode_request_payload(payload_bytes)
-                .map_err(|e| ConvertError::DecodeError(e.to_string()))?;
+            let (decoded_conn_id, metadata, channels, payload) =
+                decode_request_payload(payload_bytes)
+                    .map_err(|e| ConvertError::DecodeError(e.to_string()))?;
 
             Ok(Message::Request {
+                conn_id: decoded_conn_id,
                 request_id: frame.desc.id as u64,
                 method_id: frame.desc.method_id,
                 metadata,
@@ -222,10 +335,12 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
         }
 
         msg_type::RESPONSE => {
-            let (metadata, channels, payload) = decode_response_payload(payload_bytes)
-                .map_err(|e| ConvertError::DecodeError(e.to_string()))?;
+            let (decoded_conn_id, metadata, channels, payload) =
+                decode_response_payload(payload_bytes)
+                    .map_err(|e| ConvertError::DecodeError(e.to_string()))?;
 
             Ok(Message::Response {
+                conn_id: decoded_conn_id,
                 request_id: frame.desc.id as u64,
                 metadata,
                 channels,
@@ -233,48 +348,129 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
             })
         }
 
-        msg_type::CANCEL => Ok(Message::Cancel {
-            request_id: frame.desc.id as u64,
-        }),
+        msg_type::CANCEL => {
+            // Decode conn_id from payload (8 bytes little-endian)
+            if payload_bytes.len() < 8 {
+                return Err(ConvertError::DecodeError(
+                    "Cancel payload too short for conn_id".into(),
+                ));
+            }
+            let decoded_conn_id =
+                roam_wire::ConnectionId(u64::from_le_bytes(payload_bytes[..8].try_into().unwrap()));
+            Ok(Message::Cancel {
+                conn_id: decoded_conn_id,
+                request_id: frame.desc.id as u64,
+            })
+        }
 
-        msg_type::DATA => Ok(Message::Data {
-            channel_id: frame.desc.id as u64,
-            payload: payload_bytes.to_vec(),
-        }),
+        msg_type::DATA => {
+            // Decode conn_id from first 8 bytes, rest is actual payload
+            if payload_bytes.len() < 8 {
+                return Err(ConvertError::DecodeError(
+                    "Data payload too short for conn_id".into(),
+                ));
+            }
+            let decoded_conn_id =
+                roam_wire::ConnectionId(u64::from_le_bytes(payload_bytes[..8].try_into().unwrap()));
+            Ok(Message::Data {
+                conn_id: decoded_conn_id,
+                channel_id: frame.desc.id as u64,
+                payload: payload_bytes[8..].to_vec(),
+            })
+        }
 
-        msg_type::CLOSE => Ok(Message::Close {
-            channel_id: frame.desc.id as u64,
-        }),
+        msg_type::CLOSE => {
+            // Decode conn_id from payload (8 bytes little-endian)
+            if payload_bytes.len() < 8 {
+                return Err(ConvertError::DecodeError(
+                    "Close payload too short for conn_id".into(),
+                ));
+            }
+            let decoded_conn_id =
+                roam_wire::ConnectionId(u64::from_le_bytes(payload_bytes[..8].try_into().unwrap()));
+            Ok(Message::Close {
+                conn_id: decoded_conn_id,
+                channel_id: frame.desc.id as u64,
+            })
+        }
 
-        msg_type::RESET => Ok(Message::Reset {
-            channel_id: frame.desc.id as u64,
-        }),
+        msg_type::RESET => {
+            // Decode conn_id from payload (8 bytes little-endian)
+            if payload_bytes.len() < 8 {
+                return Err(ConvertError::DecodeError(
+                    "Reset payload too short for conn_id".into(),
+                ));
+            }
+            let decoded_conn_id =
+                roam_wire::ConnectionId(u64::from_le_bytes(payload_bytes[..8].try_into().unwrap()));
+            Ok(Message::Reset {
+                conn_id: decoded_conn_id,
+                channel_id: frame.desc.id as u64,
+            })
+        }
+
+        msg_type::CONNECT => {
+            let metadata: roam_wire::Metadata = facet_postcard::from_slice(payload_bytes)
+                .map_err(|e| ConvertError::DecodeError(e.to_string()))?;
+            Ok(Message::Connect {
+                request_id: frame.desc.id as u64,
+                metadata,
+            })
+        }
+
+        msg_type::ACCEPT => {
+            let (conn_id_val, metadata): (u64, roam_wire::Metadata) =
+                facet_postcard::from_slice(payload_bytes)
+                    .map_err(|e| ConvertError::DecodeError(e.to_string()))?;
+            Ok(Message::Accept {
+                request_id: frame.desc.id as u64,
+                conn_id: roam_wire::ConnectionId(conn_id_val),
+                metadata,
+            })
+        }
+
+        msg_type::REJECT => {
+            let (reason, metadata): (String, roam_wire::Metadata) =
+                facet_postcard::from_slice(payload_bytes)
+                    .map_err(|e| ConvertError::DecodeError(e.to_string()))?;
+            Ok(Message::Reject {
+                request_id: frame.desc.id as u64,
+                reason,
+                metadata,
+            })
+        }
 
         other => Err(ConvertError::UnknownMsgType(other)),
     }
 }
 
 /// Combined payload for Request/Response messages.
+/// Combined payload for Request/Response messages.
+/// Includes conn_id to support virtual connections over SHM.
 #[derive(facet::Facet)]
 struct CombinedPayload {
+    conn_id: u64,
     metadata: Vec<(String, MetadataValue)>,
     channels: Vec<u64>,
     payload: Vec<u8>,
 }
 
-/// Encode metadata + channels + payload for Request messages.
+/// Encode conn_id + metadata + channels + payload for Request messages.
 fn encode_request_payload(
+    conn_id: roam_wire::ConnectionId,
     metadata: &[(String, MetadataValue)],
     channels: &[u64],
     payload: &[u8],
 ) -> Vec<u8> {
     let combined = CombinedPayload {
+        conn_id: conn_id.0,
         metadata: metadata.to_vec(),
         channels: channels.to_vec(),
         payload: payload.to_vec(),
     };
     let result = facet_postcard::to_vec(&combined).unwrap_or_default();
     tracing::debug!(
+        conn_id = conn_id.0,
         channels = ?channels,
         result_len = result.len(),
         "encode_request_payload"
@@ -282,13 +478,15 @@ fn encode_request_payload(
     result
 }
 
-/// Encode metadata + channels + payload for Response messages.
+/// Encode conn_id + metadata + channels + payload for Response messages.
 fn encode_response_payload(
+    conn_id: roam_wire::ConnectionId,
     metadata: &[(String, MetadataValue)],
     channels: &[u64],
     payload: &[u8],
 ) -> Vec<u8> {
     let combined = CombinedPayload {
+        conn_id: conn_id.0,
         metadata: metadata.to_vec(),
         channels: channels.to_vec(),
         payload: payload.to_vec(),
@@ -296,33 +494,71 @@ fn encode_response_payload(
     facet_postcard::to_vec(&combined).unwrap_or_default()
 }
 
-/// Decode metadata + channels + payload for Request messages.
-fn decode_request_payload(data: &[u8]) -> DecodedRequestPayload {
-    tracing::debug!(
-        data_len = data.len(),
-        "decode_request_payload: input"
-    );
+type DecodedRequestPayloadWithConnId = Result<
+    (
+        roam_wire::ConnectionId,
+        Vec<(String, MetadataValue)>,
+        Vec<u64>,
+        Vec<u8>,
+    ),
+    String,
+>;
+
+type DecodedResponsePayloadWithConnId = Result<
+    (
+        roam_wire::ConnectionId,
+        Vec<(String, MetadataValue)>,
+        Vec<u64>,
+        Vec<u8>,
+    ),
+    String,
+>;
+
+/// Decode conn_id + metadata + channels + payload for Request messages.
+fn decode_request_payload(data: &[u8]) -> DecodedRequestPayloadWithConnId {
+    tracing::debug!(data_len = data.len(), "decode_request_payload: input");
     if data.is_empty() {
         tracing::debug!("decode_request_payload: empty data, returning empty");
-        return Ok((Vec::new(), Vec::new(), Vec::new()));
+        return Ok((
+            roam_wire::ConnectionId::ROOT,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ));
     }
-    let combined: CombinedPayload = facet_postcard::from_slice(data)
-        .map_err(|e| format!("decode error: {}", e))?;
+    let combined: CombinedPayload =
+        facet_postcard::from_slice(data).map_err(|e| format!("decode error: {}", e))?;
     tracing::debug!(
+        conn_id = combined.conn_id,
         channels = ?combined.channels,
         "decode_request_payload: decoded"
     );
-    Ok((combined.metadata, combined.channels, combined.payload))
+    Ok((
+        roam_wire::ConnectionId(combined.conn_id),
+        combined.metadata,
+        combined.channels,
+        combined.payload,
+    ))
 }
 
-/// Decode metadata + channels + payload for Response messages.
-fn decode_response_payload(data: &[u8]) -> DecodedResponsePayload {
+/// Decode conn_id + metadata + channels + payload for Response messages.
+fn decode_response_payload(data: &[u8]) -> DecodedResponsePayloadWithConnId {
     if data.is_empty() {
-        return Ok((Vec::new(), Vec::new(), Vec::new()));
+        return Ok((
+            roam_wire::ConnectionId::ROOT,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ));
     }
-    let combined: CombinedPayload = facet_postcard::from_slice(data)
-        .map_err(|e| format!("decode error: {}", e))?;
-    Ok((combined.metadata, combined.channels, combined.payload))
+    let combined: CombinedPayload =
+        facet_postcard::from_slice(data).map_err(|e| format!("decode error: {}", e))?;
+    Ok((
+        roam_wire::ConnectionId(combined.conn_id),
+        combined.metadata,
+        combined.channels,
+        combined.payload,
+    ))
 }
 
 /// Guest-side transport wrapper implementing `MessageTransport`.
@@ -678,11 +914,12 @@ mod async_transport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roam_wire::Hello;
+    use roam_wire::{ConnectionId, Hello};
 
     #[test]
     fn roundtrip_request() {
         let msg = Message::Request {
+            conn_id: ConnectionId::ROOT,
             request_id: 42,
             method_id: 123,
             metadata: vec![(
@@ -702,6 +939,7 @@ mod tests {
     #[test]
     fn roundtrip_request_with_channels() {
         let msg = Message::Request {
+            conn_id: ConnectionId::ROOT,
             request_id: 42,
             method_id: 123,
             metadata: vec![],
@@ -718,6 +956,7 @@ mod tests {
     #[test]
     fn roundtrip_response() {
         let msg = Message::Response {
+            conn_id: ConnectionId::ROOT,
             request_id: 99,
             metadata: vec![],
             channels: vec![],
@@ -733,6 +972,7 @@ mod tests {
     #[test]
     fn roundtrip_response_with_channels() {
         let msg = Message::Response {
+            conn_id: ConnectionId::ROOT,
             request_id: 99,
             metadata: vec![],
             channels: vec![2, 4, 6],
@@ -748,6 +988,7 @@ mod tests {
     #[test]
     fn roundtrip_data() {
         let msg = Message::Data {
+            conn_id: ConnectionId::ROOT,
             channel_id: 7,
             payload: b"stream chunk".to_vec(),
         };
@@ -761,10 +1002,20 @@ mod tests {
     #[test]
     fn roundtrip_control_messages() {
         let messages = vec![
-            Message::Cancel { request_id: 10 },
-            Message::Close { channel_id: 20 },
-            Message::Reset { channel_id: 30 },
+            Message::Cancel {
+                conn_id: ConnectionId::ROOT,
+                request_id: 10,
+            },
+            Message::Close {
+                conn_id: ConnectionId::ROOT,
+                channel_id: 20,
+            },
+            Message::Reset {
+                conn_id: ConnectionId::ROOT,
+                channel_id: 30,
+            },
             Message::Goodbye {
+                conn_id: ConnectionId::ROOT,
                 reason: "shutdown".to_string(),
             },
         ];
@@ -778,7 +1029,7 @@ mod tests {
 
     #[test]
     fn hello_not_supported() {
-        let msg = Message::Hello(Hello::V1 {
+        let msg = Message::Hello(Hello::V2 {
             max_payload_size: 64 * 1024,
             initial_channel_credit: 64 * 1024,
         });
@@ -792,6 +1043,7 @@ mod tests {
     #[test]
     fn credit_not_supported() {
         let msg = Message::Credit {
+            conn_id: ConnectionId::ROOT,
             channel_id: 1,
             bytes: 1024,
         };
@@ -806,6 +1058,7 @@ mod tests {
     fn inline_payload() {
         // Small payload should be inlined
         let msg = Message::Data {
+            conn_id: ConnectionId::ROOT,
             channel_id: 1,
             payload: b"tiny".to_vec(),
         };
@@ -819,6 +1072,7 @@ mod tests {
     fn large_payload() {
         // Large payload should not be inlined
         let msg = Message::Data {
+            conn_id: ConnectionId::ROOT,
             channel_id: 1,
             payload: vec![0u8; 100],
         };

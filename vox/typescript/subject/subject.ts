@@ -199,9 +199,12 @@ async function runServer() {
     throw new Error("PEER_ADDR env var not set");
   }
 
-  console.error(`server mode: connecting to ${addr}`);
+  // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
+  const acceptConnections = process.env.ACCEPT_CONNECTIONS === "1";
+
+  console.error(`server mode: connecting to ${addr}, acceptConnections=${acceptConnections}`);
   const server = new Server();
-  const conn = await server.connect(addr);
+  const conn = await server.connect(addr, { acceptConnections });
 
   try {
     await conn.runStreaming(new TestbedStreamingDispatcher());

@@ -22,6 +22,7 @@ jit = ["facet-postcard/jit"]
 roam-session.workspace = true
 roam-schema.workspace = true
 roam-hash.workspace = true
+roam-wire.workspace = true
 
 # Proc macros (re-exported as #[roam::service])
 roam-service-macros.workspace = true

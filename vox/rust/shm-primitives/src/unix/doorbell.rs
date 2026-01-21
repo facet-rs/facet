@@ -191,8 +191,7 @@ impl Doorbell {
 
         // ENOBUFS (55 on macOS/BSD, 105 on Linux) means socket buffer is full
         // This is fine - there's already a pending signal, so we can drop this one
-        let is_buffer_full = err.kind() == ErrorKind::WouldBlock
-            || raw_err == Some(libc::ENOBUFS);
+        let is_buffer_full = err.kind() == ErrorKind::WouldBlock || raw_err == Some(libc::ENOBUFS);
 
         if is_buffer_full {
             return SignalResult::BufferFull;

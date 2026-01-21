@@ -57,9 +57,9 @@ pub use framing::CobsFramed;
 
 // Re-export types that moved to roam-session (backwards compat)
 pub use roam_session::{
-    ConnectError, ConnectionError, Driver, FramedClient, HandshakeConfig, MessageConnector,
-    MessageTransport, Negotiated, NoDispatcher, RetryPolicy, accept_framed, connect_framed,
-    connect_framed_with_policy, initiate_framed,
+    ConnectError, ConnectionError, Driver, FramedClient, HandshakeConfig, IncomingConnection,
+    IncomingConnections, MessageConnector, MessageTransport, Negotiated, NoDispatcher, RetryPolicy,
+    accept_framed, connect_framed, connect_framed_with_policy, initiate_framed,
 };
 
 // Re-export session types for convenience

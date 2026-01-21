@@ -5,6 +5,7 @@
 //! - Routes incoming responses to waiting callers
 //! - Sends outgoing requests from ConnectionHandle
 //! - Handles stream data (Data/Close/Reset)
+//! - Supports virtual connections (Connect/Accept/Reject)
 //!
 //! Key differences from stream transport:
 //! - No Hello exchange (config read from segment header)
@@ -16,12 +17,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use roam_session::diagnostic::DiagnosticState;
 use roam_session::{
-    ChannelError, ChannelRegistry, ConnectionHandle, DriverMessage, ResponseData, Role,
-    ServiceDispatcher, TransportError,
+    ChannelError, ChannelRegistry, ConnectError, ConnectionHandle, DriverMessage, ResponseData,
+    Role, ServiceDispatcher, TransportError,
 };
 use roam_stream::MessageTransport;
-use roam_wire::Message;
+use roam_wire::{ConnectionId, Message};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::auditable::{self, AuditableDequeMap, AuditableReceiver, AuditableSender};
@@ -41,6 +43,9 @@ fn msg_type_name(msg: &Message) -> &'static str {
         Message::Close { .. } => "Close",
         Message::Reset { .. } => "Reset",
         Message::Credit { .. } => "Credit",
+        Message::Connect { .. } => "Connect",
+        Message::Accept { .. } => "Accept",
+        Message::Reject { .. } => "Reject",
     }
 }
 
@@ -101,6 +106,139 @@ impl From<std::io::Error> for ShmConnectionError {
     }
 }
 
+// ============================================================================
+// Virtual Connection Types
+// ============================================================================
+
+/// State for a single virtual connection.
+///
+/// Each virtual connection has its own request ID space, channel registry,
+/// and pending responses. Connection 0 (ROOT) is created implicitly.
+/// Additional connections are opened via Connect/Accept.
+struct VirtualConnectionState {
+    /// The connection ID (for debugging/logging).
+    #[allow(dead_code)]
+    conn_id: ConnectionId,
+    /// Client-side handle for making calls on this connection.
+    handle: ConnectionHandle,
+    /// Server-side channel registry for incoming Rx/Tx streams.
+    server_channel_registry: ChannelRegistry,
+    /// Pending responses (request_id -> response sender).
+    pending_responses: HashMap<u64, oneshot::Sender<Result<ResponseData, TransportError>>>,
+    /// In-flight server requests with their abort handles.
+    /// r[impl call.cancel.best-effort] - We track abort handles to allow best-effort cancellation.
+    in_flight_server_requests: HashMap<u64, tokio::task::AbortHandle>,
+}
+
+impl VirtualConnectionState {
+    /// Create a new virtual connection state.
+    fn new(
+        conn_id: ConnectionId,
+        driver_tx: mpsc::Sender<DriverMessage>,
+        role: Role,
+        initial_credit: u32,
+        diagnostic_state: Option<Arc<DiagnosticState>>,
+    ) -> Self {
+        let handle = ConnectionHandle::new_with_diagnostics(
+            conn_id,
+            driver_tx.clone(),
+            role,
+            initial_credit,
+            diagnostic_state,
+        );
+        let server_channel_registry =
+            ChannelRegistry::new_with_credit_and_role(conn_id, initial_credit, driver_tx, role);
+        Self {
+            conn_id,
+            handle,
+            server_channel_registry,
+            pending_responses: HashMap::new(),
+            in_flight_server_requests: HashMap::new(),
+        }
+    }
+
+    /// Fail all pending responses (on connection close).
+    fn fail_pending_responses(&mut self) {
+        for (_, tx) in self.pending_responses.drain() {
+            let _ = tx.send(Err(TransportError::ConnectionClosed));
+        }
+    }
+
+    /// Abort all in-flight server requests (on connection close).
+    fn abort_in_flight_requests(&mut self) {
+        for (_, abort_handle) in self.in_flight_server_requests.drain() {
+            abort_handle.abort();
+        }
+    }
+}
+
+/// Pending outgoing Connect request.
+struct PendingConnect {
+    response_tx: oneshot::Sender<Result<ConnectionHandle, ConnectError>>,
+}
+
+/// An incoming virtual connection request.
+///
+/// Received via the `IncomingConnections` receiver returned from `establish_guest`.
+/// Call `accept()` to accept the connection and get a handle,
+/// or `reject()` to refuse it.
+pub struct IncomingConnection {
+    /// The request ID for this Connect request.
+    request_id: u64,
+    /// Metadata from the Connect message.
+    pub metadata: roam_wire::Metadata,
+    /// Channel to send the Accept/Reject response.
+    response_tx: oneshot::Sender<IncomingConnectionResponse>,
+}
+
+impl IncomingConnection {
+    /// Accept this connection and receive a handle for it.
+    ///
+    /// The `metadata` will be sent in the Accept message.
+    pub async fn accept(
+        self,
+        metadata: roam_wire::Metadata,
+    ) -> Result<ConnectionHandle, TransportError> {
+        let (handle_tx, handle_rx) = oneshot::channel();
+        let _ = self.response_tx.send(IncomingConnectionResponse::Accept {
+            request_id: self.request_id,
+            metadata,
+            handle_tx,
+        });
+        handle_rx.await.map_err(|_| TransportError::DriverGone)?
+    }
+
+    /// Reject this connection with a reason.
+    pub fn reject(self, reason: String, metadata: roam_wire::Metadata) {
+        let _ = self.response_tx.send(IncomingConnectionResponse::Reject {
+            request_id: self.request_id,
+            reason,
+            metadata,
+        });
+    }
+}
+
+/// Internal response for incoming connection handling.
+enum IncomingConnectionResponse {
+    Accept {
+        request_id: u64,
+        metadata: roam_wire::Metadata,
+        handle_tx: oneshot::Sender<Result<ConnectionHandle, TransportError>>,
+    },
+    Reject {
+        request_id: u64,
+        reason: String,
+        metadata: roam_wire::Metadata,
+    },
+}
+
+/// Receiver for incoming virtual connection requests.
+pub type IncomingConnections = mpsc::Receiver<IncomingConnection>;
+
+// ============================================================================
+// ShmDriver - Single-peer driver (guest side)
+// ============================================================================
+
 /// The SHM connection driver - a future that handles bidirectional RPC.
 ///
 /// This must be spawned or awaited to drive the connection forward.
@@ -110,29 +248,34 @@ impl From<std::io::Error> for ShmConnectionError {
 pub struct ShmDriver<T, D> {
     io: T,
     dispatcher: D,
-    #[allow(dead_code)]
     role: Role,
     negotiated: ShmNegotiated,
 
-    /// Handle for client-side operations (streams, etc.)
-    handle: ConnectionHandle,
+    /// Sender for driver messages (cloned to ConnectionHandles).
+    driver_tx: mpsc::Sender<DriverMessage>,
 
     /// Unified channel for all messages (Call/Data/Close/Response).
     /// Single channel ensures FIFO ordering.
     driver_rx: mpsc::Receiver<DriverMessage>,
 
-    /// Server-side stream registry (for incoming Tx/Rx from requests we serve).
-    server_channel_registry: ChannelRegistry,
+    /// All virtual connections (including ROOT).
+    connections: HashMap<ConnectionId, VirtualConnectionState>,
 
-    /// Pending responses for outgoing calls we made.
-    /// request_id → oneshot sender for the response.
-    pending_responses: HashMap<u64, oneshot::Sender<Result<ResponseData, TransportError>>>,
+    /// Next connection ID to allocate (for Accept responses).
+    next_conn_id: u64,
 
-    /// In-flight requests we're serving (to detect duplicates).
-    in_flight_server_requests: std::collections::HashSet<u64>,
+    /// Pending outgoing Connect requests (request_id -> response channel).
+    pending_connects: HashMap<u64, PendingConnect>,
+
+    /// Channel for incoming connection requests.
+    incoming_connections_tx: Option<mpsc::Sender<IncomingConnection>>,
+
+    /// Channel for incoming connection responses (Accept/Reject from app code).
+    incoming_response_rx: mpsc::Receiver<IncomingConnectionResponse>,
+    incoming_response_tx: mpsc::Sender<IncomingConnectionResponse>,
 
     /// Diagnostic state for tracking in-flight requests (for SIGUSR1 dumps).
-    diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
+    diagnostic_state: Option<Arc<DiagnosticState>>,
 }
 
 impl<T, D> ShmDriver<T, D>
@@ -140,34 +283,6 @@ where
     T: MessageTransport,
     D: ServiceDispatcher,
 {
-    /// Create a new SHM driver with the given transport, dispatcher, and parameters.
-    pub fn new(
-        io: T,
-        dispatcher: D,
-        role: Role,
-        negotiated: ShmNegotiated,
-        handle: ConnectionHandle,
-        driver_tx: mpsc::Sender<DriverMessage>,
-        driver_rx: mpsc::Receiver<DriverMessage>,
-        diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
-    ) -> Self {
-        // Use infinite credit for now - proper SHM flow control via channel table
-        // atomics will be implemented in a future phase. This matches the current
-        // behavior of stream transports which also use infinite credit.
-        Self {
-            io,
-            dispatcher,
-            role,
-            negotiated,
-            handle,
-            driver_rx,
-            server_channel_registry: ChannelRegistry::new(driver_tx),
-            pending_responses: HashMap::new(),
-            in_flight_server_requests: std::collections::HashSet::new(),
-            diagnostic_state,
-        }
-    }
-
     /// Run the driver until the connection closes.
     pub async fn run(mut self) -> Result<(), ShmConnectionError> {
         loop {
@@ -175,7 +290,13 @@ where
             tokio::select! {
                 biased;
 
-                // Handle all driver messages (Call/Data/Close/Response).
+                // Handle incoming connection responses (Accept/Reject from app code).
+                Some(response) = self.incoming_response_rx.recv() => {
+                    trace!("driver: received incoming connection response");
+                    self.handle_incoming_response(response).await?;
+                }
+
+                // Handle all driver messages (Call/Data/Close/Response/Connect).
                 // Single channel ensures FIFO ordering.
                 Some(msg) = self.driver_rx.recv() => {
                     trace!("driver: received driver message");
@@ -204,13 +325,67 @@ where
         }
     }
 
-    /// Handle a driver message (Call/Data/Close/Response).
+    /// Handle an Accept/Reject response from application code.
+    async fn handle_incoming_response(
+        &mut self,
+        response: IncomingConnectionResponse,
+    ) -> Result<(), ShmConnectionError> {
+        match response {
+            IncomingConnectionResponse::Accept {
+                request_id,
+                metadata,
+                handle_tx,
+            } => {
+                // Allocate a new connection ID
+                let conn_id = ConnectionId::new(self.next_conn_id);
+                self.next_conn_id += 1;
+
+                // Create connection state
+                let conn_state = VirtualConnectionState::new(
+                    conn_id,
+                    self.driver_tx.clone(),
+                    self.role,
+                    self.negotiated.initial_credit,
+                    self.diagnostic_state.clone(),
+                );
+                let handle = conn_state.handle.clone();
+                self.connections.insert(conn_id, conn_state);
+
+                // Send Accept message
+                let msg = Message::Accept {
+                    request_id,
+                    conn_id,
+                    metadata,
+                };
+                MessageTransport::send(&mut self.io, &msg).await?;
+
+                // Return the handle to the caller
+                let _ = handle_tx.send(Ok(handle));
+            }
+            IncomingConnectionResponse::Reject {
+                request_id,
+                reason,
+                metadata,
+            } => {
+                let msg = Message::Reject {
+                    request_id,
+                    reason,
+                    metadata,
+                };
+                MessageTransport::send(&mut self.io, &msg).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle a driver message (Call/Data/Close/Response/Connect).
     async fn handle_driver_message(
         &mut self,
         msg: DriverMessage,
     ) -> Result<(), ShmConnectionError> {
         let wire_msg = match msg {
             DriverMessage::Call {
+                conn_id,
                 request_id,
                 method_id,
                 metadata,
@@ -218,12 +393,22 @@ where
                 payload,
                 response_tx,
             } => {
-                trace!("handle_driver_message: Call req={}", request_id);
-                // Store the response channel
-                self.pending_responses.insert(request_id, response_tx);
+                trace!(
+                    "handle_driver_message: Call req={} conn={:?}",
+                    request_id, conn_id
+                );
+                // Store the response channel in the connection's state
+                if let Some(conn) = self.connections.get_mut(&conn_id) {
+                    conn.pending_responses.insert(request_id, response_tx);
+                } else {
+                    // Unknown connection - fail the call
+                    let _ = response_tx.send(Err(TransportError::ConnectionClosed));
+                    return Ok(());
+                }
 
                 // Send the request
                 Message::Request {
+                    conn_id,
                     request_id,
                     method_id,
                     metadata,
@@ -232,6 +417,7 @@ where
                 }
             }
             DriverMessage::Data {
+                conn_id,
                 channel_id,
                 payload,
             } => {
@@ -241,22 +427,36 @@ where
                     payload.len()
                 );
                 Message::Data {
+                    conn_id,
                     channel_id,
                     payload,
                 }
             }
-            DriverMessage::Close { channel_id } => {
+            DriverMessage::Close {
+                conn_id,
+                channel_id,
+            } => {
                 trace!("handle_driver_message: Close ch={}", channel_id);
-                Message::Close { channel_id }
+                Message::Close {
+                    conn_id,
+                    channel_id,
+                }
             }
             DriverMessage::Response {
+                conn_id,
                 request_id,
                 channels,
                 payload,
             } => {
-                // Only send if this request is still in-flight
-                if !self.in_flight_server_requests.remove(&request_id) {
-                    // Request was cancelled or already completed, skip
+                // Check that the request is in-flight for this connection
+                // r[impl call.cancel.best-effort] - If cancelled, abort handle was removed,
+                // so this will return None and we won't send a duplicate response.
+                let should_send = if let Some(conn) = self.connections.get_mut(&conn_id) {
+                    conn.in_flight_server_requests.remove(&request_id).is_some()
+                } else {
+                    false
+                };
+                if !should_send {
                     return Ok(());
                 }
                 // Mark request completed for diagnostics
@@ -265,10 +465,25 @@ where
                     diag.complete_request(request_id);
                 }
                 Message::Response {
+                    conn_id,
                     request_id,
                     metadata: Vec::new(),
                     channels,
                     payload,
+                }
+            }
+            DriverMessage::Connect {
+                request_id,
+                metadata,
+                response_tx,
+            } => {
+                // Store pending connect request
+                self.pending_connects
+                    .insert(request_id, PendingConnect { response_tx });
+                // Send Connect message
+                Message::Connect {
+                    request_id,
+                    metadata,
                 }
             }
         };
@@ -338,14 +553,98 @@ where
                     )
                     .await);
             }
-            Message::Goodbye { .. } => {
-                // Fail all pending responses
-                for (_, tx) in self.pending_responses.drain() {
-                    let _ = tx.send(Err(TransportError::ConnectionClosed));
+            Message::Connect {
+                request_id,
+                metadata,
+            } => {
+                // Handle incoming virtual connection request
+                if let Some(tx) = &self.incoming_connections_tx {
+                    // Create a oneshot that routes through incoming_response_tx
+                    let (response_tx, response_rx) = oneshot::channel();
+                    let incoming = IncomingConnection {
+                        request_id,
+                        metadata,
+                        response_tx,
+                    };
+                    if tx.try_send(incoming).is_ok() {
+                        // Spawn a task to forward the response
+                        let incoming_response_tx = self.incoming_response_tx.clone();
+                        tokio::spawn(async move {
+                            if let Ok(response) = response_rx.await {
+                                let _ = incoming_response_tx.send(response).await;
+                            }
+                        });
+                    } else {
+                        // Channel full or closed - reject
+                        let msg = Message::Reject {
+                            request_id,
+                            reason: "not listening".into(),
+                            metadata: vec![],
+                        };
+                        MessageTransport::send(&mut self.io, &msg).await?;
+                    }
+                } else {
+                    // Not listening - reject
+                    let msg = Message::Reject {
+                        request_id,
+                        reason: "not listening".into(),
+                        metadata: vec![],
+                    };
+                    MessageTransport::send(&mut self.io, &msg).await?;
                 }
-                return Err(ShmConnectionError::Closed);
+            }
+            Message::Accept {
+                request_id,
+                conn_id,
+                metadata: _,
+            } => {
+                // Handle response to our outgoing Connect request
+                if let Some(pending) = self.pending_connects.remove(&request_id) {
+                    // Create connection state for the new virtual connection
+                    let conn_state = VirtualConnectionState::new(
+                        conn_id,
+                        self.driver_tx.clone(),
+                        self.role,
+                        self.negotiated.initial_credit,
+                        self.diagnostic_state.clone(),
+                    );
+                    let handle = conn_state.handle.clone();
+                    self.connections.insert(conn_id, conn_state);
+                    let _ = pending.response_tx.send(Ok(handle));
+                }
+                // Unknown request_id - ignore (may be late/duplicate)
+            }
+            Message::Reject {
+                request_id,
+                reason,
+                metadata: _,
+            } => {
+                // Handle rejection of our outgoing Connect request
+                if let Some(pending) = self.pending_connects.remove(&request_id) {
+                    let _ = pending
+                        .response_tx
+                        .send(Err(ConnectError::Rejected(reason)));
+                }
+                // Unknown request_id - ignore
+            }
+            Message::Goodbye { conn_id, reason: _ } => {
+                if conn_id.is_root() {
+                    // Goodbye on root closes entire link
+                    for (_, mut conn) in self.connections.drain() {
+                        conn.fail_pending_responses();
+                        conn.abort_in_flight_requests();
+                    }
+                    return Err(ShmConnectionError::Closed);
+                } else {
+                    // Close just this virtual connection
+                    if let Some(mut conn) = self.connections.remove(&conn_id) {
+                        conn.fail_pending_responses();
+                        conn.abort_in_flight_requests();
+                    }
+                }
             }
             Message::Request {
+                conn_id,
                 request_id,
                 method_id,
                 metadata,
@@ -355,38 +654,56 @@ where
                 debug!(
                     request_id,
                     method_id,
+                    ?conn_id,
                     channels = ?channels,
                     "ShmDriver: received Request with channels"
                 );
-                self.handle_incoming_request(request_id, method_id, metadata, channels, payload)
-                    .await?;
+                self.handle_incoming_request(
+                    conn_id, request_id, method_id, metadata, channels, payload,
+                )
+                .await?;
             }
             Message::Response {
+                conn_id,
                 request_id,
-                metadata: _,
                 channels,
                 payload,
+                ..
             } => {
-                // Route to waiting caller
-                if let Some(tx) = self.pending_responses.remove(&request_id) {
+                // Route to waiting caller on the appropriate connection
+                if let Some(conn) = self.connections.get_mut(&conn_id)
+                    && let Some(tx) = conn.pending_responses.remove(&request_id)
+                {
                     let _ = tx.send(Ok(ResponseData { payload, channels }));
                 }
                 // Unknown response IDs are ignored per spec
             }
-            Message::Cancel { request_id: _ } => {
-                // TODO: Implement cancellation
+            Message::Cancel {
+                conn_id,
+                request_id,
+            } => {
+                // r[impl call.cancel.message] - Cancel requests callee stop processing.
+                // r[impl call.cancel.best-effort] - Cancellation is best-effort.
+                self.handle_cancel(conn_id, request_id).await?;
             }
             Message::Data {
+                conn_id,
                 channel_id,
                 payload,
             } => {
-                self.handle_data(channel_id, payload).await?;
+                self.handle_data(conn_id, channel_id, payload).await?;
             }
-            Message::Close { channel_id } => {
-                self.handle_close(channel_id).await?;
+            Message::Close {
+                conn_id,
+                channel_id,
+            } => {
+                self.handle_close(conn_id, channel_id).await?;
             }
-            Message::Reset { channel_id } => {
-                self.handle_reset(channel_id)?;
+            Message::Reset {
+                conn_id,
+                channel_id,
+            } => {
+                self.handle_reset(conn_id, channel_id)?;
             }
             Message::Credit { .. } => {
                 // shm[impl shm.flow.no-credit-message]
@@ -405,14 +722,29 @@ where
     /// Handle an incoming request (we're the server for this call).
     async fn handle_incoming_request(
         &mut self,
+        conn_id: ConnectionId,
         request_id: u64,
         method_id: u64,
         metadata: Vec<(String, roam_wire::MetadataValue)>,
         channels: Vec<u64>,
         payload: Vec<u8>,
     ) -> Result<(), ShmConnectionError> {
+        let conn = match self.connections.get_mut(&conn_id) {
+            Some(c) => c,
+            None => {
+                // Unknown connection - this is a protocol error
+                return Err(self
+                    .goodbye(
+                        "core.conn.unknown",
+                        format!("Request for unknown conn_id={:?}", conn_id),
+                    )
+                    .await);
+            }
+        };
+
         // Duplicate detection
-        if !self.in_flight_server_requests.insert(request_id) {
+        // r[impl call.request-id.duplicate-detection]
+        if conn.in_flight_server_requests.contains_key(&request_id) {
             return Err(self
                 .goodbye(
                     "call.request-id.duplicate-detection",
@@ -429,18 +761,19 @@ where
 
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
-            self.in_flight_server_requests.remove(&request_id);
             if let Some(diag) = &self.diagnostic_state {
                 diag.complete_request(request_id);
             }
             return Err(self
-                .goodbye(rule_id, format!("Invalid metadata for request_id={}", request_id))
+                .goodbye(
+                    rule_id,
+                    format!("Invalid metadata for request_id={}", request_id),
+                )
                 .await);
         }
 
         // Validate payload size
         if payload.len() as u32 > self.negotiated.max_payload_size {
-            self.in_flight_server_requests.remove(&request_id);
             if let Some(diag) = &self.diagnostic_state {
                 diag.complete_request(request_id);
             }
@@ -457,26 +790,82 @@ where
                 .await);
         }
 
+        // Re-borrow conn for dispatch
+        let conn = self.connections.get_mut(&conn_id).unwrap();
+
         // Dispatch - spawn as a task so message loop can continue.
         let handler_fut = self.dispatcher.dispatch(
+            conn_id,
             method_id,
             payload,
             channels,
             request_id,
-            &mut self.server_channel_registry,
+            &mut conn.server_channel_registry,
         );
-        tokio::spawn(handler_fut);
+
+        // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
+        let join_handle = tokio::spawn(handler_fut);
+        conn.in_flight_server_requests
+            .insert(request_id, join_handle.abort_handle());
+        Ok(())
+    }
+
+    /// Handle a Cancel message from the remote peer.
+    ///
+    /// r[impl call.cancel.message] - Cancel requests callee stop processing.
+    /// r[impl call.cancel.best-effort] - Cancellation is best-effort; handler may have completed.
+    /// r[impl call.cancel.no-response-required] - We still send a Cancelled response.
+    async fn handle_cancel(
+        &mut self,
+        conn_id: ConnectionId,
+        request_id: u64,
+    ) -> Result<(), ShmConnectionError> {
+        // Get the connection
+        let conn = match self.connections.get_mut(&conn_id) {
+            Some(c) => c,
+            None => {
+                // Unknown connection - ignore (may have been closed)
+                return Ok(());
+            }
+        };
+
+        // Remove and abort the in-flight request if it exists
+        if let Some(abort_handle) = conn.in_flight_server_requests.remove(&request_id) {
+            // Abort the handler task (best-effort)
+            abort_handle.abort();
+
+            // Mark request completed for diagnostics
+            if let Some(diag) = &self.diagnostic_state {
+                diag.complete_request(request_id);
+            }
+
+            // Send a Cancelled response
+            // r[impl call.cancel.best-effort] - The callee MUST still send a Response.
+            let wire_msg = Message::Response {
+                conn_id,
+                request_id,
+                metadata: vec![],
+                channels: vec![],
+                // Cancelled error: Result::Err(1) + RoamError::Cancelled(3)
+                payload: vec![1, 3],
+            };
+            self.io.send(&wire_msg).await?;
+        }
+        // If request not found, it already completed - nothing to do
+
         Ok(())
     }
 
     /// Handle incoming Data message.
     async fn handle_data(
         &mut self,
+        conn_id: ConnectionId,
         channel_id: u64,
         payload: Vec<u8>,
     ) -> Result<(), ShmConnectionError> {
         trace!(
-            "handle_data called for channel {}, {} bytes",
+            "handle_data called for conn {:?} channel {}, {} bytes",
+            conn_id,
             channel_id,
             payload.len()
         );
@@ -502,22 +891,31 @@ where
                 .await);
         }
 
-        // Try server registry first, then client registry
-        let in_server = self.server_channel_registry.contains_incoming(channel_id);
-        let in_client = self.handle.contains_channel(channel_id);
+        let conn = match self.connections.get_mut(&conn_id) {
+            Some(c) => c,
+            None => {
+                return Err(self
+                    .goodbye(
+                        "core.conn.unknown",
+                        format!("Data for unknown conn_id={:?}", conn_id),
+                    )
+                    .await);
+            }
+        };
+
+        // Try server registry first, then client handle
+        let in_server = conn.server_channel_registry.contains_incoming(channel_id);
+        let in_client = conn.handle.contains_channel(channel_id);
         let payload_len = payload.len();
 
         let result = if in_server {
             trace!("routing to server_channel_registry");
-            let res = self
-                .server_channel_registry
+            conn.server_channel_registry
                 .route_data(channel_id, payload)
-                .await;
-            trace!("server_channel_registry.route_data returned {:?}", res);
-            res
+                .await
         } else if in_client {
             trace!("routing to client handle");
-            self.handle.route_data(channel_id, payload).await
+            conn.handle.route_data(channel_id, payload).await
         } else {
             trace!("channel {} unknown", channel_id);
             Err(ChannelError::Unknown)
@@ -556,7 +954,11 @@ where
     }
 
     /// Handle incoming Close message.
-    async fn handle_close(&mut self, channel_id: u64) -> Result<(), ShmConnectionError> {
+    async fn handle_close(
+        &mut self,
+        conn_id: ConnectionId,
+        channel_id: u64,
+    ) -> Result<(), ShmConnectionError> {
         if channel_id == 0 {
             return Err(self
                 .goodbye(
@@ -566,14 +968,26 @@ where
                 .await);
         }
 
-        // Try server registry first, then client registry
-        let in_server = self.server_channel_registry.contains(channel_id);
-        let in_client = self.handle.contains_channel(channel_id);
+        let conn = match self.connections.get_mut(&conn_id) {
+            Some(c) => c,
+            None => {
+                return Err(self
+                    .goodbye(
+                        "core.conn.unknown",
+                        format!("Close for unknown conn_id={:?}", conn_id),
+                    )
+                    .await);
+            }
+        };
+
+        // Try server registry first, then client handle
+        let in_server = conn.server_channel_registry.contains(channel_id);
+        let in_client = conn.handle.contains_channel(channel_id);
 
         if in_server {
-            self.server_channel_registry.close(channel_id);
+            conn.server_channel_registry.close(channel_id);
         } else if in_client {
-            self.handle.close_channel(channel_id);
+            conn.handle.close_channel(channel_id);
         } else {
             return Err(self
                 .goodbye(
@@ -589,12 +1003,24 @@ where
     }
 
     /// Handle incoming Reset message.
-    fn handle_reset(&mut self, channel_id: u64) -> Result<(), ShmConnectionError> {
+    fn handle_reset(
+        &mut self,
+        conn_id: ConnectionId,
+        channel_id: u64,
+    ) -> Result<(), ShmConnectionError> {
+        let conn = match self.connections.get_mut(&conn_id) {
+            Some(c) => c,
+            None => {
+                // Reset on unknown connection is silently ignored
+                return Ok(());
+            }
+        };
+
         // Try both registries - Reset on unknown stream is not an error
-        if self.server_channel_registry.contains(channel_id) {
-            self.server_channel_registry.reset(channel_id);
-        } else if self.handle.contains_channel(channel_id) {
-            self.handle.reset_channel(channel_id);
+        if conn.server_channel_registry.contains(channel_id) {
+            conn.server_channel_registry.reset(channel_id);
+        } else if conn.handle.contains_channel(channel_id) {
+            conn.handle.reset_channel(channel_id);
         }
         // Unknown stream for Reset is ignored per spec
         Ok(())
@@ -602,14 +1028,23 @@ where
 
     /// Send Goodbye and return error.
     async fn goodbye(&mut self, rule_id: &'static str, context: String) -> ShmConnectionError {
-        // Fail all pending responses
-        for (_, tx) in self.pending_responses.drain() {
-            let _ = tx.send(Err(TransportError::ConnectionClosed));
+        // Fail all pending responses and abort in-flight requests for all connections
+        for (_, mut conn) in self.connections.drain() {
+            conn.fail_pending_responses();
+            conn.abort_in_flight_requests();
+        }
+
+        // Fail all pending connect requests
+        for (_, pending) in self.pending_connects.drain() {
+            let _ = pending
+                .response_tx
+                .send(Err(ConnectError::Rejected("connection closing".into())));
         }
 
         if let Err(_e) = MessageTransport::send(
             &mut self.io,
             &Message::Goodbye {
+                conn_id: ConnectionId::ROOT,
                 reason: rule_id.into(),
             },
         )
@@ -624,7 +1059,14 @@ where
 
 /// Establish an SHM connection as a guest.
 ///
-/// Returns a handle for making calls and a driver future that must be spawned.
+/// Returns:
+/// - A handle for making calls on connection 0 (root)
+/// - A receiver for incoming virtual connection requests
+/// - A driver that must be spawned
+///
+/// The `IncomingConnections` receiver allows accepting sub-connections opened
+/// by the remote peer. If you don't need sub-connections, you can drop it and
+/// all Connect requests will be automatically rejected.
 ///
 /// # Arguments
 ///
@@ -639,14 +1081,19 @@ where
 ///
 /// // For spawned processes, use from_spawn_args:
 /// let transport = ShmGuestTransport::from_spawn_args(&args)?;
-/// let (handle, driver) = establish_guest(transport, dispatcher);
+/// let (handle, incoming, driver) = establish_guest(transport, dispatcher);
 /// tokio::spawn(driver.run());
 /// // Use handle to make calls
+/// // Use incoming.recv() to accept virtual connections
 /// ```
 pub fn establish_guest<D>(
     transport: ShmGuestTransport,
     dispatcher: D,
-) -> (ConnectionHandle, ShmDriver<ShmGuestTransport, D>)
+) -> (
+    ConnectionHandle,
+    IncomingConnections,
+    ShmDriver<ShmGuestTransport, D>,
+)
 where
     D: ServiceDispatcher,
 {
@@ -660,8 +1107,12 @@ where
 pub fn establish_guest_with_diagnostics<D>(
     transport: ShmGuestTransport,
     dispatcher: D,
-    diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
-) -> (ConnectionHandle, ShmDriver<ShmGuestTransport, D>)
+    diagnostic_state: Option<Arc<DiagnosticState>>,
+) -> (
+    ConnectionHandle,
+    IncomingConnections,
+    ShmDriver<ShmGuestTransport, D>,
+)
 where
     D: ServiceDispatcher,
 {
@@ -677,27 +1128,46 @@ where
     let (driver_tx, driver_rx) = mpsc::channel(256);
 
     // Guest is initiator (uses odd stream IDs)
+    let role = Role::Initiator;
     // Use infinite credit for now (matches current roam-stream behavior).
     let initial_credit = u32::MAX;
-    let handle = ConnectionHandle::new_with_diagnostics(
+
+    // Create root connection state
+    let root_conn = VirtualConnectionState::new(
+        ConnectionId::ROOT,
         driver_tx.clone(),
-        Role::Initiator,
+        role,
         initial_credit,
         diagnostic_state.clone(),
     );
+    let handle = root_conn.handle.clone();
 
-    let driver = ShmDriver::new(
-        transport,
+    let mut connections = HashMap::new();
+    connections.insert(ConnectionId::ROOT, root_conn);
+
+    // Create channel for incoming connection requests
+    let (incoming_connections_tx, incoming_connections_rx) = mpsc::channel(64);
+
+    // Create channel for incoming connection responses (Accept/Reject from app code)
+    let (incoming_response_tx, incoming_response_rx) = mpsc::channel(64);
+
+    let driver = ShmDriver {
+        io: transport,
         dispatcher,
-        Role::Initiator,
+        role,
         negotiated,
-        handle.clone(),
         driver_tx,
         driver_rx,
+        connections,
+        next_conn_id: 1, // 0 is ROOT, start allocating at 1
+        pending_connects: HashMap::new(),
+        incoming_connections_tx: Some(incoming_connections_tx),
+        incoming_response_rx,
+        incoming_response_tx,
         diagnostic_state,
-    );
+    };
 
-    (handle, driver)
+    (handle, incoming_connections_rx, driver)
 }
 
 // ============================================================================
@@ -708,25 +1178,31 @@ where
 ///
 /// Uses `Box<dyn ServiceDispatcher>` to allow each peer to have a different
 /// dispatcher type, enabling heterogeneous bidirectional RPC scenarios.
+///
+/// Each peer can have multiple virtual connections (Connection 0 = ROOT, plus
+/// any opened via Connect/Accept).
 struct PeerConnectionState {
     /// Dispatcher for handling incoming requests from this peer.
     /// Boxed to allow different dispatcher types per peer.
     dispatcher: Box<dyn ServiceDispatcher>,
 
-    /// Server-side stream registry for this peer.
-    server_channel_registry: ChannelRegistry,
+    /// All virtual connections for this peer (including ROOT).
+    connections: HashMap<ConnectionId, VirtualConnectionState>,
 
-    /// Pending responses for outgoing calls we made to this peer.
-    pending_responses: HashMap<u64, oneshot::Sender<Result<ResponseData, TransportError>>>,
+    /// Next connection ID to allocate (for Accept responses).
+    next_conn_id: u64,
 
-    /// In-flight requests we're serving for this peer.
-    in_flight_server_requests: std::collections::HashSet<u64>,
+    /// Pending outgoing Connect requests (request_id -> response channel).
+    pending_connects: HashMap<u64, PendingConnect>,
 
-    /// The connection handle (kept for stream routing).
-    handle: ConnectionHandle,
+    /// Channel for incoming connection requests from this peer.
+    incoming_connections_tx: Option<mpsc::Sender<IncomingConnection>>,
+
+    /// Channel for incoming connection responses (Accept/Reject from app code).
+    incoming_response_tx: mpsc::Sender<IncomingConnectionResponse>,
 
     /// Diagnostic state for tracking in-flight requests (for SIGUSR1 dumps).
-    diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
+    diagnostic_state: Option<Arc<DiagnosticState>>,
 }
 
 /// Command to control the multi-peer host driver.
@@ -740,8 +1216,8 @@ enum ControlCommand {
     AddPeer {
         peer_id: PeerId,
         dispatcher: Box<dyn ServiceDispatcher>,
-        diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
-        response: oneshot::Sender<ConnectionHandle>,
+        diagnostic_state: Option<Arc<DiagnosticState>>,
+        response: oneshot::Sender<(ConnectionHandle, IncomingConnections)>,
     },
 }
 
@@ -749,7 +1225,7 @@ enum ControlCommand {
 ///
 /// Unlike `ShmDriver` which handles a single peer, this driver manages
 /// multiple peers over a single `ShmHost`. Each peer gets its own
-/// `ConnectionHandle` for making RPC calls.
+/// `ConnectionHandle` for making RPC calls, plus support for virtual connections.
 ///
 /// This driver supports **heterogeneous dispatchers**: each peer can have a
 /// different dispatcher type. This enables bidirectional RPC scenarios where
@@ -771,14 +1247,13 @@ enum ControlCommand {
 /// let ticket2 = host.add_peer(options2)?;
 ///
 /// // Create driver with different dispatchers per peer
-/// let (driver, handles) = MultiPeerHostDriver::builder(host)
+/// let (driver, handles, incoming_map) = MultiPeerHostDriver::builder(host)
 ///     // Simple peer only needs lifecycle dispatcher
 ///     .add_peer(ticket1.peer_id(), CellLifecycleDispatcher::new(lifecycle.clone()))
 ///     // Complex peer needs routed dispatcher for bidirectional RPC
-///     // The primary dispatcher's method_ids() determines routing; fallback handles the rest
 ///     .add_peer(ticket2.peer_id(), RoutedDispatcher::new(
-///         CellLifecycleDispatcher::new(lifecycle.clone()),  // primary: handles lifecycle methods
-///         TemplateHostDispatcher::new(template_host),       // fallback: handles everything else
+///         CellLifecycleDispatcher::new(lifecycle.clone()),
+///         TemplateHostDispatcher::new(template_host),
 ///     ))
 ///     .build();
 ///
@@ -786,13 +1261,11 @@ enum ControlCommand {
 /// let driver_handle = driver.handle();
 /// tokio::spawn(driver.run());
 ///
-/// // Add more peers dynamically (lazy spawning)
-/// let ticket3 = host.add_peer(options3)?;
-/// let handle3 = driver_handle.add_peer(ticket3.peer_id(), MyDispatcher).await?;
-///
-/// // Use handles to make calls to specific peers
-/// let client1 = MyServiceClient::new(handles[&ticket1.peer_id()].clone());
-/// client1.do_thing().await?;
+/// // Accept virtual connections from peers
+/// while let Some(conn) = incoming_map[&ticket1.peer_id()].recv().await {
+///     let handle = conn.accept(vec![]).await?;
+///     // handle is now a virtual connection for this specific browser
+/// }
 /// ```
 pub struct MultiPeerHostDriver {
     /// The SHM host (owned).
@@ -825,6 +1298,12 @@ pub struct MultiPeerHostDriver {
 
     /// Sender for unified driver messages (cloned for each peer forwarder task).
     driver_msg_tx: AuditableSender<(PeerId, DriverMessage)>,
+
+    /// Unified channel for incoming connection responses from all peers.
+    incoming_response_rx: AuditableReceiver<(PeerId, IncomingConnectionResponse)>,
+
+    /// Sender for incoming connection responses (cloned for each peer).
+    incoming_response_tx: AuditableSender<(PeerId, IncomingConnectionResponse)>,
 
     /// Pending outbound messages waiting for backpressure to clear.
     /// When host slots are exhausted, messages are queued here and retried
@@ -860,12 +1339,19 @@ impl MultiPeerHostDriverBuilder {
         self
     }
 
-    /// Build the driver and return connection handles for each peer and a driver handle.
+    /// Build the driver and return connection handles, incoming connections, and a driver handle.
+    ///
+    /// Returns:
+    /// - The driver (must be spawned)
+    /// - A map of peer ID to root connection handle
+    /// - A map of peer ID to incoming virtual connection receiver
+    /// - A driver handle for dynamic peer management
     pub fn build(
         mut self,
     ) -> (
         MultiPeerHostDriver,
         HashMap<PeerId, ConnectionHandle>,
+        HashMap<PeerId, IncomingConnections>,
         MultiPeerHostDriverHandle,
     ) {
         let config = self.host.config();
@@ -876,6 +1362,7 @@ impl MultiPeerHostDriverBuilder {
 
         let mut peers = HashMap::new();
         let mut handles = HashMap::new();
+        let mut incoming_connections_map = HashMap::new();
         let mut doorbells = HashMap::new();
 
         // Create ring channel for doorbell notifications (bounded, auditable)
@@ -884,25 +1371,63 @@ impl MultiPeerHostDriverBuilder {
         // Create unified channel for driver messages from all peers (bounded, auditable)
         let (driver_msg_tx, driver_msg_rx) = auditable::channel("driver_messages", 1024);
 
+        // Create unified channel for incoming connection responses from all peers
+        let (incoming_response_tx, incoming_response_rx) =
+            auditable::channel("incoming_responses", 256);
+
         for (peer_id, dispatcher) in self.peers {
             // Create single unified channel for all messages (Call/Data/Close/Response).
             // Single channel ensures FIFO ordering.
             let (driver_tx, mut driver_rx) = mpsc::channel(256);
 
             // Host is acceptor (uses even stream IDs)
+            let role = Role::Acceptor;
             let initial_credit = u32::MAX;
-            let handle = ConnectionHandle::new(driver_tx.clone(), Role::Acceptor, initial_credit);
 
-            handles.insert(peer_id, handle.clone());
+            // Create root connection state
+            let root_conn = VirtualConnectionState::new(
+                ConnectionId::ROOT,
+                driver_tx.clone(),
+                role,
+                initial_credit,
+                None,
+            );
+            let handle = root_conn.handle.clone();
+
+            let mut connections = HashMap::new();
+            connections.insert(ConnectionId::ROOT, root_conn);
+
+            // Create channel for incoming connection requests from this peer
+            let (incoming_connections_tx, incoming_connections_rx) = mpsc::channel(64);
+
+            // Create per-peer incoming response forwarder
+            let peer_incoming_response_tx = incoming_response_tx.clone();
+            let (peer_response_tx, mut peer_response_rx) =
+                mpsc::channel::<IncomingConnectionResponse>(64);
+            tokio::spawn(async move {
+                while let Some(response) = peer_response_rx.recv().await {
+                    if peer_incoming_response_tx
+                        .send((peer_id, response))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+
+            handles.insert(peer_id, handle);
+            incoming_connections_map.insert(peer_id, incoming_connections_rx);
 
             peers.insert(
                 peer_id,
                 PeerConnectionState {
                     dispatcher,
-                    server_channel_registry: ChannelRegistry::new(driver_tx),
-                    pending_responses: HashMap::new(),
-                    in_flight_server_requests: std::collections::HashSet::new(),
-                    handle,
+                    connections,
+                    next_conn_id: 1, // 0 is ROOT
+                    pending_connects: HashMap::new(),
+                    incoming_connections_tx: Some(incoming_connections_tx),
+                    incoming_response_tx: peer_response_tx,
                     diagnostic_state: None,
                 },
             );
@@ -981,12 +1506,14 @@ impl MultiPeerHostDriverBuilder {
             ring_tx: ring_tx.clone(),
             driver_msg_rx,
             driver_msg_tx: driver_msg_tx.clone(),
+            incoming_response_rx,
+            incoming_response_tx,
             pending_sends: AuditableDequeMap::new("pending_sends[", 1024),
         };
 
         let driver_handle = MultiPeerHostDriverHandle { control_tx };
 
-        (driver, handles, driver_handle)
+        (driver, handles, incoming_connections_map, driver_handle)
     }
 }
 
@@ -1041,7 +1568,15 @@ impl MultiPeerHostDriver {
                 // Control commands (add peers dynamically)
                 Some(cmd) = self.control_rx.recv() => {
                     trace!("MultiPeerHostDriver: received control command");
-                    self.handle_control_command(cmd);
+                    self.handle_control_command(cmd).await;
+                }
+
+                // Incoming connection responses (Accept/Reject from app code)
+                Some((peer_id, response)) = self.incoming_response_rx.recv() => {
+                    trace!("MultiPeerHostDriver: received incoming connection response for peer {:?}", peer_id);
+                    if let Err(e) = self.handle_incoming_response(peer_id, response).await {
+                        warn!("MultiPeerHostDriver: error handling incoming response for peer {:?}: {:?}", peer_id, e);
+                    }
                 }
 
                 // Doorbell rang - peer has SHM messages ready
@@ -1102,8 +1637,74 @@ impl MultiPeerHostDriver {
         }
     }
 
+    /// Handle an Accept/Reject response from application code for a specific peer.
+    async fn handle_incoming_response(
+        &mut self,
+        peer_id: PeerId,
+        response: IncomingConnectionResponse,
+    ) -> Result<(), ShmConnectionError> {
+        let state = match self.peers.get_mut(&peer_id) {
+            Some(s) => s,
+            None => return Ok(()), // Peer gone
+        };
+
+        match response {
+            IncomingConnectionResponse::Accept {
+                request_id,
+                metadata,
+                handle_tx,
+            } => {
+                // Allocate a new connection ID
+                let conn_id = ConnectionId::new(state.next_conn_id);
+                state.next_conn_id += 1;
+
+                // Get driver_tx from existing root connection
+                let driver_tx = state
+                    .connections
+                    .get(&ConnectionId::ROOT)
+                    .map(|c| c.handle.driver_tx().clone())
+                    .unwrap();
+
+                // Create connection state
+                let conn_state = VirtualConnectionState::new(
+                    conn_id,
+                    driver_tx,
+                    Role::Acceptor,
+                    self.negotiated.initial_credit,
+                    state.diagnostic_state.clone(),
+                );
+                let handle = conn_state.handle.clone();
+                state.connections.insert(conn_id, conn_state);
+
+                // Send Accept message
+                let msg = Message::Accept {
+                    request_id,
+                    conn_id,
+                    metadata,
+                };
+                self.send_to_peer(peer_id, &msg).await?;
+
+                // Return the handle to the caller
+                let _ = handle_tx.send(Ok(handle));
+            }
+            IncomingConnectionResponse::Reject {
+                request_id,
+                reason,
+                metadata,
+            } => {
+                let msg = Message::Reject {
+                    request_id,
+                    reason,
+                    metadata,
+                };
+                self.send_to_peer(peer_id, &msg).await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Handle a control command.
-    fn handle_control_command(&mut self, cmd: ControlCommand) {
+    async fn handle_control_command(&mut self, cmd: ControlCommand) {
         match cmd {
             ControlCommand::CreatePeer { options, response } => {
                 // Call host.add_peer() to create a spawn ticket
@@ -1121,22 +1722,50 @@ impl MultiPeerHostDriver {
                 let (driver_tx, mut driver_rx) = mpsc::channel(256);
 
                 // Host is acceptor (uses even stream IDs)
+                let role = Role::Acceptor;
                 let initial_credit = u32::MAX;
-                let handle = ConnectionHandle::new_with_diagnostics(
+
+                // Create root connection state
+                let root_conn = VirtualConnectionState::new(
+                    ConnectionId::ROOT,
                     driver_tx.clone(),
-                    Role::Acceptor,
+                    role,
                     initial_credit,
                     diagnostic_state.clone(),
                 );
+                let handle = root_conn.handle.clone();
+
+                let mut connections = HashMap::new();
+                connections.insert(ConnectionId::ROOT, root_conn);
+
+                // Create channel for incoming connection requests from this peer
+                let (incoming_connections_tx, incoming_connections_rx) = mpsc::channel(64);
+
+                // Create per-peer incoming response forwarder
+                let peer_incoming_response_tx = self.incoming_response_tx.clone();
+                let (peer_response_tx, mut peer_response_rx) =
+                    mpsc::channel::<IncomingConnectionResponse>(64);
+                tokio::spawn(async move {
+                    while let Some(resp) = peer_response_rx.recv().await {
+                        if peer_incoming_response_tx
+                            .send((peer_id, resp))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
 
                 self.peers.insert(
                     peer_id,
                     PeerConnectionState {
                         dispatcher,
-                        server_channel_registry: ChannelRegistry::new(driver_tx),
-                        pending_responses: HashMap::new(),
-                        in_flight_server_requests: std::collections::HashSet::new(),
-                        handle: handle.clone(),
+                        connections,
+                        next_conn_id: 1,
+                        pending_connects: HashMap::new(),
+                        incoming_connections_tx: Some(incoming_connections_tx),
+                        incoming_response_tx: peer_response_tx,
                         diagnostic_state,
                     },
                 );
@@ -1207,18 +1836,28 @@ impl MultiPeerHostDriver {
 
                     // Manually trigger an immediate SHM poll for this peer to catch any messages
                     // that arrived before the doorbell waiter task started waiting.
-                    let _ = self.ring_tx.send(peer_id);
+                    if self.ring_tx.send(peer_id).await.is_err() {
+                        trace!(
+                            "Initial ring notification failed for peer {:?}: driver shutting down",
+                            peer_id
+                        );
+                    }
                 } else {
                     error!("AddPeer: NO DOORBELL FOUND for {:?}!", peer_id);
                 }
 
-                // Send the handle back to the caller
-                let _ = response.send(handle);
+                // Send the handle and incoming connections receiver back to the caller
+                if response.send((handle, incoming_connections_rx)).is_err() {
+                    trace!(
+                        "AddPeer response channel closed for peer {:?}: caller dropped",
+                        peer_id
+                    );
+                }
             }
         }
     }
 
-    /// Handle a driver message (Call/Data/Close/Response) for a specific peer.
+    /// Handle a driver message (Call/Data/Close/Response/Connect) for a specific peer.
     async fn handle_driver_message(
         &mut self,
         peer_id: PeerId,
@@ -1226,6 +1865,7 @@ impl MultiPeerHostDriver {
     ) -> Result<(), ShmConnectionError> {
         let wire_msg = match msg {
             DriverMessage::Call {
+                conn_id,
                 request_id,
                 method_id,
                 metadata,
@@ -1236,16 +1876,26 @@ impl MultiPeerHostDriver {
                 debug!(
                     request_id,
                     method_id,
+                    ?conn_id,
                     channels = ?channels,
                     "MultiPeerHostDriver: sending Request with channels"
                 );
-                // Store the response channel
+                // Store the response channel in the connection's state
                 if let Some(state) = self.peers.get_mut(&peer_id) {
-                    state.pending_responses.insert(request_id, response_tx);
+                    if let Some(conn) = state.connections.get_mut(&conn_id) {
+                        conn.pending_responses.insert(request_id, response_tx);
+                    } else {
+                        let _ = response_tx.send(Err(TransportError::ConnectionClosed));
+                        return Ok(());
+                    }
+                } else {
+                    let _ = response_tx.send(Err(TransportError::ConnectionClosed));
+                    return Ok(());
                 }
 
                 // Send the request
                 Message::Request {
+                    conn_id,
                     request_id,
                     method_id,
                     metadata,
@@ -1254,34 +1904,75 @@ impl MultiPeerHostDriver {
                 }
             }
             DriverMessage::Data {
+                conn_id,
                 channel_id,
                 payload,
             } => Message::Data {
+                conn_id,
                 channel_id,
                 payload,
             },
-            DriverMessage::Close { channel_id } => Message::Close { channel_id },
+            DriverMessage::Close {
+                conn_id,
+                channel_id,
+            } => Message::Close {
+                conn_id,
+                channel_id,
+            },
             DriverMessage::Response {
+                conn_id,
                 request_id,
                 channels,
                 payload,
             } => {
-                // Only send if this request is still in-flight
-                if let Some(state) = self.peers.get_mut(&peer_id) {
-                    if !state.in_flight_server_requests.remove(&request_id) {
-                        return Ok(());
+                // Check that the request is in-flight for this connection
+                // r[impl call.cancel.best-effort] - If cancelled, abort handle was removed,
+                // so this will return None and we won't send a duplicate response.
+                let should_send = if let Some(state) = self.peers.get_mut(&peer_id) {
+                    if let Some(conn) = state.connections.get_mut(&conn_id) {
+                        conn.in_flight_server_requests.remove(&request_id).is_some()
+                    } else {
+                        false
                     }
-                    // Mark request completed for diagnostics
-                    if let Some(diag) = &state.diagnostic_state {
-                        trace!(request_id, name = %diag.name, "completing incoming request");
-                        diag.complete_request(request_id);
-                    }
+                } else {
+                    false
+                };
+                if !should_send {
+                    return Ok(());
+                }
+                // Mark request completed for diagnostics
+                if let Some(state) = self.peers.get(&peer_id)
+                    && let Some(diag) = &state.diagnostic_state
+                {
+                    trace!(request_id, name = %diag.name, "completing incoming request");
+                    diag.complete_request(request_id);
                 }
                 Message::Response {
+                    conn_id,
                     request_id,
                     metadata: Vec::new(),
                     channels,
                     payload,
+                }
+            }
+            DriverMessage::Connect {
+                request_id,
+                metadata,
+                response_tx,
+            } => {
+                // Store pending connect request
+                if let Some(state) = self.peers.get_mut(&peer_id) {
+                    state
+                        .pending_connects
+                        .insert(request_id, PendingConnect { response_tx });
+                } else {
+                    let _ = response_tx.send(Err(ConnectError::Rejected("peer gone".into())));
+                    return Ok(());
+                }
+                // Send Connect message
+                Message::Connect {
+                    request_id,
+                    metadata,
                 }
             }
         };
@@ -1305,26 +1996,131 @@ impl MultiPeerHostDriver {
                     )
                     .await);
             }
-            Message::Goodbye { .. } => {
-                // Fail all pending responses for this peer
-                if let Some(state) = self.peers.get_mut(&peer_id) {
-                    for (_, tx) in state.pending_responses.drain() {
-                        let _ = tx.send(Err(TransportError::ConnectionClosed));
+            Message::Connect {
+                request_id,
+                metadata,
+            } => {
+                // Handle incoming virtual connection request
+                let state = match self.peers.get(&peer_id) {
+                    Some(s) => s,
+                    None => return Ok(()),
+                };
+                if let Some(tx) = &state.incoming_connections_tx {
+                    // Create a oneshot that routes through incoming_response_tx
+                    let (response_tx, response_rx) = oneshot::channel();
+                    let incoming = IncomingConnection {
+                        request_id,
+                        metadata,
+                        response_tx,
+                    };
+                    if tx.try_send(incoming).is_ok() {
+                        // Spawn a task to forward the response
+                        let incoming_response_tx = state.incoming_response_tx.clone();
+                        tokio::spawn(async move {
+                            if let Ok(response) = response_rx.await {
+                                let _ = incoming_response_tx.send(response).await;
+                            }
+                        });
+                    } else {
+                        // Channel full or closed - reject
+                        let msg = Message::Reject {
+                            request_id,
+                            reason: "not listening".into(),
+                            metadata: vec![],
+                        };
+                        self.send_to_peer(peer_id, &msg).await?;
+                    }
+                } else {
+                    // Not listening - reject
+                    let msg = Message::Reject {
+                        request_id,
+                        reason: "not listening".into(),
+                        metadata: vec![],
+                    };
+                    self.send_to_peer(peer_id, &msg).await?;
+                }
+            }
+            Message::Accept {
+                request_id,
+                conn_id,
+                metadata: _,
+            } => {
+                // Handle response to our outgoing Connect request
+                let state = match self.peers.get_mut(&peer_id) {
+                    Some(s) => s,
+                    None => return Ok(()),
+                };
+                if let Some(pending) = state.pending_connects.remove(&request_id) {
+                    // Get driver_tx from existing root connection
+                    let driver_tx = state
+                        .connections
+                        .get(&ConnectionId::ROOT)
+                        .map(|c| c.handle.driver_tx().clone())
+                        .unwrap();
+
+                    // Create connection state for the new virtual connection
+                    let conn_state = VirtualConnectionState::new(
+                        conn_id,
+                        driver_tx,
+                        Role::Acceptor,
+                        self.negotiated.initial_credit,
+                        state.diagnostic_state.clone(),
+                    );
+                    let handle = conn_state.handle.clone();
+                    state.connections.insert(conn_id, conn_state);
+                    let _ = pending.response_tx.send(Ok(handle));
+                }
+                // Unknown request_id - ignore (may be late/duplicate)
+            }
+            Message::Reject {
+                request_id,
+                reason,
+                metadata: _,
+            } => {
+                // Handle rejection of our outgoing Connect request
+                let state = match self.peers.get_mut(&peer_id) {
+                    Some(s) => s,
+                    None => return Ok(()),
+                };
+                if let Some(pending) = state.pending_connects.remove(&request_id) {
+                    let _ = pending
+                        .response_tx
+                        .send(Err(ConnectError::Rejected(reason)));
+                }
+                // Unknown request_id - ignore
+            }
+            Message::Goodbye { conn_id, reason: _ } => {
+                let state = match self.peers.get_mut(&peer_id) {
+                    Some(s) => s,
+                    None => return Ok(()),
+                };
+                if conn_id.is_root() {
+                    // Goodbye on root closes entire link - fail all pending responses for this peer
+                    for (_, mut conn) in state.connections.drain() {
+                        conn.fail_pending_responses();
+                        conn.abort_in_flight_requests();
+                    }
+                    // Remove the peer
+                    info!(
+                        "MultiPeerHostDriver: peer {:?} disconnected, removing from registry",
+                        peer_id
+                    );
+                    self.peers.remove(&peer_id);
+                    info!(
+                        "MultiPeerHostDriver: {} peers remaining after disconnect",
+                        self.peers.len()
+                    );
+                } else {
+                    // Close just this virtual connection
+                    if let Some(mut conn) = state.connections.remove(&conn_id) {
+                        conn.fail_pending_responses();
+                        conn.abort_in_flight_requests();
                     }
                 }
-                // Remove the peer
-                info!(
-                    "MultiPeerHostDriver: peer {:?} disconnected, removing from registry",
-                    peer_id
-                );
-                self.peers.remove(&peer_id);
-                info!(
-                    "MultiPeerHostDriver: {} peers remaining after disconnect",
-                    self.peers.len()
-                );
                 return Ok(());
             }
             Message::Request {
+                conn_id,
                 request_id,
                 method_id,
                 metadata,
@@ -1334,41 +2130,58 @@ impl MultiPeerHostDriver {
                 debug!(
                     request_id,
                     method_id,
+                    ?conn_id,
                     channels = ?channels,
                     "MultiPeerHostDriver: received Request with channels"
                 );
                 self.handle_incoming_request(
-                    peer_id, request_id, method_id, metadata, channels, payload,
+                    peer_id, conn_id, request_id, method_id, metadata, channels, payload,
                 )
                 .await?;
             }
             Message::Response {
+                conn_id,
                 request_id,
-                metadata: _,
                 channels,
                 payload,
+                ..
             } => {
-                // Route to waiting caller
+                // Route to waiting caller on the appropriate connection
                 if let Some(state) = self.peers.get_mut(&peer_id)
-                    && let Some(tx) = state.pending_responses.remove(&request_id)
+                    && let Some(conn) = state.connections.get_mut(&conn_id)
+                    && let Some(tx) = conn.pending_responses.remove(&request_id)
                 {
                     let _ = tx.send(Ok(ResponseData { payload, channels }));
                 }
+                // Unknown response IDs are ignored per spec
             }
-            Message::Cancel { request_id: _ } => {
-                // TODO: Implement cancellation
+            Message::Cancel {
+                conn_id,
+                request_id,
+            } => {
+                // r[impl call.cancel.message] - Cancel requests callee stop processing.
+                // r[impl call.cancel.best-effort] - Cancellation is best-effort.
+                self.handle_cancel(peer_id, conn_id, request_id).await?;
             }
             Message::Data {
+                conn_id,
                 channel_id,
                 payload,
             } => {
-                self.handle_data(peer_id, channel_id, payload).await?;
+                self.handle_data(peer_id, conn_id, channel_id, payload)
+                    .await?;
             }
-            Message::Close { channel_id } => {
-                self.handle_close(peer_id, channel_id).await?;
+            Message::Close {
+                conn_id,
+                channel_id,
+            } => {
+                self.handle_close(peer_id, conn_id, channel_id).await?;
             }
-            Message::Reset { channel_id } => {
-                self.handle_reset(peer_id, channel_id)?;
+            Message::Reset {
+                conn_id,
+                channel_id,
+            } => {
+                self.handle_reset(peer_id, conn_id, channel_id)?;
             }
             Message::Credit { .. } => {
                 return Err(self
@@ -1383,10 +2196,12 @@ impl MultiPeerHostDriver {
         Ok(())
     }
 
-    /// Handle an incoming request from a peer.
+    /// Handle an incoming request from a peer on a specific connection.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_incoming_request(
         &mut self,
         peer_id: PeerId,
+        conn_id: ConnectionId,
         request_id: u64,
         method_id: u64,
         metadata: Vec<(String, roam_wire::MetadataValue)>,
@@ -1398,8 +2213,22 @@ impl MultiPeerHostDriver {
             None => return Ok(()), // Peer gone
         };
 
+        let conn = match state.connections.get_mut(&conn_id) {
+            Some(c) => c,
+            None => {
+                return Err(self
+                    .goodbye(
+                        peer_id,
+                        "core.conn.unknown",
+                        format!("Request for unknown conn_id={:?}", conn_id),
+                    )
+                    .await);
+            }
+        };
+
         // Duplicate detection
-        if !state.in_flight_server_requests.insert(request_id) {
+        // r[impl call.request-id.duplicate-detection]
+        if conn.in_flight_server_requests.contains_key(&request_id) {
             return Err(self
                 .goodbye(
                     peer_id,
@@ -1414,12 +2243,14 @@ impl MultiPeerHostDriver {
             trace!(request_id, method_id, name = %diag.name, "recording incoming request");
             diag.record_incoming_request(request_id, method_id, None);
         } else {
-            trace!(request_id, method_id, "diagnostic_state is None, not tracking incoming request");
+            trace!(
+                request_id,
+                method_id, "diagnostic_state is None, not tracking incoming request"
+            );
         }
 
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
-            state.in_flight_server_requests.remove(&request_id);
             if let Some(diag) = &state.diagnostic_state {
                 diag.complete_request(request_id);
             }
@@ -1434,8 +2265,9 @@ impl MultiPeerHostDriver {
 
         // Validate payload size
         if payload.len() as u32 > self.negotiated.max_payload_size {
-            state.in_flight_server_requests.remove(&request_id);
-            if let Some(diag) = &state.diagnostic_state {
+            if let Some(state) = self.peers.get_mut(&peer_id)
+                && let Some(diag) = &state.diagnostic_state
+            {
                 diag.complete_request(request_id);
             }
             return Err(self
@@ -1452,21 +2284,87 @@ impl MultiPeerHostDriver {
                 .await);
         }
 
+        // Re-borrow for dispatch
+        let state = self.peers.get_mut(&peer_id).unwrap();
+        let conn = state.connections.get_mut(&conn_id).unwrap();
+
         // Dispatch - spawn as a task so message loop can continue.
         debug!(
             method_id,
             request_id,
+            ?conn_id,
             channels = ?channels,
             "handle_incoming_request: dispatching with channels"
         );
         let handler_fut = state.dispatcher.dispatch(
+            conn_id,
             method_id,
             payload,
             channels,
             request_id,
-            &mut state.server_channel_registry,
+            &mut conn.server_channel_registry,
         );
-        tokio::spawn(handler_fut);
+
+        // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
+        let join_handle = tokio::spawn(handler_fut);
+        conn.in_flight_server_requests
+            .insert(request_id, join_handle.abort_handle());
+        Ok(())
+    }
+
+    /// Handle a Cancel message from a peer.
+    ///
+    /// r[impl call.cancel.message] - Cancel requests callee stop processing.
+    /// r[impl call.cancel.best-effort] - Cancellation is best-effort; handler may have completed.
+    /// r[impl call.cancel.no-response-required] - We still send a Cancelled response.
+    async fn handle_cancel(
+        &mut self,
+        peer_id: PeerId,
+        conn_id: ConnectionId,
+        request_id: u64,
+    ) -> Result<(), ShmConnectionError> {
+        // Get the peer state
+        let state = match self.peers.get_mut(&peer_id) {
+            Some(s) => s,
+            None => {
+                // Unknown peer - ignore
+                return Ok(());
+            }
+        };
+
+        // Get the connection
+        let conn = match state.connections.get_mut(&conn_id) {
+            Some(c) => c,
+            None => {
+                // Unknown connection - ignore (may have been closed)
+                return Ok(());
+            }
+        };
+
+        // Remove and abort the in-flight request if it exists
+        if let Some(abort_handle) = conn.in_flight_server_requests.remove(&request_id) {
+            // Abort the handler task (best-effort)
+            abort_handle.abort();
+
+            // Mark request completed for diagnostics
+            if let Some(diag) = &state.diagnostic_state {
+                diag.complete_request(request_id);
+            }
+
+            // Send a Cancelled response
+            // r[impl call.cancel.best-effort] - The callee MUST still send a Response.
+            let wire_msg = Message::Response {
+                conn_id,
+                request_id,
+                metadata: vec![],
+                channels: vec![],
+                // Cancelled error: Result::Err(1) + RoamError::Cancelled(3)
+                payload: vec![1, 3],
+            };
+            self.send_to_peer(peer_id, &wire_msg).await?;
+        }
+        // If request not found, it already completed - nothing to do
+
         Ok(())
     }
 
@@ -1474,6 +2372,7 @@ impl MultiPeerHostDriver {
     async fn handle_data(
         &mut self,
         peer_id: PeerId,
+        conn_id: ConnectionId,
         channel_id: u64,
         payload: Vec<u8>,
     ) -> Result<(), ShmConnectionError> {
@@ -1506,23 +2405,33 @@ impl MultiPeerHostDriver {
             None => return Ok(()),
         };
 
-        // Try server registry first, then client registry
-        let in_server = state.server_channel_registry.contains_incoming(channel_id);
-        let in_client = state.handle.contains_channel(channel_id);
+        let conn = match state.connections.get_mut(&conn_id) {
+            Some(c) => c,
+            None => {
+                return Err(self
+                    .goodbye(
+                        peer_id,
+                        "core.conn.unknown",
+                        format!("Data for unknown conn_id={:?}", conn_id),
+                    )
+                    .await);
+            }
+        };
+
+        // Try server registry first, then client handle
+        let in_server = conn.server_channel_registry.contains_incoming(channel_id);
+        let in_client = conn.handle.contains_channel(channel_id);
         trace!(
             channel_id,
-            in_server,
-            in_client,
-            "handle_data: checking channel registries"
+            in_server, in_client, "handle_data: checking channel registries"
         );
 
         let result = if in_server {
-            state
-                .server_channel_registry
+            conn.server_channel_registry
                 .route_data(channel_id, payload.clone())
                 .await
         } else if in_client {
-            state.handle.route_data(channel_id, payload.clone()).await
+            conn.handle.route_data(channel_id, payload.clone()).await
         } else {
             warn!(
                 channel_id,
@@ -1570,6 +2479,7 @@ impl MultiPeerHostDriver {
     async fn handle_close(
         &mut self,
         peer_id: PeerId,
+        conn_id: ConnectionId,
         channel_id: u64,
     ) -> Result<(), ShmConnectionError> {
         if channel_id == 0 {
@@ -1577,7 +2487,7 @@ impl MultiPeerHostDriver {
                 .goodbye(
                     peer_id,
                     "streaming.id.zero-reserved",
-                    format!("Close for reserved channel_id=0"),
+                    "Close for reserved channel_id=0".to_string(),
                 )
                 .await);
         }
@@ -1587,13 +2497,26 @@ impl MultiPeerHostDriver {
             None => return Ok(()),
         };
 
-        let in_server = state.server_channel_registry.contains(channel_id);
-        let in_client = state.handle.contains_channel(channel_id);
+        let conn = match state.connections.get_mut(&conn_id) {
+            Some(c) => c,
+            None => {
+                return Err(self
+                    .goodbye(
+                        peer_id,
+                        "core.conn.unknown",
+                        format!("Close for unknown conn_id={:?}", conn_id),
+                    )
+                    .await);
+            }
+        };
+
+        let in_server = conn.server_channel_registry.contains(channel_id);
+        let in_client = conn.handle.contains_channel(channel_id);
 
         if in_server {
-            state.server_channel_registry.close(channel_id);
+            conn.server_channel_registry.close(channel_id);
         } else if in_client {
-            state.handle.close_channel(channel_id);
+            conn.handle.close_channel(channel_id);
         } else {
             return Err(self
                 .goodbye(
@@ -1610,16 +2533,26 @@ impl MultiPeerHostDriver {
     }
 
     /// Handle incoming Reset message.
-    fn handle_reset(&mut self, peer_id: PeerId, channel_id: u64) -> Result<(), ShmConnectionError> {
+    fn handle_reset(
+        &mut self,
+        peer_id: PeerId,
+        conn_id: ConnectionId,
+        channel_id: u64,
+    ) -> Result<(), ShmConnectionError> {
         let state = match self.peers.get_mut(&peer_id) {
             Some(s) => s,
             None => return Ok(()),
         };
 
-        if state.server_channel_registry.contains(channel_id) {
-            state.server_channel_registry.reset(channel_id);
-        } else if state.handle.contains_channel(channel_id) {
-            state.handle.reset_channel(channel_id);
+        let conn = match state.connections.get_mut(&conn_id) {
+            Some(c) => c,
+            None => return Ok(()), // Reset on unknown connection is silently ignored
+        };
+
+        if conn.server_channel_registry.contains(channel_id) {
+            conn.server_channel_registry.reset(channel_id);
+        } else if conn.handle.contains_channel(channel_id) {
+            conn.handle.reset_channel(channel_id);
         }
         Ok(())
     }
@@ -1766,10 +2699,12 @@ impl MultiPeerHostDriver {
         rule_id: &'static str,
         context: String,
     ) -> ShmConnectionError {
-        // Fail all pending responses for this peer
+        // Fail all pending responses for this peer (across all connections)
         if let Some(state) = self.peers.get_mut(&peer_id) {
-            for (_, tx) in state.pending_responses.drain() {
-                let _ = tx.send(Err(TransportError::ConnectionClosed));
+            for conn in state.connections.values_mut() {
+                for (_, tx) in conn.pending_responses.drain() {
+                    let _ = tx.send(Err(TransportError::ConnectionClosed));
+                }
             }
         }
 
@@ -1777,6 +2712,7 @@ impl MultiPeerHostDriver {
             .send_to_peer(
                 peer_id,
                 &Message::Goodbye {
+                    conn_id: roam_wire::ConnectionId::ROOT,
                     reason: rule_id.into(),
                 },
             )
@@ -1855,13 +2791,13 @@ impl MultiPeerHostDriverHandle {
     ///
     /// ```ignore
     /// // After calling create_peer and spawning:
-    /// let handle = driver_handle.add_peer(ticket.peer_id, MyDispatcher).await?;
+    /// let (handle, incoming) = driver_handle.add_peer(ticket.peer_id, MyDispatcher).await?;
     /// ```
     pub async fn add_peer<D>(
         &self,
         peer_id: PeerId,
         dispatcher: D,
-    ) -> Result<ConnectionHandle, ShmConnectionError>
+    ) -> Result<(ConnectionHandle, IncomingConnections), ShmConnectionError>
     where
         D: ServiceDispatcher + 'static,
     {
@@ -1871,14 +2807,17 @@ impl MultiPeerHostDriverHandle {
 
     /// Register a peer after it's ready, with optional diagnostic state for SIGUSR1 dumps.
     ///
-    /// Same as [`add_peer`] but allows passing a [`DiagnosticState`] to track
+    /// Same as [`Self::add_peer`] but allows passing a [`DiagnosticState`] to track
     /// in-flight requests for debugging.
+    ///
+    /// Returns a tuple of (ConnectionHandle, IncomingConnections) where IncomingConnections
+    /// is a receiver for incoming virtual connection requests from this peer.
     pub async fn add_peer_with_diagnostics<D>(
         &self,
         peer_id: PeerId,
         dispatcher: D,
-        diagnostic_state: Option<Arc<roam_session::diagnostic::DiagnosticState>>,
-    ) -> Result<ConnectionHandle, ShmConnectionError>
+        diagnostic_state: Option<Arc<DiagnosticState>>,
+    ) -> Result<(ConnectionHandle, IncomingConnections), ShmConnectionError>
     where
         D: ServiceDispatcher + 'static,
     {
@@ -1945,6 +2884,7 @@ pub fn establish_multi_peer_host<D, I>(
 ) -> (
     MultiPeerHostDriver,
     HashMap<PeerId, ConnectionHandle>,
+    HashMap<PeerId, IncomingConnections>,
     MultiPeerHostDriverHandle,
 )
 where

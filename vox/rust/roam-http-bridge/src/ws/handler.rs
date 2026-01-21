@@ -441,6 +441,7 @@ async fn setup_streaming_call(
     let roam_request_id = handle.alloc_request_id();
 
     let call_msg = roam_session::DriverMessage::Call {
+        conn_id: roam_wire::ConnectionId::ROOT,
         request_id: roam_request_id,
         method_id,
         metadata: Vec::new(),
@@ -697,6 +698,7 @@ async fn handle_data(
     // Forward to the roam connection via DriverMessage::Data
     driver_tx
         .send(DriverMessage::Data {
+            conn_id: roam_wire::ConnectionId::ROOT,
             channel_id: roam_channel_id,
             payload: postcard_bytes,
         })
@@ -739,6 +741,7 @@ async fn handle_close(
             // Send Close to roam
             let _ = driver_tx
                 .send(DriverMessage::Close {
+                    conn_id: roam_wire::ConnectionId::ROOT,
                     channel_id: roam_channel_id,
                 })
                 .await;

@@ -9,11 +9,13 @@
 
 import {
   type Hello,
-  helloV1,
+  helloV2,
   messageHello,
   messageGoodbye,
   messageRequest,
   messageResponse,
+  messageAccept,
+  messageReject,
   messageData,
   messageClose,
   encodeMessage,
@@ -130,6 +132,12 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   private channelRegistry: ChannelRegistry;
   private nextRequestId: bigint = 1n;
 
+  // Virtual connection tracking
+  // r[impl core.conn.id-allocation] - Connection IDs are allocated by the acceptor.
+  private nextConnId: bigint = 1n;
+  private virtualConnections: Set<bigint> = new Set();
+  private _acceptConnections: boolean;
+
   // Pending request tracking for concurrent calls
   private pendingRequests = new Map<
     bigint,
@@ -142,13 +150,20 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   private messagePumpRunning = false;
   private messagePumpPromise: Promise<void> | null = null;
 
-  constructor(io: T, role: Role, negotiated: Negotiated, ourHello: Hello) {
+  constructor(
+    io: T,
+    role: Role,
+    negotiated: Negotiated,
+    ourHello: Hello,
+    acceptConnections: boolean = false,
+  ) {
     this.io = io;
     this._role = role;
     this._negotiated = negotiated;
     this.ourHello = ourHello;
     this.channelAllocator = new ChannelIdAllocator(role);
     this.channelRegistry = new ChannelRegistry();
+    this._acceptConnections = acceptConnections;
   }
 
   /** Get the underlying transport. */
@@ -525,8 +540,41 @@ export class Connection<T extends MessageTransport = MessageTransport> {
       return undefined; // Duplicate Hello after exchange - ignore
     }
 
+    // r[impl message.connect.initiate] - Handle Connect requests for virtual connections.
+    if (msg.tag === "Connect") {
+      // r[impl core.conn.accept-required] - Accept or reject the connection request.
+      if (this._acceptConnections) {
+        // r[impl core.conn.id-allocation] - Allocate a new connection ID.
+        const connId = this.nextConnId++;
+        this.virtualConnections.add(connId);
+        // r[impl message.accept.response] - Send Accept with new conn_id.
+        const acceptMsg = messageAccept(msg.requestId, connId, []);
+        this.io.send(encodeMessage(acceptMsg));
+      } else {
+        // r[impl message.reject.response] - Reject since not listening.
+        const rejectMsg = messageReject(msg.requestId, "not listening", []);
+        this.io.send(encodeMessage(rejectMsg));
+      }
+      return undefined;
+    }
+
+    // Accept and Reject are responses to our Connect requests - ignore in server mode
+    if (msg.tag === "Accept" || msg.tag === "Reject") {
+      return undefined;
+    }
+
     if (msg.tag === "Goodbye") {
-      throw ConnectionError.closed();
+      // r[impl message.goodbye.connection-zero] - Goodbye on conn 0 closes entire link.
+      if (msg.connId === 0n) {
+        throw ConnectionError.closed();
+      }
+      // r[impl core.conn.lifecycle] - Close virtual connection if it exists.
+      // r[impl core.conn.independence] - Ignore Goodbye on unknown connection.
+      if (this.virtualConnections.has(msg.connId)) {
+        this.virtualConnections.delete(msg.connId);
+      }
+      // Ignore Goodbye on unknown connection IDs
+      return undefined;
     }
 
     if (msg.tag === "Request") {
@@ -794,6 +842,12 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   }
 }
 
+/** Options for hello exchange. */
+export interface HelloExchangeOptions {
+  /** Whether to accept incoming virtual connections. Default: false. */
+  acceptConnections?: boolean;
+}
+
 /**
  * Perform Hello exchange as the acceptor (server).
  *
@@ -803,6 +857,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
 export async function helloExchangeInitiator<T extends MessageTransport>(
   io: T,
   ourHello: Hello,
+  options: HelloExchangeOptions = {},
 ): Promise<Connection<T>> {
   // Send our Hello immediately
   await io.send(encodeMessage(messageHello(ourHello)));
@@ -815,7 +870,7 @@ export async function helloExchangeInitiator<T extends MessageTransport>(
     initialCredit: Math.min(ourHello.initialChannelCredit, peerHello.initialChannelCredit),
   };
 
-  return new Connection(io, Role.Initiator, negotiated, ourHello);
+  return new Connection(io, Role.Initiator, negotiated, ourHello, options.acceptConnections);
 }
 
 /**
@@ -827,6 +882,7 @@ export async function helloExchangeInitiator<T extends MessageTransport>(
 export async function helloExchangeAcceptor<T extends MessageTransport>(
   io: T,
   ourHello: Hello,
+  options: HelloExchangeOptions = {},
 ): Promise<Connection<T>> {
   // Wait for peer Hello
   const peerHello = await waitForPeerHello(io, ourHello);
@@ -839,7 +895,7 @@ export async function helloExchangeAcceptor<T extends MessageTransport>(
   // Send our Hello
   await io.send(encodeMessage(messageHello(ourHello)));
 
-  return new Connection(io, Role.Acceptor, negotiated, ourHello);
+  return new Connection(io, Role.Acceptor, negotiated, ourHello, options.acceptConnections);
 }
 
 async function waitForPeerHello<T extends MessageTransport>(
@@ -889,7 +945,8 @@ async function waitForPeerHello<T extends MessageTransport>(
 
     if (msg.tag === "Hello") {
       // r[impl message.hello.unknown-version] - reject unknown Hello versions
-      if (msg.value.tag !== "V1") {
+      // Accept V1 (deprecated) and V2 (current)
+      if (msg.value.tag !== "V1" && msg.value.tag !== "V2") {
         await io.send(encodeMessage(messageGoodbye("message.hello.unknown-version")));
         io.close();
         throw ConnectionError.protocol({
@@ -911,7 +968,7 @@ async function waitForPeerHello<T extends MessageTransport>(
   }
 }
 
-/** Default Hello message. */
+/** Default Hello message (V2 for virtual connection support). */
 export function defaultHello(): Hello {
-  return helloV1(1024 * 1024, 64 * 1024);
+  return helloV2(1024 * 1024, 64 * 1024);
 }

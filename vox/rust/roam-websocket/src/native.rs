@@ -136,7 +136,14 @@ pub async fn ws_accept<S, D>(
     transport: WsTransport<S>,
     config: HandshakeConfig,
     dispatcher: D,
-) -> Result<(ConnectionHandle, Driver<WsTransport<S>, D>), ConnectionError>
+) -> Result<
+    (
+        ConnectionHandle,
+        roam_session::IncomingConnections,
+        Driver<WsTransport<S>, D>,
+    ),
+    ConnectionError,
+>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
     D: ServiceDispatcher,
@@ -197,15 +204,17 @@ mod tests {
         // Client - for now just connect raw and do handshake manually
         let (ws_stream, _) = connect_async(&ws_url).await.unwrap();
         let transport = WsTransport::new(ws_stream);
-        let (client_handle, client_driver) = accept_framed(transport, config, NoDispatcher)
-            .await
-            .unwrap();
+        let (client_handle, _client_incoming, client_driver) =
+            accept_framed(transport, config, NoDispatcher)
+                .await
+                .unwrap();
 
         // Spawn client driver
         tokio::spawn(client_driver.run());
 
         // Server should also succeed
-        let (server_handle_result, server_driver) = server_handle.await.unwrap().unwrap();
+        let (server_handle_result, _server_incoming, server_driver) =
+            server_handle.await.unwrap().unwrap();
         tokio::spawn(server_driver.run());
 
         // Both handles exist - just verify they were created

@@ -68,7 +68,8 @@ mod unix {
         println!("Accepted connection");
 
         // Use accept() - no reconnection for accepted connections
-        let (handle, driver) = accept(stream, HandshakeConfig::default(), NoDispatcher).await?;
+        let (handle, _incoming, driver) =
+            accept(stream, HandshakeConfig::default(), NoDispatcher).await?;
         println!("Acceptor: handshake complete");
 
         // Spawn the driver

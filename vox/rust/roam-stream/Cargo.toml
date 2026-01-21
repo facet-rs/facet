@@ -20,3 +20,8 @@ tokio = { workspace = true, features = ["net", "io-util", "rt", "time", "sync"] 
 roam-wire.workspace = true
 roam-session.workspace = true
 facet-postcard.workspace = true
+
+[dev-dependencies]
+spec-proto = { path = "../../spec/spec-proto" }
+roam = { path = "../roam" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

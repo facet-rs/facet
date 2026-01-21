@@ -49,6 +49,7 @@ fn test_reserved_slot_release_on_spawn_failure() {
         .add_peer(AddPeerOptions {
             peer_name: Some("will-never-connect".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -64,6 +65,7 @@ fn test_reserved_slot_release_on_spawn_failure() {
         .add_peer(AddPeerOptions {
             peer_name: Some("second-attempt".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -94,6 +96,7 @@ fn test_other_guests_can_attach_while_slot_reserved() {
         .add_peer(AddPeerOptions {
             peer_name: Some("slow-starter".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -134,6 +137,7 @@ fn test_host_can_timeout_reserved_slot() {
         .add_peer(AddPeerOptions {
             peer_name: Some("timeout-guest".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -186,6 +190,7 @@ fn test_guest_crash_triggers_death_callback() {
                 death_called_clone.store(true, Ordering::SeqCst);
                 death_peer_id_clone.store(peer_id.get(), Ordering::SeqCst);
             })),
+            ..Default::default()
         })
         .unwrap();
 
@@ -278,6 +283,7 @@ fn test_sigkill_triggers_death_detection() {
             on_death: Some(Arc::new(move |_| {
                 death_called_clone.store(true, Ordering::SeqCst);
             })),
+            ..Default::default()
         })
         .unwrap();
 
@@ -443,6 +449,7 @@ fn test_attach_error_slot_not_reserved() {
         .add_peer(AddPeerOptions {
             peer_name: Some("real-guest".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -484,6 +491,7 @@ fn test_attach_error_slot_not_reserved() {
         .add_peer(AddPeerOptions {
             peer_name: Some("real-guest".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -524,6 +532,7 @@ fn test_attach_error_invalid_peer_id() {
         .add_peer(AddPeerOptions {
             peer_name: Some("real-guest".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -710,18 +719,21 @@ fn test_multiple_reserved_slots() {
         .add_peer(AddPeerOptions {
             peer_name: Some("guest-1".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
     let ticket2 = host
         .add_peer(AddPeerOptions {
             peer_name: Some("guest-2".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
     let ticket3 = host
         .add_peer(AddPeerOptions {
             peer_name: Some("guest-3".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -738,6 +750,7 @@ fn test_multiple_reserved_slots() {
         .add_peer(AddPeerOptions {
             peer_name: Some("guest-4".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -777,6 +790,7 @@ fn test_graceful_shutdown_no_death_callback() {
             on_death: Some(Arc::new(move |_| {
                 death_called_clone.store(true, Ordering::SeqCst);
             })),
+            ..Default::default()
         })
         .unwrap();
 

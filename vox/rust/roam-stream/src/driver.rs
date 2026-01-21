@@ -16,8 +16,8 @@ use tokio::task::JoinHandle;
 
 use crate::framing::CobsFramed;
 use roam_session::{
-    Caller, ConnectError, ConnectionError, ConnectionHandle, Driver, HandshakeConfig,
-    ResponseData, RetryPolicy, ServiceDispatcher, TransportError,
+    Caller, ConnectError, ConnectionError, ConnectionHandle, Driver, HandshakeConfig, ResponseData,
+    RetryPolicy, ServiceDispatcher, TransportError,
 };
 
 /// A factory that creates new byte-stream connections on demand.
@@ -42,11 +42,22 @@ pub trait Connector: Send + Sync + 'static {
 /// Accept a byte-stream connection and perform handshake.
 ///
 /// Wraps the stream in COBS framing, then delegates to `accept_framed`.
+/// Returns:
+/// - A handle for making calls on connection 0 (root)
+/// - A receiver for incoming virtual connection requests
+/// - A driver that must be spawned
 pub async fn accept<S, D>(
     stream: S,
     config: HandshakeConfig,
     dispatcher: D,
-) -> Result<(ConnectionHandle, Driver<CobsFramed<S>, D>), ConnectionError>
+) -> Result<
+    (
+        ConnectionHandle,
+        roam_session::IncomingConnections,
+        Driver<CobsFramed<S>, D>,
+    ),
+    ConnectionError,
+>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
     D: ServiceDispatcher,
@@ -177,13 +188,13 @@ where
 
         let framed = CobsFramed::new(stream);
 
-        let (handle, driver) = roam_session::initiate_framed(
-            framed,
-            self.config.clone(),
-            self.dispatcher.clone(),
-        )
-        .await
-        .map_err(|e| ConnectError::ConnectFailed(connection_error_to_io(e)))?;
+        let (handle, _incoming, driver) =
+            roam_session::initiate_framed(framed, self.config.clone(), self.dispatcher.clone())
+                .await
+                .map_err(|e| ConnectError::ConnectFailed(connection_error_to_io(e)))?;
+
+        // Note: We drop `_incoming` - this client doesn't accept sub-connections.
+        // Any Connect requests from the server will be automatically rejected.
 
         let driver_handle = tokio::spawn(async move { driver.run().await });
 
@@ -284,6 +295,10 @@ where
                     return Err(TransportError::ConnectionClosed);
                 }
                 Err(ConnectError::Rpc(e)) => return Err(e),
+                Err(ConnectError::Rejected(_)) => {
+                    // Virtual connection rejected - this shouldn't happen for link-level connect
+                    return Err(TransportError::ConnectionClosed);
+                }
             };
 
             match handle.call(method_id, args).await {

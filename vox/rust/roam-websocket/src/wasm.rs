@@ -179,11 +179,14 @@ impl MessageTransport for WsTransport {
                     self.last_decoded = data.clone();
                     let msg: Message = facet_postcard::from_slice(&data).map_err(|e| {
                         // Log the failed bytes for debugging
-                        web_sys::console::error_1(&format!(
-                            "postcard decode failed: {e}, bytes ({} total): {:?}",
-                            data.len(),
-                            &data[..data.len().min(100)]
-                        ).into());
+                        web_sys::console::error_1(
+                            &format!(
+                                "postcard decode failed: {e}, bytes ({} total): {:?}",
+                                data.len(),
+                                &data[..data.len().min(100)]
+                            )
+                            .into(),
+                        );
                         io::Error::new(io::ErrorKind::InvalidData, format!("postcard: {e}"))
                     })?;
                     return Ok(Some(msg));

@@ -40,6 +40,9 @@ pub use roam_schema as schema;
 // Re-export hash utilities
 pub use roam_hash as hash;
 
+// Re-export wire types for macro-generated code
+pub use roam_wire as wire;
+
 // Re-export facet for derive macros in service types
 pub use facet;
 

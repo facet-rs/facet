@@ -8,14 +8,18 @@ import {
   defaultHello,
   helloExchangeAcceptor,
   helloExchangeInitiator,
+  type HelloExchangeOptions,
 } from "@bearcove/roam-core";
+
+/** Options for connecting/accepting connections. */
+export interface ConnectOptions extends HelloExchangeOptions {}
 
 /** TCP transport for roam connections. */
 export class Server {
   /**
    * Connect to a peer address and perform handshake as initiator.
    */
-  connect(addr: string): Promise<Connection> {
+  connect(addr: string, options: ConnectOptions = {}): Promise<Connection> {
     return new Promise((resolve, reject) => {
       const lastColon = addr.lastIndexOf(":");
       if (lastColon < 0) {
@@ -28,7 +32,7 @@ export class Server {
       const socket = net.createConnection({ host, port }, async () => {
         try {
           const io = new CobsFramed(socket);
-          const conn = await helloExchangeInitiator(io, defaultHello());
+          const conn = await helloExchangeInitiator(io, defaultHello(), options);
           resolve(conn);
         } catch (e) {
           reject(e);
@@ -44,8 +48,8 @@ export class Server {
   /**
    * Accept a connection from a socket and perform handshake as acceptor.
    */
-  async accept(socket: net.Socket): Promise<Connection> {
+  async accept(socket: net.Socket, options: ConnectOptions = {}): Promise<Connection> {
     const io = new CobsFramed(socket);
-    return helloExchangeAcceptor(io, defaultHello());
+    return helloExchangeAcceptor(io, defaultHello(), options);
   }
 }

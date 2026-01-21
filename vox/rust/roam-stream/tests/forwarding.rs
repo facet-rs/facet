@@ -49,6 +49,7 @@ impl ServiceDispatcher for StreamingService {
 
     fn dispatch(
         &self,
+        _conn_id: roam_wire::ConnectionId,
         method_id: u64,
         payload: Vec<u8>,
         channels: Vec<u64>,
@@ -141,7 +142,7 @@ async fn start_backend(service: StreamingService) -> (SocketAddr, tokio::task::J
         while let Ok((stream, _)) = listener.accept().await {
             let service = service.clone();
             tokio::spawn(async move {
-                if let Ok((handle, driver)) =
+                if let Ok((handle, _incoming, driver)) =
                     accept(stream, HandshakeConfig::default(), service).await
                 {
                     let _ = driver.run().await;
@@ -178,7 +179,7 @@ async fn start_proxy(backend_addr: SocketAddr) -> (SocketAddr, tokio::task::Join
                 let forwarder = ForwardingDispatcher::new(upstream_handle);
 
                 // Accept the client connection with forwarding
-                if let Ok((handle, driver)) =
+                if let Ok((handle, _incoming, driver)) =
                     accept(client_stream, HandshakeConfig::default(), forwarder).await
                 {
                     let _ = driver.run().await;

@@ -26,7 +26,10 @@ fn handshake_subject_sends_hello_without_prompt() {
             .ok_or_else(|| "did not receive any message (expected Hello)".to_string())?;
 
         match msg {
-            Message::Hello(Hello::V1 { .. }) => {}
+            Message::Hello(Hello::V2 { .. }) => {}
+            Message::Hello(Hello::V1 { .. }) => {
+                return Err("received Hello::V1, but V1 is no longer supported".to_string());
+            }
             other => return Err(format!("first message must be Hello, got {other:?}")),
         }
 
@@ -93,8 +96,9 @@ fn handshake_unknown_hello_variant_triggers_goodbye() {
         // Send a malformed Hello-in-Message: Message::Hello + unknown Hello variant discriminant.
         //
         // Postcard enum encoding uses a varint discriminant. For `Message`, `Hello` is variant 0,
-        // and for `Hello`, `V1` is variant 0. We send Hello discriminant=1 to simulate unknown.
-        let malformed = vec![0x00, 0x01]; // Message::Hello (0), Hello::<unknown> (1)
+        // and for `Hello`, `V1` is variant 0, `V2` is variant 1. We send Hello discriminant=2
+        // to simulate an unknown future version.
+        let malformed = vec![0x00, 0x02]; // Message::Hello (0), Hello::<unknown v3> (2)
         let mut framed = cobs_encode_vec(&malformed);
         framed.push(0x00);
         io.stream
@@ -111,7 +115,7 @@ fn handshake_unknown_hello_variant_triggers_goodbye() {
                 .map_err(|e| e.to_string())?
             {
                 None => break,
-                Some(Message::Goodbye { reason }) => {
+                Some(Message::Goodbye { reason, .. }) => {
                     saw_goodbye = Some(reason);
                     break;
                 }
@@ -154,6 +158,7 @@ fn rpc_payload_over_max_triggers_goodbye() {
 
         // Send an oversized Request payload (17 bytes).
         let req = Message::Request {
+            conn_id: roam_wire::ConnectionId::ROOT,
             request_id: 1,
             method_id: 1,
             metadata: metadata_empty(),
@@ -171,7 +176,7 @@ fn rpc_payload_over_max_triggers_goodbye() {
                 .map_err(|e| e.to_string())?
             {
                 None => break,
-                Some(Message::Goodbye { reason: r }) => {
+                Some(Message::Goodbye { reason: r, .. }) => {
                     reason = Some(r);
                     break;
                 }
@@ -213,9 +218,12 @@ fn channel_id_zero_triggers_goodbye() {
             .map_err(|e| e.to_string())?;
 
         // Violate stream-id=0 reserved.
-        io.send(&Message::Close { channel_id: 0 })
-            .await
-            .map_err(|e| e.to_string())?;
+        io.send(&Message::Close {
+            conn_id: roam_wire::ConnectionId::ROOT,
+            channel_id: 0,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
         let mut reason = None::<String>;
         for _ in 0..10 {
@@ -225,7 +233,7 @@ fn channel_id_zero_triggers_goodbye() {
                 .map_err(|e| e.to_string())?
             {
                 None => break,
-                Some(Message::Goodbye { reason: r }) => {
+                Some(Message::Goodbye { reason: r, .. }) => {
                     reason = Some(r);
                     break;
                 }
@@ -269,6 +277,7 @@ fn stream_unknown_id_triggers_goodbye() {
         // Send Data on a stream ID that was never opened.
         // (Stream ID 42 was never established via Request/Response)
         io.send(&Message::Data {
+            conn_id: roam_wire::ConnectionId::ROOT,
             channel_id: 42,
             payload: vec![0u8; 4],
         })
@@ -283,7 +292,7 @@ fn stream_unknown_id_triggers_goodbye() {
                 .map_err(|e| e.to_string())?
             {
                 None => break,
-                Some(Message::Goodbye { reason: r }) => {
+                Some(Message::Goodbye { reason: r, .. }) => {
                     reason = Some(r);
                     break;
                 }
@@ -325,6 +334,7 @@ fn stream_data_id_zero_triggers_goodbye() {
 
         // Send Data with channel_id=0 (reserved).
         io.send(&Message::Data {
+            conn_id: roam_wire::ConnectionId::ROOT,
             channel_id: 0,
             payload: vec![0u8; 4],
         })
@@ -339,7 +349,7 @@ fn stream_data_id_zero_triggers_goodbye() {
                 .map_err(|e| e.to_string())?
             {
                 None => break,
-                Some(Message::Goodbye { reason: r }) => {
+                Some(Message::Goodbye { reason: r, .. }) => {
                     reason = Some(r);
                     break;
                 }

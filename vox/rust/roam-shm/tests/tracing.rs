@@ -70,6 +70,7 @@ fn setup_tracing_test() -> TracingTestFixture {
         .add_peer(roam_shm::spawn::AddPeerOptions {
             peer_name: Some("tracing-guest".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -91,7 +92,8 @@ fn setup_tracing_test() -> TracingTestFixture {
 
     // Create guest transport
     let guest_transport = ShmGuestTransport::from_spawn_args(spawn_args).unwrap();
-    let (guest_handle, guest_driver) = establish_guest(guest_transport, guest_dispatcher);
+    let (guest_handle, _guest_incoming, guest_driver) =
+        establish_guest(guest_transport, guest_dispatcher);
 
     // === Host side setup ===
     // Create shared tracing state
@@ -107,7 +109,7 @@ fn setup_tracing_test() -> TracingTestFixture {
     let host_dispatcher = RoutedDispatcher::new(host_tracing_dispatcher, host_service_dispatcher);
 
     // Set up multi-peer host driver
-    let (host_driver, mut handles, _driver_handle) =
+    let (host_driver, mut handles, _host_incoming, _driver_handle) =
         establish_multi_peer_host(host, vec![(peer_id, host_dispatcher)]);
     let host_handle = handles.remove(&peer_id).unwrap();
 

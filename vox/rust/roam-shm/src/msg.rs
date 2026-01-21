@@ -20,6 +20,12 @@ pub mod msg_type {
     pub const RESET: u8 = 6;
     /// Goodbye message (id field unused)
     pub const GOODBYE: u8 = 7;
+    /// Connect message (carries request_id for virtual connection)
+    pub const CONNECT: u8 = 8;
+    /// Accept message (carries request_id, assigns conn_id)
+    pub const ACCEPT: u8 = 9;
+    /// Reject message (carries request_id)
+    pub const REJECT: u8 = 10;
 }
 
 /// Check if a message type uses request_id in the id field.
@@ -27,7 +33,12 @@ pub mod msg_type {
 pub const fn uses_request_id(msg_type: u8) -> bool {
     matches!(
         msg_type,
-        msg_type::REQUEST | msg_type::RESPONSE | msg_type::CANCEL
+        msg_type::REQUEST
+            | msg_type::RESPONSE
+            | msg_type::CANCEL
+            | msg_type::CONNECT
+            | msg_type::ACCEPT
+            | msg_type::REJECT
     )
 }
 
@@ -47,6 +58,9 @@ pub const fn msg_type_name(msg_type: u8) -> &'static str {
         msg_type::CLOSE => "Close",
         msg_type::RESET => "Reset",
         msg_type::GOODBYE => "Goodbye",
+        msg_type::CONNECT => "Connect",
+        msg_type::ACCEPT => "Accept",
+        msg_type::REJECT => "Reject",
         _ => "Unknown",
     }
 }

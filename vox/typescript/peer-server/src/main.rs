@@ -176,7 +176,8 @@ async fn main() {
             let dispatcher = TestbedDispatcher::new(TestbedService);
 
             match ws_accept(transport, config, dispatcher).await {
-                Ok((handle, driver)) => {
+                Ok((handle, _incoming, driver)) => {
+                    // Note: We drop `_incoming` - this server doesn't accept sub-connections.
                     eprintln!("Connection established with {}", peer);
                     if let Err(e) = driver.run().await {
                         eprintln!("Connection error: {:?}", e);

@@ -276,6 +276,7 @@ fn test_spawn_ticket_workflow() {
             on_death: Some(Arc::new(move |_peer_id| {
                 death_called_clone.store(true, Ordering::SeqCst);
             })),
+            ..Default::default()
         })
         .unwrap();
 
@@ -391,6 +392,7 @@ fn test_release_reserved_slot() {
         .add_peer(AddPeerOptions {
             peer_name: Some("will-fail".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -406,6 +408,7 @@ fn test_release_reserved_slot() {
         .add_peer(AddPeerOptions {
             peer_name: Some("retry".to_string()),
             on_death: None,
+            ..Default::default()
         })
         .unwrap();
 

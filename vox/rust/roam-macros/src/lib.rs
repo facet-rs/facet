@@ -308,12 +308,14 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
 
             fn dispatch(
                 &self,
+                conn_id: #roam::wire::ConnectionId,
                 method_id: u64,
                 payload: Vec<u8>,
                 channels: Vec<u64>,
                 request_id: u64,
                 registry: &mut #roam::session::ChannelRegistry,
             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
+                let _ = conn_id; // Currently unused, reserved for virtual connection support
                 #(#dispatch_arms)*
                 else {
                     #roam::session::dispatch_unknown_method(request_id, registry)

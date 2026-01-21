@@ -147,6 +147,30 @@ private actor DriverState {
     }
 }
 
+/// Actor for virtual connection state.
+private actor VirtualConnectionState {
+    private var nextConnId: UInt64 = 1
+    private var virtualConnections: Set<UInt64> = []
+
+    func allocateConnId() -> UInt64 {
+        let id = nextConnId
+        nextConnId += 1
+        return id
+    }
+
+    func addConnection(_ connId: UInt64) {
+        virtualConnections.insert(connId)
+    }
+
+    func removeConnection(_ connId: UInt64) {
+        virtualConnections.remove(connId)
+    }
+
+    func hasConnection(_ connId: UInt64) -> Bool {
+        virtualConnections.contains(connId)
+    }
+}
+
 /// Bidirectional connection driver.
 ///
 /// r[impl call.pipelining.allowed] - Handle requests as they arrive.
@@ -163,9 +187,11 @@ public final class Driver: @unchecked Sendable {
     private let role: Role
     private let negotiated: Negotiated
     private let handle: ConnectionHandle
+    private let acceptConnections: Bool
 
     private let serverRegistry: ChannelRegistry
     private let state: DriverState
+    private let virtualConnState: VirtualConnectionState
 
     // Event stream for multiplexing
     private let eventContinuation: AsyncStream<DriverEvent>.Continuation
@@ -176,15 +202,18 @@ public final class Driver: @unchecked Sendable {
         dispatcher: any ServiceDispatcher,
         role: Role,
         negotiated: Negotiated,
-        handle: ConnectionHandle
+        handle: ConnectionHandle,
+        acceptConnections: Bool = false
     ) {
         self.transport = transport
         self.dispatcher = dispatcher
         self.role = role
         self.negotiated = negotiated
         self.handle = handle
+        self.acceptConnections = acceptConnections
         self.serverRegistry = ChannelRegistry()
         self.state = DriverState()
+        self.virtualConnState = VirtualConnectionState()
 
         // Create event stream
         var continuation: AsyncStream<DriverEvent>.Continuation!
@@ -201,6 +230,7 @@ public final class Driver: @unchecked Sendable {
         role: Role,
         negotiated: Negotiated,
         handle: ConnectionHandle,
+        acceptConnections: Bool,
         eventStream: AsyncStream<DriverEvent>,
         eventContinuation: AsyncStream<DriverEvent>.Continuation
     ) {
@@ -209,10 +239,25 @@ public final class Driver: @unchecked Sendable {
         self.role = role
         self.negotiated = negotiated
         self.handle = handle
+        self.acceptConnections = acceptConnections
         self.serverRegistry = ChannelRegistry()
         self.state = DriverState()
+        self.virtualConnState = VirtualConnectionState()
         self.eventStream = eventStream
         self.eventContinuation = eventContinuation
+    }
+
+    // Virtual connection helpers
+    private func allocateConnId() async -> UInt64 {
+        await virtualConnState.allocateConnId()
+    }
+
+    private func addVirtualConnection(_ connId: UInt64) async {
+        await virtualConnState.addConnection(connId)
+    }
+
+    private func removeVirtualConnection(_ connId: UInt64) async {
+        await virtualConnState.removeConnection(connId)
     }
 
     /// Get the task sender for handlers to send responses.
@@ -280,15 +325,16 @@ public final class Driver: @unchecked Sendable {
         let wireMsg: Message
         switch msg {
         case .data(let channelId, let payload):
-            wireMsg = .data(channelId: channelId, payload: payload)
+            wireMsg = .data(connId: 0, channelId: channelId, payload: payload)
         case .close(let channelId):
-            wireMsg = .close(channelId: channelId)
+            wireMsg = .close(connId: 0, channelId: channelId)
         case .response(let requestId, let payload):
             let wasInFlight = await state.removeInFlight(requestId)
             guard wasInFlight else {
                 return  // Already cancelled
             }
-            wireMsg = .response(requestId: requestId, metadata: [], payload: payload)
+            wireMsg = .response(
+                connId: 0, requestId: requestId, metadata: [], channels: [], payload: payload)
         }
         try await transport.send(wireMsg)
     }
@@ -300,6 +346,7 @@ public final class Driver: @unchecked Sendable {
             await state.addPendingResponse(requestId, responseTx)
 
             let msg = Message.request(
+                connId: 0,
                 requestId: requestId,
                 methodId: methodId,
                 metadata: [],
@@ -321,23 +368,48 @@ public final class Driver: @unchecked Sendable {
             // Duplicate hello, ignore
             break
 
-        case .goodbye(let reason):
-            // r[impl message.goodbye.receive]
-            await failAllPending()
-            throw ConnectionError.goodbye(reason: reason)
+        case .connect(let requestId, _):
+            // r[impl core.conn.accept-required] - Accept or reject the connection request.
+            if acceptConnections {
+                // r[impl core.conn.id-allocation] - Allocate a new connection ID.
+                let connId = await allocateConnId()
+                await addVirtualConnection(connId)
+                // r[impl message.accept.response] - Send Accept with new conn_id.
+                try await transport.send(
+                    .accept(requestId: requestId, connId: connId, metadata: []))
+            } else {
+                // r[impl message.reject.response] - Reject since not listening.
+                try await transport.send(
+                    .reject(requestId: requestId, reason: "not listening", metadata: []))
+            }
 
-        case .request(let requestId, let methodId, _, _, let payload):
-            // Note: channels field is ignored for now - server uses payload parsing for channel IDs
+        case .accept, .reject:
+            // Responses to our Connect requests - ignore in server mode
+            break
+
+        case .goodbye(let connId, let reason):
+            // r[impl message.goodbye.connection-zero] - Goodbye on conn 0 closes entire link.
+            if connId == 0 {
+                // r[impl message.goodbye.receive]
+                await failAllPending()
+                throw ConnectionError.goodbye(reason: reason)
+            }
+            // r[impl core.conn.lifecycle] - Close virtual connection if it exists.
+            // r[impl core.conn.independence] - Ignore Goodbye on unknown connection.
+            await removeVirtualConnection(connId)
+
+        case .request(_, let requestId, let methodId, _, _, let payload):
+            // Note: connId and channels field is ignored for now - server uses payload parsing for channel IDs
             try await handleRequest(requestId: requestId, methodId: methodId, payload: payload)
 
-        case .response(let requestId, _, let payload):
+        case .response(_, let requestId, _, _, let payload):
             // r[impl call.lifecycle.single-response] - One response per request.
             // r[impl call.complete] - Response completes the call.
             // r[impl call.response.encoding] - Response payload is Postcard-encoded.
             let responseTx = await state.removePendingResponse(requestId)
             responseTx?(.success(payload))
 
-        case .cancel(let requestId):
+        case .cancel(_, let requestId):
             // r[impl call.cancel.message] - Cancel requests termination.
             // r[impl call.cancel.best-effort] - Cancel is best-effort, response may still arrive.
             // r[impl core.call.cancel] - Cancel message uses request_id.
@@ -345,20 +417,20 @@ public final class Driver: @unchecked Sendable {
             let _ = await state.removeInFlight(requestId)
         // Handler may still be processing; best-effort cancellation
 
-        case .data(let channelId, let payload):
+        case .data(_, let channelId, let payload):
             try await handleData(channelId: channelId, payload: payload)
 
-        case .close(let channelId):
+        case .close(_, let channelId):
             try await handleClose(channelId: channelId)
 
-        case .reset(let channelId):
+        case .reset(_, let channelId):
             // r[impl channeling.reset] - Reset abruptly terminates channel.
             // r[impl channeling.reset.effect] - Data in flight may be lost.
             // r[impl channeling.reset.credit] - Credit is discarded on reset.
             await serverRegistry.deliverReset(channelId: channelId)
             await handle.channelRegistry.deliverReset(channelId: channelId)
 
-        case .credit(let channelId, let bytes):
+        case .credit(_, let channelId, let bytes):
             // r[impl flow.channel.credit-based] - Credit controls data flow.
             // r[impl flow.channel.credit-grant] - Credit message grants permission.
             // r[impl flow.channel.credit-additive] - Credits are additive.
@@ -460,7 +532,7 @@ public final class Driver: @unchecked Sendable {
     /// r[impl message.goodbye.send] - Send Goodbye with rule ID before closing.
     /// r[impl core.error.goodbye-reason] - Reason contains violated rule ID.
     private func sendGoodbye(_ reason: String) async throws {
-        try await transport.send(.goodbye(reason: reason))
+        try await transport.send(.goodbye(connId: 0, reason: reason))
     }
 
     private func failAllPending() async {
@@ -493,7 +565,8 @@ public enum ConnectionError: Error {
 public func establishInitiator(
     transport: any MessageTransport,
     ourHello: Hello,
-    dispatcher: any ServiceDispatcher
+    dispatcher: any ServiceDispatcher,
+    acceptConnections: Bool = false
 ) async throws -> (ConnectionHandle, Driver) {
     // Send our hello
     try await transport.send(.hello(ourHello))
@@ -504,7 +577,7 @@ public func establishInitiator(
         guard let peerMsg = try await transport.recv(),
             case .hello(let hello) = peerMsg
         else {
-            try await transport.send(.goodbye(reason: "handshake.expected-hello"))
+            try await transport.send(.goodbye(connId: 0, reason: "handshake.expected-hello"))
             throw ConnectionError.handshakeFailed("expected Hello")
         }
         peerHello = hello
@@ -514,29 +587,21 @@ public func establishInitiator(
         let reason =
             error == .unknownHelloVariant
             ? "message.hello.unknown-version" : "handshake.decode-error"
-        try? await transport.send(.goodbye(reason: reason))
+        try? await transport.send(.goodbye(connId: 0, reason: reason))
         throw ConnectionError.handshakeFailed(reason)
     }
 
-    let (ourMax, ourCredit) =
-        switch ourHello {
-        case .v1(let max, let credit): (max, credit)
-        }
-    let (peerMax, peerCredit) =
-        switch peerHello {
-        case .v1(let max, let credit): (max, credit)
-        }
-
     let negotiated = Negotiated(
-        maxPayloadSize: min(ourMax, peerMax),
-        initialCredit: min(ourCredit, peerCredit)
+        maxPayloadSize: min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
+        initialCredit: min(ourHello.initialChannelCredit, peerHello.initialChannelCredit)
     )
 
     return makeDriverAndHandle(
         transport: transport,
         dispatcher: dispatcher,
         role: .initiator,
-        negotiated: negotiated
+        negotiated: negotiated,
+        acceptConnections: acceptConnections
     )
 }
 
@@ -547,7 +612,8 @@ public func establishInitiator(
 public func establishAcceptor(
     transport: any MessageTransport,
     ourHello: Hello,
-    dispatcher: any ServiceDispatcher
+    dispatcher: any ServiceDispatcher,
+    acceptConnections: Bool = false
 ) async throws -> (ConnectionHandle, Driver) {
     // Send our hello immediately
     try await transport.send(.hello(ourHello))
@@ -558,7 +624,7 @@ public func establishAcceptor(
         guard let peerMsg = try await transport.recv(),
             case .hello(let hello) = peerMsg
         else {
-            try await transport.send(.goodbye(reason: "handshake.expected-hello"))
+            try await transport.send(.goodbye(connId: 0, reason: "handshake.expected-hello"))
             throw ConnectionError.handshakeFailed("expected Hello")
         }
         peerHello = hello
@@ -567,29 +633,21 @@ public func establishAcceptor(
         let reason =
             error == .unknownHelloVariant
             ? "message.hello.unknown-version" : "handshake.decode-error"
-        try? await transport.send(.goodbye(reason: reason))
+        try? await transport.send(.goodbye(connId: 0, reason: reason))
         throw ConnectionError.handshakeFailed(reason)
     }
 
-    let (ourMax, ourCredit) =
-        switch ourHello {
-        case .v1(let max, let credit): (max, credit)
-        }
-    let (peerMax, peerCredit) =
-        switch peerHello {
-        case .v1(let max, let credit): (max, credit)
-        }
-
     let negotiated = Negotiated(
-        maxPayloadSize: min(ourMax, peerMax),
-        initialCredit: min(ourCredit, peerCredit)
+        maxPayloadSize: min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
+        initialCredit: min(ourHello.initialChannelCredit, peerHello.initialChannelCredit)
     )
 
     return makeDriverAndHandle(
         transport: transport,
         dispatcher: dispatcher,
         role: .acceptor,
-        negotiated: negotiated
+        negotiated: negotiated,
+        acceptConnections: acceptConnections
     )
 }
 
@@ -598,7 +656,8 @@ private func makeDriverAndHandle(
     transport: any MessageTransport,
     dispatcher: any ServiceDispatcher,
     role: Role,
-    negotiated: Negotiated
+    negotiated: Negotiated,
+    acceptConnections: Bool
 ) -> (ConnectionHandle, Driver) {
     // Create the event stream that will be shared
     var continuation: AsyncStream<DriverEvent>.Continuation!
@@ -626,6 +685,7 @@ private func makeDriverAndHandle(
         role: role,
         negotiated: negotiated,
         handle: handle,
+        acceptConnections: acceptConnections,
         eventStream: eventStream,
         eventContinuation: continuation
     )
