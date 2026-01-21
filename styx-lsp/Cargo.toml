@@ -37,8 +37,8 @@ glob = "0.3"
 serde_json.workspace = true
 
 # LSP extensions (roam RPC)
-roam-stream = { git = "https://github.com/bearcove/roam" }
-roam-session = { git = "https://github.com/bearcove/roam" }
+roam-stream = { git = "https://github.com/bearcove/roam", branch = "main" }
+roam-session = { git = "https://github.com/bearcove/roam", branch = "main" }
 
 # Extension protocol
 styx-lsp-ext = { path = "../styx-lsp-ext" }
