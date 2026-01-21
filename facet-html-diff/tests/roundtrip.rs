@@ -249,3 +249,12 @@ fn insert_around_existing() {
         r#"<html><body><p>a</p><span>A</span><p>a</p></body></html>"#,
     );
 }
+
+#[test]
+fn move_and_insert_interaction() {
+    // Proptest found this case: moves and inserts interacting
+    assert_roundtrip(
+        r#"<html><body><span>A</span><div></div></body></html>"#,
+        r#"<html><body><div> </div><span>0</span>0</body></html>"#,
+    );
+}
