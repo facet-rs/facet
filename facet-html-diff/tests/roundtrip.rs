@@ -250,9 +250,273 @@ fn insert_around_existing() {
     );
 }
 
+// ============================================================================
+// Simple structural tests - one operation at a time
+// ============================================================================
+
 #[test]
-fn move_and_insert_interaction() {
-    // Proptest found this case: moves and inserts interacting
+fn simple_swap_two_elements() {
+    // [A, B] -> [B, A]
+    // Just two moves, no inserts or deletes
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p></body></html>"#,
+        r#"<html><body><p>B</p><p>A</p></body></html>"#,
+    );
+}
+
+#[test]
+fn simple_move_to_end() {
+    // [A, B, C] -> [B, C, A]
+    // Move first element to end
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p><p>C</p></body></html>"#,
+        r#"<html><body><p>B</p><p>C</p><p>A</p></body></html>"#,
+    );
+}
+
+#[test]
+fn simple_move_to_start() {
+    // [A, B, C] -> [C, A, B]
+    // Move last element to start
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p><p>C</p></body></html>"#,
+        r#"<html><body><p>C</p><p>A</p><p>B</p></body></html>"#,
+    );
+}
+
+#[test]
+fn simple_insert_at_start() {
+    // [A, B] -> [X, A, B]
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p></body></html>"#,
+        r#"<html><body><p>X</p><p>A</p><p>B</p></body></html>"#,
+    );
+}
+
+#[test]
+fn simple_insert_at_end() {
+    // [A, B] -> [A, B, X]
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p></body></html>"#,
+        r#"<html><body><p>A</p><p>B</p><p>X</p></body></html>"#,
+    );
+}
+
+#[test]
+fn simple_insert_in_middle() {
+    // [A, B] -> [A, X, B]
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p></body></html>"#,
+        r#"<html><body><p>A</p><p>X</p><p>B</p></body></html>"#,
+    );
+}
+
+#[test]
+fn simple_delete_from_start() {
+    // [A, B, C] -> [B, C]
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p><p>C</p></body></html>"#,
+        r#"<html><body><p>B</p><p>C</p></body></html>"#,
+    );
+}
+
+#[test]
+fn simple_delete_from_end() {
+    // [A, B, C] -> [A, B]
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p><p>C</p></body></html>"#,
+        r#"<html><body><p>A</p><p>B</p></body></html>"#,
+    );
+}
+
+#[test]
+fn simple_delete_from_middle() {
+    // [A, B, C] -> [A, C]
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p><p>C</p></body></html>"#,
+        r#"<html><body><p>A</p><p>C</p></body></html>"#,
+    );
+}
+
+// ============================================================================
+// Two operations combined
+// ============================================================================
+
+#[test]
+fn insert_then_move() {
+    // [A, B] -> [X, B, A]
+    // Insert X at start, move A to end
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p></body></html>"#,
+        r#"<html><body><p>X</p><p>B</p><p>A</p></body></html>"#,
+    );
+}
+
+#[test]
+fn move_then_insert() {
+    // [A, B] -> [B, X, A]
+    // Move A to end, insert X in middle
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p></body></html>"#,
+        r#"<html><body><p>B</p><p>X</p><p>A</p></body></html>"#,
+    );
+}
+
+#[test]
+fn delete_then_insert() {
+    // [A, B, C] -> [X, B, C]
+    // Delete A, insert X at start
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p><p>C</p></body></html>"#,
+        r#"<html><body><p>X</p><p>B</p><p>C</p></body></html>"#,
+    );
+}
+
+#[test]
+fn insert_then_delete() {
+    // [A, B, C] -> [A, X, C]
+    // Delete B, insert X in its place
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p><p>C</p></body></html>"#,
+        r#"<html><body><p>A</p><p>X</p><p>C</p></body></html>"#,
+    );
+}
+
+#[test]
+fn two_inserts() {
+    // [A] -> [X, A, Y]
+    assert_roundtrip(
+        r#"<html><body><p>A</p></body></html>"#,
+        r#"<html><body><p>X</p><p>A</p><p>Y</p></body></html>"#,
+    );
+}
+
+#[test]
+fn two_deletes() {
+    // [A, B, C, D] -> [B, C]
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p><p>C</p><p>D</p></body></html>"#,
+        r#"<html><body><p>B</p><p>C</p></body></html>"#,
+    );
+}
+
+// ============================================================================
+// Complex - known failing tests
+// ============================================================================
+
+#[test]
+fn swap_only() {
+    // [A, B] -> [B, A] - just swap, no inserts
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p></body></html>"#,
+        r#"<html><body><p>B</p><p>A</p></body></html>"#,
+    );
+}
+
+#[test]
+fn swap_with_insert_at_end() {
+    // [A, B] -> [B, A, C] - swap + insert at end
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p></body></html>"#,
+        r#"<html><body><p>B</p><p>A</p><p>C</p></body></html>"#,
+    );
+}
+
+#[test]
+fn swap_with_insert_at_start() {
+    // [A, B] -> [C, B, A] - insert at start + swap
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p></body></html>"#,
+        r#"<html><body><p>C</p><p>B</p><p>A</p></body></html>"#,
+    );
+}
+
+#[test]
+fn swap_with_insert_in_middle() {
+    // [A, B] -> [B, C, A] - swap with insert between
+    assert_roundtrip(
+        r#"<html><body><p>A</p><p>B</p></body></html>"#,
+        r#"<html><body><p>B</p><p>C</p><p>A</p></body></html>"#,
+    );
+}
+
+#[test]
+fn swap_different_elements() {
+    // [Span, Div] -> [Div, Span] - swap with different element types
+    assert_roundtrip(
+        r#"<html><body><span>A</span><div>B</div></body></html>"#,
+        r#"<html><body><div>B</div><span>A</span></body></html>"#,
+    );
+}
+
+#[test]
+fn swap_different_elements_with_insert() {
+    // [Span, Div] -> [Div, Span, Text] - swap different types + insert
+    assert_roundtrip(
+        r#"<html><body><span>A</span><div>B</div></body></html>"#,
+        r#"<html><body><div>B</div><span>A</span>C</body></html>"#,
+    );
+}
+
+#[test]
+fn swap_with_empty_div() {
+    // [Span, Div(empty)] -> [Div(empty), Span] - empty div
+    assert_roundtrip(
+        r#"<html><body><span>A</span><div></div></body></html>"#,
+        r#"<html><body><div></div><span>A</span></body></html>"#,
+    );
+}
+
+#[test]
+fn swap_with_div_content_change() {
+    // [Span, Div(empty)] -> [Div(text), Span]
+    assert_roundtrip(
+        r#"<html><body><span>A</span><div></div></body></html>"#,
+        r#"<html><body><div>X</div><span>A</span></body></html>"#,
+    );
+}
+
+#[test]
+fn swap_with_text_insert() {
+    // [Span, Div] -> [Div, Span, Text] - no content changes
+    assert_roundtrip(
+        r#"<html><body><span>A</span><div>B</div></body></html>"#,
+        r#"<html><body><div>B</div><span>A</span>C</body></html>"#,
+    );
+}
+
+#[test]
+fn swap_with_text_insert_empty_div() {
+    // [Span, Div(empty)] -> [Div(empty), Span, Text]
+    assert_roundtrip(
+        r#"<html><body><span>A</span><div></div></body></html>"#,
+        r#"<html><body><div></div><span>A</span>C</body></html>"#,
+    );
+}
+
+#[test]
+fn swap_with_all_text_changes() {
+    // [Span(A), Div(empty)] -> [Div(X), Span(B)] - swap + both text changes
+    assert_roundtrip(
+        r#"<html><body><span>A</span><div></div></body></html>"#,
+        r#"<html><body><div>X</div><span>B</span></body></html>"#,
+    );
+}
+
+#[test]
+fn swap_with_all_text_changes_and_insert() {
+    // [Span(A), Div(empty)] -> [Div(X), Span(B), Text] - swap + changes + insert
+    assert_roundtrip(
+        r#"<html><body><span>A</span><div></div></body></html>"#,
+        r#"<html><body><div>X</div><span>B</span>C</body></html>"#,
+    );
+}
+
+#[test]
+fn swap_with_insert_and_text_change() {
+    // [Span, Div] -> [Div, Span, Text]
+    // Div moves to front, Span stays, Text inserted at end
+    // Plus content changes in Span and Div
     assert_roundtrip(
         r#"<html><body><span>A</span><div></div></body></html>"#,
         r#"<html><body><div> </div><span>0</span>0</body></html>"#,

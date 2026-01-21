@@ -592,6 +592,47 @@ fn extract_value_at_path<'mem, 'facet>(
     peek.as_str().map(|s| s.to_string())
 }
 
+/// Format the shadow tree for debugging.
+fn format_shadow_tree(
+    arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    root: NodeId,
+    node: NodeId,
+    depth: usize,
+) -> String {
+    let mut out = String::new();
+    let indent = "  ".repeat(depth);
+
+    if let Some(node_ref) = arena.get(node) {
+        let data = node_ref.get();
+        let kind_str = match &data.kind {
+            NodeKind::Struct(name) => format!("Struct({name})"),
+            NodeKind::EnumVariant(e, v) => format!("Variant({e}::{v})"),
+            NodeKind::List(name) => format!("List({name})"),
+            NodeKind::Map(name) => format!("Map({name})"),
+            NodeKind::Option(name) => format!("Option({name})"),
+            NodeKind::Scalar(name) => format!("Scalar({name})"),
+        };
+        let label_str = data
+            .label
+            .as_ref()
+            .map(|l| format!(" path={:?}", l.path))
+            .unwrap_or_default();
+
+        out.push_str(&format!(
+            "{indent}[{id}] {kind}{label}\n",
+            id = usize::from(node),
+            kind = kind_str,
+            label = label_str
+        ));
+
+        for child in node.children(arena) {
+            out.push_str(&format_shadow_tree(arena, root, child, depth + 1));
+        }
+    }
+
+    out
+}
+
 /// Convert cinereus ops to path-based EditOps.
 ///
 /// This uses a "shadow tree" approach: we maintain a mutable copy of tree_a
@@ -621,32 +662,14 @@ fn convert_ops_with_shadow<'mem, 'facet>(
 
     let mut result = Vec::new();
 
-    // Reorder operations: Updates, Moves, Inserts, Deletes
-    // This ensures that when we process an Insert, its left sibling (if it's
-    // an existing node) is already in its final position from the Move.
-    let mut updates = Vec::new();
-    let mut moves = Vec::new();
-    let mut inserts = Vec::new();
-    let mut deletes = Vec::new();
+    debug!(
+        "SHADOW TREE INITIAL STATE:\n{}",
+        format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+    );
 
+    // Process operations in cinereus order.
+    // For each op: update shadow tree first, THEN compute paths from updated tree.
     for op in ops {
-        match &op {
-            CinereusEditOp::Update { .. } | CinereusEditOp::UpdateProperty { .. } => {
-                updates.push(op)
-            }
-            CinereusEditOp::Move { .. } => moves.push(op),
-            CinereusEditOp::Insert { .. } => inserts.push(op),
-            CinereusEditOp::Delete { .. } => deletes.push(op),
-        }
-    }
-
-    let reordered_ops = updates
-        .into_iter()
-        .chain(moves)
-        .chain(inserts)
-        .chain(deletes);
-
-    for op in reordered_ops {
         match op {
             CinereusEditOp::Update {
                 node_a,
@@ -749,38 +772,13 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 };
                 let new_node = shadow_arena.new_node(new_data);
 
-                // Insert at the correct position among siblings.
-                //
-                // IMPORTANT: `position` is the index in tree_b, NOT the shadow tree.
-                // The shadow tree may have extra nodes (not yet deleted) or different
-                // ordering. We need to find where to insert by looking at the LEFT
-                // SIBLING in tree_b and finding its shadow equivalent.
+                // Insert at the given position among current siblings.
+                // For Insert, there's no prior detach, so we insert directly at `position`.
                 let children: Vec<_> = shadow_parent.children(&shadow_arena).collect();
-                if position == 0 {
-                    // Insert at beginning
-                    if let Some(&first_child) = children.first() {
-                        first_child.insert_before(new_node, &mut shadow_arena);
-                    } else {
-                        shadow_parent.append(new_node, &mut shadow_arena);
-                    }
+                if position >= children.len() {
+                    shadow_parent.append(new_node, &mut shadow_arena);
                 } else {
-                    // Find the left sibling in tree_b (at position - 1)
-                    let tree_b_siblings: Vec<_> = parent_b.children(&tree_b.arena).collect();
-                    let left_sibling_b = tree_b_siblings.get(position - 1).copied();
-
-                    if let Some(left_b) = left_sibling_b {
-                        // Find the shadow equivalent of the left sibling
-                        if let Some(&left_shadow) = b_to_shadow.get(&left_b) {
-                            // Insert after the left sibling in shadow tree
-                            left_shadow.insert_after(new_node, &mut shadow_arena);
-                        } else {
-                            // Left sibling not in shadow yet - append to end
-                            shadow_parent.append(new_node, &mut shadow_arena);
-                        }
-                    } else {
-                        // No left sibling found - append to end
-                        shadow_parent.append(new_node, &mut shadow_arena);
-                    }
+                    children[position].insert_before(new_node, &mut shadow_arena);
                 }
 
                 b_to_shadow.insert(node_b, new_node);
@@ -798,29 +796,30 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     .unwrap_or_else(|| Path(vec![]));
                 let value = extract_value_at_path(peek_b, &label_path);
 
-                debug!(
-                    ?node_b,
-                    ?path,
-                    ?label_path,
-                    ?position,
-                    "INSERT op: computed path"
-                );
-                result.push(EditOp::Insert {
+                let edit_op = EditOp::Insert {
                     path,
                     label_path,
                     value,
                     hash: tree_b.get(node_b).hash,
-                });
+                };
+                debug!(?edit_op, "emitting Insert");
+                result.push(edit_op);
+
+                debug!(
+                    "SHADOW TREE AFTER INSERT:\n{}",
+                    format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+                );
             }
 
             CinereusEditOp::Delete { node_a } => {
                 // Path is current location before deletion
                 let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
-                debug!(?node_a, ?path, "DELETE op: computed path");
-                result.push(EditOp::Delete {
+                let edit_op = EditOp::Delete {
                     path,
                     hash: tree_a.get(node_a).hash,
-                });
+                };
+                debug!(?edit_op, "emitting Delete");
+                result.push(edit_op);
 
                 // Remove from shadow tree
                 let parent_before = shadow_arena.get(node_a).and_then(|n| n.parent());
@@ -840,6 +839,11 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                         "after remove"
                     );
                 }
+
+                debug!(
+                    "SHADOW TREE AFTER DELETE:\n{}",
+                    format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+                );
             }
 
             CinereusEditOp::Move {
@@ -860,7 +864,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     "MOVE: starting"
                 );
 
-                // Detach from current parent
+                // Detach from current parent FIRST
                 node_a.detach(&mut shadow_arena);
 
                 // Find new parent in shadow tree
@@ -869,47 +873,18 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     .copied()
                     .unwrap_or(shadow_root);
 
-                // Insert at new position using left sibling approach (same as Insert)
-                // `new_position` is the index in tree_b, not the shadow tree
+                // Insert at new_position among the CURRENT children (after detach).
+                // The position is relative to the post-detach state.
                 let children: Vec<_> = shadow_new_parent.children(&shadow_arena).collect();
-                debug!(?children, "MOVE: shadow parent children after detach");
+                debug!(
+                    ?children,
+                    new_position, "MOVE: shadow children after detach"
+                );
 
-                if new_position == 0 {
-                    debug!("MOVE: inserting at position 0");
-                    if let Some(&first_child) = children.first() {
-                        first_child.insert_before(node_a, &mut shadow_arena);
-                    } else {
-                        shadow_new_parent.append(node_a, &mut shadow_arena);
-                    }
+                if new_position >= children.len() {
+                    shadow_new_parent.append(node_a, &mut shadow_arena);
                 } else {
-                    // Find the left sibling in tree_b (at new_position - 1)
-                    let tree_b_siblings: Vec<_> = new_parent_b.children(&tree_b.arena).collect();
-                    let left_sibling_b = tree_b_siblings.get(new_position - 1).copied();
-                    debug!(
-                        ?tree_b_siblings,
-                        ?left_sibling_b,
-                        new_position,
-                        "MOVE: finding left sibling"
-                    );
-
-                    if let Some(left_b) = left_sibling_b {
-                        // Find the shadow equivalent of the left sibling
-                        let left_shadow = b_to_shadow.get(&left_b).copied();
-                        debug!(?left_b, ?left_shadow, "MOVE: left sibling lookup");
-
-                        if let Some(left_shadow) = left_shadow {
-                            // Insert after the left sibling in shadow tree
-                            left_shadow.insert_after(node_a, &mut shadow_arena);
-                        } else {
-                            // Left sibling not in shadow yet - append to end
-                            debug!("MOVE: left sibling not in shadow, appending");
-                            shadow_new_parent.append(node_a, &mut shadow_arena);
-                        }
-                    } else {
-                        // No left sibling found - append to end
-                        debug!("MOVE: no left sibling, appending");
-                        shadow_new_parent.append(node_a, &mut shadow_arena);
-                    }
+                    children[new_position].insert_before(node_a, &mut shadow_arena);
                 }
 
                 // Update b_to_shadow BEFORE computing new_path
@@ -919,17 +894,22 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 let new_path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
 
                 // Emit if paths differ
-                debug!(?old_path, ?new_path, "Move op paths");
                 if old_path != new_path {
-                    debug!("emitting Move EditOp");
-                    result.push(EditOp::Move {
+                    let edit_op = EditOp::Move {
                         old_path,
                         new_path,
                         hash: tree_b.get(node_b).hash,
-                    });
+                    };
+                    debug!(?edit_op, "emitting Move");
+                    result.push(edit_op);
                 } else {
-                    debug!("skipping Move - paths are equal");
+                    debug!(?old_path, "skipping Move - paths are equal");
                 }
+
+                debug!(
+                    "SHADOW TREE AFTER MOVE:\n{}",
+                    format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+                );
             }
         }
     }
