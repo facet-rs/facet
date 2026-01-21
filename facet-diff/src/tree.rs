@@ -28,7 +28,8 @@ use facet_diff_core::{Path, PathSegment};
 use facet_reflect::{HasFields, Peek};
 
 /// The kind of a node in the tree (for type-based matching).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, facet::Facet)]
+#[repr(u8)]
 pub enum NodeKind {
     /// A struct with the given type name
     Struct(&'static str),
@@ -45,7 +46,7 @@ pub enum NodeKind {
 }
 
 /// Label for a node (the actual value for leaves).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
 pub struct NodeLabel {
     /// The path to this node from the root.
     pub path: Path,
@@ -509,8 +510,17 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 new_parent_b,
                 new_position,
             } => {
-                // Old path is current location
+                // Old path comes from tree_a's label (where the node was)
                 let old_path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+
+                // New path comes from tree_b's label (where the node is going)
+                // This is important for struct field moves where the field name changes
+                let new_path = tree_b
+                    .get(node_b)
+                    .label
+                    .as_ref()
+                    .map(|l| l.path.clone())
+                    .unwrap_or_default();
 
                 // Detach from current parent
                 node_a.detach(&mut shadow_arena);
@@ -532,16 +542,17 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     children[new_position].insert_before(node_a, &mut shadow_arena);
                 }
 
-                // New path is location after move
-                let new_path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
-
-                // Only emit if paths differ
+                // Emit if paths differ (e.g., struct field moves like id -> class)
+                debug!(?old_path, ?new_path, "Move op paths");
                 if old_path != new_path {
+                    debug!("emitting Move EditOp");
                     result.push(EditOp::Move {
                         old_path,
                         new_path,
                         hash: tree_b.get(node_b).hash,
                     });
+                } else {
+                    debug!("skipping Move - paths are equal");
                 }
 
                 // Update b_to_shadow

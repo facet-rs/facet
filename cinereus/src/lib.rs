@@ -51,6 +51,7 @@ pub use simplify::*;
 pub use tree::*;
 
 use core::hash::Hash;
+use facet_core::Facet;
 
 /// Compute a simplified diff between two trees.
 ///
@@ -79,8 +80,8 @@ pub fn diff_trees<K, L>(
     config: &MatchingConfig,
 ) -> Vec<EditOp<K, L>>
 where
-    K: Clone + Eq + Hash + Send + Sync,
-    L: Clone + Eq + Send + Sync,
+    K: Clone + Eq + Hash + Send + Sync + for<'a> Facet<'a> + 'static,
+    L: Clone + Eq + Send + Sync + for<'a> Facet<'a> + 'static,
 {
     let (ops, _matching) = diff_trees_with_matching(tree_a, tree_b, config);
     ops
@@ -97,8 +98,8 @@ pub fn diff_trees_with_matching<K, L>(
     config: &MatchingConfig,
 ) -> (Vec<EditOp<K, L>>, Matching)
 where
-    K: Clone + Eq + Hash + Send + Sync,
-    L: Clone + Eq + Send + Sync,
+    K: Clone + Eq + Hash + Send + Sync + for<'a> Facet<'a> + 'static,
+    L: Clone + Eq + Send + Sync + for<'a> Facet<'a> + 'static,
 {
     let matching = compute_matching(tree_a, tree_b, config);
     let ops = generate_edit_script(tree_a, tree_b, &matching);

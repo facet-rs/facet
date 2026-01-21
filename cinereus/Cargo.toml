@@ -15,13 +15,15 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 matching-stats = []
-tracing = ["dep:tracing"]
+tracing = ["dep:tracing", "dep:facet-pretty"]
 
 [dependencies]
 indextree = { workspace = true }
 rapidhash = "1"
 rayon = "1"
 tracing = { version = "0.1", optional = true }
+facet-core = { workspace = true }
+facet-pretty = { workspace = true, optional = true }
 
 [dev-dependencies]
 

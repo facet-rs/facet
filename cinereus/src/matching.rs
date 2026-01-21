@@ -5,6 +5,8 @@
 //! 2. Bottom-up: Match remaining nodes by structural similarity
 
 #[cfg(feature = "tracing")]
+use facet_pretty::FacetPretty;
+#[cfg(feature = "tracing")]
 use tracing::{debug, trace};
 
 #[cfg(not(feature = "tracing"))]
@@ -18,6 +20,7 @@ macro_rules! trace {
 
 use crate::tree::Tree;
 use core::hash::Hash;
+use facet_core::Facet;
 use indextree::NodeId;
 use rapidhash::{RapidHashMap as HashMap, RapidHashSet as HashSet};
 use rayon::prelude::*;
@@ -177,10 +180,14 @@ pub fn compute_matching<K, L>(
     config: &MatchingConfig,
 ) -> Matching
 where
-    K: Clone + Eq + Hash + Send + Sync,
-    L: Clone + Send + Sync,
+    K: Clone + Eq + Hash + Send + Sync + for<'a> Facet<'a> + 'static,
+    L: Clone + Send + Sync + for<'a> Facet<'a> + 'static,
 {
-    debug!(nodes_a = tree_a.arena.count(), nodes_b = tree_b.arena.count(), "compute_matching start");
+    debug!(
+        nodes_a = tree_a.arena.count(),
+        nodes_b = tree_b.arena.count(),
+        "compute_matching start"
+    );
     let mut matching = Matching::new();
 
     // Phase 1: Top-down matching (identical subtrees by hash)
@@ -205,8 +212,8 @@ fn top_down_phase<K, L>(
     matching: &mut Matching,
     config: &MatchingConfig,
 ) where
-    K: Clone + Eq + Hash,
-    L: Clone,
+    K: Clone + Eq + Hash + for<'a> Facet<'a> + 'static,
+    L: Clone + for<'a> Facet<'a> + 'static,
 {
     debug!("top_down_phase start");
 
@@ -237,10 +244,13 @@ fn top_down_phase<K, L>(
 
         // If hashes match, these subtrees are identical
         if a_data.hash == b_data.hash && a_data.kind == b_data.kind {
-            debug!(a = usize::from(a_id), b = usize::from(b_id), hash = a_data.hash, "top_down: hash match");
+            let a_kind = a_data.kind.clone();
+            debug!(a = usize::from(a_id), a_kind = %a_kind.pretty(), b = usize::from(b_id), "top_down: hash match");
             match_subtrees(tree_a, tree_b, a_id, b_id, matching);
         } else {
-            trace!(a = usize::from(a_id), b = usize::from(b_id), a_hash = a_data.hash, b_hash = b_data.hash, "top_down: no hash match");
+            let a_kind = a_data.kind.clone();
+            let b_kind = b_data.kind.clone();
+            trace!(a = usize::from(a_id), a_kind = %a_kind.pretty(), b = usize::from(b_id), b_kind = %b_kind.pretty(), "top_down: no hash match");
             // Hashes differ - try to match children
             // IMPORTANT: Only consider children of b_id, NOT arbitrary nodes from tree B
             // This prevents cross-level matching that causes spurious operations
@@ -271,8 +281,8 @@ fn match_subtrees<K, L>(
     b_id: NodeId,
     matching: &mut Matching,
 ) where
-    K: Clone + Eq + Hash,
-    L: Clone,
+    K: Clone + Eq + Hash + for<'a> Facet<'a> + 'static,
+    L: Clone + for<'a> Facet<'a> + 'static,
 {
     matching.add(a_id, b_id);
 
@@ -303,8 +313,8 @@ impl DescendantMap {
 /// Precompute all descendant sets in parallel.
 fn precompute_descendants<K, L>(tree: &Tree<K, L>) -> DescendantMap
 where
-    K: Clone + Eq + Hash + Send + Sync,
-    L: Clone + Send + Sync,
+    K: Clone + Eq + Hash + Send + Sync + for<'a> Facet<'a> + 'static,
+    L: Clone + Send + Sync + for<'a> Facet<'a> + 'static,
 {
     let nodes: Vec<NodeId> = tree.iter().collect();
 
@@ -342,47 +352,47 @@ fn ancestry_compatible<K, L>(
     matching: &Matching,
 ) -> bool
 where
-    K: Clone + Eq + Hash,
-    L: Clone,
+    K: Clone + Eq + Hash + for<'a> Facet<'a> + 'static,
+    L: Clone + for<'a> Facet<'a> + 'static,
 {
     // Check if A's parent is matched
-    if let Some(a_parent) = tree_a.parent(a_id) {
-        if let Some(matched_b_parent) = matching.get_b(a_parent) {
-            // A's parent is matched to matched_b_parent.
-            // B must be a descendant of matched_b_parent.
-            let is_descendant = tree_b
-                .descendants(matched_b_parent)
-                .any(|desc| desc == b_id);
-            if !is_descendant {
-                trace!(
-                    a = usize::from(a_id),
-                    b = usize::from(b_id),
-                    a_parent = usize::from(a_parent),
-                    matched_b_parent = usize::from(matched_b_parent),
-                    "ancestry check failed: B not descendant of matched parent"
-                );
-                return false;
-            }
+    if let Some(a_parent) = tree_a.parent(a_id)
+        && let Some(matched_b_parent) = matching.get_b(a_parent)
+    {
+        // A's parent is matched to matched_b_parent.
+        // B must be a descendant of matched_b_parent.
+        let is_descendant = tree_b
+            .descendants(matched_b_parent)
+            .any(|desc| desc == b_id);
+        if !is_descendant {
+            trace!(
+                a = usize::from(a_id),
+                b = usize::from(b_id),
+                a_parent = usize::from(a_parent),
+                matched_b_parent = usize::from(matched_b_parent),
+                "ancestry check failed: B not descendant of matched parent"
+            );
+            return false;
         }
     }
 
     // Also check the reverse: if B's parent is matched, A must be a descendant
     // of the corresponding node in tree_a
-    if let Some(b_parent) = tree_b.parent(b_id) {
-        if let Some(matched_a_parent) = matching.get_a(b_parent) {
-            let is_descendant = tree_a
-                .descendants(matched_a_parent)
-                .any(|desc| desc == a_id);
-            if !is_descendant {
-                trace!(
-                    a = usize::from(a_id),
-                    b = usize::from(b_id),
-                    b_parent = usize::from(b_parent),
-                    matched_a_parent = usize::from(matched_a_parent),
-                    "ancestry check failed: A not descendant of matched parent"
-                );
-                return false;
-            }
+    if let Some(b_parent) = tree_b.parent(b_id)
+        && let Some(matched_a_parent) = matching.get_a(b_parent)
+    {
+        let is_descendant = tree_a
+            .descendants(matched_a_parent)
+            .any(|desc| desc == a_id);
+        if !is_descendant {
+            trace!(
+                a = usize::from(a_id),
+                b = usize::from(b_id),
+                b_parent = usize::from(b_parent),
+                matched_a_parent = usize::from(matched_a_parent),
+                "ancestry check failed: A not descendant of matched parent"
+            );
+            return false;
         }
     }
 
@@ -403,8 +413,8 @@ fn bottom_up_phase<K, L>(
     matching: &mut Matching,
     config: &MatchingConfig,
 ) where
-    K: Clone + Eq + Hash + Send + Sync,
-    L: Clone + Send + Sync,
+    K: Clone + Eq + Hash + Send + Sync + for<'a> Facet<'a> + 'static,
+    L: Clone + Send + Sync + for<'a> Facet<'a> + 'static,
 {
     // Build index for tree B by kind
     let mut b_by_kind: HashMap<K, Vec<NodeId>> = HashMap::default();
@@ -458,7 +468,14 @@ fn bottom_up_phase<K, L>(
                 .copied();
 
             if let Some(b_id) = best {
-                debug!(a = usize::from(a_id), b = usize::from(b_id), pos = a_pos, "bottom_up pass1: position+kind match");
+                let a_kind = a_data.kind.clone();
+                debug!(
+                    a = usize::from(a_id),
+                    a_kind = %a_kind.pretty(),
+                    b = usize::from(b_id),
+                    pos = a_pos,
+                    "bottom_up pass1: position+kind match"
+                );
                 matching.add(a_id, b_id);
                 continue;
             }
@@ -484,16 +501,31 @@ fn bottom_up_phase<K, L>(
             }
 
             let score = dice_coefficient(a_id, b_id, matching, &desc_a, &desc_b);
-            trace!(a = usize::from(a_id), b = usize::from(b_id), score, "bottom_up pass1: dice score");
-            if score >= config.similarity_threshold
-                && (best.is_none() || score > best.unwrap().1)
-            {
+            let b_data = tree_b.get(b_id);
+            let a_kind = a_data.kind.clone();
+            let b_kind = b_data.kind.clone();
+            trace!(
+                a = usize::from(a_id),
+                a_kind = %a_kind.pretty(),
+                b = usize::from(b_id),
+                b_kind = %b_kind.pretty(),
+                score,
+                "bottom_up pass1: dice score"
+            );
+            if score >= config.similarity_threshold && (best.is_none() || score > best.unwrap().1) {
                 best = Some((b_id, score));
             }
         }
 
         if let Some((b_id, _score)) = best {
-            debug!(a = usize::from(a_id), b = usize::from(b_id), _score, "bottom_up pass1: dice match");
+            let a_kind = a_data.kind.clone();
+            debug!(
+                a = usize::from(a_id),
+                a_kind = %a_kind.pretty(),
+                b = usize::from(b_id),
+                _score,
+                "bottom_up pass1: dice match"
+            );
             matching.add(a_id, b_id);
         }
     }
@@ -548,7 +580,13 @@ fn bottom_up_phase<K, L>(
                 .copied();
 
             if let Some(b_id) = best {
-                debug!(a = usize::from(a_id), b = usize::from(b_id), hash = a_data.hash, "bottom_up pass2: leaf match");
+                let a_kind = a_data.kind.clone();
+                debug!(
+                    a = usize::from(a_id),
+                    a_kind = %a_kind.pretty(),
+                    b = usize::from(b_id),
+                    "bottom_up pass2: leaf match"
+                );
                 matching.add(a_id, b_id);
             }
         }
@@ -569,8 +607,12 @@ fn dice_coefficient(
     #[cfg(feature = "matching-stats")]
     {
         DICE_CALLS.with(|c| *c.borrow_mut() += 1);
-        DICE_UNIQUE_A.with(|s| { s.borrow_mut().insert(a_id); });
-        DICE_UNIQUE_B.with(|s| { s.borrow_mut().insert(b_id); });
+        DICE_UNIQUE_A.with(|s| {
+            s.borrow_mut().insert(a_id);
+        });
+        DICE_UNIQUE_B.with(|s| {
+            s.borrow_mut().insert(b_id);
+        });
     }
 
     let empty = HashSet::default();
