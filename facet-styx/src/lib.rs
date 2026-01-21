@@ -60,7 +60,7 @@ pub use facet_format::DeserializeError;
 pub use facet_format::SerializeError;
 pub use parser::StyxParser;
 pub use schema_error::{ValidationError, ValidationErrorKind, ValidationResult, ValidationWarning};
-pub use schema_gen::{GenerateSchema, schema_from_type};
+pub use schema_gen::{GenerateSchema, schema_file_from_type, schema_from_type};
 pub use schema_meta::META_SCHEMA_SOURCE;
 pub use schema_types::*;
 pub use schema_validate::{Validator, validate, validate_as};

@@ -177,6 +177,15 @@ impl<T: facet_core::Facet<'static>> GenerateSchema<T> {
 
     /// Generate the schema as a string.
     pub fn generate(self) -> String {
+        let schema_file = self.generate_schema_file();
+        crate::to_string(&schema_file).expect("failed to serialize schema")
+    }
+
+    /// Generate the schema as a SchemaFile struct.
+    ///
+    /// This is more efficient than `generate()` when you need to inspect
+    /// the schema programmatically, as it avoids the string serialization.
+    pub fn generate_schema_file(self) -> SchemaFile {
         let crate_name = self
             .crate_name
             .expect("crate_name is required - call .crate_name(\"...\")");
@@ -185,7 +194,7 @@ impl<T: facet_core::Facet<'static>> GenerateSchema<T> {
             .expect("version is required - call .version(\"...\")");
 
         let id = format!("crate:{crate_name}@{version}");
-        generate_schema_inner::<T>(id, self.cli, self.lsp)
+        generate_schema_file_inner::<T>(id, self.cli, self.lsp)
     }
 }
 
@@ -197,17 +206,27 @@ impl<T: facet_core::Facet<'static>> Default for GenerateSchema<T> {
 
 /// Generate a Styx schema string from a Facet type.
 pub fn schema_from_type<T: facet_core::Facet<'static>>() -> String {
-    let shape = T::SHAPE;
-    let id = shape.type_identifier.to_string();
-    generate_schema_inner::<T>(id, None, None)
+    let schema_file = schema_file_from_type::<T>();
+    crate::to_string(&schema_file).expect("failed to serialize schema")
 }
 
-/// Internal function that generates a schema with the given id and optional cli/lsp.
-fn generate_schema_inner<T: facet_core::Facet<'static>>(
+/// Generate a SchemaFile directly from a Facet type.
+///
+/// This is more efficient than `schema_from_type` when you need to inspect
+/// the schema programmatically, as it avoids the string serialization and
+/// parsing round-trip.
+pub fn schema_file_from_type<T: facet_core::Facet<'static>>() -> SchemaFile {
+    let shape = T::SHAPE;
+    let id = shape.type_identifier.to_string();
+    generate_schema_file_inner::<T>(id, None, None)
+}
+
+/// Internal function that generates a SchemaFile with the given id and optional cli/lsp.
+fn generate_schema_file_inner<T: facet_core::Facet<'static>>(
     id: String,
     cli: Option<String>,
     lsp: Option<LspExtensionConfig>,
-) -> String {
+) -> SchemaFile {
     let shape = T::SHAPE;
 
     let mut generator = SchemaGenerator::new();
@@ -246,7 +265,7 @@ fn generate_schema_inner<T: facet_core::Facet<'static>>(
         )
     };
 
-    let schema_file = SchemaFile {
+    SchemaFile {
         meta: Meta {
             id,
             version: None,
@@ -256,9 +275,7 @@ fn generate_schema_inner<T: facet_core::Facet<'static>>(
         },
         imports: None,
         schema: schema_map,
-    };
-
-    crate::to_string(&schema_file).expect("failed to serialize schema")
+    }
 }
 
 /// Convert a Schema to a tag name for use in ObjectKey.
