@@ -6,6 +6,14 @@
 #[cfg(feature = "matching-stats")]
 pub use cinereus::matching::{get_stats as get_matching_stats, reset_stats as reset_matching_stats};
 
+#[cfg(feature = "tracing")]
+use tracing::debug;
+
+#[cfg(not(feature = "tracing"))]
+macro_rules! debug {
+    ($($arg:tt)*) => {};
+}
+
 use core::hash::Hasher;
 use std::borrow::Cow;
 use std::hash::DefaultHasher;
@@ -254,12 +262,20 @@ pub fn tree_diff<'a, 'f, A: facet_core::Facet<'f>, B: facet_core::Facet<'f>>(
     let config = MatchingConfig::default();
     let (cinereus_ops, matching) = diff_trees_with_matching(&tree_a, &tree_b, &config);
 
+    debug!(cinereus_ops_count = cinereus_ops.len(), "cinereus ops before conversion");
+    for (i, op) in cinereus_ops.iter().enumerate() {
+        debug!(i, ?op, "cinereus op");
+    }
+
     // Convert cinereus ops to path-based EditOps using a shadow tree
     // to track index shifts as operations are applied.
     // We pass the original values so we can extract actual values for leaf nodes.
     let peek_a = Peek::new(a);
     let peek_b = Peek::new(b);
-    convert_ops_with_shadow(cinereus_ops, &tree_a, &tree_b, &matching, peek_a, peek_b)
+    let result = convert_ops_with_shadow(cinereus_ops, &tree_a, &tree_b, &matching, peek_a, peek_b);
+
+    debug!(result_count = result.len(), "edit ops after conversion");
+    result
 }
 
 /// Extract a scalar value from a Peek by navigating a path.
@@ -432,6 +448,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 let value_path = tree_b.get(node_b).label.as_ref().map(|l| &l.path);
                 let value = value_path.and_then(|p| extract_value_at_path(peek_b, p));
 
+                debug!(?node_b, ?path, ?position, "INSERT op: computed path");
                 result.push(EditOp::Insert {
                     path: path.clone(),
                     value,
@@ -466,13 +483,24 @@ fn convert_ops_with_shadow<'mem, 'facet>(
             CinereusEditOp::Delete { node_a } => {
                 // Path is current location before deletion
                 let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+                debug!(?node_a, ?path, "DELETE op: computed path");
                 result.push(EditOp::Delete {
                     path,
                     hash: tree_a.get(node_a).hash,
                 });
 
                 // Remove from shadow tree
-                node_a.remove(&mut shadow_arena);
+                let parent_before = shadow_arena.get(node_a).and_then(|n| n.parent());
+                if let Some(p) = parent_before {
+                    let children_before: Vec<_> = p.children(&shadow_arena).collect();
+                    debug!(?node_a, ?p, ?children_before, "before remove");
+                }
+                node_a.detach(&mut shadow_arena);
+                let parent_after = shadow_arena.get(node_a).and_then(|n| n.parent());
+                if let Some(p) = parent_before {
+                    let children_after: Vec<_> = p.children(&shadow_arena).collect();
+                    debug!(?node_a, ?parent_before, ?parent_after, ?children_after, "after remove");
+                }
             }
 
             CinereusEditOp::Move {
@@ -567,6 +595,8 @@ fn compute_adjusted_path(
     let mut depth_to_position: HashMap<usize, usize> = HashMap::new();
     let mut current = node;
 
+    debug!(?node, ?original_path, "compute_adjusted_path start");
+
     while current != shadow_root {
         // Get the current node's path depth from its stored label
         let current_path_len = shadow_arena
@@ -580,10 +610,9 @@ fn compute_adjusted_path(
             let depth = current_path_len - 1;
             if let Some(PathSegment::Index(_)) = original_path.0.get(depth) {
                 if let Some(parent_id) = shadow_arena.get(current).and_then(|n| n.parent()) {
-                    let pos = parent_id
-                        .children(shadow_arena)
-                        .position(|c| c == current)
-                        .unwrap_or(0);
+                    let children: Vec<_> = parent_id.children(shadow_arena).collect();
+                    let pos = children.iter().position(|&c| c == current).unwrap_or(0);
+                    debug!(?current, ?parent_id, ?depth, ?pos, num_children = children.len(), "recording position");
                     depth_to_position.insert(depth, pos);
                 }
             }
@@ -731,7 +760,7 @@ mod tests {
             }
         }
 
-        tracing::debug!(?paths, "all paths in tree");
+        debug!(?paths, "all paths in tree");
 
         // Should have:
         // - [] (root)
@@ -887,7 +916,7 @@ mod tests {
         };
 
         let ops = tree_diff(&a, &b);
-        tracing::debug!(?ops, "diff ops for list delete");
+        debug!(?ops, "diff ops for list delete");
 
         // Should have some operations (the exact ops depend on cinereus's matching algorithm)
         // The algorithm may emit Delete, or Move+Delete, etc.
@@ -915,7 +944,7 @@ mod tests {
         };
 
         let ops = tree_diff(&a, &b);
-        tracing::debug!(?ops, "diff ops for list insert");
+        debug!(?ops, "diff ops for list insert");
 
         // Should have an Insert for items[1]
         let has_insert_at_1 = ops.iter().any(|op| {
@@ -951,7 +980,7 @@ mod tests {
         };
 
         let ops = tree_diff(&a, &b);
-        tracing::debug!(?ops, "diff ops for nested change");
+        debug!(?ops, "diff ops for nested change");
 
         // Should have some operations for the change
         assert!(!ops.is_empty(), "Should have operations for nested change");
