@@ -14,6 +14,7 @@ mod event;
 pub mod naming;
 mod parser;
 mod parser_ext;
+mod raw_markup;
 mod serializer;
 mod tracing_macros;
 
@@ -22,4 +23,5 @@ pub use error::*;
 pub use event::*;
 pub use parser::*;
 pub use parser_ext::*;
+pub use raw_markup::*;
 pub use serializer::*;

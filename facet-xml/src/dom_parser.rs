@@ -43,6 +43,8 @@ impl std::error::Error for XmlError {}
 /// Streaming XML parser implementing `DomParser`.
 pub struct XmlParser<'de> {
     reader: NsReader<Cursor<&'de [u8]>>,
+    /// Original input for raw capture
+    input: &'de [u8],
     /// Buffer for quick-xml events
     buf: Vec<u8>,
     /// Buffer for peeked event
@@ -57,6 +59,8 @@ pub struct XmlParser<'de> {
     state: ParserState,
     /// True if current element is empty (self-closing)
     is_empty_element: bool,
+    /// Position where current node started (for raw capture)
+    node_start_pos: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -87,6 +91,7 @@ impl<'de> XmlParser<'de> {
 
         Self {
             reader,
+            input,
             buf: Vec::new(),
             peeked: None,
             depth: 0,
@@ -94,7 +99,37 @@ impl<'de> XmlParser<'de> {
             attr_idx: 0,
             state: ParserState::Ready,
             is_empty_element: false,
+            node_start_pos: 0,
         }
+    }
+
+    /// Capture the current node as raw XML and skip past it.
+    /// Must be called right after a NodeStart event has been consumed.
+    fn do_capture_raw_node(&mut self) -> Result<Cow<'de, str>, XmlError> {
+        // Save start position before it gets overwritten by child elements
+        let start = self.node_start_pos as usize;
+        let start_depth = self.depth;
+
+        // Skip through the node - consume events until depth drops below starting
+        loop {
+            // Handle peeked event first
+            let event = if let Some(e) = self.peeked.take() {
+                Some(e)
+            } else {
+                self.read_next()?
+            };
+
+            match event {
+                Some(DomEvent::NodeEnd) if self.depth < start_depth => break,
+                None => break,
+                _ => {}
+            }
+        }
+
+        let end = self.reader.buffer_position() as usize;
+        let raw = &self.input[start..end];
+        let s = core::str::from_utf8(raw).map_err(XmlError::InvalidUtf8)?;
+        Ok(Cow::Borrowed(s))
     }
 
     /// Read the next raw event from quick-xml and convert to DomEvent.
@@ -146,6 +181,9 @@ impl<'de> XmlParser<'de> {
                 }
 
                 ParserState::Ready | ParserState::InChildren => {
+                    // Record position before reading (for raw capture)
+                    let pos_before = self.reader.buffer_position();
+
                     self.buf.clear();
                     let (resolve, event) = self
                         .reader
@@ -158,6 +196,8 @@ impl<'de> XmlParser<'de> {
                     match event {
                         Event::Start(ref e) | Event::Empty(ref e) => {
                             let is_empty = matches!(event, Event::Empty(_));
+                            // Record start position for potential raw capture
+                            self.node_start_pos = pos_before;
 
                             // Get element local name
                             let local_name = e.local_name();
@@ -314,6 +354,10 @@ impl<'de> DomParser<'de> for XmlParser<'de> {
 
     fn format_namespace(&self) -> Option<&'static str> {
         Some("xml")
+    }
+
+    fn capture_raw_node(&mut self) -> Result<Option<Cow<'de, str>>, Self::Error> {
+        Ok(Some(self.do_capture_raw_node()?))
     }
 }
 

@@ -45,4 +45,14 @@ pub trait DomParser<'de> {
     fn format_namespace(&self) -> Option<&'static str> {
         None
     }
+
+    /// Capture the current node as raw markup and skip past it.
+    ///
+    /// Must be called right after receiving a NodeStart event. Returns the raw
+    /// source text for the entire element (from opening tag through closing tag).
+    ///
+    /// Returns `None` if raw capture is not supported by this parser.
+    fn capture_raw_node(&mut self) -> Result<Option<std::borrow::Cow<'de, str>>, Self::Error> {
+        Ok(None)
+    }
 }

@@ -24,6 +24,7 @@ pub use serializer::{
 // Re-export error types for convenience
 pub use facet_dom::DomDeserializeError as DeserializeError;
 pub use facet_dom::DomSerializeError as SerializeError;
+pub use facet_dom::RawMarkup;
 
 /// Deserialize a value from an XML string into an owned type.
 ///
@@ -165,5 +166,12 @@ facet::define_attr_grammar! {
         /// This sets the default namespace for all fields that don't have their own
         /// `xml::ns` attribute. Individual fields can override this with `xml::ns`.
         NsAll(&'static str),
+        /// Marks an enum variant as a catch-all for unknown XML elements.
+        ///
+        /// Usage: `#[facet(xml::custom_element)]`
+        ///
+        /// When deserializing, if no variant name matches the element tag,
+        /// this variant is selected. Use with `xml::tag` to capture the tag name.
+        CustomElement,
     }
 }

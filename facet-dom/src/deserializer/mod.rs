@@ -72,6 +72,12 @@ where
         let name = shape.cyan();
         trace!(into = %format_args!("{module}::{name}"));
 
+        // Check for RawMarkup BEFORE transparent wrapper handling
+        // (RawMarkup has inner=String but needs special raw capture handling)
+        if crate::raw_markup::is_raw_markup(shape) {
+            return self.deserialize_raw_markup(wip);
+        }
+
         // Handle transparent wrappers (like NonZero, newtype structs with #[facet(transparent)])
         // Collections (List/Map/Set/Array), Option, and Pointer have .inner for variance but shouldn't use this path
         if shape.inner.is_some()
@@ -390,6 +396,38 @@ where
         }
 
         Ok(wip)
+    }
+
+    /// Deserialize RawMarkup by capturing raw source from the parser.
+    fn deserialize_raw_markup(
+        &mut self,
+        wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        // Must be at a NodeStart
+        let event = self.parser.peek_event_or_eof("NodeStart for RawMarkup")?;
+        if !matches!(event, DomEvent::NodeStart { .. }) {
+            return Err(DomDeserializeError::TypeMismatch {
+                expected: "NodeStart for RawMarkup",
+                got: format!("{event:?}"),
+            });
+        }
+
+        // Consume the NodeStart
+        self.parser
+            .next_event()
+            .map_err(DomDeserializeError::Parser)?;
+
+        // Try to capture raw - if not supported, fall back to error
+        let raw = self
+            .parser
+            .capture_raw_node()
+            .map_err(DomDeserializeError::Parser)?
+            .ok_or_else(|| {
+                DomDeserializeError::Unsupported("parser does not support raw capture".into())
+            })?;
+
+        // Set via the vtable's parse function
+        self.set_string_value(wip, raw)
     }
 
     /// Deserialize a scalar value (string, number, bool, etc.).
