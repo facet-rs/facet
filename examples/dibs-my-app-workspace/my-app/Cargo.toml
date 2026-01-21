@@ -1,0 +1,18 @@
+[package]
+name = "my-app"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "my-app"
+path = "src/main.rs"
+
+[dependencies]
+my-app-db = { path = "../my-app-db" }
+dibs.workspace = true
+dibs-proto.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
+tokio-tungstenite.workspace = true
+roam-stream.workspace = true
+roam-websocket.workspace = true
+dotenvy.workspace = true

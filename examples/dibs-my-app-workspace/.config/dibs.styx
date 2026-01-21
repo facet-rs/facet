@@ -1,0 +1,5 @@
+@schema {id crate:dibs@1, cli dibs}
+
+db {
+    crate my-app-db
+}

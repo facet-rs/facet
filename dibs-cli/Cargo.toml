@@ -43,3 +43,7 @@ arborium.workspace = true
 arborium-highlight.workspace = true
 arborium-theme.workspace = true
 ariadne.workspace = true
+
+[dev-dependencies]
+styx-lsp.workspace = true
+styx-lsp-test-schema.workspace = true

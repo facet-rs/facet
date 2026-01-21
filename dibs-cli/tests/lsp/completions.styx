@@ -1,0 +1,160 @@
+tests (
+    {
+        name "table completions after from"
+        input "from |"
+        completions {has (product product_variant variant_price product_source product_translation)}
+    }
+
+    {
+        name "table completions with prefix"
+        input "from prod|"
+        completions {
+            has (product product_variant product_source product_translation)
+        }
+    }
+
+    {
+        name "context-aware column completions in select"
+        input <<STYX
+            AllProducts @query{
+                from product
+                select {|}
+            }
+            STYX
+        completions {
+            has (id handle status active metadata created_at updated_at deleted_at)
+        }
+    }
+
+    {
+        name "column completions with prefix"
+        input <<STYX
+            AllProducts @query{
+                from product
+                select {ha|}
+            }
+            STYX
+        completions {
+            has (handle)
+        }
+    }
+
+    {
+        name "column completions in where clause"
+        input <<STYX
+            AllProducts @query{
+                from product
+                where {|}
+            }
+            STYX
+        completions {
+            has (id handle status active metadata created_at updated_at deleted_at)
+        }
+    }
+
+    {
+        name "column completions in order_by"
+        input <<STYX
+            AllProducts @query{
+                from product
+                order_by {|}
+            }
+            STYX
+        completions {
+            has (id handle status active created_at updated_at)
+        }
+    }
+
+    {
+        name "inlay hints show column types"
+        input <<STYX
+            AllProducts @query{
+                from product
+                select {
+                    id
+                    handle
+                    active
+                }
+            }
+            STYX
+        inlay_hints {
+            count 3
+            has (
+                {label ": BIGINT"}
+                {label ": TEXT"}
+                {label ": BOOLEAN"}
+            )
+        }
+    }
+
+    {
+        name "hover on table shows columns"
+        input <<STYX
+            AllProducts @query{
+                from prod|uct
+            }
+            STYX
+        hover {
+            contains ("Table `product`" "id" "handle" "status" "active")
+        }
+    }
+
+    {
+        name "hover on column shows type info"
+        input <<STYX
+            AllProducts @query{
+                from product
+                select {han|dle}
+            }
+            STYX
+        hover {
+            contains ("Column `product.handle`" "Type:" "TEXT")
+        }
+    }
+
+    {
+        name "diagnostic for unknown table"
+        input <<STYX
+            AllProducts @query{
+                from nonexistent_table
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "Unknown table 'nonexistent_table'"})
+        }
+    }
+
+    {
+        name "diagnostic for unknown column"
+        input <<STYX
+            AllProducts @query{
+                from product
+                select {
+                    id
+                    nonexistent_column
+                }
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "Unknown column 'nonexistent_column'"})
+        }
+    }
+
+    {
+        name "no diagnostics for valid query"
+        input <<STYX
+            AllProducts @query{
+                from product
+                select {
+                    id
+                    handle
+                }
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
+)

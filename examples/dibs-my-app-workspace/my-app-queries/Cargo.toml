@@ -1,0 +1,18 @@
+[package]
+name = "my-app-queries"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+my-app-db = { path = "../my-app-db" }
+dibs-runtime.workspace = true
+
+[build-dependencies]
+dibs.workspace = true
+my-app-db = { path = "../my-app-db" }
+
+[dev-dependencies]
+dockside.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+dibs.workspace = true

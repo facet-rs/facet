@@ -1,0 +1,65 @@
+@schema {id crate:dibs-queries@1, cli dibs}
+
+// Queries for my-app ecommerce example.
+// These are parsed by dibs-query-gen and generate Rust code + SQL.
+
+AllProducts @query{
+    from product
+    where {deleted_at @null}
+    order_by {created_at desc}
+    select {id, handle, status, active}
+}
+
+ActiveProducts @query{
+    from product
+    where {status "published", active true, deleted_at @null}
+    order_by {created_at desc}
+    limit 2
+    select {id, handle, status}
+}
+
+ProductByHandle @query{
+    params {handle @string}
+    from product
+    where {handle $handle, deleted_at @null}
+    first true
+    select {id, handle, status, active}
+}
+
+SearchProducts @query{
+    params {q @string}
+    from product
+    where {handle @ilike($q), deleted_at @null}
+    order_by {handle asc}
+    limit 50
+    select {id, handle, status}
+}
+// Paginated query with limit/offset parameters
+
+ProductsPaginated @query{
+    params {page_size @int, page_offset @int}
+    from product
+    where {deleted_at @null}
+    order_by {handle asc}
+    limit $page_size
+    offset $page_offset
+    select {id, handle, status, active}
+}
+// Query with JOIN - returns product with its first translation
+
+ProductWithTranslation @query{
+    params {handle @string}
+    from product
+    where {handle $handle, deleted_at @null}
+    first true
+    select {
+        id
+        handle
+        status
+        translation @rel{
+            from product_translation
+            first true
+            select {locale, title, description}
+        }
+    }
+}

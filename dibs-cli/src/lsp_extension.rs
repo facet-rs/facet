@@ -2,23 +2,34 @@
 //!
 //! When invoked with `dibs lsp-extension`, this provides domain-specific
 //! intelligence (completions, hover, diagnostics) for dibs query files.
+//!
+//! This connects to the user's db crate service (same as the TUI) to fetch
+//! the actual schema, rather than using dummy tables.
 
+use crate::config;
+use crate::service::{self, ServiceConnection};
+use dibs_proto::{SchemaInfo, TableInfo};
 use roam_session::HandshakeConfig;
 use roam_stream::CobsFramed;
+use std::path::Path;
+use std::sync::Arc;
 use styx_lsp_ext::{
     Capability, CodeAction, CodeActionParams, CompletionItem, CompletionKind, CompletionParams,
-    Diagnostic, DiagnosticParams, HoverParams, HoverResult, InlayHint, InlayHintParams,
-    InitializeParams, InitializeResult, StyxLspExtension, StyxLspExtensionDispatcher,
-    StyxLspHostClient,
+    Diagnostic, DiagnosticParams, DiagnosticSeverity, HoverParams, HoverResult, InitializeParams,
+    InitializeResult, InlayHint, InlayHintKind, InlayHintParams, Position, Range, StyxLspExtension,
+    StyxLspExtensionDispatcher, StyxLspHostClient,
 };
 use tokio::io::{stdin, stdout};
-use tracing::{debug, info, warn};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 
 /// Run the LSP extension, communicating over stdin/stdout.
 pub async fn run() {
     // Set up logging to stderr (stdout is for roam protocol)
+    // Use plain format without ANSI colors since this goes to editor logs
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
+        .with_ansi(false)
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive("dibs=debug".parse().unwrap()),
@@ -109,22 +120,42 @@ impl tokio::io::AsyncWrite for StdioStream {
     }
 }
 
+/// Internal state that gets populated during initialize.
+struct ExtensionState {
+    /// The schema fetched from the service.
+    schema: SchemaInfo,
+    /// The service connection (kept alive).
+    #[allow(dead_code)]
+    connection: ServiceConnection,
+}
+
 /// The dibs LSP extension implementation.
 #[derive(Clone)]
 struct DibsExtension {
-    schema: dibs::Schema,
+    /// State populated during initialize. None until then.
+    state: Arc<RwLock<Option<ExtensionState>>>,
 }
 
 impl DibsExtension {
     fn new() -> Self {
-        // Collect the schema from registered tables
-        let schema = dibs::Schema::collect();
-        Self { schema }
+        Self {
+            state: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Get the schema, returning an empty schema if not initialized.
+    async fn schema(&self) -> SchemaInfo {
+        let state = self.state.read().await;
+        state
+            .as_ref()
+            .map(|s| s.schema.clone())
+            .unwrap_or_else(|| SchemaInfo { tables: vec![] })
     }
 
     /// Get completions for table names.
-    fn table_completions(&self, prefix: &str) -> Vec<CompletionItem> {
-        self.schema
+    async fn table_completions(&self, prefix: &str) -> Vec<CompletionItem> {
+        let schema = self.schema().await;
+        schema
             .tables
             .iter()
             .filter(|t| t.name.starts_with(prefix) || prefix.is_empty())
@@ -139,9 +170,331 @@ impl DibsExtension {
             .collect()
     }
 
+    /// Collect diagnostics from a value tree.
+    async fn collect_diagnostics(
+        &self,
+        value: &styx_tree::Value,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        let schema = self.schema().await;
+
+        // If this is a tagged @query object, validate references
+        if let Some(tag) = &value.tag {
+            if tag.name == "query" {
+                if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+                    // Find the "from" field and validate the table name
+                    let mut table_name = None;
+                    for entry in &obj.entries {
+                        if entry.key.as_str() == Some("from") {
+                            if let Some(name) = entry.value.as_str() {
+                                if !schema.tables.iter().any(|t| t.name == name) {
+                                    // Unknown table
+                                    if let Some(span) = &entry.value.span {
+                                        diagnostics.push(Diagnostic {
+                                            range: span_to_range(span),
+                                            severity: DiagnosticSeverity::Error,
+                                            message: format!("Unknown table '{}'", name),
+                                            source: Some("dibs".to_string()),
+                                            code: Some("unknown-table".to_string()),
+                                            data: None,
+                                        });
+                                    }
+                                } else {
+                                    table_name = Some(name.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    // If we have a valid table, validate column references
+                    if let Some(table_name) = table_name {
+                        if let Some(table) = schema.tables.iter().find(|t| t.name == table_name) {
+                            for entry in &obj.entries {
+                                let key = entry.key.as_str().unwrap_or("");
+                                if matches!(key, "select" | "where" | "order_by" | "group_by") {
+                                    Self::validate_columns(&entry.value, table, diagnostics);
+                                }
+                            }
+                        }
+                    }
+                }
+                // Don't recurse into @query - we've handled it
+                return;
+            }
+        }
+
+        // Recurse into children
+        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+            for entry in &obj.entries {
+                Box::pin(self.collect_diagnostics(&entry.value, diagnostics)).await;
+            }
+        } else if let Some(obj) = value.as_object() {
+            for entry in &obj.entries {
+                Box::pin(self.collect_diagnostics(&entry.value, diagnostics)).await;
+            }
+        }
+
+        if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
+            for item in &seq.items {
+                Box::pin(self.collect_diagnostics(item, diagnostics)).await;
+            }
+        }
+    }
+
+    /// Validate column references in a select/where/etc block.
+    fn validate_columns(
+        value: &styx_tree::Value,
+        table: &TableInfo,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+            for entry in &obj.entries {
+                if let Some(col_name) = entry.key.as_str() {
+                    if !table.columns.iter().any(|c| c.name == col_name) {
+                        // Unknown column
+                        if let Some(span) = &entry.key.span {
+                            diagnostics.push(Diagnostic {
+                                range: span_to_range(span),
+                                severity: DiagnosticSeverity::Error,
+                                message: format!(
+                                    "Unknown column '{}' in table '{}'",
+                                    col_name, table.name
+                                ),
+                                source: Some("dibs".to_string()),
+                                code: Some("unknown-column".to_string()),
+                                data: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Collect inlay hints from a value tree.
+    async fn collect_inlay_hints(&self, value: &styx_tree::Value, hints: &mut Vec<InlayHint>) {
+        let schema = self.schema().await;
+
+        // If this is a tagged @query or @rel object, look for column references
+        if let Some(tag) = &value.tag {
+            if tag.name == "query" || tag.name == "rel" {
+                if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+                    // Find the table from "from" field
+                    let table_name = obj.entries.iter().find_map(|e| {
+                        if e.key.as_str() == Some("from") {
+                            e.value.as_str().map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(table_name) = table_name {
+                        // Find the table in schema
+                        if let Some(table) = schema.tables.iter().find(|t| t.name == table_name) {
+                            // Look for select/where/order_by entries and add hints
+                            for entry in &obj.entries {
+                                let key = entry.key.as_str().unwrap_or("");
+                                if matches!(key, "select" | "where" | "order_by" | "group_by") {
+                                    Self::add_column_hints(&entry.value, table, hints, &schema);
+                                }
+                            }
+                        }
+                    }
+
+                    // Continue recursing to find nested @rel blocks in select
+                    for entry in &obj.entries {
+                        Box::pin(self.collect_inlay_hints(&entry.value, hints)).await;
+                    }
+                }
+                return;
+            }
+        }
+
+        // Recurse into children - but only through one path to avoid double-visiting
+        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+            for entry in &obj.entries {
+                Box::pin(self.collect_inlay_hints(&entry.value, hints)).await;
+            }
+        } else if let Some(obj) = value.as_object() {
+            // Only use as_object() if payload wasn't an object
+            for entry in &obj.entries {
+                Box::pin(self.collect_inlay_hints(&entry.value, hints)).await;
+            }
+        }
+
+        if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
+            for item in &seq.items {
+                Box::pin(self.collect_inlay_hints(item, hints)).await;
+            }
+        }
+    }
+
+    /// Add inlay hints for column references in a select/where/etc block.
+    fn add_column_hints(
+        value: &styx_tree::Value,
+        table: &TableInfo,
+        hints: &mut Vec<InlayHint>,
+        _schema: &SchemaInfo,
+    ) {
+        // The value should be an object with column names as keys
+        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+            for entry in &obj.entries {
+                if let Some(col_name) = entry.key.as_str() {
+                    // Skip if entry value has an explicit type annotation (colon followed by type)
+                    // or if it's a @rel block (nested relation)
+                    if entry.value.tag.as_ref().is_some_and(|t| t.name == "rel") {
+                        // Skip @rel blocks - they're handled separately via recursion
+                        continue;
+                    }
+
+                    // Skip if there's already a value (explicit type annotation like "id: BIGINT")
+                    if entry.value.as_str().is_some() {
+                        continue;
+                    }
+
+                    // Find the column in the table
+                    if let Some(col) = table.columns.iter().find(|c| c.name == col_name) {
+                        // Get the position at the end of the column name
+                        if let Some(span) = &entry.key.span {
+                            let line = 0; // TODO: compute actual line from offset
+                            let character = span.end;
+
+                            hints.push(InlayHint {
+                                position: Position { line, character },
+                                label: format!(": {}", col.sql_type),
+                                kind: Some(InlayHintKind::Type),
+                                padding_left: false,
+                                padding_right: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Generate hover content for a column.
+    async fn column_hover(&self, col_name: &str, table_name: &str) -> Option<HoverResult> {
+        let schema = self.schema().await;
+        let table = schema.tables.iter().find(|t| t.name == table_name)?;
+        let col = table.columns.iter().find(|c| c.name == col_name)?;
+
+        let mut content = format!("**Column `{}.{}`**\n\n", table.name, col.name);
+
+        content.push_str(&format!("**Type:** `{}`\n\n", col.sql_type));
+
+        let mut constraints = Vec::new();
+        if col.primary_key {
+            constraints.push("PRIMARY KEY".to_string());
+        }
+        if col.unique {
+            constraints.push("UNIQUE".to_string());
+        }
+        if !col.nullable {
+            constraints.push("NOT NULL".to_string());
+        }
+        if col.auto_generated {
+            constraints.push("AUTO GENERATED".to_string());
+        }
+        if let Some(ref default) = col.default {
+            constraints.push(format!("DEFAULT {}", default));
+        }
+
+        if !constraints.is_empty() {
+            content.push_str("**Constraints:**\n");
+            for c in constraints {
+                content.push_str(&format!("- {}\n", c));
+            }
+        }
+
+        Some(HoverResult {
+            contents: content,
+            range: None,
+        })
+    }
+
+    /// Generate hover content for a table.
+    fn table_hover(table: &TableInfo) -> HoverResult {
+        let mut content = format!("**Table `{}`**\n\n", table.name);
+
+        if let Some(doc) = &table.doc {
+            content.push_str(doc);
+            content.push_str("\n\n");
+        }
+
+        content.push_str("| Column | Type | Constraints |\n");
+        content.push_str("|--------|------|-------------|\n");
+
+        for col in &table.columns {
+            let mut constraints = Vec::new();
+            if col.primary_key {
+                constraints.push("PK");
+            }
+            if col.unique {
+                constraints.push("UNIQUE");
+            }
+            if !col.nullable {
+                constraints.push("NOT NULL");
+            }
+
+            content.push_str(&format!(
+                "| {} | {} | {} |\n",
+                col.name,
+                col.sql_type,
+                constraints.join(", ")
+            ));
+        }
+
+        HoverResult {
+            contents: content,
+            range: None,
+        }
+    }
+
+    /// Find the table name from a context value by looking for a "from" field.
+    fn find_table_in_context(context: &styx_tree::Value) -> Option<String> {
+        debug!(
+            tag = ?context.tag,
+            has_payload = context.payload.is_some(),
+            "find_table_in_context"
+        );
+
+        // Look for a "from" field in the context object
+        if let Some(obj) = context.as_object() {
+            debug!(entries = obj.entries.len(), "checking as_object");
+            for entry in &obj.entries {
+                let key = entry.key.as_str();
+                debug!(?key, "checking entry");
+                if key == Some("from") {
+                    let table = entry.value.as_str().map(|s| s.to_string());
+                    debug!(?table, "found from field");
+                    return table;
+                }
+            }
+        }
+
+        // Also check inside tagged payloads (e.g., @query{...})
+        if let Some(styx_tree::Payload::Object(obj)) = &context.payload {
+            debug!(entries = obj.entries.len(), "checking payload object");
+            for entry in &obj.entries {
+                let key = entry.key.as_str();
+                debug!(?key, "checking payload entry");
+                if key == Some("from") {
+                    let table = entry.value.as_str().map(|s| s.to_string());
+                    debug!(?table, "found from in payload");
+                    return table;
+                }
+            }
+        }
+
+        debug!("no table found");
+        None
+    }
+
     /// Get completions for column names of a specific table.
-    fn column_completions(&self, table_name: &str, prefix: &str) -> Vec<CompletionItem> {
-        let Some(table) = self.schema.tables.iter().find(|t| t.name == table_name) else {
+    async fn column_completions(&self, table_name: &str, prefix: &str) -> Vec<CompletionItem> {
+        let schema = self.schema().await;
+        let Some(table) = schema.tables.iter().find(|t| t.name == table_name) else {
             return Vec::new();
         };
 
@@ -150,7 +503,7 @@ impl DibsExtension {
             .iter()
             .filter(|c| c.name.starts_with(prefix) || prefix.is_empty())
             .map(|c| {
-                let mut detail = c.pg_type.to_string();
+                let mut detail = c.sql_type.to_string();
                 if c.primary_key {
                     detail.push_str(" PK");
                 }
@@ -161,10 +514,51 @@ impl DibsExtension {
                 CompletionItem {
                     label: c.name.clone(),
                     detail: Some(detail),
-                    documentation: None,
+                    documentation: c.doc.clone(),
                     kind: Some(CompletionKind::Field),
                     sort_text: None,
                     insert_text: None,
+                }
+            })
+            .collect()
+    }
+
+    /// Get completions for query structure fields (from, select, where, etc.)
+    fn query_field_completions(&self, prefix: &str, is_rel: bool) -> Vec<CompletionItem> {
+        use facet_styx::{Documented, ObjectKey, ObjectSchema, Schema, SchemaFile};
+
+        // Generate schema string from the QueryFile type
+        let schema_str = facet_styx::schema_from_type::<dibs_query_schema::QueryFile>();
+
+        // Parse it back into a SchemaFile
+        let Ok(schema_file) = facet_styx::from_str::<SchemaFile>(&schema_str) else {
+            return Vec::new();
+        };
+
+        let type_name = if is_rel { "Relation" } else { "Query" };
+
+        let Some(Schema::Object(ObjectSchema(fields))) =
+            schema_file.schema.get(&Some(type_name.to_string()))
+        else {
+            return Vec::new();
+        };
+
+        fields
+            .iter()
+            .filter_map(|(key, _schema): (&Documented<ObjectKey>, &Schema)| {
+                let name = key.name()?;
+                if name.starts_with(prefix) || prefix.is_empty() {
+                    let doc = key.doc().map(|lines: &[String]| lines.join("\n"));
+                    Some(CompletionItem {
+                        label: name.to_string(),
+                        detail: None,
+                        documentation: doc,
+                        kind: Some(CompletionKind::Keyword),
+                        sort_text: None,
+                        insert_text: None,
+                    })
+                } else {
+                    None
                 }
             })
             .collect()
@@ -179,14 +573,38 @@ impl StyxLspExtension for DibsExtension {
             "Initializing dibs extension"
         );
 
+        // Try to connect to the service and fetch the schema
+        let schema = match connect_and_fetch_schema(&params.document_uri).await {
+            Ok(state) => {
+                let schema_tables = state.schema.tables.len();
+                info!(
+                    tables = schema_tables,
+                    "Connected to service, fetched schema"
+                );
+                let mut guard = self.state.write().await;
+                *guard = Some(state);
+                schema_tables
+            }
+            Err(e) => {
+                error!(error = %e, "Failed to connect to service");
+                0
+            }
+        };
+
         InitializeResult {
             name: "dibs".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            capabilities: vec![
-                Capability::Completions,
-                Capability::Hover,
-                Capability::Diagnostics,
-            ],
+            capabilities: if schema > 0 {
+                vec![
+                    Capability::Completions,
+                    Capability::Hover,
+                    Capability::Diagnostics,
+                    Capability::InlayHints,
+                ]
+            } else {
+                // No schema = no capabilities
+                vec![]
+            },
         }
     }
 
@@ -202,19 +620,51 @@ impl StyxLspExtension for DibsExtension {
             return Vec::new();
         }
 
+        // Get the last segment and the second-to-last (parent)
         let last = params.path.last().map(|s| s.as_str()).unwrap_or("");
+        let parent = if params.path.len() >= 2 {
+            params.path.get(params.path.len() - 2).map(|s| s.as_str())
+        } else {
+            None
+        };
 
-        match last {
+        // Check if the last segment is a partial input (same as prefix)
+        // In that case, use the parent to determine context
+        let context_key = if !params.prefix.is_empty() && last == params.prefix {
+            parent.unwrap_or(last)
+        } else {
+            last
+        };
+
+        match context_key {
+            // Inside a @query or @rel block - offer query structure fields
+            "@query" => self.query_field_completions(&params.prefix, false),
+            "@rel" => self.query_field_completions(&params.prefix, true),
+
             // Table references
-            "from" | "table" | "join" => self.table_completions(&params.prefix),
+            "from" | "table" | "join" => self.table_completions(&params.prefix).await,
 
             // Column references - need to know which table
             "select" | "where" | "order_by" | "group_by" => {
-                // Try to find a "from" or "table" in the context to determine the table
-                // For now, return all columns from all tables as a fallback
+                // Try tagged_context first (the @query block) - most reliable
+                if let Some(tagged) = &params.tagged_context {
+                    if let Some(table_name) = Self::find_table_in_context(tagged) {
+                        return self.column_completions(&table_name, &params.prefix).await;
+                    }
+                }
+
+                // Fallback to direct context
+                if let Some(context) = &params.context {
+                    if let Some(table_name) = Self::find_table_in_context(context) {
+                        return self.column_completions(&table_name, &params.prefix).await;
+                    }
+                }
+
+                // Last resort: return all columns from all tables
+                let schema = self.schema().await;
                 let mut items = Vec::new();
-                for table in &self.schema.tables {
-                    items.extend(self.column_completions(&table.name, &params.prefix));
+                for table in &schema.tables {
+                    items.extend(self.column_completions(&table.name, &params.prefix).await);
                 }
                 items
             }
@@ -224,63 +674,95 @@ impl StyxLspExtension for DibsExtension {
     }
 
     async fn hover(&self, params: HoverParams) -> Option<HoverResult> {
-        debug!(path = ?params.path, "Hover request");
+        debug!(
+            path = ?params.path,
+            context = ?params.context,
+            tagged_context = ?params.tagged_context,
+            "Hover request"
+        );
 
         // Try to provide hover info for table/column names
         if params.path.is_empty() {
             return None;
         }
 
-        // Check if we're hovering over a table name
         let last = params.path.last()?;
-        if let Some(table) = self.schema.tables.iter().find(|t| t.name == *last) {
-            let mut content = format!("**Table `{}`**\n\n", table.name);
+        let schema = self.schema().await;
 
-            if let Some(doc) = &table.doc {
-                content.push_str(doc);
-                content.push_str("\n\n");
+        // Try to find the table from tagged_context first (the @query block)
+        // This is the most reliable way to get context
+        let table_from_tagged = params
+            .tagged_context
+            .as_ref()
+            .and_then(|tc| Self::find_table_in_context(tc));
+
+        // If the last path segment is "from", "table", or "join", we're hovering over a table reference
+        if matches!(last.as_str(), "from" | "table" | "join") {
+            if let Some(ref table_name) = table_from_tagged {
+                if let Some(table) = schema.tables.iter().find(|t| t.name == *table_name) {
+                    return Some(Self::table_hover(table));
+                }
             }
+        }
 
-            content.push_str("| Column | Type | Constraints |\n");
-            content.push_str("|--------|------|-------------|\n");
+        // Check if we're hovering over a table name directly
+        if let Some(table) = schema.tables.iter().find(|t| t.name == *last) {
+            return Some(Self::table_hover(table));
+        }
 
-            for col in &table.columns {
-                let mut constraints = Vec::new();
-                if col.primary_key {
-                    constraints.push("PK");
-                }
-                if col.unique {
-                    constraints.push("UNIQUE");
-                }
-                if !col.nullable {
-                    constraints.push("NOT NULL");
-                }
-
-                content.push_str(&format!(
-                    "| {} | {} | {} |\n",
-                    col.name,
-                    col.pg_type,
-                    constraints.join(", ")
-                ));
+        // Check if we're hovering over a column name - use tagged_context to find the table
+        if let Some(table_name) = table_from_tagged {
+            if let Some(result) = self.column_hover(last, &table_name).await {
+                return Some(result);
             }
+        }
 
-            return Some(HoverResult {
-                contents: content,
-                range: None,
-            });
+        // Fallback: try the direct context
+        if let Some(context) = &params.context {
+            if let Some(table_name) = Self::find_table_in_context(context) {
+                if let Some(result) = self.column_hover(last, &table_name).await {
+                    return Some(result);
+                }
+            }
         }
 
         None
     }
 
-    async fn inlay_hints(&self, _params: InlayHintParams) -> Vec<InlayHint> {
-        // Not implemented yet
-        Vec::new()
+    async fn inlay_hints(&self, params: InlayHintParams) -> Vec<InlayHint> {
+        debug!(range = ?params.range, "Inlay hints request");
+
+        let mut hints = Vec::new();
+
+        // We need the context to find column references and their types
+        let Some(context) = params.context else {
+            debug!("No context provided for inlay hints");
+            return hints;
+        };
+
+        debug!(
+            has_tag = context.tag.is_some(),
+            has_payload = context.payload.is_some(),
+            "Inlay hints context"
+        );
+
+        // Find all @query blocks and add type hints for columns
+        self.collect_inlay_hints(&context, &mut hints).await;
+
+        debug!(count = hints.len(), "Returning inlay hints");
+        hints
     }
 
-    async fn diagnostics(&self, _params: DiagnosticParams) -> Vec<Diagnostic> {
-        // Not implemented yet - could validate table/column references
-        Vec::new()
+    async fn diagnostics(&self, params: DiagnosticParams) -> Vec<Diagnostic> {
+        debug!("Diagnostics request");
+
+        let mut diagnostics = Vec::new();
+
+        // Find all @query blocks and validate references
+        self.collect_diagnostics(&params.tree, &mut diagnostics)
+            .await;
+
+        diagnostics
     }
 
     async fn code_actions(&self, _params: CodeActionParams) -> Vec<CodeAction> {
@@ -290,5 +772,139 @@ impl StyxLspExtension for DibsExtension {
 
     async fn shutdown(&self) {
         info!("Shutdown requested");
+    }
+}
+
+/// Connect to the service and fetch the schema.
+///
+/// This uses the same mechanism as the TUI:
+/// 1. Find `.config/dibs.styx` starting from the document's directory
+/// 2. Connect to the service specified in the config
+/// 3. Fetch the schema via RPC
+async fn connect_and_fetch_schema(document_uri: &str) -> Result<ExtensionState, String> {
+    // Parse the URI to get the file path
+    let path = if document_uri.starts_with("file://") {
+        Path::new(&document_uri[7..])
+    } else {
+        Path::new(document_uri)
+    };
+
+    // Get the directory containing the document
+    let dir = path.parent().ok_or("Document has no parent directory")?;
+
+    info!(dir = %dir.display(), "Looking for config starting from document directory");
+
+    // Load the config
+    let (cfg, config_path) =
+        config::load_from(dir).map_err(|e| format!("Failed to load config: {}", e))?;
+
+    info!(config_path = %config_path.display(), "Found config");
+
+    // Change to the config directory so relative paths work
+    let config_dir = config_path
+        .parent()
+        .and_then(|p| p.parent())
+        .ok_or("Config path has no parent")?;
+
+    std::env::set_current_dir(config_dir)
+        .map_err(|e| format!("Failed to change directory: {}", e))?;
+
+    info!(cwd = %config_dir.display(), "Changed working directory");
+
+    // Connect to the service
+    let connection = service::connect_to_service(&cfg)
+        .await
+        .map_err(|e| format!("Failed to connect to service: {}", e))?;
+
+    info!("Connected to service");
+
+    // Fetch the schema
+    let client = connection.client();
+    let schema_info = client
+        .schema()
+        .await
+        .map_err(|e| format!("Failed to fetch schema: {}", e))?;
+
+    info!(tables = schema_info.tables.len(), "Fetched schema");
+
+    Ok(ExtensionState {
+        schema: schema_info,
+        connection,
+    })
+}
+
+/// Convert a styx span to an LSP range.
+/// Note: This is a simplified conversion that doesn't compute actual line numbers.
+fn span_to_range(span: &styx_tree::Span) -> Range {
+    // For now, we use character offsets as "character" positions
+    // A proper implementation would need the source text to compute line numbers
+    Range {
+        start: Position {
+            line: 0,
+            character: span.start,
+        },
+        end: Position {
+            line: 0,
+            character: span.end,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_query_field_completions_from_schema() {
+        // Generate schema from QueryFile type
+        let schema_str = facet_styx::schema_from_type::<dibs_query_schema::QueryFile>();
+
+        // Parse it back
+        let schema_file: facet_styx::SchemaFile =
+            facet_styx::from_str(&schema_str).expect("should parse schema");
+
+        // Verify Query type exists and has expected fields
+        let query_schema = schema_file
+            .schema
+            .get(&Some("Query".to_string()))
+            .expect("should have Query type");
+
+        if let facet_styx::Schema::Object(facet_styx::ObjectSchema(fields)) = query_schema {
+            let field_names: Vec<_> = fields.keys().filter_map(|k| k.name()).collect();
+
+            assert!(
+                field_names.contains(&"from"),
+                "Query should have 'from' field"
+            );
+            assert!(
+                field_names.contains(&"select"),
+                "Query should have 'select' field"
+            );
+            assert!(
+                field_names.contains(&"where"),
+                "Query should have 'where' field"
+            );
+            assert!(
+                field_names.contains(&"order_by"),
+                "Query should have 'order_by' field"
+            );
+        } else {
+            panic!("Query should be an object schema");
+        }
+
+        // Verify Relation type exists
+        let relation_schema = schema_file
+            .schema
+            .get(&Some("Relation".to_string()))
+            .expect("should have Relation type");
+
+        if let facet_styx::Schema::Object(facet_styx::ObjectSchema(fields)) = relation_schema {
+            let field_names: Vec<_> = fields.keys().filter_map(|k| k.name()).collect();
+
+            assert!(
+                field_names.contains(&"from"),
+                "Relation should have 'from' field"
+            );
+        } else {
+            panic!("Relation should be an object schema");
+        }
     }
 }

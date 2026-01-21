@@ -1,0 +1,21 @@
+[package]
+name = "my-app-db"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "my-app-db"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+dibs.workspace = true
+dotenvy.workspace = true
+facet = { workspace = true, features = ["jiff02", "rust_decimal"] }
+jiff.workspace = true
+rust_decimal.workspace = true
+rust_decimal_macros.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
