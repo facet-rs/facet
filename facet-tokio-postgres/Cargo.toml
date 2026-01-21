@@ -21,6 +21,7 @@ facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
 tokio-postgres = "0.7"
 postgres-types = "0.2"
 rust_decimal = { workspace = true, optional = true, features = ["db-tokio-postgres"] }
+jiff = { version = "0.2", optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet" }
@@ -40,7 +41,7 @@ test-postgres = []
 # Enable UUID support
 uuid = ["facet-core/uuid"]
 # Enable jiff timestamp support
-jiff02 = ["facet-core/jiff02"]
+jiff02 = ["dep:jiff", "facet-core/jiff02", "tokio-postgres/with-jiff-0_2", "postgres-types/with-jiff-0_2"]
 # Enable chrono timestamp support
 chrono = ["facet-core/chrono"]
 # Enable time crate support

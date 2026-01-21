@@ -494,11 +494,9 @@ async fn test_timestamp() {
         .await
         .unwrap();
 
+    // Use native TIMESTAMPTZ deserialization (not to_char string conversion)
     let row = client
-        .query_one(
-            "SELECT id, to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at FROM events",
-            &[],
-        )
+        .query_one("SELECT id, created_at FROM events", &[])
         .await
         .unwrap();
 
@@ -545,9 +543,10 @@ async fn test_optional_timestamp() {
         .await
         .unwrap();
 
+    // Use native TIMESTAMPTZ deserialization (not to_char string conversion)
     let rows = client
         .query(
-            "SELECT id, to_char(deleted_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as deleted_at FROM optional_timestamps ORDER BY id",
+            "SELECT id, deleted_at FROM optional_timestamps ORDER BY id",
             &[],
         )
         .await
@@ -563,6 +562,48 @@ async fn test_optional_timestamp() {
     let without_timestamp: OptionalTimestamp = from_row(&rows[1]).unwrap();
     assert_eq!(without_timestamp.id, 2);
     assert_eq!(without_timestamp.deleted_at, None);
+}
+
+#[cfg(feature = "jiff02")]
+#[tokio::test]
+async fn test_civil_datetime() {
+    use jiff::civil::DateTime;
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct LocalEvent {
+        id: i32,
+        scheduled_at: DateTime,
+    }
+
+    let handle = setup_postgres().await;
+    let client = &handle.client;
+
+    client
+        .execute(
+            "CREATE TABLE local_events (id INTEGER, scheduled_at TIMESTAMP)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    client
+        .execute(
+            "INSERT INTO local_events VALUES (1, '2024-06-19T15:22:45'::timestamp)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    // Use native TIMESTAMP deserialization (without timezone)
+    let row = client
+        .query_one("SELECT id, scheduled_at FROM local_events", &[])
+        .await
+        .unwrap();
+
+    let event: LocalEvent = from_row(&row).unwrap();
+
+    assert_eq!(event.id, 1);
+    assert_eq!(event.scheduled_at, "2024-06-19T15:22:45".parse().unwrap());
 }
 
 #[cfg(feature = "chrono")]

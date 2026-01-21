@@ -306,6 +306,20 @@ fn deserialize_column<'p>(
             partial = partial.set(val)?;
         }
 
+        // jiff::Timestamp for TIMESTAMPTZ columns
+        #[cfg(feature = "jiff02")]
+        _ if shape.type_identifier == "Timestamp" && shape.module_path == Some("jiff") => {
+            let val: jiff::Timestamp = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
+        }
+
+        // jiff::civil::DateTime for TIMESTAMP (without timezone) columns
+        #[cfg(feature = "jiff02")]
+        _ if shape.type_identifier == "DateTime" && shape.module_path == Some("jiff") => {
+            let val: jiff::civil::DateTime = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
+        }
+
         // Fallback: try to use parse if the type supports it
         _ => {
             if shape.vtable.has_parse() {
@@ -440,6 +454,18 @@ fn deserialize_option_column<'p>(
         _ if inner_shape.type_identifier == "String" => try_option!(String),
         #[cfg(feature = "rust_decimal")]
         _ if inner_shape.type_identifier == "Decimal" => try_option!(rust_decimal::Decimal),
+        #[cfg(feature = "jiff02")]
+        _ if inner_shape.type_identifier == "Timestamp"
+            && inner_shape.module_path == Some("jiff") =>
+        {
+            try_option!(jiff::Timestamp)
+        }
+        #[cfg(feature = "jiff02")]
+        _ if inner_shape.type_identifier == "DateTime"
+            && inner_shape.module_path == Some("jiff") =>
+        {
+            try_option!(jiff::civil::DateTime)
+        }
         _ => {}
     }
 
