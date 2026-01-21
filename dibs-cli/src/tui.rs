@@ -111,40 +111,40 @@ fn format_sql_error(err: &SqlError) -> String {
     if let Some(caller) = &err.caller {
         if let Some((file_path, line, _col)) = parse_caller_location(caller) {
             // Try to resolve the path and read the source file
-            if let Some(resolved_path) = resolve_source_path(&file_path) {
-                if let Ok(source) = std::fs::read_to_string(&resolved_path) {
-                    // Calculate byte offset for the line
-                    if let Some(byte_offset) = line_to_byte_offset(&source, line) {
-                        let mut output = Vec::new();
+            if let Some(resolved_path) = resolve_source_path(&file_path)
+                && let Ok(source) = std::fs::read_to_string(&resolved_path)
+            {
+                // Calculate byte offset for the line
+                if let Some(byte_offset) = line_to_byte_offset(&source, line) {
+                    let mut output = Vec::new();
 
-                        let builder = Report::build(
-                            ReportKind::Error,
-                            (&file_path, byte_offset..byte_offset + 1),
-                        )
-                        .with_message(&err.message)
-                        .with_config(Config::default().with_color(false))
-                        .with_label(
-                            Label::new((&file_path, byte_offset..byte_offset + 1))
-                                .with_message(&err.message),
-                        );
+                    let builder = Report::build(
+                        ReportKind::Error,
+                        (&file_path, byte_offset..byte_offset + 1),
+                    )
+                    .with_message(&err.message)
+                    .with_config(Config::default().with_color(false))
+                    .with_label(
+                        Label::new((&file_path, byte_offset..byte_offset + 1))
+                            .with_message(&err.message),
+                    );
 
-                        let report = builder.finish();
-                        report
-                            .write((&file_path, Source::from(&source)), &mut output)
-                            .ok();
+                    let report = builder.finish();
+                    report
+                        .write((&file_path, Source::from(&source)), &mut output)
+                        .ok();
 
-                        result.push_str(&String::from_utf8_lossy(&output));
+                    result.push_str(&String::from_utf8_lossy(&output));
 
-                        // Add hint/detail if available
-                        if let Some(hint) = &err.hint {
-                            result.push_str(&format!("\nHint: {}", hint));
-                        }
-                        if let Some(detail) = &err.detail {
-                            result.push_str(&format!("\nDetail: {}", detail));
-                        }
-
-                        return result;
+                    // Add hint/detail if available
+                    if let Some(hint) = &err.hint {
+                        result.push_str(&format!("\nHint: {}", hint));
                     }
+                    if let Some(detail) = &err.detail {
+                        result.push_str(&format!("\nDetail: {}", detail));
+                    }
+
+                    return result;
                 }
             }
         }
@@ -643,15 +643,15 @@ impl App {
             }
 
             // Check if the child process exited with an error
-            if let Some(status) = rt.block_on(build_process.check_exit()) {
-                if !status.success() {
-                    self.phase = AppPhase::Failed(format!(
-                        "Build failed with exit code: {}",
-                        status.code().unwrap_or(-1)
-                    ));
-                    // Stay in failed state, let main_loop handle it
-                    return Ok(true);
-                }
+            if let Some(status) = rt.block_on(build_process.check_exit())
+                && !status.success()
+            {
+                self.phase = AppPhase::Failed(format!(
+                    "Build failed with exit code: {}",
+                    status.code().unwrap_or(-1)
+                ));
+                // Stay in failed state, let main_loop handle it
+                return Ok(true);
             }
 
             // Try to accept a connection
@@ -677,33 +677,32 @@ impl App {
             }
 
             // Handle input (with short timeout for responsiveness)
-            if event::poll(Duration::from_millis(50))? {
-                if let Event::Key(key) = event::read()?
-                    && key.kind == KeyEventKind::Press
-                {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => return Ok(false),
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            self.build_auto_scroll = false;
-                            self.build_scroll = self.build_scroll.saturating_sub(1);
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            if self.build_scroll < self.build_output.len().saturating_sub(1) {
-                                self.build_scroll += 1;
-                            } else {
-                                self.build_auto_scroll = true;
-                            }
-                        }
-                        KeyCode::Char('G') => {
-                            self.build_scroll = self.build_output.len().saturating_sub(1);
+            if event::poll(Duration::from_millis(50))?
+                && let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press
+            {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(false),
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.build_auto_scroll = false;
+                        self.build_scroll = self.build_scroll.saturating_sub(1);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if self.build_scroll < self.build_output.len().saturating_sub(1) {
+                            self.build_scroll += 1;
+                        } else {
                             self.build_auto_scroll = true;
                         }
-                        KeyCode::Char('g') => {
-                            self.build_scroll = 0;
-                            self.build_auto_scroll = false;
-                        }
-                        _ => {}
                     }
+                    KeyCode::Char('G') => {
+                        self.build_scroll = self.build_output.len().saturating_sub(1);
+                        self.build_auto_scroll = true;
+                    }
+                    KeyCode::Char('g') => {
+                        self.build_scroll = 0;
+                        self.build_auto_scroll = false;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1125,114 +1124,108 @@ impl App {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         // If we have caller location, show highlighted source
-        if let Some(caller) = &sql_err.caller {
-            if let Some((file_path, line_num, col)) = parse_caller_location(caller) {
-                if let Some(resolved_path) = resolve_source_path(&file_path) {
-                    if let Ok(source) = std::fs::read_to_string(&resolved_path) {
-                        // Error header
+        if let Some(caller) = &sql_err.caller
+            && let Some((file_path, line_num, col)) = parse_caller_location(caller)
+            && let Some(resolved_path) = resolve_source_path(&file_path)
+            && let Ok(source) = std::fs::read_to_string(&resolved_path)
+        {
+            // Error header
+            lines.push(Line::from(vec![
+                Span::styled("Error: ", Style::default().fg(Color::Red).bold()),
+                Span::styled(sql_err.message.clone(), Style::default().fg(Color::White)),
+            ]));
+
+            // File location
+            lines.push(Line::from(vec![
+                Span::styled("   --> ", Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{}:{}:{}", file_path, line_num, col),
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+
+            lines.push(Line::from(""));
+
+            // Get highlighted source lines
+            let highlighted =
+                highlight_to_lines(&mut self.highlighter, &self.theme, "rust", &source);
+
+            // Get the source lines for finding leading whitespace
+            let source_lines: Vec<&str> = source.lines().collect();
+
+            // Show context: 2 lines before, error line, 2 lines after
+            let start = line_num.saturating_sub(3);
+            let end = (line_num + 2).min(highlighted.len());
+
+            for (i, hl_line) in highlighted.iter().enumerate() {
+                let display_line = i + 1; // 1-indexed
+                if display_line >= start && display_line <= end {
+                    let line_num_str = format!("{:4} ", display_line);
+                    let is_error_line = display_line == line_num;
+
+                    let mut spans = vec![Span::styled(
+                        line_num_str,
+                        Style::default().fg(Color::DarkGray),
+                    )];
+
+                    if is_error_line {
+                        spans.insert(
+                            0,
+                            Span::styled("> ", Style::default().fg(Color::Red).bold()),
+                        );
+                    } else {
+                        spans.insert(0, Span::styled("  ", Style::default()));
+                    }
+
+                    // Add the highlighted content
+                    spans.extend(hl_line.spans.iter().cloned());
+
+                    lines.push(Line::from(spans));
+
+                    // Add error pointer under the error line
+                    if is_error_line {
+                        // Point to first non-whitespace char instead of track_caller col
+                        // (track_caller col points to `?` which isn't helpful)
+                        let effective_col = source_lines
+                            .get(line_num - 1)
+                            .map(|line| {
+                                line.chars().take_while(|c| c.is_whitespace()).count() + 1 // 1-indexed
+                            })
+                            .unwrap_or(col);
+
+                        // Prefix is: "> " (2) + "{:4} " line number (5) = 7 chars
+                        let padding = " ".repeat(7 + effective_col.saturating_sub(1));
                         lines.push(Line::from(vec![
-                            Span::styled("Error: ", Style::default().fg(Color::Red).bold()),
                             Span::styled(
-                                sql_err.message.clone(),
-                                Style::default().fg(Color::White),
+                                format!("{}^", padding),
+                                Style::default().fg(Color::Red).bold(),
+                            ),
+                            Span::styled(
+                                format!(" {}", sql_err.message),
+                                Style::default().fg(Color::Red),
                             ),
                         ]));
-
-                        // File location
-                        lines.push(Line::from(vec![
-                            Span::styled("   --> ", Style::default().fg(Color::Cyan)),
-                            Span::styled(
-                                format!("{}:{}:{}", file_path, line_num, col),
-                                Style::default().fg(Color::White),
-                            ),
-                        ]));
-
-                        lines.push(Line::from(""));
-
-                        // Get highlighted source lines
-                        let highlighted =
-                            highlight_to_lines(&mut self.highlighter, &self.theme, "rust", &source);
-
-                        // Get the source lines for finding leading whitespace
-                        let source_lines: Vec<&str> = source.lines().collect();
-
-                        // Show context: 2 lines before, error line, 2 lines after
-                        let start = line_num.saturating_sub(3);
-                        let end = (line_num + 2).min(highlighted.len());
-
-                        for (i, hl_line) in highlighted.iter().enumerate() {
-                            let display_line = i + 1; // 1-indexed
-                            if display_line >= start && display_line <= end {
-                                let line_num_str = format!("{:4} ", display_line);
-                                let is_error_line = display_line == line_num;
-
-                                let mut spans = vec![Span::styled(
-                                    line_num_str,
-                                    Style::default().fg(Color::DarkGray),
-                                )];
-
-                                if is_error_line {
-                                    spans.insert(
-                                        0,
-                                        Span::styled("> ", Style::default().fg(Color::Red).bold()),
-                                    );
-                                } else {
-                                    spans.insert(0, Span::styled("  ", Style::default()));
-                                }
-
-                                // Add the highlighted content
-                                spans.extend(hl_line.spans.iter().cloned());
-
-                                lines.push(Line::from(spans));
-
-                                // Add error pointer under the error line
-                                if is_error_line {
-                                    // Point to first non-whitespace char instead of track_caller col
-                                    // (track_caller col points to `?` which isn't helpful)
-                                    let effective_col = source_lines
-                                        .get(line_num - 1)
-                                        .map(|line| {
-                                            line.chars().take_while(|c| c.is_whitespace()).count()
-                                                + 1 // 1-indexed
-                                        })
-                                        .unwrap_or(col);
-
-                                    // Prefix is: "> " (2) + "{:4} " line number (5) = 7 chars
-                                    let padding = " ".repeat(7 + effective_col.saturating_sub(1));
-                                    lines.push(Line::from(vec![
-                                        Span::styled(
-                                            format!("{}^", padding),
-                                            Style::default().fg(Color::Red).bold(),
-                                        ),
-                                        Span::styled(
-                                            format!(" {}", sql_err.message),
-                                            Style::default().fg(Color::Red),
-                                        ),
-                                    ]));
-                                }
-                            }
-                        }
-
-                        // Add hint/detail
-                        if let Some(hint) = &sql_err.hint {
-                            lines.push(Line::from(""));
-                            lines.push(Line::from(vec![
-                                Span::styled("Hint: ", Style::default().fg(Color::Cyan).bold()),
-                                Span::styled(hint.clone(), Style::default().fg(Color::White)),
-                            ]));
-                        }
-                        if let Some(detail) = &sql_err.detail {
-                            lines.push(Line::from(vec![
-                                Span::styled("Detail: ", Style::default().fg(Color::Yellow).bold()),
-                                Span::styled(detail.clone(), Style::default().fg(Color::White)),
-                            ]));
-                        }
-
-                        self.show_error_lines(lines);
-                        return;
                     }
                 }
             }
+
+            // Add hint/detail
+            if let Some(hint) = &sql_err.hint {
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![
+                    Span::styled("Hint: ", Style::default().fg(Color::Cyan).bold()),
+                    Span::styled(hint.clone(), Style::default().fg(Color::White)),
+                ]));
+            }
+            if let Some(detail) = &sql_err.detail {
+                lines.push(Line::from(vec![
+                    Span::styled("Detail: ", Style::default().fg(Color::Yellow).bold()),
+                    Span::styled(detail.clone(), Style::default().fg(Color::White)),
+                ]));
+            }
+
+            self.show_error_lines(lines);
+            return;
         }
 
         // Fallback to plain text
@@ -1272,13 +1265,13 @@ impl App {
                     }
                 } else if desc.starts_with("~ ") {
                     // Type or other change: "~ column: OLD -> NEW"
-                    if let Some(rest) = desc.strip_prefix("~ ") {
-                        if let Some((col, change_desc)) = rest.split_once(':') {
-                            if let Some((_, new_type)) = change_desc.split_once(" -> ") {
-                                type_changes.push((&td.table, col.trim(), new_type.trim()));
-                            } else {
-                                _other_changes = true;
-                            }
+                    if let Some(rest) = desc.strip_prefix("~ ")
+                        && let Some((col, change_desc)) = rest.split_once(':')
+                    {
+                        if let Some((_, new_type)) = change_desc.split_once(" -> ") {
+                            type_changes.push((&td.table, col.trim(), new_type.trim()));
+                        } else {
+                            _other_changes = true;
                         }
                     }
                 } else {
@@ -1296,7 +1289,7 @@ impl App {
             if new_tables.len() == 1 {
                 return format!("create-{}", new_tables[0]);
             } else {
-                return format!("create-tables");
+                return "create-tables".to_string();
             }
         }
 
@@ -1308,7 +1301,7 @@ impl App {
             if dropped_tables.len() == 1 {
                 return format!("drop-{}", dropped_tables[0]);
             } else {
-                return format!("drop-tables");
+                return "drop-tables".to_string();
             }
         }
 
@@ -1758,21 +1751,21 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
     fn move_down(&mut self) {
         match self.tab {
             Tab::Schema => {
-                if let Some(schema) = &self.schema {
-                    if self.selected_table < schema.tables.len().saturating_sub(1) {
-                        self.selected_table += 1;
-                        self.table_state.select(Some(self.selected_table));
-                        self.details_selection = 0;
-                        self.details_scroll = 0;
-                    }
+                if let Some(schema) = &self.schema
+                    && self.selected_table < schema.tables.len().saturating_sub(1)
+                {
+                    self.selected_table += 1;
+                    self.table_state.select(Some(self.selected_table));
+                    self.details_selection = 0;
+                    self.details_scroll = 0;
                 }
             }
             Tab::Migrations => {
-                if let Some(migrations) = &self.migrations {
-                    if self.selected_migration < migrations.len().saturating_sub(1) {
-                        self.selected_migration += 1;
-                        self.migration_state.select(Some(self.selected_migration));
-                    }
+                if let Some(migrations) = &self.migrations
+                    && self.selected_migration < migrations.len().saturating_sub(1)
+                {
+                    self.selected_migration += 1;
+                    self.migration_state.select(Some(self.selected_migration));
                 }
             }
             Tab::Diff => {}
@@ -2699,17 +2692,16 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
 
 fn mask_db_url(url: &str) -> String {
     // Mask password in URL
-    if let Some(at) = url.find('@') {
-        if let Some(colon) = url[..at].rfind(':') {
-            if let Some(slash) = url[..colon].rfind('/') {
-                let prefix = &url[..slash + 1];
-                let user_start = slash + 1;
-                if let Some(user_colon) = url[user_start..colon].find(':') {
-                    let user = &url[user_start..user_start + user_colon];
-                    let suffix = &url[at..];
-                    return format!("{}{}:***{}", prefix, user, suffix);
-                }
-            }
+    if let Some(at) = url.find('@')
+        && let Some(colon) = url[..at].rfind(':')
+        && let Some(slash) = url[..colon].rfind('/')
+    {
+        let prefix = &url[..slash + 1];
+        let user_start = slash + 1;
+        if let Some(user_colon) = url[user_start..colon].find(':') {
+            let user = &url[user_start..user_start + user_colon];
+            let suffix = &url[at..];
+            return format!("{}{}:***{}", prefix, user, suffix);
         }
     }
     url.to_string()

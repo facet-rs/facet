@@ -54,14 +54,12 @@ impl ServiceConnection {
         let entries = std::fs::read_dir(migrations_dir).ok()?;
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-                if let Ok(meta) = path.metadata() {
-                    if let Ok(mtime) = meta.modified() {
-                        if mtime > binary_mtime {
-                            return Some(path);
-                        }
-                    }
-                }
+            if path.extension().and_then(|e| e.to_str()) == Some("rs")
+                && let Ok(meta) = path.metadata()
+                && let Ok(mtime) = meta.modified()
+                && mtime > binary_mtime
+            {
+                return Some(path);
             }
         }
 
@@ -115,10 +113,9 @@ pub async fn connect_to_service(config: &Config) -> Result<ServiceConnection, Se
         .map_err(|e| ServiceError::Connection(format!("Failed to accept connection: {}", e)))?;
 
     // Establish roam session (we're the acceptor)
-    let (handle, _incoming, driver) =
-        accept(stream, HandshakeConfig::default(), NoDispatcher)
-            .await
-            .map_err(|e| ServiceError::Connection(format!("Roam handshake failed: {}", e)))?;
+    let (handle, _incoming, driver) = accept(stream, HandshakeConfig::default(), NoDispatcher)
+        .await
+        .map_err(|e| ServiceError::Connection(format!("Roam handshake failed: {}", e)))?;
 
     // Spawn the driver to handle the connection
     let driver_handle = tokio::spawn(async move {
