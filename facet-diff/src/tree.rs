@@ -98,8 +98,10 @@ pub enum EditOp {
     /// In Chawathe semantics, Insert does NOT shift - it places at a position
     /// and whatever was there gets displaced (detached to a slot for later reinsertion).
     Insert {
-        /// The path where the node was inserted (shadow tree coordinates for DOM operations)
-        path: Path,
+        /// The parent node - either a path in the tree or a slot number
+        parent: NodeRef,
+        /// The position within the parent's children
+        position: usize,
         /// The path in tree_b coordinates (for navigating new_doc to get content)
         label_path: Path,
         /// The value to insert (for leaf nodes), None for containers
@@ -829,13 +831,16 @@ fn convert_ops_with_shadow<'mem, 'facet>(
 
                 b_to_shadow.insert(node_b, new_node);
 
-                // Compute the path: parent's path + position
-                // We use position directly because that's the FINAL position in tree_b,
-                // not the current shadow tree position (which may differ due to placeholders).
-                let parent_path =
-                    compute_path_in_shadow(&shadow_arena, shadow_root, shadow_parent, tree_a);
-                let mut path = parent_path;
-                path.0.push(PathSegment::Index(position));
+                // Determine the parent reference - either a path or a slot
+                let parent = if let Some(&slot) = detached_nodes.get(&shadow_parent) {
+                    // Parent is in a slot
+                    NodeRef::Slot(slot)
+                } else {
+                    // Parent is in the tree - compute its path
+                    let parent_path =
+                        compute_path_in_shadow(&shadow_arena, shadow_root, shadow_parent, tree_a);
+                    NodeRef::Path(parent_path)
+                };
 
                 // Extract value for leaf nodes using the tree_b label path
                 let label_path = tree_b
@@ -847,7 +852,8 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 let value = extract_value_at_path(peek_b, &label_path);
 
                 let edit_op = EditOp::Insert {
-                    path,
+                    parent,
+                    position,
                     label_path,
                     value,
                     detach_to_slot,

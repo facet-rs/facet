@@ -34,8 +34,8 @@ pub enum Patch {
     /// Replace node at path with new HTML
     Replace { path: NodePath, html: String },
 
-    /// Replace all children of node at path with new HTML (innerHTML replacement).
-    ReplaceInnerHtml { path: NodePath, html: String },
+    /// Replace all children of node (either at a path or in a slot) with new HTML (innerHTML replacement).
+    ReplaceInnerHtml { node: NodeRef, html: String },
 
     /// Insert HTML before the node at path.
     /// If `detach_to_slot` is Some, the node at path is detached and stored in that slot.
@@ -444,13 +444,15 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
     trace!("translate_op: op={op:?}");
     match op {
         EditOp::Insert {
-            path,
+            parent,
+            position,
             label_path,
             value,
             detach_to_slot,
             ..
         } => translate_insert(
-            &path.0,
+            parent,
+            *position,
             &label_path.0,
             value.as_deref(),
             *detach_to_slot,
@@ -506,7 +508,8 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
 /// `label_segments` is the label_path - full type navigation path with Variants.
 /// `detach_to_slot` - if Some, the displaced node goes to this slot.
 fn translate_insert(
-    segments: &[PathSegment],
+    parent: &facet_diff::NodeRef,
+    position: usize,
     label_segments: &[PathSegment],
     value: Option<&str>,
     detach_to_slot: Option<u32>,
@@ -516,13 +519,17 @@ fn translate_insert(
 
     // Use label_segments for type navigation (has Variant info)
     let nav = navigate_path(label_segments, html_shape);
-    // Use segments for DOM path (Index segments = DOM indices)
-    let dom_path = extract_dom_indices(segments);
 
     trace!(
-        "translate_insert: segments={segments:?}, label_segments={label_segments:?}, dom_path={dom_path:?}, target={:?}, value={value:?}",
+        "translate_insert: parent={parent:?}, position={position}, label_segments={label_segments:?}, target={:?}, value={value:?}",
         nav.target
     );
+
+    // Convert parent NodeRef to our NodeRef, and compute target path/ref
+    let parent_ref = match parent {
+        facet_diff::NodeRef::Path(p) => NodeRef::Path(NodePath(extract_dom_indices(&p.0))),
+        facet_diff::NodeRef::Slot(s) => NodeRef::Slot(*s),
+    };
 
     match nav.target {
         PathTarget::Element => {
@@ -530,31 +537,33 @@ fn translate_insert(
             let node_peek = navigate_peek(peek, label_segments)?;
             let html = serialize_to_html(node_peek)?;
 
-            if dom_path.is_empty() {
-                Some(Patch::AppendChild {
-                    path: NodePath(vec![]),
-                    html,
-                })
-            } else {
-                Some(Patch::InsertBefore {
-                    path: NodePath(dom_path),
-                    html,
-                    detach_to_slot,
-                })
+            match parent_ref {
+                NodeRef::Path(parent_path) => {
+                    // Build full path: parent + position
+                    let mut dom_path = parent_path.0;
+                    dom_path.push(position);
+                    Some(Patch::InsertBefore {
+                        path: NodePath(dom_path),
+                        html,
+                        detach_to_slot,
+                    })
+                }
+                NodeRef::Slot(slot) => {
+                    // Parent is in a slot - emit ReplaceInnerHtml on the slot
+                    // (inserting into a slot's children = replacing its innerHTML)
+                    Some(Patch::ReplaceInnerHtml {
+                        node: NodeRef::Slot(slot),
+                        html,
+                    })
+                }
             }
         }
         PathTarget::Attribute(name) => {
-            // For attributes, DOM path is the element path (excluding the last index)
-            let element_dom_path: Vec<usize> = segments
-                .iter()
-                .filter_map(|seg| {
-                    if let PathSegment::Index(idx) = seg {
-                        Some(*idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+            // Attributes go on the parent element
+            let element_path = match &parent_ref {
+                NodeRef::Path(p) => p.clone(),
+                NodeRef::Slot(_) => return None, // Can't set attr on slot directly
+            };
 
             let peek = Peek::new(new_doc);
             if let Some(attr_peek) = navigate_peek(peek, label_segments) {
@@ -568,19 +577,19 @@ fn translate_insert(
                                 .and_then(|inner| inner.as_str().map(|s| s.to_string()))
                         })?;
                         return Some(Patch::SetAttribute {
-                            path: NodePath(element_dom_path),
+                            path: element_path,
                             name,
                             value: attr_value,
                         });
                     } else {
                         return Some(Patch::RemoveAttribute {
-                            path: NodePath(element_dom_path),
+                            path: element_path,
                             name,
                         });
                     }
                 } else if let Some(s) = attr_peek.as_str() {
                     return Some(Patch::SetAttribute {
-                        path: NodePath(element_dom_path),
+                        path: element_path,
                         name,
                         value: s.to_string(),
                     });
@@ -588,39 +597,35 @@ fn translate_insert(
             }
 
             value.map(|v| Patch::SetAttribute {
-                path: NodePath(element_dom_path),
+                path: element_path,
                 name: name.clone(),
                 value: v.to_string(),
             })
         }
         PathTarget::Text => {
-            let element_dom_path = extract_dom_indices(segments);
+            let target_path = match parent_ref {
+                NodeRef::Path(mut p) => {
+                    p.0.push(position);
+                    p
+                }
+                NodeRef::Slot(_) => return None, // Can't set text on slot directly
+            };
             let text = value?.to_string();
             Some(Patch::SetText {
-                path: NodePath(element_dom_path),
+                path: target_path,
                 text,
             })
         }
         PathTarget::FlattenedAttributeStruct => {
-            let element_dom_path = extract_dom_indices(segments);
-            let patches = sync_attrs_from_new_doc(&element_dom_path, label_segments, new_doc);
+            let element_path = match &parent_ref {
+                NodeRef::Path(p) => p.0.clone(),
+                NodeRef::Slot(_) => return None,
+            };
+            let patches = sync_attrs_from_new_doc(&element_path, label_segments, new_doc);
             patches.into_iter().next()
         }
         PathTarget::FlattenedChildrenList => {
-            // DOM path for the element (not including this "transparent" struct)
-            // The path segments before the last Index are the element indices
-            let element_dom_path: Vec<usize> = segments
-                .iter()
-                .filter_map(|seg| {
-                    if let PathSegment::Index(idx) = seg {
-                        Some(*idx)
-                    } else {
-                        None
-                    }
-                })
-                .take(dom_path.len().saturating_sub(1).max(1))
-                .collect();
-
+            // This is inserting a new children list into a parent
             let peek = Peek::new(new_doc);
             if let Some(struct_peek) = navigate_peek(peek, label_segments) {
                 // The struct has flattened children - find and serialize them
@@ -635,7 +640,7 @@ fn translate_insert(
                                     }
                                 }
                                 return Some(Patch::ReplaceInnerHtml {
-                                    path: NodePath(element_dom_path),
+                                    node: parent_ref,
                                     html: children_html,
                                 });
                             }

@@ -447,13 +447,22 @@ fn apply_patch(
                 }
             }
         }
-        Patch::ReplaceInnerHtml { path, html } => {
-            // Replace all children of the node at path
+        Patch::ReplaceInnerHtml {
+            node: node_ref,
+            html,
+        } => {
+            use crate::NodeRef;
+            // Replace all children of the node (either at path or in slot)
             let new_children = parse_html_children(html)?;
-            let node = root
-                .get_mut(&path.0)
-                .ok_or_else(|| format!("ReplaceInnerHtml: node not found at {:?}", path.0))?;
-            match node {
+            let target_node = match node_ref {
+                NodeRef::Path(path) => root
+                    .get_mut(&path.0)
+                    .ok_or_else(|| format!("ReplaceInnerHtml: node not found at {:?}", path.0))?,
+                NodeRef::Slot(slot) => slots
+                    .get_mut(slot)
+                    .ok_or_else(|| format!("ReplaceInnerHtml: slot {slot} not found"))?,
+            };
+            match target_node {
                 Node::Element { children, .. } => {
                     *children = new_children;
                 }
@@ -535,7 +544,8 @@ fn apply_patch(
                         .children_mut(parent_path)
                         .ok_or_else(|| format!("Remove: parent not found at {parent_path:?}"))?;
                     if idx < children.len() {
-                        children.remove(idx);
+                        // Swap with placeholder instead of remove (no shifting!)
+                        children[idx] = Node::Text(String::new());
                     } else {
                         return Err(format!("Remove: index {idx} out of bounds"));
                     }

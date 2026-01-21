@@ -522,3 +522,22 @@ fn swap_with_insert_and_text_change() {
         r#"<html><body><div> </div><span>0</span>0</body></html>"#,
     );
 }
+
+#[test]
+fn proptest_minimal_failure() {
+    // Minimal failing case from proptest
+    // [Div, Text("A"), P("a")] -> [Div]
+    assert_roundtrip(
+        r#"<html><body><div></div>A<p>a</p></body></html>"#,
+        r#"<html><body><div></div></body></html>"#,
+    );
+}
+
+#[test]
+fn proptest_minimal_failure_2() {
+    // [Div(children: [Text("0")])] -> [Text("0"), Div(children: [])]
+    assert_roundtrip(
+        r#"<html><body><div>0</div></body></html>"#,
+        r#"<html><body>0<div></div></body></html>"#,
+    );
+}

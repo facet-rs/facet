@@ -17,7 +17,10 @@ fn get_paths(old: &str, new: &str) -> Vec<Vec<PathSegment>> {
         .into_iter()
         .map(|op| match op {
             EditOp::Update { path, .. } => path.0,
-            EditOp::Insert { path, .. } => path.0,
+            EditOp::Insert { parent, .. } => match parent {
+                facet_diff::NodeRef::Path(p) => p.0,
+                facet_diff::NodeRef::Slot(_) => vec![],
+            },
             EditOp::Delete { node, .. } => match node {
                 facet_diff::NodeRef::Path(p) => p.0,
                 facet_diff::NodeRef::Slot(_) => vec![],
@@ -37,7 +40,16 @@ fn get_ops(old: &str, new: &str) -> Vec<(String, String)> {
         .map(|op| {
             let (kind, path) = match op {
                 EditOp::Update { path, .. } => ("Update", fmt_path(&path.0)),
-                EditOp::Insert { path, .. } => ("Insert", fmt_path(&path.0)),
+                EditOp::Insert {
+                    parent, position, ..
+                } => match parent {
+                    facet_diff::NodeRef::Path(p) => {
+                        ("Insert", format!("{}[{}]", fmt_path(&p.0), position))
+                    }
+                    facet_diff::NodeRef::Slot(s) => {
+                        ("InsertSlot", format!("slot:{}[{}]", s, position))
+                    }
+                },
                 EditOp::Delete { node, .. } => match node {
                     facet_diff::NodeRef::Path(p) => ("Delete", fmt_path(&p.0)),
                     facet_diff::NodeRef::Slot(s) => ("DeleteSlot", format!("slot:{s}")),
@@ -439,7 +451,7 @@ fn single_child_to_empty() {
     );
 
     assert!(
-        ops.iter().any(|(k, _)| k == "Delete"),
-        "Should have Delete operation"
+        ops.iter().any(|(k, _)| k == "Delete" || k == "DeleteSlot"),
+        "Should have Delete or DeleteSlot operation"
     );
 }
