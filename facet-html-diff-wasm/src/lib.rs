@@ -257,7 +257,7 @@ fn parse_html_fragment(doc: &Document, html: &str) -> Result<Node, JsValue> {
     Ok(first_child)
 }
 
-/// Extract the inner content of a <body> tag.
+/// Extract the inner content of a `<body>` tag.
 fn extract_body_inner(html: &str) -> Option<String> {
     let start = html.find("<body")?.checked_add(5)?;
     let after_tag = html.get(start..)?;

@@ -141,7 +141,7 @@ struct PathNavigation {
 /// Navigate a path through the type structure, using metadata to build DOM path.
 ///
 /// facet-diff generates paths that SKIP Options and flattened field names.
-/// So `F(body), I(1), V(P)` means: body field → children[1] → P variant
+/// So `F(body), I(1), V(P)` means: body field → children\[1\] → P variant
 /// The Index(1) is NOT an Option unwrap - it's the children list index.
 ///
 /// The rules:

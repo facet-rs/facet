@@ -26,7 +26,7 @@ use rapidhash::{RapidHashMap as HashMap, RapidHashSet as HashSet};
 use rayon::prelude::*;
 
 #[cfg(feature = "matching-stats")]
-use std::cell::RefCell;
+use core::cell::RefCell;
 
 #[cfg(feature = "matching-stats")]
 thread_local! {
