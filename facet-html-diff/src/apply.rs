@@ -416,14 +416,19 @@ fn convert_attrs(attrs: &facet_html_dom::GlobalAttrs) -> HashMap<String, String>
 
 /// Apply a list of patches to a Node tree in order.
 pub fn apply_patches(root: &mut Node, patches: &[Patch]) -> Result<(), String> {
+    let mut slots: HashMap<u32, Node> = HashMap::new();
     for patch in patches {
-        apply_patch(root, patch)?;
+        apply_patch(root, patch, &mut slots)?;
     }
     Ok(())
 }
 
 /// Apply a single patch.
-fn apply_patch(root: &mut Node, patch: &Patch) -> Result<(), String> {
+fn apply_patch(
+    root: &mut Node,
+    patch: &Patch,
+    slots: &mut HashMap<u32, Node>,
+) -> Result<(), String> {
     match patch {
         Patch::Replace { path, html } => {
             let new_node = parse_html_fragment(html)?;
@@ -539,27 +544,53 @@ fn apply_patch(root: &mut Node, patch: &Patch) -> Result<(), String> {
                 .ok_or_else(|| format!("RemoveAttribute: node not found at {:?}", path.0))?;
             attrs.remove(name);
         }
-        Patch::Move { from, to } => {
-            // Remove the node from the old location
-            if from.0.is_empty() {
-                return Err("Move: cannot move root".to_string());
-            }
-            let from_parent_path = &from.0[..from.0.len() - 1];
-            let from_idx = from.0[from.0.len() - 1];
-            let from_children = root
-                .children_mut(from_parent_path)
-                .ok_or_else(|| format!("Move: source parent not found at {from_parent_path:?}"))?;
-            if from_idx >= from_children.len() {
-                return Err(format!("Move: source index {from_idx} out of bounds"));
-            }
-            let node = from_children.remove(from_idx);
+        Patch::Move {
+            from,
+            to,
+            detach_to_slot,
+        } => {
+            use crate::MoveSource;
 
-            // Insert at the new location
+            // Get the node to move (either from a path or from a slot)
+            let node = match from {
+                MoveSource::Path(from_path) => {
+                    if from_path.0.is_empty() {
+                        return Err("Move: cannot move root".to_string());
+                    }
+                    let from_parent_path = &from_path.0[..from_path.0.len() - 1];
+                    let from_idx = from_path.0[from_path.0.len() - 1];
+                    let from_children = root.children_mut(from_parent_path).ok_or_else(|| {
+                        format!("Move: source parent not found at {from_parent_path:?}")
+                    })?;
+                    if from_idx >= from_children.len() {
+                        return Err(format!("Move: source index {from_idx} out of bounds"));
+                    }
+                    from_children.remove(from_idx)
+                }
+                MoveSource::Slot(slot) => slots
+                    .remove(slot)
+                    .ok_or_else(|| format!("Move: slot {slot} not found"))?,
+            };
+
+            // Check if we need to detach the occupant at the target position
             if to.0.is_empty() {
                 return Err("Move: cannot move to root".to_string());
             }
             let to_parent_path = &to.0[..to.0.len() - 1];
             let to_idx = to.0[to.0.len() - 1];
+
+            if let Some(slot) = detach_to_slot {
+                // Detach the occupant and store in slot
+                let to_children = root.children_mut(to_parent_path).ok_or_else(|| {
+                    format!("Move: target parent not found at {to_parent_path:?}")
+                })?;
+                if to_idx < to_children.len() {
+                    let occupant = to_children.remove(to_idx);
+                    slots.insert(*slot, occupant);
+                }
+            }
+
+            // Insert the node at the target location
             let to_children = root
                 .children_mut(to_parent_path)
                 .ok_or_else(|| format!("Move: target parent not found at {to_parent_path:?}"))?;

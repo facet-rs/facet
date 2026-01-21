@@ -14,7 +14,7 @@ pub use diff::{
 };
 pub use report::DiffReport;
 pub use tree::{
-    EditOp, FacetTree, NodeKind, NodeLabel, SimilarityResult, build_tree,
+    EditOp, FacetTree, MoveSource, NodeKind, NodeLabel, SimilarityResult, build_tree,
     compute_element_similarity, elements_are_similar, tree_diff,
 };
 

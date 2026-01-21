@@ -85,6 +85,73 @@ pub enum EditOp<K, L, P: Properties = NoProperties> {
     },
 }
 
+impl<K: std::fmt::Debug, L: std::fmt::Debug, P: Properties> std::fmt::Display for EditOp<K, L, P>
+where
+    P::Key: std::fmt::Debug,
+    P::Value: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditOp::Update { node_a, node_b, .. } => {
+                write!(
+                    f,
+                    "Update(a:{} → b:{})",
+                    usize::from(*node_a),
+                    usize::from(*node_b)
+                )
+            }
+            EditOp::UpdateProperty {
+                node_a,
+                key,
+                new_value,
+                ..
+            } => {
+                write!(
+                    f,
+                    "UpdateProp(a:{}, {:?}={:?})",
+                    usize::from(*node_a),
+                    key,
+                    new_value
+                )
+            }
+            EditOp::Insert {
+                node_b,
+                parent_b,
+                position,
+                kind,
+                ..
+            } => {
+                write!(
+                    f,
+                    "Insert(b:{} {:?} @{} under b:{})",
+                    usize::from(*node_b),
+                    kind,
+                    position,
+                    usize::from(*parent_b)
+                )
+            }
+            EditOp::Delete { node_a } => {
+                write!(f, "Delete(a:{})", usize::from(*node_a))
+            }
+            EditOp::Move {
+                node_a,
+                node_b,
+                new_parent_b,
+                new_position,
+            } => {
+                write!(
+                    f,
+                    "Move(a:{} → b:{} @{} under b:{})",
+                    usize::from(*node_a),
+                    usize::from(*node_b),
+                    new_position,
+                    usize::from(*new_parent_b)
+                )
+            }
+        }
+    }
+}
+
 /// Generate an edit script from a matching between two trees.
 ///
 /// The edit script transforms tree A into tree B using INSERT, DELETE, UPDATE, MOVE,
@@ -110,7 +177,13 @@ where
         let b_data = tree_b.get(b_id);
 
         if a_data.hash != b_data.hash {
-            debug!(a = usize::from(a_id), b = usize::from(b_id), a_hash = a_data.hash, b_hash = b_data.hash, "emit UPDATE");
+            debug!(
+                a = usize::from(a_id),
+                b = usize::from(b_id),
+                a_hash = a_data.hash,
+                b_hash = b_data.hash,
+                "emit UPDATE"
+            );
             ops.push(EditOp::Update {
                 node_a: a_id,
                 node_b: b_id,
@@ -121,7 +194,11 @@ where
 
         // Phase 1b: Property changes - diff properties for matched nodes
         for change in a_data.properties.diff(&b_data.properties) {
-            debug!(a = usize::from(a_id), b = usize::from(b_id), "emit UpdateProperty");
+            debug!(
+                a = usize::from(a_id),
+                b = usize::from(b_id),
+                "emit UpdateProperty"
+            );
             ops.push(EditOp::UpdateProperty {
                 node_a: a_id,
                 node_b: b_id,
@@ -141,7 +218,12 @@ where
 
             if let Some(parent_b) = parent_b {
                 let pos = tree_b.position(b_id);
-                debug!(b = usize::from(b_id), parent = usize::from(parent_b), pos, "emit INSERT");
+                debug!(
+                    b = usize::from(b_id),
+                    parent = usize::from(parent_b),
+                    pos,
+                    "emit INSERT"
+                );
                 ops.push(EditOp::Insert {
                     node_b: b_id,
                     parent_b,
@@ -174,7 +256,14 @@ where
         let position_changed = pos_a != pos_b;
 
         if parent_changed || position_changed {
-            debug!(a = usize::from(a_id), b = usize::from(b_id), parent_changed, pos_a, pos_b, "emit MOVE");
+            debug!(
+                a = usize::from(a_id),
+                b = usize::from(b_id),
+                parent_changed,
+                pos_a,
+                pos_b,
+                "emit MOVE"
+            );
             ops.push(EditOp::Move {
                 node_a: a_id,
                 node_b: b_id,
@@ -298,18 +387,46 @@ mod tests {
 
         // Debug: print tree structure and matching
         debug!(?tree_a.root, "tree_a root");
-        debug!(?child_a, hash = tree_a.get(child_a).hash, pos = tree_a.position(child_a), "tree_a child_a");
-        debug!(?child_b, hash = tree_a.get(child_b).hash, pos = tree_a.position(child_b), "tree_a child_b");
+        debug!(
+            ?child_a,
+            hash = tree_a.get(child_a).hash,
+            pos = tree_a.position(child_a),
+            "tree_a child_a"
+        );
+        debug!(
+            ?child_b,
+            hash = tree_a.get(child_b).hash,
+            pos = tree_a.position(child_b),
+            "tree_a child_b"
+        );
         debug!(?tree_b.root, "tree_b root");
-        debug!(?child_b2, hash = tree_b.get(child_b2).hash, pos = tree_b.position(child_b2), "tree_b child_b2");
-        debug!(?child_a2, hash = tree_b.get(child_a2).hash, pos = tree_b.position(child_a2), "tree_b child_a2");
+        debug!(
+            ?child_b2,
+            hash = tree_b.get(child_b2).hash,
+            pos = tree_b.position(child_b2),
+            "tree_b child_b2"
+        );
+        debug!(
+            ?child_a2,
+            hash = tree_b.get(child_a2).hash,
+            pos = tree_b.position(child_a2),
+            "tree_b child_a2"
+        );
         for (a, b) in matching.pairs() {
             debug!(?a, ?b, "matching pair");
         }
 
         // Verify matching is correct
-        assert_eq!(matching.get_b(child_a), Some(child_a2), "child_a should match child_a2");
-        assert_eq!(matching.get_b(child_b), Some(child_b2), "child_b should match child_b2");
+        assert_eq!(
+            matching.get_b(child_a),
+            Some(child_a2),
+            "child_a should match child_a2"
+        );
+        assert_eq!(
+            matching.get_b(child_b),
+            Some(child_b2),
+            "child_b should match child_b2"
+        );
 
         // Verify positions in original trees
         assert_eq!(tree_a.position(child_a), 0, "child_a at pos 0 in tree_a");
@@ -327,9 +444,12 @@ mod tests {
         let moves: Vec<_> = ops
             .iter()
             .filter_map(|op| match op {
-                EditOp::Move { node_a, node_b, new_parent_b, new_position } => {
-                    Some((*node_a, *node_b, *new_parent_b, *new_position))
-                }
+                EditOp::Move {
+                    node_a,
+                    node_b,
+                    new_parent_b,
+                    new_position,
+                } => Some((*node_a, *node_b, *new_parent_b, *new_position)),
                 _ => None,
             })
             .collect();
@@ -432,11 +552,23 @@ mod tests {
         }
 
         // Count the ops - with cross-matching we get Insert+Delete instead of Update
-        let updates = ops.iter().filter(|op| matches!(op, EditOp::Update { .. })).count();
-        let inserts = ops.iter().filter(|op| matches!(op, EditOp::Insert { .. })).count();
-        let deletes = ops.iter().filter(|op| matches!(op, EditOp::Delete { .. })).count();
+        let updates = ops
+            .iter()
+            .filter(|op| matches!(op, EditOp::Update { .. }))
+            .count();
+        let inserts = ops
+            .iter()
+            .filter(|op| matches!(op, EditOp::Insert { .. }))
+            .count();
+        let deletes = ops
+            .iter()
+            .filter(|op| matches!(op, EditOp::Delete { .. }))
+            .count();
 
-        debug!("updates={}, inserts={}, deletes={}", updates, inserts, deletes);
+        debug!(
+            "updates={}, inserts={}, deletes={}",
+            updates, inserts, deletes
+        );
 
         // IDEAL: 1 update (id: None -> "foo"), 0 inserts, 0 deletes
         // ACTUAL: likely 1 insert, 1 delete, maybe 1 update
@@ -607,10 +739,7 @@ mod tests {
         let id_change = update_property_ops
             .iter()
             .find(|op| matches!(op, EditOp::UpdateProperty { key: "id", .. }));
-        assert!(
-            id_change.is_some(),
-            "Should have UpdateProperty for 'id'"
-        );
+        assert!(id_change.is_some(), "Should have UpdateProperty for 'id'");
 
         let class_change = update_property_ops
             .iter()

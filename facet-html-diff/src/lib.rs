@@ -17,6 +17,16 @@ use facet_reflect::{HasFields, Peek, PeekStruct};
 #[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
 pub struct NodePath(pub Vec<usize>);
 
+/// Source for a Move operation - either a path or a slot.
+#[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
+#[repr(u8)]
+pub enum MoveSource {
+    /// Move from a path in the DOM
+    Path(NodePath),
+    /// Move from a slot (previously detached node)
+    Slot(u32),
+}
+
 /// Operations to transform the DOM.
 #[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
 #[repr(u8)]
@@ -53,7 +63,12 @@ pub enum Patch {
     RemoveAttribute { path: NodePath, name: String },
 
     /// Move a node from one location to another.
-    Move { from: NodePath, to: NodePath },
+    /// If `detach_to_slot` is Some, the node currently at `to` is detached and stored in that slot.
+    Move {
+        from: MoveSource,
+        to: NodePath,
+        detach_to_slot: Option<u32>,
+    },
 }
 
 /// Diff two HTML documents and return DOM patches.
@@ -438,10 +453,24 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
             .into_iter()
             .collect(),
         EditOp::Move {
-            old_path, new_path, ..
-        } => translate_move(&old_path.0, &new_path.0, new_doc)
-            .into_iter()
-            .collect(),
+            from,
+            to,
+            detach_to_slot,
+            ..
+        } => {
+            let from_source = match from {
+                facet_diff::MoveSource::Path(p) => {
+                    MoveSource::Path(NodePath(extract_dom_indices(&p.0)))
+                }
+                facet_diff::MoveSource::Slot(s) => MoveSource::Slot(*s),
+            };
+            let to_path = NodePath(extract_dom_indices(&to.0));
+            vec![Patch::Move {
+                from: from_source,
+                to: to_path,
+                detach_to_slot: *detach_to_slot,
+            }]
+        }
         EditOp::UpdateAttribute {
             path,
             attr_name,
@@ -661,67 +690,6 @@ fn translate_delete(segments: &[PathSegment], new_doc: &Html) -> Option<Patch> {
         }
         PathTarget::Other => None,
     }
-}
-
-/// Translate a Move operation.
-fn translate_move(
-    old_segments: &[PathSegment],
-    new_segments: &[PathSegment],
-    new_doc: &Html,
-) -> Option<Patch> {
-    let html_shape = <Html as facet_core::Facet>::SHAPE;
-    let old_nav = navigate_path(old_segments, html_shape);
-    let new_nav = navigate_path(new_segments, html_shape);
-
-    trace!(
-        "translate_move: old={old_segments:?} -> new={new_segments:?}, targets={:?} -> {:?}",
-        old_nav.target, new_nav.target
-    );
-
-    // Attribute moves -> SetAttribute/RemoveAttribute
-    if let PathTarget::Attribute(attr_name) = new_nav.target {
-        let peek = Peek::new(new_doc);
-        if let Some(attr_peek) = navigate_peek(peek, new_segments) {
-            if let Ok(opt) = attr_peek.into_option() {
-                if let Some(inner) = opt.value() {
-                    if let Some(s) = inner.as_str() {
-                        return Some(Patch::SetAttribute {
-                            path: NodePath(new_nav.element_dom_path),
-                            name: attr_name,
-                            value: s.to_string(),
-                        });
-                    }
-                } else {
-                    return Some(Patch::RemoveAttribute {
-                        path: NodePath(new_nav.element_dom_path),
-                        name: attr_name,
-                    });
-                }
-            } else if let Some(s) = attr_peek.as_str() {
-                return Some(Patch::SetAttribute {
-                    path: NodePath(new_nav.element_dom_path),
-                    name: attr_name,
-                    value: s.to_string(),
-                });
-            }
-        }
-        return None;
-    }
-
-    // Skip flattened attribute struct moves
-    if matches!(new_nav.target, PathTarget::FlattenedAttributeStruct) {
-        return None;
-    }
-
-    // Element moves -> DOM Move
-    if old_nav.target == PathTarget::Element && new_nav.target == PathTarget::Element {
-        return Some(Patch::Move {
-            from: NodePath(old_nav.dom_path),
-            to: NodePath(new_nav.dom_path),
-        });
-    }
-
-    None
 }
 
 /// Sync all attributes from new_doc for an element.

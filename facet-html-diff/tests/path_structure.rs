@@ -19,7 +19,7 @@ fn get_paths(old: &str, new: &str) -> Vec<Vec<PathSegment>> {
             EditOp::Update { path, .. } => path.0,
             EditOp::Insert { path, .. } => path.0,
             EditOp::Delete { path, .. } => path.0,
-            EditOp::Move { new_path, .. } => new_path.0,
+            EditOp::Move { to, .. } => to.0,
             EditOp::UpdateAttribute { path, .. } => path.0,
             _ => vec![],
         })
@@ -36,7 +36,7 @@ fn get_ops(old: &str, new: &str) -> Vec<(String, String)> {
                 EditOp::Update { path, .. } => ("Update", fmt_path(&path.0)),
                 EditOp::Insert { path, .. } => ("Insert", fmt_path(&path.0)),
                 EditOp::Delete { path, .. } => ("Delete", fmt_path(&path.0)),
-                EditOp::Move { new_path, .. } => ("Move", fmt_path(&new_path.0)),
+                EditOp::Move { to, .. } => ("Move", fmt_path(&to.0)),
                 EditOp::UpdateAttribute { path, .. } => ("UpdateAttr", fmt_path(&path.0)),
                 _ => ("Other", String::new()),
             };

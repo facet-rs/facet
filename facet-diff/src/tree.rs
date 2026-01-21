@@ -105,14 +105,26 @@ pub enum EditOp {
         hash: u64,
     },
     /// A node was moved from one location to another.
+    /// If `detach_to_slot` is Some, the node at `new_path` is detached and stored in that slot.
     Move {
-        /// The original path
-        old_path: Path,
-        /// The new path
-        new_path: Path,
+        /// The source - either a path or a slot number
+        from: MoveSource,
+        /// The target path
+        to: Path,
+        /// If Some, the displaced node goes to this slot
+        detach_to_slot: Option<u32>,
         /// Hash of the moved value
         hash: u64,
     },
+}
+
+/// Source for a Move operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MoveSource {
+    /// Move from a path in the tree
+    Path(Path),
+    /// Move from a slot (previously detached node)
+    Slot(u32),
 }
 
 /// Properties for HTML/XML nodes: attribute key-value pairs.
@@ -662,6 +674,12 @@ fn convert_ops_with_shadow<'mem, 'facet>(
 
     let mut result = Vec::new();
 
+    // Track detached nodes: NodeId -> slot number
+    // When a Move places a node at a position occupied by another node,
+    // the occupant is detached and stored in a slot for later reinsertion.
+    let mut detached_nodes: HashMap<NodeId, u32> = HashMap::new();
+    let mut next_slot: u32 = 0;
+
     debug!(
         "SHADOW TREE INITIAL STATE:\n{}",
         format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
@@ -772,13 +790,53 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 };
                 let new_node = shadow_arena.new_node(new_data);
 
-                // Insert at the given position among current siblings.
-                // For Insert, there's no prior detach, so we insert directly at `position`.
-                let children: Vec<_> = shadow_parent.children(&shadow_arena).collect();
-                if position >= children.len() {
-                    shadow_parent.append(new_node, &mut shadow_arena);
+                // The `position` field is the FINAL position in tree_b.
+                // To insert correctly in the shadow tree, we need to find the left sibling
+                // in tree_b and insert after its corresponding node in the shadow tree.
+                //
+                // This is necessary because the shadow tree may contain nodes that will
+                // be deleted later (they exist in tree_a but not tree_b), so using
+                // `position` directly would put the node in the wrong place.
+                let b_siblings: Vec<_> = tree_b.children(parent_b).collect();
+                debug!(
+                    ?position,
+                    ?b_siblings,
+                    "INSERT: looking for left sibling in tree_b"
+                );
+
+                if position == 0 {
+                    // No left sibling - insert at the beginning
+                    let first_child = shadow_parent.children(&shadow_arena).next();
+                    if let Some(first) = first_child {
+                        first.insert_before(new_node, &mut shadow_arena);
+                    } else {
+                        shadow_parent.append(new_node, &mut shadow_arena);
+                    }
                 } else {
-                    children[position].insert_before(new_node, &mut shadow_arena);
+                    // Find the left sibling (node at position-1 in tree_b)
+                    let left_sibling_b = b_siblings.get(position - 1).copied();
+                    debug!(?left_sibling_b, "INSERT: left sibling in tree_b");
+
+                    if let Some(left_b) = left_sibling_b {
+                        // Find the corresponding node in the shadow tree
+                        if let Some(left_shadow) = b_to_shadow.get(&left_b).copied() {
+                            // Insert after the left sibling
+                            left_shadow.insert_after(new_node, &mut shadow_arena);
+                            debug!(
+                                ?left_shadow,
+                                ?new_node,
+                                "INSERT: inserted after left sibling"
+                            );
+                        } else {
+                            // Left sibling not in shadow tree yet - shouldn't happen with proper ordering
+                            // Fall back to append
+                            debug!("INSERT: left sibling not found in shadow, appending");
+                            shadow_parent.append(new_node, &mut shadow_arena);
+                        }
+                    } else {
+                        // No left sibling found - append
+                        shadow_parent.append(new_node, &mut shadow_arena);
+                    }
                 }
 
                 b_to_shadow.insert(node_b, new_node);
@@ -852,20 +910,13 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 new_parent_b,
                 new_position,
             } => {
-                // Old path comes from current shadow tree position (before the move)
-                let old_path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
-
                 debug!(
                     ?node_a,
                     ?node_b,
                     ?new_parent_b,
                     new_position,
-                    ?old_path,
                     "MOVE: starting"
                 );
-
-                // Detach from current parent FIRST
-                node_a.detach(&mut shadow_arena);
 
                 // Find new parent in shadow tree
                 let shadow_new_parent = b_to_shadow
@@ -873,38 +924,65 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     .copied()
                     .unwrap_or(shadow_root);
 
-                // Insert at new_position among the CURRENT children (after detach).
-                // The position is relative to the post-detach state.
-                let children: Vec<_> = shadow_new_parent.children(&shadow_arena).collect();
-                debug!(
-                    ?children,
-                    new_position, "MOVE: shadow children after detach"
-                );
+                // Check if the node is currently detached (in limbo)
+                let is_detached = detached_nodes.contains_key(&node_a);
 
+                // Determine the source for the Move
+                let from = if is_detached {
+                    let slot = detached_nodes.remove(&node_a).unwrap();
+                    MoveSource::Slot(slot)
+                } else {
+                    let old_path =
+                        compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+                    // Detach node_a from its current position
+                    node_a.detach(&mut shadow_arena);
+                    MoveSource::Path(old_path)
+                };
+
+                // Check if something is at the target position that needs to be detached
+                let children: Vec<_> = shadow_new_parent.children(&shadow_arena).collect();
+                let detach_to_slot = if new_position < children.len() {
+                    let occupant = children[new_position];
+                    // Don't detach ourselves (shouldn't happen since we already detached)
+                    if occupant != node_a {
+                        let occupant_slot = next_slot;
+                        next_slot += 1;
+                        debug!(
+                            ?occupant,
+                            occupant_slot, "MOVE: will detach occupant to slot"
+                        );
+                        detached_nodes.insert(occupant, occupant_slot);
+                        occupant.detach(&mut shadow_arena);
+                        Some(occupant_slot)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Place node_a at new_position
+                let children: Vec<_> = shadow_new_parent.children(&shadow_arena).collect();
                 if new_position >= children.len() {
                     shadow_new_parent.append(node_a, &mut shadow_arena);
                 } else {
                     children[new_position].insert_before(node_a, &mut shadow_arena);
                 }
 
-                // Update b_to_shadow BEFORE computing new_path
+                // Compute the target path
+                let to = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+
+                // Emit Move
+                debug!(?from, ?to, ?detach_to_slot, "MOVE: emitting");
+                result.push(EditOp::Move {
+                    from,
+                    to,
+                    detach_to_slot,
+                    hash: tree_b.get(node_b).hash,
+                });
+
+                // Update b_to_shadow
                 b_to_shadow.insert(node_b, node_a);
-
-                // New path comes from actual position in shadow tree after the move
-                let new_path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
-
-                // Emit if paths differ
-                if old_path != new_path {
-                    let edit_op = EditOp::Move {
-                        old_path,
-                        new_path,
-                        hash: tree_b.get(node_b).hash,
-                    };
-                    debug!(?edit_op, "emitting Move");
-                    result.push(edit_op);
-                } else {
-                    debug!(?old_path, "skipping Move - paths are equal");
-                }
 
                 debug!(
                     "SHADOW TREE AFTER MOVE:\n{}",
