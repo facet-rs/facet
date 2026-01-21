@@ -16,7 +16,7 @@
   <div id="results"></div>
   
   <script type="module">
-    import init, { apply_patches_json, set_body_inner_html, get_body_inner_html } from './pkg/facet_html_diff_wasm.js';
+    import init, { apply_patches_json, set_body_inner_html, get_body_inner_html, diff_html } from './pkg/facet_html_diff_wasm.js';
 
     window.wasmReady = false;
     window.testResults = [];
@@ -37,11 +37,13 @@
     window.setBodyInnerHtml = null;
     window.applyPatchesJson = null;
     window.getBodyInnerHtml = null;
+    window.diffHtml = null;
 
     initWasm().then(() => {
       window.setBodyInnerHtml = set_body_inner_html;
       window.applyPatchesJson = apply_patches_json;
       window.getBodyInnerHtml = get_body_inner_html;
+      window.diffHtml = diff_html;
     });
 
     // Run a single test case using WASM

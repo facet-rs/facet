@@ -10,6 +10,19 @@ use web_sys::{Document, Element, Node};
 // Re-export patch types for reference
 pub use facet_html_diff::{NodePath, NodeRef, Patch};
 
+/// Compute diff between two HTML documents and return patches as JSON.
+/// This allows computing diffs in the browser for fuzzing tests.
+#[wasm_bindgen]
+pub fn diff_html(old_html: &str, new_html: &str) -> Result<String, JsValue> {
+    let patches = facet_html_diff::diff_html(old_html, new_html)
+        .map_err(|e| JsValue::from_str(&format!("diff failed: {e}")))?;
+
+    let json = facet_json::to_string(&patches)
+        .map_err(|e| JsValue::from_str(&format!("serialize failed: {e}")))?;
+
+    Ok(json)
+}
+
 /// Slots for detached nodes during patch application.
 /// In Chawathe's model, INSERT doesn't shift - it displaces the occupant to a slot.
 struct Slots {
@@ -100,7 +113,7 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
                 parent.remove_child(&target)?;
             }
             // If it was a slot, it's now gone
-            if let NodeRef::Slot(s) = node {
+            if let NodeRef::Slot(s, _) = node {
                 slots.take(*s);
             }
         }
@@ -164,9 +177,17 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
             // Get the node to move (from path or slot)
             let node = match from {
                 NodeRef::Path(path) => find_node(doc, path, slots)?,
-                NodeRef::Slot(slot) => slots
-                    .take(*slot)
-                    .ok_or_else(|| JsValue::from_str(&format!("slot {} is empty", slot)))?,
+                NodeRef::Slot(slot, rel_path) => {
+                    let slot_root = slots
+                        .take(*slot)
+                        .ok_or_else(|| JsValue::from_str(&format!("slot {} is empty", slot)))?;
+                    // If there's a relative path, navigate to the nested node
+                    if let Some(path) = rel_path {
+                        navigate_within_node(&slot_root, path)?
+                    } else {
+                        slot_root
+                    }
+                }
             };
 
             // Remove from current location (if it has a parent - slots don't)
@@ -207,11 +228,32 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
 fn resolve_node_ref(doc: &Document, node_ref: &NodeRef, slots: &Slots) -> Result<Node, JsValue> {
     match node_ref {
         NodeRef::Path(path) => find_node(doc, path, slots),
-        NodeRef::Slot(slot) => slots
-            .get(*slot)
-            .cloned()
-            .ok_or_else(|| JsValue::from_str(&format!("slot {} is empty", slot))),
+        NodeRef::Slot(slot, rel_path) => {
+            let slot_root = slots
+                .get(*slot)
+                .cloned()
+                .ok_or_else(|| JsValue::from_str(&format!("slot {} is empty", slot)))?;
+
+            // Navigate the relative path within the slot if present
+            if let Some(path) = rel_path {
+                navigate_within_node(&slot_root, path)
+            } else {
+                Ok(slot_root)
+            }
+        }
     }
+}
+
+/// Navigate a relative path within a node (for slot-relative paths).
+fn navigate_within_node(root: &Node, path: &NodePath) -> Result<Node, JsValue> {
+    let mut current = root.clone();
+    for &idx in &path.0 {
+        let children = current.child_nodes();
+        current = children
+            .item(idx as u32)
+            .ok_or_else(|| JsValue::from_str(&format!("relative path child {} not found", idx)))?;
+    }
+    Ok(current)
 }
 
 /// Find a node by DOM path.
