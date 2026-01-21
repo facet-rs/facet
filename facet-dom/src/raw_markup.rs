@@ -2,7 +2,7 @@
 
 use std::ops::Deref;
 
-use facet_core::{OxPtrConst, OxPtrMut, ParseError, PtrConst, TryFromOutcome, VTableIndirect};
+use facet_core::{OxPtrConst, OxPtrUninit, ParseError, PtrConst, TryFromOutcome, VTableIndirect};
 
 /// A string containing raw markup captured verbatim from the source.
 ///
@@ -20,28 +20,28 @@ unsafe fn display_raw_markup(
 }
 
 unsafe fn try_from_raw_markup(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static facet_core::Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
     // Handle &str
     if src_shape.id == <&str as facet_core::Facet>::SHAPE.id {
         let s: &str = unsafe { src.get::<&str>() };
-        unsafe { *target.as_mut::<RawMarkup>() = RawMarkup(s.to_owned()) };
+        unsafe { target.put(RawMarkup(s.to_owned())) };
         TryFromOutcome::Converted
     }
     // Handle String
     else if src_shape.id == <String as facet_core::Facet>::SHAPE.id {
         let s = unsafe { src.read::<String>() };
-        unsafe { *target.as_mut::<RawMarkup>() = RawMarkup(s) };
+        unsafe { target.put(RawMarkup(s)) };
         TryFromOutcome::Converted
     } else {
         TryFromOutcome::Unsupported
     }
 }
 
-unsafe fn parse_raw_markup(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
-    unsafe { *target.as_mut::<RawMarkup>() = RawMarkup(s.to_owned()) };
+unsafe fn parse_raw_markup(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
+    unsafe { target.put(RawMarkup(s.to_owned())) };
     Some(Ok(()))
 }
 

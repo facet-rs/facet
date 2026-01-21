@@ -1127,15 +1127,15 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         #facet_crate::TryFromOutcome::Converted
                     }
 
-                    /// try_from wrapper for VTableIndirect (OxPtrMut signature)
+                    /// try_from wrapper for VTableIndirect (OxPtrUninit signature)
                     #[doc(hidden)]
                     unsafe fn __facet_try_from_ref_indirect(
-                        dst: #facet_crate::OxPtrMut,
+                        dst: #facet_crate::OxPtrUninit,
                         src_shape: &'static #facet_crate::Shape,
                         src: #facet_crate::PtrConst,
                     ) -> #facet_crate::TryFromOutcome {
                         Self::__facet_try_from_ref(
-                            dst.ptr().as_ptr::<Self>() as *mut Self,
+                            dst.ptr().as_mut_byte_ptr() as *mut Self,
                             src_shape,
                             src,
                         )

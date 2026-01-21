@@ -5,7 +5,7 @@ use alloc::string::String;
 use url::Url;
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
+    Def, Facet, OxPtrConst, OxPtrUninit, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
     Type, UserType, VTableIndirect,
 };
 
@@ -40,7 +40,7 @@ const fn url_parse_error_message(error: url::ParseError) -> &'static str {
 }
 
 unsafe fn try_from_url(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -50,7 +50,7 @@ unsafe fn try_from_url(
             let source_str: &str = src.get::<&str>();
             match Url::parse(source_str) {
                 Ok(val) => {
-                    *target.as_mut::<Url>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(e) => TryFromOutcome::Failed(url_parse_error_message(e).into()),
@@ -61,7 +61,7 @@ unsafe fn try_from_url(
             let source_str = src.read::<String>();
             match Url::parse(&source_str) {
                 Ok(val) => {
-                    *target.as_mut::<Url>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(e) => TryFromOutcome::Failed(url_parse_error_message(e).into()),
@@ -72,11 +72,11 @@ unsafe fn try_from_url(
     }
 }
 
-unsafe fn parse_url(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn parse_url(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     unsafe {
         match Url::parse(s) {
             Ok(val) => {
-                *target.as_mut::<Url>() = val;
+                target.put(val);
                 Some(Ok(()))
             }
             Err(e) => Some(Err(ParseError::from_str(url_parse_error_message(e)))),

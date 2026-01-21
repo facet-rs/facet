@@ -4,12 +4,12 @@ use alloc::string::String;
 use rust_decimal::Decimal;
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
+    Def, Facet, OxPtrConst, OxPtrUninit, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
     Type, UserType, VTableIndirect,
 };
 
 unsafe fn try_from_decimal(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -19,7 +19,7 @@ unsafe fn try_from_decimal(
             let source_str: &str = src.get::<&str>();
             match source_str.parse::<Decimal>() {
                 Ok(val) => {
-                    *target.as_mut::<Decimal>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("Decimal parsing failed".into()),
@@ -30,7 +30,7 @@ unsafe fn try_from_decimal(
             let source_str = src.read::<String>();
             match source_str.parse::<Decimal>() {
                 Ok(val) => {
-                    *target.as_mut::<Decimal>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("Decimal parsing failed".into()),
@@ -45,14 +45,14 @@ unsafe fn try_from_decimal(
     }
 }
 
-unsafe fn parse_decimal(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn parse_decimal(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     unsafe {
         let parsed = s
             .parse::<Decimal>()
             .map_err(|_| ParseError::from_str("Decimal parsing failed"));
         Some(match parsed {
             Ok(val) => {
-                *target.as_mut::<Decimal>() = val;
+                target.put(val);
                 Ok(())
             }
             Err(e) => Err(e),

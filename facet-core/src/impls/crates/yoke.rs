@@ -5,9 +5,9 @@ use stable_deref_trait::StableDeref;
 use yoke::{Yoke, Yokeable};
 
 use crate::{
-    Facet, OxPtrConst, OxPtrMut, PtrConst, PtrMut, PtrUninit, ShapeBuilder, TryFromOutcome, Type,
-    TypeNameOpts, TypeOpsIndirect, UserType, VTableDirect, VTableErased, VTableIndirect, Variance,
-    VarianceDesc,
+    Facet, OxPtrConst, OxPtrMut, OxPtrUninit, PtrConst, PtrMut, PtrUninit, ShapeBuilder,
+    TryFromOutcome, Type, TypeNameOpts, TypeOpsIndirect, UserType, VTableDirect, VTableErased,
+    VTableIndirect, Variance, VarianceDesc,
 };
 
 // Helper functions to create type_name formatters
@@ -75,7 +75,7 @@ unsafe fn yoke_drop<Y: for<'y> Yokeable<'y>, C>(ox: OxPtrMut) {
 /// 3. Returns Unsupported if neither is available
 #[allow(non_snake_case)]
 unsafe fn yoke_try_from<'f, Y, C>(
-    dst: OxPtrMut,
+    dst: OxPtrUninit,
     src_shape: &'static crate::Shape,
     src_ptr: PtrConst,
 ) -> TryFromOutcome
@@ -160,13 +160,13 @@ where
                         })
                     }
                     VTableErased::Indirect(VTableIndirect {
-                        try_from: Some(try_from_fn), // unsafe fn(OxPtrMut, &'static Shape, PtrConst) -> TryFromOutcome
+                        try_from: Some(try_from_fn), // unsafe fn(OxPtrUninit, &'static Shape, PtrConst) -> TryFromOutcome
                         ..
                     }) => {
                         Yoke::<Y, C>::try_attach_to_cart(src_ptr.read::<C>(), |cart_ref| {
                             let mut maybe_uninit = MaybeUninit::<Y::Output>::uninit();
-                            let out_ptr = OxPtrMut::new(
-                                PtrMut::new(maybe_uninit.as_mut_ptr() as *mut u8),
+                            let out_ptr = OxPtrUninit::new(
+                                PtrUninit::from_maybe_uninit(&mut maybe_uninit),
                                 <Y as Yokeable>::Output::SHAPE,
                             );
                             // Use PtrConst::new with the unsized type - it handles wide pointers correctly
@@ -213,7 +213,7 @@ where
 
         match result {
             Ok(yoke) => {
-                dst.ptr().as_uninit().put(yoke);
+                dst.put(yoke);
                 TryFromOutcome::Converted
             }
             Err(e) => e,
@@ -316,7 +316,7 @@ mod tests {
             yoke_shape.call_try_from(
                 <Arc<str>>::SHAPE,
                 PtrConst::new_sized(&value as *const _),
-                yoke_uninit_ptr.ptr,
+                yoke_uninit_ptr,
             )
         }
         .expect("Should return Some since it has a try_from");

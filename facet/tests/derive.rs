@@ -1314,7 +1314,7 @@ fn from_ref_infallible() {
     let src_ptr = facet::PtrConst::new(src_str);
 
     let mut uninit = core::mem::MaybeUninit::<BorrowedData<'_>>::uninit();
-    let dst_ptr = facet::PtrMut::new(uninit.as_mut_ptr());
+    let dst_ptr = facet::PtrUninit::from_maybe_uninit(&mut uninit);
 
     let outcome = unsafe { shape.call_try_from(src_shape, src_ptr, dst_ptr) };
     assert!(
@@ -1358,7 +1358,7 @@ fn try_from_ref_fallible() {
     let src_ptr = facet::PtrConst::new(src_str);
 
     let mut uninit = core::mem::MaybeUninit::<AsStr>::uninit();
-    let dst_ptr = facet::PtrMut::new(uninit.as_mut_ptr());
+    let dst_ptr = facet::PtrUninit::from_maybe_uninit(&mut uninit);
 
     let outcome = unsafe { shape.call_try_from(src_shape, src_ptr, dst_ptr) };
     assert!(
@@ -1374,7 +1374,7 @@ fn try_from_ref_fallible() {
     let invalid_ptr = facet::PtrConst::new(invalid_str);
 
     let mut uninit2 = core::mem::MaybeUninit::<AsStr>::uninit();
-    let dst_ptr2 = facet::PtrMut::new(uninit2.as_mut_ptr());
+    let dst_ptr2 = facet::PtrUninit::from_maybe_uninit(&mut uninit2);
 
     let outcome2 = unsafe { shape.call_try_from(src_shape, invalid_ptr, dst_ptr2) };
     assert!(
@@ -1410,7 +1410,7 @@ fn from_ref_wrong_source_type() {
     let wrong_ptr = facet::PtrConst::new(&wrong_value as *const i32);
 
     let mut uninit = core::mem::MaybeUninit::<TextData<'_>>::uninit();
-    let dst_ptr = facet::PtrMut::new(uninit.as_mut_ptr());
+    let dst_ptr = facet::PtrUninit::from_maybe_uninit(&mut uninit);
 
     let outcome = unsafe { shape.call_try_from(wrong_shape, wrong_ptr, dst_ptr) };
     assert!(
@@ -1456,7 +1456,7 @@ fn from_ref_enum() {
     let src_ptr = facet::PtrConst::new(src_str);
 
     let mut uninit = core::mem::MaybeUninit::<Status<'_>>::uninit();
-    let dst_ptr = facet::PtrMut::new(uninit.as_mut_ptr());
+    let dst_ptr = facet::PtrUninit::from_maybe_uninit(&mut uninit);
 
     let outcome = unsafe { shape.call_try_from(src_shape, src_ptr, dst_ptr) };
     assert!(
@@ -1472,7 +1472,7 @@ fn from_ref_enum() {
     let src_ptr2 = facet::PtrConst::new(src_str2);
 
     let mut uninit2 = core::mem::MaybeUninit::<Status<'_>>::uninit();
-    let dst_ptr2 = facet::PtrMut::new(uninit2.as_mut_ptr());
+    let dst_ptr2 = facet::PtrUninit::from_maybe_uninit(&mut uninit2);
 
     let outcome2 = unsafe { shape.call_try_from(src_shape, src_ptr2, dst_ptr2) };
     assert!(

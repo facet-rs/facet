@@ -381,7 +381,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         frame.deinit_for_replace();
 
         // Parse the string value using the type's parse function
-        let result = unsafe { shape.call_parse(s, frame.data.assume_init()) };
+        let result = unsafe { shape.call_parse(s, frame.data) };
 
         match result {
             Some(Ok(())) => {
@@ -418,7 +418,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         frame.deinit_for_replace();
 
         // Parse the bytes using the type's parse_bytes function
-        let result = unsafe { shape.call_parse_bytes(bytes, frame.data.assume_init()) };
+        let result = unsafe { shape.call_parse_bytes(bytes, frame.data) };
 
         match result {
             Some(Ok(())) => {

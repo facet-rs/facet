@@ -5,12 +5,12 @@ use alloc::string::String;
 use ulid::Ulid;
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
+    Def, Facet, OxPtrConst, OxPtrUninit, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
     Type, UserType, VTableIndirect,
 };
 
 unsafe fn try_from_ulid(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -20,7 +20,7 @@ unsafe fn try_from_ulid(
             let source_str: &str = src.get::<&str>();
             match Ulid::from_string(source_str) {
                 Ok(val) => {
-                    *target.as_mut::<Ulid>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("ULID parsing failed".into()),
@@ -31,7 +31,7 @@ unsafe fn try_from_ulid(
             let source_str = src.read::<String>();
             match Ulid::from_string(&source_str) {
                 Ok(val) => {
-                    *target.as_mut::<Ulid>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("ULID parsing failed".into()),
@@ -42,12 +42,12 @@ unsafe fn try_from_ulid(
     }
 }
 
-unsafe fn parse_ulid(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn parse_ulid(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     unsafe {
         let parsed = Ulid::from_string(s).map_err(|_| ParseError::from_str("ULID parsing failed"));
         Some(match parsed {
             Ok(val) => {
-                *target.as_mut::<Ulid>() = val;
+                target.put(val);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -73,7 +73,7 @@ unsafe fn partial_eq_ulid(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
     }
 }
 
-unsafe fn parse_bytes_ulid(bytes: &[u8], target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn parse_bytes_ulid(bytes: &[u8], target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     unsafe {
         if bytes.len() != 16 {
             return Some(Err(ParseError::from_str("ULID must be exactly 16 bytes")));
@@ -82,7 +82,7 @@ unsafe fn parse_bytes_ulid(bytes: &[u8], target: OxPtrMut) -> Option<Result<(), 
         let mut arr = [0u8; 16];
         arr.copy_from_slice(bytes);
         let val = u128::from_be_bytes(arr);
-        *target.as_mut::<Ulid>() = Ulid::from(val);
+        target.put(Ulid::from(val));
         Some(Ok(()))
     }
 }

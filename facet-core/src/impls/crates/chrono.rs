@@ -4,7 +4,7 @@ use alloc::string::{String, ToString};
 use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, ProxyDef, PtrConst, PtrMut, PtrUninit, Shape,
+    Def, Facet, OxPtrConst, OxPtrUninit, ParseError, ProxyDef, PtrConst, PtrMut, PtrUninit, Shape,
     ShapeBuilder, TryFromOutcome, Type, UserType, VTableIndirect,
 };
 
@@ -23,7 +23,7 @@ unsafe fn display_datetime_utc(
 }
 
 unsafe fn try_from_datetime_utc(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -32,7 +32,7 @@ unsafe fn try_from_datetime_utc(
             let source_str = src.read::<String>();
             match DateTime::parse_from_rfc3339(&source_str).map(|dt| dt.with_timezone(&Utc)) {
                 Ok(val) => {
-                    *target.as_mut::<DateTime<Utc>>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("could not parse date".into()),
@@ -43,14 +43,14 @@ unsafe fn try_from_datetime_utc(
     }
 }
 
-unsafe fn parse_datetime_utc(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn parse_datetime_utc(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     unsafe {
         let parsed = DateTime::parse_from_rfc3339(s)
             .map(|dt| dt.with_timezone(&Utc))
             .map_err(|_| ParseError::from_str("could not parse date"));
         Some(match parsed {
             Ok(val) => {
-                *target.as_mut::<DateTime<Utc>>() = val;
+                target.put(val);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -103,7 +103,7 @@ unsafe fn display_datetime_fixed_offset(
 }
 
 unsafe fn try_from_datetime_fixed_offset(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -112,7 +112,7 @@ unsafe fn try_from_datetime_fixed_offset(
             let source_str = src.read::<String>();
             match DateTime::parse_from_rfc3339(&source_str) {
                 Ok(val) => {
-                    *target.as_mut::<DateTime<FixedOffset>>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("could not parse date".into()),
@@ -123,13 +123,16 @@ unsafe fn try_from_datetime_fixed_offset(
     }
 }
 
-unsafe fn parse_datetime_fixed_offset(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn parse_datetime_fixed_offset(
+    s: &str,
+    target: OxPtrUninit,
+) -> Option<Result<(), ParseError>> {
     unsafe {
         let parsed = DateTime::parse_from_rfc3339(s)
             .map_err(|_| ParseError::from_str("could not parse date"));
         Some(match parsed {
             Ok(val) => {
-                *target.as_mut::<DateTime<FixedOffset>>() = val;
+                target.put(val);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -182,7 +185,7 @@ unsafe fn display_datetime_local(
 }
 
 unsafe fn try_from_datetime_local(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -191,7 +194,7 @@ unsafe fn try_from_datetime_local(
             let source_str = src.read::<String>();
             match DateTime::parse_from_rfc3339(&source_str).map(|dt| dt.with_timezone(&Local)) {
                 Ok(val) => {
-                    *target.as_mut::<DateTime<Local>>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("could not parse date".into()),
@@ -202,14 +205,14 @@ unsafe fn try_from_datetime_local(
     }
 }
 
-unsafe fn parse_datetime_local(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn parse_datetime_local(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     unsafe {
         let parsed = DateTime::parse_from_rfc3339(s)
             .map(|dt| dt.with_timezone(&Local))
             .map_err(|_| ParseError::from_str("could not parse date"));
         Some(match parsed {
             Ok(val) => {
-                *target.as_mut::<DateTime<Local>>() = val;
+                target.put(val);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -258,7 +261,7 @@ unsafe fn display_naive_datetime(
 }
 
 unsafe fn try_from_naive_datetime(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -269,7 +272,7 @@ unsafe fn try_from_naive_datetime(
                 .or_else(|_| NaiveDateTime::parse_from_str(&source_str, "%Y-%m-%d %H:%M:%S"))
             {
                 Ok(val) => {
-                    *target.as_mut::<NaiveDateTime>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("could not parse date".into()),
@@ -280,14 +283,14 @@ unsafe fn try_from_naive_datetime(
     }
 }
 
-unsafe fn parse_naive_datetime(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn parse_naive_datetime(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     unsafe {
         let parsed = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
             .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
             .map_err(|_| ParseError::from_str("could not parse date"));
         Some(match parsed {
             Ok(val) => {
-                *target.as_mut::<NaiveDateTime>() = val;
+                target.put(val);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -336,7 +339,7 @@ unsafe fn display_naive_date(
 }
 
 unsafe fn try_from_naive_date(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -345,7 +348,7 @@ unsafe fn try_from_naive_date(
             let source_str = src.read::<String>();
             match NaiveDate::parse_from_str(&source_str, "%Y-%m-%d") {
                 Ok(val) => {
-                    *target.as_mut::<NaiveDate>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("could not parse date".into()),
@@ -356,13 +359,13 @@ unsafe fn try_from_naive_date(
     }
 }
 
-unsafe fn parse_naive_date(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn parse_naive_date(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     unsafe {
         let parsed = NaiveDate::parse_from_str(s, "%Y-%m-%d")
             .map_err(|_| ParseError::from_str("could not parse date"));
         Some(match parsed {
             Ok(val) => {
-                *target.as_mut::<NaiveDate>() = val;
+                target.put(val);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -411,7 +414,7 @@ unsafe fn display_naive_time(
 }
 
 unsafe fn try_from_naive_time(
-    target: OxPtrMut,
+    target: OxPtrUninit,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> TryFromOutcome {
@@ -422,7 +425,7 @@ unsafe fn try_from_naive_time(
                 .or_else(|_| NaiveTime::parse_from_str(&source_str, "%H:%M:%S%.f"))
             {
                 Ok(val) => {
-                    *target.as_mut::<NaiveTime>() = val;
+                    target.put(val);
                     TryFromOutcome::Converted
                 }
                 Err(_) => TryFromOutcome::Failed("could not parse time".into()),
@@ -433,14 +436,14 @@ unsafe fn try_from_naive_time(
     }
 }
 
-unsafe fn parse_naive_time(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
+unsafe fn parse_naive_time(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
     unsafe {
         let parsed = NaiveTime::parse_from_str(s, "%H:%M:%S")
             .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M:%S%.f"))
             .map_err(|_| ParseError::from_str("could not parse time"));
         Some(match parsed {
             Ok(val) => {
-                *target.as_mut::<NaiveTime>() = val;
+                target.put(val);
                 Ok(())
             }
             Err(e) => Err(e),

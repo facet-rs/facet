@@ -2,7 +2,7 @@
 // VTable types
 //////////////////////////////////////////////////////////////////////
 
-use crate::{OxPtrConst, OxPtrMut, PtrMut};
+use crate::{OxPtrConst, OxPtrMut, OxPtrUninit, PtrMut};
 use alloc::string::String;
 use core::{cmp, fmt, hash::Hasher, marker::PhantomData, mem::transmute};
 
@@ -364,17 +364,24 @@ pub struct VTableIndirect {
     /// Invariants function - checks type invariants.
     pub invariants: Option<unsafe fn(OxPtrConst) -> Option<Result<(), String>>>,
 
-    /// Parse function - parses value from string into destination.
-    pub parse: Option<unsafe fn(&str, OxPtrMut) -> Option<Result<(), crate::ParseError>>>,
+    /// Parse function - parses value from string into uninitialized destination.
+    ///
+    /// The destination is uninitialized memory. Implementations must use `target.put(value)`
+    /// to write the parsed value, NOT `*target.as_mut() = value` which would try to drop
+    /// uninitialized memory.
+    pub parse: Option<unsafe fn(&str, OxPtrUninit) -> Option<Result<(), crate::ParseError>>>,
 
-    /// Parse bytes function - parses value from byte slice into destination.
+    /// Parse bytes function - parses value from byte slice into uninitialized destination.
     /// Used for binary formats where types have a more efficient representation.
-    pub parse_bytes: Option<unsafe fn(&[u8], OxPtrMut) -> Option<Result<(), crate::ParseError>>>,
+    ///
+    /// The destination is uninitialized memory. Implementations must use `target.put(value)`
+    /// to write the parsed value.
+    pub parse_bytes: Option<unsafe fn(&[u8], OxPtrUninit) -> Option<Result<(), crate::ParseError>>>,
 
-    /// Try from function - converts from another value type.
+    /// Try from function - converts from another value type into uninitialized destination.
     ///
     /// # Arguments
-    /// - `dst`: Destination pointer where the converted value will be written
+    /// - `dst`: Uninitialized destination pointer where the converted value will be written
     /// - `src_shape`: Shape of the source type
     /// - `src_ptr`: Pointer to the source value
     ///
@@ -392,8 +399,13 @@ pub struct VTableIndirect {
     ///
     /// - `dst` must be valid for writes and properly aligned for the destination type
     /// - `src_ptr` must point to valid, initialized memory of the type described by `src_shape`
+    ///
+    /// # Implementation Note
+    ///
+    /// The destination is uninitialized memory. Implementations must use `dst.put(value)`
+    /// to write the converted value, NOT `*dst.as_mut() = value`.
     pub try_from: Option<
-        unsafe fn(OxPtrMut, &'static crate::Shape, crate::PtrConst) -> crate::TryFromOutcome,
+        unsafe fn(OxPtrUninit, &'static crate::Shape, crate::PtrConst) -> crate::TryFromOutcome,
     >,
 
     /// Try into inner function - extracts inner value (consuming).

@@ -774,15 +774,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
                 facet_core::VTableErased::Indirect(vt) => {
                     if let Some(try_from_fn) = vt.try_from {
-                        // SAFETY: assume_init is valid because we're in a state where the
-                        // parent frame has been initialized, and the shape matches.
-                        let ox_mut = unsafe {
-                            facet_core::OxMut::new(
-                                parent_frame.data.assume_init(),
-                                parent_frame.allocated.shape(),
-                            )
-                        };
-                        unsafe { try_from_fn(ox_mut.into(), inner_shape, inner_ptr) }
+                        // parent_frame.data is uninitialized - we're writing the converted
+                        // value into it
+                        let ox_uninit = facet_core::OxPtrUninit::new(
+                            parent_frame.data,
+                            parent_frame.allocated.shape(),
+                        );
+                        unsafe { try_from_fn(ox_uninit, inner_shape, inner_ptr) }
                     } else {
                         return Err(ReflectError::OperationFailed {
                             shape: parent_frame.allocated.shape(),
