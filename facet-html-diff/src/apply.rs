@@ -464,14 +464,12 @@ fn apply_patch(
 
                     // In Chawathe semantics, Insert does NOT shift - it places at position
                     // and whatever was there gets displaced (detached to a slot).
-                    if let Some(slot) = detach_to_slot {
-                        if *position < children.len() {
-                            let occupant = std::mem::replace(
-                                &mut children[*position],
-                                Node::Text(String::new()),
-                            );
-                            slots.insert(*slot, occupant);
-                        }
+                    if let Some(slot) = detach_to_slot
+                        && *position < children.len()
+                    {
+                        let occupant =
+                            std::mem::replace(&mut children[*position], Node::Text(String::new()));
+                        slots.insert(*slot, occupant);
                     }
 
                     // Grow the array with empty text placeholders if needed

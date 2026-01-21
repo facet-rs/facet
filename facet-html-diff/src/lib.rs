@@ -217,25 +217,22 @@ fn navigate_path(
                         // Get the variant from the previous segment
                         if let Some(PathSegment::Variant(var_name)) =
                             segments.get(i.wrapping_sub(1))
-                        {
-                            if let Some(variant) =
+                            && let Some(variant) =
                                 enum_def.variants.iter().find(|v| v.name == var_name)
-                            {
-                                if let Some(field) = variant.data.fields.get(*idx) {
-                                    current_shape = field.shape();
-                                    if is_last {
-                                        if variant.is_text() {
-                                            target = PathTarget::Text;
-                                        } else if is_transparent_element_struct(current_shape) {
-                                            // Struct with only flattened fields (attrs + children)
-                                            // This is the "content" of the element, not a DOM node
-                                            // Inserting this = replacing innerHTML
-                                            target = PathTarget::FlattenedChildrenList;
-                                        } else {
-                                            // Landing on struct/enum inside variant = element
-                                            target = PathTarget::Element;
-                                        }
-                                    }
+                            && let Some(field) = variant.data.fields.get(*idx)
+                        {
+                            current_shape = field.shape();
+                            if is_last {
+                                if variant.is_text() {
+                                    target = PathTarget::Text;
+                                } else if is_transparent_element_struct(current_shape) {
+                                    // Struct with only flattened fields (attrs + children)
+                                    // This is the "content" of the element, not a DOM node
+                                    // Inserting this = replacing innerHTML
+                                    target = PathTarget::FlattenedChildrenList;
+                                } else {
+                                    // Landing on struct/enum inside variant = element
+                                    target = PathTarget::Element;
                                 }
                             }
                         }
@@ -278,15 +275,15 @@ fn navigate_path(
                     break;
                 };
 
-                if let Type::User(UserType::Enum(enum_def)) = &enum_shape.ty {
-                    if let Some(variant) = enum_def.variants.iter().find(|v| v.name == name) {
-                        current_shape = enum_shape;
-                        if is_last {
-                            if variant.is_text() {
-                                target = PathTarget::Text;
-                            } else {
-                                target = PathTarget::Element;
-                            }
+                if let Type::User(UserType::Enum(enum_def)) = &enum_shape.ty
+                    && let Some(variant) = enum_def.variants.iter().find(|v| v.name == name)
+                {
+                    current_shape = enum_shape;
+                    if is_last {
+                        if variant.is_text() {
+                            target = PathTarget::Text;
+                        } else {
+                            target = PathTarget::Element;
                         }
                     }
                 }
@@ -384,12 +381,11 @@ fn find_field_in_struct(
             return Some((field, field.shape()));
         }
         // Check flattened structs
-        if field.is_flattened() {
-            if let Type::User(UserType::Struct(inner_struct)) = &field.shape().ty {
-                if let Some(result) = find_field_in_struct(inner_struct, name) {
-                    return Some(result);
-                }
-            }
+        if field.is_flattened()
+            && let Type::User(UserType::Struct(inner_struct)) = &field.shape().ty
+            && let Some(result) = find_field_in_struct(inner_struct, name)
+        {
+            return Some(result);
         }
     }
     None
@@ -661,14 +657,14 @@ fn collect_attributes_recursive(peek: Peek<'_, '_>, dom_path: &[usize], patches:
     // Handle flattened maps (BTreeMap<String, String> for extra attributes)
     if let Ok(map) = peek.into_map() {
         for (k, v) in map.iter() {
-            if let Some(key) = k.as_str() {
-                if let Some(value) = v.as_str() {
-                    patches.push(Patch::SetAttribute {
-                        path: NodePath(dom_path.to_vec()),
-                        name: key.to_string(),
-                        value: value.to_string(),
-                    });
-                }
+            if let Some(key) = k.as_str()
+                && let Some(value) = v.as_str()
+            {
+                patches.push(Patch::SetAttribute {
+                    path: NodePath(dom_path.to_vec()),
+                    name: key.to_string(),
+                    value: value.to_string(),
+                });
             }
         }
     }
@@ -766,11 +762,11 @@ fn navigate_peek<'mem, 'facet>(
                             // Find flattened list field and index into it
                             let mut found = None;
                             for (field, field_peek) in s.fields() {
-                                if field.is_flattened() {
-                                    if let Ok(list) = field_peek.into_list_like() {
-                                        found = list.get(*idx);
-                                        break;
-                                    }
+                                if field.is_flattened()
+                                    && let Ok(list) = field_peek.into_list_like()
+                                {
+                                    found = list.get(*idx);
+                                    break;
                                 }
                             }
                             found?
@@ -788,11 +784,11 @@ fn navigate_peek<'mem, 'facet>(
                     // Struct with flattened list - find it and index
                     let mut found = None;
                     for (field, field_peek) in s.fields() {
-                        if field.is_flattened() {
-                            if let Ok(list) = field_peek.into_list_like() {
-                                found = list.get(*idx);
-                                break;
-                            }
+                        if field.is_flattened()
+                            && let Ok(list) = field_peek.into_list_like()
+                        {
+                            found = list.get(*idx);
+                            break;
                         }
                     }
                     found?
@@ -831,15 +827,15 @@ fn find_field_in_peek_struct<'mem, 'facet>(
     name: &str,
 ) -> Option<Peek<'mem, 'facet>> {
     for (field, field_peek) in s.fields() {
-        if field.is_flattened() {
-            if let Ok(inner_s) = field_peek.into_struct() {
-                if let Ok(fp) = inner_s.field_by_name(name) {
-                    return Some(fp);
-                }
-                // Recurse into nested flattened structs
-                if let Some(fp) = find_field_in_peek_struct(inner_s, name) {
-                    return Some(fp);
-                }
+        if field.is_flattened()
+            && let Ok(inner_s) = field_peek.into_struct()
+        {
+            if let Ok(fp) = inner_s.field_by_name(name) {
+                return Some(fp);
+            }
+            // Recurse into nested flattened structs
+            if let Some(fp) = find_field_in_peek_struct(inner_s, name) {
+                return Some(fp);
             }
         }
     }

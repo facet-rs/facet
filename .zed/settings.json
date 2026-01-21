@@ -12,7 +12,7 @@
         "check": {
           "command": "clippy",
           "workspace": false,
-          "allTargets": true,
+          "allTargets": false,
         },
         "diagnostics": {
           "experimental": {

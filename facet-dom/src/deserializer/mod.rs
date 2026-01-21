@@ -66,11 +66,14 @@ where
         mut wip: Partial<'de, BORROW>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let shape = wip.shape();
-        use owo_colors::OwoColorize;
-        let module_path = shape.module_path.unwrap_or("?");
-        let module = module_path.dimmed();
-        let name = shape.cyan();
-        trace!(into = %format_args!("{module}::{name}"));
+        #[cfg(any(test, feature = "tracing"))]
+        {
+            use owo_colors::OwoColorize;
+            let module_path = shape.module_path.unwrap_or("?");
+            let module = module_path.dimmed();
+            let name = shape.cyan();
+            trace!(into = %format_args!("{module}::{name}"));
+        }
 
         // Handle transparent wrappers (like NonZero, newtype structs with #[facet(transparent)])
         // Collections (List/Map/Set/Array), Option, and Pointer have .inner for variance but shouldn't use this path
