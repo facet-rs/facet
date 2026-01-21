@@ -83,10 +83,11 @@ where
         // so we can look for tag fields and use their values to select variants.
         if solver.candidates().len() > 1 {
             for ev in &evidence {
-                if let Some(ScalarValue::Str(variant_name)) = &ev.scalar_value {
-                    if solver.hint_variant(variant_name) && solver.candidates().len() == 1 {
-                        break;
-                    }
+                if let Some(ScalarValue::Str(variant_name)) = &ev.scalar_value
+                    && solver.hint_variant(variant_name)
+                    && solver.candidates().len() == 1
+                {
+                    break;
                 }
             }
         }
