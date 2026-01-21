@@ -6,14 +6,14 @@
 AllProducts @query{
     from product
     where {deleted_at @null}
-    order_by {created_at desc}
+    order-by {created_at desc}
     select {id, handle, status, active}
 }
 
 ActiveProducts @query{
     from product
     where {status "published", active true, deleted_at @null}
-    order_by {created_at desc}
+    order-by {created_at desc}
     limit 2
     select {id, handle, status}
 }
@@ -30,7 +30,7 @@ SearchProducts @query{
     params {q @string}
     from product
     where {handle @ilike($q), deleted_at @null}
-    order_by {handle asc}
+    order-by {handle asc}
     limit 50
     select {id, handle, status}
 }
@@ -40,7 +40,7 @@ ProductsPaginated @query{
     params {page_size @int, page_offset @int}
     from product
     where {deleted_at @null}
-    order_by {handle asc}
+    order-by {handle asc}
     limit $page_size
     offset $page_offset
     select {id, handle, status, active}

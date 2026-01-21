@@ -188,6 +188,7 @@ pub struct Select {
 #[derive(Debug, Facet)]
 #[facet(rename_all = "lowercase")]
 #[repr(u8)]
+#[allow(clippy::large_enum_variant)]
 pub enum FieldDef {
     /// A relation field (`@rel{...}`).
     Rel(Relation),
@@ -278,8 +279,9 @@ pub struct Delete {
 /// Values clause for INSERT/UPDATE.
 #[derive(Debug, Facet)]
 pub struct Values {
+    /// Column name -> value expression. None means use param with same name ($column_name).
     #[facet(flatten)]
-    pub columns: IndexMap<String, ValueExpr>,
+    pub columns: IndexMap<String, Option<ValueExpr>>,
 }
 
 /// A value expression in INSERT/UPDATE.
@@ -316,7 +318,7 @@ pub struct ConflictTarget {
 #[derive(Debug, Facet)]
 pub struct ConflictUpdate {
     #[facet(flatten)]
-    pub columns: IndexMap<String, UpdateValue>,
+    pub columns: IndexMap<String, Option<UpdateValue>>,
 }
 
 /// Value for an update column - either a param reference or special value.
@@ -328,9 +330,9 @@ pub enum UpdateValue {
     Now,
     /// Default value (@default).
     Default,
-    /// Parameter or literal - bare scalar fallback (just column name means use inserted value).
+    /// Parameter or literal - bare scalar fallback.
     #[facet(other)]
-    Expr(Option<String>),
+    Expr(String),
 }
 
 /// RETURNING clause.
