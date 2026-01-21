@@ -36,6 +36,7 @@ pub enum Decl {
 /// Can be either a structured query (with `from` and `select`) or a raw SQL query
 /// (with `sql` and `returns`).
 #[derive(Debug, Facet)]
+#[facet(rename_all = "kebab-case")]
 pub struct Query {
     /// Query parameters.
     pub params: Option<Params>,
@@ -49,6 +50,12 @@ pub struct Query {
 
     /// Return only the first result.
     pub first: Option<bool>,
+
+    /// Use DISTINCT to return only unique rows.
+    pub distinct: Option<bool>,
+
+    /// DISTINCT ON clause (PostgreSQL-specific) - return first row of each group.
+    pub distinct_on: Option<DistinctOn>,
 
     /// Order by clause.
     pub order_by: Option<OrderBy>,
@@ -75,6 +82,11 @@ pub struct Returns {
     #[facet(flatten)]
     pub fields: IndexMap<String, ParamType>,
 }
+
+/// DISTINCT ON clause (PostgreSQL-specific) - a sequence of column names.
+#[derive(Debug, Facet)]
+#[facet(transparent)]
+pub struct DistinctOn(pub Vec<String>);
 
 /// ORDER BY clause.
 #[derive(Debug, Facet)]
@@ -185,6 +197,7 @@ pub enum FieldDef {
 
 /// A relation definition (nested query on related table).
 #[derive(Debug, Facet)]
+#[facet(rename_all = "kebab-case")]
 pub struct Relation {
     /// Optional explicit table name.
     pub from: Option<String>,
