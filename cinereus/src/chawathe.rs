@@ -23,6 +23,7 @@ use crate::matching::Matching;
 use crate::tree::{NoProperties, Properties, Tree};
 use core::fmt;
 use core::hash::Hash;
+#[cfg(feature = "tracing")]
 use facet_pretty::FacetPretty;
 use indextree::NodeId;
 
@@ -221,14 +222,14 @@ where
 
             if let Some(parent_b) = parent_b {
                 let pos = tree_b.position(b_id);
-                let parent_b_data = tree_b.get(parent_b);
+                let _parent_b_data = tree_b.get(parent_b);
                 debug!(
                     b = usize::from(b_id),
                     b_kind = %b_data.kind.pretty(),
                     b_label = %b_data.label.pretty(),
                     parent = usize::from(parent_b),
-                    parent_kind = %parent_b_data.kind.pretty(),
-                    parent_label = %parent_b_data.label.pretty(),
+                    parent_kind = %_parent_b_data.kind.pretty(),
+                    parent_label = %_parent_b_data.label.pretty(),
                     pos,
                     "emit INSERT"
                 );
@@ -285,11 +286,11 @@ where
     // Process in post-order so children are deleted before parents
     for a_id in tree_a.post_order() {
         if !matching.contains_a(a_id) {
-            let a_data = tree_a.get(a_id);
+            let _a_data = tree_a.get(a_id);
             debug!(
                 a = usize::from(a_id),
-                a_kind = %a_data.kind.pretty(),
-                a_label = %a_data.label.pretty(),
+                a_kind = %_a_data.kind.pretty(),
+                a_label = %_a_data.label.pretty(),
                 "emit DELETE"
             );
             ops.push(EditOp::Delete { node_a: a_id });

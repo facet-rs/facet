@@ -1909,11 +1909,22 @@ dependencies = [
  "facet-dom",
  "facet-html",
  "facet-html-dom",
+ "facet-json",
  "facet-reflect",
  "facet-testhelpers",
  "proptest",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "facet-html-diff-wasm"
+version = "0.42.0"
+dependencies = [
+ "facet-html-diff",
+ "facet-json",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

@@ -178,16 +178,22 @@ fn main() {
             EditOp::Update { path, .. } => {
                 println!("  UPDATE at {}", path);
             }
-            EditOp::Insert { path, .. } => {
-                println!("  INSERT at {}", path);
-            }
-            EditOp::Delete { path, .. } => {
-                println!("  DELETE at {}", path);
-            }
-            EditOp::Move {
-                old_path, new_path, ..
+            EditOp::Insert {
+                parent,
+                position,
+                label_path,
+                ..
             } => {
-                println!("  MOVE {} -> {}", old_path, new_path);
+                println!(
+                    "  INSERT at {:?}[{}] (label: {})",
+                    parent, position, label_path
+                );
+            }
+            EditOp::Delete { node, .. } => {
+                println!("  DELETE {:?}", node);
+            }
+            EditOp::Move { from, to, .. } => {
+                println!("  MOVE {:?} -> {}", from, to);
             }
             _ => {
                 println!("  (other operation)");

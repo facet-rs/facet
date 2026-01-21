@@ -1,0 +1,21 @@
+{
+  "name": "facet-html-diff-wasm",
+  "version": "1.0.0",
+  "description": "Browser tests for facet-html-diff WASM patch application",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "cargo build -p facet-html-diff-wasm --target wasm32-unknown-unknown --release && wasm-bindgen --target web --out-dir pkg ../target/wasm32-unknown-unknown/release/facet_html_diff_wasm.wasm",
+    "generate-tests": "cargo test -p facet-html-diff --test generate_wasm_tests -- --ignored",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "packageManager": "pnpm@10.28.1",
+  "devDependencies": {
+    "@playwright/test": "1.57.0",
+    "playwright": "1.57.0",
+    "serve": "^14.2.5"
+  }
+}

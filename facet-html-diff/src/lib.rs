@@ -84,15 +84,15 @@ pub fn diff_html(old_html: &str, new_html: &str) -> Result<Vec<Patch>, String> {
     let edit_ops = tree_diff(&old_doc, &new_doc);
 
     debug!(count = edit_ops.len(), "Edit ops from facet-diff");
-    for op in &edit_ops {
-        debug!(?op, "edit op");
+    for _op in &edit_ops {
+        debug!(?_op, "edit op");
     }
 
     let patches = translate_to_patches(&edit_ops, &new_doc);
 
     debug!(count = patches.len(), "Translated patches");
-    for patch in &patches {
-        debug!(?patch, "patch");
+    for _patch in &patches {
+        debug!(?_patch, "patch");
     }
 
     Ok(patches)

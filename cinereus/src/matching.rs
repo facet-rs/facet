@@ -18,7 +18,7 @@ macro_rules! trace {
     ($($arg:tt)*) => {};
 }
 
-use crate::tree::{NoProperties, Properties, Tree};
+use crate::tree::{Properties, Tree};
 use core::hash::Hash;
 use facet_core::Facet;
 use indextree::NodeId;
@@ -246,13 +246,13 @@ fn top_down_phase<'a, K, L, P>(
 
         // If hashes match, these subtrees are identical
         if a_data.hash == b_data.hash && a_data.kind == b_data.kind {
-            let a_kind = a_data.kind.pretty().to_string();
-            debug!(a = usize::from(a_id), a_kind = %a_kind, b = usize::from(b_id), "top_down: hash match");
+            let _a_kind = a_data.kind.pretty().to_string();
+            debug!(a = usize::from(a_id), a_kind = %_a_kind, b = usize::from(b_id), "top_down: hash match");
             match_subtrees(tree_a, tree_b, a_id, b_id, matching);
         } else {
-            let a_kind = a_data.kind.pretty().to_string();
-            let b_kind = b_data.kind.pretty().to_string();
-            trace!(a = usize::from(a_id), a_kind = %a_kind, b = usize::from(b_id), b_kind = %b_kind, "top_down: no hash match");
+            let _a_kind = a_data.kind.pretty().to_string();
+            let _b_kind = b_data.kind.pretty().to_string();
+            trace!(a = usize::from(a_id), a_kind = %_a_kind, b = usize::from(b_id), b_kind = %_b_kind, "top_down: no hash match");
             // Hashes differ - try to match children
             // IMPORTANT: Only consider children of b_id, NOT arbitrary nodes from tree B
             // This prevents cross-level matching that causes spurious operations
