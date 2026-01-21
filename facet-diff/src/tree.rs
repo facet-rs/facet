@@ -44,6 +44,9 @@ pub struct NodeLabel {
 }
 
 /// An edit operation in the diff.
+///
+/// Each operation is self-contained with all information needed to apply it.
+/// Consumers do not have access to the original trees.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EditOp {
@@ -51,6 +54,10 @@ pub enum EditOp {
     Update {
         /// The path to the updated node
         path: Path,
+        /// The old value (for display/verification), None for containers
+        old_value: Option<String>,
+        /// The new value to set, None for containers
+        new_value: Option<String>,
         /// Hash of the old value
         old_hash: u64,
         /// Hash of the new value
@@ -60,6 +67,8 @@ pub enum EditOp {
     Insert {
         /// The path where the node was inserted
         path: Path,
+        /// The value to insert (for leaf nodes), None for containers
+        value: Option<String>,
         /// Hash of the inserted value
         hash: u64,
     },
@@ -246,8 +255,88 @@ pub fn tree_diff<'a, 'f, A: facet_core::Facet<'f>, B: facet_core::Facet<'f>>(
     let (cinereus_ops, matching) = diff_trees_with_matching(&tree_a, &tree_b, &config);
 
     // Convert cinereus ops to path-based EditOps using a shadow tree
-    // to track index shifts as operations are applied
-    convert_ops_with_shadow(cinereus_ops, &tree_a, &tree_b, &matching)
+    // to track index shifts as operations are applied.
+    // We pass the original values so we can extract actual values for leaf nodes.
+    let peek_a = Peek::new(a);
+    let peek_b = Peek::new(b);
+    convert_ops_with_shadow(cinereus_ops, &tree_a, &tree_b, &matching, peek_a, peek_b)
+}
+
+/// Extract a scalar value from a Peek by navigating a path.
+///
+/// Returns Some(string representation) for leaf/scalar values, None for containers.
+fn extract_value_at_path<'mem, 'facet>(
+    mut peek: Peek<'mem, 'facet>,
+    path: &Path,
+) -> Option<String> {
+    // Navigate to the node
+    for segment in &path.0 {
+        peek = match segment {
+            PathSegment::Field(name) => {
+                if let Ok(s) = peek.into_struct() {
+                    s.field_by_name(name).ok()?
+                } else if let Ok(opt) = peek.into_option() {
+                    let inner = opt.value()?;
+                    if let Ok(s) = inner.into_struct() {
+                        s.field_by_name(name).ok()?
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            }
+            PathSegment::Index(idx) => {
+                if let Ok(list) = peek.into_list() {
+                    list.get(*idx)?
+                } else if let Ok(opt) = peek.into_option() {
+                    if *idx == 0 {
+                        opt.value()?
+                    } else {
+                        return None;
+                    }
+                } else if let Ok(e) = peek.into_enum() {
+                    e.field(*idx).ok()??
+                } else {
+                    return None;
+                }
+            }
+            PathSegment::Variant(_) => {
+                // Variant just means we're already at that variant, continue
+                peek
+            }
+            PathSegment::Key(key) => {
+                if let Ok(map) = peek.into_map() {
+                    for (k, v) in map.iter() {
+                        if let Some(s) = k.as_str() {
+                            if s == key {
+                                peek = v;
+                                break;
+                            }
+                        }
+                    }
+                    return None;
+                } else {
+                    return None;
+                }
+            }
+        };
+    }
+
+    // For now, we only extract string values.
+    // This covers text content and attribute values in HTML.
+    // Other scalar types can be added later if needed.
+
+    // If we ended up at an Option<String>, unwrap it first
+    if let Ok(opt) = peek.into_option() {
+        if let Some(inner) = opt.value() {
+            return inner.as_str().map(|s| s.to_string());
+        } else {
+            return None;
+        }
+    }
+
+    peek.as_str().map(|s| s.to_string())
 }
 
 /// Convert cinereus ops to path-based EditOps.
@@ -255,11 +344,16 @@ pub fn tree_diff<'a, 'f, A: facet_core::Facet<'f>, B: facet_core::Facet<'f>>(
 /// This uses a "shadow tree" approach: we maintain a mutable copy of tree_a
 /// and simulate applying each operation to it. This lets us compute correct
 /// paths that account for index shifts from earlier operations.
-fn convert_ops_with_shadow(
+///
+/// The peeks are used to extract actual values for leaf nodes, making
+/// the resulting EditOps self-contained.
+fn convert_ops_with_shadow<'mem, 'facet>(
     ops: Vec<CinereusEditOp<NodeKind, NodeLabel>>,
     tree_a: &FacetTree,
     tree_b: &FacetTree,
     matching: &Matching,
+    peek_a: Peek<'mem, 'facet>,
+    peek_b: Peek<'mem, 'facet>,
 ) -> Vec<EditOp> {
     // Shadow tree: mutable clone of tree_a's structure
     let mut shadow_arena = tree_a.arena.clone();
@@ -282,10 +376,28 @@ fn convert_ops_with_shadow(
                 old_label: _,
                 new_label: _,
             } => {
-                // Path is the current location in shadow tree
+                // Path is the current location in shadow tree (for applying the patch)
                 let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+
+                // Extract actual values using the stored paths in tree labels
+                let old_path = tree_a
+                    .get(node_a)
+                    .label
+                    .as_ref()
+                    .map(|l| &l.path);
+                let new_path_in_b = tree_b
+                    .get(node_b)
+                    .label
+                    .as_ref()
+                    .map(|l| &l.path);
+
+                let old_value = old_path.and_then(|p| extract_value_at_path(peek_a, p));
+                let new_value = new_path_in_b.and_then(|p| extract_value_at_path(peek_b, p));
+
                 result.push(EditOp::Update {
                     path,
+                    old_value,
+                    new_value,
                     old_hash: tree_a.get(node_a).hash,
                     new_hash: tree_b.get(node_b).hash,
                 });
@@ -316,8 +428,13 @@ fn convert_ops_with_shadow(
                     }
                 }
 
+                // Extract value for leaf nodes
+                let value_path = tree_b.get(node_b).label.as_ref().map(|l| &l.path);
+                let value = value_path.and_then(|p| extract_value_at_path(peek_b, p));
+
                 result.push(EditOp::Insert {
                     path: path.clone(),
+                    value,
                     hash: tree_b.get(node_b).hash,
                 });
 
@@ -924,7 +1041,7 @@ pub fn compute_element_similarity<'mem, 'facet>(
     };
 
     // Generate edit operations using shadow tree
-    let edit_ops = convert_ops_with_shadow(cinereus_ops, &tree_a, &tree_b, &matching);
+    let edit_ops = convert_ops_with_shadow(cinereus_ops, &tree_a, &tree_b, &matching, peek_a, peek_b);
 
     SimilarityResult {
         score,

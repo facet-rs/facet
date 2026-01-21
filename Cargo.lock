@@ -888,6 +888,7 @@ dependencies = [
  "indextree",
  "rapidhash",
  "rayon",
+ "tracing",
 ]
 
 [[package]]

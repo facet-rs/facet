@@ -209,12 +209,6 @@ fn top_down_phase<K, L>(
     L: Clone,
 {
     debug!("top_down_phase start");
-    // Build hash -> nodes index for tree B
-    let mut b_by_hash: HashMap<u64, Vec<NodeId>> = HashMap::default();
-    for b_id in tree_b.iter() {
-        let hash = tree_b.get(b_id).hash;
-        b_by_hash.entry(hash).or_default().push(b_id);
-    }
 
     // Priority queue: process nodes by height (descending)
     // Higher nodes = larger subtrees = more valuable to match first
@@ -248,23 +242,18 @@ fn top_down_phase<K, L>(
         } else {
             trace!(a = usize::from(a_id), b = usize::from(b_id), a_hash = a_data.hash, b_hash = b_data.hash, "top_down: no hash match");
             // Hashes differ - try to match children
+            // IMPORTANT: Only consider children of b_id, NOT arbitrary nodes from tree B
+            // This prevents cross-level matching that causes spurious operations
             for a_child in tree_a.children(a_id) {
                 let a_child_data = tree_a.get(a_child);
 
-                // Look for B nodes with matching hash
-                if let Some(b_candidates) = b_by_hash.get(&a_child_data.hash) {
-                    for &b_candidate in b_candidates {
-                        if !matching.contains_b(b_candidate) {
-                            candidates.push((a_child, b_candidate));
-                        }
-                    }
-                }
-
-                // Also try children of b_id with same kind
                 for b_child in tree_b.children(b_id) {
                     if !matching.contains_b(b_child) {
                         let b_child_data = tree_b.get(b_child);
-                        if a_child_data.kind == b_child_data.kind {
+                        // Match by hash (exact isomorphism) or kind (structural match)
+                        if a_child_data.hash == b_child_data.hash
+                            || a_child_data.kind == b_child_data.kind
+                        {
                             candidates.push((a_child, b_child));
                         }
                     }
@@ -341,11 +330,73 @@ where
     DescendantMap { data }
 }
 
+/// Check if B is a valid match for A based on ancestry constraints.
+///
+/// If A's parent is matched to some node P_b, then B must be a descendant of P_b.
+/// This prevents matching nodes across incompatible tree locations.
+fn ancestry_compatible<K, L>(
+    a_id: NodeId,
+    b_id: NodeId,
+    tree_a: &Tree<K, L>,
+    tree_b: &Tree<K, L>,
+    matching: &Matching,
+) -> bool
+where
+    K: Clone + Eq + Hash,
+    L: Clone,
+{
+    // Check if A's parent is matched
+    if let Some(a_parent) = tree_a.parent(a_id) {
+        if let Some(matched_b_parent) = matching.get_b(a_parent) {
+            // A's parent is matched to matched_b_parent.
+            // B must be a descendant of matched_b_parent.
+            let is_descendant = tree_b
+                .descendants(matched_b_parent)
+                .any(|desc| desc == b_id);
+            if !is_descendant {
+                trace!(
+                    a = usize::from(a_id),
+                    b = usize::from(b_id),
+                    a_parent = usize::from(a_parent),
+                    matched_b_parent = usize::from(matched_b_parent),
+                    "ancestry check failed: B not descendant of matched parent"
+                );
+                return false;
+            }
+        }
+    }
+
+    // Also check the reverse: if B's parent is matched, A must be a descendant
+    // of the corresponding node in tree_a
+    if let Some(b_parent) = tree_b.parent(b_id) {
+        if let Some(matched_a_parent) = matching.get_a(b_parent) {
+            let is_descendant = tree_a
+                .descendants(matched_a_parent)
+                .any(|desc| desc == a_id);
+            if !is_descendant {
+                trace!(
+                    a = usize::from(a_id),
+                    b = usize::from(b_id),
+                    b_parent = usize::from(b_parent),
+                    matched_a_parent = usize::from(matched_a_parent),
+                    "ancestry check failed: A not descendant of matched parent"
+                );
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 /// Phase 2: Bottom-up matching.
 ///
-/// For unmatched nodes, find candidates with the same kind and compute
-/// similarity using the Dice coefficient on matched descendants.
-/// For leaf nodes (no children), we match by hash since Dice is not meaningful.
+/// Uses a two-pass approach based on GumTree Simple:
+/// 1. First pass: Match internal nodes - prefer position+kind when parent is matched,
+///    fall back to Dice coefficient for global matches
+/// 2. Second pass: Match leaf nodes (now ancestry constraints are established)
+///
+/// This prevents cross-level matching of leaves that happen to have the same hash.
 fn bottom_up_phase<K, L>(
     tree_a: &Tree<K, L>,
     tree_b: &Tree<K, L>,
@@ -355,23 +406,12 @@ fn bottom_up_phase<K, L>(
     K: Clone + Eq + Hash + Send + Sync,
     L: Clone + Send + Sync,
 {
-    // Build indices for tree B: by kind and by (kind, hash) for leaves
+    // Build index for tree B by kind
     let mut b_by_kind: HashMap<K, Vec<NodeId>> = HashMap::default();
-    let mut b_by_kind_hash: HashMap<(K, u64), Vec<NodeId>> = HashMap::default();
-
     for b_id in tree_b.iter() {
         if !matching.contains_b(b_id) {
             let b_data = tree_b.get(b_id);
-            let kind = b_data.kind.clone();
-            b_by_kind.entry(kind.clone()).or_default().push(b_id);
-
-            // For leaves, also index by (kind, hash)
-            if tree_b.child_count(b_id) == 0 {
-                b_by_kind_hash
-                    .entry((kind, b_data.hash))
-                    .or_default()
-                    .push(b_id);
-            }
+            b_by_kind.entry(b_data.kind.clone()).or_default().push(b_id);
         }
     }
 
@@ -379,59 +419,140 @@ fn bottom_up_phase<K, L>(
     let desc_a = precompute_descendants(tree_a);
     let desc_b = precompute_descendants(tree_b);
 
-    // Process tree A in post-order (children before parents)
-    for a_id in tree_a.post_order() {
+    // PASS 1: Match internal nodes (non-leaves)
+    // Use BFS order so parents are matched before children, enabling position-based matching
+    for a_id in tree_a.iter() {
         if matching.contains_a(a_id) {
             continue;
         }
 
+        // Skip leaves in this pass
+        if tree_a.child_count(a_id) == 0 {
+            continue;
+        }
+
         let a_data = tree_a.get(a_id);
-        let is_leaf = tree_a.child_count(a_id) == 0;
+        let a_pos = tree_a.position(a_id);
 
-        if is_leaf {
-            // For leaves, match by exact hash (same kind AND same hash)
-            let key = (a_data.kind.clone(), a_data.hash);
-            if let Some(candidates) = b_by_kind_hash.get(&key) {
-                for &b_id in candidates {
-                    if !matching.contains_b(b_id) {
-                        debug!(a = usize::from(a_id), b = usize::from(b_id), hash = a_data.hash, "bottom_up: leaf match by hash");
-                        matching.add(a_id, b_id);
-                        break; // Take the first available match
-                    }
-                }
-            }
-        } else {
-            // For internal nodes, use Dice coefficient
-            let candidates = b_by_kind.get(&a_data.kind).cloned().unwrap_or_default();
-            let num_candidates = candidates.len();
+        // Check if parent is matched - enables position-based matching
+        let parent_a = tree_a.parent(a_id);
+        let matched_parent_b = parent_a.and_then(|p| matching.get_b(p));
 
-            let mut best: Option<(NodeId, f64)> = None;
-            for b_id in candidates {
-                if matching.contains_b(b_id) {
-                    continue;
-                }
+        if let Some(parent_b) = matched_parent_b {
+            // Parent is matched - try position+kind matching among children of parent_b
+            // This is the "unique type among children" heuristic from GumTree Simple
+            let candidates: Vec<NodeId> = tree_b
+                .children(parent_b)
+                .filter(|&b_id| {
+                    !matching.contains_b(b_id)
+                        && tree_b.child_count(b_id) > 0 // Must be internal node
+                        && tree_b.get(b_id).kind == a_data.kind
+                })
+                .collect();
 
-                // Skip leaves when looking for internal node matches
-                if tree_b.child_count(b_id) == 0 {
-                    continue;
-                }
+            // Prefer same position, otherwise take first match by kind
+            let best = candidates
+                .iter()
+                .find(|&&b_id| tree_b.position(b_id) == a_pos)
+                .or_else(|| candidates.first())
+                .copied();
 
-                let score = dice_coefficient(a_id, b_id, matching, &desc_a, &desc_b);
-                trace!(a = usize::from(a_id), b = usize::from(b_id), score, "bottom_up: dice score");
-                if score >= config.similarity_threshold
-                    && (best.is_none() || score > best.unwrap().1)
-                {
-                    best = Some((b_id, score));
-                }
-            }
-
-            if let Some((b_id, score)) = best {
-                debug!(a = usize::from(a_id), b = usize::from(b_id), score, "bottom_up: internal match by dice");
+            if let Some(b_id) = best {
+                debug!(a = usize::from(a_id), b = usize::from(b_id), pos = a_pos, "bottom_up pass1: position+kind match");
                 matching.add(a_id, b_id);
-            } else {
-                trace!(a = usize::from(a_id), num_candidates, "bottom_up: no match found");
+                continue;
             }
         }
+
+        // No parent match or no position match - fall back to Dice coefficient
+        let candidates = b_by_kind.get(&a_data.kind).cloned().unwrap_or_default();
+
+        let mut best: Option<(NodeId, f64)> = None;
+        for b_id in candidates {
+            if matching.contains_b(b_id) {
+                continue;
+            }
+
+            // Skip leaves when looking for internal node matches
+            if tree_b.child_count(b_id) == 0 {
+                continue;
+            }
+
+            // Check ancestry constraint
+            if !ancestry_compatible(a_id, b_id, tree_a, tree_b, matching) {
+                continue;
+            }
+
+            let score = dice_coefficient(a_id, b_id, matching, &desc_a, &desc_b);
+            trace!(a = usize::from(a_id), b = usize::from(b_id), score, "bottom_up pass1: dice score");
+            if score >= config.similarity_threshold
+                && (best.is_none() || score > best.unwrap().1)
+            {
+                best = Some((b_id, score));
+            }
+        }
+
+        if let Some((b_id, _score)) = best {
+            debug!(a = usize::from(a_id), b = usize::from(b_id), _score, "bottom_up pass1: dice match");
+            matching.add(a_id, b_id);
+        }
+    }
+
+    // PASS 2: Match leaf nodes
+    // Now that internal nodes are matched, ancestry constraints are established
+    for a_id in tree_a.iter() {
+        if matching.contains_a(a_id) {
+            continue;
+        }
+
+        // Only process leaves in this pass
+        if tree_a.child_count(a_id) != 0 {
+            continue;
+        }
+
+        let a_data = tree_a.get(a_id);
+        let a_pos = tree_a.position(a_id);
+
+        // Get the parent's matched counterpart to constrain the search
+        let parent_a = tree_a.parent(a_id);
+        let matched_parent_b = parent_a.and_then(|p| matching.get_b(p));
+
+        // If parent is matched, only search among children of the matched parent
+        if let Some(parent_b) = matched_parent_b {
+            // First try exact hash match at same position
+            let candidates: Vec<NodeId> = tree_b
+                .children(parent_b)
+                .filter(|&b_id| {
+                    !matching.contains_b(b_id)
+                        && tree_b.child_count(b_id) == 0
+                        && tree_b.get(b_id).kind == a_data.kind
+                })
+                .collect();
+
+            // Prefer same position with same hash, then same hash, then same kind+position
+            let best = candidates
+                .iter()
+                .find(|&&b_id| {
+                    tree_b.position(b_id) == a_pos && tree_b.get(b_id).hash == a_data.hash
+                })
+                .or_else(|| {
+                    candidates
+                        .iter()
+                        .find(|&&b_id| tree_b.get(b_id).hash == a_data.hash)
+                })
+                .or_else(|| {
+                    candidates
+                        .iter()
+                        .find(|&&b_id| tree_b.position(b_id) == a_pos)
+                })
+                .copied();
+
+            if let Some(b_id) = best {
+                debug!(a = usize::from(a_id), b = usize::from(b_id), hash = a_data.hash, "bottom_up pass2: leaf match");
+                matching.add(a_id, b_id);
+            }
+        }
+        // If parent isn't matched, don't try global search - this prevents cross-level matching
     }
 }
 
