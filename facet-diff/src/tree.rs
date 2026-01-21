@@ -4,7 +4,9 @@
 //! cinereus's tree diffing algorithm.
 
 #[cfg(feature = "matching-stats")]
-pub use cinereus::matching::{get_stats as get_matching_stats, reset_stats as reset_matching_stats};
+pub use cinereus::matching::{
+    get_stats as get_matching_stats, reset_stats as reset_matching_stats,
+};
 
 #[cfg(feature = "tracing")]
 use tracing::debug;
@@ -23,10 +25,10 @@ use cinereus::{
     indextree::{self, NodeId},
     tree::{Properties, PropertyChange},
 };
-use std::collections::HashMap;
 use facet_core::{Def, StructKind, Type, UserType};
 use facet_diff_core::{Path, PathSegment};
 use facet_reflect::{HasFields, Peek};
+use std::collections::HashMap;
 
 /// The kind of a node in the tree (for type-based matching).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, facet::Facet)]
@@ -143,11 +145,8 @@ impl Properties for HtmlProperties {
 
     fn similarity(&self, other: &Self) -> f64 {
         // Count matching attributes
-        let all_keys: std::collections::HashSet<_> = self
-            .attrs
-            .keys()
-            .chain(other.attrs.keys())
-            .collect();
+        let all_keys: std::collections::HashSet<_> =
+            self.attrs.keys().chain(other.attrs.keys()).collect();
 
         if all_keys.is_empty() {
             return 1.0; // Both empty = perfect match
@@ -259,15 +258,15 @@ impl TreeBuilder {
         let mut props = HtmlProperties::new();
 
         // Only structs have attribute fields
-        if let Type::User(UserType::Struct(_)) = peek.shape().ty {
-            if let Ok(s) = peek.into_struct() {
-                for (field, field_peek) in s.fields() {
-                    // Check if this field is an attribute
-                    if field.is_attribute() {
-                        // Extract the value as a string
-                        let value = self.extract_attribute_value(field_peek);
-                        props.set(field.name, value);
-                    }
+        if let Type::User(UserType::Struct(_)) = peek.shape().ty
+            && let Ok(s) = peek.into_struct()
+        {
+            for (field, field_peek) in s.fields() {
+                // Check if this field is an attribute
+                if field.is_attribute() {
+                    // Extract the value as a string
+                    let value = self.extract_attribute_value(field_peek);
+                    props.set(field.name, value);
                 }
             }
         }
@@ -405,7 +404,10 @@ pub fn tree_diff<'a, 'f, A: facet_core::Facet<'f>, B: facet_core::Facet<'f>>(
     let config = MatchingConfig::default();
     let (cinereus_ops, matching) = diff_trees_with_matching(&tree_a, &tree_b, &config);
 
-    debug!(cinereus_ops_count = cinereus_ops.len(), "cinereus ops before conversion");
+    debug!(
+        cinereus_ops_count = cinereus_ops.len(),
+        "cinereus ops before conversion"
+    );
     for (i, op) in cinereus_ops.iter().enumerate() {
         debug!(i, ?op, "cinereus op");
     }
@@ -545,34 +547,33 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 let mut path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
 
                 // Extract actual values using the stored paths in tree labels
-                let old_path = tree_a
-                    .get(node_a)
-                    .label
-                    .as_ref()
-                    .map(|l| &l.path);
-                let new_path_in_b = tree_b
-                    .get(node_b)
-                    .label
-                    .as_ref()
-                    .map(|l| &l.path);
+                let old_path = tree_a.get(node_a).label.as_ref().map(|l| &l.path);
+                let new_path_in_b = tree_b.get(node_b).label.as_ref().map(|l| &l.path);
 
                 let old_value = old_path.and_then(|p| extract_value_at_path(peek_a, p));
                 let new_value = new_path_in_b.and_then(|p| extract_value_at_path(peek_b, p));
-                debug!(?old_path, ?new_path_in_b, ?old_value, ?new_value, "Update op values");
+                debug!(
+                    ?old_path,
+                    ?new_path_in_b,
+                    ?old_value,
+                    ?new_value,
+                    "Update op values"
+                );
 
                 // For struct field changes (e.g., attribute fields like id->class),
                 // replace the last segment with the new field name.
                 // This preserves the position but updates the field name.
-                if let (Some(old_p), Some(new_p)) = (old_path, new_path_in_b) {
-                    if let (Some(PathSegment::Field(old_field)), Some(PathSegment::Field(new_field))) =
-                        (old_p.0.last(), new_p.0.last())
-                    {
-                        if old_field != new_field && !path.0.is_empty() {
-                            // Replace the last field segment with the new field name
-                            if let Some(PathSegment::Field(_)) = path.0.last() {
-                                path.0.pop();
-                                path.0.push(PathSegment::Field(new_field.clone()));
-                            }
+                if let (Some(old_p), Some(new_p)) = (old_path, new_path_in_b)
+                    && let (
+                        Some(PathSegment::Field(old_field)),
+                        Some(PathSegment::Field(new_field)),
+                    ) = (old_p.0.last(), new_p.0.last())
+                {
+                    if old_field != new_field && !path.0.is_empty() {
+                        // Replace the last field segment with the new field name
+                        if let Some(PathSegment::Field(_)) = path.0.last() {
+                            path.0.pop();
+                            path.0.push(PathSegment::Field(new_field.clone()));
                         }
                     }
                 }
@@ -602,7 +603,13 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 let old_value = old_value.flatten();
                 let new_value = new_value.flatten();
 
-                debug!(?path, ?key, ?old_value, ?new_value, "emitting EditOp::UpdateAttribute");
+                debug!(
+                    ?path,
+                    ?key,
+                    ?old_value,
+                    ?new_value,
+                    "emitting EditOp::UpdateAttribute"
+                );
                 result.push(EditOp::UpdateAttribute {
                     path,
                     attr_name: key,
@@ -645,7 +652,13 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     .unwrap_or_else(|| Path(vec![]));
                 let value = extract_value_at_path(peek_b, &label_path);
 
-                debug!(?node_b, ?path, ?label_path, ?position, "INSERT op: computed path");
+                debug!(
+                    ?node_b,
+                    ?path,
+                    ?label_path,
+                    ?position,
+                    "INSERT op: computed path"
+                );
                 result.push(EditOp::Insert {
                     path: path.clone(),
                     label_path,
@@ -698,7 +711,13 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 let parent_after = shadow_arena.get(node_a).and_then(|n| n.parent());
                 if let Some(p) = parent_before {
                     let children_after: Vec<_> = p.children(&shadow_arena).collect();
-                    debug!(?node_a, ?parent_before, ?parent_after, ?children_after, "after remove");
+                    debug!(
+                        ?node_a,
+                        ?parent_before,
+                        ?parent_after,
+                        ?children_after,
+                        "after remove"
+                    );
                 }
             }
 
@@ -724,7 +743,10 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 node_a.detach(&mut shadow_arena);
 
                 // Find new parent in shadow tree
-                let shadow_new_parent = b_to_shadow.get(&new_parent_b).copied().unwrap_or(shadow_root);
+                let shadow_new_parent = b_to_shadow
+                    .get(&new_parent_b)
+                    .copied()
+                    .unwrap_or(shadow_root);
 
                 // Insert at new position
                 let children: Vec<_> = shadow_new_parent.children(&shadow_arena).collect();
@@ -777,12 +799,12 @@ fn compute_path_in_shadow(
     // But we need to account for any index shifts from insertions/deletions
     // For now, let's compute the path by walking up and using labels where available
 
-    if let Some(node_ref) = shadow_arena.get(node) {
-        if let Some(label) = &node_ref.get().label {
-            // Original node from tree_a - use its stored path
-            // But we need to update any indices that may have shifted
-            return compute_adjusted_path(shadow_arena, shadow_root, node, &label.path);
-        }
+    if let Some(node_ref) = shadow_arena.get(node)
+        && let Some(label) = &node_ref.get().label
+    {
+        // Original node from tree_a - use its stored path
+        // But we need to update any indices that may have shifted
+        return compute_adjusted_path(shadow_arena, shadow_root, node, &label.path);
     }
 
     // Inserted node - compute path by walking up
@@ -817,13 +839,20 @@ fn compute_adjusted_path(
         // If this depth has an Index segment in the original path, record actual position
         if current_path_len > 0 {
             let depth = current_path_len - 1;
-            if let Some(PathSegment::Index(_)) = original_path.0.get(depth) {
-                if let Some(parent_id) = shadow_arena.get(current).and_then(|n| n.parent()) {
-                    let children: Vec<_> = parent_id.children(shadow_arena).collect();
-                    let pos = children.iter().position(|&c| c == current).unwrap_or(0);
-                    debug!(?current, ?parent_id, ?depth, ?pos, num_children = children.len(), "recording position");
-                    depth_to_position.insert(depth, pos);
-                }
+            if let Some(PathSegment::Index(_)) = original_path.0.get(depth)
+                && let Some(parent_id) = shadow_arena.get(current).and_then(|n| n.parent())
+            {
+                let children: Vec<_> = parent_id.children(shadow_arena).collect();
+                let pos = children.iter().position(|&c| c == current).unwrap_or(0);
+                debug!(
+                    ?current,
+                    ?parent_id,
+                    ?depth,
+                    ?pos,
+                    num_children = children.len(),
+                    "recording position"
+                );
+                depth_to_position.insert(depth, pos);
             }
         }
 
@@ -982,23 +1011,21 @@ mod tests {
             "Should have root path"
         );
         assert!(
-            paths.iter().any(|p| p.0 == vec![PathSegment::Field("items".into())]),
+            paths
+                .iter()
+                .any(|p| p.0 == vec![PathSegment::Field("items".into())]),
             "Should have items field path"
         );
         assert!(
-            paths.iter().any(|p| p.0
-                == vec![
-                    PathSegment::Field("items".into()),
-                    PathSegment::Index(0)
-                ]),
+            paths
+                .iter()
+                .any(|p| p.0 == vec![PathSegment::Field("items".into()), PathSegment::Index(0)]),
             "Should have items[0] path"
         );
         assert!(
-            paths.iter().any(|p| p.0
-                == vec![
-                    PathSegment::Field("items".into()),
-                    PathSegment::Index(2)
-                ]),
+            paths
+                .iter()
+                .any(|p| p.0 == vec![PathSegment::Field("items".into()), PathSegment::Index(2)]),
             "Should have items[2] path"
         );
     }
@@ -1090,8 +1117,7 @@ mod tests {
         item0_node.remove(&mut shadow_arena);
 
         // Now item1 (originally at index 1) should be at index 0
-        let adjusted1 =
-            compute_adjusted_path(&shadow_arena, tree.root, item1_node, &item1_path);
+        let adjusted1 = compute_adjusted_path(&shadow_arena, tree.root, item1_node, &item1_path);
         let expected1 = Path(vec![
             PathSegment::Field("items".into()),
             PathSegment::Index(0),
@@ -1102,8 +1128,7 @@ mod tests {
         );
 
         // And item2 (originally at index 2) should be at index 1
-        let adjusted2 =
-            compute_adjusted_path(&shadow_arena, tree.root, item2_node, &item2_path);
+        let adjusted2 = compute_adjusted_path(&shadow_arena, tree.root, item2_node, &item2_path);
         let expected2 = Path(vec![
             PathSegment::Field("items".into()),
             PathSegment::Index(1),
@@ -1132,9 +1157,9 @@ mod tests {
         assert!(!ops.is_empty(), "Should have some operations for deletion");
 
         // Should have at least one Delete or Move operation
-        let has_structural_change = ops.iter().any(|op| {
-            matches!(op, EditOp::Delete { .. } | EditOp::Move { .. })
-        });
+        let has_structural_change = ops
+            .iter()
+            .any(|op| matches!(op, EditOp::Delete { .. } | EditOp::Move { .. }));
         assert!(
             has_structural_change,
             "Should have Delete or Move for structural change, got: {:?}",
@@ -1158,16 +1183,16 @@ mod tests {
         // Should have an Insert for items[1]
         let has_insert_at_1 = ops.iter().any(|op| {
             if let EditOp::Insert { path, .. } = op {
-                path.0
-                    == vec![
-                        PathSegment::Field("items".into()),
-                        PathSegment::Index(1),
-                    ]
+                path.0 == vec![PathSegment::Field("items".into()), PathSegment::Index(1)]
             } else {
                 false
             }
         });
-        assert!(has_insert_at_1, "Should have Insert at items[1], got: {:?}", ops);
+        assert!(
+            has_insert_at_1,
+            "Should have Insert at items[1], got: {:?}",
+            ops
+        );
     }
 
     /// Test that nested structures produce diff operations
@@ -1176,15 +1201,23 @@ mod tests {
         let a = Nested {
             name: "root".into(),
             children: vec![
-                Container { items: vec!["a".into()] },
-                Container { items: vec!["b".into()] },
+                Container {
+                    items: vec!["a".into()],
+                },
+                Container {
+                    items: vec!["b".into()],
+                },
             ],
         };
         let b = Nested {
             name: "root".into(),
             children: vec![
-                Container { items: vec!["a".into()] },
-                Container { items: vec!["modified".into()] }, // changed
+                Container {
+                    items: vec!["a".into()],
+                },
+                Container {
+                    items: vec!["modified".into()],
+                }, // changed
             ],
         };
 
@@ -1280,7 +1313,8 @@ pub fn compute_element_similarity<'mem, 'facet>(
     };
 
     // Generate edit operations using shadow tree
-    let edit_ops = convert_ops_with_shadow(cinereus_ops, &tree_a, &tree_b, &matching, peek_a, peek_b);
+    let edit_ops =
+        convert_ops_with_shadow(cinereus_ops, &tree_a, &tree_b, &matching, peek_a, peek_b);
 
     SimilarityResult {
         score,

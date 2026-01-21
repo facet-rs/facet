@@ -81,6 +81,7 @@ members = [
     "facet-html",
     "facet-dom",
     "facet-html-dom",
+    "facet-html-diff",
     "facet-atom",
     "facet-singularize",
     "facet-json-schema",

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 043339cf3c49762c399e1e44bf4e899a219cdf9b53fecb2d5ae6878c8b7bd367 # shrinks to old_children = [Text(" "), Span { class: None, text: "A" }], new_children = [P { class: None, text: "a" }, Span { class: None, text: "A" }, P { class: None, text: "a" }]
