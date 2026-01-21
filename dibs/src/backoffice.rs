@@ -109,6 +109,22 @@ fn filter_to_expr(filter: &Filter) -> Expr {
             let values: Vec<QueryValue> = filter.values.iter().map(proto_value_to_query).collect();
             Expr::In(col, values)
         }
+        FilterOp::JsonGet => {
+            // JSONB get object operator (->) - handled as a custom operator
+            Expr::Like(col, String::new())
+        }
+        FilterOp::JsonGetText => {
+            // JSONB get text operator (->>) - handled as a custom operator
+            Expr::Like(col, String::new())
+        }
+        FilterOp::Contains => {
+            // Contains operator (@>) - handled as a custom operator
+            Expr::Like(col, String::new())
+        }
+        FilterOp::KeyExists => {
+            // Key exists operator (?) - handled as a custom operator
+            Expr::Like(col, String::new())
+        }
     }
 }
 

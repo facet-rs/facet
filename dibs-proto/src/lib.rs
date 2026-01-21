@@ -291,27 +291,35 @@ pub struct RowField {
 #[repr(u8)]
 pub enum FilterOp {
     /// Equal (=)
-    Eq = 0,
+    Eq,
     /// Not equal (!=)
-    Ne = 1,
+    Ne,
     /// Less than (<)
-    Lt = 2,
+    Lt,
     /// Less than or equal (<=)
-    Lte = 3,
+    Lte,
     /// Greater than (>)
-    Gt = 4,
+    Gt,
     /// Greater than or equal (>=)
-    Gte = 5,
+    Gte,
     /// LIKE pattern match
-    Like = 6,
+    Like,
     /// Case-insensitive LIKE
-    ILike = 7,
+    ILike,
     /// IS NULL
-    IsNull = 8,
+    IsNull,
     /// IS NOT NULL
-    IsNotNull = 9,
+    IsNotNull,
     /// IN (value1, value2, ...) - uses `values` field instead of `value`
-    In = 10,
+    In,
+    /// JSONB get object operator (->)
+    JsonGet,
+    /// JSONB get text operator (->>)
+    JsonGetText,
+    /// Contains operator (@>)
+    Contains,
+    /// Key exists operator (?)
+    KeyExists,
 }
 
 /// A single filter condition.

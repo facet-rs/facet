@@ -99,10 +99,14 @@ pub struct Where {
 /// - `@ilike($param)` or `@ilike("pattern")` for case-insensitive LIKE
 /// - `@like`, `@gt`, `@lt`, `@gte`, `@lte`, `@ne` for comparison operators
 /// - `@in($param)` for `= ANY($1)` (array containment)
+/// - `@json-get($param)` for JSONB `->` operator (get JSON object)
+/// - `@json-get-text($param)` for JSONB `->>` operator (get JSON value as text)
+/// - `@contains($param)` for `@>` operator (contains, typically JSONB)
+/// - `@key-exists($param)` for `?` operator (key exists, typically JSONB)
 ///
 /// Bare scalars (like `$handle`) are treated as equality filters via `#[facet(other)]`.
 #[derive(Debug, Facet)]
-#[facet(rename_all = "lowercase")]
+#[facet(rename_all = "kebab-case")]
 #[repr(u8)]
 pub enum FilterValue {
     /// NULL check (@null)
@@ -126,6 +130,14 @@ pub enum FilterValue {
     Ne(Vec<String>),
     /// IN array check (@in($param)) - param should be an array type
     In(Vec<String>),
+    /// JSONB get object operator (@json_get($param)) -> `column -> $param`
+    JsonGet(Vec<String>),
+    /// JSONB get text operator (@json_get_text($param)) -> `column ->> $param`
+    JsonGetText(Vec<String>),
+    /// Contains operator (@contains($param)) -> `column @> $param`
+    Contains(Vec<String>),
+    /// Key exists operator (@key_exists($param)) -> `column ? $param`
+    KeyExists(Vec<String>),
     /// Equality - bare scalar fallback (e.g., `$handle` or `"value"`)
     #[facet(other)]
     Eq(String),
