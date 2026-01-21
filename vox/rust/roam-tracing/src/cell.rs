@@ -453,7 +453,7 @@ impl CellTracingService {
 }
 
 impl CellTracing for CellTracingService {
-    async fn configure(&self, config: TracingConfig) -> ConfigResult {
+    async fn configure(&self, _cx: &roam::session::Context, config: TracingConfig) -> ConfigResult {
         *self.filter.write().unwrap() = FilterState::from_config(&config);
         ConfigResult::Ok
     }

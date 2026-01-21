@@ -23,15 +23,20 @@ use tokio_tungstenite::{connect_async, tungstenite};
 struct TestbedImpl;
 
 impl Testbed for TestbedImpl {
-    async fn echo(&self, message: String) -> String {
+    async fn echo(&self, _cx: &roam_session::Context, message: String) -> String {
         message
     }
 
-    async fn reverse(&self, message: String) -> String {
+    async fn reverse(&self, _cx: &roam_session::Context, message: String) -> String {
         message.chars().rev().collect()
     }
 
-    async fn divide(&self, dividend: i64, divisor: i64) -> Result<i64, MathError> {
+    async fn divide(
+        &self,
+        _cx: &roam_session::Context,
+        dividend: i64,
+        divisor: i64,
+    ) -> Result<i64, MathError> {
         if divisor == 0 {
             Err(MathError::DivisionByZero)
         } else {
@@ -39,7 +44,7 @@ impl Testbed for TestbedImpl {
         }
     }
 
-    async fn lookup(&self, id: u32) -> Result<Person, LookupError> {
+    async fn lookup(&self, _cx: &roam_session::Context, id: u32) -> Result<Person, LookupError> {
         match id {
             1 => Ok(Person {
                 name: "Alice".to_string(),
@@ -50,7 +55,7 @@ impl Testbed for TestbedImpl {
         }
     }
 
-    async fn sum(&self, mut numbers: roam_session::Rx<i32>) -> i64 {
+    async fn sum(&self, _cx: &roam_session::Context, mut numbers: roam_session::Rx<i32>) -> i64 {
         let mut total: i64 = 0;
         while let Some(n) = numbers.recv().await.ok().flatten() {
             total += n as i64;
@@ -58,7 +63,12 @@ impl Testbed for TestbedImpl {
         total
     }
 
-    async fn generate(&self, count: u32, output: roam_session::Tx<i32>) {
+    async fn generate(
+        &self,
+        _cx: &roam_session::Context,
+        count: u32,
+        output: roam_session::Tx<i32>,
+    ) {
         for i in 0..count as i32 {
             let _ = output.send(&i).await;
         }
@@ -66,6 +76,7 @@ impl Testbed for TestbedImpl {
 
     async fn transform(
         &self,
+        _cx: &roam_session::Context,
         mut input: roam_session::Rx<String>,
         output: roam_session::Tx<String>,
     ) {
@@ -74,12 +85,17 @@ impl Testbed for TestbedImpl {
         }
     }
 
-    async fn echo_point(&self, point: spec_proto::Point) -> spec_proto::Point {
+    async fn echo_point(
+        &self,
+        _cx: &roam_session::Context,
+        point: spec_proto::Point,
+    ) -> spec_proto::Point {
         point
     }
 
     async fn create_person(
         &self,
+        _cx: &roam_session::Context,
         name: String,
         age: u8,
         email: Option<String>,
@@ -87,13 +103,21 @@ impl Testbed for TestbedImpl {
         spec_proto::Person { name, age, email }
     }
 
-    async fn rectangle_area(&self, rect: spec_proto::Rectangle) -> f64 {
+    async fn rectangle_area(
+        &self,
+        _cx: &roam_session::Context,
+        rect: spec_proto::Rectangle,
+    ) -> f64 {
         let width = (rect.bottom_right.x - rect.top_left.x).abs() as f64;
         let height = (rect.bottom_right.y - rect.top_left.y).abs() as f64;
         width * height
     }
 
-    async fn parse_color(&self, name: String) -> Option<spec_proto::Color> {
+    async fn parse_color(
+        &self,
+        _cx: &roam_session::Context,
+        name: String,
+    ) -> Option<spec_proto::Color> {
         match name.to_lowercase().as_str() {
             "red" => Some(spec_proto::Color::Red),
             "green" => Some(spec_proto::Color::Green),
@@ -102,7 +126,7 @@ impl Testbed for TestbedImpl {
         }
     }
 
-    async fn shape_area(&self, shape: spec_proto::Shape) -> f64 {
+    async fn shape_area(&self, _cx: &roam_session::Context, shape: spec_proto::Shape) -> f64 {
         match shape {
             spec_proto::Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
             spec_proto::Shape::Rectangle { width, height } => width * height,
@@ -112,6 +136,7 @@ impl Testbed for TestbedImpl {
 
     async fn create_canvas(
         &self,
+        _cx: &roam_session::Context,
         name: String,
         shapes: Vec<spec_proto::Shape>,
         background: spec_proto::Color,
@@ -123,17 +148,21 @@ impl Testbed for TestbedImpl {
         }
     }
 
-    async fn process_message(&self, msg: spec_proto::Message) -> spec_proto::Message {
+    async fn process_message(
+        &self,
+        _cx: &roam_session::Context,
+        msg: spec_proto::Message,
+    ) -> spec_proto::Message {
         msg
     }
 
-    async fn get_points(&self, count: u32) -> Vec<spec_proto::Point> {
+    async fn get_points(&self, _cx: &roam_session::Context, count: u32) -> Vec<spec_proto::Point> {
         (0..count as i32)
             .map(|i| spec_proto::Point { x: i, y: i * 2 })
             .collect()
     }
 
-    async fn swap_pair(&self, pair: (i32, String)) -> (String, i32) {
+    async fn swap_pair(&self, _cx: &roam_session::Context, pair: (i32, String)) -> (String, i32) {
         (pair.1, pair.0)
     }
 }

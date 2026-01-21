@@ -2421,11 +2421,26 @@ pub trait Caller: Clone + Send + Sync + 'static {
     /// assigned channel IDs before serialization.
     ///
     /// Returns ResponseData containing the payload and any response channel IDs.
-    async fn call<T: Facet<'static>>(
+    fn call<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
         args: &mut T,
-    ) -> Result<ResponseData, TransportError>;
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
+        self.call_with_metadata(method_id, args, roam_wire::Metadata::default())
+    }
+
+    /// Make an RPC call with the given method ID, arguments, and metadata.
+    ///
+    /// The arguments are mutable because stream bindings (Tx/Rx) need to be
+    /// assigned channel IDs before serialization.
+    ///
+    /// Returns ResponseData containing the payload and any response channel IDs.
+    fn call_with_metadata<T: Facet<'static> + Send>(
+        &self,
+        method_id: u64,
+        args: &mut T,
+        metadata: roam_wire::Metadata,
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send;
 
     /// Bind receivers for `Rx<T>` streams in the response.
     ///
@@ -2437,16 +2452,109 @@ pub trait Caller: Clone + Send + Sync + 'static {
 }
 
 impl Caller for ConnectionHandle {
-    async fn call<T: Facet<'static>>(
+    async fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
         args: &mut T,
+        metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        ConnectionHandle::call(self, method_id, args).await
+        ConnectionHandle::call_with_metadata(self, method_id, args, metadata).await
     }
 
     fn bind_response_streams<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]) {
         ConnectionHandle::bind_response_streams(self, response, channels)
+    }
+}
+
+// ============================================================================
+// CallFuture - Builder pattern for RPC calls with optional metadata
+// ============================================================================
+
+/// A future representing an RPC call that can be configured with metadata.
+///
+/// This provides a builder pattern for RPC calls:
+/// - `client.method(args).await` - Simple call with default (empty) metadata
+/// - `client.method(args).with_metadata(meta).await` - Call with custom metadata
+///
+/// The future is lazy - the RPC call is not made until `.await` is called.
+///
+/// # Example
+///
+/// ```ignore
+/// // Simple call
+/// let result = client.subscribe(route).await?;
+///
+/// // With metadata
+/// let result = client.subscribe(route)
+///     .with_metadata(vec![("trace-id".into(), MetadataValue::String("abc".into()))])
+///     .await?;
+/// ```
+pub struct CallFuture<C, Args, Ok, Err>
+where
+    C: Caller,
+    Args: Facet<'static>,
+{
+    caller: C,
+    method_id: u64,
+    args: Args,
+    metadata: roam_wire::Metadata,
+    _phantom: PhantomData<fn() -> (Ok, Err)>,
+}
+
+impl<C, Args, Ok, Err> CallFuture<C, Args, Ok, Err>
+where
+    C: Caller,
+    Args: Facet<'static>,
+{
+    /// Create a new CallFuture.
+    pub fn new(caller: C, method_id: u64, args: Args) -> Self {
+        Self {
+            caller,
+            method_id,
+            args,
+            metadata: roam_wire::Metadata::default(),
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Set metadata for this call.
+    ///
+    /// Metadata is a list of key-value pairs that will be sent with the request.
+    /// The server can access this via `Context::metadata()`.
+    pub fn with_metadata(mut self, metadata: roam_wire::Metadata) -> Self {
+        self.metadata = metadata;
+        self
+    }
+}
+
+impl<C, Args, Ok, Err> std::future::IntoFuture for CallFuture<C, Args, Ok, Err>
+where
+    C: Caller,
+    Args: Facet<'static> + Send + 'static,
+    Ok: Facet<'static> + Send + 'static,
+    Err: Facet<'static> + Send + 'static,
+{
+    type Output = Result<Ok, CallError<Err>>;
+    type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let CallFuture {
+            caller,
+            method_id,
+            mut args,
+            metadata,
+            _phantom,
+        } = self;
+
+        Box::pin(async move {
+            let response = caller
+                .call_with_metadata(method_id, &mut args, metadata)
+                .await
+                .map_err(CallError::from)?;
+            let mut result = decode_response::<Ok, Err>(&response.payload)?;
+            caller.bind_response_streams(&mut result, &response.channels);
+            Ok(result)
+        })
     }
 }
 
@@ -2566,10 +2674,22 @@ impl ConnectionHandle {
     /// let response = handle.call(method_id::SUM, &mut (rx,)).await?;
     /// // tx.send(&42).await to push values
     /// ```
+    /// Make an RPC call with default (empty) metadata.
     pub async fn call<T: Facet<'static>>(
         &self,
         method_id: u64,
         args: &mut T,
+    ) -> Result<ResponseData, TransportError> {
+        self.call_with_metadata(method_id, args, roam_wire::Metadata::default())
+            .await
+    }
+
+    /// Make an RPC call with custom metadata.
+    pub async fn call_with_metadata<T: Facet<'static>>(
+        &self,
+        method_id: u64,
+        args: &mut T,
+        metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
         // Walk args and bind any streams (allocates channel IDs)
         // This collects receivers that need to be drained but does NOT spawn
@@ -2601,8 +2721,10 @@ impl ConnectionHandle {
 
         if drains.is_empty() {
             // No Rx streams - simple call
-            self.call_raw_with_channels(method_id, channels, payload, args_debug)
-                .await
+            self.call_raw_with_channels_and_metadata(
+                method_id, channels, payload, args_debug, metadata,
+            )
+            .await
         } else {
             // Has Rx streams - spawn tasks to drain them
             // IMPORTANT: We must send Request BEFORE spawning drain tasks to ensure ordering.
@@ -2627,7 +2749,7 @@ impl ConnectionHandle {
                 conn_id: self.shared.conn_id,
                 request_id,
                 method_id,
-                metadata: Vec::new(),
+                metadata,
                 channels,
                 payload,
                 response_tx,
@@ -2898,6 +3020,18 @@ impl ConnectionHandle {
         args_debug: Option<String>,
     ) -> Result<ResponseData, TransportError> {
         self.call_raw_full(method_id, Vec::new(), channels, payload, args_debug)
+            .await
+    }
+
+    async fn call_raw_with_channels_and_metadata(
+        &self,
+        method_id: u64,
+        channels: Vec<u64>,
+        payload: Vec<u8>,
+        args_debug: Option<String>,
+        metadata: roam_wire::Metadata,
+    ) -> Result<ResponseData, TransportError> {
+        self.call_raw_full(method_id, metadata, channels, payload, args_debug)
             .await
     }
 

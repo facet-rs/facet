@@ -39,15 +39,15 @@ impl TestServiceImpl {
 }
 
 impl TestService for TestServiceImpl {
-    async fn echo(&self, input: String) -> String {
+    async fn echo(&self, _cx: &roam::Context, input: String) -> String {
         format!("[{}] {}", self.name, input)
     }
 
-    async fn add(&self, a: i32, b: i32) -> i32 {
+    async fn add(&self, _cx: &roam::Context, a: i32, b: i32) -> i32 {
         a + b
     }
 
-    async fn stream_sum(&self, mut numbers: Rx<i32>) -> i64 {
+    async fn stream_sum(&self, _cx: &roam::Context, mut numbers: Rx<i32>) -> i64 {
         let mut total = 0i64;
         while let Ok(Some(n)) = numbers.recv().await {
             total += n as i64;
@@ -55,7 +55,7 @@ impl TestService for TestServiceImpl {
         total
     }
 
-    async fn generate(&self, count: u32, output: Tx<i32>) {
+    async fn generate(&self, _cx: &roam::Context, count: u32, output: Tx<i32>) {
         for i in 0..count {
             if output.send(&(i as i32)).await.is_err() {
                 break;

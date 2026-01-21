@@ -466,10 +466,11 @@ where
     C: MessageConnector,
     D: ServiceDispatcher + Clone + 'static,
 {
-    async fn call<T: Facet<'static>>(
+    async fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
         args: &mut T,
+        metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
         let mut attempt = 0u32;
 
@@ -495,7 +496,10 @@ where
                 }
             };
 
-            match handle.call(method_id, args).await {
+            match handle
+                .call_with_metadata(method_id, args, metadata.clone())
+                .await
+            {
                 Ok(response) => return Ok(response),
                 Err(TransportError::Encode(e)) => {
                     return Err(TransportError::Encode(e));

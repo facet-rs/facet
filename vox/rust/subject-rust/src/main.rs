@@ -27,14 +27,14 @@ impl testbed::Testbed for TestbedService {
     // Unary methods
     // ========================================================================
 
-    #[instrument(skip(self))]
-    async fn echo(&self, message: String) -> String {
+    #[instrument(skip(self, _cx))]
+    async fn echo(&self, _cx: &roam::session::Context, message: String) -> String {
         info!("echo called");
         message
     }
 
-    #[instrument(skip(self))]
-    async fn reverse(&self, message: String) -> String {
+    #[instrument(skip(self, _cx))]
+    async fn reverse(&self, _cx: &roam::session::Context, message: String) -> String {
         info!("reverse called");
         message.chars().rev().collect()
     }
@@ -43,8 +43,13 @@ impl testbed::Testbed for TestbedService {
     // Fallible methods (for testing User(E) error path)
     // ========================================================================
 
-    #[instrument(skip(self))]
-    async fn divide(&self, dividend: i64, divisor: i64) -> Result<i64, MathError> {
+    #[instrument(skip(self, _cx))]
+    async fn divide(
+        &self,
+        _cx: &roam::session::Context,
+        dividend: i64,
+        divisor: i64,
+    ) -> Result<i64, MathError> {
         info!("divide called");
         if divisor == 0 {
             Err(MathError::DivisionByZero)
@@ -53,8 +58,8 @@ impl testbed::Testbed for TestbedService {
         }
     }
 
-    #[instrument(skip(self))]
-    async fn lookup(&self, id: u32) -> Result<Person, LookupError> {
+    #[instrument(skip(self, _cx))]
+    async fn lookup(&self, _cx: &roam::session::Context, id: u32) -> Result<Person, LookupError> {
         info!("lookup called");
         match id {
             1 => Ok(Person {
@@ -80,8 +85,8 @@ impl testbed::Testbed for TestbedService {
     // Streaming methods
     // ========================================================================
 
-    #[instrument(skip(self, numbers))]
-    async fn sum(&self, mut numbers: Rx<i32>) -> i64 {
+    #[instrument(skip(self, _cx, numbers))]
+    async fn sum(&self, _cx: &roam::session::Context, mut numbers: Rx<i32>) -> i64 {
         info!("sum called, starting to receive numbers");
         let mut total: i64 = 0;
         while let Some(n) = numbers.recv().await.ok().flatten() {
@@ -92,8 +97,8 @@ impl testbed::Testbed for TestbedService {
         total
     }
 
-    #[instrument(skip(self, output))]
-    async fn generate(&self, count: u32, output: Tx<i32>) {
+    #[instrument(skip(self, _cx, output))]
+    async fn generate(&self, _cx: &roam::session::Context, count: u32, output: Tx<i32>) {
         info!(count, "generate called");
         for i in 0..count as i32 {
             debug!(i, "sending value");
@@ -105,8 +110,13 @@ impl testbed::Testbed for TestbedService {
         info!("generate complete");
     }
 
-    #[instrument(skip(self, input, output))]
-    async fn transform(&self, mut input: Rx<String>, output: Tx<String>) {
+    #[instrument(skip(self, _cx, input, output))]
+    async fn transform(
+        &self,
+        _cx: &roam::session::Context,
+        mut input: Rx<String>,
+        output: Tx<String>,
+    ) {
         info!("transform called");
         while let Some(s) = input.recv().await.ok().flatten() {
             debug!(?s, "transforming");
@@ -119,21 +129,27 @@ impl testbed::Testbed for TestbedService {
     // Complex type methods
     // ========================================================================
 
-    async fn echo_point(&self, point: Point) -> Point {
+    async fn echo_point(&self, _cx: &roam::session::Context, point: Point) -> Point {
         point
     }
 
-    async fn create_person(&self, name: String, age: u8, email: Option<String>) -> Person {
+    async fn create_person(
+        &self,
+        _cx: &roam::session::Context,
+        name: String,
+        age: u8,
+        email: Option<String>,
+    ) -> Person {
         Person { name, age, email }
     }
 
-    async fn rectangle_area(&self, rect: Rectangle) -> f64 {
+    async fn rectangle_area(&self, _cx: &roam::session::Context, rect: Rectangle) -> f64 {
         let width = (rect.bottom_right.x - rect.top_left.x).abs() as f64;
         let height = (rect.bottom_right.y - rect.top_left.y).abs() as f64;
         width * height
     }
 
-    async fn parse_color(&self, name: String) -> Option<Color> {
+    async fn parse_color(&self, _cx: &roam::session::Context, name: String) -> Option<Color> {
         match name.to_lowercase().as_str() {
             "red" => Some(Color::Red),
             "green" => Some(Color::Green),
@@ -142,7 +158,7 @@ impl testbed::Testbed for TestbedService {
         }
     }
 
-    async fn shape_area(&self, shape: Shape) -> f64 {
+    async fn shape_area(&self, _cx: &roam::session::Context, shape: Shape) -> f64 {
         match shape {
             Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
             Shape::Rectangle { width, height } => width * height,
@@ -150,7 +166,13 @@ impl testbed::Testbed for TestbedService {
         }
     }
 
-    async fn create_canvas(&self, name: String, shapes: Vec<Shape>, background: Color) -> Canvas {
+    async fn create_canvas(
+        &self,
+        _cx: &roam::session::Context,
+        name: String,
+        shapes: Vec<Shape>,
+        background: Color,
+    ) -> Canvas {
         Canvas {
             name,
             shapes,
@@ -158,7 +180,7 @@ impl testbed::Testbed for TestbedService {
         }
     }
 
-    async fn process_message(&self, msg: Message) -> Message {
+    async fn process_message(&self, _cx: &roam::session::Context, msg: Message) -> Message {
         // Echo the message back with some transformation
         match msg {
             Message::Text(s) => Message::Text(format!("processed: {s}")),
@@ -167,13 +189,13 @@ impl testbed::Testbed for TestbedService {
         }
     }
 
-    async fn get_points(&self, count: u32) -> Vec<Point> {
+    async fn get_points(&self, _cx: &roam::session::Context, count: u32) -> Vec<Point> {
         (0..count as i32)
             .map(|i| Point { x: i, y: i * 2 })
             .collect()
     }
 
-    async fn swap_pair(&self, pair: (i32, String)) -> (String, i32) {
+    async fn swap_pair(&self, _cx: &roam::session::Context, pair: (i32, String)) -> (String, i32) {
         (pair.1, pair.0)
     }
 }

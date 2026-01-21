@@ -38,15 +38,15 @@ trait Testbed {
 struct TestbedImpl;
 
 impl Testbed for TestbedImpl {
-    async fn echo(&self, input: String) -> String {
+    async fn echo(&self, _cx: &roam_session::Context, input: String) -> String {
         input
     }
 
-    async fn add(&self, (a, b): (i32, i32)) -> i32 {
+    async fn add(&self, _cx: &roam_session::Context, (a, b): (i32, i32)) -> i32 {
         a + b
     }
 
-    async fn sum(&self, mut numbers: Rx<i32>) -> i64 {
+    async fn sum(&self, _cx: &roam_session::Context, mut numbers: Rx<i32>) -> i64 {
         eprintln!("server: sum called");
         let mut total = 0i64;
         loop {
@@ -70,7 +70,7 @@ impl Testbed for TestbedImpl {
         total
     }
 
-    async fn generate(&self, count: u32, output: Tx<i32>) {
+    async fn generate(&self, _cx: &roam_session::Context, count: u32, output: Tx<i32>) {
         for i in 0..count {
             if output.send(&(i as i32)).await.is_err() {
                 break;
@@ -78,7 +78,7 @@ impl Testbed for TestbedImpl {
         }
     }
 
-    async fn generate_large(&self, count: u32, output: Tx<String>) {
+    async fn generate_large(&self, _cx: &roam_session::Context, count: u32, output: Tx<String>) {
         // Generate strings >32 bytes to force slot allocation (not inline)
         for i in 0..count {
             let large_string = format!("message_{:04}_padding_to_exceed_32_bytes_inline_limit", i);
@@ -88,7 +88,7 @@ impl Testbed for TestbedImpl {
         }
     }
 
-    async fn consume_large(&self, mut input: Rx<String>) -> u32 {
+    async fn consume_large(&self, _cx: &roam_session::Context, mut input: Rx<String>) -> u32 {
         let mut count = 0u32;
         while let Ok(Some(_value)) = input.recv().await {
             count += 1;
@@ -98,7 +98,12 @@ impl Testbed for TestbedImpl {
         count
     }
 
-    async fn consume_then_fail(&self, mut input: Rx<String>, fail_after: u32) -> (bool, u32) {
+    async fn consume_then_fail(
+        &self,
+        _cx: &roam_session::Context,
+        mut input: Rx<String>,
+        fail_after: u32,
+    ) -> (bool, u32) {
         let mut count = 0u32;
         while let Ok(Some(_value)) = input.recv().await {
             count += 1;
@@ -111,7 +116,7 @@ impl Testbed for TestbedImpl {
         (true, count)
     }
 
-    async fn recursive_call(&self, depth: u32) -> u32 {
+    async fn recursive_call(&self, _cx: &roam_session::Context, depth: u32) -> u32 {
         // Basic impl without callback - just returns depth
         depth
     }
@@ -1339,7 +1344,7 @@ async fn recursive_calls_with_slot_exhaustion() {
     }
 
     impl CellService for CellServiceImpl {
-        async fn process(&self, depth: u32) -> u32 {
+        async fn process(&self, _cx: &roam::Context, depth: u32) -> u32 {
             eprintln!("GUEST: process(depth={})", depth);
             if depth == 0 {
                 return 0;
@@ -1374,7 +1379,12 @@ async fn recursive_calls_with_slot_exhaustion() {
             }
         }
 
-        async fn process_streaming(&self, depth: u32, mut data: Rx<String>) -> u32 {
+        async fn process_streaming(
+            &self,
+            _cx: &roam::Context,
+            depth: u32,
+            mut data: Rx<String>,
+        ) -> u32 {
             eprintln!("GUEST: process_streaming(depth={})", depth);
 
             // Consume incoming stream in background while we recurse
@@ -1452,7 +1462,7 @@ async fn recursive_calls_with_slot_exhaustion() {
     }
 
     impl HostService for HostServiceImpl {
-        async fn host_process(&self, depth: u32) -> u32 {
+        async fn host_process(&self, _cx: &roam::Context, depth: u32) -> u32 {
             eprintln!("HOST: host_process(depth={})", depth);
             if depth == 0 {
                 return 0;
@@ -1487,7 +1497,12 @@ async fn recursive_calls_with_slot_exhaustion() {
             }
         }
 
-        async fn host_process_streaming(&self, depth: u32, mut data: Rx<String>) -> u32 {
+        async fn host_process_streaming(
+            &self,
+            _cx: &roam::Context,
+            depth: u32,
+            mut data: Rx<String>,
+        ) -> u32 {
             eprintln!("HOST: host_process_streaming(depth={})", depth);
 
             // Consume incoming stream in background while we recurse
@@ -1708,11 +1723,16 @@ async fn recursive_streaming_calls_with_slot_exhaustion() {
     }
 
     impl CellService for CellServiceImpl {
-        async fn process(&self, depth: u32) -> u32 {
+        async fn process(&self, _cx: &roam::Context, depth: u32) -> u32 {
             depth // Not used in this test
         }
 
-        async fn process_streaming(&self, depth: u32, mut data: Rx<String>) -> u32 {
+        async fn process_streaming(
+            &self,
+            _cx: &roam::Context,
+            depth: u32,
+            mut data: Rx<String>,
+        ) -> u32 {
             eprintln!("GUEST: process_streaming(depth={})", depth);
 
             // Consume incoming stream in background while we recurse
@@ -1788,11 +1808,16 @@ async fn recursive_streaming_calls_with_slot_exhaustion() {
     }
 
     impl HostService for HostServiceImpl {
-        async fn host_process(&self, depth: u32) -> u32 {
+        async fn host_process(&self, _cx: &roam::Context, depth: u32) -> u32 {
             depth // Not used in this test
         }
 
-        async fn host_process_streaming(&self, depth: u32, mut data: Rx<String>) -> u32 {
+        async fn host_process_streaming(
+            &self,
+            _cx: &roam::Context,
+            depth: u32,
+            mut data: Rx<String>,
+        ) -> u32 {
             eprintln!("HOST: host_process_streaming(depth={})", depth);
 
             // Consume incoming stream in background while we recurse

@@ -27,17 +27,22 @@ impl TestService {
 }
 
 impl Testbed for TestService {
-    async fn echo(&self, message: String) -> String {
+    async fn echo(&self, _cx: &roam::session::Context, message: String) -> String {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         message
     }
 
-    async fn reverse(&self, message: String) -> String {
+    async fn reverse(&self, _cx: &roam::session::Context, message: String) -> String {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         message.chars().rev().collect()
     }
 
-    async fn divide(&self, dividend: i64, divisor: i64) -> Result<i64, spec_proto::MathError> {
+    async fn divide(
+        &self,
+        _cx: &roam::session::Context,
+        dividend: i64,
+        divisor: i64,
+    ) -> Result<i64, spec_proto::MathError> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         if divisor == 0 {
             Err(spec_proto::MathError::DivisionByZero)
@@ -46,7 +51,11 @@ impl Testbed for TestService {
         }
     }
 
-    async fn lookup(&self, id: u32) -> Result<spec_proto::Person, spec_proto::LookupError> {
+    async fn lookup(
+        &self,
+        _cx: &roam::session::Context,
+        id: u32,
+    ) -> Result<spec_proto::Person, spec_proto::LookupError> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         if id == 1 {
             Ok(spec_proto::Person {
@@ -59,7 +68,7 @@ impl Testbed for TestService {
         }
     }
 
-    async fn sum(&self, mut numbers: Rx<i32>) -> i64 {
+    async fn sum(&self, _cx: &roam::session::Context, mut numbers: Rx<i32>) -> i64 {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         let mut total = 0i64;
         while let Ok(Some(n)) = numbers.recv().await {
@@ -68,26 +77,36 @@ impl Testbed for TestService {
         total
     }
 
-    async fn generate(&self, count: u32, output: Tx<i32>) {
+    async fn generate(&self, _cx: &roam::session::Context, count: u32, output: Tx<i32>) {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         for i in 0..count as i32 {
             let _ = output.send(&i).await;
         }
     }
 
-    async fn transform(&self, mut input: Rx<String>, output: Tx<String>) {
+    async fn transform(
+        &self,
+        _cx: &roam::session::Context,
+        mut input: Rx<String>,
+        output: Tx<String>,
+    ) {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         while let Ok(Some(s)) = input.recv().await {
             let _ = output.send(&s.to_uppercase()).await;
         }
     }
 
-    async fn echo_point(&self, point: spec_proto::Point) -> spec_proto::Point {
+    async fn echo_point(
+        &self,
+        _cx: &roam::session::Context,
+        point: spec_proto::Point,
+    ) -> spec_proto::Point {
         point
     }
 
     async fn create_person(
         &self,
+        _cx: &roam::session::Context,
         name: String,
         age: u8,
         email: Option<String>,
@@ -95,13 +114,21 @@ impl Testbed for TestService {
         spec_proto::Person { name, age, email }
     }
 
-    async fn rectangle_area(&self, rect: spec_proto::Rectangle) -> f64 {
+    async fn rectangle_area(
+        &self,
+        _cx: &roam::session::Context,
+        rect: spec_proto::Rectangle,
+    ) -> f64 {
         let w = (rect.bottom_right.x - rect.top_left.x).abs() as f64;
         let h = (rect.bottom_right.y - rect.top_left.y).abs() as f64;
         w * h
     }
 
-    async fn parse_color(&self, name: String) -> Option<spec_proto::Color> {
+    async fn parse_color(
+        &self,
+        _cx: &roam::session::Context,
+        name: String,
+    ) -> Option<spec_proto::Color> {
         match name.to_lowercase().as_str() {
             "red" => Some(spec_proto::Color::Red),
             "green" => Some(spec_proto::Color::Green),
@@ -110,7 +137,7 @@ impl Testbed for TestService {
         }
     }
 
-    async fn shape_area(&self, shape: spec_proto::Shape) -> f64 {
+    async fn shape_area(&self, _cx: &roam::session::Context, shape: spec_proto::Shape) -> f64 {
         match shape {
             spec_proto::Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
             spec_proto::Shape::Rectangle { width, height } => width * height,
@@ -120,6 +147,7 @@ impl Testbed for TestService {
 
     async fn create_canvas(
         &self,
+        _cx: &roam::session::Context,
         name: String,
         shapes: Vec<spec_proto::Shape>,
         background: spec_proto::Color,
@@ -131,7 +159,11 @@ impl Testbed for TestService {
         }
     }
 
-    async fn process_message(&self, msg: spec_proto::Message) -> spec_proto::Message {
+    async fn process_message(
+        &self,
+        _cx: &roam::session::Context,
+        msg: spec_proto::Message,
+    ) -> spec_proto::Message {
         match msg {
             spec_proto::Message::Text(s) => spec_proto::Message::Text(format!("processed: {s}")),
             spec_proto::Message::Number(n) => spec_proto::Message::Number(n * 2),
@@ -141,13 +173,13 @@ impl Testbed for TestService {
         }
     }
 
-    async fn get_points(&self, count: u32) -> Vec<spec_proto::Point> {
+    async fn get_points(&self, _cx: &roam::session::Context, count: u32) -> Vec<spec_proto::Point> {
         (0..count as i32)
             .map(|i| spec_proto::Point { x: i, y: i * 2 })
             .collect()
     }
 
-    async fn swap_pair(&self, pair: (i32, String)) -> (String, i32) {
+    async fn swap_pair(&self, _cx: &roam::session::Context, pair: (i32, String)) -> (String, i32) {
         (pair.1, pair.0)
     }
 }

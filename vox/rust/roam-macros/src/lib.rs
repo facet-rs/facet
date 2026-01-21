@@ -204,7 +204,7 @@ fn generate_trait_method(method: &ServiceMethod, roam: &TokenStream2) -> TokenSt
     let method_name = format_ident!("{}", method.name().to_snake_case());
     let method_doc = method.doc().map(|d| quote! { #[doc = #d] });
 
-    // Parameters
+    // Parameters - cx: &Context comes first
     let params: Vec<TokenStream2> = method
         .args()
         .map(|arg| {
@@ -220,7 +220,7 @@ fn generate_trait_method(method: &ServiceMethod, roam: &TokenStream2) -> TokenSt
 
     quote! {
         #method_doc
-        fn #method_name(&self, #(#params),*) -> impl std::future::Future<Output = #full_return> + Send;
+        fn #method_name(&self, cx: &#roam::Context, #(#params),*) -> impl std::future::Future<Output = #full_return> + Send;
     }
 }
 
@@ -308,7 +308,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
 
             fn dispatch(
                 &self,
-                cx: &#roam::session::Context,
+                cx: &#roam::Context,
                 payload: Vec<u8>,
                 registry: &mut #roam::session::ChannelRegistry,
             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
@@ -382,16 +382,17 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
     quote! {
         fn #dispatch_name(
             &self,
-            cx: &#roam::session::Context,
+            cx: &#roam::Context,
             payload: Vec<u8>,
             registry: &mut #roam::session::ChannelRegistry,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
             let handler = self.handler.clone();
+            let cx_clone = cx.clone();
             #dispatch_call(cx, payload, registry, move |args: #tuple_type| async move {
                 use #roam::facet_pretty::FacetPretty;
                 if #method_name_str != "emit_tracing" { #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, args = %#args_log, "handling"); }
                 #args_binding
-                handler.#method_name(#args_call).await
+                handler.#method_name(&cx_clone, #args_call).await
             })
         }
     }
@@ -459,7 +460,21 @@ fn generate_client_method(
         .map(|arg| format_ident!("{}", arg.name().to_snake_case()))
         .collect();
 
-    // Build args tuple
+    // Build args tuple type for CallFuture
+    let args_tuple_type = if arg_names.is_empty() {
+        quote! { () }
+    } else {
+        let arg_types: Vec<TokenStream2> =
+            method.args().map(|arg| arg.ty.to_token_stream()).collect();
+        if arg_types.len() == 1 {
+            let ty = &arg_types[0];
+            quote! { (#ty,) }
+        } else {
+            quote! { (#(#arg_types),*) }
+        }
+    };
+
+    // Build args tuple value
     let args_tuple = if arg_names.is_empty() {
         quote! { () }
     } else if arg_names.len() == 1 {
@@ -471,23 +486,21 @@ fn generate_client_method(
 
     // Return type and error type depend on whether method is fallible
     let return_type = method.return_type();
-    let (ok_ty, err_ty, client_return) = format_client_return_type(&return_type, roam);
+    let (ok_ty, err_ty, _client_return) = format_client_return_type(&return_type, roam);
 
-    let method_name_str = method.name();
+    // The CallFuture type
+    let call_future_return = quote! {
+        #roam::session::CallFuture<C, #args_tuple_type, #ok_ty, #err_ty>
+    };
+
     quote! {
         #method_doc
-        pub async fn #method_name(&self, #(#params),*) -> #client_return {
-            use #roam::facet_pretty::FacetPretty;
-            let mut args = #args_tuple;
-            #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, args = %args.pretty_with(#roam::PrettyPrinter::new().with_colors(#roam::facet_pretty::ColorMode::Never).with_max_content_len(64)), "calling");
-            let response = #roam::session::Caller::call(&self.caller, #method_id_mod::#method_name(), &mut args)
-                .await
-                .map_err(#roam::session::CallError::from)?;
-            let mut result = #roam::session::decode_response::<#ok_ty, #err_ty>(&response.payload)?;
-            #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, result = %result.pretty_with(#roam::PrettyPrinter::new().with_colors(#roam::facet_pretty::ColorMode::Never).with_max_content_len(64)), "response");
-            // Bind any Rx<T> streams in the response so data can be received
-            #roam::session::Caller::bind_response_streams(&self.caller, &mut result, &response.channels);
-            Ok(result)
+        pub fn #method_name(&self, #(#params),*) -> #call_future_return {
+            #roam::session::CallFuture::new(
+                self.caller.clone(),
+                #method_id_mod::#method_name(),
+                #args_tuple,
+            )
         }
     }
 }

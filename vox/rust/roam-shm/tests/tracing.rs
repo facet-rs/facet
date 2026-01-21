@@ -26,7 +26,7 @@ trait GuestService {
 struct GuestServiceImpl;
 
 impl GuestService for GuestServiceImpl {
-    async fn ping(&self) -> String {
+    async fn ping(&self, _cx: &roam::Context) -> String {
         // Emit a tracing event
         tracing::info!("guest received ping");
         "pong".to_string()
@@ -45,7 +45,7 @@ struct HostServiceImpl {
 }
 
 impl HostService for HostServiceImpl {
-    async fn get_name(&self) -> String {
+    async fn get_name(&self, _cx: &roam::Context) -> String {
         self.name.clone()
     }
 }

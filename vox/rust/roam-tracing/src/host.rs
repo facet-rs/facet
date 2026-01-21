@@ -103,11 +103,11 @@ pub struct HostTracingService {
 }
 
 impl HostTracing for HostTracingService {
-    async fn get_tracing_config(&self) -> TracingConfig {
+    async fn get_tracing_config(&self, _cx: &roam::Context) -> TracingConfig {
         self.state.config()
     }
 
-    async fn emit_tracing(&self, records: Vec<TracingRecord>) {
+    async fn emit_tracing(&self, _cx: &roam::Context, records: Vec<TracingRecord>) {
         for record in records {
             let tagged = TaggedRecord {
                 peer_id: self.peer_id,
@@ -125,12 +125,24 @@ mod tests {
     use super::*;
     use crate::record::Level;
 
+    /// Create a dummy context for tests that call trait methods directly
+    fn dummy_cx() -> roam::Context {
+        roam::Context::new(
+            roam::wire::ConnectionId::new(1),
+            roam::wire::RequestId::new(1),
+            roam::wire::MethodId::new(1),
+            roam::wire::Metadata::default(),
+            vec![],
+        )
+    }
+
     #[tokio::test]
     async fn test_host_tracing_service() {
         let state = HostTracingState::new(100);
         let mut rx = state.take_receiver().unwrap();
 
         let service = state.service_for_peer(1, Some("test-cell".to_string()));
+        let cx = dummy_cx();
 
         // Emit some records
         let records = vec![
@@ -152,7 +164,7 @@ mod tests {
             },
         ];
 
-        service.emit_tracing(records).await;
+        service.emit_tracing(&cx, records).await;
 
         // Receive and verify
         let tagged1 = rx.recv().await.unwrap();
@@ -176,9 +188,10 @@ mod tests {
     async fn test_config_query() {
         let state = HostTracingState::new(100);
         let service = state.service_for_peer(1, None);
+        let cx = dummy_cx();
 
         // Default config (from RUST_LOG env var or "info")
-        let config = service.get_tracing_config().await;
+        let config = service.get_tracing_config(&cx).await;
         // Default should contain some filter directives
         assert!(!config.filter_directives.is_empty() || config.filter_directives == "info");
 
@@ -189,7 +202,7 @@ mod tests {
         });
 
         // Query again
-        let config = service.get_tracing_config().await;
+        let config = service.get_tracing_config(&cx).await;
         assert_eq!(config.filter_directives, "debug,mymodule=trace");
         assert!(config.include_span_events);
     }
