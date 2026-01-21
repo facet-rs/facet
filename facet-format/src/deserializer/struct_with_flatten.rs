@@ -78,6 +78,19 @@ where
             solver.see_key(ev.name.clone());
         }
 
+        // If still ambiguous, try to disambiguate using tag values from
+        // internally-tagged enums. The evidence captures scalar values,
+        // so we can look for tag fields and use their values to select variants.
+        if solver.candidates().len() > 1 {
+            for ev in &evidence {
+                if let Some(ScalarValue::Str(variant_name)) = &ev.scalar_value {
+                    if solver.hint_variant(variant_name) && solver.candidates().len() == 1 {
+                        break;
+                    }
+                }
+            }
+        }
+
         // Get the resolved configuration
         let config_handle = solver
             .finish()
@@ -109,6 +122,10 @@ where
         // Track currently open path segments: (field_name, is_option, is_variant)
         // The is_variant flag indicates if we've selected a variant at this level
         let mut open_segments: alloc::vec::Vec<(&str, bool, bool)> = alloc::vec::Vec::new();
+
+        // Build a lookup for variant selections by path depth
+        // For internally-tagged enums, we need to select variants when opening enum fields
+        let variant_selections = resolution.variant_selections();
 
         loop {
             let event = self.expect_event("value")?;
@@ -179,7 +196,41 @@ where
                             if is_option {
                                 wip = wip.begin_some().map_err(DeserializeError::reflect)?;
                             }
-                            open_segments.push((segment, is_option, false));
+
+                            // Check if we need to select a variant at this point
+                            // This happens for internally-tagged enums where variant fields
+                            // are siblings of the tag field
+                            let mut selected_variant = false;
+
+                            // Build current path from open_segments plus the segment we just opened
+                            let current_path: alloc::vec::Vec<&str> = open_segments
+                                .iter()
+                                .map(|(name, _, _)| *name)
+                                .chain(core::iter::once(segment))
+                                .collect();
+
+                            for vs in variant_selections {
+                                let vs_fields: alloc::vec::Vec<&str> = vs
+                                    .path
+                                    .segments()
+                                    .iter()
+                                    .filter_map(|s| match s {
+                                        PathSegment::Field(name) => Some(*name),
+                                        PathSegment::Variant(_, _) => None,
+                                    })
+                                    .collect();
+
+                                // Check if current path matches the variant selection path
+                                if current_path == vs_fields {
+                                    wip = wip
+                                        .select_variant_named(vs.variant_name)
+                                        .map_err(DeserializeError::reflect)?;
+                                    selected_variant = true;
+                                    break;
+                                }
+                            }
+
+                            open_segments.push((segment, is_option, selected_variant));
                         }
 
                         // Open the last segment (the actual field being deserialized)
@@ -187,19 +238,16 @@ where
                             wip = wip
                                 .begin_field(segment)
                                 .map_err(DeserializeError::reflect)?;
+
                             let is_option = matches!(wip.shape().def, Def::Option(_));
 
                             if is_option {
                                 // Check if the value is null before deciding to enter Some
-                                let peeked = self
-                                    .parser
-                                    .peek_event()
-                                    .map_err(DeserializeError::Parser)?;
+                                let peeked =
+                                    self.parser.peek_event().map_err(DeserializeError::Parser)?;
                                 if matches!(
                                     peeked,
-                                    Some(ParseEvent::Scalar(
-                                        ScalarValue::Null | ScalarValue::Unit
-                                    ))
+                                    Some(ParseEvent::Scalar(ScalarValue::Null | ScalarValue::Unit))
                                 ) {
                                     // Value is null - consume it and set Option to None
                                     let _ = self.expect_event("null or unit")?;
@@ -225,8 +273,38 @@ where
                         }
 
                         if ends_with_variant {
-                            // For externally-tagged enums: select variant and deserialize content
                             if let Some(PathSegment::Variant(_, variant_name)) = segments.last() {
+                                // Check if this is an internally-tagged enum tag field.
+                                // For internally-tagged enums, the tag field's serialized_name
+                                // matches the enum's tag attribute, and the value is just
+                                // the variant name string (not a nested struct).
+                                let is_internally_tagged_tag = field_info
+                                    .value_shape
+                                    .get_tag_attr()
+                                    .is_some_and(|tag| tag == field_info.serialized_name);
+
+                                if is_internally_tagged_tag {
+                                    // Consume the tag value (the variant name string)
+                                    // We don't need to verify it matches since the solver
+                                    // already determined the variant from probing.
+                                    self.parser.skip_value().map_err(DeserializeError::Parser)?;
+
+                                    wip = wip
+                                        .select_variant_named(variant_name)
+                                        .map_err(DeserializeError::reflect)?;
+
+                                    // Mark this segment as having a variant selected so we
+                                    // keep it open for sibling fields (the variant's content)
+                                    if let Some(last) = open_segments.last_mut() {
+                                        last.2 = true; // is_variant = true
+                                    }
+
+                                    // Don't close segments - keep them open for sibling fields
+                                    fields_set.insert(field_info.serialized_name);
+                                    continue;
+                                }
+
+                                // For externally-tagged enums: select variant and deserialize content
                                 wip = wip
                                     .select_variant_named(variant_name)
                                     .map_err(DeserializeError::reflect)?;
