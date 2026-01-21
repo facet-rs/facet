@@ -356,12 +356,12 @@ pub fn get_schema_fields(schema_file: &SchemaFile) -> Vec<SchemaField> {
         return fields;
     };
 
-    collect_object_fields(root_schema, &mut fields);
+    collect_object_fields(root_schema, schema_file, &mut fields);
     fields
 }
 
 /// Recursively collect fields from a schema, handling wrappers like @object.
-fn collect_object_fields(schema: &Schema, fields: &mut Vec<SchemaField>) {
+fn collect_object_fields(schema: &Schema, schema_file: &SchemaFile, fields: &mut Vec<SchemaField>) {
     match schema {
         Schema::Object(obj) => {
             for (key, field_schema) in &obj.0 {
@@ -380,12 +380,16 @@ fn collect_object_fields(schema: &Schema, fields: &mut Vec<SchemaField>) {
             }
         }
         Schema::Flatten(flatten) => {
-            collect_object_fields(&flatten.0.0, fields);
+            collect_object_fields(&flatten.0.0, schema_file, fields);
         }
         Schema::Type {
-            name: Some(_type_name),
+            name: Some(type_name),
         } => {
-            // Would need schema_file to resolve - skip for now
+            // Resolve the type reference and collect its fields
+            if let Some(type_schema) = schema_file.schema.get(&Some(type_name.clone())) {
+                let resolved = resolve_type_reference(type_schema, schema_file);
+                collect_object_fields(&resolved, schema_file, fields);
+            }
         }
         _ => {}
     }
@@ -616,10 +620,25 @@ fn get_schema_at_path_recursive(
 
     match schema {
         Schema::Object(obj) => {
-            let field_schema = obj
+            // First try exact named field match
+            if let Some(field_schema) = obj
                 .0
-                .get(&Documented::new(ObjectKey::named(field_name.clone())))?;
-            get_schema_at_path_recursive(field_schema, rest, schema_file)
+                .get(&Documented::new(ObjectKey::named(field_name.clone())))
+            {
+                return get_schema_at_path_recursive(field_schema, rest, schema_file);
+            }
+
+            // Try catch-all keys (like @string or @)
+            for (key, field_schema) in &obj.0 {
+                // Check for typed catch-all like @string (tag = Some("string"), value = None)
+                // or unit catch-all @ (tag = Some(""), value = None)
+                // key is Documented<ObjectKey>, so key.value is the ObjectKey
+                if key.value.value.is_none() && key.value.tag.is_some() {
+                    return get_schema_at_path_recursive(field_schema, rest, schema_file);
+                }
+            }
+
+            None
         }
         Schema::Enum(enum_schema) => {
             // Check if field_name is a tag reference like "@query"
@@ -653,9 +672,28 @@ pub fn get_schema_fields_at_path(schema_file: &SchemaFile, path: &[String]) -> V
         return Vec::new();
     };
 
+    // Resolve type references to get the actual schema
+    let resolved = resolve_type_reference(&schema, schema_file);
+
     let mut fields = Vec::new();
-    collect_object_fields(&schema, &mut fields);
+    collect_object_fields(&resolved, schema_file, &mut fields);
     fields
+}
+
+/// Resolve a type reference to its actual schema definition.
+fn resolve_type_reference(schema: &Schema, schema_file: &SchemaFile) -> Schema {
+    match schema {
+        Schema::Type {
+            name: Some(type_name),
+        } => {
+            if let Some(type_schema) = schema_file.schema.get(&Some(type_name.clone())) {
+                resolve_type_reference(type_schema, schema_file)
+            } else {
+                schema.clone()
+            }
+        }
+        other => other.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -714,6 +752,71 @@ mod tests {
         assert!(
             decl.is_some(),
             "@schema @ should be detected as a declaration"
+        );
+    }
+
+    #[test]
+    fn test_get_schema_fields_at_path_through_enum_variant() {
+        // Schema similar to dibs-queries: root is @object{@string @Decl}
+        // where Decl is @enum{ query @Query } and Query is @object{from, select, ...}
+        let schema_source = r#"
+meta {id "test@1"}
+schema {
+    @ @object{@string @Decl}
+    Decl @enum{
+        query @Query
+    }
+    Query @object{
+        from @optional(@string)
+        select @optional(@string)
+        where @optional(@string)
+    }
+}
+"#;
+        let schema_file: SchemaFile =
+            facet_styx::from_str(schema_source).expect("should parse schema");
+
+        // Path: ["AllProducts", "@query"] - navigating into a @query{} block
+        let fields =
+            get_schema_fields_at_path(&schema_file, &["AllProducts".into(), "@query".into()]);
+
+        let field_names: Vec<_> = fields.iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            field_names.contains(&"from"),
+            "should have 'from' field, got: {:?}",
+            field_names
+        );
+        assert!(
+            field_names.contains(&"select"),
+            "should have 'select' field, got: {:?}",
+            field_names
+        );
+        assert!(
+            field_names.contains(&"where"),
+            "should have 'where' field, got: {:?}",
+            field_names
+        );
+    }
+
+    #[test]
+    fn test_find_object_at_offset_includes_tag_in_path() {
+        // When cursor is inside @query{...}, path should include "@query"
+        let source = r#"AllProducts @query{
+    from product
+}"#;
+        let tree = styx_tree::parse(source).unwrap();
+
+        // Cursor inside the @query block (after "from ")
+        let offset = source.find("from").unwrap() + 5; // inside "from product"
+        let ctx = find_object_at_offset(&tree, offset);
+
+        assert!(ctx.is_some(), "should find object context");
+        let ctx = ctx.unwrap();
+
+        assert!(
+            ctx.path.contains(&"@query".to_string()),
+            "path should contain '@query', got: {:?}",
+            ctx.path
         );
     }
 }

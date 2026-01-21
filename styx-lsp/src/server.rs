@@ -810,7 +810,13 @@ impl LanguageServer for StyxLanguageServer {
         let schema_fields: Vec<(String, String)> = if let Ok(schema_file) =
             facet_styx::from_str::<facet_styx::SchemaFile>(&schema.source)
         {
-            get_schema_fields_at_path(&schema_file, path)
+            let fields = get_schema_fields_at_path(&schema_file, path);
+            tracing::debug!(
+                count = fields.len(),
+                ?path,
+                "schema fields from parsed SchemaFile"
+            );
+            fields
                 .into_iter()
                 .map(|f| {
                     // Build type string from schema info
@@ -825,6 +831,7 @@ impl LanguageServer for StyxLanguageServer {
                 })
                 .collect()
         } else {
+            tracing::debug!("Failed to parse schema, falling back to source-based lookup");
             // Fallback to source-based lookup if parsing fails
             get_schema_fields_from_source_at_path(&schema.source, path)
         };
@@ -839,8 +846,14 @@ impl LanguageServer for StyxLanguageServer {
             })
             .unwrap_or_else(|| get_existing_fields(tree));
 
-        // Get current word being typed for fuzzy matching
-        let current_word = get_word_at_position(&doc.content, position);
+        // Get current word being typed for fuzzy matching and text_edit range
+        let word_info = get_word_range_at_position(&doc.content, position);
+        let current_word = word_info.as_ref().map(|(w, _)| w.clone());
+        // Range for text_edit - either replace the word being typed, or insert at cursor
+        let edit_range = word_info.map(|(_, r)| r).unwrap_or_else(|| Range {
+            start: position,
+            end: position,
+        });
 
         // Filter out existing fields
         let available_fields: Vec<_> = schema_fields
@@ -930,7 +943,11 @@ impl LanguageServer for StyxLanguageServer {
                     label_details,
                     kind: Some(CompletionItemKind::FIELD),
                     detail: Some(type_str),
-                    insert_text: Some(format!("{} ", name)),
+                    text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                        range: edit_range,
+                        new_text: format!("{} ", name),
+                    })),
+                    filter_text: Some(name.clone()),
                     sort_text: Some(if is_optional {
                         format!("1{}", name) // Optional fields sort after required
                     } else {
@@ -967,7 +984,7 @@ impl LanguageServer for StyxLanguageServer {
                     Ok(ext_items) => {
                         tracing::debug!(count = ext_items.len(), "Got completions from extension");
                         for item in ext_items {
-                            items.push(convert_ext_completion(item));
+                            items.push(convert_ext_completion(item, edit_range));
                         }
                     }
                     Err(e) => {
@@ -2739,8 +2756,9 @@ fn get_existing_fields(tree: &Value) -> Vec<String> {
     fields
 }
 
-/// Get the word being typed at the cursor position
-fn get_word_at_position(content: &str, position: Position) -> Option<String> {
+/// Get the current word being typed and its range in the document.
+/// Returns (word, Range) where Range is the span of the word.
+fn get_word_range_at_position(content: &str, position: Position) -> Option<(String, Range)> {
     let offset = position_to_offset(content, position);
     if offset == 0 {
         return None;
@@ -2757,7 +2775,13 @@ fn get_word_at_position(content: &str, position: Position) -> Option<String> {
     if word.is_empty() {
         None
     } else {
-        Some(word.to_string())
+        // Calculate the start position of the word
+        let start_position = offset_to_position(content, word_start);
+        let range = Range {
+            start: start_position,
+            end: position,
+        };
+        Some((word.to_string(), range))
     }
 }
 
@@ -2795,9 +2819,17 @@ fn levenshtein(a: &str, b: &str) -> usize {
 }
 
 /// Convert an extension completion item to LSP completion item.
-fn convert_ext_completion(item: ext::CompletionItem) -> CompletionItem {
+fn convert_ext_completion(item: ext::CompletionItem, edit_range: Range) -> CompletionItem {
+    // Use text_edit if insert_text is provided (Zed ignores insert_text)
+    let text_edit = item.insert_text.as_ref().map(|text| {
+        CompletionTextEdit::Edit(TextEdit {
+            range: edit_range,
+            new_text: text.clone(),
+        })
+    });
+
     CompletionItem {
-        label: item.label,
+        label: item.label.clone(),
         kind: item.kind.map(|k| match k {
             ext::CompletionKind::Field => CompletionItemKind::FIELD,
             ext::CompletionKind::Value => CompletionItemKind::VALUE,
@@ -2812,7 +2844,8 @@ fn convert_ext_completion(item: ext::CompletionItem) -> CompletionItem {
             })
         }),
         sort_text: item.sort_text,
-        insert_text: item.insert_text,
+        text_edit,
+        filter_text: Some(item.label),
         // Extension completions sort after schema completions
         preselect: Some(false),
         ..Default::default()
