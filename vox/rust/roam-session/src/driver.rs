@@ -560,12 +560,14 @@ fn connection_error_to_io(e: ConnectionError) -> io::Error {
 /// r[impl core.conn.independence]
 struct ConnectionState {
     /// The connection ID (for debugging/logging).
-    #[allow(dead_code)]
     conn_id: ConnectionId,
     /// Client-side handle for making calls on this connection.
     handle: ConnectionHandle,
     /// Server-side channel registry for incoming Rx/Tx streams.
     server_channel_registry: ChannelRegistry,
+    /// Dispatcher for handling incoming requests on this connection.
+    /// If None, inherits from the parent link's dispatcher.
+    dispatcher: Option<Box<dyn ServiceDispatcher>>,
     /// Pending responses (request_id -> response sender).
     pending_responses:
         HashMap<u64, crate::runtime::OneshotSender<Result<ResponseData, TransportError>>>,
@@ -582,6 +584,7 @@ impl ConnectionState {
         role: Role,
         initial_credit: u32,
         diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>>,
+        dispatcher: Option<Box<dyn ServiceDispatcher>>,
     ) -> Self {
         let handle = ConnectionHandle::new_with_diagnostics(
             conn_id,
@@ -596,6 +599,7 @@ impl ConnectionState {
             conn_id,
             handle,
             server_channel_registry,
+            dispatcher,
             pending_responses: HashMap::new(),
             in_flight_server_requests: HashMap::new(),
         }
@@ -635,19 +639,27 @@ impl IncomingConnection {
     ///
     /// The `metadata` will be sent in the Accept message.
     ///
+    /// The `dispatcher` will handle incoming requests on this virtual connection.
+    /// If None, the parent link's dispatcher will be used (and only calls can be made,
+    /// not received).
+    ///
     /// Note: The returned `ConnectionHandle` cannot itself accept nested connections.
     /// r[impl core.conn.only-root-accepts]
     pub async fn accept(
         self,
         metadata: roam_wire::Metadata,
+        dispatcher: Option<Box<dyn ServiceDispatcher>>,
     ) -> Result<ConnectionHandle, TransportError> {
         let (handle_tx, handle_rx) = crate::runtime::oneshot();
         let _ = self.response_tx.send(IncomingConnectionResponse::Accept {
             request_id: self.request_id,
             metadata,
+            dispatcher,
             handle_tx,
         });
-        handle_rx.await.map_err(|_| TransportError::DriverGone)?
+        let result: Result<ConnectionHandle, _> =
+            handle_rx.await.map_err(|_| TransportError::DriverGone)?;
+        result
     }
 
     /// Reject this connection with a reason.
@@ -665,6 +677,7 @@ enum IncomingConnectionResponse {
     Accept {
         request_id: u64,
         metadata: roam_wire::Metadata,
+        dispatcher: Option<Box<dyn ServiceDispatcher>>,
         handle_tx: crate::runtime::OneshotSender<Result<ConnectionHandle, TransportError>>,
     },
     Reject {
@@ -676,7 +689,10 @@ enum IncomingConnectionResponse {
 
 /// Pending outgoing Connect request.
 struct PendingConnect {
+    /// Channel to send the response handle.
     response_tx: crate::runtime::OneshotSender<Result<ConnectionHandle, ConnectError>>,
+    /// Dispatcher to use for this virtual connection (can receive calls).
+    dispatcher: Option<Box<dyn ServiceDispatcher>>,
 }
 
 // ============================================================================
@@ -779,6 +795,7 @@ where
             IncomingConnectionResponse::Accept {
                 request_id,
                 metadata,
+                dispatcher,
                 handle_tx,
             } => {
                 // Allocate a new connection ID
@@ -793,6 +810,7 @@ where
                     self.role,
                     self.negotiated.initial_credit,
                     self.diagnostic_state.clone(),
+                    dispatcher,
                 );
                 let handle = conn_state.handle.clone();
                 self.connections.insert(conn_id, conn_state);
@@ -905,13 +923,19 @@ where
                 request_id,
                 metadata,
                 response_tx,
+                dispatcher,
             } => {
                 // r[impl message.connect.initiate]
                 // r[impl message.connect.request-id]
                 // r[impl message.connect.metadata]
                 // Store pending connect request
-                self.pending_connects
-                    .insert(request_id, PendingConnect { response_tx });
+                self.pending_connects.insert(
+                    request_id,
+                    PendingConnect {
+                        response_tx,
+                        dispatcher,
+                    },
+                );
                 // Send Connect message
                 let wire_msg = Message::Connect {
                     request_id,
@@ -1010,12 +1034,15 @@ where
                 // Handle response to our outgoing Connect request
                 if let Some(pending) = self.pending_connects.remove(&request_id) {
                     // Create connection state for the new virtual connection
+                    // r[impl core.conn.dispatcher-custom]
+                    // Use the dispatcher provided by the initiator
                     let conn_state = ConnectionState::new(
                         conn_id,
                         self.driver_tx.clone(),
                         self.role,
                         self.negotiated.initial_credit,
                         self.diagnostic_state.clone(),
+                        pending.dispatcher,
                     );
                     let handle = conn_state.handle.clone();
                     self.connections.insert(conn_id, conn_state);
@@ -1161,9 +1188,20 @@ where
             channels,
         );
 
-        let handler_fut = self
-            .dispatcher
-            .dispatch(&cx, payload, &mut conn.server_channel_registry);
+        // r[impl core.conn.dispatcher] - Use connection-specific dispatcher if available
+        let dispatcher: &dyn ServiceDispatcher = if let Some(ref conn_dispatcher) = conn.dispatcher
+        {
+            conn_dispatcher.as_ref()
+        } else {
+            &self.dispatcher
+        };
+
+        debug!(
+            conn_id = conn_id.raw(),
+            request_id, method_id, "dispatching incoming request"
+        );
+
+        let handler_fut = dispatcher.dispatch(&cx, payload, &mut conn.server_channel_registry);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let abort_handle = spawn_with_abort(async move {
@@ -1468,14 +1506,16 @@ where
     // Create unified channel for all messages
     let (driver_tx, driver_rx) = channel(256);
 
-    // Create the root connection (connection 0)
+    // Create root connection (connection 0)
     // r[impl core.link.connection-zero]
+    // Root uses None for dispatcher - it uses the link's dispatcher
     let root_conn = ConnectionState::new(
         ConnectionId::ROOT,
         driver_tx.clone(),
         role,
         negotiated.initial_credit,
-        None, // No diagnostic state by default
+        None,
+        None,
     );
     let handle = root_conn.handle.clone();
 

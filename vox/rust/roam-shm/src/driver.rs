@@ -123,10 +123,12 @@ struct VirtualConnectionState {
     handle: ConnectionHandle,
     /// Server-side channel registry for incoming Rx/Tx streams.
     server_channel_registry: ChannelRegistry,
+    /// Dispatcher for handling incoming requests on this connection.
+    /// If None, inherits from the parent link's dispatcher.
+    dispatcher: Option<Box<dyn ServiceDispatcher>>,
     /// Pending responses (request_id -> response sender).
     pending_responses: HashMap<u64, oneshot::Sender<Result<ResponseData, TransportError>>>,
     /// In-flight server requests with their abort handles.
-    /// r[impl call.cancel.best-effort] - We track abort handles to allow best-effort cancellation.
     in_flight_server_requests: HashMap<u64, tokio::task::AbortHandle>,
 }
 
@@ -138,6 +140,7 @@ impl VirtualConnectionState {
         role: Role,
         initial_credit: u32,
         diagnostic_state: Option<Arc<DiagnosticState>>,
+        dispatcher: Option<Box<dyn ServiceDispatcher>>,
     ) -> Self {
         let handle = ConnectionHandle::new_with_diagnostics(
             conn_id,
@@ -152,6 +155,7 @@ impl VirtualConnectionState {
             conn_id,
             handle,
             server_channel_registry,
+            dispatcher,
             pending_responses: HashMap::new(),
             in_flight_server_requests: HashMap::new(),
         }
@@ -175,6 +179,7 @@ impl VirtualConnectionState {
 /// Pending outgoing Connect request.
 struct PendingConnect {
     response_tx: oneshot::Sender<Result<ConnectionHandle, ConnectError>>,
+    dispatcher: Option<Box<dyn ServiceDispatcher>>,
 }
 
 /// An incoming virtual connection request.
@@ -195,14 +200,20 @@ impl IncomingConnection {
     /// Accept this connection and receive a handle for it.
     ///
     /// The `metadata` will be sent in the Accept message.
+    ///
+    /// The `dispatcher` will handle incoming requests on this virtual connection.
+    /// If None, the parent link's dispatcher will be used (and only calls can be made,
+    /// not received).
     pub async fn accept(
         self,
         metadata: roam_wire::Metadata,
+        dispatcher: Option<Box<dyn ServiceDispatcher>>,
     ) -> Result<ConnectionHandle, TransportError> {
         let (handle_tx, handle_rx) = oneshot::channel();
         let _ = self.response_tx.send(IncomingConnectionResponse::Accept {
             request_id: self.request_id,
             metadata,
+            dispatcher,
             handle_tx,
         });
         handle_rx.await.map_err(|_| TransportError::DriverGone)?
@@ -219,10 +230,11 @@ impl IncomingConnection {
 }
 
 /// Internal response for incoming connection handling.
-enum IncomingConnectionResponse {
+pub enum IncomingConnectionResponse {
     Accept {
         request_id: u64,
         metadata: roam_wire::Metadata,
+        dispatcher: Option<Box<dyn ServiceDispatcher>>,
         handle_tx: oneshot::Sender<Result<ConnectionHandle, TransportError>>,
     },
     Reject {
@@ -334,6 +346,7 @@ where
             IncomingConnectionResponse::Accept {
                 request_id,
                 metadata,
+                dispatcher,
                 handle_tx,
             } => {
                 // Allocate a new connection ID
@@ -347,6 +360,7 @@ where
                     self.role,
                     self.negotiated.initial_credit,
                     self.diagnostic_state.clone(),
+                    dispatcher,
                 );
                 let handle = conn_state.handle.clone();
                 self.connections.insert(conn_id, conn_state);
@@ -476,10 +490,16 @@ where
                 request_id,
                 metadata,
                 response_tx,
+                dispatcher,
             } => {
                 // Store pending connect request
-                self.pending_connects
-                    .insert(request_id, PendingConnect { response_tx });
+                self.pending_connects.insert(
+                    request_id,
+                    PendingConnect {
+                        response_tx,
+                        dispatcher,
+                    },
+                );
                 // Send Connect message
                 Message::Connect {
                     request_id,
@@ -601,12 +621,15 @@ where
                 // Handle response to our outgoing Connect request
                 if let Some(pending) = self.pending_connects.remove(&request_id) {
                     // Create connection state for the new virtual connection
+                    // r[impl core.conn.dispatcher-custom]
+                    // Use the dispatcher provided by the initiator
                     let conn_state = VirtualConnectionState::new(
                         conn_id,
                         self.driver_tx.clone(),
                         self.role,
                         self.negotiated.initial_credit,
                         self.diagnostic_state.clone(),
+                        pending.dispatcher,
                     );
                     let handle = conn_state.handle.clone();
                     self.connections.insert(conn_id, conn_state);
@@ -802,10 +825,20 @@ where
             channels,
         );
 
-        // Dispatch - spawn as a task so message loop can continue.
-        let handler_fut = self
-            .dispatcher
-            .dispatch(&cx, payload, &mut conn.server_channel_registry);
+        // r[impl core.conn.dispatcher] - Use connection-specific dispatcher if available
+        let dispatcher: &dyn ServiceDispatcher = if let Some(ref conn_dispatcher) = conn.dispatcher
+        {
+            conn_dispatcher.as_ref()
+        } else {
+            &self.dispatcher
+        };
+
+        debug!(
+            conn_id = conn_id.raw(),
+            request_id, method_id, "dispatching incoming request"
+        );
+
+        let handler_fut = dispatcher.dispatch(&cx, payload, &mut conn.server_channel_registry);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let join_handle = tokio::spawn(handler_fut);
@@ -1143,6 +1176,7 @@ where
         role,
         initial_credit,
         diagnostic_state.clone(),
+        None,
     );
     let handle = root_conn.handle.clone();
 
@@ -1394,6 +1428,7 @@ impl MultiPeerHostDriverBuilder {
                 driver_tx.clone(),
                 role,
                 initial_credit,
+                None,
                 None,
             );
             let handle = root_conn.handle.clone();
@@ -1656,6 +1691,7 @@ impl MultiPeerHostDriver {
             IncomingConnectionResponse::Accept {
                 request_id,
                 metadata,
+                dispatcher,
                 handle_tx,
             } => {
                 // Allocate a new connection ID
@@ -1670,12 +1706,15 @@ impl MultiPeerHostDriver {
                     .unwrap();
 
                 // Create connection state
+                // r[impl core.conn.dispatcher-custom]
+                // Use the dispatcher provided by the initiator
                 let conn_state = VirtualConnectionState::new(
                     conn_id,
                     driver_tx,
                     Role::Acceptor,
                     self.negotiated.initial_credit,
                     state.diagnostic_state.clone(),
+                    dispatcher,
                 );
                 let handle = conn_state.handle.clone();
                 state.connections.insert(conn_id, conn_state);
@@ -1730,12 +1769,15 @@ impl MultiPeerHostDriver {
                 let initial_credit = u32::MAX;
 
                 // Create root connection state
+                // r[impl core.conn.dispatcher-default]
+                // Root uses None for dispatcher - it uses the peer's dispatcher
                 let root_conn = VirtualConnectionState::new(
                     ConnectionId::ROOT,
                     driver_tx.clone(),
                     role,
                     initial_credit,
                     diagnostic_state.clone(),
+                    None,
                 );
                 let handle = root_conn.handle.clone();
 
@@ -1963,12 +2005,17 @@ impl MultiPeerHostDriver {
                 request_id,
                 metadata,
                 response_tx,
+                dispatcher,
             } => {
                 // Store pending connect request
                 if let Some(state) = self.peers.get_mut(&peer_id) {
-                    state
-                        .pending_connects
-                        .insert(request_id, PendingConnect { response_tx });
+                    state.pending_connects.insert(
+                        request_id,
+                        PendingConnect {
+                            response_tx,
+                            dispatcher,
+                        },
+                    );
                 } else {
                     let _ = response_tx.send(Err(ConnectError::Rejected("peer gone".into())));
                     return Ok(());
@@ -2063,12 +2110,15 @@ impl MultiPeerHostDriver {
                         .unwrap();
 
                     // Create connection state for the new virtual connection
+                    // r[impl core.conn.dispatcher-custom]
+                    // Use the dispatcher provided by the initiator
                     let conn_state = VirtualConnectionState::new(
                         conn_id,
                         driver_tx,
                         Role::Acceptor,
                         self.negotiated.initial_credit,
                         state.diagnostic_state.clone(),
+                        pending.dispatcher,
                     );
                     let handle = conn_state.handle.clone();
                     state.connections.insert(conn_id, conn_state);
@@ -2301,18 +2351,20 @@ impl MultiPeerHostDriver {
             channels,
         );
 
+        // r[impl core.conn.dispatcher] - Use connection-specific dispatcher if available
+        let dispatcher: &dyn ServiceDispatcher = if let Some(ref conn_dispatcher) = conn.dispatcher
+        {
+            conn_dispatcher.as_ref()
+        } else {
+            state.dispatcher.as_ref()
+        };
+
         // Dispatch - spawn as a task so message loop can continue.
         debug!(
-            method_id,
-            request_id,
-            ?conn_id,
-            channels = ?cx.channels,
-            "handle_incoming_request: dispatching with channels"
+            conn_id = conn_id.raw(),
+            request_id, method_id, "dispatching incoming request"
         );
-        let handler_fut =
-            state
-                .dispatcher
-                .dispatch(&cx, payload, &mut conn.server_channel_registry);
+        let handler_fut = dispatcher.dispatch(&cx, payload, &mut conn.server_channel_registry);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let join_handle = tokio::spawn(handler_fut);

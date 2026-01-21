@@ -745,6 +745,9 @@ pub enum DriverMessage {
         request_id: u64,
         metadata: roam_wire::Metadata,
         response_tx: OneshotSender<Result<ConnectionHandle, crate::ConnectError>>,
+        /// Dispatcher for handling incoming requests on the virtual connection.
+        /// If None, the connection can only make calls, not receive them.
+        dispatcher: Option<Box<dyn ServiceDispatcher>>,
     },
 }
 
@@ -2183,6 +2186,149 @@ impl ServiceDispatcher for ForwardingDispatcher {
     }
 }
 
+// ============================================================================
+// LateBoundForwarder - Forwarding with Deferred Handle Binding
+// ============================================================================
+
+/// A handle that can be set once after creation.
+///
+/// This solves the chicken-and-egg problem in bidirectional proxying where:
+/// 1. You need to pass a dispatcher to `connect()` for reverse-direction calls
+/// 2. But the dispatcher needs a handle that's only available after `accept_framed()`
+///
+/// # Example
+///
+/// ```ignore
+/// // Create the late-bound handle (empty initially)
+/// let late_bound = LateBoundHandle::new();
+///
+/// // Pass a forwarder using this handle to connect()
+/// let virtual_conn = handle.connect(
+///     metadata,
+///     Some(Box::new(LateBoundForwarder::new(late_bound.clone()))),
+/// ).await?;
+///
+/// // Accept the other connection to get its handle
+/// let (browser_handle, driver) = accept_framed(transport, config, dispatcher).await?;
+///
+/// // NOW bind the handle - any incoming calls will be forwarded
+/// late_bound.set(browser_handle);
+/// ```
+#[derive(Clone)]
+pub struct LateBoundHandle {
+    inner: Arc<std::sync::OnceLock<ConnectionHandle>>,
+}
+
+impl LateBoundHandle {
+    /// Create a new unbound handle.
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(std::sync::OnceLock::new()),
+        }
+    }
+
+    /// Bind the handle to a connection. Can only be called once.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called more than once.
+    pub fn set(&self, handle: ConnectionHandle) {
+        if self.inner.set(handle).is_err() {
+            panic!("LateBoundHandle::set called more than once");
+        }
+    }
+
+    /// Try to get the bound handle, if set.
+    pub fn get(&self) -> Option<&ConnectionHandle> {
+        self.inner.get()
+    }
+}
+
+impl Default for LateBoundHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A dispatcher that forwards all requests to a late-bound upstream connection.
+///
+/// Like [`ForwardingDispatcher`], but the upstream handle is provided after creation
+/// via [`LateBoundHandle::set`]. This enables bidirectional proxying scenarios.
+///
+/// If a request arrives before the handle is bound, it returns `Cancelled`.
+///
+/// # Example
+///
+/// ```ignore
+/// // Create late-bound handle and forwarder
+/// let late_bound = LateBoundHandle::new();
+/// let forwarder = LateBoundForwarder::new(late_bound.clone());
+///
+/// // Use forwarder with connect() for reverse-direction calls
+/// let virtual_conn = handle.connect(metadata, Some(Box::new(forwarder))).await?;
+///
+/// // Later, bind the actual handle
+/// let (browser_handle, driver) = accept_framed(...).await?;
+/// late_bound.set(browser_handle);
+/// ```
+pub struct LateBoundForwarder {
+    upstream: LateBoundHandle,
+}
+
+impl LateBoundForwarder {
+    /// Create a new late-bound forwarding dispatcher.
+    pub fn new(upstream: LateBoundHandle) -> Self {
+        Self { upstream }
+    }
+}
+
+impl Clone for LateBoundForwarder {
+    fn clone(&self) -> Self {
+        Self {
+            upstream: self.upstream.clone(),
+        }
+    }
+}
+
+impl ServiceDispatcher for LateBoundForwarder {
+    fn method_ids(&self) -> Vec<u64> {
+        vec![]
+    }
+
+    fn dispatch(
+        &self,
+        cx: &Context,
+        payload: Vec<u8>,
+        registry: &mut ChannelRegistry,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
+        let task_tx = registry.driver_tx();
+        let conn_id = cx.conn_id;
+        let request_id = cx.request_id.raw();
+
+        // Try to get the upstream handle
+        let Some(upstream) = self.upstream.get().cloned() else {
+            // Handle not bound yet - return Cancelled
+            debug!(
+                method_id = cx.method_id.raw(),
+                "LateBoundForwarder: upstream not bound, returning Cancelled"
+            );
+            return Box::pin(async move {
+                let _ = task_tx
+                    .send(DriverMessage::Response {
+                        conn_id,
+                        request_id,
+                        channels: vec![],
+                        payload: vec![1, 3], // Err(Cancelled)
+                    })
+                    .await;
+            });
+        };
+
+        // Delegate to ForwardingDispatcher now that we have the handle
+        ForwardingDispatcher::new(upstream).dispatch(cx, payload, registry)
+    }
+}
+
 // TODO: Remove this shim once facet implements `Facet` for `core::convert::Infallible`
 // and for the never type `!` (facet-rs/facet#1668), then use `Infallible`.
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
@@ -3182,12 +3328,15 @@ impl ConnectionHandle {
     ///
     /// * `metadata` - Optional metadata to send with the Connect request
     ///   (e.g., authentication tokens, routing hints).
+    /// * `dispatcher` - Optional dispatcher for handling incoming requests on the
+    ///   virtual connection. If None, the connection can only make calls, not receive them.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// // Open a new virtual connection
-    /// let virtual_conn = handle.connect(vec![]).await?;
+    /// // Open a new virtual connection that can receive calls
+    /// let dispatcher = Box::new(MyDispatcher::new());
+    /// let virtual_conn = handle.connect(vec![], Some(dispatcher)).await?;
     ///
     /// // Use the new connection for calls
     /// let response = virtual_conn.call_raw(method_id, payload).await?;
@@ -3195,6 +3344,7 @@ impl ConnectionHandle {
     pub async fn connect(
         &self,
         metadata: roam_wire::Metadata,
+        dispatcher: Option<Box<dyn ServiceDispatcher>>,
     ) -> Result<ConnectionHandle, crate::ConnectError> {
         let request_id = self.shared.request_ids.next();
         let (response_tx, response_rx) = oneshot();
@@ -3203,6 +3353,7 @@ impl ConnectionHandle {
             request_id,
             metadata,
             response_tx,
+            dispatcher,
         };
 
         self.shared.driver_tx.send(msg).await.map_err(|_| {

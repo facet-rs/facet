@@ -206,9 +206,9 @@ async fn start_server_accepting_virtual_connections(
                     // Handle incoming virtual connections
                     while let Some(conn) = incoming.recv().await {
                         tokio::spawn(async move {
-                            // Accept the connection - the dispatcher is already set up
-                            // on the link, so the new connection will use the same service
-                            match conn.accept(vec![]).await {
+                            // Accept connection with no dispatcher (None)
+                            // This connection can only make calls, not receive them
+                            match conn.accept(vec![], None).await {
                                 Ok(_virtual_handle) => {
                                     // Virtual connection is now active
                                     // Calls on it will be handled by the dispatcher
@@ -814,7 +814,7 @@ async fn server_initiated_virtual_connection() {
         // Accept any incoming virtual connections from client
         tokio::spawn(async move {
             while let Some(conn) = incoming.recv().await {
-                let _ = conn.accept(vec![]).await;
+                let _ = conn.accept(vec![], None).await;
             }
         });
 
@@ -850,7 +850,7 @@ async fn server_initiated_virtual_connection() {
     // Client accepts incoming virtual connections from server
     tokio::spawn(async move {
         while let Some(conn) = incoming.recv().await {
-            let _ = conn.accept(vec![]).await;
+            let _ = conn.accept(vec![], None).await;
         }
     });
 
@@ -887,7 +887,7 @@ async fn link_closure_during_streaming_call() {
 
         // Accept the virtual connection
         if let Some(conn) = incoming.recv().await {
-            let _virtual_handle = conn.accept(vec![]).await.unwrap();
+            let _virtual_handle = conn.accept(vec![], None).await.unwrap();
             // Small delay so client can start a streaming call
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

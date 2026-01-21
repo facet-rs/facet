@@ -300,7 +300,7 @@ async fn run_server_with_incoming_connections(addr: &str) -> Result<(), String> 
         while let Some(incoming_conn) = incoming.recv().await {
             info!("received incoming connection request");
             // Accept all incoming connections with empty metadata
-            match incoming_conn.accept(vec![]).await {
+            match incoming_conn.accept(vec![], None).await {
                 Ok(_conn_handle) => {
                     info!("accepted virtual connection");
                 }
