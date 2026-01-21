@@ -95,8 +95,10 @@ pub struct Where {
 ///
 /// Tagged operators:
 /// - `@null` for IS NULL
+/// - `@not_null` for IS NOT NULL
 /// - `@ilike($param)` or `@ilike("pattern")` for case-insensitive LIKE
-/// - `@like`, `@gt`, `@lt` for other operators
+/// - `@like`, `@gt`, `@lt`, `@gte`, `@lte`, `@ne` for comparison operators
+/// - `@in($param)` for `= ANY($1)` (array containment)
 ///
 /// Bare scalars (like `$handle`) are treated as equality filters via `#[facet(other)]`.
 #[derive(Debug, Facet)]
@@ -105,6 +107,9 @@ pub struct Where {
 pub enum FilterValue {
     /// NULL check (@null)
     Null,
+    /// NOT NULL check (@not_null)
+    #[facet(rename = "not_null")]
+    NotNull,
     /// ILIKE pattern matching (@ilike($param) or @ilike("pattern"))
     Ilike(Vec<String>),
     /// LIKE pattern matching (@like($param) or @like("pattern"))
@@ -113,6 +118,14 @@ pub enum FilterValue {
     Gt(Vec<String>),
     /// Less than (@lt($param) or @lt(value))
     Lt(Vec<String>),
+    /// Greater than or equal (@gte($param) or @gte(value))
+    Gte(Vec<String>),
+    /// Less than or equal (@lte($param) or @lte(value))
+    Lte(Vec<String>),
+    /// Not equal (@ne($param) or @ne(value))
+    Ne(Vec<String>),
+    /// IN array check (@in($param)) - param should be an array type
+    In(Vec<String>),
     /// Equality - bare scalar fallback (e.g., `$handle` or `"value"`)
     #[facet(other)]
     Eq(String),
