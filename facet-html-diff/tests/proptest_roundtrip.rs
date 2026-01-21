@@ -265,6 +265,167 @@ proptest! {
     }
 }
 
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    /// Test empty element transitions: adding/removing children from empty divs.
+    /// This exercises the matching fix where empty nodes match non-empty nodes.
+    #[test]
+    fn empty_element_transitions(
+        children in prop::collection::vec(arb_node(0), 0..3)
+    ) {
+        // Test: empty div -> div with children
+        let old_html = "<html><body><div></div></body></html>".to_string();
+        let new_inner: String = children.iter().map(|c| c.to_html()).collect();
+        let new_html = format!("<html><body><div>{new_inner}</div></body></html>");
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected, "empty->filled failed");
+    }
+
+    /// Test removing all children from an element.
+    #[test]
+    fn drain_element_children(
+        children in prop::collection::vec(arb_node(0), 1..4)
+    ) {
+        // Test: div with children -> empty div
+        let old_inner: String = children.iter().map(|c| c.to_html()).collect();
+        let old_html = format!("<html><body><div>{old_inner}</div></body></html>");
+        let new_html = "<html><body><div></div></body></html>".to_string();
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected, "filled->empty failed");
+    }
+
+    /// Test deeper nesting (depth 3-4).
+    #[test]
+    fn deep_nesting_roundtrip(
+        old_children in prop::collection::vec(arb_node(3), 1..3),
+        new_children in prop::collection::vec(arb_node(3), 1..3)
+    ) {
+        let old_html = nodes_to_html(&old_children);
+        let new_html = nodes_to_html(&new_children);
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected);
+    }
+
+    /// Test sibling reordering - same elements in different order.
+    #[test]
+    fn sibling_reorder_roundtrip(
+        mut elements in prop::collection::vec(arb_node(0), 2..5)
+    ) {
+        let old_html = nodes_to_html(&elements);
+
+        // Rotate elements to create a reordering
+        if !elements.is_empty() {
+            elements.rotate_left(1);
+        }
+        let new_html = nodes_to_html(&elements);
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected);
+    }
+
+    /// Test moving content between siblings.
+    #[test]
+    fn content_move_between_siblings(
+        text in arb_text()
+    ) {
+        // Content moves from one div to another
+        let old_html = format!("<html><body><div>{text}</div><div></div></body></html>");
+        let new_html = format!("<html><body><div></div><div>{text}</div></body></html>");
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected);
+    }
+
+    /// Test text moving into/out of elements.
+    #[test]
+    fn text_element_boundary_moves(
+        text in arb_text()
+    ) {
+        // Text outside div moves inside
+        let old_html = format!("<html><body>{text}<div></div></body></html>");
+        let new_html = format!("<html><body><div>{text}</div></body></html>");
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected);
+    }
+}
+
 #[cfg(test)]
 mod sanity_tests {
     use super::*;
