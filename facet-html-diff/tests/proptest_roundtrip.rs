@@ -142,7 +142,7 @@ fn normalize_html(html: &str) -> Result<String, String> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(100))]
+    #![proptest_config(ProptestConfig::with_cases(1000))]
 
     /// The core invariant: apply(old, diff(old, new)) produces new.
     #[test]
@@ -266,7 +266,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(50))]
+    #![proptest_config(ProptestConfig::with_cases(500))]
 
     /// Test empty element transitions: adding/removing children from empty divs.
     /// This exercises the matching fix where empty nodes match non-empty nodes.
@@ -408,6 +408,214 @@ proptest! {
         // Text outside div moves inside
         let old_html = format!("<html><body>{text}<div></div></body></html>");
         let new_html = format!("<html><body><div>{text}</div></body></html>");
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected);
+    }
+
+    /// Test inserting text before nested div structures (issue #1846 pattern).
+    /// This specifically tests the slot-based displacement with nested elements.
+    #[test]
+    fn insert_before_nested_divs(
+        text in arb_text(),
+        depth in 1usize..4
+    ) {
+        // Build nested divs: <div><div>...<div></div>...</div></div>
+        let mut inner = String::new();
+        for _ in 0..depth {
+            inner = format!("<div>{inner}</div>");
+        }
+
+        let old_html = format!("<html><body>{inner}</body></html>");
+        let new_html = format!("<html><body>{text}{inner}</body></html>");
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected, "insert before nested divs failed at depth {}", depth);
+    }
+
+    /// Test inserting text into deeply nested divs (the exact issue #1846 pattern).
+    #[test]
+    fn insert_into_nested_divs(
+        text in arb_text(),
+        depth in 1usize..4
+    ) {
+        // Old: <div><div>...</div></div> (nested empty divs)
+        // New: <div><div>...<div>TEXT</div>...</div></div> (text in innermost)
+        let mut old_inner = String::new();
+        for _ in 0..depth {
+            old_inner = format!("<div>{old_inner}</div>");
+        }
+
+        let mut new_inner = text.clone();
+        for _ in 0..depth {
+            new_inner = format!("<div>{new_inner}</div>");
+        }
+
+        let old_html = format!("<html><body>{old_inner}</body></html>");
+        let new_html = format!("<html><body>{new_inner}</body></html>");
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected, "insert into nested divs failed at depth {}", depth);
+    }
+
+    /// Test the exact pattern from issue #1846: insert text before nested divs AND
+    /// insert text into the innermost div.
+    #[test]
+    fn issue_1846_pattern(
+        text_before in arb_text(),
+        text_inside in arb_text(),
+        depth in 1usize..4
+    ) {
+        // Old: <div><div>...</div></div>
+        // New: TEXT_BEFORE<div><div>...<div>TEXT_INSIDE</div>...</div></div>
+        let mut old_inner = String::new();
+        for _ in 0..depth {
+            old_inner = format!("<div>{old_inner}</div>");
+        }
+
+        let mut new_inner = text_inside.clone();
+        for _ in 0..depth {
+            new_inner = format!("<div>{new_inner}</div>");
+        }
+
+        let old_html = format!("<html><body>{old_inner}</body></html>");
+        let new_html = format!("<html><body>{text_before}{new_inner}</body></html>");
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected, "issue 1846 pattern failed at depth {}", depth);
+    }
+
+    /// Test nested structures with mixed content.
+    #[test]
+    fn nested_mixed_content(
+        texts in prop::collection::vec(arb_text(), 2..4),
+        depth in 1usize..3
+    ) {
+        // Create nested divs with text at various levels
+        let mut old_content = texts[0].clone();
+        let mut new_content = texts.get(1).cloned().unwrap_or_default();
+
+        for i in 0..depth {
+            let extra_text = texts.get(i + 1).cloned().unwrap_or_default();
+            old_content = format!("<div>{old_content}</div>");
+            new_content = format!("<div>{extra_text}{new_content}</div>");
+        }
+
+        let old_html = format!("<html><body>{old_content}</body></html>");
+        let new_html = format!("<html><body>{new_content}</body></html>");
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected);
+    }
+
+    /// Test multiple sibling elements being displaced and reinserted.
+    #[test]
+    fn multiple_siblings_displaced(
+        insert_text in arb_text(),
+        num_siblings in 2usize..5
+    ) {
+        // Old: <div>A</div><div>B</div><div>C</div>...
+        // New: TEXT<div>A</div><div>B</div><div>C</div>...
+        let siblings: String = (0..num_siblings)
+            .map(|i| format!("<div>child{i}</div>"))
+            .collect();
+
+        let old_html = format!("<html><body>{siblings}</body></html>");
+        let new_html = format!("<html><body>{insert_text}{siblings}</body></html>");
+
+        let patches = diff_html(&old_html, &new_html)
+            .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
+
+        let mut tree = Node::parse(&old_html)
+            .map_err(|e| TestCaseError::fail(format!("parse failed: {e}")))?;
+
+        apply_patches(&mut tree, &patches)
+            .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
+
+        let result = tree.to_html();
+        let expected = normalize_html(&new_html)
+            .map_err(|e| TestCaseError::fail(format!("normalize failed: {e}")))?;
+
+        prop_assert_eq!(result, expected);
+    }
+
+    /// Test deeply nested structure where inner content changes.
+    #[test]
+    fn deep_inner_content_change(
+        old_text in arb_text(),
+        new_text in arb_text(),
+        depth in 2usize..5
+    ) {
+        let mut old_inner = old_text;
+        let mut new_inner = new_text;
+
+        for _ in 0..depth {
+            old_inner = format!("<div>{old_inner}</div>");
+            new_inner = format!("<div>{new_inner}</div>");
+        }
+
+        let old_html = format!("<html><body>{old_inner}</body></html>");
+        let new_html = format!("<html><body>{new_inner}</body></html>");
 
         let patches = diff_html(&old_html, &new_html)
             .map_err(|e| TestCaseError::fail(format!("diff failed: {e}")))?;
