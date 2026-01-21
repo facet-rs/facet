@@ -42,3 +42,10 @@ roam-session = { git = "https://github.com/bearcove/roam", branch = "main" }
 
 # Extension protocol
 styx-lsp-ext = { path = "../styx-lsp-ext" }
+
+# Testing
+styx-lsp-test-schema = { path = "../styx-lsp-test-schema" }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true

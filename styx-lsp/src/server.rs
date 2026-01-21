@@ -13,15 +13,15 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 use crate::extensions::{ExtensionManager, ExtensionResult, get_extension_info};
 use crate::schema_hints::find_matching_hint;
 use crate::schema_validation::{
-    find_object_at_offset, find_schema_declaration, get_document_fields, get_error_span,
-    get_schema_fields, get_schema_fields_at_path, load_document_schema, resolve_schema,
-    validate_against_schema,
+    find_object_at_offset, find_schema_declaration, find_tagged_context_at_offset,
+    get_document_fields, get_error_span, get_schema_fields, get_schema_fields_at_path,
+    load_document_schema, resolve_schema, validate_against_schema,
 };
 use crate::semantic_tokens::{compute_semantic_tokens, semantic_token_legend};
 use styx_lsp_ext as ext;
 
 /// Document state tracked by the server
-pub(crate) struct DocumentState {
+pub struct DocumentState {
     /// Document content
     pub content: String,
     /// Parsed CST
@@ -34,7 +34,7 @@ pub(crate) struct DocumentState {
 }
 
 /// Shared document map type
-pub(crate) type DocumentMap = Arc<RwLock<HashMap<Url, DocumentState>>>;
+pub type DocumentMap = Arc<RwLock<HashMap<Url, DocumentState>>>;
 
 /// Information about a blocked LSP extension.
 struct BlockedExtensionInfo {
@@ -87,7 +87,7 @@ impl StyxLanguageServer {
         // Try to spawn the extension (will check allowlist internally)
         match self
             .extensions
-            .get_or_spawn(&ext_info.schema_id, &ext_info.config)
+            .get_or_spawn(&ext_info.schema_id, &ext_info.config, uri.as_str())
             .await
         {
             ExtensionResult::Running => None,
@@ -404,7 +404,13 @@ impl LanguageServer for StyxLanguageServer {
 
     async fn initialized(&self, _: InitializedParams) {
         self.client
-            .log_message(MessageType::INFO, "Styx language server initialized")
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "Styx language server initialized (PID: {})",
+                    std::process::id()
+                ),
+            )
             .await;
     }
 
@@ -678,7 +684,65 @@ impl LanguageServer for StyxLanguageServer {
             }));
         }
 
-        // Case 2: Hover on field name
+        // Case 2: Try extension for domain-specific hover (takes priority over schema hover)
+        if let Ok(schema_file) = load_document_schema(tree, &uri) {
+            let schema_id = &schema_file.meta.id;
+            tracing::debug!(%schema_id, "Trying extension for hover");
+            if let Some(client) = self.extensions.get_client(schema_id).await {
+                tracing::debug!("Got extension client, calling hover");
+                let field_path = find_field_path_at_offset(tree, offset).unwrap_or_default();
+                let context_obj = find_object_at_offset(tree, offset);
+                let tagged_context = find_tagged_context_at_offset(tree, offset);
+
+                let ext_params = ext::HoverParams {
+                    document_uri: uri.to_string(),
+                    cursor: ext::Cursor {
+                        line: position.line,
+                        character: position.character,
+                        offset: offset as u32,
+                    },
+                    path: field_path,
+                    context: context_obj.map(|c| Value {
+                        tag: None,
+                        payload: Some(styx_tree::Payload::Object(c.object)),
+                        span: None,
+                    }),
+                    tagged_context,
+                };
+
+                match client.hover(ext_params).await {
+                    Ok(Some(result)) => {
+                        tracing::debug!(contents = %result.contents, "Extension returned hover");
+                        let range = result.range.map(|r| Range {
+                            start: Position {
+                                line: r.start.line,
+                                character: r.start.character,
+                            },
+                            end: Position {
+                                line: r.end.line,
+                                character: r.end.character,
+                            },
+                        });
+                        return Ok(Some(Hover {
+                            contents: HoverContents::Markup(MarkupContent {
+                                kind: MarkupKind::Markdown,
+                                value: result.contents,
+                            }),
+                            range,
+                        }));
+                    }
+                    Ok(None) => {
+                        tracing::debug!("Extension returned None for hover");
+                        // Extension returned None, fall through to schema-based hover
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Extension hover failed");
+                    }
+                }
+            }
+        }
+
+        // Case 3: Fallback to schema-based field hover
         if let Some(field_path) = find_field_path_at_offset(tree, offset)
             && let Some(ref schema) = resolved
         {
@@ -714,56 +778,6 @@ impl LanguageServer for StyxLanguageServer {
             }
         }
 
-        // Case 3: Try extension for domain-specific hover
-        if let Ok(schema_file) = load_document_schema(tree, &uri) {
-            let schema_id = &schema_file.meta.id;
-            if let Some(client) = self.extensions.get_client(schema_id).await {
-                let field_path = find_field_path_at_offset(tree, offset).unwrap_or_default();
-                let context_obj = find_object_at_offset(tree, offset);
-
-                let ext_params = ext::HoverParams {
-                    document_uri: uri.to_string(),
-                    cursor: ext::Cursor {
-                        line: position.line,
-                        character: position.character,
-                        offset: offset as u32,
-                    },
-                    path: field_path,
-                    context: context_obj.map(|c| Value {
-                        tag: None,
-                        payload: Some(styx_tree::Payload::Object(c.object)),
-                        span: None,
-                    }),
-                };
-
-                match client.hover(ext_params).await {
-                    Ok(Some(result)) => {
-                        let range = result.range.map(|r| Range {
-                            start: Position {
-                                line: r.start.line,
-                                character: r.start.character,
-                            },
-                            end: Position {
-                                line: r.end.line,
-                                character: r.end.character,
-                            },
-                        });
-                        return Ok(Some(Hover {
-                            contents: HoverContents::Markup(MarkupContent {
-                                kind: MarkupKind::Markdown,
-                                value: result.contents,
-                            }),
-                            range,
-                        }));
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Extension hover failed");
-                    }
-                }
-            }
-        }
-
         Ok(None)
     }
 
@@ -792,7 +806,28 @@ impl LanguageServer for StyxLanguageServer {
 
         tracing::debug!(?offset, ?path, "completion: finding fields at path");
 
-        let schema_fields = get_schema_fields_from_source_at_path(&schema.source, path);
+        // Parse the schema to properly resolve type references and enum variants
+        let schema_fields: Vec<(String, String)> = if let Ok(schema_file) =
+            facet_styx::from_str::<facet_styx::SchemaFile>(&schema.source)
+        {
+            get_schema_fields_at_path(&schema_file, path)
+                .into_iter()
+                .map(|f| {
+                    // Build type string from schema info
+                    let type_str = if f.optional {
+                        format!("@optional({})", schema_to_type_str(&f.schema))
+                    } else if let Some(default) = &f.default_value {
+                        format!("@default({} {})", default, schema_to_type_str(&f.schema))
+                    } else {
+                        schema_to_type_str(&f.schema)
+                    };
+                    (f.name, type_str)
+                })
+                .collect()
+        } else {
+            // Fallback to source-based lookup if parsing fails
+            get_schema_fields_from_source_at_path(&schema.source, path)
+        };
         let existing_fields = context
             .as_ref()
             .map(|c| {
@@ -910,6 +945,7 @@ impl LanguageServer for StyxLanguageServer {
         if let Ok(schema_file) = load_document_schema(tree, &uri) {
             let schema_id = &schema_file.meta.id;
             if let Some(client) = self.extensions.get_client(schema_id).await {
+                let tagged_context = find_tagged_context_at_offset(tree, offset);
                 let ext_params = ext::CompletionParams {
                     document_uri: uri.to_string(),
                     cursor: ext::Cursor {
@@ -924,6 +960,7 @@ impl LanguageServer for StyxLanguageServer {
                         payload: Some(styx_tree::Payload::Object(c.object.clone())),
                         span: None,
                     }),
+                    tagged_context,
                 };
 
                 match client.completions(ext_params).await {
@@ -1355,6 +1392,9 @@ impl LanguageServer for StyxLanguageServer {
                             )
                             .await;
                         }
+
+                        // Request inlay hint refresh so hints appear immediately
+                        let _ = self.client.inlay_hint_refresh().await;
                     }
                 }
                 Ok(None)
@@ -1518,6 +1558,56 @@ impl LanguageServer for StyxLanguageServer {
                         padding_right: Some(true),
                         data: None,
                     });
+                }
+            }
+        }
+
+        // Try to get inlay hints from extension
+        if let Ok(schema_file) = load_document_schema(tree, &uri) {
+            let schema_id = &schema_file.meta.id;
+            tracing::debug!(%schema_id, "Trying extension for inlay hints");
+            if let Some(client) = self.extensions.get_client(schema_id).await {
+                tracing::debug!("Got extension client, calling inlay_hints");
+                let ext_params = ext::InlayHintParams {
+                    document_uri: uri.to_string(),
+                    range: ext::Range {
+                        start: ext::Position {
+                            line: params.range.start.line,
+                            character: params.range.start.character,
+                        },
+                        end: ext::Position {
+                            line: params.range.end.line,
+                            character: params.range.end.character,
+                        },
+                    },
+                    context: Some(tree.clone()),
+                };
+
+                match client.inlay_hints(ext_params).await {
+                    Ok(ext_hints) => {
+                        tracing::debug!(count = ext_hints.len(), "Got inlay hints from extension");
+                        for hint in ext_hints {
+                            // Convert position - extension uses byte offsets, we need line/character
+                            let position =
+                                offset_to_position(&doc.content, hint.position.character as usize);
+                            hints.push(InlayHint {
+                                position,
+                                label: InlayHintLabel::String(hint.label),
+                                kind: hint.kind.map(|k| match k {
+                                    ext::InlayHintKind::Type => InlayHintKind::TYPE,
+                                    ext::InlayHintKind::Parameter => InlayHintKind::PARAMETER,
+                                }),
+                                text_edits: None,
+                                tooltip: None,
+                                padding_left: Some(hint.padding_left),
+                                padding_right: Some(hint.padding_right),
+                                data: None,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Extension inlay hints failed");
+                    }
                 }
             }
         }
@@ -2479,6 +2569,32 @@ fn format_field_hover(
     content
 }
 
+/// Convert a Schema to a displayable type string
+fn schema_to_type_str(schema: &facet_styx::Schema) -> String {
+    use facet_styx::Schema;
+    match schema {
+        Schema::String(_) => "@string".to_string(),
+        Schema::Int(_) => "@int".to_string(),
+        Schema::Float(_) => "@float".to_string(),
+        Schema::Bool => "@bool".to_string(),
+        Schema::Unit => "@unit".to_string(),
+        Schema::Any => "@any".to_string(),
+        Schema::Type { name: Some(n) } => format!("@{}", n),
+        Schema::Type { name: None } => "@type".to_string(),
+        Schema::Object(_) => "@object{...}".to_string(),
+        Schema::Seq(_) => "@seq(...)".to_string(),
+        Schema::Map(_) => "@map(...)".to_string(),
+        Schema::Enum(_) => "@enum{...}".to_string(),
+        Schema::Union(_) => "@union(...)".to_string(),
+        Schema::OneOf(_) => "@oneof(...)".to_string(),
+        Schema::Flatten(_) => "@flatten(...)".to_string(),
+        Schema::Literal(s) => format!("\"{}\"", s),
+        Schema::Optional(opt) => format!("@optional({})", schema_to_type_str(&opt.0.0)),
+        Schema::Default(def) => format!("@default(..., {})", schema_to_type_str(&def.0.1)),
+        Schema::Deprecated(dep) => format!("@deprecated({})", schema_to_type_str(&dep.0.1)),
+    }
+}
+
 /// Get schema fields at a specific path (for nested object completion)
 fn get_schema_fields_from_source_at_path(
     schema_source: &str,
@@ -2976,6 +3092,11 @@ pub async fn run() -> eyre::Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
+
+    eprintln!(
+        "styx-lsp PID: {} - attach debugger now!",
+        std::process::id()
+    );
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();

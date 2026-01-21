@@ -143,6 +143,7 @@ impl ExtensionManager {
         &self,
         schema_id: &str,
         config: &LspExtensionConfig,
+        document_uri: &str,
     ) -> ExtensionResult {
         // Check if already spawned
         {
@@ -164,7 +165,7 @@ impl ExtensionManager {
         }
 
         // Spawn the extension
-        let Some(extension) = self.spawn_extension(config).await else {
+        let Some(extension) = self.spawn_extension(schema_id, config, document_uri).await else {
             return ExtensionResult::Failed;
         };
 
@@ -190,8 +191,13 @@ impl ExtensionManager {
             .map(StyxLspExtensionClient::new)
     }
 
-    /// Spawn an extension process and establish roam connection.
-    async fn spawn_extension(&self, config: &LspExtensionConfig) -> Option<Extension> {
+    /// Spawn an extension process, establish roam connection, and initialize it.
+    async fn spawn_extension(
+        &self,
+        schema_id: &str,
+        config: &LspExtensionConfig,
+        document_uri: &str,
+    ) -> Option<Extension> {
         let launch = &config.launch;
         if launch.is_empty() {
             warn!("Empty launch command");
@@ -251,6 +257,31 @@ impl ExtensionManager {
             }
         });
 
+        // Initialize the extension
+        let client = StyxLspExtensionClient::new(handle.clone());
+        let init_result = client
+            .initialize(styx_lsp_ext::InitializeParams {
+                styx_version: env!("CARGO_PKG_VERSION").to_string(),
+                document_uri: document_uri.to_string(),
+                schema_id: schema_id.to_string(),
+            })
+            .await;
+
+        match init_result {
+            Ok(result) => {
+                info!(
+                    name = %result.name,
+                    version = %result.version,
+                    capabilities = ?result.capabilities,
+                    "Extension initialized"
+                );
+            }
+            Err(e) => {
+                warn!(command, error = %e, "Failed to initialize extension");
+                return None;
+            }
+        }
+
         Some(Extension {
             process,
             config: config.clone(),
@@ -296,8 +327,15 @@ pub fn get_extension_info(schema: &facet_styx::SchemaFile) -> Option<ExtensionIn
 
 /// Implementation of StyxLspHost for extension callbacks.
 #[derive(Clone)]
-struct StyxLspHostImpl {
+pub struct StyxLspHostImpl {
     documents: DocumentMap,
+}
+
+impl StyxLspHostImpl {
+    /// Create a new host implementation with the given document map.
+    pub fn new(documents: DocumentMap) -> Self {
+        Self { documents }
+    }
 }
 
 impl StyxLspHost for StyxLspHostImpl {

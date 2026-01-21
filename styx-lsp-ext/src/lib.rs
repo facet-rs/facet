@@ -25,7 +25,7 @@
 //! - `StyxLspExtensionDispatcher` - Dispatch incoming calls on the extension side
 //! - `StyxLspHostClient` - Call LSP methods from the extension
 //! - `StyxLspHostDispatcher` - Dispatch incoming calls on the LSP side
-
+//!
 use facet::Facet;
 use styx_tree::Value;
 
@@ -169,8 +169,11 @@ pub struct CompletionParams {
     pub path: Vec<String>,
     /// Text the user has typed (for filtering).
     pub prefix: String,
-    /// The subtree relevant to this completion.
+    /// The subtree relevant to this completion (innermost object at cursor).
     pub context: Option<Value>,
+    /// The closest enclosing tagged value (e.g., `@query{...}`).
+    /// Useful for domain-specific context like finding which table a column belongs to.
+    pub tagged_context: Option<Value>,
 }
 
 /// A completion item.
@@ -215,8 +218,11 @@ pub struct HoverParams {
     pub cursor: Cursor,
     /// Path to the symbol.
     pub path: Vec<String>,
-    /// Context subtree.
+    /// Context subtree (innermost object at cursor).
     pub context: Option<Value>,
+    /// The closest enclosing tagged value (e.g., `@query{...}`).
+    /// Useful for domain-specific context like finding which table a column belongs to.
+    pub tagged_context: Option<Value>,
 }
 
 /// Result of a hover request.

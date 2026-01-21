@@ -487,6 +487,67 @@ pub fn find_object_at_offset(value: &Value, offset: usize) -> Option<ObjectConte
     find_object_at_offset_recursive(value, offset, Vec::new())
 }
 
+/// Find the closest enclosing tagged value containing the given offset.
+/// Returns the full Value including its tag and payload.
+pub fn find_tagged_context_at_offset(value: &Value, offset: usize) -> Option<Value> {
+    find_tagged_context_recursive(value, offset, None)
+}
+
+fn find_tagged_context_recursive(
+    value: &Value,
+    offset: usize,
+    current_tagged: Option<&Value>,
+) -> Option<Value> {
+    // Check if this value's span contains the offset
+    let in_span = if let Some(span) = value.span {
+        offset >= span.start as usize && offset <= span.end as usize
+    } else {
+        // Root value might not have a span, assume it contains everything
+        true
+    };
+
+    if !in_span {
+        return None;
+    }
+
+    // If this value is tagged, it becomes the new candidate
+    let new_tagged = if value.tag.is_some() {
+        Some(value)
+    } else {
+        current_tagged
+    };
+
+    // Check payload for nested values
+    if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+        for entry in &obj.entries {
+            if let Some(result) = find_tagged_context_recursive(&entry.value, offset, new_tagged) {
+                return Some(result);
+            }
+        }
+    }
+
+    // Also check if the value itself is an object (for root objects without payload)
+    if let Some(obj) = value.as_object() {
+        for entry in &obj.entries {
+            if let Some(result) = find_tagged_context_recursive(&entry.value, offset, new_tagged) {
+                return Some(result);
+            }
+        }
+    }
+
+    // Check sequences
+    if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
+        for item in &seq.items {
+            if let Some(result) = find_tagged_context_recursive(item, offset, new_tagged) {
+                return Some(result);
+            }
+        }
+    }
+
+    // If we're in this value's span, return the current tagged context
+    new_tagged.cloned()
+}
+
 fn find_object_at_offset_recursive(
     value: &Value,
     offset: usize,
@@ -509,6 +570,11 @@ fn find_object_at_offset_recursive(
             let mut nested_path = path.clone();
             if let Some(key) = entry.key.as_str() {
                 nested_path.push(key.to_string());
+            }
+            // If the value has a tag (like @query), add it to the path
+            // This allows schema navigation to find enum variants
+            if let Some(tag) = entry.value.tag_name() {
+                nested_path.push(format!("@{}", tag));
             }
             if let Some(deeper) =
                 find_object_at_offset_recursive(&entry.value, offset, nested_path.clone())
@@ -550,8 +616,23 @@ fn get_schema_at_path_recursive(
 
     match schema {
         Schema::Object(obj) => {
-            let field_schema = obj.0.get(&Documented::new(ObjectKey::named(field_name.clone())))?;
+            let field_schema = obj
+                .0
+                .get(&Documented::new(ObjectKey::named(field_name.clone())))?;
             get_schema_at_path_recursive(field_schema, rest, schema_file)
+        }
+        Schema::Enum(enum_schema) => {
+            // Check if field_name is a tag reference like "@query"
+            if let Some(variant_name) = field_name.strip_prefix('@') {
+                // Look up the variant in the enum
+                if let Some(variant_schema) = enum_schema
+                    .0
+                    .get(&Documented::new(variant_name.to_string()))
+                {
+                    return get_schema_at_path_recursive(variant_schema, rest, schema_file);
+                }
+            }
+            None
         }
         Schema::Optional(opt) => get_schema_at_path_recursive(&opt.0.0, path, schema_file),
         Schema::Default(def) => get_schema_at_path_recursive(&def.0.1, path, schema_file),
@@ -599,7 +680,9 @@ mod tests {
     fn test_find_schema_declaration_embedded() {
         let value = styx_tree::parse("@schema {id crate:foo@1, cli foo}").unwrap();
         let decl = find_schema_declaration(&value).expect("should find declaration");
-        assert!(matches!(decl, SchemaRef::Embedded { id, cli } if id == "crate:foo@1" && cli == "foo"));
+        assert!(
+            matches!(decl, SchemaRef::Embedded { id, cli } if id == "crate:foo@1" && cli == "foo")
+        );
     }
 
     #[test]

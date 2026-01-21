@@ -15,4 +15,5 @@ facet = { workspace = true, optional = true }
 [dev-dependencies]
 insta = "1.42"
 facet.workspace = true
-facet-json = { path = "../../../facet/facet-json" }
+facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main" }

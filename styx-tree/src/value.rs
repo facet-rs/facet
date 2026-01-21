@@ -715,4 +715,66 @@ mod tests {
         // Verify equality
         assert_eq!(value, roundtripped, "Value should survive JSON roundtrip");
     }
+
+    #[test]
+    fn test_value_postcard_roundtrip() {
+        // Simple scalar
+        let v = Value::scalar("hello");
+        let bytes = facet_postcard::to_vec(&v).expect("serialize scalar");
+        let v2: Value = facet_postcard::from_slice(&bytes).expect("deserialize scalar");
+        assert_eq!(v, v2);
+
+        // Tagged value
+        let v = Value::tag("string");
+        let bytes = facet_postcard::to_vec(&v).expect("serialize tagged");
+        let v2: Value = facet_postcard::from_slice(&bytes).expect("deserialize tagged");
+        assert_eq!(v, v2);
+
+        // Nested object (recursive structure)
+        let v = Value {
+            tag: None,
+            payload: Some(Payload::Object(Object {
+                entries: vec![
+                    Entry {
+                        key: Value::scalar("name"),
+                        value: Value::scalar("Alice"),
+                        doc_comment: None,
+                    },
+                    Entry {
+                        key: Value::scalar("nested"),
+                        value: Value {
+                            tag: None,
+                            payload: Some(Payload::Object(Object {
+                                entries: vec![Entry {
+                                    key: Value::scalar("inner"),
+                                    value: Value::scalar("value"),
+                                    doc_comment: None,
+                                }],
+                                separator: Separator::Newline,
+                                span: None,
+                            })),
+                            span: None,
+                        },
+                        doc_comment: Some("A nested object".to_string()),
+                    },
+                ],
+                separator: Separator::Newline,
+                span: None,
+            })),
+            span: None,
+        };
+        let bytes = facet_postcard::to_vec(&v).expect("serialize nested");
+        let v2: Value = facet_postcard::from_slice(&bytes).expect("deserialize nested");
+        assert_eq!(v, v2);
+
+        // Sequence with values
+        let v = Value::seq(vec![
+            Value::scalar("a"),
+            Value::scalar("b"),
+            Value::tagged("important", Value::unit()),
+        ]);
+        let bytes = facet_postcard::to_vec(&v).expect("serialize sequence");
+        let v2: Value = facet_postcard::from_slice(&bytes).expect("deserialize sequence");
+        assert_eq!(v, v2);
+    }
 }

@@ -10,9 +10,10 @@
 pub mod cache;
 pub mod extensions;
 pub mod schema_hints;
-pub mod semantic_tokens;
 mod schema_validation;
+pub mod semantic_tokens;
 mod server;
+pub mod testing;
 
-pub use server::run;
-pub use semantic_tokens::{compute_highlight_spans, HighlightSpan, TokenType};
+pub use semantic_tokens::{HighlightSpan, TokenType, compute_highlight_spans};
+pub use server::{DocumentMap, DocumentState, run};
