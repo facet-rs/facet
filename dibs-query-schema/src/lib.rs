@@ -168,6 +168,9 @@ pub struct Relation {
     #[facet(rename = "where")]
     pub where_clause: Option<Where>,
 
+    /// Order by clause.
+    pub order_by: Option<OrderBy>,
+
     /// Return only the first result.
     pub first: Option<bool>,
 
