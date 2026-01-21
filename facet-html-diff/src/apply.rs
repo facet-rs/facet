@@ -580,6 +580,7 @@ fn apply_patch(
             use crate::NodeRef;
 
             // Get the node to move (either from a path or from a slot)
+            // When taking from a path, swap with placeholder (no shifting!)
             let node = match from {
                 NodeRef::Path(from_path) => {
                     if from_path.0.is_empty() {
@@ -593,7 +594,8 @@ fn apply_patch(
                     if from_idx >= from_children.len() {
                         return Err(format!("Move: source index {from_idx} out of bounds"));
                     }
-                    from_children.remove(from_idx)
+                    // Swap with placeholder instead of remove (no shifting!)
+                    std::mem::replace(&mut from_children[from_idx], Node::Text(String::new()))
                 }
                 NodeRef::Slot(slot) => slots
                     .remove(slot)

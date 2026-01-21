@@ -11,8 +11,16 @@ pub use cinereus::matching::{
 #[cfg(feature = "tracing")]
 use tracing::debug;
 
+#[cfg(feature = "tracing")]
+use tracing::trace;
+
 #[cfg(not(feature = "tracing"))]
 macro_rules! debug {
+    ($($arg:tt)*) => {};
+}
+
+#[cfg(not(feature = "tracing"))]
+macro_rules! trace {
     ($($arg:tt)*) => {};
 }
 
@@ -273,7 +281,7 @@ impl TreeBuilder {
     fn collect_properties<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> HtmlProperties {
         let mut props = HtmlProperties::new();
         self.collect_properties_recursive(peek, &mut props);
-        debug!(
+        trace!(
             shape = peek.shape().type_identifier,
             props_count = props.attrs.len(),
             "collect_properties result"
@@ -287,7 +295,7 @@ impl TreeBuilder {
         peek: Peek<'mem, 'facet>,
         props: &mut HtmlProperties,
     ) {
-        debug!(
+        trace!(
             shape = peek.shape().type_identifier,
             "collect_properties_recursive"
         );
@@ -298,10 +306,10 @@ impl TreeBuilder {
                     for (field, field_peek) in s.fields() {
                         if field.is_attribute() {
                             let value = self.extract_attribute_value(field_peek);
-                            debug!(field = field.name, ?value, "found attribute field");
+                            trace!(field = field.name, ?value, "found attribute field");
                             props.set(field.name, value);
                         } else if field.is_flattened() {
-                            debug!(field = field.name, "recursing into flattened field");
+                            trace!(field = field.name, "recursing into flattened field");
                             self.collect_properties_recursive(field_peek, props);
                         }
                     }
@@ -312,7 +320,7 @@ impl TreeBuilder {
                 if let Ok(e) = peek.into_enum() {
                     // Tuple variants have fields - get field 0 (the inner struct)
                     if let Ok(Some(inner)) = e.field(0) {
-                        debug!("recursing into enum variant inner value");
+                        trace!("recursing into enum variant inner value");
                         self.collect_properties_recursive(inner, props);
                     }
                 }
@@ -798,7 +806,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
 
                 // In Chawathe semantics, Insert does NOT shift - it places at position
                 // and whatever was there gets displaced (detached to a slot).
-                // This is the same semantics as Move.
+                // We insert new_node before occupant, then detach occupant (swap, no shift).
                 let children: Vec<_> = shadow_parent.children(&shadow_arena).collect();
                 let detach_to_slot = if position < children.len() {
                     let occupant = children[position];
@@ -808,25 +816,26 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                         ?occupant,
                         occupant_slot, "INSERT: will detach occupant to slot"
                     );
-                    detached_nodes.insert(occupant, occupant_slot);
+                    // Insert new_node before occupant, then detach occupant
+                    occupant.insert_before(new_node, &mut shadow_arena);
                     occupant.detach(&mut shadow_arena);
+                    detached_nodes.insert(occupant, occupant_slot);
                     Some(occupant_slot)
                 } else {
+                    // No occupant, just append
+                    shadow_parent.append(new_node, &mut shadow_arena);
                     None
                 };
 
-                // Place new node at position
-                let children: Vec<_> = shadow_parent.children(&shadow_arena).collect();
-                if position >= children.len() {
-                    shadow_parent.append(new_node, &mut shadow_arena);
-                } else {
-                    children[position].insert_before(new_node, &mut shadow_arena);
-                }
-
                 b_to_shadow.insert(node_b, new_node);
 
-                // Compute the path after the node is in the shadow tree
-                let path = compute_path_in_shadow(&shadow_arena, shadow_root, new_node, tree_a);
+                // Compute the path: parent's path + position
+                // We use position directly because that's the FINAL position in tree_b,
+                // not the current shadow tree position (which may differ due to placeholders).
+                let parent_path =
+                    compute_path_in_shadow(&shadow_arena, shadow_root, shadow_parent, tree_a);
+                let mut path = parent_path;
+                path.0.push(PathSegment::Index(position));
 
                 // Extract value for leaf nodes using the tree_b label path
                 let label_path = tree_b
@@ -861,7 +870,17 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 } else {
                     // Node is in the tree - delete from path
                     let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
-                    // Remove from shadow tree
+                    // Swap with placeholder (insert placeholder before, then detach)
+                    // This prevents shifting of siblings.
+                    let placeholder_data: NodeData<NodeKind, NodeLabel, HtmlProperties> =
+                        NodeData {
+                            hash: 0,
+                            kind: NodeKind::Scalar("placeholder"),
+                            label: None,
+                            properties: HtmlProperties::new(),
+                        };
+                    let placeholder = shadow_arena.new_node(placeholder_data);
+                    node_a.insert_before(placeholder, &mut shadow_arena);
                     node_a.detach(&mut shadow_arena);
                     NodeRef::Path(path)
                 };
@@ -909,12 +928,23 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 } else {
                     let old_path =
                         compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
-                    // Detach node_a from its current position
+                    // Swap node_a with a placeholder (insert placeholder before, then detach)
+                    // This prevents shifting of siblings.
+                    let placeholder_data: NodeData<NodeKind, NodeLabel, HtmlProperties> =
+                        NodeData {
+                            hash: 0,
+                            kind: NodeKind::Scalar("placeholder"),
+                            label: None,
+                            properties: HtmlProperties::new(),
+                        };
+                    let placeholder = shadow_arena.new_node(placeholder_data);
+                    node_a.insert_before(placeholder, &mut shadow_arena);
                     node_a.detach(&mut shadow_arena);
                     NodeRef::Path(old_path)
                 };
 
                 // Check if something is at the target position that needs to be detached
+                // We insert node_a before occupant, then detach occupant (swap, no shift).
                 let children: Vec<_> = shadow_new_parent.children(&shadow_arena).collect();
                 let detach_to_slot = if new_position < children.len() {
                     let occupant = children[new_position];
@@ -926,23 +956,20 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                             ?occupant,
                             occupant_slot, "MOVE: will detach occupant to slot"
                         );
-                        detached_nodes.insert(occupant, occupant_slot);
+                        // Insert node_a before occupant, then detach occupant
+                        occupant.insert_before(node_a, &mut shadow_arena);
                         occupant.detach(&mut shadow_arena);
+                        detached_nodes.insert(occupant, occupant_slot);
                         Some(occupant_slot)
                     } else {
+                        // node_a is already at the target position, nothing to do
                         None
                     }
                 } else {
+                    // No occupant, just append
+                    shadow_new_parent.append(node_a, &mut shadow_arena);
                     None
                 };
-
-                // Place node_a at new_position
-                let children: Vec<_> = shadow_new_parent.children(&shadow_arena).collect();
-                if new_position >= children.len() {
-                    shadow_new_parent.append(node_a, &mut shadow_arena);
-                } else {
-                    children[new_position].insert_before(node_a, &mut shadow_arena);
-                }
 
                 // Compute the target path: parent's path + new_position
                 // We use new_position directly because that's the FINAL position in tree_b,
