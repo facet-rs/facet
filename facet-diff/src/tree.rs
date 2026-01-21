@@ -287,7 +287,8 @@ fn extract_value_at_path<'mem, 'facet>(
     path: &Path,
 ) -> Option<String> {
     // Navigate to the node
-    for segment in &path.0 {
+    for (i, segment) in path.0.iter().enumerate() {
+        debug!(i, ?segment, shape = ?peek.shape().type_identifier, "extract_value_at_path navigating");
         peek = match segment {
             PathSegment::Field(name) => {
                 if let Ok(s) = peek.into_struct() {
@@ -297,9 +298,11 @@ fn extract_value_at_path<'mem, 'facet>(
                     if let Ok(s) = inner.into_struct() {
                         s.field_by_name(name).ok()?
                     } else {
+                        debug!("extract_value_at_path: option inner not a struct");
                         return None;
                     }
                 } else {
+                    debug!("extract_value_at_path: not a struct or option for Field");
                     return None;
                 }
             }
@@ -310,11 +313,13 @@ fn extract_value_at_path<'mem, 'facet>(
                     if *idx == 0 {
                         opt.value()?
                     } else {
+                        debug!("extract_value_at_path: option index != 0");
                         return None;
                     }
                 } else if let Ok(e) = peek.into_enum() {
                     e.field(*idx).ok()??
                 } else {
+                    debug!("extract_value_at_path: not a list, option, or enum for Index");
                     return None;
                 }
             }
@@ -334,6 +339,7 @@ fn extract_value_at_path<'mem, 'facet>(
                     }
                     return None;
                 } else {
+                    debug!("extract_value_at_path: not a map for Key");
                     return None;
                 }
             }
@@ -393,8 +399,8 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 old_label: _,
                 new_label: _,
             } => {
-                // Path is the current location in shadow tree (for applying the patch)
-                let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+                // Path for applying the patch comes from shadow tree (current position in DOM)
+                let mut path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
 
                 // Extract actual values using the stored paths in tree labels
                 let old_path = tree_a
@@ -410,7 +416,26 @@ fn convert_ops_with_shadow<'mem, 'facet>(
 
                 let old_value = old_path.and_then(|p| extract_value_at_path(peek_a, p));
                 let new_value = new_path_in_b.and_then(|p| extract_value_at_path(peek_b, p));
+                debug!(?old_path, ?new_path_in_b, ?old_value, ?new_value, "Update op values");
 
+                // For struct field changes (e.g., attribute fields like id->class),
+                // replace the last segment with the new field name.
+                // This preserves the position but updates the field name.
+                if let (Some(old_p), Some(new_p)) = (old_path, new_path_in_b) {
+                    if let (Some(PathSegment::Field(old_field)), Some(PathSegment::Field(new_field))) =
+                        (old_p.0.last(), new_p.0.last())
+                    {
+                        if old_field != new_field && !path.0.is_empty() {
+                            // Replace the last field segment with the new field name
+                            if let Some(PathSegment::Field(_)) = path.0.last() {
+                                path.0.pop();
+                                path.0.push(PathSegment::Field(new_field.clone()));
+                            }
+                        }
+                    }
+                }
+
+                debug!(?path, ?old_value, ?new_value, "emitting EditOp::Update");
                 result.push(EditOp::Update {
                     path,
                     old_value,

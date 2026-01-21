@@ -249,16 +249,33 @@ mod tests {
         // Tree B: root -> [child_b at pos 0, child_a at pos 1]
         // This tests the swap scenario to understand Move semantics
 
-        let mut tree_a: Tree<String, String> = Tree::new(NodeData::new(100, "root".to_string()));
-        let child_a = tree_a.add_child(tree_a.root, NodeData::leaf(1, "leaf".to_string(), "A".to_string()));
-        let child_b = tree_a.add_child(tree_a.root, NodeData::leaf(2, "leaf".to_string(), "B".to_string()));
+        // Root hashes must differ (otherwise top-down recursively matches children BY POSITION).
+        // With min_height=0, leaves are included in top-down and matched by hash.
+        let mut tree_a: Tree<&str, &str> = Tree::new(NodeData::new(100, "root"));
+        let child_a = tree_a.add_child(tree_a.root, NodeData::leaf(1, "leaf", "A"));
+        let child_b = tree_a.add_child(tree_a.root, NodeData::leaf(2, "leaf", "B"));
 
-        let mut tree_b: Tree<String, String> = Tree::new(NodeData::new(100, "root".to_string()));
+        let mut tree_b: Tree<&str, &str> = Tree::new(NodeData::new(200, "root")); // Different root hash!
         // Swap order: B first, then A
-        let child_b2 = tree_b.add_child(tree_b.root, NodeData::leaf(2, "leaf".to_string(), "B".to_string()));
-        let child_a2 = tree_b.add_child(tree_b.root, NodeData::leaf(1, "leaf".to_string(), "A".to_string()));
+        let child_b2 = tree_b.add_child(tree_b.root, NodeData::leaf(2, "leaf", "B"));
+        let child_a2 = tree_b.add_child(tree_b.root, NodeData::leaf(1, "leaf", "A"));
 
-        let matching = compute_matching(&tree_a, &tree_b, &MatchingConfig::default());
+        let config = MatchingConfig {
+            min_height: 0, // Include leaves in top-down matching
+            ..Default::default()
+        };
+        let matching = compute_matching(&tree_a, &tree_b, &config);
+
+        // Debug: print tree structure and matching
+        debug!(?tree_a.root, "tree_a root");
+        debug!(?child_a, hash = tree_a.get(child_a).hash, pos = tree_a.position(child_a), "tree_a child_a");
+        debug!(?child_b, hash = tree_a.get(child_b).hash, pos = tree_a.position(child_b), "tree_a child_b");
+        debug!(?tree_b.root, "tree_b root");
+        debug!(?child_b2, hash = tree_b.get(child_b2).hash, pos = tree_b.position(child_b2), "tree_b child_b2");
+        debug!(?child_a2, hash = tree_b.get(child_a2).hash, pos = tree_b.position(child_a2), "tree_b child_a2");
+        for (a, b) in matching.pairs() {
+            debug!(?a, ?b, "matching pair");
+        }
 
         // Verify matching is correct
         assert_eq!(matching.get_b(child_a), Some(child_a2), "child_a should match child_a2");
@@ -271,6 +288,10 @@ mod tests {
         assert_eq!(tree_b.position(child_b2), 0, "child_b2 at pos 0 in tree_b");
 
         let ops = generate_edit_script(&tree_a, &tree_b, &matching);
+
+        for op in &ops {
+            debug!(?op, "edit script op");
+        }
 
         // Filter move operations
         let moves: Vec<_> = ops

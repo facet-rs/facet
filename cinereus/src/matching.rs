@@ -244,13 +244,13 @@ fn top_down_phase<'a, K, L>(
 
         // If hashes match, these subtrees are identical
         if a_data.hash == b_data.hash && a_data.kind == b_data.kind {
-            let a_kind = a_data.kind.clone();
-            debug!(a = usize::from(a_id), a_kind = %a_kind.pretty(), b = usize::from(b_id), "top_down: hash match");
+            let a_kind = a_data.kind.pretty().to_string();
+            debug!(a = usize::from(a_id), a_kind = %a_kind, b = usize::from(b_id), "top_down: hash match");
             match_subtrees(tree_a, tree_b, a_id, b_id, matching);
         } else {
-            let a_kind = a_data.kind.clone();
-            let b_kind = b_data.kind.clone();
-            trace!(a = usize::from(a_id), a_kind = %a_kind.pretty(), b = usize::from(b_id), b_kind = %b_kind.pretty(), "top_down: no hash match");
+            let a_kind = a_data.kind.pretty().to_string();
+            let b_kind = b_data.kind.pretty().to_string();
+            trace!(a = usize::from(a_id), a_kind = %a_kind, b = usize::from(b_id), b_kind = %b_kind, "top_down: no hash match");
             // Hashes differ - try to match children
             // IMPORTANT: Only consider children of b_id, NOT arbitrary nodes from tree B
             // This prevents cross-level matching that causes spurious operations
@@ -468,10 +468,10 @@ fn bottom_up_phase<'a, K, L>(
                 .copied();
 
             if let Some(b_id) = best {
-                let a_kind = a_data.kind.clone();
+                let a_kind = a_data.kind.pretty().to_string();
                 debug!(
                     a = usize::from(a_id),
-                    a_kind = %a_kind.pretty(),
+                    a_kind = %a_kind,
                     b = usize::from(b_id),
                     pos = a_pos,
                     "bottom_up pass1: position+kind match"
@@ -502,13 +502,13 @@ fn bottom_up_phase<'a, K, L>(
 
             let score = dice_coefficient(a_id, b_id, matching, &desc_a, &desc_b);
             let b_data = tree_b.get(b_id);
-            let a_kind = a_data.kind.clone();
-            let b_kind = b_data.kind.clone();
+            let a_kind = a_data.kind.pretty().to_string();
+            let b_kind = b_data.kind.pretty().to_string();
             trace!(
                 a = usize::from(a_id),
-                a_kind = %a_kind.pretty(),
+                a_kind = %a_kind,
                 b = usize::from(b_id),
-                b_kind = %b_kind.pretty(),
+                b_kind = %b_kind,
                 score,
                 "bottom_up pass1: dice score"
             );
@@ -518,10 +518,10 @@ fn bottom_up_phase<'a, K, L>(
         }
 
         if let Some((b_id, _score)) = best {
-            let a_kind = a_data.kind.clone();
+            let a_kind = a_data.kind.pretty().to_string();
             debug!(
                 a = usize::from(a_id),
-                a_kind = %a_kind.pretty(),
+                a_kind = %a_kind,
                 b = usize::from(b_id),
                 _score,
                 "bottom_up pass1: dice match"
@@ -580,10 +580,10 @@ fn bottom_up_phase<'a, K, L>(
                 .copied();
 
             if let Some(b_id) = best {
-                let a_kind = a_data.kind.clone();
+                let a_kind = a_data.kind.pretty().to_string();
                 debug!(
                     a = usize::from(a_id),
-                    a_kind = %a_kind.pretty(),
+                    a_kind = %a_kind,
                     b = usize::from(b_id),
                     "bottom_up pass2: leaf match"
                 );
