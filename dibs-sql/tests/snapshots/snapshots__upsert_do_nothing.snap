@@ -1,0 +1,5 @@
+---
+source: crates/dibs-sql/tests/snapshots.rs
+expression: result.sql
+---
+INSERT INTO "products" ("handle", "status") VALUES ($1, $2) ON CONFLICT ("handle") DO NOTHING

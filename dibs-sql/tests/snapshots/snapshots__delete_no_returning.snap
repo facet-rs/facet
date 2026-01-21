@@ -1,0 +1,5 @@
+---
+source: crates/dibs-sql/tests/snapshots.rs
+expression: result.sql
+---
+DELETE FROM "products" WHERE "deleted_at" IS NOT NULL

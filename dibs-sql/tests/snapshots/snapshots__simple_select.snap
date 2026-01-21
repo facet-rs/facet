@@ -1,0 +1,5 @@
+---
+source: crates/dibs-sql/tests/snapshots.rs
+expression: result.sql
+---
+SELECT "id", "name", "email" FROM "users"

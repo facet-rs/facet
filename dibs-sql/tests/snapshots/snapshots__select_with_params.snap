@@ -1,0 +1,5 @@
+---
+source: crates/dibs-sql/tests/snapshots.rs
+expression: result.sql
+---
+SELECT "id", "handle", "status" FROM "products" WHERE "handle" = $1 AND "status" = $2

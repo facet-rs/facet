@@ -1,0 +1,5 @@
+---
+source: crates/dibs-sql/tests/snapshots.rs
+expression: result.sql
+---
+SELECT "t0"."id", "t0"."handle", "t1"."title", "t1"."description" FROM "products" "t0" LEFT JOIN "product_translations" "t1" ON "t1"."product_id" = "t0"."id" AND "t1"."locale" = $1 WHERE "t0"."handle" = $2

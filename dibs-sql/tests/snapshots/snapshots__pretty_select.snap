@@ -1,0 +1,9 @@
+---
+source: crates/dibs-sql/tests/snapshots.rs
+expression: result.sql
+---
+SELECT "id", "handle", "status"
+FROM "products"
+WHERE "status" = 'active' AND "deleted_at" IS NULL
+ORDER BY "created_at" DESC
+LIMIT 10

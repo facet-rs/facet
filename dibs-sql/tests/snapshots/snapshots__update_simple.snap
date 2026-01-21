@@ -1,0 +1,5 @@
+---
+source: crates/dibs-sql/tests/snapshots.rs
+expression: result.sql
+---
+UPDATE "products" SET "status" = $1, "updated_at" = NOW() WHERE "handle" = $2 RETURNING "id", "handle", "status"

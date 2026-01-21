@@ -63,3 +63,68 @@ ProductWithTranslation @query{
         }
     }
 }
+
+// ============================================================================
+// Mutations
+// ============================================================================
+
+// Insert a new product
+
+CreateProduct @insert{
+    params {handle @string, status @string}
+    into product
+    values {handle $handle, status $status, created_at @now}
+    returning {id, handle, status}
+}
+
+// Insert a product with default status
+
+CreateProductWithDefaults @insert{
+    params {handle @string}
+    into product
+    values {handle $handle, status @default, created_at @now}
+    returning {id, handle, status}
+}
+
+// Upsert a product - insert or update on conflict
+
+UpsertProduct @upsert{
+    params {handle @string, status @string}
+    into product
+    values {handle $handle, status $status, created_at @now}
+    on_conflict {
+        target {handle}
+        update {status, updated_at @now}
+    }
+    returning {id, handle, status}
+}
+
+// Update a product by handle
+
+UpdateProductStatus @update{
+    params {handle @string, status @string}
+    table product
+    set {status $status, updated_at @now}
+    where {handle $handle}
+    returning {id, handle, status}
+}
+
+// Soft delete a product
+
+SoftDeleteProduct @update{
+    params {handle @string}
+    table product
+    set {deleted_at @now}
+    where {handle $handle}
+    returning {id, handle}
+}
+
+// Hard delete a product (use with caution!)
+
+DeleteProduct @delete{
+    params {id @int}
+    from product
+    where {id $id}
+    returning {id, handle}
+}
+

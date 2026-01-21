@@ -1,0 +1,5 @@
+---
+source: crates/dibs-sql/tests/snapshots.rs
+expression: result.sql
+---
+SELECT "id", "name" FROM "users" WHERE "active" = TRUE AND "deleted_at" IS NULL ORDER BY "created_at" DESC LIMIT 10 OFFSET 20

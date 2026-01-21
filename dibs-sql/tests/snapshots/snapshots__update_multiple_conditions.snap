@@ -1,0 +1,5 @@
+---
+source: crates/dibs-sql/tests/snapshots.rs
+expression: result.sql
+---
+UPDATE "products" SET "deleted_at" = NOW() WHERE "handle" = $1 AND "deleted_at" IS NULL RETURNING "id"
