@@ -55,7 +55,10 @@ impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConfigError::NotFound => {
-                write!(f, "No .config/dibs.styx found in current directory or any parent")
+                write!(
+                    f,
+                    "No .config/dibs.styx found in current directory or any parent"
+                )
             }
             ConfigError::Io(e) => write!(f, "Failed to read .config/dibs.styx: {}", e),
             ConfigError::Parse(e) => write!(f, "Failed to parse .config/dibs.styx: {}", e),

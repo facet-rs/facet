@@ -18,7 +18,8 @@ fn main() {
     let (schema, planner_schema) = collect_schema();
 
     let queries_path = Path::new(".dibs-queries/queries.styx");
-    let source = fs::read_to_string(queries_path).expect("Failed to read .dibs-queries/queries.styx");
+    let source =
+        fs::read_to_string(queries_path).expect("Failed to read .dibs-queries/queries.styx");
 
     let file = parse_query_file(&source).expect("Failed to parse .dibs-queries/queries.styx");
     let generated = generate_rust_code_with_planner(&file, &schema, Some(&planner_schema));

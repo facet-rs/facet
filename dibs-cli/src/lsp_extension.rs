@@ -555,7 +555,7 @@ impl DibsExtension {
                         documentation: doc,
                         kind: Some(CompletionKind::Keyword),
                         sort_text: None,
-                        insert_text: None,
+                        insert_text: Some(format!("{} ", name)),
                     })
                 } else {
                     None
