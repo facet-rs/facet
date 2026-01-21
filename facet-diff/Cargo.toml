@@ -35,6 +35,7 @@ facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
 insta = { workspace = true }
 owo-colors = "4"
+tracing = { workspace = true }
 
 [lints]
 workspace = true

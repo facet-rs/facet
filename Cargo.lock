@@ -1779,6 +1779,7 @@ dependencies = [
  "insta",
  "log",
  "owo-colors",
+ "tracing",
 ]
 
 [[package]]

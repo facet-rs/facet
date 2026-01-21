@@ -436,43 +436,57 @@ fn compute_path_in_shadow(
 }
 
 /// Compute an adjusted path for a node that may have shifted due to insertions/deletions.
-/// For now, we just use the stored path since the shadow tree structure reflects
-/// the actual positions.
+///
+/// Key insight: tree depth and path depth may NOT be 1:1 because Option types add a tree
+/// node but not a path segment. We must use each node's stored path length to track depth.
 fn compute_adjusted_path(
     shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel>>,
     shadow_root: NodeId,
     node: NodeId,
     original_path: &Path,
 ) -> Path {
-    // Walk up to find the actual position indices
-    let mut indices_from_walk = Vec::new();
+    // Build a map from path depth -> actual position, but only for Index segments
+    // We use each node's stored path to determine its depth, not tree traversal count
+    let mut depth_to_position: HashMap<usize, usize> = HashMap::new();
     let mut current = node;
 
     while current != shadow_root {
+        // Get the current node's path depth from its stored label
+        let current_path_len = shadow_arena
+            .get(current)
+            .and_then(|n| n.get().label.as_ref())
+            .map(|l| l.path.0.len())
+            .unwrap_or(0);
+
+        // If this depth has an Index segment in the original path, record actual position
+        if current_path_len > 0 {
+            let depth = current_path_len - 1;
+            if let Some(PathSegment::Index(_)) = original_path.0.get(depth) {
+                if let Some(parent_id) = shadow_arena.get(current).and_then(|n| n.parent()) {
+                    let pos = parent_id
+                        .children(shadow_arena)
+                        .position(|c| c == current)
+                        .unwrap_or(0);
+                    depth_to_position.insert(depth, pos);
+                }
+            }
+        }
+
+        // Move to parent
         if let Some(parent_id) = shadow_arena.get(current).and_then(|n| n.parent()) {
-            // Get actual position among siblings
-            let pos = parent_id
-                .children(shadow_arena)
-                .position(|c| c == current)
-                .unwrap_or(0);
-            indices_from_walk.push(pos);
             current = parent_id;
         } else {
             break;
         }
     }
-    indices_from_walk.reverse();
 
-    // Now merge with the original path structure, using walked indices where appropriate
+    // Build result path with adjusted indices
     let mut result_segments = Vec::new();
-    let mut index_iter = indices_from_walk.iter();
-
-    for segment in &original_path.0 {
+    for (i, segment) in original_path.0.iter().enumerate() {
         match segment {
             PathSegment::Index(_) => {
-                // Use the actual position from our walk
-                if let Some(&actual_pos) = index_iter.next() {
-                    result_segments.push(PathSegment::Index(actual_pos));
+                if let Some(&pos) = depth_to_position.get(&i) {
+                    result_segments.push(PathSegment::Index(pos));
                 } else {
                     result_segments.push(segment.clone());
                 }
@@ -517,11 +531,23 @@ fn compute_path_by_walking(
 mod tests {
     use super::*;
     use facet::Facet;
+    use facet_testhelpers::test;
 
     #[derive(Debug, Clone, PartialEq, Facet)]
     struct Person {
         name: String,
         age: u32,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Facet)]
+    struct Container {
+        items: Vec<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Facet)]
+    struct Nested {
+        name: String,
+        children: Vec<Container>,
     }
 
     #[test]
@@ -567,6 +593,266 @@ mod tests {
             node_count >= 3,
             "Tree should have root and field nodes, got {}",
             node_count
+        );
+    }
+
+    /// Test that tree building produces correct paths for list elements
+    #[test]
+    fn test_tree_paths_for_list() {
+        let container = Container {
+            items: vec!["a".into(), "b".into(), "c".into()],
+        };
+
+        let peek = Peek::new(&container);
+        let tree = build_tree(peek);
+
+        // Collect all paths from the tree
+        let mut paths: Vec<Path> = Vec::new();
+        for node in tree.arena.iter() {
+            if let Some(label) = &node.get().label {
+                paths.push(label.path.clone());
+            }
+        }
+
+        tracing::debug!(?paths, "all paths in tree");
+
+        // Should have:
+        // - [] (root)
+        // - [Field("items")] (the vec field)
+        // - [Field("items"), Index(0)] (first element)
+        // - [Field("items"), Index(1)] (second element)
+        // - [Field("items"), Index(2)] (third element)
+        assert!(
+            paths.iter().any(|p| p.0.is_empty()),
+            "Should have root path"
+        );
+        assert!(
+            paths.iter().any(|p| p.0 == vec![PathSegment::Field("items".into())]),
+            "Should have items field path"
+        );
+        assert!(
+            paths.iter().any(|p| p.0
+                == vec![
+                    PathSegment::Field("items".into()),
+                    PathSegment::Index(0)
+                ]),
+            "Should have items[0] path"
+        );
+        assert!(
+            paths.iter().any(|p| p.0
+                == vec![
+                    PathSegment::Field("items".into()),
+                    PathSegment::Index(2)
+                ]),
+            "Should have items[2] path"
+        );
+    }
+
+    /// Test that compute_adjusted_path correctly updates Index segments
+    #[test]
+    fn test_compute_adjusted_path_basic() {
+        let container = Container {
+            items: vec!["a".into(), "b".into(), "c".into()],
+        };
+
+        let peek = Peek::new(&container);
+        let tree = build_tree(peek);
+
+        // Find the node for items[1]
+        let target_path = Path(vec![
+            PathSegment::Field("items".into()),
+            PathSegment::Index(1),
+        ]);
+
+        let mut target_node = None;
+        for node_id in tree.root.descendants(&tree.arena) {
+            if let Some(label) = &tree.arena.get(node_id).unwrap().get().label {
+                if label.path == target_path {
+                    target_node = Some(node_id);
+                    break;
+                }
+            }
+        }
+        let target_node = target_node.expect("Should find items[1] node");
+
+        // Without any modifications, the adjusted path should equal the original
+        let adjusted = compute_adjusted_path(&tree.arena, tree.root, target_node, &target_path);
+        assert_eq!(
+            adjusted, target_path,
+            "Unmodified tree should have unchanged paths"
+        );
+    }
+
+    /// Test that after deleting an element, subsequent element paths shift
+    #[test]
+    fn test_path_adjustment_after_delete() {
+        let container = Container {
+            items: vec!["a".into(), "b".into(), "c".into()],
+        };
+
+        let peek = Peek::new(&container);
+        let tree = build_tree(peek);
+
+        // Clone the arena to simulate shadow tree
+        let mut shadow_arena = tree.arena.clone();
+
+        // Find the nodes
+        let items_path = Path(vec![PathSegment::Field("items".into())]);
+        let item0_path = Path(vec![
+            PathSegment::Field("items".into()),
+            PathSegment::Index(0),
+        ]);
+        let item1_path = Path(vec![
+            PathSegment::Field("items".into()),
+            PathSegment::Index(1),
+        ]);
+        let item2_path = Path(vec![
+            PathSegment::Field("items".into()),
+            PathSegment::Index(2),
+        ]);
+
+        let mut item0_node = None;
+        let mut item1_node = None;
+        let mut item2_node = None;
+
+        for node_id in tree.root.descendants(&tree.arena) {
+            if let Some(label) = &tree.arena.get(node_id).unwrap().get().label {
+                if label.path == item0_path {
+                    item0_node = Some(node_id);
+                } else if label.path == item1_path {
+                    item1_node = Some(node_id);
+                } else if label.path == item2_path {
+                    item2_node = Some(node_id);
+                }
+            }
+        }
+
+        let item0_node = item0_node.expect("Should find items[0]");
+        let item1_node = item1_node.expect("Should find items[1]");
+        let item2_node = item2_node.expect("Should find items[2]");
+
+        // Delete item0 from shadow tree
+        item0_node.remove(&mut shadow_arena);
+
+        // Now item1 (originally at index 1) should be at index 0
+        let adjusted1 =
+            compute_adjusted_path(&shadow_arena, tree.root, item1_node, &item1_path);
+        let expected1 = Path(vec![
+            PathSegment::Field("items".into()),
+            PathSegment::Index(0),
+        ]);
+        assert_eq!(
+            adjusted1, expected1,
+            "After deleting item[0], item[1] should become item[0]"
+        );
+
+        // And item2 (originally at index 2) should be at index 1
+        let adjusted2 =
+            compute_adjusted_path(&shadow_arena, tree.root, item2_node, &item2_path);
+        let expected2 = Path(vec![
+            PathSegment::Field("items".into()),
+            PathSegment::Index(1),
+        ]);
+        assert_eq!(
+            adjusted2, expected2,
+            "After deleting item[0], item[2] should become item[1]"
+        );
+    }
+
+    /// Test list element deletion produces some diff operations
+    #[test]
+    fn test_diff_list_delete() {
+        let a = Container {
+            items: vec!["a".into(), "b".into(), "c".into()],
+        };
+        let b = Container {
+            items: vec!["a".into(), "c".into()], // removed "b"
+        };
+
+        let ops = tree_diff(&a, &b);
+        tracing::debug!(?ops, "diff ops for list delete");
+
+        // Should have some operations (the exact ops depend on cinereus's matching algorithm)
+        // The algorithm may emit Delete, or Move+Delete, etc.
+        assert!(!ops.is_empty(), "Should have some operations for deletion");
+
+        // Should have at least one Delete or Move operation
+        let has_structural_change = ops.iter().any(|op| {
+            matches!(op, EditOp::Delete { .. } | EditOp::Move { .. })
+        });
+        assert!(
+            has_structural_change,
+            "Should have Delete or Move for structural change, got: {:?}",
+            ops
+        );
+    }
+
+    /// Test list element insertion produces correct Insert path
+    #[test]
+    fn test_diff_list_insert() {
+        let a = Container {
+            items: vec!["a".into(), "c".into()],
+        };
+        let b = Container {
+            items: vec!["a".into(), "b".into(), "c".into()], // inserted "b" at index 1
+        };
+
+        let ops = tree_diff(&a, &b);
+        tracing::debug!(?ops, "diff ops for list insert");
+
+        // Should have an Insert for items[1]
+        let has_insert_at_1 = ops.iter().any(|op| {
+            if let EditOp::Insert { path, .. } = op {
+                path.0
+                    == vec![
+                        PathSegment::Field("items".into()),
+                        PathSegment::Index(1),
+                    ]
+            } else {
+                false
+            }
+        });
+        assert!(has_insert_at_1, "Should have Insert at items[1], got: {:?}", ops);
+    }
+
+    /// Test that nested structures produce diff operations
+    #[test]
+    fn test_nested_list_paths() {
+        let a = Nested {
+            name: "root".into(),
+            children: vec![
+                Container { items: vec!["a".into()] },
+                Container { items: vec!["b".into()] },
+            ],
+        };
+        let b = Nested {
+            name: "root".into(),
+            children: vec![
+                Container { items: vec!["a".into()] },
+                Container { items: vec!["modified".into()] }, // changed
+            ],
+        };
+
+        let ops = tree_diff(&a, &b);
+        tracing::debug!(?ops, "diff ops for nested change");
+
+        // Should have some operations for the change
+        assert!(!ops.is_empty(), "Should have operations for nested change");
+
+        // At minimum, there should be something touching children
+        let has_children_op = ops.iter().any(|op| {
+            let path = match op {
+                EditOp::Update { path, .. } => path,
+                EditOp::Insert { path, .. } => path,
+                EditOp::Delete { path, .. } => path,
+                EditOp::Move { old_path, .. } => old_path,
+            };
+            path.0.first() == Some(&PathSegment::Field("children".into()))
+        });
+        assert!(
+            has_children_op,
+            "Should have operation touching children, got: {:?}",
+            ops
         );
     }
 }
