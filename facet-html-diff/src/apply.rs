@@ -464,21 +464,40 @@ fn apply_patch(
                 }
             }
         }
-        Patch::InsertBefore { path, html } => {
+        Patch::InsertBefore {
+            path,
+            html,
+            detach_to_slot,
+        } => {
             let new_node = parse_html_fragment(html)?;
             if path.0.is_empty() {
                 return Err("InsertBefore: cannot insert before root".to_string());
             }
             let parent_path = &path.0[..path.0.len() - 1];
             let idx = path.0[path.0.len() - 1];
+
+            // In Chawathe semantics, Insert does NOT shift - it places at position
+            // and whatever was there gets displaced (detached to a slot).
+            if let Some(slot) = detach_to_slot {
+                let children = root
+                    .children_mut(parent_path)
+                    .ok_or_else(|| format!("InsertBefore: parent not found at {parent_path:?}"))?;
+                if idx < children.len() {
+                    // Swap with empty placeholder (no shifting!)
+                    let occupant = std::mem::replace(&mut children[idx], Node::Text(String::new()));
+                    slots.insert(*slot, occupant);
+                }
+            }
+
             let children = root
                 .children_mut(parent_path)
                 .ok_or_else(|| format!("InsertBefore: parent not found at {parent_path:?}"))?;
-            if idx <= children.len() {
-                children.insert(idx, new_node);
-            } else {
-                return Err(format!("InsertBefore: index {idx} out of bounds"));
+            // Grow the array with empty text placeholders if needed
+            while children.len() <= idx {
+                children.push(Node::Text(String::new()));
             }
+            // Overwrite the placeholder at the target position
+            children[idx] = new_node;
         }
         Patch::AppendChild { path, html } => {
             let new_node = parse_html_fragment(html)?;
@@ -580,24 +599,27 @@ fn apply_patch(
             let to_idx = to.0[to.0.len() - 1];
 
             if let Some(slot) = detach_to_slot {
-                // Detach the occupant and store in slot
+                // Detach the occupant by swapping with empty placeholder (no shifting!)
                 let to_children = root.children_mut(to_parent_path).ok_or_else(|| {
                     format!("Move: target parent not found at {to_parent_path:?}")
                 })?;
                 if to_idx < to_children.len() {
-                    let occupant = to_children.remove(to_idx);
+                    let occupant =
+                        std::mem::replace(&mut to_children[to_idx], Node::Text(String::new()));
                     slots.insert(*slot, occupant);
                 }
             }
 
-            // Insert the node at the target location
+            // Place the node at the target location
             let to_children = root
                 .children_mut(to_parent_path)
                 .ok_or_else(|| format!("Move: target parent not found at {to_parent_path:?}"))?;
-            if to_idx > to_children.len() {
-                return Err(format!("Move: target index {to_idx} out of bounds"));
+            // Grow the array with empty text placeholders if needed
+            while to_children.len() <= to_idx {
+                to_children.push(Node::Text(String::new()));
             }
-            to_children.insert(to_idx, node);
+            // Overwrite the placeholder at the target position
+            to_children[to_idx] = node;
         }
     }
     Ok(())
@@ -723,10 +745,28 @@ mod tests {
             &[Patch::InsertBefore {
                 path: NodePath(vec![0]),
                 html: "<p>Zero</p>".to_string(),
+                detach_to_slot: Some(0), // Chawathe: displace First to slot 0
             }],
         )
         .unwrap();
-        assert_eq!(node.to_html(), "<body><p>Zero</p><p>First</p></body>");
+        // After insert with displacement, First is in slot 0, only Zero is in tree
+        assert_eq!(node.to_html(), "<body><p>Zero</p></body>");
+    }
+
+    #[test]
+    fn test_apply_insert_before_no_displacement() {
+        // Insert at end (no occupant) - no displacement needed
+        let mut node = Node::parse("<html><body><p>First</p></body></html>").unwrap();
+        apply_patches(
+            &mut node,
+            &[Patch::InsertBefore {
+                path: NodePath(vec![1]), // Insert at index 1 (past last element)
+                html: "<p>Second</p>".to_string(),
+                detach_to_slot: None,
+            }],
+        )
+        .unwrap();
+        assert_eq!(node.to_html(), "<body><p>First</p><p>Second</p></body>");
     }
 
     #[test]

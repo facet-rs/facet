@@ -37,8 +37,13 @@ pub enum Patch {
     /// Replace all children of node at path with new HTML (innerHTML replacement).
     ReplaceInnerHtml { path: NodePath, html: String },
 
-    /// Insert HTML before the node at path
-    InsertBefore { path: NodePath, html: String },
+    /// Insert HTML before the node at path.
+    /// If `detach_to_slot` is Some, the node at path is detached and stored in that slot.
+    InsertBefore {
+        path: NodePath,
+        html: String,
+        detach_to_slot: Option<u32>,
+    },
 
     /// Insert HTML after the node at path
     InsertAfter { path: NodePath, html: String },
@@ -442,10 +447,17 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
             path,
             label_path,
             value,
+            detach_to_slot,
             ..
-        } => translate_insert(&path.0, &label_path.0, value.as_deref(), new_doc)
-            .into_iter()
-            .collect(),
+        } => translate_insert(
+            &path.0,
+            &label_path.0,
+            value.as_deref(),
+            *detach_to_slot,
+            new_doc,
+        )
+        .into_iter()
+        .collect(),
         EditOp::Delete { path, .. } => translate_delete(&path.0, new_doc).into_iter().collect(),
         EditOp::Update {
             path, new_value, ..
@@ -488,10 +500,12 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
 ///
 /// `segments` is the path from EditOp - DOM position with Variants stripped.
 /// `label_segments` is the label_path - full type navigation path with Variants.
+/// `detach_to_slot` - if Some, the displaced node goes to this slot.
 fn translate_insert(
     segments: &[PathSegment],
     label_segments: &[PathSegment],
     value: Option<&str>,
+    detach_to_slot: Option<u32>,
     new_doc: &Html,
 ) -> Option<Patch> {
     let html_shape = <Html as facet_core::Facet>::SHAPE;
@@ -521,6 +535,7 @@ fn translate_insert(
                 Some(Patch::InsertBefore {
                     path: NodePath(dom_path),
                     html,
+                    detach_to_slot,
                 })
             }
         }

@@ -87,6 +87,8 @@ pub enum EditOp {
         new_value: Option<String>,
     },
     /// A node was inserted in tree B.
+    /// In Chawathe semantics, Insert does NOT shift - it places at a position
+    /// and whatever was there gets displaced (detached to a slot for later reinsertion).
     Insert {
         /// The path where the node was inserted (shadow tree coordinates for DOM operations)
         path: Path,
@@ -94,6 +96,8 @@ pub enum EditOp {
         label_path: Path,
         /// The value to insert (for leaf nodes), None for containers
         value: Option<String>,
+        /// If Some, the displaced node goes to this slot
+        detach_to_slot: Option<u32>,
         /// Hash of the inserted value
         hash: u64,
     },
@@ -473,7 +477,7 @@ pub fn tree_diff<'a, 'f, A: facet_core::Facet<'f>, B: facet_core::Facet<'f>>(
         "cinereus ops before conversion"
     );
     for (i, op) in cinereus_ops.iter().enumerate() {
-        debug!(i, ?op, "cinereus op");
+        debug!(i, %op, "cinereus op");
     }
 
     // Convert cinereus ops to path-based EditOps using a shadow tree
@@ -778,6 +782,8 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 label,
                 ..
             } => {
+                debug!(?node_b, ?parent_b, position, "INSERT: starting");
+
                 // Find the parent in our shadow tree
                 let shadow_parent = b_to_shadow.get(&parent_b).copied().unwrap_or(shadow_root);
 
@@ -790,59 +796,36 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 };
                 let new_node = shadow_arena.new_node(new_data);
 
-                // The `position` field is the FINAL position in tree_b.
-                // To insert correctly in the shadow tree, we need to find the left sibling
-                // in tree_b and insert after its corresponding node in the shadow tree.
-                //
-                // This is necessary because the shadow tree may contain nodes that will
-                // be deleted later (they exist in tree_a but not tree_b), so using
-                // `position` directly would put the node in the wrong place.
-                let b_siblings: Vec<_> = tree_b.children(parent_b).collect();
-                debug!(
-                    ?position,
-                    ?b_siblings,
-                    "INSERT: looking for left sibling in tree_b"
-                );
-
-                if position == 0 {
-                    // No left sibling - insert at the beginning
-                    let first_child = shadow_parent.children(&shadow_arena).next();
-                    if let Some(first) = first_child {
-                        first.insert_before(new_node, &mut shadow_arena);
-                    } else {
-                        shadow_parent.append(new_node, &mut shadow_arena);
-                    }
+                // In Chawathe semantics, Insert does NOT shift - it places at position
+                // and whatever was there gets displaced (detached to a slot).
+                // This is the same semantics as Move.
+                let children: Vec<_> = shadow_parent.children(&shadow_arena).collect();
+                let detach_to_slot = if position < children.len() {
+                    let occupant = children[position];
+                    let occupant_slot = next_slot;
+                    next_slot += 1;
+                    debug!(
+                        ?occupant,
+                        occupant_slot, "INSERT: will detach occupant to slot"
+                    );
+                    detached_nodes.insert(occupant, occupant_slot);
+                    occupant.detach(&mut shadow_arena);
+                    Some(occupant_slot)
                 } else {
-                    // Find the left sibling (node at position-1 in tree_b)
-                    let left_sibling_b = b_siblings.get(position - 1).copied();
-                    debug!(?left_sibling_b, "INSERT: left sibling in tree_b");
+                    None
+                };
 
-                    if let Some(left_b) = left_sibling_b {
-                        // Find the corresponding node in the shadow tree
-                        if let Some(left_shadow) = b_to_shadow.get(&left_b).copied() {
-                            // Insert after the left sibling
-                            left_shadow.insert_after(new_node, &mut shadow_arena);
-                            debug!(
-                                ?left_shadow,
-                                ?new_node,
-                                "INSERT: inserted after left sibling"
-                            );
-                        } else {
-                            // Left sibling not in shadow tree yet - shouldn't happen with proper ordering
-                            // Fall back to append
-                            debug!("INSERT: left sibling not found in shadow, appending");
-                            shadow_parent.append(new_node, &mut shadow_arena);
-                        }
-                    } else {
-                        // No left sibling found - append
-                        shadow_parent.append(new_node, &mut shadow_arena);
-                    }
+                // Place new node at position
+                let children: Vec<_> = shadow_parent.children(&shadow_arena).collect();
+                if position >= children.len() {
+                    shadow_parent.append(new_node, &mut shadow_arena);
+                } else {
+                    children[position].insert_before(new_node, &mut shadow_arena);
                 }
 
                 b_to_shadow.insert(node_b, new_node);
 
-                // NOW compute the path - after the node is in the shadow tree.
-                // This gives us the actual position where it ended up.
+                // Compute the path after the node is in the shadow tree
                 let path = compute_path_in_shadow(&shadow_arena, shadow_root, new_node, tree_a);
 
                 // Extract value for leaf nodes using the tree_b label path
@@ -858,6 +841,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     path,
                     label_path,
                     value,
+                    detach_to_slot,
                     hash: tree_b.get(node_b).hash,
                 };
                 debug!(?edit_op, "emitting Insert");
@@ -969,8 +953,13 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     children[new_position].insert_before(node_a, &mut shadow_arena);
                 }
 
-                // Compute the target path
-                let to = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+                // Compute the target path: parent's path + new_position
+                // We use new_position directly because that's the FINAL position in tree_b,
+                // not the current shadow tree position (which may have gaps from detached nodes).
+                let parent_path =
+                    compute_path_in_shadow(&shadow_arena, shadow_root, shadow_new_parent, tree_a);
+                let mut to = parent_path;
+                to.0.push(PathSegment::Index(new_position));
 
                 // Emit Move
                 debug!(?from, ?to, ?detach_to_slot, "MOVE: emitting");
