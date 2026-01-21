@@ -44,5 +44,12 @@ hints {
         patterns ("**/.dibs-queries/*.styx")
         schema {id crate:dibs-queries@1, cli dibs}
     }
+    styx-lsp {
+        title "Styx LSP"
+        description "User configuration for the Styx Language Server"
+        homepage "https://styx.bearcove.eu"
+        patterns ("{userconfig}/styx/config.styx")
+        schema {id crate:styx-lsp-config@1, cli styx}
+    }
 }
 

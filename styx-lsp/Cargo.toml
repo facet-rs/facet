@@ -49,3 +49,7 @@ styx-lsp-test-schema = { path = "../styx-lsp-test-schema" }
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
+
+[build-dependencies]
+facet.workspace = true
+facet-styx = { path = "../facet-styx" }

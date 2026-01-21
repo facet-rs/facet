@@ -39,6 +39,7 @@ use tokio::task::JoinHandle;
 use tower_lsp::lsp_types::Url;
 use tracing::{debug, info, warn};
 
+use crate::config::{self, StyxUserConfig};
 use crate::schema_validation::resolve_schema;
 use crate::server::DocumentMap;
 
@@ -111,11 +112,21 @@ struct Extension {
 }
 
 impl ExtensionManager {
-    /// Create a new extension manager.
+    /// Create a new extension manager, loading the allowlist from the user config.
     pub(crate) fn new(documents: DocumentMap) -> Self {
+        // Load allowed extensions from user config
+        let allowlist = match config::load_config() {
+            Ok(Some(config)) => config.allowed_extensions,
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                warn!(error = %e, "Failed to load user config, starting with empty allowlist");
+                Vec::new()
+            }
+        };
+
         Self {
             extensions: RwLock::new(HashMap::new()),
-            allowlist: RwLock::new(Vec::new()),
+            allowlist: RwLock::new(allowlist),
             documents,
         }
     }
@@ -127,11 +138,19 @@ impl ExtensionManager {
         allowlist.iter().any(|allowed| command.starts_with(allowed))
     }
 
-    /// Add a command to the allowlist.
+    /// Add a command to the allowlist and persist to user config.
     pub async fn allow(&self, command: String) {
         let mut allowlist = self.allowlist.write().await;
         if !allowlist.contains(&command) {
-            allowlist.push(command);
+            allowlist.push(command.clone());
+
+            // Persist to user config
+            let config = StyxUserConfig {
+                allowed_extensions: allowlist.clone(),
+            };
+            if let Err(e) = config::save_config(&config) {
+                warn!(error = %e, "Failed to save user config");
+            }
         }
     }
 

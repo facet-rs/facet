@@ -451,6 +451,11 @@ pub fn generate_placeholder(schema: &Schema) -> String {
             .as_ref()
             .map(|n| format!("@{}", n))
             .unwrap_or_else(|| "@".to_string()),
+        Schema::Tuple(t) => {
+            // Generate tuple placeholder: (val1 val2 ...)
+            let elements: Vec<_> = t.0.iter().map(|d| generate_placeholder(&d.value)).collect();
+            format!("({})", elements.join(" "))
+        }
     }
 }
 

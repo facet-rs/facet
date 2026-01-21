@@ -2606,6 +2606,10 @@ fn schema_to_type_str(schema: &facet_styx::Schema) -> String {
         Schema::Optional(opt) => format!("@optional({})", schema_to_type_str(&opt.0.0)),
         Schema::Default(def) => format!("@default(..., {})", schema_to_type_str(&def.0.1)),
         Schema::Deprecated(dep) => format!("@deprecated({})", schema_to_type_str(&dep.0.1)),
+        Schema::Tuple(t) => {
+            let elements: Vec<_> = t.0.iter().map(|d| schema_to_type_str(&d.value)).collect();
+            format!("@tuple({})", elements.join(" "))
+        }
     }
 }
 

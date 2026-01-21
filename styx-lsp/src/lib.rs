@@ -8,6 +8,7 @@
 //! - Schema suggestions for known file patterns
 
 pub mod cache;
+pub mod config;
 pub mod extensions;
 pub mod schema_hints;
 mod schema_validation;
