@@ -549,9 +549,10 @@ where
     // because innermost_peek might unwrap the type if it has .inner set
     if serializer.raw_serialize_shape() == Some(value.shape()) {
         // RawJson is a tuple struct with a single Cow<str> field
-        // Get the inner Cow<str> value via as_str on the inner
+        // Get the inner Cow<str> value via as_str on the inner.
+        // Use fields_for_binary_serialize to access the field directly without skip logic.
         if let Ok(struct_) = value.into_struct()
-            && let Some((_field_item, inner_value)) = struct_.fields_for_serialize().next()
+            && let Some((_field_item, inner_value)) = struct_.fields_for_binary_serialize().next()
             && let Some(s) = inner_value.as_str()
         {
             return serializer.raw_scalar(s).map_err(SerializeError::Backend);
@@ -764,9 +765,12 @@ where
 
     if let Ok(struct_) = value.into_struct() {
         let kind = struct_.ty().kind;
+        let field_mode = serializer.struct_field_mode();
+
         if kind == StructKind::Tuple || kind == StructKind::TupleStruct {
-            // Serialize tuples as arrays without length prefixes
-            let fields: alloc::vec::Vec<_> = struct_.fields_for_serialize().collect();
+            // Serialize tuples as arrays without length prefixes.
+            // Tuples are positional, so use binary serialize to avoid skip predicates.
+            let fields: alloc::vec::Vec<_> = struct_.fields_for_binary_serialize().collect();
             serializer.begin_seq().map_err(SerializeError::Backend)?;
             for (field_item, field_value) in fields {
                 // Check for field-level proxy
@@ -787,11 +791,16 @@ where
                 .map_err(SerializeError::Backend)?;
             serializer.begin_struct().map_err(SerializeError::Backend)?;
 
-            // Collect fields and sort according to format preference
-            let mut fields: alloc::vec::Vec<_> = struct_.fields_for_serialize().collect();
+            // Collect fields and sort according to format preference.
+            // For binary formats (Unnamed), use fields_for_binary_serialize to avoid
+            // skip predicates that would break positional deserialization.
+            let mut fields: alloc::vec::Vec<_> = if field_mode == StructFieldMode::Unnamed {
+                struct_.fields_for_binary_serialize().collect()
+            } else {
+                struct_.fields_for_serialize().collect()
+            };
 
             sort_fields_if_needed(serializer, &mut fields);
-            let field_mode = serializer.struct_field_mode();
 
             for (field_item, field_value) in fields {
                 // Let format handle field metadata with value access (for metadata containers)
@@ -844,7 +853,9 @@ where
             match variant.data.kind {
                 StructKind::Unit => return Ok(()),
                 StructKind::TupleStruct | StructKind::Tuple | StructKind::Struct => {
-                    for (field_item, field_value) in enum_.fields_for_serialize() {
+                    // Index encoding is for binary formats - use binary serialize
+                    // to avoid skip predicates that would break positional deserialization.
+                    for (field_item, field_value) in enum_.fields_for_binary_serialize() {
                         if let Some(proxy_def) = field_item
                             .field
                             .and_then(|f| f.effective_proxy(serializer.format_namespace()))
@@ -882,12 +893,17 @@ where
                     .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
                     .map_err(SerializeError::Backend)?;
 
+                let field_mode = serializer.struct_field_mode();
                 match variant.data.kind {
                     StructKind::Unit => {}
                     StructKind::Struct => {
-                        let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
+                        let mut fields: alloc::vec::Vec<_> =
+                            if field_mode == StructFieldMode::Unnamed {
+                                enum_.fields_for_binary_serialize().collect()
+                            } else {
+                                enum_.fields_for_serialize().collect()
+                            };
                         sort_fields_if_needed(serializer, &mut fields);
-                        let field_mode = serializer.struct_field_mode();
                         for (field_item, field_value) in fields {
                             serializer
                                 .field_metadata(&field_item)
@@ -920,6 +936,7 @@ where
             }
             (Some(tag_key), Some(content_key)) => {
                 // Adjacently tagged.
+                let field_mode = serializer.struct_field_mode();
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
                 serializer
                     .field_key(tag_key)
@@ -937,9 +954,13 @@ where
                             .field_key(content_key)
                             .map_err(SerializeError::Backend)?;
                         serializer.begin_struct().map_err(SerializeError::Backend)?;
-                        let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
+                        let mut fields: alloc::vec::Vec<_> =
+                            if field_mode == StructFieldMode::Unnamed {
+                                enum_.fields_for_binary_serialize().collect()
+                            } else {
+                                enum_.fields_for_serialize().collect()
+                            };
                         sort_fields_if_needed(serializer, &mut fields);
-                        let field_mode = serializer.struct_field_mode();
                         for (field_item, field_value) in fields {
                             serializer
                                 .field_metadata(&field_item)
@@ -1013,13 +1034,30 @@ where
         // Externally tagged (default).
         // For #[facet(other)] variants with a #[facet(metadata = "tag")] field,
         // use the field's value as the tag name instead of the variant name.
-        trace!(variant_name = variant.name, is_other = variant.is_other(), "serializing enum variant");
+        trace!(
+            variant_name = variant.name,
+            is_other = variant.is_other(),
+            "serializing enum variant"
+        );
+        let field_mode = serializer.struct_field_mode();
         let tag_name: Cow<'_, str> = if variant.is_other() {
-            // Look for a tag field in the variant's data
+            // Look for a tag field in the variant's data.
+            // For binary formats, use binary serialize to avoid skip predicates.
             let mut tag_value: Option<Cow<'_, str>> = None;
-            for (field_item, field_value) in enum_.fields_for_serialize() {
+            let fields_iter: alloc::boxed::Box<
+                dyn Iterator<Item = (facet_reflect::FieldItem, facet_reflect::Peek<'_, '_>)>,
+            > = if field_mode == StructFieldMode::Unnamed {
+                alloc::boxed::Box::new(enum_.fields_for_binary_serialize())
+            } else {
+                alloc::boxed::Box::new(enum_.fields_for_serialize())
+            };
+            for (field_item, field_value) in fields_iter {
                 if let Some(field) = field_item.field {
-                    trace!(field_name = field.name, is_variant_tag = field.is_variant_tag(), "checking field for tag");
+                    trace!(
+                        field_name = field.name,
+                        is_variant_tag = field.is_variant_tag(),
+                        "checking field for tag"
+                    );
                     if field.is_variant_tag() {
                         // Extract the tag value - handle Option<String>
                         if let Ok(opt) = field_value.into_option()
@@ -1090,8 +1128,16 @@ where
                     // Struct variant - use struct after tag
                     // For #[facet(other)] variants, skip metadata fields (like tag) from payload
                     let is_other = variant.is_other();
-                    let mut fields: alloc::vec::Vec<_> = enum_
-                        .fields_for_serialize()
+                    let fields_iter: alloc::boxed::Box<
+                        dyn Iterator<
+                            Item = (facet_reflect::FieldItem, facet_reflect::Peek<'_, '_>),
+                        >,
+                    > = if field_mode == StructFieldMode::Unnamed {
+                        alloc::boxed::Box::new(enum_.fields_for_binary_serialize())
+                    } else {
+                        alloc::boxed::Box::new(enum_.fields_for_serialize())
+                    };
+                    let mut fields: alloc::vec::Vec<_> = fields_iter
                         .filter(|(field_item, _)| {
                             if is_other {
                                 // Skip metadata fields and tag fields for other variants
@@ -1186,15 +1232,19 @@ where
                 Ok(())
             }
             StructKind::Struct => {
+                let field_mode = serializer.struct_field_mode();
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
                 serializer
                     .field_key(variant.effective_name())
                     .map_err(SerializeError::Backend)?;
 
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
-                let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
+                let mut fields: alloc::vec::Vec<_> = if field_mode == StructFieldMode::Unnamed {
+                    enum_.fields_for_binary_serialize().collect()
+                } else {
+                    enum_.fields_for_serialize().collect()
+                };
                 sort_fields_if_needed(serializer, &mut fields);
-                let field_mode = serializer.struct_field_mode();
                 for (field_item, field_value) in fields {
                     serializer
                         .field_metadata(&field_item)
@@ -1508,16 +1558,23 @@ where
             }
         }
         StructKind::Struct => {
+            let field_mode = serializer.struct_field_mode();
             serializer.begin_struct().map_err(SerializeError::Backend)?;
-            let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
+            let mut fields: alloc::vec::Vec<_> = if field_mode == StructFieldMode::Unnamed {
+                enum_.fields_for_binary_serialize().collect()
+            } else {
+                enum_.fields_for_serialize().collect()
+            };
             sort_fields_if_needed(serializer, &mut fields);
             for (field_item, field_value) in fields {
                 serializer
                     .field_metadata(&field_item)
                     .map_err(SerializeError::Backend)?;
-                serializer
-                    .field_key(field_item.effective_name())
-                    .map_err(SerializeError::Backend)?;
+                if field_mode == StructFieldMode::Named {
+                    serializer
+                        .field_key(field_item.effective_name())
+                        .map_err(SerializeError::Backend)?;
+                }
                 // Check for field-level proxy
                 if let Some(proxy_def) = field_item
                     .field

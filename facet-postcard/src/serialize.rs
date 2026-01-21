@@ -1287,11 +1287,8 @@ mod tests {
 
         // Test that Value can be serialized/deserialized as part of a tuple
         // This tests the hint_dynamic_value() fix for struct fields
-        let tuple: (u64, alloc::string::String, Value) = (
-            42,
-            "hello".into(),
-            Value::from(VNumber::from_i64(123)),
-        );
+        let tuple: (u64, alloc::string::String, Value) =
+            (42, "hello".into(), Value::from(VNumber::from_i64(123)));
 
         let bytes = to_vec(&tuple).unwrap();
         let decoded: (u64, alloc::string::String, Value) = crate::from_slice(&bytes).unwrap();
@@ -1315,9 +1312,10 @@ mod tests {
         let original = WithValue {
             id: 1,
             name: "test".into(),
-            data: Value::from(VObject::from_iter([
-                ("key".to_string(), Value::from(VString::new("value"))),
-            ])),
+            data: Value::from(VObject::from_iter([(
+                "key".to_string(),
+                Value::from(VString::new("value")),
+            )])),
         };
 
         let bytes = to_vec(&original).unwrap();
@@ -1367,5 +1365,59 @@ mod tests {
         let bytes = to_vec(&original).unwrap();
         let decoded: Outer = crate::from_slice(&bytes).unwrap();
         assert_eq!(decoded, original);
+    }
+
+    /// Regression test for https://github.com/facet-rs/facet/issues/1836
+    ///
+    /// The `skip_all_unless_truthy` attribute was causing fields to be skipped
+    /// during serialization, breaking roundtrip for binary formats like postcard
+    /// where fields are identified by position rather than name.
+    #[test]
+    fn test_skip_all_unless_truthy_roundtrip() {
+        facet_testhelpers::setup();
+
+        #[derive(Debug, Clone, PartialEq, Facet)]
+        #[facet(skip_all_unless_truthy)]
+        pub struct Value {
+            pub tag: Option<alloc::string::String>,
+            pub payload: Option<alloc::string::String>,
+        }
+
+        // Test case from the issue: first field is None, second is Some
+        let v = Value {
+            tag: None,
+            payload: Some("hello".into()),
+        };
+
+        let bytes = to_vec(&v).expect("serialize");
+        let v2: Value = crate::from_slice(&bytes).expect("deserialize");
+        assert_eq!(v, v2);
+
+        // Also test all None
+        let v = Value {
+            tag: None,
+            payload: None,
+        };
+        let bytes = to_vec(&v).expect("serialize");
+        let v2: Value = crate::from_slice(&bytes).expect("deserialize");
+        assert_eq!(v, v2);
+
+        // Also test all Some
+        let v = Value {
+            tag: Some("mytag".into()),
+            payload: Some("mypayload".into()),
+        };
+        let bytes = to_vec(&v).expect("serialize");
+        let v2: Value = crate::from_slice(&bytes).expect("deserialize");
+        assert_eq!(v, v2);
+
+        // Also test first Some, second None
+        let v = Value {
+            tag: Some("mytag".into()),
+            payload: None,
+        };
+        let bytes = to_vec(&v).expect("serialize");
+        let v2: Value = crate::from_slice(&bytes).expect("deserialize");
+        assert_eq!(v, v2);
     }
 }

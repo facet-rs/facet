@@ -94,10 +94,32 @@ pub trait HasFields<'mem, 'facet> {
     /// Iterates over all fields in this type, providing both field metadata and value
     fn fields(&self) -> FieldIter<'mem, 'facet>;
 
-    /// Iterates over fields in this type that should be included when it is serialized
+    /// Iterates over fields in this type that should be included when it is serialized.
+    ///
+    /// This respects `#[facet(skip_serializing_if = ...)]` and `#[facet(skip_all_unless_truthy)]`
+    /// predicates, which is correct for self-describing formats like JSON where skipped fields
+    /// can be reconstructed from the schema.
     fn fields_for_serialize(&self) -> FieldsForSerializeIter<'mem, 'facet> {
         FieldsForSerializeIter {
             stack: vec![FieldsForSerializeIterState::Fields(self.fields())],
+            skip_predicates: true,
+        }
+    }
+
+    /// Iterates over fields for serialization to positional binary formats.
+    ///
+    /// Unlike [`fields_for_serialize`](Self::fields_for_serialize), this ignores
+    /// `skip_serializing_if` predicates (including those from `skip_all_unless_truthy`).
+    /// This is necessary for binary formats like postcard where fields are identified by
+    /// position rather than name - skipping fields would cause a mismatch between
+    /// serialized and expected field positions during deserialization.
+    ///
+    /// Note: This still respects unconditional `#[facet(skip)]` and `#[facet(skip_serializing)]`
+    /// attributes, as those indicate fields that should never be serialized regardless of format.
+    fn fields_for_binary_serialize(&self) -> FieldsForSerializeIter<'mem, 'facet> {
+        FieldsForSerializeIter {
+            stack: vec![FieldsForSerializeIterState::Fields(self.fields())],
+            skip_predicates: false,
         }
     }
 }
@@ -222,6 +244,9 @@ impl ExactSizeIterator for FieldIter<'_, '_> {}
 /// An iterator over the fields of a struct or enum that should be serialized. See [`HasFields::fields_for_serialize`]
 pub struct FieldsForSerializeIter<'mem, 'facet> {
     stack: Vec<FieldsForSerializeIterState<'mem, 'facet>>,
+    /// Whether to evaluate skip_serializing_if predicates.
+    /// Set to false for binary formats where all fields must be present.
+    skip_predicates: bool,
 }
 
 enum FieldsForSerializeIterState<'mem, 'facet> {
@@ -336,8 +361,15 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                     };
                     self.stack.push(FieldsForSerializeIterState::Fields(fields));
 
-                    let data = peek.data();
-                    let should_skip = unsafe { field.should_skip_serializing(data) };
+                    // Check if we should skip this field.
+                    // For binary formats (skip_predicates = false), only check unconditional flags.
+                    // For text formats (skip_predicates = true), also evaluate predicates.
+                    let should_skip = if self.skip_predicates {
+                        let data = peek.data();
+                        unsafe { field.should_skip_serializing(data) }
+                    } else {
+                        field.should_skip_serializing_unconditional()
+                    };
 
                     if should_skip {
                         continue;
