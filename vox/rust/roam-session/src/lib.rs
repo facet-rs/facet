@@ -2421,11 +2421,27 @@ pub trait Caller: Clone + Send + Sync + 'static {
     /// assigned channel IDs before serialization.
     ///
     /// Returns ResponseData containing the payload and any response channel IDs.
+    #[cfg(not(target_arch = "wasm32"))]
     fn call<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
         args: &mut T,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
+        self.call_with_metadata(method_id, args, roam_wire::Metadata::default())
+    }
+
+    /// Make an RPC call with the given method ID and arguments.
+    ///
+    /// The arguments are mutable because stream bindings (Tx/Rx) need to be
+    /// assigned channel IDs before serialization.
+    ///
+    /// Returns ResponseData containing the payload and any response channel IDs.
+    #[cfg(target_arch = "wasm32")]
+    fn call<T: Facet<'static> + Send>(
+        &self,
+        method_id: u64,
+        args: &mut T,
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         self.call_with_metadata(method_id, args, roam_wire::Metadata::default())
     }
 
@@ -2435,12 +2451,27 @@ pub trait Caller: Clone + Send + Sync + 'static {
     /// assigned channel IDs before serialization.
     ///
     /// Returns ResponseData containing the payload and any response channel IDs.
+    #[cfg(not(target_arch = "wasm32"))]
     fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
         args: &mut T,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send;
+
+    /// Make an RPC call with the given method ID, arguments, and metadata.
+    ///
+    /// The arguments are mutable because stream bindings (Tx/Rx) need to be
+    /// assigned channel IDs before serialization.
+    ///
+    /// Returns ResponseData containing the payload and any response channel IDs.
+    #[cfg(target_arch = "wasm32")]
+    fn call_with_metadata<T: Facet<'static> + Send>(
+        &self,
+        method_id: u64,
+        args: &mut T,
+        metadata: roam_wire::Metadata,
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>>;
 
     /// Bind receivers for `Rx<T>` streams in the response.
     ///
@@ -2527,6 +2558,9 @@ where
     }
 }
 
+// On native, the future must be Send so it can be spawned on tokio.
+// On WASM, futures don't need Send since everything is single-threaded.
+#[cfg(not(target_arch = "wasm32"))]
 impl<C, Args, Ok, Err> std::future::IntoFuture for CallFuture<C, Args, Ok, Err>
 where
     C: Caller,
@@ -2536,6 +2570,38 @@ where
 {
     type Output = Result<Ok, CallError<Err>>;
     type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let CallFuture {
+            caller,
+            method_id,
+            mut args,
+            metadata,
+            _phantom,
+        } = self;
+
+        Box::pin(async move {
+            let response = caller
+                .call_with_metadata(method_id, &mut args, metadata)
+                .await
+                .map_err(CallError::from)?;
+            let mut result = decode_response::<Ok, Err>(&response.payload)?;
+            caller.bind_response_streams(&mut result, &response.channels);
+            Ok(result)
+        })
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<C, Args, Ok, Err> std::future::IntoFuture for CallFuture<C, Args, Ok, Err>
+where
+    C: Caller,
+    Args: Facet<'static> + Send + 'static,
+    Ok: Facet<'static> + Send + 'static,
+    Err: Facet<'static> + Send + 'static,
+{
+    type Output = Result<Ok, CallError<Err>>;
+    type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output>>>;
 
     fn into_future(self) -> Self::IntoFuture {
         let CallFuture {
