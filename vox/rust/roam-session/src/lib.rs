@@ -1368,9 +1368,8 @@ impl Default for RequestIdGenerator {
 /// The `channels` parameter contains channel IDs from the Request message framing.
 /// These are patched into the deserialized args before binding streams.
 pub fn dispatch_call<A, R, E, F, Fut>(
+    cx: &Context,
     payload: Vec<u8>,
-    channels: Vec<u64>,
-    request_id: u64,
     registry: &mut ChannelRegistry,
     handler: F,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>
@@ -1381,7 +1380,9 @@ where
     F: FnOnce(A) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = Result<R, E>> + Send + 'static,
 {
-    let conn_id = registry.conn_id();
+    let conn_id = cx.conn_id;
+    let request_id = cx.request_id.raw();
+    let channels = &cx.channels;
 
     // Deserialize args
     let mut args: A = match facet_postcard::from_slice(&payload) {
@@ -1404,7 +1405,7 @@ where
 
     // Patch channel IDs from Request framing into deserialized args
     debug!(channels = ?channels, "dispatch_call: patching channel IDs");
-    patch_channel_ids(&mut args, &channels);
+    patch_channel_ids(&mut args, channels);
 
     // Bind streams via reflection - THIS MUST HAPPEN SYNCHRONOUSLY
     debug!("dispatch_call: binding streams SYNC");
@@ -1461,9 +1462,8 @@ where
 ///
 /// Same as `dispatch_call` but for handlers that cannot fail at the application level.
 pub fn dispatch_call_infallible<A, R, F, Fut>(
+    cx: &Context,
     payload: Vec<u8>,
-    channels: Vec<u64>,
-    request_id: u64,
     registry: &mut ChannelRegistry,
     handler: F,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>
@@ -1473,7 +1473,9 @@ where
     F: FnOnce(A) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = R> + Send + 'static,
 {
-    let conn_id = registry.conn_id();
+    let conn_id = cx.conn_id;
+    let request_id = cx.request_id.raw();
+    let channels = &cx.channels;
 
     // Deserialize args
     let mut args: A = match facet_postcard::from_slice(&payload) {
@@ -1495,7 +1497,7 @@ where
     };
 
     // Patch channel IDs from Request framing into deserialized args
-    patch_channel_ids(&mut args, &channels);
+    patch_channel_ids(&mut args, channels);
 
     // Bind streams via reflection
     registry.bind_streams(&mut args);
@@ -1540,10 +1542,11 @@ where
 ///
 /// Used by dispatchers when the method_id doesn't match any known method.
 pub fn dispatch_unknown_method(
-    request_id: u64,
+    cx: &Context,
     registry: &mut ChannelRegistry,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
-    let conn_id = registry.conn_id();
+    let conn_id = cx.conn_id;
+    let request_id = cx.request_id.raw();
     let task_tx = registry.driver_tx();
     Box::pin(async move {
         // UnknownMethod error
@@ -1722,6 +1725,84 @@ fn patch_channel_ids_recursive(mut poke: facet::Poke<'_, '_>, channels: &[u64], 
 // Service Dispatcher
 // ============================================================================
 
+/// Context passed to service method implementations.
+///
+/// Contains information about the request that may be useful to the handler:
+/// - `conn_id`: Which virtual connection the request came from
+/// - `metadata`: Key-value pairs sent with the request
+///
+/// This enables services to identify callers and access per-request metadata.
+#[derive(Debug, Clone)]
+pub struct Context {
+    /// The connection ID this request arrived on.
+    ///
+    /// For virtual connections, this identifies which specific connection
+    /// the request came from, enabling bidirectional communication.
+    pub conn_id: roam_wire::ConnectionId,
+
+    /// The request ID for this call.
+    ///
+    /// Unique within the connection; used for response routing and cancellation.
+    pub request_id: roam_wire::RequestId,
+
+    /// The method ID being called.
+    pub method_id: roam_wire::MethodId,
+
+    /// Metadata sent with the request.
+    ///
+    /// This is the `metadata` field from the wire `Request` message.
+    pub metadata: roam_wire::Metadata,
+
+    /// Channel IDs from the request, in argument declaration order.
+    ///
+    /// Used for stream binding. Proxies can use this to remap channel IDs.
+    pub channels: Vec<u64>,
+}
+
+impl Context {
+    /// Create a new context.
+    pub fn new(
+        conn_id: roam_wire::ConnectionId,
+        request_id: roam_wire::RequestId,
+        method_id: roam_wire::MethodId,
+        metadata: roam_wire::Metadata,
+        channels: Vec<u64>,
+    ) -> Self {
+        Self {
+            conn_id,
+            request_id,
+            method_id,
+            metadata,
+            channels,
+        }
+    }
+
+    /// Get the connection ID.
+    pub fn conn_id(&self) -> roam_wire::ConnectionId {
+        self.conn_id
+    }
+
+    /// Get the request ID.
+    pub fn request_id(&self) -> roam_wire::RequestId {
+        self.request_id
+    }
+
+    /// Get the method ID.
+    pub fn method_id(&self) -> roam_wire::MethodId {
+        self.method_id
+    }
+
+    /// Get the request metadata.
+    pub fn metadata(&self) -> &roam_wire::Metadata {
+        &self.metadata
+    }
+
+    /// Get the channel IDs.
+    pub fn channels(&self) -> &[u64] {
+        &self.channels
+    }
+}
+
 /// Trait for dispatching requests to a service.
 ///
 /// The dispatcher handles both simple and channeling methods uniformly.
@@ -1736,9 +1817,9 @@ pub trait ServiceDispatcher: Send + Sync {
     /// Dispatch a request and send the response via the task channel.
     ///
     /// The dispatcher is responsible for:
-    /// - Looking up the method by method_id
+    /// - Looking up the method by `cx.method_id()`
     /// - Deserializing arguments from payload
-    /// - Patching channel IDs from `channels` into deserialized args via `patch_channel_ids()`
+    /// - Patching channel IDs from `cx.channels()` into deserialized args via `patch_channel_ids()`
     /// - Binding any Tx/Rx streams via the registry
     /// - Calling the service method
     /// - Sending Data/Close messages for any Tx streams
@@ -1747,7 +1828,7 @@ pub trait ServiceDispatcher: Send + Sync {
     /// By using a single channel for Data/Close/Response, correct ordering is guaranteed:
     /// all stream Data and Close messages are sent before the Response.
     ///
-    /// The `channels` parameter contains channel IDs from the Request message framing,
+    /// The `cx.channels()` contains channel IDs from the Request message framing,
     /// in declaration order. For a ForwardingDispatcher, this enables transparent proxying
     /// without parsing the payload.
     ///
@@ -1757,11 +1838,8 @@ pub trait ServiceDispatcher: Send + Sync {
     /// r[impl channeling.allocation.caller] - Stream IDs are from Request.channels (caller allocated).
     fn dispatch(
         &self,
-        conn_id: roam_wire::ConnectionId,
-        method_id: u64,
+        cx: &Context,
         payload: Vec<u8>,
-        channels: Vec<u64>,
-        request_id: u64,
         registry: &mut ChannelRegistry,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>;
 }
@@ -1807,19 +1885,14 @@ where
 
     fn dispatch(
         &self,
-        conn_id: roam_wire::ConnectionId,
-        method_id: u64,
+        cx: &Context,
         payload: Vec<u8>,
-        channels: Vec<u64>,
-        request_id: u64,
         registry: &mut ChannelRegistry,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
-        if self.primary_methods.contains(&method_id) {
-            self.primary
-                .dispatch(conn_id, method_id, payload, channels, request_id, registry)
+        if self.primary_methods.contains(&cx.method_id().raw()) {
+            self.primary.dispatch(cx, payload, registry)
         } else {
-            self.fallback
-                .dispatch(conn_id, method_id, payload, channels, request_id, registry)
+            self.fallback.dispatch(cx, payload, registry)
         }
     }
 }
@@ -1875,15 +1948,16 @@ impl ServiceDispatcher for ForwardingDispatcher {
 
     fn dispatch(
         &self,
-        conn_id: roam_wire::ConnectionId,
-        method_id: u64,
+        cx: &Context,
         payload: Vec<u8>,
-        channels: Vec<u64>,
-        request_id: u64,
         registry: &mut ChannelRegistry,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
         let task_tx = registry.driver_tx();
         let upstream = self.upstream.clone();
+        let conn_id = cx.conn_id;
+        let method_id = cx.method_id.raw();
+        let request_id = cx.request_id.raw();
+        let channels = cx.channels.clone();
 
         if channels.is_empty() {
             // Unary call - but response may contain Rx<T> channels

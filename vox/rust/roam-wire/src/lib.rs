@@ -52,6 +52,81 @@ impl std::fmt::Display for ConnectionId {
     }
 }
 
+/// Request ID identifying an in-flight RPC request.
+///
+/// Request IDs are unique within a connection and monotonically increasing.
+/// r[impl call.request-id.uniqueness]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Facet)]
+#[repr(transparent)]
+pub struct RequestId(pub u64);
+
+impl RequestId {
+    /// Create a new request ID.
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    /// Get the raw u64 value.
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<u64> for RequestId {
+    fn from(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+impl From<RequestId> for u64 {
+    fn from(id: RequestId) -> Self {
+        id.0
+    }
+}
+
+impl std::fmt::Display for RequestId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "req:{}", self.0)
+    }
+}
+
+/// Method ID identifying an RPC method.
+///
+/// Method IDs are computed as a hash of the service and method names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Facet)]
+#[repr(transparent)]
+pub struct MethodId(pub u64);
+
+impl MethodId {
+    /// Create a new method ID.
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    /// Get the raw u64 value.
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<u64> for MethodId {
+    fn from(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+impl From<MethodId> for u64 {
+    fn from(id: MethodId) -> Self {
+        id.0
+    }
+}
+
+impl std::fmt::Display for MethodId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "method:{}", self.0)
+    }
+}
+
 /// Hello message for handshake.
 // r[impl message.hello.structure]
 #[repr(u8)]

@@ -14,7 +14,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use roam_session::{ChannelRegistry, ServiceDispatcher, dispatch_call, dispatch_unknown_method};
+use roam_session::{
+    ChannelRegistry, Context, ServiceDispatcher, dispatch_call, dispatch_unknown_method,
+};
 use roam_stream::{
     ConnectError, Connector, HandshakeConfig, RetryPolicy, accept, connect, connect_with_policy,
 };
@@ -42,25 +44,21 @@ impl ServiceDispatcher for TestService {
 
     fn dispatch(
         &self,
-        _conn_id: roam_wire::ConnectionId,
-        method_id: u64,
+        cx: &Context,
         payload: Vec<u8>,
-        channels: Vec<u64>,
-        request_id: u64,
         registry: &mut ChannelRegistry,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
 
-        match method_id {
+        match cx.method_id().raw() {
             // Echo method
             1 => dispatch_call::<String, String, (), _, _>(
+                cx,
                 payload,
-                channels,
-                request_id,
                 registry,
                 |input: String| async move { Ok(input) },
             ),
-            _ => dispatch_unknown_method(request_id, registry),
+            _ => dispatch_unknown_method(cx, registry),
         }
     }
 }

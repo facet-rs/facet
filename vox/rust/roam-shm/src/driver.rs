@@ -19,8 +19,8 @@ use std::sync::Arc;
 
 use roam_session::diagnostic::DiagnosticState;
 use roam_session::{
-    ChannelError, ChannelRegistry, ConnectError, ConnectionHandle, DriverMessage, ResponseData,
-    Role, ServiceDispatcher, TransportError,
+    ChannelError, ChannelRegistry, ConnectError, ConnectionHandle, Context, DriverMessage,
+    ResponseData, Role, ServiceDispatcher, TransportError,
 };
 use roam_stream::MessageTransport;
 use roam_wire::{ConnectionId, Message};
@@ -793,15 +793,19 @@ where
         // Re-borrow conn for dispatch
         let conn = self.connections.get_mut(&conn_id).unwrap();
 
-        // Dispatch - spawn as a task so message loop can continue.
-        let handler_fut = self.dispatcher.dispatch(
+        // Build context for dispatch
+        let cx = Context::new(
             conn_id,
-            method_id,
-            payload,
+            roam_wire::RequestId::new(request_id),
+            roam_wire::MethodId::new(method_id),
+            metadata,
             channels,
-            request_id,
-            &mut conn.server_channel_registry,
         );
+
+        // Dispatch - spawn as a task so message loop can continue.
+        let handler_fut = self
+            .dispatcher
+            .dispatch(&cx, payload, &mut conn.server_channel_registry);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let join_handle = tokio::spawn(handler_fut);
@@ -2288,22 +2292,27 @@ impl MultiPeerHostDriver {
         let state = self.peers.get_mut(&peer_id).unwrap();
         let conn = state.connections.get_mut(&conn_id).unwrap();
 
+        // Build context for dispatch
+        let cx = Context::new(
+            conn_id,
+            roam_wire::RequestId::new(request_id),
+            roam_wire::MethodId::new(method_id),
+            metadata,
+            channels,
+        );
+
         // Dispatch - spawn as a task so message loop can continue.
         debug!(
             method_id,
             request_id,
             ?conn_id,
-            channels = ?channels,
+            channels = ?cx.channels,
             "handle_incoming_request: dispatching with channels"
         );
-        let handler_fut = state.dispatcher.dispatch(
-            conn_id,
-            method_id,
-            payload,
-            channels,
-            request_id,
-            &mut conn.server_channel_registry,
-        );
+        let handler_fut =
+            state
+                .dispatcher
+                .dispatch(&cx, payload, &mut conn.server_channel_registry);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let join_handle = tokio::spawn(handler_fut);

@@ -258,7 +258,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
             };
             quote! {
                 #keyword method_id == #method_id_mod::#method_name() {
-                    self.#dispatch_name(payload, channels, request_id, registry)
+                    self.#dispatch_name(cx, payload, registry)
                 }
             }
         })
@@ -308,17 +308,14 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
 
             fn dispatch(
                 &self,
-                conn_id: #roam::wire::ConnectionId,
-                method_id: u64,
+                cx: &#roam::session::Context,
                 payload: Vec<u8>,
-                channels: Vec<u64>,
-                request_id: u64,
                 registry: &mut #roam::session::ChannelRegistry,
             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
-                let _ = conn_id; // Currently unused, reserved for virtual connection support
+                let method_id = cx.method_id().raw();
                 #(#dispatch_arms)*
                 else {
-                    #roam::session::dispatch_unknown_method(request_id, registry)
+                    #roam::session::dispatch_unknown_method(cx, registry)
                 }
             }
         }
@@ -385,13 +382,12 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
     quote! {
         fn #dispatch_name(
             &self,
+            cx: &#roam::session::Context,
             payload: Vec<u8>,
-            channels: Vec<u64>,
-            request_id: u64,
             registry: &mut #roam::session::ChannelRegistry,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
             let handler = self.handler.clone();
-            #dispatch_call(payload, channels, request_id, registry, move |args: #tuple_type| async move {
+            #dispatch_call(cx, payload, registry, move |args: #tuple_type| async move {
                 use #roam::facet_pretty::FacetPretty;
                 if #method_name_str != "emit_tracing" { #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, args = %#args_log, "handling"); }
                 #args_binding

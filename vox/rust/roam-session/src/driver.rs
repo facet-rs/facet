@@ -36,8 +36,8 @@ use facet::Facet;
 
 use crate::runtime::{Mutex, Receiver, channel, sleep, spawn, spawn_with_abort};
 use crate::{
-    ChannelError, ChannelRegistry, ConnectionHandle, DriverMessage, MessageTransport, ResponseData,
-    RoamError, Role, ServiceDispatcher, TransportError,
+    ChannelError, ChannelRegistry, ConnectionHandle, Context, DriverMessage, MessageTransport,
+    ResponseData, RoamError, Role, ServiceDispatcher, TransportError,
 };
 use roam_wire::{ConnectionId, Hello, Message};
 
@@ -1149,14 +1149,17 @@ where
             return Err(self.goodbye("flow.call.payload-limit").await);
         }
 
-        let handler_fut = self.dispatcher.dispatch(
+        let cx = Context::new(
             conn_id,
-            method_id,
-            payload,
+            roam_wire::RequestId::new(request_id),
+            roam_wire::MethodId::new(method_id),
+            metadata,
             channels,
-            request_id,
-            &mut conn.server_channel_registry,
         );
+
+        let handler_fut = self
+            .dispatcher
+            .dispatch(&cx, payload, &mut conn.server_channel_registry);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let abort_handle = spawn_with_abort(async move {
@@ -1517,13 +1520,12 @@ impl ServiceDispatcher for NoDispatcher {
 
     fn dispatch(
         &self,
-        conn_id: roam_wire::ConnectionId,
-        _method_id: u64,
+        cx: &Context,
         _payload: Vec<u8>,
-        _channels: Vec<u64>,
-        request_id: u64,
         registry: &mut ChannelRegistry,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
+        let conn_id = cx.conn_id;
+        let request_id = cx.request_id.raw();
         let driver_tx = registry.driver_tx();
         Box::pin(async move {
             let response: Result<(), RoamError<()>> = Err(RoamError::UnknownMethod);
