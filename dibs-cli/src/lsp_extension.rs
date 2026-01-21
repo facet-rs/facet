@@ -179,48 +179,48 @@ impl DibsExtension {
         let schema = self.schema().await;
 
         // If this is a tagged @query object, validate references
-        if let Some(tag) = &value.tag {
-            if tag.name == "query" {
-                if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
-                    // Find the "from" field and validate the table name
-                    let mut table_name = None;
-                    for entry in &obj.entries {
-                        if entry.key.as_str() == Some("from") {
-                            if let Some(name) = entry.value.as_str() {
-                                if !schema.tables.iter().any(|t| t.name == name) {
-                                    // Unknown table
-                                    if let Some(span) = &entry.value.span {
-                                        diagnostics.push(Diagnostic {
-                                            range: span_to_range(span),
-                                            severity: DiagnosticSeverity::Error,
-                                            message: format!("Unknown table '{}'", name),
-                                            source: Some("dibs".to_string()),
-                                            code: Some("unknown-table".to_string()),
-                                            data: None,
-                                        });
-                                    }
-                                } else {
-                                    table_name = Some(name.to_string());
-                                }
+        if let Some(tag) = &value.tag
+            && tag.name == "query"
+        {
+            if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+                // Find the "from" field and validate the table name
+                let mut table_name = None;
+                for entry in &obj.entries {
+                    if entry.key.as_str() == Some("from")
+                        && let Some(name) = entry.value.as_str()
+                    {
+                        if !schema.tables.iter().any(|t| t.name == name) {
+                            // Unknown table
+                            if let Some(span) = &entry.value.span {
+                                diagnostics.push(Diagnostic {
+                                    range: span_to_range(span),
+                                    severity: DiagnosticSeverity::Error,
+                                    message: format!("Unknown table '{}'", name),
+                                    source: Some("dibs".to_string()),
+                                    code: Some("unknown-table".to_string()),
+                                    data: None,
+                                });
                             }
-                        }
-                    }
-
-                    // If we have a valid table, validate column references
-                    if let Some(table_name) = table_name {
-                        if let Some(table) = schema.tables.iter().find(|t| t.name == table_name) {
-                            for entry in &obj.entries {
-                                let key = entry.key.as_str().unwrap_or("");
-                                if matches!(key, "select" | "where" | "order_by" | "group_by") {
-                                    Self::validate_columns(&entry.value, table, diagnostics);
-                                }
-                            }
+                        } else {
+                            table_name = Some(name.to_string());
                         }
                     }
                 }
-                // Don't recurse into @query - we've handled it
-                return;
+
+                // If we have a valid table, validate column references
+                if let Some(table_name) = table_name
+                    && let Some(table) = schema.tables.iter().find(|t| t.name == table_name)
+                {
+                    for entry in &obj.entries {
+                        let key = entry.key.as_str().unwrap_or("");
+                        if matches!(key, "select" | "where" | "order_by" | "group_by") {
+                            Self::validate_columns(&entry.value, table, diagnostics);
+                        }
+                    }
+                }
             }
+            // Don't recurse into @query - we've handled it
+            return;
         }
 
         // Recurse into children
@@ -249,22 +249,22 @@ impl DibsExtension {
     ) {
         if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
             for entry in &obj.entries {
-                if let Some(col_name) = entry.key.as_str() {
-                    if !table.columns.iter().any(|c| c.name == col_name) {
-                        // Unknown column
-                        if let Some(span) = &entry.key.span {
-                            diagnostics.push(Diagnostic {
-                                range: span_to_range(span),
-                                severity: DiagnosticSeverity::Error,
-                                message: format!(
-                                    "Unknown column '{}' in table '{}'",
-                                    col_name, table.name
-                                ),
-                                source: Some("dibs".to_string()),
-                                code: Some("unknown-column".to_string()),
-                                data: None,
-                            });
-                        }
+                if let Some(col_name) = entry.key.as_str()
+                    && !table.columns.iter().any(|c| c.name == col_name)
+                {
+                    // Unknown column
+                    if let Some(span) = &entry.key.span {
+                        diagnostics.push(Diagnostic {
+                            range: span_to_range(span),
+                            severity: DiagnosticSeverity::Error,
+                            message: format!(
+                                "Unknown column '{}' in table '{}'",
+                                col_name, table.name
+                            ),
+                            source: Some("dibs".to_string()),
+                            code: Some("unknown-column".to_string()),
+                            data: None,
+                        });
                     }
                 }
             }
@@ -276,38 +276,38 @@ impl DibsExtension {
         let schema = self.schema().await;
 
         // If this is a tagged @query or @rel object, look for column references
-        if let Some(tag) = &value.tag {
-            if tag.name == "query" || tag.name == "rel" {
-                if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
-                    // Find the table from "from" field
-                    let table_name = obj.entries.iter().find_map(|e| {
-                        if e.key.as_str() == Some("from") {
-                            e.value.as_str().map(|s| s.to_string())
-                        } else {
-                            None
-                        }
-                    });
+        if let Some(tag) = &value.tag
+            && (tag.name == "query" || tag.name == "rel")
+        {
+            if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+                // Find the table from "from" field
+                let table_name = obj.entries.iter().find_map(|e| {
+                    if e.key.as_str() == Some("from") {
+                        e.value.as_str().map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                });
 
-                    if let Some(table_name) = table_name {
-                        // Find the table in schema
-                        if let Some(table) = schema.tables.iter().find(|t| t.name == table_name) {
-                            // Look for select/where/order_by entries and add hints
-                            for entry in &obj.entries {
-                                let key = entry.key.as_str().unwrap_or("");
-                                if matches!(key, "select" | "where" | "order_by" | "group_by") {
-                                    Self::add_column_hints(&entry.value, table, hints, &schema);
-                                }
+                if let Some(table_name) = table_name {
+                    // Find the table in schema
+                    if let Some(table) = schema.tables.iter().find(|t| t.name == table_name) {
+                        // Look for select/where/order_by entries and add hints
+                        for entry in &obj.entries {
+                            let key = entry.key.as_str().unwrap_or("");
+                            if matches!(key, "select" | "where" | "order_by" | "group_by") {
+                                Self::add_column_hints(&entry.value, table, hints, &schema);
                             }
                         }
                     }
-
-                    // Continue recursing to find nested @rel blocks in select
-                    for entry in &obj.entries {
-                        Box::pin(self.collect_inlay_hints(&entry.value, hints)).await;
-                    }
                 }
-                return;
+
+                // Continue recursing to find nested @rel blocks in select
+                for entry in &obj.entries {
+                    Box::pin(self.collect_inlay_hints(&entry.value, hints)).await;
+                }
             }
+            return;
         }
 
         // Recurse into children - but only through one path to avoid double-visiting
@@ -647,17 +647,17 @@ impl StyxLspExtension for DibsExtension {
             // Column references - need to know which table
             "select" | "where" | "order_by" | "group_by" => {
                 // Try tagged_context first (the @query block) - most reliable
-                if let Some(tagged) = &params.tagged_context {
-                    if let Some(table_name) = Self::find_table_in_context(tagged) {
-                        return self.column_completions(&table_name, &params.prefix).await;
-                    }
+                if let Some(tagged) = &params.tagged_context
+                    && let Some(table_name) = Self::find_table_in_context(tagged)
+                {
+                    return self.column_completions(&table_name, &params.prefix).await;
                 }
 
                 // Fallback to direct context
-                if let Some(context) = &params.context {
-                    if let Some(table_name) = Self::find_table_in_context(context) {
-                        return self.column_completions(&table_name, &params.prefix).await;
-                    }
+                if let Some(context) = &params.context
+                    && let Some(table_name) = Self::find_table_in_context(context)
+                {
+                    return self.column_completions(&table_name, &params.prefix).await;
                 }
 
                 // Last resort: return all columns from all tables
@@ -694,15 +694,14 @@ impl StyxLspExtension for DibsExtension {
         let table_from_tagged = params
             .tagged_context
             .as_ref()
-            .and_then(|tc| Self::find_table_in_context(tc));
+            .and_then(Self::find_table_in_context);
 
         // If the last path segment is "from", "table", or "join", we're hovering over a table reference
-        if matches!(last.as_str(), "from" | "table" | "join") {
-            if let Some(ref table_name) = table_from_tagged {
-                if let Some(table) = schema.tables.iter().find(|t| t.name == *table_name) {
-                    return Some(Self::table_hover(table));
-                }
-            }
+        if matches!(last.as_str(), "from" | "table" | "join")
+            && let Some(ref table_name) = table_from_tagged
+            && let Some(table) = schema.tables.iter().find(|t| t.name == *table_name)
+        {
+            return Some(Self::table_hover(table));
         }
 
         // Check if we're hovering over a table name directly
@@ -711,19 +710,18 @@ impl StyxLspExtension for DibsExtension {
         }
 
         // Check if we're hovering over a column name - use tagged_context to find the table
-        if let Some(table_name) = table_from_tagged {
-            if let Some(result) = self.column_hover(last, &table_name).await {
-                return Some(result);
-            }
+        if let Some(table_name) = table_from_tagged
+            && let Some(result) = self.column_hover(last, &table_name).await
+        {
+            return Some(result);
         }
 
         // Fallback: try the direct context
-        if let Some(context) = &params.context {
-            if let Some(table_name) = Self::find_table_in_context(context) {
-                if let Some(result) = self.column_hover(last, &table_name).await {
-                    return Some(result);
-                }
-            }
+        if let Some(context) = &params.context
+            && let Some(table_name) = Self::find_table_in_context(context)
+            && let Some(result) = self.column_hover(last, &table_name).await
+        {
+            return Some(result);
         }
 
         None
@@ -783,8 +781,8 @@ impl StyxLspExtension for DibsExtension {
 /// 3. Fetch the schema via RPC
 async fn connect_and_fetch_schema(document_uri: &str) -> Result<ExtensionState, String> {
     // Parse the URI to get the file path
-    let path = if document_uri.starts_with("file://") {
-        Path::new(&document_uri[7..])
+    let path = if let Some(stripped) = document_uri.strip_prefix("file://") {
+        Path::new(stripped)
     } else {
         Path::new(document_uri)
     };
