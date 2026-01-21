@@ -533,6 +533,31 @@ fn bottom_up_phase<'a, K, L, P>(
                 "bottom_up pass1: dice match"
             );
             matching.add(a_id, b_id);
+        } else if parent_a.is_none() {
+            // Root node with no Dice match - match by kind alone if there's a unique candidate
+            // This handles the case where trees are structurally different but have same root type
+            let root_candidates: Vec<_> = b_by_kind
+                .get(&a_data.kind)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|&b_id| {
+                    !matching.contains_b(b_id)
+                        && tree_b.child_count(b_id) > 0
+                        && tree_b.parent(b_id).is_none() // Must also be a root
+                })
+                .collect();
+
+            if let Some(&b_id) = root_candidates.first() {
+                let a_kind = a_data.kind.pretty().to_string();
+                debug!(
+                    a = usize::from(a_id),
+                    a_kind = %a_kind,
+                    b = usize::from(b_id),
+                    "bottom_up pass1: root kind match (fallback)"
+                );
+                matching.add(a_id, b_id);
+            }
         }
     }
 

@@ -14,13 +14,14 @@ macro_rules! debug {
     ($($arg:tt)*) => {};
 }
 
-use core::hash::Hasher;
+use core::hash::{Hash, Hasher};
 use std::borrow::Cow;
 use std::hash::DefaultHasher;
 
 use cinereus::{
     EditOp as CinereusEditOp, Matching, MatchingConfig, NodeData, Tree, diff_trees_with_matching,
     indextree::{self, NodeId},
+    tree::{Properties, PropertyChange},
 };
 use std::collections::HashMap;
 use facet_core::{Def, StructKind, Type, UserType};
@@ -72,10 +73,23 @@ pub enum EditOp {
         /// Hash of the new value
         new_hash: u64,
     },
+    /// An attribute (property) was updated on a matched node.
+    UpdateAttribute {
+        /// The path to the node containing the attribute
+        path: Path,
+        /// The attribute name (field name)
+        attr_name: &'static str,
+        /// The old value (None if attribute was absent)
+        old_value: Option<String>,
+        /// The new value (None if attribute is being removed)
+        new_value: Option<String>,
+    },
     /// A node was inserted in tree B.
     Insert {
-        /// The path where the node was inserted
+        /// The path where the node was inserted (shadow tree coordinates for DOM operations)
         path: Path,
+        /// The path in tree_b coordinates (for navigating new_doc to get content)
+        label_path: Path,
         /// The value to insert (for leaf nodes), None for containers
         value: Option<String>,
         /// Hash of the inserted value
@@ -99,8 +113,92 @@ pub enum EditOp {
     },
 }
 
+/// Properties for HTML/XML nodes: attribute key-value pairs.
+///
+/// These are fields marked with `#[facet(html::attribute)]` or `#[facet(xml::attribute)]`.
+/// They are diffed field-by-field when nodes match, avoiding the cross-matching problem
+/// where identical Option values (like None) get matched across different fields.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HtmlProperties {
+    /// Attribute values keyed by field name.
+    /// Values are stored as Option<String> to handle both present and absent attributes.
+    pub attrs: HashMap<&'static str, Option<String>>,
+}
+
+impl HtmlProperties {
+    /// Create empty properties.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set an attribute value.
+    pub fn set(&mut self, key: &'static str, value: Option<String>) {
+        self.attrs.insert(key, value);
+    }
+}
+
+impl Properties for HtmlProperties {
+    type Key = &'static str;
+    type Value = Option<String>;
+
+    fn similarity(&self, other: &Self) -> f64 {
+        // Count matching attributes
+        let all_keys: std::collections::HashSet<_> = self
+            .attrs
+            .keys()
+            .chain(other.attrs.keys())
+            .collect();
+
+        if all_keys.is_empty() {
+            return 1.0; // Both empty = perfect match
+        }
+
+        let mut matches = 0;
+        for key in &all_keys {
+            if self.attrs.get(*key) == other.attrs.get(*key) {
+                matches += 1;
+            }
+        }
+
+        matches as f64 / all_keys.len() as f64
+    }
+
+    fn diff(&self, other: &Self) -> Vec<PropertyChange<Self::Key, Self::Value>> {
+        let mut changes = Vec::new();
+
+        // Check all keys in self
+        for (key, old_value) in &self.attrs {
+            let new_value = other.attrs.get(key);
+            if new_value != Some(old_value) {
+                changes.push(PropertyChange {
+                    key: *key,
+                    old_value: Some(old_value.clone()),
+                    new_value: new_value.cloned(),
+                });
+            }
+        }
+
+        // Check keys only in other (additions)
+        for (key, new_value) in &other.attrs {
+            if !self.attrs.contains_key(key) {
+                changes.push(PropertyChange {
+                    key: *key,
+                    old_value: None,
+                    new_value: Some(new_value.clone()),
+                });
+            }
+        }
+
+        changes
+    }
+
+    fn is_empty(&self) -> bool {
+        self.attrs.is_empty()
+    }
+}
+
 /// A tree built from a Peek value, ready for diffing.
-pub type FacetTree = Tree<NodeKind, NodeLabel>;
+pub type FacetTree = Tree<NodeKind, NodeLabel, HtmlProperties>;
 
 /// Build a cinereus tree from a Peek value.
 pub fn build_tree<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> FacetTree {
@@ -113,7 +211,7 @@ pub fn build_tree<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> FacetTree {
 }
 
 struct TreeBuilder {
-    arena: cinereus::indextree::Arena<NodeData<NodeKind, NodeLabel>>,
+    arena: cinereus::indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
 }
 
 impl TreeBuilder {
@@ -136,20 +234,60 @@ impl TreeBuilder {
         // Determine the node kind
         let kind = self.determine_kind(peek);
 
-        // Create node data
+        // Collect properties (attribute fields) for struct types
+        let properties = self.collect_properties(peek);
+
+        // Create node data with properties
         let data = NodeData {
             hash,
             kind,
             label: Some(NodeLabel { path: path.clone() }),
+            properties,
         };
 
         // Create the node
         let node_id = self.arena.new_node(data);
 
-        // Build children based on type
+        // Build children based on type (excluding attribute fields)
         self.build_children(peek, node_id, path);
 
         node_id
+    }
+
+    /// Collect attribute fields as properties.
+    fn collect_properties<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> HtmlProperties {
+        let mut props = HtmlProperties::new();
+
+        // Only structs have attribute fields
+        if let Type::User(UserType::Struct(_)) = peek.shape().ty {
+            if let Ok(s) = peek.into_struct() {
+                for (field, field_peek) in s.fields() {
+                    // Check if this field is an attribute
+                    if field.is_attribute() {
+                        // Extract the value as a string
+                        let value = self.extract_attribute_value(field_peek);
+                        props.set(field.name, value);
+                    }
+                }
+            }
+        }
+
+        props
+    }
+
+    /// Extract an attribute value as Option<String>.
+    fn extract_attribute_value<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> Option<String> {
+        // Handle Option<T> by unwrapping
+        if let Ok(opt) = peek.into_option() {
+            if let Some(inner) = opt.value() {
+                return inner.as_str().map(|s| s.to_string());
+            } else {
+                return None;
+            }
+        }
+
+        // Direct string value
+        peek.as_str().map(|s| s.to_string())
     }
 
     fn determine_kind<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> NodeKind {
@@ -186,6 +324,10 @@ impl TreeBuilder {
                     for (field, field_peek) in s.fields() {
                         // Skip metadata fields
                         if field.is_metadata() {
+                            continue;
+                        }
+                        // Skip attribute fields - they're stored as properties, not children
+                        if field.is_attribute() {
                             continue;
                         }
                         let child_path = path.with(PathSegment::Field(Cow::Borrowed(field.name)));
@@ -371,7 +513,7 @@ fn extract_value_at_path<'mem, 'facet>(
 /// The peeks are used to extract actual values for leaf nodes, making
 /// the resulting EditOps self-contained.
 fn convert_ops_with_shadow<'mem, 'facet>(
-    ops: Vec<CinereusEditOp<NodeKind, NodeLabel>>,
+    ops: Vec<CinereusEditOp<NodeKind, NodeLabel, HtmlProperties>>,
     tree_a: &FacetTree,
     tree_b: &FacetTree,
     matching: &Matching,
@@ -446,6 +588,30 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 // No structural change for Update
             }
 
+            CinereusEditOp::UpdateProperty {
+                node_a,
+                node_b: _,
+                key,
+                old_value,
+                new_value,
+            } => {
+                // Path to the node containing the attribute
+                let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
+
+                // Flatten Option<Option<String>> to Option<String>
+                let old_value = old_value.flatten();
+                let new_value = new_value.flatten();
+
+                debug!(?path, ?key, ?old_value, ?new_value, "emitting EditOp::UpdateAttribute");
+                result.push(EditOp::UpdateAttribute {
+                    path,
+                    attr_name: key,
+                    old_value,
+                    new_value,
+                });
+                // No structural change for UpdateAttribute
+            }
+
             CinereusEditOp::Insert {
                 node_b,
                 parent_b,
@@ -470,22 +636,29 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     }
                 }
 
-                // Extract value for leaf nodes
-                let value_path = tree_b.get(node_b).label.as_ref().map(|l| &l.path);
-                let value = value_path.and_then(|p| extract_value_at_path(peek_b, p));
+                // Extract value for leaf nodes using the tree_b label path
+                let label_path = tree_b
+                    .get(node_b)
+                    .label
+                    .as_ref()
+                    .map(|l| l.path.clone())
+                    .unwrap_or_else(|| Path(vec![]));
+                let value = extract_value_at_path(peek_b, &label_path);
 
-                debug!(?node_b, ?path, ?position, "INSERT op: computed path");
+                debug!(?node_b, ?path, ?label_path, ?position, "INSERT op: computed path");
                 result.push(EditOp::Insert {
                     path: path.clone(),
+                    label_path,
                     value,
                     hash: tree_b.get(node_b).hash,
                 });
 
                 // Create a new node in shadow tree and add to b_to_shadow
-                let new_data: NodeData<NodeKind, NodeLabel> = NodeData {
+                let new_data: NodeData<NodeKind, NodeLabel, HtmlProperties> = NodeData {
                     hash: 0,
                     kind: NodeKind::Scalar("inserted"),
                     label,
+                    properties: HtmlProperties::new(),
                 };
                 let new_node = shadow_arena.new_node(new_data);
 
@@ -595,7 +768,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
 /// For inserted nodes, we compute the path by walking up and determining
 /// the position at each level.
 fn compute_path_in_shadow(
-    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel>>,
+    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
     shadow_root: NodeId,
     node: NodeId,
     _tree_a: &FacetTree,
@@ -621,7 +794,7 @@ fn compute_path_in_shadow(
 /// Key insight: tree depth and path depth may NOT be 1:1 because Option types add a tree
 /// node but not a path segment. We must use each node's stored path length to track depth.
 fn compute_adjusted_path(
-    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel>>,
+    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
     shadow_root: NodeId,
     node: NodeId,
     original_path: &Path,
@@ -684,7 +857,7 @@ fn compute_adjusted_path(
 
 /// Compute path for a node by walking up the tree.
 fn compute_path_by_walking(
-    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel>>,
+    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
     shadow_root: NodeId,
     node: NodeId,
 ) -> Path {
@@ -1028,6 +1201,7 @@ mod tests {
                 EditOp::Insert { path, .. } => path,
                 EditOp::Delete { path, .. } => path,
                 EditOp::Move { old_path, .. } => old_path,
+                EditOp::UpdateAttribute { path, .. } => path,
             };
             path.0.first() == Some(&PathSegment::Field("children".into()))
         });
