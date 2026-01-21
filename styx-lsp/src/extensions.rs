@@ -233,13 +233,14 @@ impl ExtensionManager {
         let dispatcher = StyxLspHostDispatcher::new(host_impl);
 
         // Use initiate_framed for the initiating side
-        let (handle, driver) = roam_session::initiate_framed(framed, handshake_config, dispatcher)
-            .await
-            .map_err(|e| {
-                warn!(command, error = %e, "Failed roam handshake with extension");
-                e
-            })
-            .ok()?;
+        let (handle, _incoming, driver) =
+            roam_session::initiate_framed(framed, handshake_config, dispatcher)
+                .await
+                .map_err(|e| {
+                    warn!(command, error = %e, "Failed roam handshake with extension");
+                    e
+                })
+                .ok()?;
 
         debug!(command, "Roam session established with extension");
 
