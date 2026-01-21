@@ -466,10 +466,10 @@ fn bottom_up_phase<'a, K, L, P>(
                 .copied();
 
             if let Some(b_id) = best {
-                let a_kind = a_data.kind.pretty().to_string();
+                let _a_kind = a_data.kind.pretty().to_string();
                 debug!(
                     a = usize::from(a_id),
-                    a_kind = %a_kind,
+                    a_kind = %_a_kind,
                     b = usize::from(b_id),
                     pos = a_pos,
                     "bottom_up pass1: position+kind match"
@@ -500,13 +500,13 @@ fn bottom_up_phase<'a, K, L, P>(
 
             let score = dice_coefficient(a_id, b_id, matching, &desc_a, &desc_b);
             let b_data = tree_b.get(b_id);
-            let a_kind = a_data.kind.pretty().to_string();
-            let b_kind = b_data.kind.pretty().to_string();
+            let _a_kind = a_data.kind.pretty().to_string();
+            let _b_kind = b_data.kind.pretty().to_string();
             trace!(
                 a = usize::from(a_id),
-                a_kind = %a_kind,
+                a_kind = %_a_kind,
                 b = usize::from(b_id),
-                b_kind = %b_kind,
+                b_kind = %_b_kind,
                 score,
                 "bottom_up pass1: dice score"
             );
@@ -516,10 +516,10 @@ fn bottom_up_phase<'a, K, L, P>(
         }
 
         if let Some((b_id, _score)) = best {
-            let a_kind = a_data.kind.pretty().to_string();
+            let _a_kind = a_data.kind.pretty().to_string();
             debug!(
                 a = usize::from(a_id),
-                a_kind = %a_kind,
+                a_kind = %_a_kind,
                 b = usize::from(b_id),
                 _score,
                 "bottom_up pass1: dice match"
@@ -541,10 +541,10 @@ fn bottom_up_phase<'a, K, L, P>(
                 .collect();
 
             if let Some(&b_id) = root_candidates.first() {
-                let a_kind = a_data.kind.pretty().to_string();
+                let _a_kind = a_data.kind.pretty().to_string();
                 debug!(
                     a = usize::from(a_id),
-                    a_kind = %a_kind,
+                    a_kind = %_a_kind,
                     b = usize::from(b_id),
                     "bottom_up pass1: root kind match (fallback)"
                 );
@@ -603,10 +603,10 @@ fn bottom_up_phase<'a, K, L, P>(
                 .copied();
 
             if let Some(b_id) = best {
-                let a_kind = a_data.kind.pretty().to_string();
+                let _a_kind = a_data.kind.pretty().to_string();
                 debug!(
                     a = usize::from(a_id),
-                    a_kind = %a_kind,
+                    a_kind = %_a_kind,
                     b = usize::from(b_id),
                     "bottom_up pass2: leaf match"
                 );

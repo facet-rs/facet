@@ -23,7 +23,7 @@ use crate::matching::Matching;
 use crate::tree::{NoProperties, Properties, Tree};
 use core::fmt;
 use core::hash::Hash;
-#[cfg(feature = "tracing")]
+#[cfg(any(test, feature = "tracing"))]
 use facet_pretty::FacetPretty;
 use indextree::NodeId;
 

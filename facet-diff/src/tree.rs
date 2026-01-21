@@ -149,7 +149,7 @@ pub enum NodeRef {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HtmlProperties {
     /// Attribute values keyed by field name.
-    /// Values are stored as Option<String> to handle both present and absent attributes.
+    /// Values are stored as `Option<String>` to handle both present and absent attributes.
     pub attrs: HashMap<&'static str, Option<String>>,
 }
 
@@ -331,7 +331,7 @@ impl TreeBuilder {
         }
     }
 
-    /// Extract an attribute value as Option<String>.
+    /// Extract an attribute value as `Option<String>`.
     fn extract_attribute_value<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> Option<String> {
         // Handle Option<T> by unwrapping
         if let Ok(opt) = peek.into_option() {
@@ -486,8 +486,9 @@ pub fn tree_diff<'a, 'f, A: facet_core::Facet<'f>, B: facet_core::Facet<'f>>(
         cinereus_ops_count = cinereus_ops.len(),
         "cinereus ops before conversion"
     );
-    for (i, op) in cinereus_ops.iter().enumerate() {
-        debug!(i, %op, "cinereus op");
+    #[allow(clippy::unused_enumerate_index)]
+    for (_i, _op) in cinereus_ops.iter().enumerate() {
+        debug!(_i, %_op, "cinereus op");
     }
 
     // Convert cinereus ops to path-based EditOps using a shadow tree
@@ -496,8 +497,9 @@ pub fn tree_diff<'a, 'f, A: facet_core::Facet<'f>, B: facet_core::Facet<'f>>(
     let peek_a = Peek::new(a);
     let peek_b = Peek::new(b);
     let result = convert_ops_with_shadow(cinereus_ops, &tree_a, &tree_b, &matching, peek_a, peek_b);
-
     debug!(result_count = result.len(), "edit ops after conversion");
+
+    #[allow(clippy::let_and_return)]
     result
 }
 
@@ -509,8 +511,9 @@ fn extract_value_at_path<'mem, 'facet>(
     path: &Path,
 ) -> Option<String> {
     // Navigate to the node
-    for (i, segment) in path.0.iter().enumerate() {
-        debug!(i, ?segment, shape = ?peek.shape().type_identifier, "extract_value_at_path navigating");
+    #[allow(clippy::unused_enumerate_index)]
+    for (_i, segment) in path.0.iter().enumerate() {
+        debug!(_i, ?segment, shape = ?peek.shape().type_identifier, "extract_value_at_path navigating");
         peek = match segment {
             PathSegment::Field(name) => {
                 if let Ok(s) = peek.into_struct() {
@@ -538,11 +541,11 @@ fn extract_value_at_path<'mem, 'facet>(
                             // Find flattened list field
                             let mut found = None;
                             for (field, field_peek) in s.fields() {
-                                if field.is_flattened() {
-                                    if let Ok(list) = field_peek.into_list() {
-                                        found = list.get(*idx);
-                                        break;
-                                    }
+                                if field.is_flattened()
+                                    && let Ok(list) = field_peek.into_list()
+                                {
+                                    found = list.get(*idx);
+                                    break;
                                 }
                             }
                             found?
@@ -564,11 +567,11 @@ fn extract_value_at_path<'mem, 'facet>(
                     // Struct with flattened list - find it and index
                     let mut found = None;
                     for (field, field_peek) in s.fields() {
-                        if field.is_flattened() {
-                            if let Ok(list) = field_peek.into_list() {
-                                found = list.get(*idx);
-                                break;
-                            }
+                        if field.is_flattened()
+                            && let Ok(list) = field_peek.into_list()
+                        {
+                            found = list.get(*idx);
+                            break;
                         }
                     }
                     found?
@@ -587,11 +590,11 @@ fn extract_value_at_path<'mem, 'facet>(
                 if let Ok(map) = peek.into_map() {
                     let mut found = None;
                     for (k, v) in map.iter() {
-                        if let Some(s) = k.as_str() {
-                            if s == key {
-                                found = Some(v);
-                                break;
-                            }
+                        if let Some(s) = k.as_str()
+                            && s == key
+                        {
+                            found = Some(v);
+                            break;
                         }
                     }
                     found?
@@ -620,6 +623,7 @@ fn extract_value_at_path<'mem, 'facet>(
 }
 
 /// Format the shadow tree for debugging.
+#[allow(dead_code, clippy::only_used_in_recursion)]
 fn format_shadow_tree(
     arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
     root: NodeId,
@@ -735,14 +739,13 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                         Some(PathSegment::Field(old_field)),
                         Some(PathSegment::Field(new_field)),
                     ) = (old_p.0.last(), new_p.0.last())
+                    && old_field != new_field
+                    && !path.0.is_empty()
+                    && let Some(PathSegment::Field(_)) = path.0.last()
                 {
-                    if old_field != new_field && !path.0.is_empty() {
-                        // Replace the last field segment with the new field name
-                        if let Some(PathSegment::Field(_)) = path.0.last() {
-                            path.0.pop();
-                            path.0.push(PathSegment::Field(new_field.clone()));
-                        }
-                    }
+                    // Replace the last field segment with the new field name
+                    path.0.pop();
+                    path.0.push(PathSegment::Field(new_field.clone()));
                 }
 
                 debug!(?path, ?old_value, ?new_value, "emitting EditOp::Update");
@@ -1314,11 +1317,11 @@ mod tests {
 
         let mut target_node = None;
         for node_id in tree.root.descendants(&tree.arena) {
-            if let Some(label) = &tree.arena.get(node_id).unwrap().get().label {
-                if label.path == target_path {
-                    target_node = Some(node_id);
-                    break;
-                }
+            if let Some(label) = &tree.arena.get(node_id).unwrap().get().label
+                && label.path == target_path
+            {
+                target_node = Some(node_id);
+                break;
             }
         }
         let target_node = target_node.expect("Should find items[1] node");
@@ -1345,7 +1348,7 @@ mod tests {
         let mut shadow_arena = tree.arena.clone();
 
         // Find the nodes
-        let items_path = Path(vec![PathSegment::Field("items".into())]);
+        let _items_path = Path(vec![PathSegment::Field("items".into())]);
         let item0_path = Path(vec![
             PathSegment::Field("items".into()),
             PathSegment::Index(0),
@@ -1576,7 +1579,7 @@ mod tests {
         );
         // Should NOT collect non-attribute field
         assert!(
-            props.attrs.get("content").is_none(),
+            !props.attrs.contains_key("content"),
             "Should not collect non-attribute field"
         );
     }
