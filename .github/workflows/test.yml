@@ -395,3 +395,48 @@ jobs:
           POSTGRES_PASSWORD: postgres
         run: |
           cargo nextest run -p facet-tokio-postgres --features test-postgres
+
+  test-wasm-browser:
+    runs-on: depot-ubuntu-24.04-4
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Ensure WASM target is installed
+        run: rustup target add wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install wasm-bindgen-cli
+        run: |
+          WASM_BINDGEN_VERSION=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version' | head -1)
+          cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION"
+
+      - name: Build WASM
+        run: |
+          cargo build -p facet-html-diff-wasm --target wasm32-unknown-unknown --release
+          wasm-bindgen --target web --out-dir facet-html-diff-wasm/pkg target/wasm32-unknown-unknown/release/facet_html_diff_wasm.wasm
+
+      - name: Install dependencies
+        working-directory: facet-html-diff-wasm
+        run: pnpm install
+
+      - name: Install Playwright browsers
+        working-directory: facet-html-diff-wasm
+        run: pnpm exec playwright install chromium
+
+      - name: ✨ Run browser tests
+        working-directory: facet-html-diff-wasm
+        run: pnpm exec playwright test

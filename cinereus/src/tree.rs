@@ -5,14 +5,72 @@
 use core::hash::Hash;
 use indextree::{Arena, NodeId};
 
+/// A property change detected between matched nodes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PropertyChange<K, V> {
+    /// The property key
+    pub key: K,
+    /// The old value (None if property was added)
+    pub old_value: Option<V>,
+    /// The new value (None if property was removed)
+    pub new_value: Option<V>,
+}
+
+/// Trait for node properties (key-value pairs that are NOT tree children).
+///
+/// Properties are compared field-by-field when nodes match, generating
+/// granular update operations. This avoids the cross-matching problem
+/// where identical values (like None) get matched across different fields.
+pub trait Properties: Clone {
+    /// The key type for properties (e.g., &'static str for attribute names)
+    type Key: Clone + Eq + Hash;
+    /// The value type for properties
+    type Value: Clone + Eq;
+
+    /// Compute similarity between two property sets (0.0 to 1.0).
+    /// Used during bottom-up matching to prefer nodes with similar properties.
+    fn similarity(&self, other: &Self) -> f64;
+
+    /// Find all property differences between self and other.
+    /// Returns changes needed to transform self into other.
+    fn diff(&self, other: &Self) -> Vec<PropertyChange<Self::Key, Self::Value>>;
+
+    /// Check if this property set is empty (no properties defined).
+    fn is_empty(&self) -> bool;
+}
+
+/// Default "no properties" type for backward compatibility.
+///
+/// Nodes without properties behave exactly as before.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NoProperties;
+
+impl Properties for NoProperties {
+    type Key = ();
+    type Value = ();
+
+    fn similarity(&self, _other: &Self) -> f64 {
+        1.0 // No properties = perfect match
+    }
+
+    fn diff(&self, _other: &Self) -> Vec<PropertyChange<Self::Key, Self::Value>> {
+        vec![] // No properties = no changes
+    }
+
+    fn is_empty(&self) -> bool {
+        true
+    }
+}
+
 /// Data stored in each tree node.
 ///
 /// This is the minimal information needed for the GumTree/Chawathe algorithms:
 /// - A structural hash for fast equality checking
 /// - A "kind" for type-based matching (nodes of different kinds don't match)
 /// - An optional label for leaf nodes (the actual value)
+/// - Properties: key-value pairs that are NOT tree children
 #[derive(Debug, Clone)]
-pub struct NodeData<K, L> {
+pub struct NodeData<K, L, P = NoProperties> {
     /// Structural hash of this node and all its descendants (Merkle-tree style).
     /// Two nodes with the same hash are structurally identical.
     pub hash: u64,
@@ -25,24 +83,52 @@ pub struct NodeData<K, L> {
     /// For internal nodes, this might be None or a type name.
     /// For leaf nodes, this is the actual value (as a string or comparable form).
     pub label: Option<L>,
+
+    /// Properties: key-value pairs attached to this node.
+    /// Unlike children, properties are diffed field-by-field when nodes match.
+    pub properties: P,
 }
 
-impl<K, L> NodeData<K, L> {
-    /// Create a new node with the given hash and kind.
+impl<K, L> NodeData<K, L, NoProperties> {
+    /// Create a new node with the given hash and kind (no properties).
     pub const fn new(hash: u64, kind: K) -> Self {
         Self {
             hash,
             kind,
             label: None,
+            properties: NoProperties,
         }
     }
 
-    /// Create a new leaf node with a label.
+    /// Create a new leaf node with a label (no properties).
     pub const fn leaf(hash: u64, kind: K, label: L) -> Self {
         Self {
             hash,
             kind,
             label: Some(label),
+            properties: NoProperties,
+        }
+    }
+}
+
+impl<K, L, P> NodeData<K, L, P> {
+    /// Create a new node with properties.
+    pub const fn with_properties(hash: u64, kind: K, properties: P) -> Self {
+        Self {
+            hash,
+            kind,
+            label: None,
+            properties,
+        }
+    }
+
+    /// Create a new leaf node with label and properties.
+    pub const fn leaf_with_properties(hash: u64, kind: K, label: L, properties: P) -> Self {
+        Self {
+            hash,
+            kind,
+            label: Some(label),
+            properties,
         }
     }
 }
@@ -51,34 +137,35 @@ impl<K, L> NodeData<K, L> {
 ///
 /// Wraps an `indextree::Arena` with a designated root node.
 #[derive(Debug)]
-pub struct Tree<K, L> {
+pub struct Tree<K, L, P = NoProperties> {
     /// The arena storing all nodes.
-    pub arena: Arena<NodeData<K, L>>,
+    pub arena: Arena<NodeData<K, L, P>>,
     /// The root node ID.
     pub root: NodeId,
 }
 
-impl<K, L> Tree<K, L>
+impl<K, L, P> Tree<K, L, P>
 where
     K: Clone + Eq + Hash,
     L: Clone,
+    P: Properties,
 {
     /// Create a new tree with a single root node.
-    pub fn new(root_data: NodeData<K, L>) -> Self {
+    pub fn new(root_data: NodeData<K, L, P>) -> Self {
         let mut arena = Arena::new();
         let root = arena.new_node(root_data);
         Self { arena, root }
     }
 
     /// Add a child node to a parent.
-    pub fn add_child(&mut self, parent: NodeId, data: NodeData<K, L>) -> NodeId {
+    pub fn add_child(&mut self, parent: NodeId, data: NodeData<K, L, P>) -> NodeId {
         let child = self.arena.new_node(data);
         parent.append(child, &mut self.arena);
         child
     }
 
     /// Get the data for a node.
-    pub fn get(&self, id: NodeId) -> &NodeData<K, L> {
+    pub fn get(&self, id: NodeId) -> &NodeData<K, L, P> {
         self.arena.get(id).expect("invalid node id").get()
     }
 
@@ -137,13 +224,13 @@ where
 }
 
 /// Post-order iterator over tree nodes.
-struct PostOrderIter<'a, K, L> {
-    arena: &'a Arena<NodeData<K, L>>,
+struct PostOrderIter<'a, K, L, P> {
+    arena: &'a Arena<NodeData<K, L, P>>,
     stack: Vec<(NodeId, bool)>, // (node_id, children_visited)
 }
 
-impl<'a, K, L> PostOrderIter<'a, K, L> {
-    fn new(root: NodeId, arena: &'a Arena<NodeData<K, L>>) -> Self {
+impl<'a, K, L, P> PostOrderIter<'a, K, L, P> {
+    fn new(root: NodeId, arena: &'a Arena<NodeData<K, L, P>>) -> Self {
         Self {
             arena,
             stack: vec![(root, false)],
@@ -151,7 +238,7 @@ impl<'a, K, L> PostOrderIter<'a, K, L> {
     }
 }
 
-impl<'a, K, L> Iterator for PostOrderIter<'a, K, L> {
+impl<'a, K, L, P> Iterator for PostOrderIter<'a, K, L, P> {
     type Item = NodeId;
 
     fn next(&mut self) -> Option<Self::Item> {

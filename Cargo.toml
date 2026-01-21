@@ -81,6 +81,8 @@ members = [
     "facet-html",
     "facet-dom",
     "facet-html-dom",
+    "facet-html-diff",
+    "facet-html-diff-wasm",
     "facet-atom",
     "facet-singularize",
     "facet-json-schema",
@@ -102,6 +104,8 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
 
 [workspace.dependencies]
+facet-core = { path = "facet-core" }
+facet-pretty = { path = "facet-pretty" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
 autocfg = "^1.5.0"
 bolero = "^0.13.4"

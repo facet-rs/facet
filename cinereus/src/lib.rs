@@ -40,9 +40,11 @@
 pub use indextree;
 
 mod chawathe;
-mod matching;
+/// GumTree matching algorithm
+pub mod matching;
 mod simplify;
-mod tree;
+/// Tree representation with properties support
+pub mod tree;
 
 pub use chawathe::*;
 pub use matching::*;
@@ -50,6 +52,7 @@ pub use simplify::*;
 pub use tree::*;
 
 use core::hash::Hash;
+use facet_core::Facet;
 
 /// Compute a simplified diff between two trees.
 ///
@@ -72,16 +75,37 @@ use core::hash::Hash;
 /// let ops = diff_trees(&tree_a, &tree_b, &MatchingConfig::default());
 /// // ops contains the edit operations to transform tree_a into tree_b
 /// ```
-pub fn diff_trees<K, L>(
-    tree_a: &Tree<K, L>,
-    tree_b: &Tree<K, L>,
+pub fn diff_trees<'a, K, L, P>(
+    tree_a: &'a Tree<K, L, P>,
+    tree_b: &'a Tree<K, L, P>,
     config: &MatchingConfig,
-) -> Vec<EditOp<K, L>>
+) -> Vec<EditOp<K, L, P>>
 where
-    K: Clone + Eq + Hash,
-    L: Clone + Eq,
+    K: Clone + Eq + Hash + Send + Sync + Facet<'a>,
+    L: Clone + Eq + Send + Sync + Facet<'a>,
+    P: tree::Properties + Send + Sync,
+{
+    let (ops, _matching) = diff_trees_with_matching(tree_a, tree_b, config);
+    ops
+}
+
+/// Like [`diff_trees`], but also returns the node matching.
+///
+/// This is useful when you need to translate NodeId-based operations
+/// into path-based operations, as you need to track which nodes in
+/// tree_a correspond to nodes in tree_b.
+pub fn diff_trees_with_matching<'a, K, L, P>(
+    tree_a: &'a Tree<K, L, P>,
+    tree_b: &'a Tree<K, L, P>,
+    config: &MatchingConfig,
+) -> (Vec<EditOp<K, L, P>>, Matching)
+where
+    K: Clone + Eq + Hash + Send + Sync + Facet<'a>,
+    L: Clone + Eq + Send + Sync + Facet<'a>,
+    P: tree::Properties + Send + Sync,
 {
     let matching = compute_matching(tree_a, tree_b, config);
     let ops = generate_edit_script(tree_a, tree_b, &matching);
-    simplify_edit_script(ops, tree_a, tree_b)
+    let ops = simplify_edit_script(ops, tree_a, tree_b);
+    (ops, matching)
 }

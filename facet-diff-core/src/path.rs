@@ -3,7 +3,8 @@
 use std::borrow::Cow;
 
 /// A path segment describing how to reach a child.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, facet::Facet)]
+#[repr(u8)]
 pub enum PathSegment {
     /// A named field in a struct
     Field(Cow<'static, str>),
@@ -16,7 +17,7 @@ pub enum PathSegment {
 }
 
 /// A path from root to a node.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Hash, facet::Facet)]
 pub struct Path(pub Vec<PathSegment>);
 
 impl Path {

@@ -14,12 +14,16 @@ pub use diff::{
 };
 pub use report::DiffReport;
 pub use tree::{
-    EditOp, FacetTree, NodeKind, NodeLabel, SimilarityResult, build_tree,
+    EditOp, FacetTree, NodeKind, NodeLabel, NodeRef, SimilarityResult, build_tree,
     compute_element_similarity, elements_are_similar, tree_diff,
 };
 
 // Re-export cinereus types for advanced usage
 pub use cinereus::{Matching, MatchingConfig};
+
+// Re-export matching stats when feature is enabled
+#[cfg(feature = "matching-stats")]
+pub use tree::{get_matching_stats, reset_matching_stats};
 
 // Re-export core types from facet-diff-core
 pub use facet_diff_core::{

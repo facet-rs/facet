@@ -919,8 +919,8 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         if !self.started_elements_lists.contains(&idx) {
             // Close any other open elements lists before starting this one
             // (we can only be "inside" one list at a time for begin_nth_field to work)
-            for &other_idx in self.started_elements_lists.iter().collect::<Vec<_>>() {
-                trace!(other_idx, "closing elements list to switch to new one");
+            for &_other_idx in self.started_elements_lists.iter().collect::<Vec<_>>() {
+                trace!(_other_idx, "closing elements list to switch to new one");
                 wip = wip.end()?;
             }
             self.started_elements_lists.clear();
@@ -1169,13 +1169,13 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         // Finalize all elements fields
         // First, close all open elements lists
         for &idx in self.started_elements_lists.iter().collect::<Vec<_>>() {
-            if let Some((element_name, _)) = self
+            if let Some((_element_name, _)) = self
                 .field_map
                 .elements_fields
                 .iter()
                 .find(|(_, info)| info.idx == idx)
             {
-                trace!(path = %wip.path(), element_name, "ending elements list");
+                trace!(path = %wip.path(), _element_name, "ending elements list");
             }
             wip = wip.end()?;
         }

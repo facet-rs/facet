@@ -88,8 +88,10 @@ static SUBSCRIBER_INIT: LazyLock<()> = LazyLock::new(|| {
                 .with_timer(Uptime)
                 .with_target(false)
                 .with_level(true)
-                .with_file(true)
-                .with_line_number(true)
+                // .with_file(true)
+                // .with_line_number(true)
+                .with_file(false)
+                .with_line_number(false)
                 .compact(),
         )
         .with(filter)
