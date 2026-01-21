@@ -1,0 +1,200 @@
+//! Raw XML element types for representing arbitrary XML without a predefined schema.
+//!
+//! This crate provides [`Element`] and [`Content`] types that can capture
+//! any XML structure, useful when you need to handle untyped/dynamic XML content.
+//!
+//! # Example
+//!
+//! ```rust
+//! use facet_xml::{from_str, to_string};
+//! use facet_xml_node::Element;
+//!
+//! let xml = r#"<root attr="value"><child>text</child></root>"#;
+//! let element: Element = from_str(xml).unwrap();
+//!
+//! assert_eq!(element.tag, "root");
+//! assert_eq!(element.attrs.get("attr"), Some(&"value".to_string()));
+//! ```
+
+use facet_xml as xml;
+use std::collections::HashMap;
+
+/// Content that can appear inside an XML element - either child elements or text.
+#[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
+#[repr(u8)]
+pub enum Content {
+    /// Text content.
+    #[facet(xml::text)]
+    Text(String),
+    /// A child element (catch-all for any tag name).
+    #[facet(xml::custom_element)]
+    Element(Element),
+}
+
+impl Content {
+    /// Returns `Some(&str)` if this is text content.
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Content::Text(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// Returns `Some(&Element)` if this is an element.
+    pub fn as_element(&self) -> Option<&Element> {
+        match self {
+            Content::Element(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+/// An XML element that captures any tag name, attributes, and children.
+///
+/// This type can represent arbitrary XML structure without needing
+/// a predefined schema.
+#[derive(Debug, Clone, PartialEq, Eq, Default, facet::Facet)]
+pub struct Element {
+    /// The element's tag name (captured dynamically).
+    #[facet(xml::tag, default)]
+    pub tag: String,
+
+    /// All attributes as key-value pairs.
+    #[facet(flatten, default)]
+    pub attrs: HashMap<String, String>,
+
+    /// Child content (elements and text).
+    #[facet(flatten, default)]
+    #[facet(recursive_type)]
+    pub children: Vec<Content>,
+}
+
+impl Element {
+    /// Create a new element with just a tag name.
+    pub fn new(tag: impl Into<String>) -> Self {
+        Self {
+            tag: tag.into(),
+            attrs: HashMap::new(),
+            children: Vec::new(),
+        }
+    }
+
+    /// Add an attribute.
+    pub fn with_attr(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.attrs.insert(name.into(), value.into());
+        self
+    }
+
+    /// Add a child element.
+    pub fn with_child(mut self, child: Element) -> Self {
+        self.children.push(Content::Element(child));
+        self
+    }
+
+    /// Add text content.
+    pub fn with_text(mut self, text: impl Into<String>) -> Self {
+        self.children.push(Content::Text(text.into()));
+        self
+    }
+
+    /// Get an attribute value by name.
+    pub fn get_attr(&self, name: &str) -> Option<&str> {
+        self.attrs.get(name).map(|s| s.as_str())
+    }
+
+    /// Iterate over child elements (skipping text nodes).
+    pub fn child_elements(&self) -> impl Iterator<Item = &Element> {
+        self.children.iter().filter_map(|c| c.as_element())
+    }
+
+    /// Get the combined text content (concatenated from all text children).
+    pub fn text_content(&self) -> String {
+        let mut result = String::new();
+        for child in &self.children {
+            match child {
+                Content::Text(t) => result.push_str(t),
+                Content::Element(e) => result.push_str(&e.text_content()),
+            }
+        }
+        result
+    }
+}
+
+impl From<Element> for Content {
+    fn from(e: Element) -> Self {
+        Content::Element(e)
+    }
+}
+
+impl From<String> for Content {
+    fn from(s: String) -> Self {
+        Content::Text(s)
+    }
+}
+
+impl From<&str> for Content {
+    fn from(s: &str) -> Self {
+        Content::Text(s.to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn element_builder_api() {
+        let elem = Element::new("root")
+            .with_attr("id", "123")
+            .with_child(Element::new("child").with_text("hello world"));
+
+        assert_eq!(elem.tag, "root");
+        assert_eq!(elem.get_attr("id"), Some("123"));
+        assert_eq!(elem.children.len(), 1);
+
+        let child = elem.child_elements().next().unwrap();
+        assert_eq!(child.tag, "child");
+        assert_eq!(child.text_content(), "hello world");
+    }
+
+    #[test]
+    fn parse_simple_xml() {
+        let xml = r#"<root><child>hello</child></root>"#;
+        let elem: Element = facet_xml::from_str(xml).unwrap();
+
+        assert_eq!(elem.tag, "root");
+        assert_eq!(elem.children.len(), 1);
+
+        let child = elem.child_elements().next().unwrap();
+        assert_eq!(child.tag, "child");
+        assert_eq!(child.text_content(), "hello");
+    }
+
+    #[test]
+    fn parse_with_attributes() {
+        let xml = r#"<root id="123" class="test"><child name="foo">bar</child></root>"#;
+        let elem: Element = facet_xml::from_str(xml).unwrap();
+
+        assert_eq!(elem.tag, "root");
+        assert_eq!(elem.get_attr("id"), Some("123"));
+        assert_eq!(elem.get_attr("class"), Some("test"));
+
+        let child = elem.child_elements().next().unwrap();
+        assert_eq!(child.get_attr("name"), Some("foo"));
+        assert_eq!(child.text_content(), "bar");
+    }
+
+    #[test]
+    fn parse_mixed_content() {
+        let xml = r#"<p>Hello <b>world</b>!</p>"#;
+        let elem: Element = facet_xml::from_str(xml).unwrap();
+
+        assert_eq!(elem.tag, "p");
+        assert_eq!(elem.children.len(), 3);
+        // Note: trailing whitespace is trimmed by XML parser
+        assert_eq!(elem.children[0].as_text(), Some("Hello"));
+        assert_eq!(elem.children[1].as_element().unwrap().tag, "b");
+        assert_eq!(elem.children[2].as_text(), Some("!"));
+        assert_eq!(elem.text_content(), "Helloworld!");
+    }
+}

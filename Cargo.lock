@@ -2291,6 +2291,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-xml-node"
+version = "0.42.0"
+dependencies = [
+ "facet",
+ "facet-xml",
+]
+
+[[package]]
 name = "facet-yaml"
 version = "0.42.0"
 dependencies = [

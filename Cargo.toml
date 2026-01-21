@@ -86,7 +86,7 @@ members = [
     "facet-json-schema",
     "facet-typescript",
     "facet-python",
-    "facet-tokio-postgres",
+    "facet-tokio-postgres", "facet-xml-node",
 ]
 exclude = [
     # proto-attr experiment uses nightly features
