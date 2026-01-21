@@ -393,10 +393,22 @@ impl Field {
         self.proxy.map(|p| p.shape)
     }
 
+    /// Checks if this field should be unconditionally skipped during serialization.
+    ///
+    /// Returns `true` if the field has `SKIP` or `SKIP_SERIALIZING` flags set.
+    /// This does NOT check `skip_serializing_if` predicates.
+    ///
+    /// Use this for binary formats where all fields must be present in order,
+    /// and `skip_serializing_if` predicates would break deserialization.
+    #[inline]
+    pub const fn should_skip_serializing_unconditional(&self) -> bool {
+        self.flags.contains(FieldFlags::SKIP) || self.flags.contains(FieldFlags::SKIP_SERIALIZING)
+    }
+
     /// Checks if this field should be skipped during serialization.
     ///
     /// Returns `true` if:
-    /// - The field has `SKIP_SERIALIZING` flag set, or
+    /// - The field has `SKIP` or `SKIP_SERIALIZING` flag set, or
     /// - `skip_serializing_if` is set and the predicate returns true
     ///
     /// # Safety
@@ -404,12 +416,8 @@ impl Field {
     /// `field_ptr` must point to a valid value of this field's type.
     #[inline]
     pub unsafe fn should_skip_serializing(&self, field_ptr: PtrConst) -> bool {
-        // Check the SKIP flag (which means skip both serialization and deserialization)
-        if self.flags.contains(FieldFlags::SKIP) {
-            return true;
-        }
-        // Check the SKIP_SERIALIZING flag (which means skip serialization only)
-        if self.flags.contains(FieldFlags::SKIP_SERIALIZING) {
+        // Check unconditional skip flags first
+        if self.should_skip_serializing_unconditional() {
             return true;
         }
         // Then check the predicate if set
