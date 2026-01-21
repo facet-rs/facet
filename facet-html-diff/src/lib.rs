@@ -692,7 +692,7 @@ fn translate_update(segments: &[PathSegment], new_value: Option<&str>) -> Option
     let html_shape = <Html as facet_core::Facet>::SHAPE;
     let nav = navigate_path(segments, html_shape);
 
-    eprintln!(
+    debug!(
         "translate_update: segments={segments:?}, dom_path={:?}, target={:?}, value={new_value:?}",
         nav.dom_path, nav.target
     );

@@ -257,6 +257,11 @@ impl TreeBuilder {
     fn collect_properties<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> HtmlProperties {
         let mut props = HtmlProperties::new();
         self.collect_properties_recursive(peek, &mut props);
+        debug!(
+            shape = peek.shape().type_identifier,
+            props_count = props.attrs.len(),
+            "collect_properties result"
+        );
         props
     }
 
@@ -266,6 +271,10 @@ impl TreeBuilder {
         peek: Peek<'mem, 'facet>,
         props: &mut HtmlProperties,
     ) {
+        debug!(
+            shape = peek.shape().type_identifier,
+            "collect_properties_recursive"
+        );
         // Only structs have attribute fields
         if let Type::User(UserType::Struct(_)) = peek.shape().ty
             && let Ok(s) = peek.into_struct()
@@ -274,9 +283,11 @@ impl TreeBuilder {
                 if field.is_attribute() {
                     // This field is an attribute - extract its value
                     let value = self.extract_attribute_value(field_peek);
+                    debug!(field = field.name, ?value, "found attribute field");
                     props.set(field.name, value);
                 } else if field.is_flattened() {
                     // This field is flattened - recurse into it to find attributes
+                    debug!(field = field.name, "recursing into flattened field");
                     self.collect_properties_recursive(field_peek, props);
                 }
             }
