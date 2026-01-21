@@ -31,6 +31,7 @@ tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 boxen = { workspace = true }
+facet-html = { path = "../facet-html" }
 facet-xml = { path = "../facet-xml" }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }

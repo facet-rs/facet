@@ -256,22 +256,31 @@ impl TreeBuilder {
     /// Collect attribute fields as properties.
     fn collect_properties<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> HtmlProperties {
         let mut props = HtmlProperties::new();
+        self.collect_properties_recursive(peek, &mut props);
+        props
+    }
 
+    /// Recursively collect attribute fields, including from flattened structs.
+    fn collect_properties_recursive<'mem, 'facet>(
+        &self,
+        peek: Peek<'mem, 'facet>,
+        props: &mut HtmlProperties,
+    ) {
         // Only structs have attribute fields
         if let Type::User(UserType::Struct(_)) = peek.shape().ty
             && let Ok(s) = peek.into_struct()
         {
             for (field, field_peek) in s.fields() {
-                // Check if this field is an attribute
                 if field.is_attribute() {
-                    // Extract the value as a string
+                    // This field is an attribute - extract its value
                     let value = self.extract_attribute_value(field_peek);
                     props.set(field.name, value);
+                } else if field.is_flattened() {
+                    // This field is flattened - recurse into it to find attributes
+                    self.collect_properties_recursive(field_peek, props);
                 }
             }
         }
-
-        props
     }
 
     /// Extract an attribute value as Option<String>.
@@ -327,6 +336,27 @@ impl TreeBuilder {
                         }
                         // Skip attribute fields - they're stored as properties, not children
                         if field.is_attribute() {
+                            continue;
+                        }
+                        // For flattened fields, we need to decide based on what they contain:
+                        // - Flattened structs (like GlobalAttrs) contain attributes -> skip as tree node
+                        //   (their attributes are collected as properties on the parent)
+                        // - Flattened lists (like children: Vec<FlowContent>) -> process their items
+                        if field.is_flattened() {
+                            // Check if the field is a struct type (like GlobalAttrs)
+                            if let Type::User(UserType::Struct(_)) = field_peek.shape().ty {
+                                // Flattened struct - skip it (attributes collected as properties)
+                                continue;
+                            }
+                            // For flattened lists/arrays, process their items directly
+                            // (don't create a tree node for the list field itself)
+                            if let Ok(list) = field_peek.into_list_like() {
+                                for (i, elem) in list.iter().enumerate() {
+                                    let child_path = path.with(PathSegment::Index(i));
+                                    let child_id = self.build_node(elem, child_path);
+                                    parent_id.append(child_id, &mut self.arena);
+                                }
+                            }
                             continue;
                         }
                         let child_path = path.with(PathSegment::Field(Cow::Borrowed(field.name)));
@@ -915,6 +945,7 @@ fn compute_path_by_walking(
 mod tests {
     use super::*;
     use facet::Facet;
+    use facet_html as html;
     use facet_testhelpers::test;
 
     #[derive(Debug, Clone, PartialEq, Facet)]
@@ -1241,6 +1272,178 @@ mod tests {
         assert!(
             has_children_op,
             "Should have operation touching children, got: {:?}",
+            ops
+        );
+    }
+
+    // =========================================================================
+    // Tests for collect_properties (HTML attribute collection)
+    // =========================================================================
+
+    /// Simple struct with direct attribute fields
+    #[derive(Debug, Clone, PartialEq, Facet)]
+    struct SimpleElement {
+        #[facet(html::attribute)]
+        id: Option<String>,
+        #[facet(html::attribute)]
+        class: Option<String>,
+        // Non-attribute field
+        content: String,
+    }
+
+    /// Attrs struct that gets flattened (like GlobalAttrs in facet-html-dom)
+    #[derive(Debug, Clone, PartialEq, Default, Facet)]
+    struct Attrs {
+        #[facet(html::attribute)]
+        id: Option<String>,
+        #[facet(html::attribute)]
+        class: Option<String>,
+        #[facet(html::attribute)]
+        style: Option<String>,
+    }
+
+    /// Element with flattened attrs (mimics facet-html-dom structure)
+    #[derive(Debug, Clone, PartialEq, Facet)]
+    struct ElementWithFlattenedAttrs {
+        #[facet(flatten)]
+        attrs: Attrs,
+        // Non-attribute field
+        children: Vec<String>,
+    }
+
+    #[test]
+    fn test_collect_properties_direct_attrs() {
+        let elem = SimpleElement {
+            id: Some("my-id".into()),
+            class: Some("my-class".into()),
+            content: "hello".into(),
+        };
+
+        let peek = Peek::new(&elem);
+        let builder = TreeBuilder::new();
+        let props = builder.collect_properties(peek);
+
+        // Should collect both attribute fields
+        assert_eq!(
+            props.attrs.get("id"),
+            Some(&Some("my-id".to_string())),
+            "Should collect id attribute"
+        );
+        assert_eq!(
+            props.attrs.get("class"),
+            Some(&Some("my-class".to_string())),
+            "Should collect class attribute"
+        );
+        // Should NOT collect non-attribute field
+        assert!(
+            props.attrs.get("content").is_none(),
+            "Should not collect non-attribute field"
+        );
+    }
+
+    #[test]
+    fn test_collect_properties_none_values() {
+        let elem = SimpleElement {
+            id: None,
+            class: Some("visible".into()),
+            content: "hello".into(),
+        };
+
+        let peek = Peek::new(&elem);
+        let builder = TreeBuilder::new();
+        let props = builder.collect_properties(peek);
+
+        // Should collect None as None
+        assert_eq!(
+            props.attrs.get("id"),
+            Some(&None),
+            "Should collect None attribute"
+        );
+        assert_eq!(
+            props.attrs.get("class"),
+            Some(&Some("visible".to_string())),
+            "Should collect Some attribute"
+        );
+    }
+
+    #[test]
+    fn test_collect_properties_flattened_attrs() {
+        let elem = ElementWithFlattenedAttrs {
+            attrs: Attrs {
+                id: Some("my-id".into()),
+                class: Some("my-class".into()),
+                style: None,
+            },
+            children: vec!["child".into()],
+        };
+
+        let peek = Peek::new(&elem);
+        let builder = TreeBuilder::new();
+        let props = builder.collect_properties(peek);
+
+        // Should collect attributes from flattened struct
+        assert_eq!(
+            props.attrs.get("id"),
+            Some(&Some("my-id".to_string())),
+            "Should collect id from flattened attrs"
+        );
+        assert_eq!(
+            props.attrs.get("class"),
+            Some(&Some("my-class".to_string())),
+            "Should collect class from flattened attrs"
+        );
+        assert_eq!(
+            props.attrs.get("style"),
+            Some(&None),
+            "Should collect style=None from flattened attrs"
+        );
+    }
+
+    #[test]
+    fn test_diff_emits_update_attribute_for_flattened() {
+        let a = ElementWithFlattenedAttrs {
+            attrs: Attrs {
+                id: Some("old-id".into()),
+                class: None,
+                style: None,
+            },
+            children: vec![],
+        };
+        let b = ElementWithFlattenedAttrs {
+            attrs: Attrs {
+                id: Some("new-id".into()),
+                class: Some("added-class".into()),
+                style: None,
+            },
+            children: vec![],
+        };
+
+        let ops = tree_diff(&a, &b);
+
+        eprintln!("All ops: {:#?}", ops);
+
+        // Should emit UpdateAttribute ops for changed attributes
+        let update_attrs: Vec<_> = ops
+            .iter()
+            .filter_map(|op| {
+                if let EditOp::UpdateAttribute { attr_name, .. } = op {
+                    Some(*attr_name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        eprintln!("UpdateAttribute attrs: {:?}", update_attrs);
+
+        assert!(
+            update_attrs.contains(&"id"),
+            "Should emit UpdateAttribute for id change, got ops: {:?}",
+            ops
+        );
+        assert!(
+            update_attrs.contains(&"class"),
+            "Should emit UpdateAttribute for class change, got ops: {:?}",
             ops
         );
     }

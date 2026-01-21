@@ -1775,6 +1775,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-diff-core",
+ "facet-html",
  "facet-pretty",
  "facet-reflect",
  "facet-showcase",
