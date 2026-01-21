@@ -242,4 +242,66 @@ mod tests {
             .collect();
         assert_eq!(deletes.len(), 1, "Should have one delete operation");
     }
+
+    #[test]
+    fn test_swap_two_siblings() {
+        // Tree A: root -> [child_a at pos 0, child_b at pos 1]
+        // Tree B: root -> [child_b at pos 0, child_a at pos 1]
+        // This tests the swap scenario to understand Move semantics
+
+        let mut tree_a: Tree<String, String> = Tree::new(NodeData::new(100, "root".to_string()));
+        let child_a = tree_a.add_child(tree_a.root, NodeData::leaf(1, "leaf".to_string(), "A".to_string()));
+        let child_b = tree_a.add_child(tree_a.root, NodeData::leaf(2, "leaf".to_string(), "B".to_string()));
+
+        let mut tree_b: Tree<String, String> = Tree::new(NodeData::new(100, "root".to_string()));
+        // Swap order: B first, then A
+        let child_b2 = tree_b.add_child(tree_b.root, NodeData::leaf(2, "leaf".to_string(), "B".to_string()));
+        let child_a2 = tree_b.add_child(tree_b.root, NodeData::leaf(1, "leaf".to_string(), "A".to_string()));
+
+        let matching = compute_matching(&tree_a, &tree_b, &MatchingConfig::default());
+
+        // Verify matching is correct
+        assert_eq!(matching.get_b(child_a), Some(child_a2), "child_a should match child_a2");
+        assert_eq!(matching.get_b(child_b), Some(child_b2), "child_b should match child_b2");
+
+        // Verify positions in original trees
+        assert_eq!(tree_a.position(child_a), 0, "child_a at pos 0 in tree_a");
+        assert_eq!(tree_a.position(child_b), 1, "child_b at pos 1 in tree_a");
+        assert_eq!(tree_b.position(child_a2), 1, "child_a2 at pos 1 in tree_b");
+        assert_eq!(tree_b.position(child_b2), 0, "child_b2 at pos 0 in tree_b");
+
+        let ops = generate_edit_script(&tree_a, &tree_b, &matching);
+
+        // Filter move operations
+        let moves: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                EditOp::Move { node_a, node_b, new_parent_b, new_position } => {
+                    Some((*node_a, *node_b, *new_parent_b, *new_position))
+                }
+                _ => None,
+            })
+            .collect();
+
+        // Key question: What does cinereus emit for a swap?
+        // - Move for child_a: was at pos 0, should be at pos 1
+        // - Move for child_b: was at pos 1, should be at pos 0
+        //
+        // The new_position field comes from tree_b.position(b_id), which is the
+        // FINAL position in the target tree, not an intermediate position.
+
+        assert_eq!(moves.len(), 2, "Should have two move operations for a swap");
+
+        // Find move for child_a (hash 1)
+        let move_a = moves.iter().find(|(a, _, _, _)| *a == child_a);
+        assert!(move_a.is_some(), "Should have move for child_a");
+        let (_, _, _, new_pos_a) = move_a.unwrap();
+        assert_eq!(*new_pos_a, 1, "child_a should move to position 1");
+
+        // Find move for child_b (hash 2)
+        let move_b = moves.iter().find(|(a, _, _, _)| *a == child_b);
+        assert!(move_b.is_some(), "Should have move for child_b");
+        let (_, _, _, new_pos_b) = move_b.unwrap();
+        assert_eq!(*new_pos_b, 0, "child_b should move to position 0");
+    }
 }

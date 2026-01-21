@@ -74,14 +74,14 @@ use facet_core::Facet;
 /// let ops = diff_trees(&tree_a, &tree_b, &MatchingConfig::default());
 /// // ops contains the edit operations to transform tree_a into tree_b
 /// ```
-pub fn diff_trees<K, L>(
-    tree_a: &Tree<K, L>,
-    tree_b: &Tree<K, L>,
+pub fn diff_trees<'a, K, L>(
+    tree_a: &'a Tree<K, L>,
+    tree_b: &'a Tree<K, L>,
     config: &MatchingConfig,
 ) -> Vec<EditOp<K, L>>
 where
-    K: Clone + Eq + Hash + Send + Sync + for<'a> Facet<'a> + 'static,
-    L: Clone + Eq + Send + Sync + for<'a> Facet<'a> + 'static,
+    K: Clone + Eq + Hash + Send + Sync + Facet<'a>,
+    L: Clone + Eq + Send + Sync + Facet<'a>,
 {
     let (ops, _matching) = diff_trees_with_matching(tree_a, tree_b, config);
     ops
@@ -92,14 +92,14 @@ where
 /// This is useful when you need to translate NodeId-based operations
 /// into path-based operations, as you need to track which nodes in
 /// tree_a correspond to nodes in tree_b.
-pub fn diff_trees_with_matching<K, L>(
-    tree_a: &Tree<K, L>,
-    tree_b: &Tree<K, L>,
+pub fn diff_trees_with_matching<'a, K, L>(
+    tree_a: &'a Tree<K, L>,
+    tree_b: &'a Tree<K, L>,
     config: &MatchingConfig,
 ) -> (Vec<EditOp<K, L>>, Matching)
 where
-    K: Clone + Eq + Hash + Send + Sync + for<'a> Facet<'a> + 'static,
-    L: Clone + Eq + Send + Sync + for<'a> Facet<'a> + 'static,
+    K: Clone + Eq + Hash + Send + Sync + Facet<'a>,
+    L: Clone + Eq + Send + Sync + Facet<'a>,
 {
     let matching = compute_matching(tree_a, tree_b, config);
     let ops = generate_edit_script(tree_a, tree_b, &matching);
