@@ -24,6 +24,7 @@ pub use serializer::{
 // Re-export error types for convenience
 pub use facet_dom::DomDeserializeError as DeserializeError;
 pub use facet_dom::DomSerializeError as SerializeError;
+pub use facet_dom::RawMarkup;
 
 /// Deserialize a value from an XML string into an owned type.
 ///
