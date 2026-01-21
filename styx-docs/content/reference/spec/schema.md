@@ -162,7 +162,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > | `@unit` | the unit value `@` |
 > | `@any` | any value |
 >
-> Composite type constructors (`@optional`, `@union`, `@map`, `@enum`, `@one-of`, `@flatten`) are described in their own sections.
+> Composite type constructors (`@optional`, `@union`, `@seq`, `@tuple`, `@map`, `@enum`, `@one-of`, `@flatten`) are described in their own sections.
 > Modifiers (`@default`, `@deprecated`) are described in their own sections.
 
 ### Type constraints
@@ -333,6 +333,24 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > })
 > ids @seq(@union(@int @string))    // sequence of ids
 > ```
+
+### Tuples
+
+> r[schema.tuple]
+> `@tuple(@A @B @C ...)` defines a fixed-length sequence where each position has a distinct type.
+> Unlike `@seq` which is homogeneous (all elements same type), `@tuple` is heterogeneous.
+>
+> ```styx
+> point @tuple(@int @int)           // (x, y) coordinates
+> entry @tuple(@string @int @bool)  // (name, count, enabled)
+> range @tuple(@float @float)       // (min, max)
+> ```
+>
+> r[schema.tuple.validation]
+> Validation checks that:
+> - The value is a sequence
+> - The sequence has exactly the expected number of elements
+> - Each element matches its corresponding positional type
 
 ### Maps
 
@@ -546,6 +564,8 @@ schema {
     object @object{@ @Schema}
     /// Sequence schema: @seq(@type).
     seq(@Schema)
+    /// Tuple schema: @tuple(@A @B @C ...).
+    tuple @seq(@Schema)
     /// Union: @union(@A @B ...).
     union @seq(@Schema)
     /// Optional: @optional(@T).
