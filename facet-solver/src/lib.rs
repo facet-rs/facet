@@ -2402,29 +2402,7 @@ impl SchemaBuilder {
         key_prefix: &KeyPath,
         config: &mut Resolution,
     ) -> Result<(), SchemaError> {
-        // Check if this is a newtype variant (single unnamed field)
-        if variant.data.fields.len() == 1 && variant.data.fields[0].name == "0" {
-            let inner_field = &variant.data.fields[0];
-            let inner_shape = inner_field.shape();
-
-            // If the inner type is a struct, add key paths for its fields
-            if let Type::User(UserType::Struct(inner_struct)) = inner_shape.ty {
-                Self::collect_struct_key_paths_only(inner_struct, key_prefix, config);
-                return Ok(());
-            }
-        }
-
-        // Named fields - add key paths for each
-        for variant_field in variant.data.fields {
-            let mut field_key_path = key_prefix.clone();
-            field_key_path.push(variant_field.effective_name());
-            config.add_key_path(field_key_path.clone());
-
-            // Recurse into nested structs
-            if let Type::User(UserType::Struct(inner_struct)) = variant_field.shape().ty {
-                Self::collect_struct_key_paths_only(inner_struct, &field_key_path, config);
-            }
-        }
+        Self::collect_variant_fields_key_paths_only(variant, key_prefix, config);
         Ok(())
     }
 
@@ -2439,20 +2417,61 @@ impl SchemaBuilder {
 
             if is_flatten {
                 // Flattened field: keys bubble up to current level
-                if let Type::User(UserType::Struct(inner_struct)) = field.shape().ty {
-                    Self::collect_struct_key_paths_only(inner_struct, key_prefix, config);
-                }
+                Self::collect_shape_key_paths_only(field.shape(), key_prefix, config);
             } else {
                 // Regular field: add its key path
                 let mut field_key_path = key_prefix.clone();
                 field_key_path.push(field.effective_name());
                 config.add_key_path(field_key_path.clone());
 
-                // Recurse into nested structs
-                if let Type::User(UserType::Struct(inner_struct)) = field.shape().ty {
-                    Self::collect_struct_key_paths_only(inner_struct, &field_key_path, config);
+                // Recurse into nested types
+                Self::collect_shape_key_paths_only(field.shape(), &field_key_path, config);
+            }
+        }
+    }
+
+    /// Recursively collect key paths from a shape (struct or enum).
+    fn collect_shape_key_paths_only(
+        shape: &'static Shape,
+        key_prefix: &KeyPath,
+        config: &mut Resolution,
+    ) {
+        match shape.ty {
+            Type::User(UserType::Struct(inner_struct)) => {
+                Self::collect_struct_key_paths_only(inner_struct, key_prefix, config);
+            }
+            Type::User(UserType::Enum(enum_type)) => {
+                // For enums, collect key paths from ALL variants
+                // (we don't know which variant will be selected)
+                for variant in enum_type.variants {
+                    Self::collect_variant_fields_key_paths_only(variant, key_prefix, config);
                 }
             }
+            _ => {}
+        }
+    }
+
+    /// Collect key paths from a variant's fields (not the variant itself).
+    fn collect_variant_fields_key_paths_only(
+        variant: &'static Variant,
+        key_prefix: &KeyPath,
+        config: &mut Resolution,
+    ) {
+        // Check if this is a newtype variant (single unnamed field)
+        if variant.data.fields.len() == 1 && variant.data.fields[0].name == "0" {
+            let inner_field = &variant.data.fields[0];
+            Self::collect_shape_key_paths_only(inner_field.shape(), key_prefix, config);
+            return;
+        }
+
+        // Named fields - add key paths for each
+        for variant_field in variant.data.fields {
+            let mut field_key_path = key_prefix.clone();
+            field_key_path.push(variant_field.effective_name());
+            config.add_key_path(field_key_path.clone());
+
+            // Recurse into nested types
+            Self::collect_shape_key_paths_only(variant_field.shape(), &field_key_path, config);
         }
     }
 
