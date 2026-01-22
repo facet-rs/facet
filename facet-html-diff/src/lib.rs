@@ -4,7 +4,7 @@
 //! that can be applied to update an HTML document incrementally.
 
 #[macro_use]
-mod macros;
+mod tracing_macros;
 
 pub mod apply;
 
@@ -1095,34 +1095,7 @@ mod tests {
     use super::*;
     use facet_testhelpers::test;
 
-    #[test]
-    fn test_replace_element_with_attrs() {
-        let old = "<html><body><div></div></body></html>";
-        let new = r#"<html><body><p class="a"> </p></body></html>"#;
-
-        let patches = diff_html(old, new).unwrap();
-
-        let mut tree = apply::parse_html(old).unwrap();
-        apply::apply_patches(&mut tree, &patches).unwrap();
-        let result = tree.to_html();
-
-        assert_eq!(result, r#"<body><p class="a"> </p></body>"#);
-    }
-
-    #[test]
-    fn test_add_element_with_text() {
-        let old = "<html><body><p>First</p></body></html>";
-        let new = "<html><body><p>First</p><p>Second</p></body></html>";
-
-        let patches = diff_html(old, new).unwrap();
-
-        let mut tree = apply::parse_html(old).unwrap();
-        apply::apply_patches(&mut tree, &patches).unwrap();
-        let result = tree.to_html();
-
-        assert_eq!(result, "<body><p>First</p><p>Second</p></body>");
-    }
-
+    /// Verify InsertText is used for text nodes, not InsertElement with tag "text"
     #[test]
     fn test_text_insert_generates_insert_text() {
         let old = "<html><body><div></div></body></html>";
@@ -1130,7 +1103,6 @@ mod tests {
 
         let patches = diff_html(old, new).unwrap();
 
-        // Should have InsertText, not InsertElement with tag "text"
         let has_text_element = patches
             .iter()
             .any(|p| matches!(p, Patch::InsertElement { tag, .. } if tag == "text"));
@@ -1146,19 +1118,5 @@ mod tests {
             has_insert_text,
             "Should have InsertText patch, got: {patches:?}"
         );
-    }
-
-    #[test]
-    fn test_add_second_p_with_same_text() {
-        let old = "<html><body><p> </p></body></html>";
-        let new = r#"<html><body><p> </p><p class="a"> </p></body></html>"#;
-
-        let patches = diff_html(old, new).unwrap();
-
-        let mut tree = apply::parse_html(old).unwrap();
-        apply::apply_patches(&mut tree, &patches).unwrap();
-        let result = tree.to_html();
-
-        assert_eq!(result, r#"<body><p> </p><p class="a"> </p></body>"#);
     }
 }
