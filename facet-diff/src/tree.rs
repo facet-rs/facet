@@ -937,10 +937,18 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 );
 
                 // Find new parent in shadow tree
-                let shadow_new_parent = b_to_shadow
-                    .get(&new_parent_b)
-                    .copied()
-                    .unwrap_or(shadow_root);
+                let shadow_new_parent =
+                    b_to_shadow.get(&new_parent_b).copied().unwrap_or_else(|| {
+                        // new_parent_b is not in b_to_shadow - this shouldn't happen after matching fixes.
+                        // If this occurs, cinereus should have skipped this Move because parent_b is unmatched.
+                        debug!(
+                            ?new_parent_b,
+                            ?node_a,
+                            ?node_b,
+                            "WARNING: new_parent_b not in b_to_shadow, falling back to shadow_root"
+                        );
+                        shadow_root
+                    });
 
                 // Check if the node is currently detached (in limbo)
                 let is_detached = detached_nodes.contains_key(&node_a);

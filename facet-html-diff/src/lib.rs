@@ -34,6 +34,22 @@ pub enum NodeRef {
     Slot(u32, Option<NodePath>),
 }
 
+/// Content that can be inserted as part of a new subtree.
+/// This is used for the `children` field in `InsertElement` when inserting
+/// a completely new subtree that has no match in the old document.
+#[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
+#[repr(u8)]
+pub enum InsertContent {
+    /// An element with its tag, attributes, and nested children
+    Element {
+        tag: String,
+        attrs: Vec<(String, String)>,
+        children: Vec<InsertContent>,
+    },
+    /// A text node
+    Text(String),
+}
+
 /// Operations to transform the DOM.
 ///
 /// These follow Chawathe semantics: Insert/Move operations do NOT shift siblings.
@@ -41,13 +57,18 @@ pub enum NodeRef {
 #[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
 #[repr(u8)]
 pub enum Patch {
-    /// Insert an empty element at position within parent.
+    /// Insert an element at position within parent.
     /// If `detach_to_slot` is Some, the node at that position is detached and stored in that slot.
-    /// Children are NOT included - they will be placed via separate Move/InsertElement/InsertText ops.
+    ///
+    /// `attrs` and `children` contain the initial content:
+    /// - Empty if this is a "shell" insert (content will be added via separate ops)
+    /// - Populated if this is a new subtree with no matches in the old document
     InsertElement {
         parent: NodeRef,
         position: usize,
         tag: String,
+        attrs: Vec<(String, String)>,
+        children: Vec<InsertContent>,
         detach_to_slot: Option<u32>,
     },
 
@@ -580,15 +601,18 @@ fn translate_insert(
                 }
             }
 
-            // Not a text variant - insert element
+            // Not a text variant - insert element with its attrs and children
             let peek2 = Peek::new(new_doc);
             let node_peek2 = navigate_peek(peek2, label_segments)?;
             let tag = get_element_tag(node_peek2);
+            let (attrs, children) = extract_attrs_and_children(node_peek2);
 
             Some(Patch::InsertElement {
                 parent: parent_ref,
                 position,
                 tag,
+                attrs,
+                children,
                 detach_to_slot,
             })
         }
@@ -902,10 +926,16 @@ fn find_field_in_peek_struct<'mem, 'facet>(
 fn get_element_tag(peek: Peek<'_, '_>) -> String {
     use std::borrow::Cow;
 
-    // If it's an enum, use the active variant's name
+    // If it's an enum, get the inner struct and check for a tag field
     if let Ok(enum_peek) = peek.into_enum() {
         if let Ok(variant) = enum_peek.active_variant() {
-            // Check for rename attribute on the variant
+            // First, check if the inner struct has a tag field (for Custom* elements)
+            if let Some(inner) = enum_peek.field(0).ok().flatten() {
+                if let Some(tag) = get_tag_from_struct(inner) {
+                    return tag;
+                }
+            }
+            // Otherwise use the variant's rename or name
             let variant_name: Cow<'_, str> = variant
                 .get_builtin_attr("rename")
                 .and_then(|a| a.get_as::<&str>().copied())
@@ -915,7 +945,12 @@ fn get_element_tag(peek: Peek<'_, '_>) -> String {
         }
     }
 
-    // For structs, check rename attribute on shape, then fall back to type identifier
+    // For structs, first check for a tag field
+    if let Some(tag) = get_tag_from_struct(peek) {
+        return tag;
+    }
+
+    // Fall back to rename attribute on shape, then type identifier
     if let Some(rename) = peek.shape().get_builtin_attr_value::<&str>("rename") {
         rename.to_string()
     } else {
@@ -923,9 +958,165 @@ fn get_element_tag(peek: Peek<'_, '_>) -> String {
     }
 }
 
+/// Check for a field with the `html::tag` or `xml::tag` attribute and return its value.
+fn get_tag_from_struct(peek: Peek<'_, '_>) -> Option<String> {
+    if let Ok(s) = peek.into_struct() {
+        for (field, field_peek) in s.fields() {
+            if field.is_tag() {
+                return field_peek.as_str().map(|s| s.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Extract attributes and children of an element.
+/// This is used when inserting a new subtree that has no match in the old document.
+fn extract_attrs_and_children(peek: Peek<'_, '_>) -> (Vec<(String, String)>, Vec<InsertContent>) {
+    let mut attrs = Vec::new();
+    let mut children = Vec::new();
+
+    // For enums, get the inner struct
+    let struct_peek = if let Ok(enum_peek) = peek.into_enum() {
+        // Get the inner value (field 0 of the enum variant)
+        enum_peek.field(0).ok().flatten()
+    } else {
+        Some(peek)
+    };
+
+    let Some(struct_peek) = struct_peek else {
+        return (attrs, children);
+    };
+
+    // Try to get fields from a struct
+    if let Ok(s) = struct_peek.into_struct() {
+        extract_from_struct(s, &mut attrs, &mut children);
+    }
+
+    (attrs, children)
+}
+
+/// Helper to recursively extract attrs and children from a struct.
+fn extract_from_struct(
+    s: PeekStruct<'_, '_>,
+    attrs: &mut Vec<(String, String)>,
+    children: &mut Vec<InsertContent>,
+) {
+    for (field, field_peek) in s.fields() {
+        // Handle attributes
+        if field.is_attribute() {
+            // Get the attribute name
+            let attr_name = field
+                .rename
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| to_element_name(&field.name).into_owned());
+
+            // Handle Option<String> attributes
+            if let Ok(opt) = field_peek.into_option() {
+                if let Some(inner) = opt.value() {
+                    if let Some(val) = inner.as_str() {
+                        attrs.push((attr_name, val.to_string()));
+                    }
+                }
+            } else if let Some(val) = field_peek.as_str() {
+                attrs.push((attr_name, val.to_string()));
+            }
+            continue;
+        }
+        // Handle text field
+        if field.is_text() {
+            if let Some(text) = field_peek.as_str() {
+                if !text.is_empty() {
+                    children.push(InsertContent::Text(text.to_string()));
+                }
+            }
+            continue;
+        }
+        // Handle flattened structs (like GlobalAttrs) - recurse to extract nested attrs
+        if field.is_flattened() {
+            if let Ok(inner_struct) = field_peek.into_struct() {
+                extract_from_struct(inner_struct, attrs, children);
+            } else if let Ok(list) = field_peek.into_list_like() {
+                // Flattened children list
+                for item in list.iter() {
+                    if let Some(content) = peek_to_insert_content(item) {
+                        children.push(content);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Convert a Peek value to InsertContent.
+fn peek_to_insert_content(peek: Peek<'_, '_>) -> Option<InsertContent> {
+    // Check if it's an enum (like FlowContent, PhrasingContent)
+    if let Ok(enum_peek) = peek.into_enum() {
+        if let Ok(variant) = enum_peek.active_variant() {
+            if variant.is_text() {
+                // Text variant - extract the string
+                let text = enum_peek
+                    .field(0)
+                    .ok()
+                    .flatten()
+                    .and_then(|p| p.as_str().map(|s| s.to_string()))
+                    .unwrap_or_default();
+                return Some(InsertContent::Text(text));
+            } else {
+                // Element variant
+                let tag = get_element_tag(peek);
+                let (attrs, children) = extract_attrs_and_children(peek);
+                return Some(InsertContent::Element {
+                    tag,
+                    attrs,
+                    children,
+                });
+            }
+        }
+    }
+
+    // For non-enum structs (shouldn't happen in typical HTML but handle it)
+    let tag = get_element_tag(peek);
+    let (attrs, children) = extract_attrs_and_children(peek);
+    Some(InsertContent::Element {
+        tag,
+        attrs,
+        children,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_replace_element_with_attrs() {
+        // This test reproduces the single_element_roundtrip failure
+        let old = "<html><body><div></div></body></html>";
+        let new = r#"<html><body><p class="a"> </p></body></html>"#;
+
+        let old_doc: Html = facet_html::from_str(old).unwrap();
+        let new_doc: Html = facet_html::from_str(new).unwrap();
+        let ops = tree_diff(&old_doc, &new_doc);
+        eprintln!("EditOps for replace_element_with_attrs:");
+        for op in &ops {
+            eprintln!("  {:?}", op);
+        }
+
+        let patches = diff_html(old, new).unwrap();
+
+        eprintln!("Patches:");
+        for p in &patches {
+            eprintln!("  {:?}", p);
+        }
+
+        // Apply patches and verify
+        let mut tree = apply::parse_html(old).unwrap();
+        apply::apply_patches(&mut tree, &patches).unwrap();
+        let result = tree.to_html();
+
+        assert_eq!(result, r#"<body><p class="a"> </p></body>"#);
+    }
 
     #[test]
     fn test_add_element_with_text() {
@@ -994,5 +1185,48 @@ mod tests {
             has_insert_text,
             "Should have InsertText patch, got: {patches:?}"
         );
+    }
+
+    #[test]
+    fn test_add_second_p_with_same_text() {
+        // This is the minimal failure from proptest
+        // Old: <p> </p>  (one p with space text)
+        // New: <p> </p><p class="a"> </p>  (two p's, both with space text)
+        let old = "<html><body><p> </p></body></html>";
+        let new = r#"<html><body><p> </p><p class="a"> </p></body></html>"#;
+
+        let old_doc: Html = facet_html::from_str(old).unwrap();
+        let new_doc: Html = facet_html::from_str(new).unwrap();
+
+        let ops = tree_diff(&old_doc, &new_doc);
+        eprintln!("EditOps:");
+        for op in &ops {
+            eprintln!("  {:?}", op);
+        }
+
+        // The critical question: is there a Move operation?
+        // There should NOT be one - the text in old P should stay in place
+        let has_move = ops
+            .iter()
+            .any(|op| matches!(op, facet_diff::EditOp::Move { .. }));
+        if has_move {
+            eprintln!("ERROR: Move operation detected - this is the bug!");
+            eprintln!("The text ' ' in old <p> should match with text ' ' in new <p>[0].");
+            eprintln!("No Move should be needed.");
+        }
+
+        let patches = diff_html(old, new).unwrap();
+        eprintln!("Patches:");
+        for p in &patches {
+            eprintln!("  {:?}", p);
+        }
+
+        // Apply patches and verify
+        let mut tree = apply::parse_html(old).unwrap();
+        apply::apply_patches(&mut tree, &patches).unwrap();
+        let result = tree.to_html();
+
+        // The first <p> should remain, and a second <p class="a"> should be added
+        assert_eq!(result, r#"<body><p> </p><p class="a"> </p></body>"#);
     }
 }

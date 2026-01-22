@@ -287,6 +287,12 @@ fn match_subtrees<'a, K, L, P>(
     L: Clone + Facet<'a>,
     P: Properties,
 {
+    // Skip if either node is already matched (can happen if a descendant was
+    // matched earlier due to candidate processing order)
+    if matching.contains_a(a_id) || matching.contains_b(b_id) {
+        return;
+    }
+
     matching.add(a_id, b_id);
 
     // Match children in order (they should be identical if hashes match)
@@ -458,11 +464,12 @@ fn bottom_up_phase<'a, K, L, P>(
                 .filter(|&b_id| !matching.contains_b(b_id) && tree_b.get(b_id).kind == a_data.kind)
                 .collect();
 
-            // Prefer same position, otherwise take first match by kind
+            // Match by position - don't fall back to first candidate as that can cause
+            // incorrect matches between semantically different elements (e.g., two divs
+            // with different classes).
             let best = candidates
                 .iter()
                 .find(|&&b_id| tree_b.position(b_id) == a_pos)
-                .or_else(|| candidates.first())
                 .copied();
 
             if let Some(b_id) = best {

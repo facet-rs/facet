@@ -16,3 +16,4 @@ cc b3a5a95f7a8bbed81c99f849f202d47025c4b65d22a2074475c2ec9a5fa71e12 # shrinks to
 cc 348027b651884c505a3f174e7032b506f6ebf09e98c1efdfb181143bf8205f8e # shrinks to old_children = [Text("0")], new_children = [P { class: None, text: "a" }, Text("a")]
 cc e4dced26487b1489ccd3d19f105706b44f5af0d105219e0c90b70707c0273c4d # shrinks to node_a = Div { class: None, id: None, children: [Text(" "), P { class: None, text: "A" }] }, node_b = Div { class: None, id: None, children: [Text("0")] }
 cc 6d0b5531ed5636a6cd48d7000de3bb28e169135854df1ff00b6be562b0b037b1 # shrinks to old_children = [P { class: None, text: "A" }, Text("A")], new_children = [Text("a")]
+cc e1c6ec5cec3d34555c572ebed846b1687482051372a62e13a664135d9be632ff # shrinks to old_children = [P { class: None, text: " " }], new_children = [P { class: None, text: " " }, P { class: Some("a"), text: " " }]

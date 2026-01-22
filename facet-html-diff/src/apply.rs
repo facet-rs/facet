@@ -2,7 +2,7 @@
 //!
 //! For property testing: apply(A, diff(A, B)) == B
 
-use crate::{NodePath, Patch};
+use crate::{InsertContent, NodePath, Patch};
 use facet_xml_node::{Content, Element};
 use std::collections::HashMap;
 
@@ -76,13 +76,15 @@ fn apply_patch(
             parent,
             position,
             tag,
+            attrs,
+            children,
             detach_to_slot,
         } => {
-            // Create an empty element with the given tag
+            // Create element with its attrs and children
             let new_element = Element {
                 tag: tag.clone(),
-                attrs: std::collections::HashMap::new(),
-                children: Vec::new(),
+                attrs: attrs.iter().cloned().collect(),
+                children: children.iter().map(insert_content_to_content).collect(),
             };
             let new_content = Content::Element(new_element);
 
@@ -302,6 +304,22 @@ fn insert_at_position(
     Ok(())
 }
 
+/// Convert InsertContent to Content (facet_xml_node).
+fn insert_content_to_content(ic: &InsertContent) -> Content {
+    match ic {
+        InsertContent::Element {
+            tag,
+            attrs,
+            children,
+        } => Content::Element(Element {
+            tag: tag.clone(),
+            attrs: attrs.iter().cloned().collect(),
+            children: children.iter().map(insert_content_to_content).collect(),
+        }),
+        InsertContent::Text(s) => Content::Text(s.clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,6 +387,8 @@ mod tests {
                 parent: crate::NodeRef::Path(NodePath(vec![])),
                 position: 0,
                 tag: "p".to_string(),
+                attrs: vec![],
+                children: vec![],
                 detach_to_slot: Some(0), // Chawathe: displace First to slot 0
             }],
         )
@@ -387,11 +407,54 @@ mod tests {
                 parent: crate::NodeRef::Path(NodePath(vec![])),
                 position: 1, // Insert at index 1 (past last element)
                 tag: "p".to_string(),
+                attrs: vec![],
+                children: vec![],
                 detach_to_slot: None,
             }],
         )
         .unwrap();
         assert_eq!(node.to_html(), "<body><p>First</p><p></p></body>");
+    }
+
+    #[test]
+    fn test_apply_insert_element_with_children() {
+        // Insert element with text content
+        let mut node = parse_html("<html><body><p>First</p></body></html>").unwrap();
+        apply_patches(
+            &mut node,
+            &[Patch::InsertElement {
+                parent: crate::NodeRef::Path(NodePath(vec![])),
+                position: 1,
+                tag: "p".to_string(),
+                attrs: vec![],
+                children: vec![crate::InsertContent::Text("Second".to_string())],
+                detach_to_slot: None,
+            }],
+        )
+        .unwrap();
+        assert_eq!(node.to_html(), "<body><p>First</p><p>Second</p></body>");
+    }
+
+    #[test]
+    fn test_apply_insert_element_with_attrs() {
+        // Insert element with attribute
+        let mut node = parse_html("<html><body><p>First</p></body></html>").unwrap();
+        apply_patches(
+            &mut node,
+            &[Patch::InsertElement {
+                parent: crate::NodeRef::Path(NodePath(vec![])),
+                position: 1,
+                tag: "p".to_string(),
+                attrs: vec![("class".to_string(), "highlight".to_string())],
+                children: vec![crate::InsertContent::Text("Second".to_string())],
+                detach_to_slot: None,
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            node.to_html(),
+            "<body><p>First</p><p class=\"highlight\">Second</p></body>"
+        );
     }
 
     #[test]
