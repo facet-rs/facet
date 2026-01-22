@@ -58,3 +58,29 @@ See [`cinereus/CHAWATHE_SEMANTICS.md`](../cinereus/CHAWATHE_SEMANTICS.md) for th
 2. Compute structural diff using `cinereus` (GumTree matching + Chawathe edit script)
 3. Translate edit operations into DOM patches with slot-based displacement
 4. Apply via `apply_patches()` or serialize for browser use with `facet-html-diff-wasm`
+
+## Testing
+
+### Unit tests
+
+```bash
+cargo nextest run -p facet-html-diff
+```
+
+Roundtrip tests live in `tests/roundtrip-cases/*.html` with a simple format:
+
+```html
+<html><body><p>Hello</p></body></html>
+===
+<html><body><p>Goodbye</p></body></html>
+```
+
+### Fuzzing
+
+```bash
+cd facet-html-diff
+cargo +nightly fuzz run roundtrip
+```
+
+The fuzzer generates random HTML trees and verifies the roundtrip invariant:
+`apply(old, diff(old, new)) == new`

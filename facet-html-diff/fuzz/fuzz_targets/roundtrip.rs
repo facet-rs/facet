@@ -92,20 +92,12 @@ fuzz_target!(|input: FuzzInput| {
     let old_html = nodes_to_html(&input.old);
     let new_html = nodes_to_html(&input.new);
 
-    let Ok(patches) = facet_html_diff::diff_html(&old_html, &new_html) else {
-        return;
-    };
-    let Ok(mut tree) = facet_html_diff::parse_html(&old_html) else {
-        return;
-    };
-    let Ok(()) = facet_html_diff::apply_patches(&mut tree, &patches) else {
-        return;
-    };
+    let patches = facet_html_diff::diff_html(&old_html, &new_html).expect("diff failed");
+    let mut tree = facet_html_diff::parse_html(&old_html).expect("parse old failed");
+    facet_html_diff::apply_patches(&mut tree, &patches).expect("apply failed");
 
     let result = tree.to_html();
-    let Ok(expected_tree) = facet_html_diff::parse_html(&new_html) else {
-        return;
-    };
+    let expected_tree = facet_html_diff::parse_html(&new_html).expect("parse new failed");
     let expected = expected_tree.to_html();
 
     assert_eq!(
