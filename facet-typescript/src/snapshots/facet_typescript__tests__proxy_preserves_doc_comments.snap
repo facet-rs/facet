@@ -1,0 +1,13 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1033
+expression: ts
+---
+/**
+ * This is a point in 2D space.
+ * It has x and y coordinates.
+ */
+export interface Point {
+  x: number;
+  y: number;
+}

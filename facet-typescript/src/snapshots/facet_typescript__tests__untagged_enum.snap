@@ -1,0 +1,6 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 624
+expression: ts
+---
+export type Value = string | number;
