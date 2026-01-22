@@ -18,7 +18,7 @@ pub fn generate(schema: &SchemaFile, package_name: &str, output_dir: &str) -> Re
     for (name_opt, schema_type) in &schema.schema {
         let type_name = match name_opt {
             Some(name) => name.clone(),
-            None => "Config".to_string(), // Root type gets default name
+            None => "Root".to_string(), // Root type gets default name
         };
         mapper.register_type(&type_name, schema_type)?;
     }
@@ -366,19 +366,19 @@ fn generate_parse_file(
     writeln!(out, ")")?;
     writeln!(out)?;
 
-    // Find the root type - should be "Config" which is the default name for the @ type
+    // Find the root type - should be "Root" which is the default name for the @ type
     let root_type = mapper
         .types()
-        .get("Config")
+        .get("Root")
         .and_then(|go_type| {
             if matches!(go_type, GoType::Struct { .. }) {
-                Some("Config")
+                Some("Root")
             } else {
                 None
             }
         })
         .or_else(|| {
-            // Fallback: find any struct type if "Config" doesn't exist
+            // Fallback: find any struct type if "Root" doesn't exist
             mapper.types().iter().find_map(|(name, go_type)| {
                 if matches!(go_type, GoType::Struct { .. }) {
                     Some(name.as_str())
