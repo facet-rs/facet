@@ -4,6 +4,7 @@ version = "1.0.0"
 edition.workspace = true
 description = "Serde support for the Styx configuration language"
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 serde = "1.0"

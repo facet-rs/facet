@@ -2,6 +2,9 @@
 name = "styx-gen-go"
 version = "1.0.0"
 edition.workspace = true
+description = "Go code generator for Styx schemas"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 facet-styx.workspace = true
