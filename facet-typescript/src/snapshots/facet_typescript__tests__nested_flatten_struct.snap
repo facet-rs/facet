@@ -1,0 +1,10 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts
+---
+export interface Outer {
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+}
