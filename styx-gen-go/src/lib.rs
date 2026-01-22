@@ -366,14 +366,27 @@ fn generate_parse_file(
     writeln!(out, ")")?;
     writeln!(out)?;
 
-    // Find the root type (if any)
-    let root_type = mapper.types().iter().find_map(|(name, go_type)| {
-        if matches!(go_type, GoType::Struct { .. }) {
-            Some(name.as_str())
-        } else {
-            None
-        }
-    });
+    // Find the root type - should be "Config" which is the default name for the @ type
+    let root_type = mapper
+        .types()
+        .get("Config")
+        .and_then(|go_type| {
+            if matches!(go_type, GoType::Struct { .. }) {
+                Some("Config")
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            // Fallback: find any struct type if "Config" doesn't exist
+            mapper.types().iter().find_map(|(name, go_type)| {
+                if matches!(go_type, GoType::Struct { .. }) {
+                    Some(name.as_str())
+                } else {
+                    None
+                }
+            })
+        });
 
     if let Some(root_type) = root_type {
         // LoadFromFile helper
