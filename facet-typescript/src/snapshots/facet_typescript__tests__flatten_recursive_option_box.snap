@@ -1,0 +1,8 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1237
+expression: ts
+---
+export interface Node {
+  value: number;
+}

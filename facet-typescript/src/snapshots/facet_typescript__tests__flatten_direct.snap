@@ -1,0 +1,10 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 994
+expression: ts_direct
+---
+export interface FlattenDirect {
+  name: string;
+  x: number;
+  y: number;
+}
