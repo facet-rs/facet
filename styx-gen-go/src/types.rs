@@ -103,7 +103,13 @@ impl TypeMapper {
                 for (documented_key, field_schema) in &obj_schema.0 {
                     let key = documented_key.value();
                     if let Some(field_name) = &key.value {
-                        let field_doc = documented_key.doc.as_ref().map(|lines| lines.join(" "));
+                        let field_doc = documented_key.doc.as_ref().map(|lines| {
+                            lines
+                                .iter()
+                                .map(|line| line.strip_prefix(' ').unwrap_or(line))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        });
                         let field =
                             self.map_field(parent_name, field_name, field_schema, field_doc)?;
                         struct_fields.push(field);
@@ -150,7 +156,13 @@ impl TypeMapper {
                     .keys()
                     .map(|documented_name| EnumVariant {
                         name: documented_name.value().clone(),
-                        doc: documented_name.doc().map(|lines| lines.join("\n")),
+                        doc: documented_name.doc().map(|lines| {
+                            lines
+                                .iter()
+                                .map(|line| line.strip_prefix(' ').unwrap_or(line))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        }),
                     })
                     .collect();
                 Ok(GoType::Enum {
