@@ -3,33 +3,54 @@
 //! This module provides the bridge between facet-reflect's `Peek` and
 //! cinereus's tree diffing algorithm.
 
+/// Property key for node properties (tag, text, or named attributes).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, facet::Facet)]
+#[repr(u8)]
+pub enum PropKey {
+    /// The tag name (e.g., HTML element tag like "div", "span").
+    Tag,
+    /// Text content of the node.
+    Text,
+    /// A named attribute (e.g., "id", "class", "href").
+    Attr(String),
+}
+
+impl std::fmt::Display for PropKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PropKey::Tag => write!(f, "tag"),
+            PropKey::Text => write!(f, "text"),
+            PropKey::Attr(name) => write!(f, "@{}", name),
+        }
+    }
+}
+
+impl From<&str> for PropKey {
+    fn from(s: &str) -> Self {
+        PropKey::Attr(s.to_string())
+    }
+}
+
+impl From<String> for PropKey {
+    fn from(s: String) -> Self {
+        PropKey::Attr(s)
+    }
+}
+
 #[cfg(feature = "matching-stats")]
 pub use cinereus::matching::{
     get_stats as get_matching_stats, reset_stats as reset_matching_stats,
 };
 
-#[cfg(feature = "tracing")]
-use tracing::debug;
-
-#[cfg(feature = "tracing")]
-use tracing::trace;
-
-#[cfg(not(feature = "tracing"))]
-macro_rules! debug {
-    ($($arg:tt)*) => {};
-}
-
-#[cfg(not(feature = "tracing"))]
-macro_rules! trace {
-    ($($arg:tt)*) => {};
-}
+use crate::{debug, trace, trace_verbose};
 
 use core::hash::{Hash, Hasher};
 use std::borrow::Cow;
 use std::hash::DefaultHasher;
 
 use cinereus::{
-    EditOp as CinereusEditOp, Matching, MatchingConfig, NodeData, Tree, diff_trees_with_matching,
+    EditOp as CinereusEditOp, Matching, MatchingConfig, NodeData, Tree, TreeTypes,
+    diff_trees_with_matching,
     indextree::{self, NodeId},
     tree::{Properties, PropertyChange},
 };
@@ -56,79 +77,120 @@ pub enum NodeKind {
     Scalar(&'static str),
 }
 
+impl std::fmt::Display for NodeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeKind::Struct(name) => write!(f, "struct {}", name),
+            NodeKind::EnumVariant(enum_name, variant) => write!(f, "{}::{}", enum_name, variant),
+            NodeKind::List(name) => write!(f, "list<{}>", name),
+            NodeKind::Map(name) => write!(f, "map<{}>", name),
+            NodeKind::Option(name) => write!(f, "option<{}>", name),
+            NodeKind::Scalar(name) => write!(f, "{}", name),
+        }
+    }
+}
+
 /// Label for a node (the actual value for leaves).
-#[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, facet::Facet)]
 pub struct NodeLabel {
     /// The path to this node from the root.
     pub path: Path,
 }
 
-/// An edit operation in the diff.
+impl std::fmt::Display for NodeLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.path)
+    }
+}
+
+/// Property value wrapper that implements Display.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PropValue(pub Option<String>);
+
+impl PropValue {
+    /// Get the inner `Option<String>`.
+    pub fn inner(&self) -> &Option<String> {
+        &self.0
+    }
+
+    /// Unwrap into the inner `Option<String>`.
+    pub fn into_inner(self) -> Option<String> {
+        self.0
+    }
+}
+
+impl std::fmt::Display for PropValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some(s) => write!(f, "{}", s),
+            None => write!(f, "none"),
+        }
+    }
+}
+
+impl From<Option<String>> for PropValue {
+    fn from(v: Option<String>) -> Self {
+        PropValue(v)
+    }
+}
+
+impl From<PropValue> for Option<String> {
+    fn from(v: PropValue) -> Self {
+        v.0
+    }
+}
+
+/// Tree type bundle for facet-diff trees.
+pub struct FacetTreeTypes;
+
+impl TreeTypes for FacetTreeTypes {
+    type Kind = NodeKind;
+    type Label = NodeLabel;
+    type Props = Props;
+}
+
+/// An edit operation that transforms tree_a (old) into tree_b (new).
 ///
 /// Each operation is self-contained with all information needed to apply it.
 /// Consumers do not have access to the original trees.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EditOp {
-    /// A value was updated (matched but content differs).
-    Update {
-        /// The path to the updated node
+    /// Attributes changed on a node that exists in both trees.
+    UpdateAttributes {
+        /// Path to the node (same in both trees since the node matched)
         path: Path,
-        /// The old value (for display/verification), None for containers
-        old_value: Option<String>,
-        /// The new value to set, None for containers
-        new_value: Option<String>,
-        /// Hash of the old value
-        old_hash: u64,
-        /// Hash of the new value
-        new_hash: u64,
+        /// The attribute changes (old_value → new_value)
+        changes: Vec<AttributeChange>,
     },
-    /// An attribute (property) was updated on a matched node.
-    UpdateAttribute {
-        /// The path to the node containing the attribute
-        path: Path,
-        /// The attribute name (field name)
-        attr_name: &'static str,
-        /// The old value (None if attribute was absent)
-        old_value: Option<String>,
-        /// The new value (None if attribute is being removed)
-        new_value: Option<String>,
-    },
-    /// A node was inserted in tree B.
+    /// A node from tree_b (new) needs to be inserted.
     /// In Chawathe semantics, Insert does NOT shift - it places at a position
     /// and whatever was there gets displaced (detached to a slot for later reinsertion).
     Insert {
-        /// The parent node - either a path in the tree or a slot number
+        /// Where to insert: parent node in tree_a (old), or a slot
         parent: NodeRef,
-        /// The position within the parent's children
+        /// Position within the parent's children
         position: usize,
-        /// The path in tree_b coordinates (for navigating new_doc to get content)
-        label_path: Path,
-        /// The value to insert (for leaf nodes), None for containers
+        /// Path in tree_b (new) - use this to get the content to insert
+        path: Path,
+        /// For leaf nodes: the text value to insert. None for containers.
         value: Option<String>,
-        /// If Some, the displaced node goes to this slot
+        /// If Some, the displaced node at this position goes to this slot
         detach_to_slot: Option<u32>,
-        /// Hash of the inserted value
-        hash: u64,
     },
-    /// A node was deleted from tree A.
+    /// A node from tree_a (old) needs to be deleted.
     Delete {
-        /// The node to delete - either at a path or in a slot
+        /// The node to delete in tree_a (old), or from a slot
         node: NodeRef,
-        /// Hash of the deleted value
-        hash: u64,
     },
-    /// A node was moved from one location to another.
-    /// If `detach_to_slot` is Some, the node at `new_path` is detached and stored in that slot.
+    /// A node needs to move from one location to another.
     Move {
-        /// The source - either a path or a slot number
+        /// Source: where the node is in tree_a (old), or a slot
         from: NodeRef,
-        /// The target path
-        to: Path,
-        /// If Some, the displaced node goes to this slot
+        /// Destination: where it should go (tree_a path or slot-relative)
+        to: NodeRef,
+        /// If Some, the displaced node at the destination goes to this slot
         detach_to_slot: Option<u32>,
-        /// Hash of the moved value
-        hash: u64,
     },
 }
 
@@ -137,42 +199,90 @@ pub enum EditOp {
 pub enum NodeRef {
     /// Node at a path in the tree
     Path(Path),
-    /// Node in a slot (previously detached)
-    Slot(u32),
+    /// Node in a slot (previously detached).
+    /// The optional path is relative to the slot root - used when the target
+    /// is nested inside the detached subtree.
+    Slot(u32, Option<Path>),
 }
 
-/// Properties for HTML/XML nodes: attribute key-value pairs.
+/// A single attribute change within an UpdateAttributes operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttributeChange {
+    /// The property key
+    pub key: PropKey,
+    /// The old value (None if attribute was absent)
+    pub old_value: Option<String>,
+    /// The new value (None if attribute is being removed)
+    pub new_value: Option<String>,
+}
+
+/// Node properties: key-value pairs for fields marked with `#[facet(attribute)]` or `#[facet(text)]`.
 ///
-/// These are fields marked with `#[facet(html::attribute)]` or `#[facet(xml::attribute)]`.
-/// They are diffed field-by-field when nodes match, avoiding the cross-matching problem
+/// Properties are diffed field-by-field when nodes match, avoiding the cross-matching problem
 /// where identical Option values (like None) get matched across different fields.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct HtmlProperties {
-    /// Attribute values keyed by field name.
-    /// Values are stored as `Option<String>` to handle both present and absent attributes.
-    pub attrs: HashMap<&'static str, Option<String>>,
+pub struct Props {
+    /// Property values keyed by PropKey.
+    pub props: HashMap<PropKey, PropValue>,
 }
 
-impl HtmlProperties {
+impl Props {
     /// Create empty properties.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Set an attribute value.
-    pub fn set(&mut self, key: &'static str, value: Option<String>) {
-        self.attrs.insert(key, value);
+    /// Get a property value.
+    pub fn get(&self, key: impl Into<PropKey>) -> Option<&PropValue> {
+        self.props.get(&key.into())
+    }
+
+    /// Check if a property exists.
+    pub fn contains(&self, key: impl Into<PropKey>) -> bool {
+        self.props.contains_key(&key.into())
+    }
+
+    /// Set a property value.
+    pub fn set(&mut self, key: PropKey, value: Option<String>) {
+        self.props.insert(key, PropValue(value));
+    }
+
+    /// Set a named attribute.
+    pub fn set_attr(&mut self, name: impl Into<String>, value: Option<String>) {
+        self.props
+            .insert(PropKey::Attr(name.into()), PropValue(value));
     }
 }
 
-impl Properties for HtmlProperties {
-    type Key = &'static str;
-    type Value = Option<String>;
+impl Properties for Props {
+    type Key = PropKey;
+    type Value = PropValue;
 
     fn similarity(&self, other: &Self) -> f64 {
-        // Count matching attributes
-        let all_keys: std::collections::HashSet<_> =
-            self.attrs.keys().chain(other.attrs.keys()).collect();
+        // If Tag differs, elements are not similar at all (can't change tag name in DOM)
+        // This is for HTML elements where the tag name is semantic identity.
+        let self_tag = self.props.get(&PropKey::Tag);
+        let other_tag = other.props.get(&PropKey::Tag);
+
+        match (self_tag, other_tag) {
+            // Both have Tag - compare them (HTML elements)
+            (Some(a), Some(b)) if a != b => return 0.0,
+            // Only one has Tag - incompatible
+            (Some(_), None) | (None, Some(_)) => return 0.0,
+            // Neither has Tag - this is a regular Rust struct, same type = same identity
+            // Return 1.0 because the NodeKind already ensures type compatibility
+            (None, None) => return 1.0,
+            // Both have same Tag - continue to attribute comparison
+            _ => {}
+        }
+
+        // Count matching attributes (excluding Tag which we already checked)
+        let all_keys: std::collections::HashSet<_> = self
+            .props
+            .keys()
+            .chain(other.props.keys())
+            .filter(|k| !matches!(k, PropKey::Tag))
+            .collect();
 
         if all_keys.is_empty() {
             return 1.0; // Both empty = perfect match
@@ -180,7 +290,7 @@ impl Properties for HtmlProperties {
 
         let mut matches = 0;
         for key in &all_keys {
-            if self.attrs.get(*key) == other.attrs.get(*key) {
+            if self.props.get(*key) == other.props.get(*key) {
                 matches += 1;
             }
         }
@@ -192,11 +302,11 @@ impl Properties for HtmlProperties {
         let mut changes = Vec::new();
 
         // Check all keys in self
-        for (key, old_value) in &self.attrs {
-            let new_value = other.attrs.get(key);
+        for (key, old_value) in &self.props {
+            let new_value = other.props.get(key);
             if new_value != Some(old_value) {
                 changes.push(PropertyChange {
-                    key: *key,
+                    key: key.clone(),
                     old_value: Some(old_value.clone()),
                     new_value: new_value.cloned(),
                 });
@@ -204,10 +314,10 @@ impl Properties for HtmlProperties {
         }
 
         // Check keys only in other (additions)
-        for (key, new_value) in &other.attrs {
-            if !self.attrs.contains_key(key) {
+        for (key, new_value) in &other.props {
+            if !self.props.contains_key(key) {
                 changes.push(PropertyChange {
-                    key: *key,
+                    key: key.clone(),
                     old_value: None,
                     new_value: Some(new_value.clone()),
                 });
@@ -218,12 +328,12 @@ impl Properties for HtmlProperties {
     }
 
     fn is_empty(&self) -> bool {
-        self.attrs.is_empty()
+        self.props.is_empty()
     }
 }
 
 /// A tree built from a Peek value, ready for diffing.
-pub type FacetTree = Tree<NodeKind, NodeLabel, HtmlProperties>;
+pub type FacetTree = Tree<FacetTreeTypes>;
 
 /// Build a cinereus tree from a Peek value.
 pub fn build_tree<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> FacetTree {
@@ -236,7 +346,7 @@ pub fn build_tree<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> FacetTree {
 }
 
 struct TreeBuilder {
-    arena: cinereus::indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    arena: cinereus::indextree::Arena<NodeData<FacetTreeTypes>>,
 }
 
 impl TreeBuilder {
@@ -254,7 +364,7 @@ impl TreeBuilder {
         // Compute structural hash
         let mut hasher = DefaultHasher::new();
         peek.structural_hash(&mut hasher);
-        let hash = hasher.finish();
+        let hash = cinereus::NodeHash(hasher.finish());
 
         // Determine the node kind
         let kind = self.determine_kind(peek);
@@ -280,12 +390,12 @@ impl TreeBuilder {
     }
 
     /// Collect attribute fields as properties.
-    fn collect_properties<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> HtmlProperties {
-        let mut props = HtmlProperties::new();
+    fn collect_properties<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> Props {
+        let mut props = Props::new();
         self.collect_properties_recursive(peek, &mut props);
-        trace!(
+        trace_verbose!(
             shape = peek.shape().type_identifier,
-            props_count = props.attrs.len(),
+            props_count = props.props.len(),
             "collect_properties result"
         );
         props
@@ -295,9 +405,9 @@ impl TreeBuilder {
     fn collect_properties_recursive<'mem, 'facet>(
         &self,
         peek: Peek<'mem, 'facet>,
-        props: &mut HtmlProperties,
+        props: &mut Props,
     ) {
-        trace!(
+        trace_verbose!(
             shape = peek.shape().type_identifier,
             "collect_properties_recursive"
         );
@@ -307,11 +417,20 @@ impl TreeBuilder {
                 if let Ok(s) = peek.into_struct() {
                     for (field, field_peek) in s.fields() {
                         if field.is_attribute() {
-                            let value = self.extract_attribute_value(field_peek);
-                            // trace!(field = field.name, ?value, "found attribute field");
-                            props.set(field.name, value);
+                            if let Ok(value) = self.extract_attribute_value(field_peek) {
+                                props.set_attr(field.name, value);
+                            }
+                        } else if field.is_text() {
+                            // Text content stored as Text property
+                            if let Ok(value) = self.extract_attribute_value(field_peek) {
+                                props.set(PropKey::Text, value);
+                            }
+                        } else if field.is_tag() {
+                            // Tag field stored as Tag property for element matching
+                            if let Some(tag) = field_peek.as_str() {
+                                props.set(PropKey::Tag, Some(tag.to_string()));
+                            }
                         } else if field.is_flattened() {
-                            // trace!(field = field.name, "recursing into flattened field");
                             self.collect_properties_recursive(field_peek, props);
                         }
                     }
@@ -327,23 +446,42 @@ impl TreeBuilder {
                     }
                 }
             }
-            _ => {}
+            _ => {
+                // Handle flattened maps (like HashMap<String, String> for attributes)
+                if let Def::Map(_) = &peek.shape().def
+                    && let Ok(map) = peek.into_map()
+                {
+                    for (k, v) in map.iter() {
+                        if let Some(key) = k.as_str() {
+                            let value = v.as_str().map(|s| s.to_string());
+                            props.set_attr(key, value);
+                        }
+                    }
+                    return;
+                }
+                // For scalar values, store as Text property using Display
+                // This handles strings, numbers, bools, etc.
+                props.set(PropKey::Text, Some(format!("{}", peek)));
+            }
         }
     }
 
     /// Extract an attribute value as `Option<String>`.
-    fn extract_attribute_value<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> Option<String> {
+    fn extract_attribute_value<'mem, 'facet>(
+        &self,
+        peek: Peek<'mem, 'facet>,
+    ) -> Result<Option<String>, String> {
         // Handle Option<T> by unwrapping
         if let Ok(opt) = peek.into_option() {
             if let Some(inner) = opt.value() {
-                return inner.as_str().map(|s| s.to_string());
+                return Ok(inner.as_str().map(|s| s.to_string()));
             } else {
-                return None;
+                return Ok(None);
             }
         }
 
         // Direct string value
-        peek.as_str().map(|s| s.to_string())
+        Ok(peek.as_str().map(|s| s.to_string()))
     }
 
     fn determine_kind<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> NodeKind {
@@ -386,6 +524,10 @@ impl TreeBuilder {
                         if field.is_attribute() {
                             continue;
                         }
+                        // Skip tag fields - they're stored as properties for matching, not as children
+                        if field.is_tag() {
+                            continue;
+                        }
                         // For flattened fields, we need to decide based on what they contain:
                         // - Flattened structs (like GlobalAttrs) contain attributes -> skip as tree node
                         //   (their attributes are collected as properties on the parent)
@@ -417,6 +559,12 @@ impl TreeBuilder {
                 if let Ok(e) = peek.into_enum()
                     && let Ok(variant) = e.active_variant()
                 {
+                    // Text variants (like FlowContent::Text) store their content as _text property
+                    // Don't create child nodes for them - they're leaf nodes
+                    if variant.is_text() {
+                        return;
+                    }
+
                     let variant_path = path.with(PathSegment::Variant(Cow::Borrowed(variant.name)));
                     for (i, (field, field_peek)) in e.fields().enumerate() {
                         let child_path = if variant.data.kind == StructKind::Struct {
@@ -481,15 +629,6 @@ pub fn tree_diff<'a, 'f, A: facet_core::Facet<'f>, B: facet_core::Facet<'f>>(
 
     let config = MatchingConfig::default();
     let (cinereus_ops, matching) = diff_trees_with_matching(&tree_a, &tree_b, &config);
-
-    debug!(
-        cinereus_ops_count = cinereus_ops.len(),
-        "cinereus ops before conversion"
-    );
-    #[allow(clippy::unused_enumerate_index)]
-    for (_i, _op) in cinereus_ops.iter().enumerate() {
-        debug!(_i, %_op, "cinereus op");
-    }
 
     // Convert cinereus ops to path-based EditOps using a shadow tree
     // to track index shifts as operations are applied.
@@ -622,42 +761,73 @@ fn extract_value_at_path<'mem, 'facet>(
     peek.as_str().map(|s| s.to_string())
 }
 
-/// Format the shadow tree for debugging.
+/// Format the shadow tree for debugging with colors.
 #[allow(dead_code, clippy::only_used_in_recursion)]
 fn format_shadow_tree(
-    arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
-    root: NodeId,
+    arena: &indextree::Arena<NodeData<FacetTreeTypes>>,
+    _root: NodeId,
     node: NodeId,
     depth: usize,
 ) -> String {
+    use std::fmt::Write;
+
+    // ANSI color codes
+    const DIM: &str = "\x1b[2m";
+    const CYAN: &str = "\x1b[36m";
+    const YELLOW: &str = "\x1b[33m";
+    const GREEN: &str = "\x1b[32m";
+    const MAGENTA: &str = "\x1b[35m";
+    const RESET: &str = "\x1b[0m";
+
     let mut out = String::new();
     let indent = "  ".repeat(depth);
 
     if let Some(node_ref) = arena.get(node) {
         let data = node_ref.get();
-        let kind_str = match &data.kind {
-            NodeKind::Struct(name) => format!("Struct({name})"),
-            NodeKind::EnumVariant(e, v) => format!("Variant({e}::{v})"),
-            NodeKind::List(name) => format!("List({name})"),
-            NodeKind::Map(name) => format!("Map({name})"),
-            NodeKind::Option(name) => format!("Option({name})"),
-            NodeKind::Scalar(name) => format!("Scalar({name})"),
-        };
-        let label_str = data
+
+        // Get the last path segment to show what this node adds
+        let segment_str = data
             .label
             .as_ref()
-            .map(|l| format!(" path={:?}", l.path))
+            .and_then(|l| l.path.0.last())
+            .map(|seg| match seg {
+                PathSegment::Field(name) => format!("{CYAN}.{name}{RESET}"),
+                PathSegment::Index(idx) => format!("{YELLOW}[{idx}]{RESET}"),
+                PathSegment::Key(key) => format!("{YELLOW}[{key:?}]{RESET}"),
+                PathSegment::Variant(name) => format!("{MAGENTA}::{name}{RESET}"),
+            })
             .unwrap_or_default();
 
-        out.push_str(&format!(
-            "{indent}[{id}] {kind}{label}\n",
+        // Format the kind, showing type name for containers
+        let kind_str = match &data.kind {
+            NodeKind::Struct(name) => format!(" {MAGENTA}{name}{RESET}"),
+            NodeKind::EnumVariant(_, v) => format!(" {MAGENTA}::{v}{RESET}"),
+            NodeKind::List(_) => format!(" {DIM}[]{RESET}"),
+            NodeKind::Map(_) => format!(" {DIM}{{}}{RESET}"),
+            NodeKind::Option(_) => format!(" {DIM}?{RESET}"),
+            NodeKind::Scalar(_) => String::new(),
+        };
+
+        // Get Text value for scalars
+        let value_str = data
+            .properties
+            .props
+            .get(&PropKey::Text)
+            .and_then(|v| v.0.as_ref())
+            .map(|v| format!(" = {GREEN}{v:?}{RESET}"))
+            .unwrap_or_default();
+
+        let _ = writeln!(
+            out,
+            "{indent}{DIM}[{id}]{RESET} {segment}{kind}{value}",
             id = usize::from(node),
+            segment = segment_str,
             kind = kind_str,
-            label = label_str
-        ));
+            value = value_str
+        );
 
         for child in node.children(arena) {
-            out.push_str(&format_shadow_tree(arena, root, child, depth + 1));
+            out.push_str(&format_shadow_tree(arena, _root, child, depth + 1));
         }
     }
 
@@ -673,11 +843,11 @@ fn format_shadow_tree(
 /// The peeks are used to extract actual values for leaf nodes, making
 /// the resulting EditOps self-contained.
 fn convert_ops_with_shadow<'mem, 'facet>(
-    ops: Vec<CinereusEditOp<NodeKind, NodeLabel, HtmlProperties>>,
+    ops: Vec<CinereusEditOp<FacetTreeTypes>>,
     tree_a: &FacetTree,
     tree_b: &FacetTree,
     matching: &Matching,
-    peek_a: Peek<'mem, 'facet>,
+    _peek_a: Peek<'mem, 'facet>,
     peek_b: Peek<'mem, 'facet>,
 ) -> Vec<EditOp> {
     // Shadow tree: mutable clone of tree_a's structure
@@ -700,93 +870,40 @@ fn convert_ops_with_shadow<'mem, 'facet>(
     let mut next_slot: u32 = 0;
 
     debug!(
-        "SHADOW TREE INITIAL STATE:\n{}",
-        format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+        tree = %format!("\n{}", format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)),
+        "shadow tree initial state"
     );
 
     // Process operations in cinereus order.
     // For each op: update shadow tree first, THEN compute paths from updated tree.
     for op in ops {
         match op {
-            CinereusEditOp::Update {
-                node_a,
-                node_b,
-                old_label: _,
-                new_label: _,
-            } => {
-                // Path for applying the patch comes from shadow tree (current position in DOM)
-                let mut path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
-
-                // Extract actual values using the stored paths in tree labels
-                let old_path = tree_a.get(node_a).label.as_ref().map(|l| &l.path);
-                let new_path_in_b = tree_b.get(node_b).label.as_ref().map(|l| &l.path);
-
-                let old_value = old_path.and_then(|p| extract_value_at_path(peek_a, p));
-                let new_value = new_path_in_b.and_then(|p| extract_value_at_path(peek_b, p));
-                debug!(
-                    ?old_path,
-                    ?new_path_in_b,
-                    ?old_value,
-                    ?new_value,
-                    "Update op values"
-                );
-
-                // For struct field changes (e.g., attribute fields like id->class),
-                // replace the last segment with the new field name.
-                // This preserves the position but updates the field name.
-                if let (Some(old_p), Some(new_p)) = (old_path, new_path_in_b)
-                    && let (
-                        Some(PathSegment::Field(old_field)),
-                        Some(PathSegment::Field(new_field)),
-                    ) = (old_p.0.last(), new_p.0.last())
-                    && old_field != new_field
-                    && !path.0.is_empty()
-                    && let Some(PathSegment::Field(_)) = path.0.last()
-                {
-                    // Replace the last field segment with the new field name
-                    path.0.pop();
-                    path.0.push(PathSegment::Field(new_field.clone()));
-                }
-
-                debug!(?path, ?old_value, ?new_value, "emitting EditOp::Update");
-                result.push(EditOp::Update {
-                    path,
-                    old_value,
-                    new_value,
-                    old_hash: tree_a.get(node_a).hash,
-                    new_hash: tree_b.get(node_b).hash,
-                });
-                // No structural change for Update
-            }
-
-            CinereusEditOp::UpdateProperty {
+            CinereusEditOp::UpdateProperties {
                 node_a,
                 node_b: _,
-                key,
-                old_value,
-                new_value,
+                changes,
             } => {
-                // Path to the node containing the attribute
+                // Path to the node containing the attributes
                 let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
 
-                // Flatten Option<Option<String>> to Option<String>
-                let old_value = old_value.flatten();
-                let new_value = new_value.flatten();
+                // Convert cinereus PropertyChange to our AttributeChange
+                let changes: Vec<AttributeChange> = changes
+                    .into_iter()
+                    .map(|c| AttributeChange {
+                        key: c.key,
+                        // Unwrap Option<PropValue> to Option<String>
+                        old_value: c.old_value.and_then(|v| v.into_inner()),
+                        new_value: c.new_value.and_then(|v| v.into_inner()),
+                    })
+                    .collect();
 
                 debug!(
-                    ?path,
-                    ?key,
-                    ?old_value,
-                    ?new_value,
-                    "emitting EditOp::UpdateAttribute"
+                    %path,
+                    num_changes = changes.len(),
+                    "emitting EditOp::UpdateAttributes"
                 );
-                result.push(EditOp::UpdateAttribute {
-                    path,
-                    attr_name: key,
-                    old_value,
-                    new_value,
-                });
-                // No structural change for UpdateAttribute
+                result.push(EditOp::UpdateAttributes { path, changes });
+                // No structural change for UpdateAttributes
             }
 
             CinereusEditOp::Insert {
@@ -796,17 +913,22 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 label,
                 ..
             } => {
-                debug!(?node_b, ?parent_b, position, "INSERT: starting");
+                debug!(
+                    node_b = usize::from(node_b),
+                    parent_b = usize::from(parent_b),
+                    position,
+                    "INSERT: starting"
+                );
 
                 // Find the parent in our shadow tree
                 let shadow_parent = b_to_shadow.get(&parent_b).copied().unwrap_or(shadow_root);
 
                 // Create a new node in shadow tree
-                let new_data: NodeData<NodeKind, NodeLabel, HtmlProperties> = NodeData {
-                    hash: 0,
+                let new_data: NodeData<FacetTreeTypes> = NodeData {
+                    hash: cinereus::NodeHash(0),
                     kind: NodeKind::Scalar("inserted"),
                     label: label.clone(),
-                    properties: HtmlProperties::new(),
+                    properties: Props::new(),
                 };
                 let new_node = shadow_arena.new_node(new_data);
 
@@ -819,7 +941,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     let occupant_slot = next_slot;
                     next_slot += 1;
                     debug!(
-                        ?occupant,
+                        occupant = usize::from(occupant),
                         occupant_slot, "INSERT: will detach occupant to slot"
                     );
                     // Insert new_node before occupant, then detach occupant
@@ -839,12 +961,12 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 // We need to check if the parent OR any ancestor is detached
                 let parent = if let Some(&slot) = detached_nodes.get(&shadow_parent) {
                     // Parent is directly in a slot
-                    NodeRef::Slot(slot)
-                } else if let Some(slot) =
+                    NodeRef::Slot(slot, None)
+                } else if let Some((slot, relative_path)) =
                     find_detached_ancestor(&shadow_arena, shadow_parent, &detached_nodes)
                 {
-                    // An ancestor is in a slot
-                    NodeRef::Slot(slot)
+                    // An ancestor is in a slot - include the relative path to the parent
+                    NodeRef::Slot(slot, relative_path)
                 } else {
                     // Parent is in the tree - compute its path
                     let parent_path =
@@ -852,29 +974,28 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     NodeRef::Path(parent_path)
                 };
 
-                // Extract value for leaf nodes using the tree_b label path
-                let label_path = tree_b
+                // Extract value for leaf nodes using the tree_b path
+                let path = tree_b
                     .get(node_b)
                     .label
                     .as_ref()
                     .map(|l| l.path.clone())
                     .unwrap_or_else(|| Path(vec![]));
-                let value = extract_value_at_path(peek_b, &label_path);
+                let value = extract_value_at_path(peek_b, &path);
 
                 let edit_op = EditOp::Insert {
                     parent,
                     position,
-                    label_path,
+                    path,
                     value,
                     detach_to_slot,
-                    hash: tree_b.get(node_b).hash,
                 };
                 debug!(?edit_op, "emitting Insert");
                 result.push(edit_op);
 
                 debug!(
-                    "SHADOW TREE AFTER INSERT:\n{}",
-                    format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+                    tree = %format!("\n{}", format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)),
+                    "shadow tree after insert"
                 );
             }
 
@@ -882,41 +1003,37 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 // Check if the node or any ancestor is currently detached (in a slot)
                 let node = if let Some(slot) = detached_nodes.remove(&node_a) {
                     // Node is directly in a slot - delete from slot
-                    NodeRef::Slot(slot)
-                } else if let Some(slot) =
+                    NodeRef::Slot(slot, None)
+                } else if let Some((slot, relative_path)) =
                     find_detached_ancestor(&shadow_arena, node_a, &detached_nodes)
                 {
                     // An ancestor is in a slot - the node is inside a detached subtree
                     // It will be deleted when the slot is cleared or the subtree is replaced
-                    NodeRef::Slot(slot)
+                    NodeRef::Slot(slot, relative_path)
                 } else {
                     // Node is in the tree - delete from path
                     let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
                     // Swap with placeholder (insert placeholder before, then detach)
                     // This prevents shifting of siblings.
-                    let placeholder_data: NodeData<NodeKind, NodeLabel, HtmlProperties> =
-                        NodeData {
-                            hash: 0,
-                            kind: NodeKind::Scalar("placeholder"),
-                            label: None,
-                            properties: HtmlProperties::new(),
-                        };
+                    let placeholder_data: NodeData<FacetTreeTypes> = NodeData {
+                        hash: cinereus::NodeHash(0),
+                        kind: NodeKind::Scalar("placeholder"),
+                        label: None,
+                        properties: Props::new(),
+                    };
                     let placeholder = shadow_arena.new_node(placeholder_data);
                     node_a.insert_before(placeholder, &mut shadow_arena);
                     node_a.detach(&mut shadow_arena);
                     NodeRef::Path(path)
                 };
 
-                let edit_op = EditOp::Delete {
-                    node,
-                    hash: tree_a.get(node_a).hash,
-                };
+                let edit_op = EditOp::Delete { node };
                 debug!(?edit_op, "emitting Delete");
                 result.push(edit_op);
 
                 debug!(
-                    "SHADOW TREE AFTER DELETE:\n{}",
-                    format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+                    tree = %format!("\n{}", format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)),
+                    "shadow tree after delete"
                 );
             }
 
@@ -927,18 +1044,26 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 new_position,
             } => {
                 debug!(
-                    ?node_a,
-                    ?node_b,
-                    ?new_parent_b,
+                    node_a = usize::from(node_a),
+                    node_b = usize::from(node_b),
+                    new_parent_b = usize::from(new_parent_b),
                     new_position,
                     "MOVE: starting"
                 );
 
                 // Find new parent in shadow tree
-                let shadow_new_parent = b_to_shadow
-                    .get(&new_parent_b)
-                    .copied()
-                    .unwrap_or(shadow_root);
+                let shadow_new_parent =
+                    b_to_shadow.get(&new_parent_b).copied().unwrap_or_else(|| {
+                        // new_parent_b is not in b_to_shadow - this shouldn't happen after matching fixes.
+                        // If this occurs, cinereus should have skipped this Move because parent_b is unmatched.
+                        debug!(
+                            new_parent_b = usize::from(new_parent_b),
+                            node_a = usize::from(node_a),
+                            node_b = usize::from(node_b),
+                            "WARNING: new_parent_b not in b_to_shadow, falling back to shadow_root"
+                        );
+                        shadow_root
+                    });
 
                 // Check if the node is currently detached (in limbo)
                 let is_detached = detached_nodes.contains_key(&node_a);
@@ -946,19 +1071,18 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 // Determine the source for the Move
                 let from = if is_detached {
                     let slot = detached_nodes.remove(&node_a).unwrap();
-                    NodeRef::Slot(slot)
+                    NodeRef::Slot(slot, None)
                 } else {
                     let old_path =
                         compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
                     // Swap node_a with a placeholder (insert placeholder before, then detach)
                     // This prevents shifting of siblings.
-                    let placeholder_data: NodeData<NodeKind, NodeLabel, HtmlProperties> =
-                        NodeData {
-                            hash: 0,
-                            kind: NodeKind::Scalar("placeholder"),
-                            label: None,
-                            properties: HtmlProperties::new(),
-                        };
+                    let placeholder_data: NodeData<FacetTreeTypes> = NodeData {
+                        hash: cinereus::NodeHash(0),
+                        kind: NodeKind::Scalar("placeholder"),
+                        label: None,
+                        properties: Props::new(),
+                    };
                     let placeholder = shadow_arena.new_node(placeholder_data);
                     node_a.insert_before(placeholder, &mut shadow_arena);
                     node_a.detach(&mut shadow_arena);
@@ -996,10 +1120,32 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 // Compute the target path: parent's path + new_position
                 // We use new_position directly because that's the FINAL position in tree_b,
                 // not the current shadow tree position (which may have gaps from detached nodes).
-                let parent_path =
-                    compute_path_in_shadow(&shadow_arena, shadow_root, shadow_new_parent, tree_a);
-                let mut to = parent_path;
-                to.0.push(PathSegment::Index(new_position));
+                //
+                // Check if the parent is in a detached subtree (slot) - if so, we need
+                // to use a slot-relative path, not a root-relative path.
+                let to = if let Some(&slot) = detached_nodes.get(&shadow_new_parent) {
+                    // Parent is directly in a slot
+                    let mut rel_path = Path(vec![]);
+                    rel_path.0.push(PathSegment::Index(new_position));
+                    NodeRef::Slot(slot, Some(rel_path))
+                } else if let Some((slot, relative_path)) =
+                    find_detached_ancestor(&shadow_arena, shadow_new_parent, &detached_nodes)
+                {
+                    // An ancestor is in a slot - extend the relative path
+                    let mut rel_path = relative_path.unwrap_or_else(|| Path(vec![]));
+                    rel_path.0.push(PathSegment::Index(new_position));
+                    NodeRef::Slot(slot, Some(rel_path))
+                } else {
+                    // Parent is in the tree - compute its path
+                    let mut parent_path = compute_path_in_shadow(
+                        &shadow_arena,
+                        shadow_root,
+                        shadow_new_parent,
+                        tree_a,
+                    );
+                    parent_path.0.push(PathSegment::Index(new_position));
+                    NodeRef::Path(parent_path)
+                };
 
                 // Emit Move
                 debug!(?from, ?to, ?detach_to_slot, "MOVE: emitting");
@@ -1007,15 +1153,14 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     from,
                     to,
                     detach_to_slot,
-                    hash: tree_b.get(node_b).hash,
                 });
 
                 // Update b_to_shadow
                 b_to_shadow.insert(node_b, node_a);
 
                 debug!(
-                    "SHADOW TREE AFTER MOVE:\n{}",
-                    format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+                    tree = %format!("\n{}", format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)),
+                    "shadow tree after move"
                 );
             }
         }
@@ -1024,28 +1169,90 @@ fn convert_ops_with_shadow<'mem, 'facet>(
     result
 }
 
-/// Compute the path from root to a node in the shadow tree.
 /// Check if any ancestor of a node is in the detached_nodes map.
-/// Returns the slot number if an ancestor is detached, None otherwise.
+/// Returns (slot_number, relative_path) if an ancestor is detached, None otherwise.
+/// The relative_path is the path from the detached ancestor (slot root) to the node,
+/// preserving the actual PathSegments (including Variant segments) from the node labels.
 fn find_detached_ancestor(
-    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    shadow_arena: &indextree::Arena<NodeData<FacetTreeTypes>>,
     node: NodeId,
     detached_nodes: &HashMap<NodeId, u32>,
-) -> Option<u32> {
+) -> Option<(u32, Option<Path>)> {
     let mut current = node;
-    debug!(?node, ?detached_nodes, "find_detached_ancestor: starting");
+    // Collect (child_node, parent_node) pairs as we traverse up
+    let mut traversal: Vec<(NodeId, NodeId)> = Vec::new();
+    trace!(node = usize::from(node), "find_detached_ancestor: starting");
+
     loop {
-        debug!(?current, "find_detached_ancestor: checking");
+        trace!(
+            current = usize::from(current),
+            "find_detached_ancestor: checking"
+        );
         // Check if current node is detached
         if let Some(&slot) = detached_nodes.get(&current) {
-            debug!(?current, slot, "find_detached_ancestor: found!");
-            return Some(slot);
+            trace!(
+                current = usize::from(current),
+                slot,
+                traversal_len = traversal.len(),
+                "find_detached_ancestor: found!"
+            );
+            // Build the relative path from slot root to the original node
+            // by using the label paths from each node
+            let relative_path = if traversal.is_empty() {
+                None // Node is directly the slot root
+            } else {
+                // Get the slot root's path (current node's label)
+                let slot_root_path_len = shadow_arena
+                    .get(current)
+                    .and_then(|n| n.get().label.as_ref())
+                    .map(|l| l.path.0.len())
+                    .unwrap_or(0);
+
+                // Get the target node's full path (original node's label)
+                let target_path = shadow_arena
+                    .get(node)
+                    .and_then(|n| n.get().label.as_ref())
+                    .map(|l| l.path.0.clone());
+
+                if let Some(full_path) = target_path {
+                    // The relative path is the suffix after the slot root's path
+                    if full_path.len() > slot_root_path_len {
+                        let relative_segments = full_path[slot_root_path_len..].to_vec();
+                        trace!(
+                            ?relative_segments,
+                            "find_detached_ancestor: relative path from labels"
+                        );
+                        Some(Path(relative_segments))
+                    } else {
+                        None
+                    }
+                } else {
+                    // Fallback: use position indices if labels aren't available
+                    // This preserves old behavior for nodes without labels
+                    let mut path_indices: Vec<usize> = Vec::new();
+                    for (child, parent) in traversal.iter().rev() {
+                        let pos = parent
+                            .children(shadow_arena)
+                            .position(|c| c == *child)
+                            .unwrap_or(0);
+                        path_indices.push(pos);
+                    }
+                    Some(Path(
+                        path_indices.into_iter().map(PathSegment::Index).collect(),
+                    ))
+                }
+            };
+            return Some((slot, relative_path));
         }
-        // Move to parent
+        // Move to parent, recording the traversal
         if let Some(parent_id) = shadow_arena.get(current).and_then(|n| n.parent()) {
+            traversal.push((current, parent_id));
             current = parent_id;
         } else {
-            debug!(?current, "find_detached_ancestor: no parent, stopping");
+            trace!(
+                current = usize::from(current),
+                "find_detached_ancestor: no parent, stopping"
+            );
             // No more parents
             break;
         }
@@ -1058,7 +1265,7 @@ fn find_detached_ancestor(
 /// For inserted nodes, we compute the path by walking up and determining
 /// the position at each level.
 fn compute_path_in_shadow(
-    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    shadow_arena: &indextree::Arena<NodeData<FacetTreeTypes>>,
     shadow_root: NodeId,
     node: NodeId,
     _tree_a: &FacetTree,
@@ -1084,7 +1291,7 @@ fn compute_path_in_shadow(
 /// Key insight: tree depth and path depth may NOT be 1:1 because Option types add a tree
 /// node but not a path segment. We must use each node's stored path length to track depth.
 fn compute_adjusted_path(
-    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    shadow_arena: &indextree::Arena<NodeData<FacetTreeTypes>>,
     shadow_root: NodeId,
     node: NodeId,
     original_path: &Path,
@@ -1094,7 +1301,7 @@ fn compute_adjusted_path(
     let mut depth_to_position: HashMap<usize, usize> = HashMap::new();
     let mut current = node;
 
-    debug!(?node, ?original_path, "compute_adjusted_path start");
+    trace!(node = usize::from(node), %original_path, "compute_adjusted_path start");
 
     while current != shadow_root {
         // Get the current node's path depth from its stored label
@@ -1112,11 +1319,11 @@ fn compute_adjusted_path(
             {
                 let children: Vec<_> = parent_id.children(shadow_arena).collect();
                 let pos = children.iter().position(|&c| c == current).unwrap_or(0);
-                debug!(
-                    ?current,
-                    ?parent_id,
-                    ?depth,
-                    ?pos,
+                trace!(
+                    current = usize::from(current),
+                    parent = usize::from(parent_id),
+                    depth,
+                    pos,
                     num_children = children.len(),
                     "recording position"
                 );
@@ -1154,7 +1361,7 @@ fn compute_adjusted_path(
 
 /// Compute path for a node by walking up the tree.
 fn compute_path_by_walking(
-    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    shadow_arena: &indextree::Arena<NodeData<FacetTreeTypes>>,
     shadow_root: NodeId,
     node: NodeId,
 ) -> Path {
@@ -1177,519 +1384,6 @@ fn compute_path_by_walking(
 
     segments.reverse();
     Path(segments)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use facet::Facet;
-    use facet_html as html;
-    use facet_testhelpers::test;
-
-    #[derive(Debug, Clone, PartialEq, Facet)]
-    struct Person {
-        name: String,
-        age: u32,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Facet)]
-    struct Container {
-        items: Vec<String>,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Facet)]
-    struct Nested {
-        name: String,
-        children: Vec<Container>,
-    }
-
-    #[test]
-    fn test_identical_trees() {
-        let a = Person {
-            name: "Alice".into(),
-            age: 30,
-        };
-        let b = a.clone();
-
-        let ops = tree_diff(&a, &b);
-        assert!(ops.is_empty(), "Identical trees should have no edits");
-    }
-
-    #[test]
-    fn test_simple_update() {
-        let a = Person {
-            name: "Alice".into(),
-            age: 30,
-        };
-        let b = Person {
-            name: "Alice".into(),
-            age: 31,
-        };
-
-        let ops = tree_diff(&a, &b);
-        assert!(!ops.is_empty(), "Changed values should have edits");
-    }
-
-    #[test]
-    fn test_tree_building() {
-        let person = Person {
-            name: "Alice".into(),
-            age: 30,
-        };
-
-        let peek = Peek::new(&person);
-        let tree = build_tree(peek);
-
-        // Should have root + 2 fields (at minimum)
-        let node_count = tree.arena.count();
-        assert!(
-            node_count >= 3,
-            "Tree should have root and field nodes, got {}",
-            node_count
-        );
-    }
-
-    /// Test that tree building produces correct paths for list elements
-    #[test]
-    fn test_tree_paths_for_list() {
-        let container = Container {
-            items: vec!["a".into(), "b".into(), "c".into()],
-        };
-
-        let peek = Peek::new(&container);
-        let tree = build_tree(peek);
-
-        // Collect all paths from the tree
-        let mut paths: Vec<Path> = Vec::new();
-        for node in tree.arena.iter() {
-            if let Some(label) = &node.get().label {
-                paths.push(label.path.clone());
-            }
-        }
-
-        debug!(?paths, "all paths in tree");
-
-        // Should have:
-        // - [] (root)
-        // - [Field("items")] (the vec field)
-        // - [Field("items"), Index(0)] (first element)
-        // - [Field("items"), Index(1)] (second element)
-        // - [Field("items"), Index(2)] (third element)
-        assert!(
-            paths.iter().any(|p| p.0.is_empty()),
-            "Should have root path"
-        );
-        assert!(
-            paths
-                .iter()
-                .any(|p| p.0 == vec![PathSegment::Field("items".into())]),
-            "Should have items field path"
-        );
-        assert!(
-            paths
-                .iter()
-                .any(|p| p.0 == vec![PathSegment::Field("items".into()), PathSegment::Index(0)]),
-            "Should have items[0] path"
-        );
-        assert!(
-            paths
-                .iter()
-                .any(|p| p.0 == vec![PathSegment::Field("items".into()), PathSegment::Index(2)]),
-            "Should have items[2] path"
-        );
-    }
-
-    /// Test that compute_adjusted_path correctly updates Index segments
-    #[test]
-    fn test_compute_adjusted_path_basic() {
-        let container = Container {
-            items: vec!["a".into(), "b".into(), "c".into()],
-        };
-
-        let peek = Peek::new(&container);
-        let tree = build_tree(peek);
-
-        // Find the node for items[1]
-        let target_path = Path(vec![
-            PathSegment::Field("items".into()),
-            PathSegment::Index(1),
-        ]);
-
-        let mut target_node = None;
-        for node_id in tree.root.descendants(&tree.arena) {
-            if let Some(label) = &tree.arena.get(node_id).unwrap().get().label
-                && label.path == target_path
-            {
-                target_node = Some(node_id);
-                break;
-            }
-        }
-        let target_node = target_node.expect("Should find items[1] node");
-
-        // Without any modifications, the adjusted path should equal the original
-        let adjusted = compute_adjusted_path(&tree.arena, tree.root, target_node, &target_path);
-        assert_eq!(
-            adjusted, target_path,
-            "Unmodified tree should have unchanged paths"
-        );
-    }
-
-    /// Test that after deleting an element, subsequent element paths shift
-    #[test]
-    fn test_path_adjustment_after_delete() {
-        let container = Container {
-            items: vec!["a".into(), "b".into(), "c".into()],
-        };
-
-        let peek = Peek::new(&container);
-        let tree = build_tree(peek);
-
-        // Clone the arena to simulate shadow tree
-        let mut shadow_arena = tree.arena.clone();
-
-        // Find the nodes
-        let _items_path = Path(vec![PathSegment::Field("items".into())]);
-        let item0_path = Path(vec![
-            PathSegment::Field("items".into()),
-            PathSegment::Index(0),
-        ]);
-        let item1_path = Path(vec![
-            PathSegment::Field("items".into()),
-            PathSegment::Index(1),
-        ]);
-        let item2_path = Path(vec![
-            PathSegment::Field("items".into()),
-            PathSegment::Index(2),
-        ]);
-
-        let mut item0_node = None;
-        let mut item1_node = None;
-        let mut item2_node = None;
-
-        for node_id in tree.root.descendants(&tree.arena) {
-            if let Some(label) = &tree.arena.get(node_id).unwrap().get().label {
-                if label.path == item0_path {
-                    item0_node = Some(node_id);
-                } else if label.path == item1_path {
-                    item1_node = Some(node_id);
-                } else if label.path == item2_path {
-                    item2_node = Some(node_id);
-                }
-            }
-        }
-
-        let item0_node = item0_node.expect("Should find items[0]");
-        let item1_node = item1_node.expect("Should find items[1]");
-        let item2_node = item2_node.expect("Should find items[2]");
-
-        // Delete item0 from shadow tree
-        item0_node.remove(&mut shadow_arena);
-
-        // Now item1 (originally at index 1) should be at index 0
-        let adjusted1 = compute_adjusted_path(&shadow_arena, tree.root, item1_node, &item1_path);
-        let expected1 = Path(vec![
-            PathSegment::Field("items".into()),
-            PathSegment::Index(0),
-        ]);
-        assert_eq!(
-            adjusted1, expected1,
-            "After deleting item[0], item[1] should become item[0]"
-        );
-
-        // And item2 (originally at index 2) should be at index 1
-        let adjusted2 = compute_adjusted_path(&shadow_arena, tree.root, item2_node, &item2_path);
-        let expected2 = Path(vec![
-            PathSegment::Field("items".into()),
-            PathSegment::Index(1),
-        ]);
-        assert_eq!(
-            adjusted2, expected2,
-            "After deleting item[0], item[2] should become item[1]"
-        );
-    }
-
-    /// Test list element deletion produces some diff operations
-    #[test]
-    fn test_diff_list_delete() {
-        let a = Container {
-            items: vec!["a".into(), "b".into(), "c".into()],
-        };
-        let b = Container {
-            items: vec!["a".into(), "c".into()], // removed "b"
-        };
-
-        let ops = tree_diff(&a, &b);
-        debug!(?ops, "diff ops for list delete");
-
-        // Should have some operations (the exact ops depend on cinereus's matching algorithm)
-        // The algorithm may emit Delete, or Move+Delete, etc.
-        assert!(!ops.is_empty(), "Should have some operations for deletion");
-
-        // Should have at least one Delete or Move operation
-        let has_structural_change = ops
-            .iter()
-            .any(|op| matches!(op, EditOp::Delete { .. } | EditOp::Move { .. }));
-        assert!(
-            has_structural_change,
-            "Should have Delete or Move for structural change, got: {:?}",
-            ops
-        );
-    }
-
-    /// Test list element insertion produces operations that handle the change
-    #[test]
-    fn test_diff_list_insert() {
-        let a = Container {
-            items: vec!["a".into(), "c".into()],
-        };
-        let b = Container {
-            items: vec!["a".into(), "b".into(), "c".into()], // inserted "b" at index 1
-        };
-
-        let ops = tree_diff(&a, &b);
-        debug!(?ops, "diff ops for list insert");
-
-        // The algorithm should produce an Insert somewhere in items
-        // (The exact strategy may vary - e.g., update items[1] to "b" and insert "c" at items[2],
-        // or insert "b" at items[1] directly)
-        let has_insert_in_items = ops.iter().any(|op| {
-            if let EditOp::Insert { label_path, .. } = op {
-                label_path.0.first() == Some(&PathSegment::Field("items".into()))
-            } else {
-                false
-            }
-        });
-        assert!(
-            has_insert_in_items,
-            "Should have Insert in items, got: {:?}",
-            ops
-        );
-    }
-
-    /// Test that nested structures produce diff operations
-    #[test]
-    fn test_nested_list_paths() {
-        let a = Nested {
-            name: "root".into(),
-            children: vec![
-                Container {
-                    items: vec!["a".into()],
-                },
-                Container {
-                    items: vec!["b".into()],
-                },
-            ],
-        };
-        let b = Nested {
-            name: "root".into(),
-            children: vec![
-                Container {
-                    items: vec!["a".into()],
-                },
-                Container {
-                    items: vec!["modified".into()],
-                }, // changed
-            ],
-        };
-
-        let ops = tree_diff(&a, &b);
-        debug!(?ops, "diff ops for nested change");
-
-        // Should have some operations for the change
-        assert!(!ops.is_empty(), "Should have operations for nested change");
-
-        // At minimum, there should be something touching children
-        let has_children_op = ops.iter().any(|op| {
-            let path = match op {
-                EditOp::Update { path, .. } => Some(path),
-                EditOp::Insert { label_path, .. } => Some(label_path),
-                EditOp::Delete { node, .. } => match node {
-                    NodeRef::Path(p) => Some(p),
-                    NodeRef::Slot(_) => None,
-                },
-                EditOp::Move { to, .. } => Some(to),
-                EditOp::UpdateAttribute { path, .. } => Some(path),
-            };
-            path.is_some_and(|p| p.0.first() == Some(&PathSegment::Field("children".into())))
-        });
-        assert!(
-            has_children_op,
-            "Should have operation touching children, got: {:?}",
-            ops
-        );
-    }
-
-    // =========================================================================
-    // Tests for collect_properties (HTML attribute collection)
-    // =========================================================================
-
-    /// Simple struct with direct attribute fields
-    #[derive(Debug, Clone, PartialEq, Facet)]
-    struct SimpleElement {
-        #[facet(html::attribute)]
-        id: Option<String>,
-        #[facet(html::attribute)]
-        class: Option<String>,
-        // Non-attribute field
-        content: String,
-    }
-
-    /// Attrs struct that gets flattened (like GlobalAttrs in facet-html-dom)
-    #[derive(Debug, Clone, PartialEq, Default, Facet)]
-    struct Attrs {
-        #[facet(html::attribute)]
-        id: Option<String>,
-        #[facet(html::attribute)]
-        class: Option<String>,
-        #[facet(html::attribute)]
-        style: Option<String>,
-    }
-
-    /// Element with flattened attrs (mimics facet-html-dom structure)
-    #[derive(Debug, Clone, PartialEq, Facet)]
-    struct ElementWithFlattenedAttrs {
-        #[facet(flatten)]
-        attrs: Attrs,
-        // Non-attribute field
-        children: Vec<String>,
-    }
-
-    #[test]
-    fn test_collect_properties_direct_attrs() {
-        let elem = SimpleElement {
-            id: Some("my-id".into()),
-            class: Some("my-class".into()),
-            content: "hello".into(),
-        };
-
-        let peek = Peek::new(&elem);
-        let builder = TreeBuilder::new();
-        let props = builder.collect_properties(peek);
-
-        // Should collect both attribute fields
-        assert_eq!(
-            props.attrs.get("id"),
-            Some(&Some("my-id".to_string())),
-            "Should collect id attribute"
-        );
-        assert_eq!(
-            props.attrs.get("class"),
-            Some(&Some("my-class".to_string())),
-            "Should collect class attribute"
-        );
-        // Should NOT collect non-attribute field
-        assert!(
-            !props.attrs.contains_key("content"),
-            "Should not collect non-attribute field"
-        );
-    }
-
-    #[test]
-    fn test_collect_properties_none_values() {
-        let elem = SimpleElement {
-            id: None,
-            class: Some("visible".into()),
-            content: "hello".into(),
-        };
-
-        let peek = Peek::new(&elem);
-        let builder = TreeBuilder::new();
-        let props = builder.collect_properties(peek);
-
-        // Should collect None as None
-        assert_eq!(
-            props.attrs.get("id"),
-            Some(&None),
-            "Should collect None attribute"
-        );
-        assert_eq!(
-            props.attrs.get("class"),
-            Some(&Some("visible".to_string())),
-            "Should collect Some attribute"
-        );
-    }
-
-    #[test]
-    fn test_collect_properties_flattened_attrs() {
-        let elem = ElementWithFlattenedAttrs {
-            attrs: Attrs {
-                id: Some("my-id".into()),
-                class: Some("my-class".into()),
-                style: None,
-            },
-            children: vec!["child".into()],
-        };
-
-        let peek = Peek::new(&elem);
-        let builder = TreeBuilder::new();
-        let props = builder.collect_properties(peek);
-
-        // Should collect attributes from flattened struct
-        assert_eq!(
-            props.attrs.get("id"),
-            Some(&Some("my-id".to_string())),
-            "Should collect id from flattened attrs"
-        );
-        assert_eq!(
-            props.attrs.get("class"),
-            Some(&Some("my-class".to_string())),
-            "Should collect class from flattened attrs"
-        );
-        assert_eq!(
-            props.attrs.get("style"),
-            Some(&None),
-            "Should collect style=None from flattened attrs"
-        );
-    }
-
-    #[test]
-    fn test_diff_emits_update_attribute_for_flattened() {
-        let a = ElementWithFlattenedAttrs {
-            attrs: Attrs {
-                id: Some("old-id".into()),
-                class: None,
-                style: None,
-            },
-            children: vec![],
-        };
-        let b = ElementWithFlattenedAttrs {
-            attrs: Attrs {
-                id: Some("new-id".into()),
-                class: Some("added-class".into()),
-                style: None,
-            },
-            children: vec![],
-        };
-
-        let ops = tree_diff(&a, &b);
-
-        eprintln!("All ops: {:#?}", ops);
-
-        // Should emit UpdateAttribute ops for changed attributes
-        let update_attrs: Vec<_> = ops
-            .iter()
-            .filter_map(|op| {
-                if let EditOp::UpdateAttribute { attr_name, .. } = op {
-                    Some(*attr_name)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        eprintln!("UpdateAttribute attrs: {:?}", update_attrs);
-
-        assert!(
-            update_attrs.contains(&"id"),
-            "Should emit UpdateAttribute for id change, got ops: {:?}",
-            ops
-        );
-        assert!(
-            update_attrs.contains(&"class"),
-            "Should emit UpdateAttribute for class change, got ops: {:?}",
-            ops
-        );
-    }
 }
 
 /// Result of computing similarity between two Peek values using tree diff.
@@ -1788,3 +1482,6 @@ pub fn elements_are_similar<'mem, 'facet>(
     let result = compute_element_similarity(peek_a, peek_b, None);
     result.is_similar(threshold)
 }
+
+#[cfg(test)]
+mod tests;

@@ -2,6 +2,8 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
+mod tracing_macros;
+
 mod diff;
 mod report;
 mod sequences;
@@ -14,7 +16,7 @@ pub use diff::{
 };
 pub use report::DiffReport;
 pub use tree::{
-    EditOp, FacetTree, NodeKind, NodeLabel, NodeRef, SimilarityResult, build_tree,
+    AttributeChange, EditOp, FacetTree, NodeKind, NodeLabel, NodeRef, SimilarityResult, build_tree,
     compute_element_similarity, elements_are_similar, tree_diff,
 };
 

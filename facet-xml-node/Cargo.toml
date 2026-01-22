@@ -20,5 +20,7 @@ facet-core = { path = "../facet-core", version = "0.42.0" }
 facet-dom = { path = "../facet-dom", version = "0.42.0" }
 facet-xml = { path = "../facet-xml", version = "0.42.0" }
 
+[dev-dependencies]
+
 [lints]
 workspace = true

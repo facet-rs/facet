@@ -78,11 +78,7 @@ members = [
     "facet-asn1",
     "facet-csv",
     "facet-xdr",
-    "facet-html",
     "facet-dom",
-    "facet-html-dom",
-    "facet-html-diff",
-    "facet-html-diff-wasm",
     "facet-atom",
     "facet-singularize",
     "facet-json-schema",
@@ -156,3 +152,6 @@ inherits = "dev"
 opt-level = 3
 incremental = false
 codegen-units = 1
+
+[profile.dev.package.backtrace]
+opt-level = 3

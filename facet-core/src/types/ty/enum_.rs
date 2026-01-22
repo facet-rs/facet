@@ -81,17 +81,20 @@ impl Variant {
     /// text content rather than as elements.
     #[inline]
     pub fn is_text(&self) -> bool {
-        self.has_attr(Some("html"), "text") || self.has_attr(Some("xml"), "text")
+        self.has_builtin_attr("text")
+            || self.has_attr(Some("html"), "text")
+            || self.has_attr(Some("xml"), "text")
     }
 
-    /// Returns true if this variant has the `#[facet(html::custom_element)]` or
-    /// `#[facet(xml::custom_element)]` attribute.
+    /// Returns true if this variant has the `#[facet(custom_element)]`,
+    /// `#[facet(html::custom_element)]` or `#[facet(xml::custom_element)]` attribute.
     ///
     /// When deserializing HTML/XML, variants marked as custom_element act as a catch-all
     /// for unknown element names. The element's tag name is stored in the variant's `tag` field.
     #[inline]
     pub fn is_custom_element(&self) -> bool {
-        self.has_attr(Some("html"), "custom_element")
+        self.has_builtin_attr("custom_element")
+            || self.has_attr(Some("html"), "custom_element")
             || self.has_attr(Some("xml"), "custom_element")
     }
 

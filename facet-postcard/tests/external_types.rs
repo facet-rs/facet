@@ -11,6 +11,8 @@
 //! - net: IP addresses (std::net)
 
 #![cfg(feature = "jit")]
+// Allow unused imports - they're used by feature-gated submodules via `super::*`
+#![allow(unused_imports)]
 
 use facet::Facet;
 use facet_postcard::{from_slice, to_vec};

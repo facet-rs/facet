@@ -1,94 +1,24 @@
-Provides diffing capabilities for Facet types.
+# facet-diff
+
+Structural diffing for Facet types using the GumTree/Chawathe algorithm.
+
+## Overview
+
+facet-diff computes the minimal edit script to transform one value into another.
+It works on any type that implements `Facet`, using reflection to traverse the
+structure without requiring manual diff implementations.
+
+```rust,ignore
+use facet_diff::tree_diff;
+
+let old = MyStruct { name: "alice", count: 1 };
+let new = MyStruct { name: "alice", count: 2 };
+
+let ops = tree_diff(&old, &new);
+// ops contains Update for the count field
+```
 
 ## Architecture
-
-facet-diff computes structural differences between two values using a multi-phase
-pipeline. Here's how it works, using HTML diffing as a concrete example.
-
-### Example: Diffing HTML Documents
-
-```text
-Old HTML: <div>hello<p>world</p></div>
-New HTML: <div><p>WORLD</p></div>
-
-Expected patches:
-1. Delete text node "hello"
-2. Update text "world" → "WORLD"
-```
-
-### Phase 1: Tree Building (`build_tree`)
-
-Both values are converted to generic trees using `Peek` (facet's reflection API).
-
-```text
-Input:  Peek<Html>  ──────►  Tree<NodeKind, NodeLabel>
-```
-
-Each tree node contains:
-- **hash**: Content hash (for detecting identical subtrees)
-- **kind**: Type info like `Struct("Div")`, `List("children")`, `Scalar("String")`
-- **label**: Path from root (e.g., `body.children[0].Div.children[1]`)
-
-The hash captures content identity, the kind enables structural matching,
-and the path allows navigating back to the original value.
-
-### Phase 2: Tree Matching (cinereus)
-
-The [cinereus](https://docs.rs/cinereus) crate implements the GumTree algorithm
-to find which nodes in tree A correspond to which nodes in tree B.
-
-```text
-Input:  Tree A, Tree B  ──────►  Matching (A↔B node pairs)
-```
-
-Two-phase matching:
-1. **Top-down**: Match subtrees with identical hashes (exact matches)
-2. **Bottom-up**: Match remaining nodes by kind + position (structural matches)
-
-### Phase 3: Edit Script Generation (cinereus/chawathe)
-
-Given the matching, generate a minimal edit script using the Chawathe algorithm.
-
-```text
-Input:  Tree A, Tree B, Matching  ──────►  Vec<CinereusEditOp>
-```
-
-Operations reference NodeIds (valid only while both trees exist):
-- `Update { node_a, node_b }` - Content changed
-- `Insert { node_b, parent_b, position }` - New node
-- `Delete { node_a }` - Node removed
-- `Move { node_a, node_b, new_parent, new_position }` - Node relocated
-
-### Phase 4: Path Translation (`convert_ops_with_shadow`)
-
-Convert cinereus ops (with NodeIds) to facet-diff's public `EditOp` (with paths).
-
-```text
-Input:  CinereusEditOp[], Tree A, Tree B, Peek A, Peek B
-Output: Vec<EditOp>  (self-contained, no tree references)
-```
-
-Uses a "shadow tree" that starts as a clone of tree A and gets modified as
-operations are processed. This ensures paths account for structural changes
-(insertions shift indices, deletions shift indices, etc.).
-
-**Critical**: `EditOp::Update` must include the actual new value (not just a hash),
-because consumers won't have access to the original trees.
-
-### Phase 5: Consumer Application
-
-Consumers receive `Vec<EditOp>` and translate to domain-specific patches.
-
-```text
-Input:  Vec<EditOp>  ──────►  Domain patches (e.g., DOM mutations)
-```
-
-For HTML: `EditOp::Update` on a text node → `SetText { path, value }`
-
-The consumer does NOT have access to the original values. Each `EditOp` must
-be self-contained with all information needed to apply it.
-
-### Data Flow Summary
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -99,30 +29,74 @@ be self-contained with all information needed to apply it.
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Tree A, Tree B  (hashes + kinds + paths, no values)                │
 └──────────────┬──────────────────────────────────────────────────────┘
-               │ compute_matching() + generate_edit_script()
+               │ cinereus: compute_matching() + generate_edit_script()
                ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  CinereusEditOp[]  (references NodeIds, needs both trees)           │
 └──────────────┬──────────────────────────────────────────────────────┘
-               │ convert_ops_with_shadow(ops, trees, peeks)
+               │ convert_ops_with_shadow()
                ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  EditOp[]  (self-contained with paths + values)                     │
 └──────────────┬──────────────────────────────────────────────────────┘
-               │ consumer translation
+               │ consumer translation (e.g., facet-html-diff)
                ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Domain patches  (e.g., DOM mutations, SQL updates, etc.)           │
+│  Domain patches  (DOM mutations, database updates, etc.)            │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Key Invariant
+## Pipeline Phases
 
-**EditOp must be self-contained.** After phase 4, the original `Peek` values
-are no longer available. Each operation must include everything needed to
-apply it:
+### 1. Tree Building
 
-- `Update`: path + **new value** (not just hash!)
-- `Insert`: path + **value to insert**
-- `Delete`: path (value not needed)
-- `Move`: old_path + new_path
+Both values are converted to generic trees using `Peek` (facet's reflection API).
+Each node contains a content hash for identity, a kind for structural matching,
+and a path for navigation back to the original value.
+
+### 2. Tree Matching (cinereus)
+
+The [cinereus](../cinereus) crate implements the GumTree algorithm:
+- **Top-down**: Match subtrees with identical hashes (exact matches)
+- **Bottom-up**: Match remaining nodes by kind + Dice similarity
+
+### 3. Edit Script Generation
+
+Given the matching, the Chawathe algorithm generates a minimal edit script.
+Operations include Update, Insert, Delete, and Move.
+
+**Important**: Insert and Move follow [Chawathe semantics][chawathe] - they
+displace existing nodes into slots rather than shifting siblings. See
+[`cinereus/CHAWATHE_SEMANTICS.md`](../cinereus/CHAWATHE_SEMANTICS.md) for details.
+
+[chawathe]: https://dl.acm.org/doi/10.1145/235968.233366
+
+### 4. Path Translation
+
+Cinereus operations reference NodeIds (only valid while both trees exist).
+This phase converts them to self-contained `EditOp` values with paths and
+actual values, using a "shadow tree" to track structural changes.
+
+## Key Invariant
+
+**EditOp must be self-contained.** After path translation, the original values
+are no longer available. Each operation includes everything needed to apply it:
+
+- `Update`: path + new value
+- `Insert`: path + value to insert  
+- `Delete`: path
+- `Move`: old path + new path
+
+## Example: HTML Diffing
+
+```text
+Old: <div>hello<p>world</p></div>
+New: <div><p>WORLD</p></div>
+
+Pipeline:
+1. build_tree() → Tree with Div, Text("hello"), P, Text("world") nodes
+2. matching → Text("world") ↔ Text("WORLD"), P ↔ P, etc.
+3. edit script → Delete(Text("hello")), Update(Text → "WORLD")
+4. path translation → EditOp with paths like body.children[0].Div.children[0]
+5. facet-html-diff → SetText { path: [0,0], text: "WORLD" }
+```

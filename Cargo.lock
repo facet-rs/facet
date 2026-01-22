@@ -886,8 +886,6 @@ name = "cinereus"
 version = "0.42.0"
 dependencies = [
  "facet",
- "facet-core",
- "facet-pretty",
  "facet-testhelpers",
  "indextree",
  "rapidhash",
@@ -1775,7 +1773,6 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-diff-core",
- "facet-html",
  "facet-pretty",
  "facet-reflect",
  "facet-showcase",
@@ -1876,61 +1873,6 @@ dependencies = [
  "ulid",
  "uuid",
  "yoke",
-]
-
-[[package]]
-name = "facet-html"
-version = "0.42.0"
-dependencies = [
- "datatest-stable",
- "facet",
- "facet-assert",
- "facet-core",
- "facet-diff",
- "facet-dom",
- "facet-html-dom",
- "facet-reflect",
- "facet-showcase",
- "facet-testhelpers",
- "html5gum",
- "indoc",
- "itoa",
- "zmij",
-]
-
-[[package]]
-name = "facet-html-diff"
-version = "0.42.0"
-dependencies = [
- "facet",
- "facet-core",
- "facet-diff",
- "facet-dom",
- "facet-html",
- "facet-html-dom",
- "facet-json",
- "facet-reflect",
- "facet-testhelpers",
- "proptest",
- "tracing",
-]
-
-[[package]]
-name = "facet-html-diff-wasm"
-version = "0.42.0"
-dependencies = [
- "facet-html-diff",
- "facet-json",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
-name = "facet-html-dom"
-version = "0.42.0"
-dependencies = [
- "facet",
- "facet-html",
 ]
 
 [[package]]
@@ -2786,15 +2728,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "html5gum"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12d29324a6ba370667998f63c6dd2b2511e2297f07e827f69026684907adc3b5"
-dependencies = [
- "jetscii",
-]
-
-[[package]]
 name = "http"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3242,12 +3175,6 @@ name = "itoa"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
-
-[[package]]
-name = "jetscii"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47f142fe24a9c9944451e8349de0a56af5f3e7226dc46f3ed4d4ecc0b85af75e"
 
 [[package]]
 name = "jiff"

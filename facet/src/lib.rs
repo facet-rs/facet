@@ -338,7 +338,35 @@ pub mod builtin {
             /// Usage: `#[facet(try_from_ref = Self::try_from_ref)]`
             ///
             /// Note: This is compile-time only. The path is read from raw tokens by the derive macro.
-            TryFromRef(arbitrary)
+            TryFromRef(arbitrary),
+
+            // ================================================================
+            // DOM-related attributes (for XML/HTML serialization)
+            // ================================================================
+
+            /// Marks a field as an XML/HTML attribute on the element tag.
+            ///
+            /// Usage: `#[facet(attribute)]`
+            ///
+            /// Fields marked as attributes are serialized as XML/HTML element attributes
+            /// rather than child elements or text content.
+            Attribute,
+
+            /// Marks a field as text content within an XML/HTML element.
+            ///
+            /// Usage: `#[facet(text)]`
+            ///
+            /// Fields marked as text contain the text content of the element,
+            /// as opposed to child elements or attributes.
+            Text,
+
+            /// Marks an enum variant as a catch-all for custom/unknown elements.
+            ///
+            /// Usage: `#[facet(custom_element)]`
+            ///
+            /// When deserializing XML/HTML, unknown element tags are captured
+            /// by the variant marked with `custom_element`.
+            CustomElement
         }
     }
 
