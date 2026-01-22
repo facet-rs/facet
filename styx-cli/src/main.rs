@@ -571,7 +571,7 @@ fn run_extract(binary: &str) -> Result<(), CliError> {
 }
 
 fn run_skill() -> Result<(), CliError> {
-    print!("{}", include_str!("../../../contrib/claude-skill/SKILL.md"));
+    print!("{}", include_str!("../contrib/SKILL.md"));
     Ok(())
 }
 
