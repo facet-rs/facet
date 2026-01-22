@@ -51,6 +51,15 @@ pub enum InsertContent {
     Text(String),
 }
 
+/// A single property change within an UpdateProps operation.
+#[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
+pub struct PropChange {
+    /// The property name (field name)
+    pub name: String,
+    /// The new value (None if property is being removed)
+    pub value: Option<String>,
+}
+
 /// Operations to transform the DOM.
 ///
 /// These follow Chawathe semantics: Insert/Move operations do NOT shift siblings.
@@ -105,6 +114,14 @@ pub enum Patch {
         from: NodeRef,
         to: NodeRef,
         detach_to_slot: Option<u32>,
+    },
+
+    /// Update multiple properties on an element.
+    /// The `_text` property is handled specially: it updates the text content of the element.
+    /// Other properties are applied as HTML attributes.
+    UpdateProps {
+        path: NodePath,
+        changes: Vec<PropChange>,
     },
 }
 
@@ -585,16 +602,19 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Result<Vec<Patch>, TranslateErro
             }])
         }
         EditOp::UpdateAttributes { path, changes } => {
-            let mut patches = Vec::with_capacity(changes.len());
-            for change in changes {
-                let patch = translate_update_attribute(
-                    &path.0,
-                    change.attr_name,
-                    change.new_value.as_deref(),
-                )?;
-                patches.push(patch);
-            }
-            Ok(patches)
+            // Convert directly to UpdateProps - _text handling happens during apply
+            let dom_path = NodePath(extract_dom_indices(&path.0));
+            let prop_changes: Vec<PropChange> = changes
+                .iter()
+                .map(|c| PropChange {
+                    name: c.attr_name.to_string(),
+                    value: c.new_value.clone(),
+                })
+                .collect();
+            Ok(vec![Patch::UpdateProps {
+                path: dom_path,
+                changes: prop_changes,
+            }])
         }
         #[allow(unreachable_patterns)]
         _ => Err(TranslateError::UnexpectedOp {
@@ -846,6 +866,14 @@ fn translate_update_attribute(
     new_value: Option<&str>,
 ) -> Result<Patch, TranslateError> {
     let dom_path = to_dom_path(segments);
+
+    // Special handling for _text property - this is how facet-diff represents text content
+    if attr_name == "_text" {
+        return Ok(Patch::SetText {
+            path: NodePath(dom_path),
+            text: new_value.unwrap_or("").to_string(),
+        });
+    }
 
     match new_value {
         Some(value) => Ok(Patch::SetAttribute {

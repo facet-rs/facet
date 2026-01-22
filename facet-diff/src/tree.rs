@@ -289,15 +289,15 @@ impl TreeBuilder {
                 if let Ok(s) = peek.into_struct() {
                     for (field, field_peek) in s.fields() {
                         if field.is_attribute() {
-                            let value = self.extract_attribute_value(field_peek);
-                            // trace!(field = field.name, ?value, "found attribute field");
-                            props.set(field.name, value);
+                            if let Ok(value) = self.extract_attribute_value(field_peek) {
+                                props.set(field.name, value);
+                            }
                         } else if field.is_text() {
                             // Text content stored as special _text property
-                            let value = self.extract_attribute_value(field_peek);
-                            props.set("_text", value);
+                            if let Ok(value) = self.extract_attribute_value(field_peek) {
+                                props.set("_text", value);
+                            }
                         } else if field.is_flattened() {
-                            // trace!(field = field.name, "recursing into flattened field");
                             self.collect_properties_recursive(field_peek, props);
                         }
                     }
@@ -322,18 +322,21 @@ impl TreeBuilder {
     }
 
     /// Extract an attribute value as `Option<String>`.
-    fn extract_attribute_value<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> Option<String> {
+    fn extract_attribute_value<'mem, 'facet>(
+        &self,
+        peek: Peek<'mem, 'facet>,
+    ) -> Result<Option<String>, String> {
         // Handle Option<T> by unwrapping
         if let Ok(opt) = peek.into_option() {
             if let Some(inner) = opt.value() {
-                return inner.as_str().map(|s| s.to_string());
+                return Ok(inner.as_str().map(|s| s.to_string()));
             } else {
-                return None;
+                return Ok(None);
             }
         }
 
         // Direct string value
-        peek.as_str().map(|s| s.to_string())
+        Ok(peek.as_str().map(|s| s.to_string()))
     }
 
     fn determine_kind<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> NodeKind {
@@ -407,6 +410,12 @@ impl TreeBuilder {
                 if let Ok(e) = peek.into_enum()
                     && let Ok(variant) = e.active_variant()
                 {
+                    // Text variants (like FlowContent::Text) store their content as _text property
+                    // Don't create child nodes for them - they're leaf nodes
+                    if variant.is_text() {
+                        return;
+                    }
+
                     let variant_path = path.with(PathSegment::Variant(Cow::Borrowed(variant.name)));
                     for (i, (field, field_peek)) in e.fields().enumerate() {
                         let child_path = if variant.data.kind == StructKind::Struct {

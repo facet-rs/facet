@@ -13,6 +13,8 @@ use facet_html_diff::{apply_patches, diff_html, parse_html};
 use std::path::Path;
 
 fn run_roundtrip_test(path: &Path) -> datatest_stable::Result<()> {
+    facet_testhelpers::setup();
+
     let content = std::fs::read_to_string(path)?;
     let parts: Vec<&str> = content.split("\n===\n").collect();
 
@@ -27,7 +29,10 @@ fn run_roundtrip_test(path: &Path) -> datatest_stable::Result<()> {
     let old = parts[0].trim();
     let new = parts[1].trim();
 
+    tracing::info!(%old, %new, "Starting roundtrip test");
+
     let patches = diff_html(old, new).map_err(|e| format!("diff failed: {e}"))?;
+    tracing::info!(?patches, "Generated patches");
 
     let mut tree = parse_html(old).map_err(|e| format!("parse old failed: {e}"))?;
     apply_patches(&mut tree, &patches).map_err(|e| format!("apply failed: {e}"))?;

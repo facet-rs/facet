@@ -2,7 +2,7 @@
 //!
 //! For property testing: apply(A, diff(A, B)) == B
 
-use crate::{InsertContent, NodePath, Patch};
+use crate::{InsertContent, NodePath, Patch, PropChange};
 use facet_xml_node::{Content, Element};
 use std::collections::HashMap;
 
@@ -113,7 +113,7 @@ fn apply_patch(
                     let idx = path.0[path.0.len() - 1];
                     let children = root
                         .children_mut(parent_path)
-                        .ok_or_else(|| format!("Remove: parent not found at {parent_path:?}"))?;
+                        .map_err(|e| format!("Remove: {e}"))?;
                     if idx < children.len() {
                         // Swap with placeholder instead of remove (no shifting!)
                         children[idx] = Content::Text(String::new());
@@ -137,7 +137,7 @@ fn apply_patch(
             let text_idx = path.0[path.0.len() - 1];
             let children = root
                 .children_mut(parent_path)
-                .ok_or_else(|| format!("SetText: parent not found at {parent_path:?}"))?;
+                .map_err(|e| format!("SetText: {e}"))?;
             if text_idx >= children.len() {
                 return Err(format!(
                     "SetText: index {text_idx} out of bounds (len={})",
@@ -149,13 +149,13 @@ fn apply_patch(
         Patch::SetAttribute { path, name, value } => {
             let attrs = root
                 .attrs_mut(&path.0)
-                .ok_or_else(|| format!("SetAttribute: node not found at {:?}", path.0))?;
+                .map_err(|e| format!("SetAttribute: {e}"))?;
             attrs.insert(name.clone(), value.clone());
         }
         Patch::RemoveAttribute { path, name } => {
             let attrs = root
                 .attrs_mut(&path.0)
-                .ok_or_else(|| format!("RemoveAttribute: node not found at {:?}", path.0))?;
+                .map_err(|e| format!("RemoveAttribute: {e}"))?;
             attrs.remove(name);
         }
         Patch::Move {
@@ -177,9 +177,9 @@ fn apply_patch(
                     }
                     let from_parent_path = &from_path.0[..from_path.0.len() - 1];
                     let from_idx = from_path.0[from_path.0.len() - 1];
-                    let from_children = root.children_mut(from_parent_path).ok_or_else(|| {
-                        format!("Move: source parent not found at {from_parent_path:?}")
-                    })?;
+                    let from_children = root
+                        .children_mut(from_parent_path)
+                        .map_err(|e| format!("Move: {e}"))?;
                     if from_idx >= from_children.len() {
                         return Err(format!("Move: source index {from_idx} out of bounds"));
                     }
@@ -202,9 +202,9 @@ fn apply_patch(
 
                     // Check if we need to detach the occupant at the target position
                     if let Some(slot) = detach_to_slot {
-                        let to_children = root.children_mut(to_parent_path).ok_or_else(|| {
-                            format!("Move: target parent not found at {to_parent_path:?}")
-                        })?;
+                        let to_children = root
+                            .children_mut(to_parent_path)
+                            .map_err(|e| format!("Move: {e}"))?;
                         debug!(
                             to_idx,
                             to_children_len = to_children.len(),
@@ -221,9 +221,9 @@ fn apply_patch(
                     }
 
                     // Place the content at the target location
-                    let to_children = root.children_mut(to_parent_path).ok_or_else(|| {
-                        format!("Move: target parent not found at {to_parent_path:?}")
-                    })?;
+                    let to_children = root
+                        .children_mut(to_parent_path)
+                        .map_err(|e| format!("Move: {e}"))?;
                     // Grow the array with empty text placeholders if needed
                     while to_children.len() <= to_idx {
                         to_children.push(Content::Text(String::new()));
@@ -284,7 +284,78 @@ fn apply_patch(
                 }
             }
         }
+        Patch::UpdateProps { path, changes } => {
+            apply_update_props(root, path, changes)?;
+        }
     }
+    Ok(())
+}
+
+/// Apply property updates, handling `_text` specially.
+fn apply_update_props(
+    root: &mut Element,
+    path: &NodePath,
+    changes: &[PropChange],
+) -> Result<(), String> {
+    // Get the content at path
+    let content = root
+        .get_content_mut(&path.0)
+        .map_err(|e| format!("UpdateProps: {e}"))?;
+
+    for change in changes {
+        if change.name == "_text" {
+            // Special handling for _text: update the text content directly
+            match content {
+                Content::Text(t) => {
+                    if let Some(text) = &change.value {
+                        *t = text.clone();
+                    } else {
+                        *t = String::new();
+                    }
+                }
+                Content::Element(elem) => {
+                    // Update text child of element
+                    if let Some(text) = &change.value {
+                        if elem.children.is_empty() {
+                            elem.children.push(Content::Text(text.clone()));
+                        } else {
+                            let mut found_text = false;
+                            for child in &mut elem.children {
+                                if let Content::Text(t) = child {
+                                    *t = text.clone();
+                                    found_text = true;
+                                    break;
+                                }
+                            }
+                            if !found_text {
+                                elem.children[0] = Content::Text(text.clone());
+                            }
+                        }
+                    } else {
+                        elem.children.retain(|c| !matches!(c, Content::Text(_)));
+                    }
+                }
+            }
+        } else {
+            // Regular attribute - only valid on elements
+            match content {
+                Content::Element(elem) => {
+                    if let Some(value) = &change.value {
+                        elem.attrs.insert(change.name.clone(), value.clone());
+                    } else {
+                        elem.attrs.remove(&change.name);
+                    }
+                }
+                Content::Text(_) => {
+                    return Err(format!(
+                        "UpdateProps: cannot set attribute '{}' on text node",
+                        change.name
+                    ));
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -303,7 +374,7 @@ fn insert_at_position(
         NodeRef::Path(path) => {
             let children = root
                 .children_mut(&path.0)
-                .ok_or_else(|| format!("Insert: parent not found at {:?}", path.0))?;
+                .map_err(|e| format!("Insert: {e}"))?;
 
             // In Chawathe semantics, Insert does NOT shift - it places at position
             // and whatever was there gets displaced (detached to a slot).

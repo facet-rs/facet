@@ -7,6 +7,40 @@ use std::collections::HashMap;
 
 pub use parser::{ElementParseError, ElementParser, from_element};
 
+/// Error when navigating to a path in an Element tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathError {
+    /// Path was empty - cannot navigate to root as Content.
+    EmptyPath { path: Vec<usize> },
+    /// Index out of bounds.
+    IndexOutOfBounds {
+        path: Vec<usize>,
+        index: usize,
+        len: usize,
+    },
+    /// Tried to navigate through a text node.
+    TextNodeHasNoChildren { path: Vec<usize> },
+}
+
+impl std::fmt::Display for PathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PathError::EmptyPath { path } => write!(f, "empty path: {path:?}"),
+            PathError::IndexOutOfBounds { path, index, len } => {
+                write!(
+                    f,
+                    "index {index} out of bounds (len={len}) at path {path:?}"
+                )
+            }
+            PathError::TextNodeHasNoChildren { path } => {
+                write!(f, "text node has no children at path {path:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PathError {}
+
 /// Content that can appear inside an XML element - either child elements or text.
 #[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
 #[repr(u8)]
@@ -107,34 +141,60 @@ impl Element {
         result
     }
 
-    /// Get a mutable reference to a descendant element by path.
+    /// Get a mutable reference to content at a path.
     /// Path is a sequence of child indices.
-    pub fn get_mut(&mut self, path: &[usize]) -> Option<&mut Element> {
+    pub fn get_content_mut(&mut self, path: &[usize]) -> Result<&mut Content, PathError> {
         if path.is_empty() {
-            return Some(self);
+            return Err(PathError::EmptyPath { path: vec![] });
         }
 
         let idx = path[0];
-        let child = self.children.get_mut(idx)?;
+        let len = self.children.len();
+        let child = self
+            .children
+            .get_mut(idx)
+            .ok_or_else(|| PathError::IndexOutOfBounds {
+                path: path.to_vec(),
+                index: idx,
+                len,
+            })?;
+
+        if path.len() == 1 {
+            return Ok(child);
+        }
+
         match child {
-            Content::Element(e) => e.get_mut(&path[1..]),
-            Content::Text(_) => {
-                // Text nodes can't have children and we can't return &mut Element for text
-                None
-            }
+            Content::Element(e) => e.get_content_mut(&path[1..]),
+            Content::Text(_) => Err(PathError::TextNodeHasNoChildren {
+                path: path.to_vec(),
+            }),
         }
     }
 
     /// Get a mutable reference to the children vec at a path.
-    pub fn children_mut(&mut self, path: &[usize]) -> Option<&mut Vec<Content>> {
-        let node = self.get_mut(path)?;
-        Some(&mut node.children)
+    pub fn children_mut(&mut self, path: &[usize]) -> Result<&mut Vec<Content>, PathError> {
+        if path.is_empty() {
+            return Ok(&mut self.children);
+        }
+        match self.get_content_mut(path)? {
+            Content::Element(e) => Ok(&mut e.children),
+            Content::Text(_) => Err(PathError::TextNodeHasNoChildren {
+                path: path.to_vec(),
+            }),
+        }
     }
 
     /// Get a mutable reference to the attrs at a path.
-    pub fn attrs_mut(&mut self, path: &[usize]) -> Option<&mut HashMap<String, String>> {
-        let node = self.get_mut(path)?;
-        Some(&mut node.attrs)
+    pub fn attrs_mut(&mut self, path: &[usize]) -> Result<&mut HashMap<String, String>, PathError> {
+        if path.is_empty() {
+            return Ok(&mut self.attrs);
+        }
+        match self.get_content_mut(path)? {
+            Content::Element(e) => Ok(&mut e.attrs),
+            Content::Text(_) => Err(PathError::TextNodeHasNoChildren {
+                path: path.to_vec(),
+            }),
+        }
     }
 
     /// Serialize to HTML string.
