@@ -681,9 +681,23 @@ pub struct Ol {
     /// Reversed order.
     #[facet(html::attribute, default)]
     pub reversed: Option<String>,
-    /// List items.
-    #[facet(html::elements, default)]
-    pub li: Vec<Li>,
+    /// Child elements (li elements and whitespace text nodes).
+    #[facet(flatten, default)]
+    pub children: Vec<OlContent>,
+}
+
+/// Content types that can appear inside an ordered list.
+///
+/// Includes text nodes to preserve whitespace between list items.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum OlContent {
+    /// Text node (for whitespace between list items).
+    #[facet(html::text)]
+    Text(String),
+    /// List item.
+    #[facet(rename = "li")]
+    Li(Li),
 }
 
 /// Unordered list.
@@ -693,9 +707,23 @@ pub struct Ul {
     /// Global attributes.
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
-    /// List items.
-    #[facet(html::elements, default)]
-    pub li: Vec<Li>,
+    /// Child elements (li elements and whitespace text nodes).
+    #[facet(flatten, default)]
+    pub children: Vec<UlContent>,
+}
+
+/// Content types that can appear inside an unordered list.
+///
+/// Includes text nodes to preserve whitespace between list items.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum UlContent {
+    /// Text node (for whitespace between list items).
+    #[facet(html::text)]
+    Text(String),
+    /// List item.
+    #[facet(rename = "li")]
+    Li(Li),
 }
 
 /// List item.
@@ -728,10 +756,13 @@ pub struct Dl {
 
 /// Content types that can appear inside a description list.
 ///
-/// Note: Text content is silently discarded (per HTML spec, `<dl>` only contains `<dt>`/`<dd>`).
+/// Includes text nodes to preserve whitespace between terms and descriptions.
 #[derive(Facet)]
 #[repr(u8)]
 pub enum DlContent {
+    /// Text node (for whitespace between elements).
+    #[facet(html::text)]
+    Text(String),
     /// Description term.
     #[facet(rename = "dt")]
     Dt(Dt),
@@ -1327,12 +1358,24 @@ pub struct Video {
     /// Crossorigin.
     #[facet(html::attribute, default)]
     pub crossorigin: Option<String>,
-    /// Source elements.
-    #[facet(html::elements, default)]
-    pub source: Vec<Source>,
-    /// Track elements.
-    #[facet(html::elements, default)]
-    pub track: Vec<Track>,
+    /// Child elements (source, track elements and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<VideoContent>,
+}
+
+/// Content types that can appear inside a video element.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum VideoContent {
+    /// Text node (for whitespace).
+    #[facet(html::text)]
+    Text(String),
+    /// Source element.
+    #[facet(rename = "source")]
+    Source(Source),
+    /// Track element.
+    #[facet(rename = "track")]
+    Track(Track),
 }
 
 /// Audio player.
@@ -1363,9 +1406,21 @@ pub struct Audio {
     /// Crossorigin.
     #[facet(html::attribute, default)]
     pub crossorigin: Option<String>,
-    /// Source elements.
-    #[facet(html::elements, default)]
-    pub source: Vec<Source>,
+    /// Child elements (source elements and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<AudioContent>,
+}
+
+/// Content types that can appear inside an audio element.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum AudioContent {
+    /// Text node (for whitespace).
+    #[facet(html::text)]
+    Text(String),
+    /// Source element.
+    #[facet(rename = "source")]
+    Source(Source),
 }
 
 /// Media source.
@@ -1429,12 +1484,24 @@ pub struct Picture {
     /// Global attributes.
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
-    /// Source elements.
-    #[facet(html::elements, default)]
-    pub source: Vec<Source>,
+    /// Child elements (source, img elements and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<PictureContent>,
+}
+
+/// Content types that can appear inside a picture element.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum PictureContent {
+    /// Text node (for whitespace).
+    #[facet(html::text)]
+    Text(String),
+    /// Source element.
+    #[facet(rename = "source")]
+    Source(Source),
     /// Fallback image.
-    #[facet(default)]
-    pub img: Option<Img>,
+    #[facet(rename = "img")]
+    Img(Img),
 }
 
 /// Canvas for graphics.
@@ -1526,24 +1593,36 @@ pub struct Table {
     /// Global attributes.
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
+    /// Child elements (caption, colgroup, thead, tbody, tfoot, tr, and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<TableContent>,
+}
+
+/// Content types that can appear inside a table.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum TableContent {
+    /// Text node (for whitespace).
+    #[facet(html::text)]
+    Text(String),
     /// Caption.
-    #[facet(default)]
-    pub caption: Option<Caption>,
-    /// Column groups.
-    #[facet(html::elements, default)]
-    pub colgroup: Vec<Colgroup>,
+    #[facet(rename = "caption")]
+    Caption(Caption),
+    /// Column group.
+    #[facet(rename = "colgroup")]
+    Colgroup(Colgroup),
     /// Table head.
-    #[facet(default)]
-    pub thead: Option<Thead>,
-    /// Table body sections.
-    #[facet(html::elements, default)]
-    pub tbody: Vec<Tbody>,
+    #[facet(rename = "thead")]
+    Thead(Thead),
+    /// Table body.
+    #[facet(rename = "tbody")]
+    Tbody(Tbody),
     /// Table foot.
-    #[facet(default)]
-    pub tfoot: Option<Tfoot>,
-    /// Direct rows (when no thead/tbody/tfoot).
-    #[facet(html::elements, default)]
-    pub tr: Vec<Tr>,
+    #[facet(rename = "tfoot")]
+    Tfoot(Tfoot),
+    /// Table row.
+    #[facet(rename = "tr")]
+    Tr(Tr),
 }
 
 /// Table caption.
@@ -1569,9 +1648,21 @@ pub struct Colgroup {
     /// Number of columns spanned.
     #[facet(html::attribute, default)]
     pub span: Option<String>,
-    /// Column definitions.
-    #[facet(html::elements, default)]
-    pub col: Vec<Col>,
+    /// Child elements (col elements and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<ColgroupContent>,
+}
+
+/// Content types that can appear inside a colgroup.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum ColgroupContent {
+    /// Text node (for whitespace).
+    #[facet(html::text)]
+    Text(String),
+    /// Column definition.
+    #[facet(rename = "col")]
+    Col(Col),
 }
 
 /// Table column.
@@ -1593,9 +1684,9 @@ pub struct Thead {
     /// Global attributes.
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
-    /// Rows.
-    #[facet(html::elements, default)]
-    pub tr: Vec<Tr>,
+    /// Child elements (tr elements and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<TableSectionContent>,
 }
 
 /// Table body.
@@ -1605,9 +1696,9 @@ pub struct Tbody {
     /// Global attributes.
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
-    /// Rows.
-    #[facet(html::elements, default)]
-    pub tr: Vec<Tr>,
+    /// Child elements (tr elements and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<TableSectionContent>,
 }
 
 /// Table foot.
@@ -1617,9 +1708,21 @@ pub struct Tfoot {
     /// Global attributes.
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
-    /// Rows.
-    #[facet(html::elements, default)]
-    pub tr: Vec<Tr>,
+    /// Child elements (tr elements and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<TableSectionContent>,
+}
+
+/// Content types that can appear inside thead, tbody, or tfoot.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum TableSectionContent {
+    /// Text node (for whitespace).
+    #[facet(html::text)]
+    Text(String),
+    /// Table row.
+    #[facet(rename = "tr")]
+    Tr(Tr),
 }
 
 /// Table row.
@@ -1629,12 +1732,24 @@ pub struct Tr {
     /// Global attributes.
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
-    /// Header cells.
-    #[facet(html::elements, default)]
-    pub th: Vec<Th>,
-    /// Data cells.
-    #[facet(html::elements, default)]
-    pub td: Vec<Td>,
+    /// Child elements (th, td elements and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<TrContent>,
+}
+
+/// Content types that can appear inside a table row.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum TrContent {
+    /// Text node (for whitespace).
+    #[facet(html::text)]
+    Text(String),
+    /// Header cell.
+    #[facet(rename = "th")]
+    Th(Th),
+    /// Data cell.
+    #[facet(rename = "td")]
+    Td(Td),
 }
 
 /// Table header cell.
@@ -1904,12 +2019,24 @@ pub struct Select {
     /// Form override.
     #[facet(html::attribute, default)]
     pub form: Option<String>,
-    /// Options.
-    #[facet(html::elements, default)]
-    pub option: Vec<OptionElement>,
-    /// Option groups.
-    #[facet(html::elements, default)]
-    pub optgroup: Vec<Optgroup>,
+    /// Child elements (option, optgroup, and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<SelectContent>,
+}
+
+/// Content types that can appear inside a select.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum SelectContent {
+    /// Text node (for whitespace).
+    #[facet(html::text)]
+    Text(String),
+    /// Option.
+    #[facet(rename = "option")]
+    Option(OptionElement),
+    /// Option group.
+    #[facet(rename = "optgroup")]
+    Optgroup(Optgroup),
 }
 
 /// Option in a select.
@@ -1949,9 +2076,21 @@ pub struct Optgroup {
     /// Disabled.
     #[facet(html::attribute, default)]
     pub disabled: Option<String>,
-    /// Options.
-    #[facet(html::elements, default)]
-    pub option: Vec<OptionElement>,
+    /// Child elements (option elements and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<OptgroupContent>,
+}
+
+/// Content types that can appear inside an optgroup.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum OptgroupContent {
+    /// Text node (for whitespace).
+    #[facet(html::text)]
+    Text(String),
+    /// Option.
+    #[facet(rename = "option")]
+    Option(OptionElement),
 }
 
 /// Textarea.
@@ -2066,9 +2205,21 @@ pub struct Datalist {
     /// Global attributes.
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
-    /// Options.
-    #[facet(html::elements, default)]
-    pub option: Vec<OptionElement>,
+    /// Child elements (option elements and whitespace).
+    #[facet(flatten, default)]
+    pub children: Vec<DatalistContent>,
+}
+
+/// Content types that can appear inside a datalist.
+#[derive(Facet)]
+#[repr(u8)]
+pub enum DatalistContent {
+    /// Text node (for whitespace).
+    #[facet(html::text)]
+    Text(String),
+    /// Option.
+    #[facet(rename = "option")]
+    Option(OptionElement),
 }
 
 /// Output.

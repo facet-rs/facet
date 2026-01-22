@@ -36,6 +36,14 @@ const TEST_CASES = [
   },
   { name: "swap_siblings", old: "<p>First</p><p>Second</p>", new: "<p>Second</p><p>First</p>" },
   { name: "text_and_elements", old: "Text<span>Span</span>", new: "<span>Span</span>Text" },
+  // Whitespace test case - investigate if whitespace text nodes cause path mismatches
+  { name: "whitespace_text_change", old: "<p> <em>Yes</em></p>", new: "<p> <em>No</em></p>" },
+  // Newlines between elements - this is closer to the failing Template 7 case
+  {
+    name: "newlines_between_elements",
+    old: "<ul>\n    <li>Item A</li>\n    <li>Item B</li>\n</ul>",
+    new: '<ul>\n    <li>Item A</li>\n    <li class="hidden">Item B</li>\n</ul>',
+  },
 ];
 
 test.describe("facet-html-diff WASM", () => {

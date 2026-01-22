@@ -14,7 +14,7 @@
 //! See `cinereus/CHAWATHE_SEMANTICS.md` for details.
 
 use facet_html_diff::InsertContent;
-use tracing::debug;
+use tracing::{debug, trace};
 use wasm_bindgen::prelude::*;
 use web_sys::{Document, Element, Node};
 
@@ -326,15 +326,34 @@ fn insert_at_position(
     let current_len = children.length() as usize;
     let pos = position as u32;
 
+    trace!(
+        parent_tag = parent.tag_name(),
+        position,
+        current_len,
+        ?detach_to_slot,
+        "insert_at_position"
+    );
+
     if position < current_len {
         // Position exists - replace (Chawathe semantics - no shift)
         let existing = children.item(pos).unwrap();
+        trace!(
+            existing_node_type = existing.node_type(),
+            existing_text = ?existing.text_content(),
+            "replacing existing node"
+        );
         let replaced = parent.replace_child(node, &existing)?;
         if let Some(slot) = detach_to_slot {
+            trace!(slot, "storing replaced node in slot");
             slots.store(slot, replaced);
         }
     } else {
         // Position is beyond current children - grow with empty text placeholders
+        trace!(
+            growing_from = current_len,
+            growing_to = position,
+            "growing with placeholders"
+        );
         for _ in current_len..position {
             let placeholder = doc.create_text_node("");
             parent.append_child(&placeholder)?;
@@ -404,11 +423,23 @@ fn find_node(doc: &Document, path: &NodePath, _slots: &Slots) -> Result<Node, Js
     let body = doc.body().ok_or_else(|| JsValue::from_str("no body"))?;
     let mut current: Node = body.into();
 
+    trace!(?path, "find_node starting from body");
+
     for &idx in &path.0 {
         let children = current.child_nodes();
-        current = children
-            .item(idx as u32)
-            .ok_or_else(|| JsValue::from_str(&format!("child {} not found", idx)))?;
+        let num_children = children.length();
+        trace!(idx, num_children, "navigating to child");
+        current = children.item(idx as u32).ok_or_else(|| {
+            JsValue::from_str(&format!(
+                "child {} not found (parent has {} children)",
+                idx, num_children
+            ))
+        })?;
+        trace!(
+            node_type = current.node_type(),
+            node_name = current.node_name(),
+            "found node"
+        );
     }
 
     Ok(current)
