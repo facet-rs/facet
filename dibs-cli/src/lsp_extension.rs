@@ -644,7 +644,7 @@ impl DibsExtension {
         }
     }
 
-    /// Check param type compatibility in a value (handles both direct and operator patterns).
+    /// Check param and literal type compatibility in a value.
     async fn check_param_type_in_value(
         &self,
         document_uri: &str,
@@ -653,8 +653,18 @@ impl DibsExtension {
         declared_params: &[(String, Option<String>, Option<styx_tree::Span>)],
         diagnostics: &mut Vec<Diagnostic>,
     ) {
-        // Check if value is a $param reference
-        if let Some(text) = value.as_str() {
+        // Skip special tags like @null, @now, @default - they're type-flexible
+        if let Some(tag) = &value.tag {
+            if matches!(tag.name.as_str(), "null" | "now" | "default") {
+                return;
+            }
+        }
+
+        // Check if value is a scalar
+        if let Some(styx_tree::Payload::Scalar(scalar)) = &value.payload {
+            let text = &scalar.text;
+
+            // Check for $param reference
             if let Some(param_name) = text.strip_prefix('$') {
                 self.emit_type_mismatch_if_needed(
                     document_uri,
@@ -665,29 +675,106 @@ impl DibsExtension {
                     diagnostics,
                 )
                 .await;
+                return;
+            }
+
+            // Check literal type vs column type
+            let literal_type = self.infer_literal_type(text, scalar.kind);
+            if let Some(lit_type) = literal_type {
+                if !self.literal_type_compatible(&lit_type, &column.sql_type) {
+                    if let Some(span) = &value.span {
+                        diagnostics.push(Diagnostic {
+                            range: self.span_to_range(document_uri, span).await,
+                            severity: DiagnosticSeverity::Error,
+                            message: format!(
+                                "type mismatch: {} literal '{}' for column '{}' ({})",
+                                lit_type, text, column.name, column.sql_type
+                            ),
+                            source: Some("dibs".to_string()),
+                            code: Some("literal-type-mismatch".to_string()),
+                            data: None,
+                        });
+                    }
+                }
             }
         }
 
         // Check if value has a tag like @eq, @ilike, etc. with param argument
         if value.tag.is_some() {
-            // Check sequence payload for params (e.g., @eq($param))
+            // Check sequence payload for params/literals (e.g., @eq($param) or @eq(123))
             if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
                 for item in &seq.items {
-                    if let Some(text) = item.as_str() {
-                        if let Some(param_name) = text.strip_prefix('$') {
-                            self.emit_type_mismatch_if_needed(
-                                document_uri,
-                                item.span.as_ref(),
-                                param_name,
-                                column,
-                                declared_params,
-                                diagnostics,
-                            )
-                            .await;
-                        }
-                    }
+                    // Recurse to check each item
+                    Box::pin(self.check_param_type_in_value(
+                        document_uri,
+                        item,
+                        column,
+                        declared_params,
+                        diagnostics,
+                    ))
+                    .await;
                 }
             }
+        }
+    }
+
+    /// Infer the type of a literal value from its text and scalar kind.
+    fn infer_literal_type(&self, text: &str, kind: styx_tree::ScalarKind) -> Option<&'static str> {
+        use styx_tree::ScalarKind;
+
+        match kind {
+            // Quoted strings are always strings
+            ScalarKind::Quoted | ScalarKind::Raw | ScalarKind::Heredoc => Some("string"),
+            ScalarKind::Bare => {
+                // Check for boolean
+                if text == "true" || text == "false" {
+                    return Some("boolean");
+                }
+                // Check for integer
+                if text.parse::<i64>().is_ok() {
+                    return Some("integer");
+                }
+                // Check for float
+                if text.parse::<f64>().is_ok() {
+                    return Some("float");
+                }
+                // Bare identifiers (like column names) - don't type check these
+                None
+            }
+        }
+    }
+
+    /// Check if a literal type is compatible with a SQL column type.
+    fn literal_type_compatible(&self, literal_type: &str, sql_type: &str) -> bool {
+        let sql_upper = sql_type.to_uppercase();
+        match literal_type {
+            "string" => matches!(
+                sql_upper.as_str(),
+                "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING" | "JSONB" | "JSON"
+            ),
+            "integer" => matches!(
+                sql_upper.as_str(),
+                "INT"
+                    | "INTEGER"
+                    | "BIGINT"
+                    | "SMALLINT"
+                    | "INT4"
+                    | "INT8"
+                    | "INT2"
+                    | "FLOAT"
+                    | "DOUBLE"
+                    | "REAL"
+                    | "NUMERIC"
+                    | "DECIMAL"
+                    | "FLOAT4"
+                    | "FLOAT8"
+            ),
+            "float" => matches!(
+                sql_upper.as_str(),
+                "FLOAT" | "DOUBLE" | "REAL" | "NUMERIC" | "DECIMAL" | "FLOAT4" | "FLOAT8"
+            ),
+            "boolean" => matches!(sql_upper.as_str(), "BOOLEAN" | "BOOL"),
+            _ => true,
         }
     }
 
