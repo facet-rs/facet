@@ -54,7 +54,7 @@ impl FieldCategory {
             Some(FieldCategory::Attribute)
         } else if field.is_text() {
             Some(FieldCategory::Text)
-        } else if field.is_dom_tag() {
+        } else if field.is_tag() {
             Some(FieldCategory::Tag)
         } else if field.is_elements() {
             Some(FieldCategory::Elements)

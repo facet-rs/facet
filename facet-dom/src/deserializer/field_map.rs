@@ -360,7 +360,7 @@ impl StructFieldMap {
                     namespace,
                 };
                 text_field = Some(info);
-            } else if field.is_dom_tag() {
+            } else if field.is_tag() {
                 let info = FieldInfo {
                     idx,
                     field,

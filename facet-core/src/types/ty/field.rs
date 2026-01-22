@@ -250,7 +250,7 @@ impl Field {
     /// Checks for `#[facet(tag)]`, `xml::tag`, or `html::tag` attributes.
     /// Used by custom element types to store the element's tag name during deserialization.
     #[inline]
-    pub fn is_dom_tag(&self) -> bool {
+    pub fn is_tag(&self) -> bool {
         self.has_builtin_attr("tag")
             || self.has_attr(Some("xml"), "tag")
             || self.has_attr(Some("html"), "tag")
