@@ -94,38 +94,58 @@ where
 
             // No matching variant - check for #[facet(other)] fallback
             if let Some(other_variant) = enum_def.variants.iter().find(|v| v.is_other()) {
-                // Convert any scalar to its string representation
-                let scalar_as_string = match scalar {
-                    ScalarValue::Str(s) => s.to_string(),
-                    ScalarValue::Bool(b) => b.to_string(),
-                    ScalarValue::I64(i) => i.to_string(),
-                    ScalarValue::U64(u) => u.to_string(),
-                    ScalarValue::I128(i) => i.to_string(),
-                    ScalarValue::U128(u) => u.to_string(),
-                    ScalarValue::F64(f) => f.to_string(),
-                    ScalarValue::Char(c) => c.to_string(),
-                    ScalarValue::Null => "null".to_string(),
-                    ScalarValue::Bytes(_) => {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "string or struct for enum",
-                            got: "bytes".to_string(),
-                            span: self.last_span,
-                            path: None,
-                        });
-                    }
-                    ScalarValue::Unit => "".to_string(),
-                };
+                // Check if this variant has #[facet(tag)] and #[facet(content)] fields
+                let has_tag_field = other_variant.data.fields.iter().any(|f| f.is_variant_tag());
+                let has_content_field = other_variant
+                    .data
+                    .fields
+                    .iter()
+                    .any(|f| f.is_variant_content());
 
-                self.expect_event("value")?; // consume the scalar
-                wip = wip
-                    .select_variant_named(other_variant.effective_name())
-                    .map_err(DeserializeError::reflect)?;
+                if has_tag_field || has_content_field {
+                    // Don't consume the scalar yet - let deserialize_other_variant_with_captured_tag do it
+                    wip = wip
+                        .select_variant_named(other_variant.effective_name())
+                        .map_err(DeserializeError::reflect)?;
 
-                // The other variant should be a newtype (single field)
-                // Set the string value into that field
-                wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
-                wip = self.set_string_value(wip, Cow::Owned(scalar_as_string))?;
-                wip = wip.end().map_err(DeserializeError::reflect)?;
+                    // Use the tag/content deserialization path with tag=None
+                    // The scalar will be deserialized into the content field
+                    wip = self.deserialize_other_variant_with_captured_tag(wip, None)?;
+                } else {
+                    // Consume the scalar now for the newtype path
+                    self.expect_event("value")?;
+
+                    wip = wip
+                        .select_variant_named(other_variant.effective_name())
+                        .map_err(DeserializeError::reflect)?;
+
+                    // The other variant is a newtype (single field)
+                    // Convert scalar to string and set it into field 0
+                    let scalar_as_string = match scalar {
+                        ScalarValue::Str(s) => s.to_string(),
+                        ScalarValue::Bool(b) => b.to_string(),
+                        ScalarValue::I64(i) => i.to_string(),
+                        ScalarValue::U64(u) => u.to_string(),
+                        ScalarValue::I128(i) => i.to_string(),
+                        ScalarValue::U128(u) => u.to_string(),
+                        ScalarValue::F64(f) => f.to_string(),
+                        ScalarValue::Char(c) => c.to_string(),
+                        ScalarValue::Null => "null".to_string(),
+                        ScalarValue::Bytes(_) => {
+                            return Err(DeserializeError::TypeMismatch {
+                                expected: "string or struct for enum",
+                                got: "bytes".to_string(),
+                                span: self.last_span,
+                                path: None,
+                            });
+                        }
+                        ScalarValue::Unit => "".to_string(),
+                    };
+
+                    wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
+                    wip = self.set_string_value(wip, Cow::Owned(scalar_as_string))?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                }
                 return Ok(wip);
             }
 
