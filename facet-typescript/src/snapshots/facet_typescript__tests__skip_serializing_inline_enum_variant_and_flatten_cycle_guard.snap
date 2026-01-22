@@ -1,0 +1,8 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1297
+expression: ts
+---
+export type Wrapper =
+  | { Item: { value: number } }
+  | { Data: { visible: string } };

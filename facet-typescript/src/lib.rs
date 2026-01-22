@@ -99,6 +99,11 @@ impl TypeScriptGenerator {
         }
     }
 
+    #[inline]
+    fn shape_key(shape: &'static Shape) -> &'static str {
+        shape.type_identifier
+    }
+
     /// Unwrap through options, pointers, transparent wrappers, and proxies to get the effective shape.
     ///
     /// Returns the unwrapped shape along with a flag indicating whether an `Option` was encountered.
@@ -150,18 +155,36 @@ impl TypeScriptGenerator {
         fields: &'static [Field],
         force_optional: bool,
     ) -> Vec<String> {
+        let mut flatten_stack: Vec<&'static str> = Vec::new();
+        self.collect_inline_fields_guarded(fields, force_optional, &mut flatten_stack)
+    }
+
+    fn collect_inline_fields_guarded(
+        &mut self,
+        fields: &'static [Field],
+        force_optional: bool,
+        flatten_stack: &mut Vec<&'static str>,
+    ) -> Vec<String> {
         let mut result = Vec::new();
         for field in fields {
-            if field.flags.contains(facet_core::FieldFlags::SKIP) {
+            if field.should_skip_serializing_unconditional() {
                 continue;
             }
             if field.is_flattened() {
                 let (inner_shape, parent_is_optional) =
                     Self::unwrap_to_inner_shape(field.shape.get());
                 if let Type::User(UserType::Struct(st)) = &inner_shape.ty {
-                    result.extend(
-                        self.collect_inline_fields(st.fields, force_optional || parent_is_optional),
-                    );
+                    let inner_key = Self::shape_key(inner_shape);
+                    if flatten_stack.contains(&inner_key) {
+                        continue;
+                    }
+                    flatten_stack.push(inner_key);
+                    result.extend(self.collect_inline_fields_guarded(
+                        st.fields,
+                        force_optional || parent_is_optional,
+                        flatten_stack,
+                    ));
+                    flatten_stack.pop();
                     continue;
                 }
             }
@@ -171,16 +194,41 @@ impl TypeScriptGenerator {
     }
 
     /// Write struct fields to output, handling skip and flatten recursively.
-    fn write_struct_fields(&mut self, fields: &'static [Field], force_optional: bool) {
+    fn write_struct_fields_for_shape(
+        &mut self,
+        field_owner_shape: &'static Shape,
+        fields: &'static [Field],
+    ) {
+        let mut flatten_stack: Vec<&'static str> = Vec::new();
+        flatten_stack.push(Self::shape_key(field_owner_shape));
+        self.write_struct_fields_guarded(fields, false, &mut flatten_stack);
+    }
+
+    fn write_struct_fields_guarded(
+        &mut self,
+        fields: &'static [Field],
+        force_optional: bool,
+        flatten_stack: &mut Vec<&'static str>,
+    ) {
         for field in fields {
-            if field.flags.contains(facet_core::FieldFlags::SKIP) {
+            if field.should_skip_serializing_unconditional() {
                 continue;
             }
             if field.is_flattened() {
                 let (inner_shape, parent_is_optional) =
                     Self::unwrap_to_inner_shape(field.shape.get());
                 if let Type::User(UserType::Struct(st)) = &inner_shape.ty {
-                    self.write_struct_fields(st.fields, force_optional || parent_is_optional);
+                    let inner_key = Self::shape_key(inner_shape);
+                    if flatten_stack.contains(&inner_key) {
+                        continue;
+                    }
+                    flatten_stack.push(inner_key);
+                    self.write_struct_fields_guarded(
+                        st.fields,
+                        force_optional || parent_is_optional,
+                        flatten_stack,
+                    );
+                    flatten_stack.pop();
                     continue;
                 }
             }
@@ -255,7 +303,7 @@ impl TypeScriptGenerator {
             let proxy_shape = proxy_def.shape;
             match &proxy_shape.ty {
                 Type::User(UserType::Struct(st)) => {
-                    self.generate_struct(shape, st.fields, st.kind);
+                    self.generate_struct(shape, proxy_shape, st.fields, st.kind);
                     return;
                 }
                 Type::User(UserType::Enum(en)) => {
@@ -280,7 +328,7 @@ impl TypeScriptGenerator {
 
         match &shape.ty {
             Type::User(UserType::Struct(st)) => {
-                self.generate_struct(shape, st.fields, st.kind);
+                self.generate_struct(shape, shape, st.fields, st.kind);
             }
             Type::User(UserType::Enum(en)) => {
                 self.generate_enum(shape, en);
@@ -301,14 +349,20 @@ impl TypeScriptGenerator {
 
     fn generate_struct(
         &mut self,
-        shape: &'static Shape,
+        exported_shape: &'static Shape,
+        field_owner_shape: &'static Shape,
         fields: &'static [Field],
         kind: StructKind,
     ) {
         match kind {
             StructKind::Unit => {
                 // Unit struct as null
-                writeln!(self.output, "export type {} = null;", shape.type_identifier).unwrap();
+                writeln!(
+                    self.output,
+                    "export type {} = null;",
+                    exported_shape.type_identifier
+                )
+                .unwrap();
             }
             StructKind::TupleStruct if fields.len() == 1 => {
                 // Newtype - type alias to inner
@@ -316,7 +370,7 @@ impl TypeScriptGenerator {
                 writeln!(
                     self.output,
                     "export type {} = {};",
-                    shape.type_identifier, inner_type
+                    exported_shape.type_identifier, inner_type
                 )
                 .unwrap();
             }
@@ -329,16 +383,21 @@ impl TypeScriptGenerator {
                 writeln!(
                     self.output,
                     "export type {} = [{}];",
-                    shape.type_identifier,
+                    exported_shape.type_identifier,
                     types.join(", ")
                 )
                 .unwrap();
             }
             StructKind::Struct => {
-                writeln!(self.output, "export interface {} {{", shape.type_identifier).unwrap();
+                writeln!(
+                    self.output,
+                    "export interface {} {{",
+                    exported_shape.type_identifier
+                )
+                .unwrap();
                 self.indent += 1;
 
-                self.write_struct_fields(fields, false);
+                self.write_struct_fields_for_shape(field_owner_shape, fields);
 
                 self.indent -= 1;
                 self.output.push_str("}\n");
@@ -1162,5 +1221,84 @@ mod tests {
 
         let ts = to_typescript::<Outer>();
         insta::assert_snapshot!(ts);
+    }
+
+    #[test]
+    fn test_flatten_recursive_option_box() {
+        #[derive(Facet)]
+        struct Node {
+            value: u32,
+            #[facet(flatten)]
+            next: Option<Box<Node>>,
+        }
+
+        let ts = to_typescript::<Node>();
+        insta::assert_snapshot!("flatten_recursive_option_box", ts);
+    }
+
+    #[test]
+    fn test_skip_serializing_struct_field() {
+        #[derive(Facet)]
+        struct Data {
+            visible: String,
+            #[facet(skip_serializing)]
+            internal: u64,
+        }
+
+        let ts = to_typescript::<Data>();
+        insta::assert_snapshot!("skip_serializing_struct_field", ts);
+    }
+
+    #[test]
+    fn test_skip_serializing_inline_enum_variant_and_flatten_cycle_guard() {
+        #[derive(Facet)]
+        struct Node {
+            value: u32,
+            #[facet(flatten)]
+            next: Option<Box<Node>>,
+        }
+
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum Wrapper {
+            Item {
+                #[facet(flatten)]
+                node: Node,
+            },
+            Data {
+                visible: String,
+                #[facet(skip_serializing)]
+                internal: u64,
+            },
+        }
+
+        let item = Wrapper::Item {
+            node: Node {
+                value: 1,
+                next: None,
+            },
+        };
+        match item {
+            Wrapper::Item { node } => assert_eq!(node.value, 1),
+            Wrapper::Data { .. } => unreachable!(),
+        }
+
+        let data = Wrapper::Data {
+            visible: String::new(),
+            internal: 0,
+        };
+        match data {
+            Wrapper::Data { visible, internal } => {
+                assert!(visible.is_empty());
+                assert_eq!(internal, 0);
+            }
+            Wrapper::Item { .. } => unreachable!(),
+        }
+
+        let ts = to_typescript::<Wrapper>();
+        insta::assert_snapshot!(
+            "skip_serializing_inline_enum_variant_and_flatten_cycle_guard",
+            ts
+        );
     }
 }
