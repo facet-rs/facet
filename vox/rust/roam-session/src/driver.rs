@@ -560,6 +560,7 @@ fn connection_error_to_io(e: ConnectionError) -> io::Error {
 /// r[impl core.conn.independence]
 struct ConnectionState {
     /// The connection ID (for debugging/logging).
+    #[allow(dead_code)]
     conn_id: ConnectionId,
     /// Client-side handle for making calls on this connection.
     handle: ConnectionHandle,

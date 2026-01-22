@@ -6,6 +6,11 @@ license.workspace = true
 repository.workspace = true
 description = "Cross-platform file descriptor / handle passing for roam"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 tokio = { workspace = true, features = ["net", "io-util"] }
 

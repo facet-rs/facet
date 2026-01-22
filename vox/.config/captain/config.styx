@@ -1,0 +1,7 @@
+@schema {id crate:captain-config@1, cli captain}
+
+pre-commit {}
+
+pre-push {
+    doc-tests false
+}

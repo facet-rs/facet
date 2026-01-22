@@ -1,5 +1,0 @@
-// Captain configuration
-pre-commit
-pre-push {
-    doc-tests #false
-}
