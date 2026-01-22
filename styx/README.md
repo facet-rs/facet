@@ -123,7 +123,7 @@ And so, tags are a natural way to _select_ a variant:
 ```styx
 alts (
     @no_payload@
-    @tuple_payload(3, 7)
+    @tuple_payload(3 7)
     @struct_payload{name Gisèle}
 )
 ```
