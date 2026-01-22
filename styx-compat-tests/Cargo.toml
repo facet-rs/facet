@@ -1,6 +1,6 @@
 [package]
 name = "styx-compat-tests"
-version = "0.1.0"
+version = "1.0.0"
 edition.workspace = true
 description = "Cross-compatibility tests between facet-styx and serde_styx"
 publish = false

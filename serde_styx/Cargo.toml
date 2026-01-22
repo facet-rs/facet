@@ -1,6 +1,6 @@
 [package]
 name = "serde_styx"
-version = "0.1.0"
+version = "1.0.0"
 edition.workspace = true
 description = "Serde support for the Styx configuration language"
 license.workspace = true
