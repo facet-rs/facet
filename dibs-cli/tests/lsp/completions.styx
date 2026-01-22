@@ -421,4 +421,86 @@ tests (
             count 0
         }
     }
+
+    // ========================================================================
+    // Type Checking Tests
+    // ========================================================================
+
+    {
+        name "lint: param type matches column type (string)"
+        input <<STYX
+            GoodQuery @query{
+                from product
+                params {handle @string}
+                where {deleted_at @null, handle $handle}
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
+
+    {
+        name "lint: param type matches column type (int)"
+        input <<STYX
+            GoodQuery @query{
+                from product
+                params {id @int}
+                where {deleted_at @null, id $id}
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
+
+    {
+        name "lint: param type mismatch - int param for text column"
+        input <<STYX
+            BadQuery @query{
+                from product
+                params {handle @int}
+                where {deleted_at @null, handle $handle}
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "type mismatch" code "param-type-mismatch"})
+        }
+    }
+
+    {
+        name "lint: param type mismatch - string param for bigint column"
+        input <<STYX
+            BadQuery @query{
+                from product
+                params {id @string}
+                where {deleted_at @null, id $id}
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "type mismatch" code "param-type-mismatch"})
+        }
+    }
+
+    {
+        name "lint: param type mismatch with operator"
+        input <<STYX
+            BadQuery @query{
+                from product
+                params {id @string}
+                where {deleted_at @null, id @eq($id)}
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "type mismatch" code "param-type-mismatch"})
+        }
+    }
 )

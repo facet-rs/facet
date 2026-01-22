@@ -310,7 +310,8 @@ impl DibsExtension {
                 let mut offset_span: Option<&styx_tree::Span> = None;
                 let mut limit_span: Option<&styx_tree::Span> = None;
                 let mut first_span: Option<&styx_tree::Span> = None;
-                let mut declared_params: Vec<String> = Vec::new();
+                let mut declared_params: Vec<(String, Option<String>, Option<styx_tree::Span>)> =
+                    Vec::new(); // (name, type, span)
                 let mut table_name = None;
 
                 for entry in &obj.entries {
@@ -349,13 +350,17 @@ impl DibsExtension {
                             }
                         }
                         "params" => {
-                            // Collect declared param names
+                            // Collect declared param names and types
                             if let Some(styx_tree::Payload::Object(params_obj)) =
                                 &entry.value.payload
                             {
                                 for param_entry in &params_obj.entries {
                                     if let Some(name) = param_entry.key.as_str() {
-                                        declared_params.push(name.to_string());
+                                        // Get the type tag (e.g., @string, @int)
+                                        let param_type =
+                                            param_entry.value.tag.as_ref().map(|t| t.name.clone());
+                                        let span = param_entry.key.span.clone();
+                                        declared_params.push((name.to_string(), param_type, span));
                                     }
                                 }
                             }
@@ -427,35 +432,20 @@ impl DibsExtension {
                 // Lint: unused params - collect used params and compare
                 if !declared_params.is_empty() {
                     let used_params = self.collect_param_refs(value);
-                    for param in &declared_params {
-                        if !used_params.contains(param) {
-                            // Find the param entry to get its span
-                            for entry in &obj.entries {
-                                if entry.key.as_str() == Some("params") {
-                                    if let Some(styx_tree::Payload::Object(params_obj)) =
-                                        &entry.value.payload
-                                    {
-                                        for param_entry in &params_obj.entries {
-                                            if param_entry.key.as_str() == Some(param.as_str()) {
-                                                if let Some(span) = &param_entry.key.span {
-                                                    diagnostics.push(Diagnostic {
-                                                        range: self
-                                                            .span_to_range(document_uri, span)
-                                                            .await,
-                                                        severity: DiagnosticSeverity::Warning,
-                                                        message: format!(
-                                                            "param '{}' is declared but never used",
-                                                            param
-                                                        ),
-                                                        source: Some("dibs".to_string()),
-                                                        code: Some("unused-param".to_string()),
-                                                        data: None,
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                    for (param_name, _param_type, param_span) in &declared_params {
+                        if !used_params.contains(param_name) {
+                            if let Some(span) = param_span {
+                                diagnostics.push(Diagnostic {
+                                    range: self.span_to_range(document_uri, span).await,
+                                    severity: DiagnosticSeverity::Warning,
+                                    message: format!(
+                                        "param '{}' is declared but never used",
+                                        param_name
+                                    ),
+                                    source: Some("dibs".to_string()),
+                                    code: Some("unused-param".to_string()),
+                                    data: None,
+                                });
                             }
                         }
                     }
@@ -529,6 +519,17 @@ impl DibsExtension {
                                     document_uri,
                                     &entry.value,
                                     table,
+                                    diagnostics,
+                                )
+                                .await;
+                            }
+                            // Type check param usages in where clause
+                            if key == "where" {
+                                self.validate_param_types(
+                                    document_uri,
+                                    &entry.value,
+                                    table,
+                                    &declared_params,
                                     diagnostics,
                                 )
                                 .await;
@@ -609,6 +610,139 @@ impl DibsExtension {
                     }
                 }
             }
+        }
+    }
+
+    /// Validate param types against column types in a where clause.
+    async fn validate_param_types(
+        &self,
+        document_uri: &str,
+        where_value: &styx_tree::Value,
+        table: &TableInfo,
+        declared_params: &[(String, Option<String>, Option<styx_tree::Span>)],
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        if let Some(styx_tree::Payload::Object(obj)) = &where_value.payload {
+            for entry in &obj.entries {
+                let col_name = entry.key.as_str().unwrap_or("");
+                let column = table.columns.iter().find(|c| c.name == col_name);
+
+                if let Some(column) = column {
+                    // Check for param usage in this entry's value
+                    // Pattern 1: `column $param` (direct)
+                    // Pattern 2: `column @op($param)` (with operator)
+                    self.check_param_type_in_value(
+                        document_uri,
+                        &entry.value,
+                        column,
+                        declared_params,
+                        diagnostics,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    /// Check param type compatibility in a value (handles both direct and operator patterns).
+    async fn check_param_type_in_value(
+        &self,
+        document_uri: &str,
+        value: &styx_tree::Value,
+        column: &dibs_proto::ColumnInfo,
+        declared_params: &[(String, Option<String>, Option<styx_tree::Span>)],
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        // Check if value is a $param reference
+        if let Some(text) = value.as_str() {
+            if let Some(param_name) = text.strip_prefix('$') {
+                self.emit_type_mismatch_if_needed(
+                    document_uri,
+                    value.span.as_ref(),
+                    param_name,
+                    column,
+                    declared_params,
+                    diagnostics,
+                )
+                .await;
+            }
+        }
+
+        // Check if value has a tag like @eq, @ilike, etc. with param argument
+        if value.tag.is_some() {
+            // Check sequence payload for params (e.g., @eq($param))
+            if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
+                for item in &seq.items {
+                    if let Some(text) = item.as_str() {
+                        if let Some(param_name) = text.strip_prefix('$') {
+                            self.emit_type_mismatch_if_needed(
+                                document_uri,
+                                item.span.as_ref(),
+                                param_name,
+                                column,
+                                declared_params,
+                                diagnostics,
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Emit a type mismatch diagnostic if param type doesn't match column type.
+    async fn emit_type_mismatch_if_needed(
+        &self,
+        document_uri: &str,
+        span: Option<&styx_tree::Span>,
+        param_name: &str,
+        column: &dibs_proto::ColumnInfo,
+        declared_params: &[(String, Option<String>, Option<styx_tree::Span>)],
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        // Find the param's declared type
+        let param_info = declared_params
+            .iter()
+            .find(|(name, _, _)| name == param_name);
+
+        if let Some((_, Some(param_type), _)) = param_info {
+            if !self.types_compatible(param_type, &column.sql_type) {
+                if let Some(span) = span {
+                    diagnostics.push(Diagnostic {
+                        range: self.span_to_range(document_uri, span).await,
+                        severity: DiagnosticSeverity::Error,
+                        message: format!(
+                            "type mismatch: param '{}' is @{} but column '{}' is {}",
+                            param_name, param_type, column.name, column.sql_type
+                        ),
+                        source: Some("dibs".to_string()),
+                        code: Some("param-type-mismatch".to_string()),
+                        data: None,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Check if a param type is compatible with a SQL column type.
+    fn types_compatible(&self, param_type: &str, sql_type: &str) -> bool {
+        match param_type {
+            "string" => matches!(
+                sql_type.to_uppercase().as_str(),
+                "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING"
+            ),
+            "int" => matches!(
+                sql_type.to_uppercase().as_str(),
+                "INT" | "INTEGER" | "BIGINT" | "SMALLINT" | "INT4" | "INT8" | "INT2"
+            ),
+            "bool" | "boolean" => matches!(sql_type.to_uppercase().as_str(), "BOOLEAN" | "BOOL"),
+            "float" => matches!(
+                sql_type.to_uppercase().as_str(),
+                "FLOAT" | "DOUBLE" | "REAL" | "NUMERIC" | "DECIMAL" | "FLOAT4" | "FLOAT8"
+            ),
+            // For unrecognized param types, assume compatible (could be custom)
+            _ => true,
         }
     }
 
