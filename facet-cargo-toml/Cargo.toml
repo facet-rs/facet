@@ -1,6 +1,6 @@
 [package]
 name = "facet-cargo-toml"
-version = "0.1.0"
+version = "0.43.0"
 edition = "2024"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 license = "MIT OR Apache-2.0"
@@ -10,13 +10,13 @@ keywords = ["cargo", "toml", "parser", "manifest", "lockfile"]
 categories = ["development-tools", "parser-implementations"]
 
 [dependencies]
-facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
-facet-format = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-toml = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-value = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"], version = "0.43" }
+facet-format = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
+facet-toml = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
+facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
+facet-value = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
+facet-error = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
 camino = "1.2"
-facet-error = { git = "https://github.com/facet-rs/facet", branch = "main" }
 
 [dev-dependencies]
 datatest-stable = "0.3"
