@@ -58,12 +58,6 @@ fn generate_types_file(mapper: &TypeMapper, package_name: &str) -> Result<String
     writeln!(out, "package {}", package_name)?;
     writeln!(out)?;
 
-    // Imports (we'll need these for validation and parsing)
-    writeln!(out, "import (")?;
-    writeln!(out, "\t\"fmt\"")?;
-    writeln!(out, ")")?;
-    writeln!(out)?;
-
     // Generate type definitions
     for (name, go_type) in mapper.types() {
         generate_type_definition(&mut out, name, go_type)?;
@@ -365,10 +359,7 @@ fn generate_parse_file(
     writeln!(out, "import (")?;
     writeln!(out, "\t\"os\"")?;
     writeln!(out)?;
-    writeln!(
-        out,
-        "\t\"github.com/bearcove/styx/implementations/styx-go\""
-    )?;
+    writeln!(out, "\tstyx \"github.com/bearcove/styx/implementations/styx-go\"")?;
     writeln!(out, ")")?;
     writeln!(out)?;
 

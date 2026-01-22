@@ -75,7 +75,7 @@ impl TypeMapper {
 
     /// Register a named type from the schema.
     pub fn register_type(&mut self, name: &str, schema: &Schema) -> Result<(), GenError> {
-        let go_type = self.map_schema_type(schema)?;
+        let go_type = self.map_schema_type(Some(name), schema)?;
         self.types.insert(name.to_string(), go_type);
         Ok(())
     }
@@ -85,8 +85,8 @@ impl TypeMapper {
         &self.types
     }
 
-    /// Map a schema type to a Go type.
-    fn map_schema_type(&self, schema: &Schema) -> Result<GoType, GenError> {
+    /// Map a schema type to a Go type, registering nested types as needed.
+    fn map_schema_type(&mut self, parent_name: Option<&str>, schema: &Schema) -> Result<GoType, GenError> {
         match schema {
             Schema::String(_) => Ok(GoType::Primitive("string".to_string())),
             Schema::Int(_) => Ok(GoType::Primitive("int64".to_string())),
@@ -99,7 +99,7 @@ impl TypeMapper {
                 for (documented_key, field_schema) in &obj_schema.0 {
                     let key = documented_key.value();
                     if let Some(field_name) = &key.value {
-                        let field = self.map_field(field_name, field_schema)?;
+                        let field = self.map_field(parent_name, field_name, field_schema)?;
                         struct_fields.push(field);
                     }
                 }
@@ -110,14 +110,14 @@ impl TypeMapper {
             }
             Schema::Seq(seq_schema) => {
                 let item_schema = &seq_schema.0.0;
-                let item_type = self.type_name(item_schema.value())?;
+                let item_type = self.type_name(parent_name, item_schema.value())?;
                 Ok(GoType::Primitive(format!("[]{}", item_type)))
             }
             Schema::Tuple(tuple_schema) => {
                 if tuple_schema.0.is_empty() {
                     Ok(GoType::Primitive("[]interface{}".to_string()))
                 } else {
-                    let first_type = self.type_name(tuple_schema.0[0].value())?;
+                    let first_type = self.type_name(parent_name, tuple_schema.0[0].value())?;
                     Ok(GoType::Primitive(format!("[]{}", first_type)))
                 }
             }
@@ -126,12 +126,12 @@ impl TypeMapper {
                 let key_type = if schemas.is_empty() {
                     "string".to_string()
                 } else {
-                    self.type_name(schemas[0].value())?
+                    self.type_name(parent_name, schemas[0].value())?
                 };
                 let value_type = if schemas.len() < 2 {
                     "interface{}".to_string()
                 } else {
-                    self.type_name(schemas[1].value())?
+                    self.type_name(parent_name, schemas[1].value())?
                 };
                 Ok(GoType::Primitive(format!(
                     "map[{}]{}",
@@ -154,21 +154,21 @@ impl TypeMapper {
             }
             Schema::Optional(opt_schema) => {
                 let inner = opt_schema.0.0.value();
-                let inner_type = self.type_name(inner)?;
+                let inner_type = self.type_name(parent_name, inner)?;
                 Ok(GoType::Primitive(format!("*{}", inner_type)))
             }
             Schema::Default(default_schema) => {
                 let inner = default_schema.0.1.value();
-                self.map_schema_type(inner)
+                self.map_schema_type(parent_name, inner)
             }
             Schema::Union(_) | Schema::OneOf(_) => Ok(GoType::Primitive("interface{}".to_string())),
             Schema::Flatten(flatten_schema) => {
                 let inner = flatten_schema.0.0.value();
-                self.map_schema_type(inner)
+                self.map_schema_type(parent_name, inner)
             }
             Schema::Deprecated(depr_schema) => {
                 let inner = depr_schema.0.1.value();
-                self.map_schema_type(inner)
+                self.map_schema_type(parent_name, inner)
             }
             Schema::Literal(_) => Ok(GoType::Primitive("string".to_string())),
             Schema::Type { name } => {
@@ -181,17 +181,48 @@ impl TypeMapper {
         }
     }
 
-    /// Map a field to a struct field.
-    fn map_field(&self, name: &str, schema: &Schema) -> Result<StructField, GenError> {
-        let optional = matches!(schema, Schema::Optional(_));
-        let inner_schema = if let Schema::Optional(opt) = schema {
-            opt.0.0.value().as_ref()
+    /// Map a field to a struct field, registering nested types as needed.
+    fn map_field(&mut self, parent_name: Option<&str>, field_name: &str, schema: &Schema) -> Result<StructField, GenError> {
+        // Unwrap Default and Optional wrappers to find the core type
+        let mut current = schema;
+        let mut is_optional = false;
+
+        loop {
+            match current {
+                Schema::Default(default_schema) => {
+                    current = default_schema.0.1.value();
+                }
+                Schema::Optional(opt_schema) => {
+                    is_optional = true;
+                    current = opt_schema.0.0.value();
+                }
+                _ => break,
+            }
+        }
+
+        let inner_schema = current;
+
+        // Check if this is a nested object - if so, generate a named type for it
+        let type_name = if matches!(inner_schema, Schema::Object(_)) {
+            // Generate a type name for the nested object
+            let nested_type_name = if let Some(parent) = parent_name {
+                format!("{}{}", parent, to_pascal_case(field_name))
+            } else {
+                to_pascal_case(field_name)
+            };
+
+            // Register the nested type if it doesn't exist yet
+            if !self.types.contains_key(&nested_type_name) {
+                let nested_type = self.map_schema_type(Some(&nested_type_name), inner_schema)?;
+                self.types.insert(nested_type_name.clone(), nested_type);
+            }
+
+            nested_type_name
         } else {
-            schema
+            self.type_name(parent_name, inner_schema)?
         };
 
-        let type_name = self.type_name(inner_schema)?;
-        let type_name = if optional
+        let type_name = if is_optional
             && !type_name.starts_with('*')
             && !type_name.starts_with('[')
             && !type_name.starts_with("map[")
@@ -205,11 +236,11 @@ impl TypeMapper {
         let doc = None; // TODO: Extract doc from Documented wrapper
 
         Ok(StructField {
-            go_name: to_pascal_case(name),
-            json_name: name.to_string(),
-            styx_name: name.to_string(),
+            go_name: to_pascal_case(field_name),
+            json_name: field_name.to_string(),
+            styx_name: field_name.to_string(),
             type_name,
-            optional,
+            optional: is_optional,
             doc,
             constraints,
         })
@@ -237,8 +268,8 @@ impl TypeMapper {
         }
     }
 
-    /// Get the Go type name for a schema type.
-    fn type_name(&self, schema: &Schema) -> Result<String, GenError> {
+    /// Get the Go type name for a schema type (non-nested objects return generic map).
+    fn type_name(&self, _parent_name: Option<&str>, schema: &Schema) -> Result<String, GenError> {
         match schema {
             Schema::String(_) => Ok("string".to_string()),
             Schema::Int(_) => Ok("int64".to_string()),
@@ -248,14 +279,14 @@ impl TypeMapper {
             Schema::Any => Ok("interface{}".to_string()),
             Schema::Object(_) => Ok("map[string]interface{}".to_string()),
             Schema::Seq(seq_schema) => {
-                let item_type = self.type_name(seq_schema.0.0.value())?;
+                let item_type = self.type_name(_parent_name, seq_schema.0.0.value())?;
                 Ok(format!("[]{}", item_type))
             }
             Schema::Tuple(tuple_schema) => {
                 if tuple_schema.0.is_empty() {
                     Ok("[]interface{}".to_string())
                 } else {
-                    let first_type = self.type_name(tuple_schema.0[0].value())?;
+                    let first_type = self.type_name(_parent_name, tuple_schema.0[0].value())?;
                     Ok(format!("[]{}", first_type))
                 }
             }
@@ -264,18 +295,18 @@ impl TypeMapper {
                 let key_type = if schemas.is_empty() {
                     "string".to_string()
                 } else {
-                    self.type_name(schemas[0].value())?
+                    self.type_name(_parent_name, schemas[0].value())?
                 };
                 let value_type = if schemas.len() < 2 {
                     "interface{}".to_string()
                 } else {
-                    self.type_name(schemas[1].value())?
+                    self.type_name(_parent_name, schemas[1].value())?
                 };
                 Ok(format!("map[{}]{}", key_type, value_type))
             }
             Schema::Enum(_) => Ok("string".to_string()),
             Schema::Optional(opt_schema) => {
-                let inner_type = self.type_name(opt_schema.0.0.value())?;
+                let inner_type = self.type_name(_parent_name, opt_schema.0.0.value())?;
                 if inner_type.starts_with('*')
                     || inner_type.starts_with('[')
                     || inner_type.starts_with("map[")
@@ -285,10 +316,10 @@ impl TypeMapper {
                     Ok(format!("*{}", inner_type))
                 }
             }
-            Schema::Default(default_schema) => self.type_name(default_schema.0.1.value()),
+            Schema::Default(default_schema) => self.type_name(_parent_name, default_schema.0.1.value()),
             Schema::Union(_) | Schema::OneOf(_) => Ok("interface{}".to_string()),
-            Schema::Flatten(flatten_schema) => self.type_name(flatten_schema.0.0.value()),
-            Schema::Deprecated(depr_schema) => self.type_name(depr_schema.0.1.value()),
+            Schema::Flatten(flatten_schema) => self.type_name(_parent_name, flatten_schema.0.0.value()),
+            Schema::Deprecated(depr_schema) => self.type_name(_parent_name, depr_schema.0.1.value()),
             Schema::Literal(_) => Ok("string".to_string()),
             Schema::Type { name } => {
                 if let Some(n) = name {
