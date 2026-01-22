@@ -5,7 +5,10 @@ mod parser;
 use facet_xml as xml;
 use std::collections::HashMap;
 
-pub use parser::{ElementParseError, ElementParser, from_element};
+pub use parser::{
+    ElementParseError, ElementParser, ElementSerializeError, ElementSerializer, from_element,
+    to_element,
+};
 
 /// Error when navigating to a path in an Element tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -349,5 +352,93 @@ mod tests {
         let item: Item = from_element(&elem).unwrap();
         assert_eq!(item.id, "123");
         assert_eq!(item.value, "hello");
+    }
+
+    #[test]
+    fn to_element_simple() {
+        #[derive(facet::Facet, Debug, PartialEq)]
+        struct Person {
+            name: String,
+            age: u32,
+        }
+
+        let person = Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+
+        let elem = to_element(&person).unwrap();
+        assert_eq!(elem.tag, "person");
+        assert_eq!(elem.children.len(), 2);
+
+        let name_child = elem.child_elements().find(|e| e.tag == "name").unwrap();
+        assert_eq!(name_child.text_content(), "Alice");
+
+        let age_child = elem.child_elements().find(|e| e.tag == "age").unwrap();
+        assert_eq!(age_child.text_content(), "30");
+    }
+
+    #[test]
+    fn to_element_with_attrs() {
+        #[derive(facet::Facet, Debug, PartialEq)]
+        struct Item {
+            #[facet(xml::attribute)]
+            id: String,
+            value: String,
+        }
+
+        let item = Item {
+            id: "123".to_string(),
+            value: "hello".to_string(),
+        };
+
+        let elem = to_element(&item).unwrap();
+        assert_eq!(elem.tag, "item");
+        assert_eq!(elem.get_attr("id"), Some("123"));
+
+        let value_child = elem.child_elements().find(|e| e.tag == "value").unwrap();
+        assert_eq!(value_child.text_content(), "hello");
+    }
+
+    #[test]
+    fn roundtrip_simple() {
+        #[derive(facet::Facet, Debug, PartialEq)]
+        struct Person {
+            name: String,
+            age: u32,
+        }
+
+        let original = Person {
+            name: "Bob".to_string(),
+            age: 42,
+        };
+
+        let elem = to_element(&original).unwrap();
+        let roundtripped: Person = from_element(&elem).unwrap();
+
+        assert_eq!(original, roundtripped);
+    }
+
+    #[test]
+    fn roundtrip_with_attrs() {
+        #[derive(facet::Facet, Debug, PartialEq)]
+        struct Item {
+            #[facet(xml::attribute)]
+            id: String,
+            #[facet(xml::attribute)]
+            version: u32,
+            value: String,
+        }
+
+        let original = Item {
+            id: "test-123".to_string(),
+            version: 5,
+            value: "content".to_string(),
+        };
+
+        let elem = to_element(&original).unwrap();
+        let roundtripped: Item = from_element(&elem).unwrap();
+
+        assert_eq!(original, roundtripped);
     }
 }

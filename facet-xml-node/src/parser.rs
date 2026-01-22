@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::fmt;
 
-use facet_dom::{DomDeserializer, DomEvent, DomParser};
+use facet_dom::{DomDeserializer, DomEvent, DomParser, DomSerializer, WriteScalar};
 
 use crate::{Content, Element};
 
@@ -174,5 +174,168 @@ impl<'a> DomParser<'static> for ElementParser<'a> {
 
     fn format_namespace(&self) -> Option<&'static str> {
         Some("xml")
+    }
+}
+
+#[derive(Debug)]
+pub struct ElementSerializeError;
+
+impl fmt::Display for ElementSerializeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "element serialize error")
+    }
+}
+
+impl std::error::Error for ElementSerializeError {}
+
+/// Serialize a typed value into an Element tree.
+pub fn to_element<T>(
+    value: &T,
+) -> Result<Element, facet_dom::DomSerializeError<ElementSerializeError>>
+where
+    T: facet_core::Facet<'static>,
+{
+    let mut serializer = ElementSerializer::default();
+    let peek = facet_reflect::Peek::new(value);
+    facet_dom::serialize(&mut serializer, peek)?;
+    serializer.finish()
+}
+
+/// Serializer that builds an Element tree from DomSerializer callbacks.
+#[derive(Default)]
+pub struct ElementSerializer {
+    /// Stack of elements being built
+    stack: Vec<Element>,
+    /// The root element (after serialization completes)
+    root: Option<Element>,
+    /// Whether the current field should be serialized as an attribute
+    is_attribute: bool,
+    /// Whether the current field should be serialized as text content
+    is_text: bool,
+    /// Whether the current field is an xml::elements list
+    is_elements: bool,
+    /// Whether the current field is a tag field
+    is_tag: bool,
+    /// Whether the current field is a doctype field
+    is_doctype: bool,
+}
+
+impl ElementSerializer {
+    /// Finish serialization and return the root element.
+    fn finish(mut self) -> Result<Element, facet_dom::DomSerializeError<ElementSerializeError>> {
+        // If we have a root, return it
+        if let Some(root) = self.root.take() {
+            return Ok(root);
+        }
+
+        // Otherwise, pop the last element from the stack
+        if self.stack.len() == 1 {
+            Ok(self.stack.pop().unwrap())
+        } else {
+            Err(facet_dom::DomSerializeError::Backend(ElementSerializeError))
+        }
+    }
+}
+
+impl DomSerializer for ElementSerializer {
+    type Error = ElementSerializeError;
+
+    fn element_start(&mut self, tag: &str, _namespace: Option<&str>) -> Result<(), Self::Error> {
+        self.stack.push(Element::new(tag));
+        Ok(())
+    }
+
+    fn attribute(
+        &mut self,
+        name: &str,
+        value: facet_reflect::Peek<'_, '_>,
+        _namespace: Option<&str>,
+    ) -> Result<(), Self::Error> {
+        // Convert the value to a string using format_scalar (before borrowing elem)
+        if let Some(value_str) = self.format_scalar(value) {
+            let elem = self.stack.last_mut().ok_or(ElementSerializeError)?;
+            elem.attrs.insert(name.to_string(), value_str);
+        }
+        Ok(())
+    }
+
+    fn children_start(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn children_end(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn element_end(&mut self, _tag: &str) -> Result<(), Self::Error> {
+        let elem = self.stack.pop().ok_or(ElementSerializeError)?;
+
+        if let Some(parent) = self.stack.last_mut() {
+            parent.children.push(Content::Element(elem));
+        } else {
+            self.root = Some(elem);
+        }
+        Ok(())
+    }
+
+    fn text(&mut self, content: &str) -> Result<(), Self::Error> {
+        if let Some(elem) = self.stack.last_mut() {
+            elem.children.push(Content::Text(content.to_string()));
+        } else {
+            return Err(ElementSerializeError);
+        }
+        Ok(())
+    }
+
+    fn format_namespace(&self) -> Option<&'static str> {
+        Some("xml")
+    }
+
+    fn field_metadata(&mut self, field: &facet_reflect::FieldItem) -> Result<(), Self::Error> {
+        let Some(field_def) = field.field else {
+            // For flattened map entries, treat them as attributes
+            self.is_attribute = true;
+            self.is_text = false;
+            self.is_elements = false;
+            self.is_tag = false;
+            self.is_doctype = false;
+            return Ok(());
+        };
+
+        // Check field attributes
+        self.is_attribute = field_def.get_attr(Some("xml"), "attribute").is_some();
+        self.is_text = field_def.get_attr(Some("xml"), "text").is_some();
+        self.is_elements = field_def.get_attr(Some("xml"), "elements").is_some();
+        self.is_tag = field_def.get_attr(Some("xml"), "tag").is_some();
+        self.is_doctype = field_def.get_attr(Some("xml"), "doctype").is_some();
+        Ok(())
+    }
+
+    fn is_attribute_field(&self) -> bool {
+        self.is_attribute
+    }
+
+    fn is_text_field(&self) -> bool {
+        self.is_text
+    }
+
+    fn is_elements_field(&self) -> bool {
+        self.is_elements
+    }
+
+    fn is_tag_field(&self) -> bool {
+        self.is_tag
+    }
+
+    fn is_doctype_field(&self) -> bool {
+        self.is_doctype
+    }
+
+    fn clear_field_state(&mut self) {
+        self.is_attribute = false;
+        self.is_text = false;
+        self.is_elements = false;
+        self.is_tag = false;
+        self.is_doctype = false;
     }
 }
