@@ -39,6 +39,8 @@
 
 pub use indextree;
 
+mod tracing_macros;
+
 mod chawathe;
 /// GumTree matching algorithm
 pub mod matching;

@@ -4,20 +4,10 @@
 //! 1. Top-down: Match identical subtrees by hash
 //! 2. Bottom-up: Match remaining nodes by structural similarity
 
+use crate::{debug, trace};
+
 #[cfg(any(test, feature = "tracing"))]
 use facet_pretty::FacetPretty;
-
-#[cfg(any(test, feature = "tracing"))]
-use tracing::{debug, trace};
-
-#[cfg(not(any(test, feature = "tracing")))]
-macro_rules! debug {
-    ($($arg:tt)*) => {};
-}
-#[cfg(not(any(test, feature = "tracing")))]
-macro_rules! trace {
-    ($($arg:tt)*) => {};
-}
 
 use crate::tree::{Properties, Tree};
 use core::hash::Hash;
@@ -218,7 +208,7 @@ fn top_down_phase<'a, K, L, P>(
     L: Clone + Facet<'a>,
     P: Properties,
 {
-    debug!("top_down_phase start");
+    trace!("top_down_phase start");
 
     // Priority queue: process nodes by height (descending)
     // Higher nodes = larger subtrees = more valuable to match first
@@ -247,7 +237,7 @@ fn top_down_phase<'a, K, L, P>(
 
         // If hashes match, these subtrees are identical
         if a_data.hash == b_data.hash && a_data.kind == b_data.kind {
-            debug!(a = usize::from(a_id), a_kind = %a_data.kind.pretty(), b = usize::from(b_id), "top_down: hash match");
+            trace!(a = usize::from(a_id), a_kind = %a_data.kind.pretty(), b = usize::from(b_id), "top_down: hash match");
             match_subtrees(tree_a, tree_b, a_id, b_id, matching);
         } else {
             trace!(a = usize::from(a_id), a_kind = %a_data.kind.pretty(), b = usize::from(b_id), b_kind = %b_data.kind.pretty(), "top_down: no hash match");

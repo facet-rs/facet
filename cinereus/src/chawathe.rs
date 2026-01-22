@@ -9,14 +9,8 @@
 //! 3. MOVE: Relocate nodes to new parents or positions
 //! 4. DELETE: Remove nodes that exist only in the source tree
 
+use crate::{debug, trace};
 use facet::Facet;
-#[cfg(any(test, feature = "tracing"))]
-use tracing::debug;
-
-#[cfg(not(any(test, feature = "tracing")))]
-macro_rules! debug {
-    ($($arg:tt)*) => {};
-}
 
 use crate::matching::Matching;
 use crate::tree::{NoProperties, Properties, PropertyChange, Tree};
@@ -81,12 +75,19 @@ where
             EditOp::UpdateProperties {
                 node_a, changes, ..
             } => {
-                write!(
-                    f,
-                    "UpdateProps(a:{}, {} changes)",
-                    usize::from(*node_a),
-                    changes.len()
-                )
+                write!(f, "UpdateProps(a:{}", usize::from(*node_a))?;
+                for change in changes {
+                    write!(f, " {}:", change.key.pretty())?;
+                    match (&change.old_value, &change.new_value) {
+                        (Some(old), Some(new)) => {
+                            write!(f, " {} → {}", old.pretty(), new.pretty())?
+                        }
+                        (None, Some(new)) => write!(f, " + {}", new.pretty())?,
+                        (Some(old), None) => write!(f, " - {}", old.pretty())?,
+                        (None, None) => {}
+                    }
+                }
+                write!(f, ")")
             }
             EditOp::Insert {
                 node_b,
@@ -166,7 +167,7 @@ where
     P::Key: Facet<'a>,
     P::Value: Facet<'a>,
 {
-    debug!(matched_pairs = matching.len(), "generate_edit_script start");
+    trace!(matched_pairs = matching.len(), "generate_edit_script start");
     let mut ops = Ops::new();
 
     // Phase 1: Property changes - diff properties for matched nodes

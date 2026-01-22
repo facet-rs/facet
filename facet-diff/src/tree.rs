@@ -473,15 +473,6 @@ pub fn tree_diff<'a, 'f, A: facet_core::Facet<'f>, B: facet_core::Facet<'f>>(
     let config = MatchingConfig::default();
     let (cinereus_ops, matching) = diff_trees_with_matching(&tree_a, &tree_b, &config);
 
-    debug!(
-        cinereus_ops_count = cinereus_ops.len(),
-        "cinereus ops before conversion"
-    );
-    #[allow(clippy::unused_enumerate_index)]
-    for (_i, _op) in cinereus_ops.iter().enumerate() {
-        debug!(_i, %_op, "cinereus op");
-    }
-
     // Convert cinereus ops to path-based EditOps using a shadow tree
     // to track index shifts as operations are applied.
     // We pass the original values so we can extract actual values for leaf nodes.
