@@ -77,24 +77,6 @@ ProductWithTranslation @query{
     }
 }
 
-// Query with vec relation - returns product with all translations
-
-ProductWithTranslations @query{
-    params {handle @string}
-    from product
-    where {handle $handle, deleted_at @null}
-    first true
-    select {
-        id
-        handle
-        status
-        translations @rel{
-            from product_translation
-            select {locale, title, description}
-        }
-    }
-}
-
 // DISTINCT query - unique statuses
 
 UniqueStatuses @query{
@@ -110,6 +92,7 @@ CountProducts @query{
     from product
     where {deleted_at @null}
     count true
+    select {id}
 }
 
 // Query with filter operators
@@ -125,12 +108,11 @@ ProductsByPriceRange @query{
     select {id, handle, price}
 }
 
-// Query with @in filter
+// Query with literal @in filter
 
-ProductsByHandles @query{
-    params {handles @array(@string)}
+ProductsByKnownHandles @query{
     from product
-    where {handle @in($handles), deleted_at @null}
+    where {handle @in("prod-1" "prod-2" "prod-3"), deleted_at @null}
     select {id, handle, status}
 }
 
@@ -251,46 +233,45 @@ DeleteProduct @delete{
 // ============================================================================
 // JSONB Operators (if you have JSONB columns)
 // ============================================================================
+// Note: These examples show the syntax but require a metadata JSONB column
+// in your product table to work. Commented out for now.
 
 // Query with JSONB containment (@>)
 // Finds products where metadata contains the specified key-value pair
-
-ProductsByMetadataContains @query{
-    params {search_metadata @jsonb}
-    from product
-    where {metadata @>($search_metadata), deleted_at @null}
-    select {id, handle, metadata}
-}
+//
+// ProductsByMetadataContains @query{
+//     params {search_json @string}
+//     from product
+//     where {metadata @>($search_json), deleted_at @null}
+//     select {id, handle, metadata}
+// }
 
 // Query with JSONB key exists (@?)
-// Finds products where metadata has a specific key
-
-ProductsWithMetadataKey @query{
-    params {key_name @string}
-    from product
-    where {metadata @?($key_name), deleted_at @null}
-    select {id, handle, metadata}
-}
+//
+// ProductsWithMetadataKey @query{
+//     params {key_name @string}
+//     from product
+//     where {metadata @?($key_name), deleted_at @null}
+//     select {id, handle, metadata}
+// }
 
 // Query with JSONB field access (->)
-// Extracts a specific field from JSONB column
-
-ProductsByMetadataField @query{
-    params {tag @string}
-    from product
-    where {metadata -> "tags" @>($tag), deleted_at @null}
-    select {id, handle, metadata}
-}
+//
+// ProductsByMetadataField @query{
+//     params {tag @string}
+//     from product
+//     where {metadata -> "tags" @>($tag), deleted_at @null}
+//     select {id, handle, metadata}
+// }
 
 // Query with JSONB text extraction (->>)
-// Extracts text value from JSONB column
-
-ProductsByMetadataText @query{
-    params {category @string}
-    from product
-    where {metadata ->> "category" $category, deleted_at @null}
-    select {id, handle, metadata}
-}
+//
+// ProductsByMetadataText @query{
+//     params {category @string}
+//     from product
+//     where {metadata ->> "category" $category, deleted_at @null}
+//     select {id, handle, metadata}
+// }
 
 // ============================================================================
 // Advanced Examples
@@ -311,7 +292,7 @@ ProductDetailsFull @query{
         price
         created_at
         updated_at
-        translations @rel{
+        locales @rel{
             from product_translation
             where {locale @in("en" "fr")}
             order-by {locale asc}

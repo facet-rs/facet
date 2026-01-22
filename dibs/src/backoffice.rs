@@ -197,12 +197,16 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
 // =============================================================================
 
 impl SquelService for SquelServiceImpl {
-    async fn schema(&self) -> SchemaInfo {
+    async fn schema(&self, _cx: &roam::Context) -> SchemaInfo {
         let schema = Schema::collect();
         schema_to_info(&schema)
     }
 
-    async fn list(&self, request: ListRequest) -> Result<ListResponse, DibsError> {
+    async fn list(
+        &self,
+        _cx: &roam::Context,
+        request: ListRequest,
+    ) -> Result<ListResponse, DibsError> {
         // Connect to database
         let (client, connection) =
             tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
@@ -266,7 +270,11 @@ impl SquelService for SquelServiceImpl {
         })
     }
 
-    async fn get(&self, request: GetRequest) -> Result<Option<Row>, DibsError> {
+    async fn get(
+        &self,
+        _cx: &roam::Context,
+        request: GetRequest,
+    ) -> Result<Option<Row>, DibsError> {
         // Connect to database
         let (client, connection) =
             tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
@@ -309,7 +317,7 @@ impl SquelService for SquelServiceImpl {
         Ok(row.map(query_row_to_proto))
     }
 
-    async fn create(&self, request: CreateRequest) -> Result<Row, DibsError> {
+    async fn create(&self, _cx: &roam::Context, request: CreateRequest) -> Result<Row, DibsError> {
         // Connect to database
         let (client, connection) =
             tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
@@ -338,7 +346,7 @@ impl SquelService for SquelServiceImpl {
         Ok(query_row_to_proto(row))
     }
 
-    async fn update(&self, request: UpdateRequest) -> Result<Row, DibsError> {
+    async fn update(&self, _cx: &roam::Context, request: UpdateRequest) -> Result<Row, DibsError> {
         // Connect to database
         let (client, connection) =
             tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
@@ -384,7 +392,7 @@ impl SquelService for SquelServiceImpl {
         Ok(query_row_to_proto(row))
     }
 
-    async fn delete(&self, request: DeleteRequest) -> Result<u64, DibsError> {
+    async fn delete(&self, _cx: &roam::Context, request: DeleteRequest) -> Result<u64, DibsError> {
         // Connect to database
         let (client, connection) =
             tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)

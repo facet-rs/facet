@@ -1345,7 +1345,7 @@ impl DibsExtension {
 }
 
 impl StyxLspExtension for DibsExtension {
-    async fn initialize(&self, params: InitializeParams) -> InitializeResult {
+    async fn initialize(&self, _cx: &roam::Context, params: InitializeParams) -> InitializeResult {
         info!(
             schema_id = %params.schema_id,
             document_uri = %params.document_uri,
@@ -1388,7 +1388,11 @@ impl StyxLspExtension for DibsExtension {
         }
     }
 
-    async fn completions(&self, params: CompletionParams) -> Vec<CompletionItem> {
+    async fn completions(
+        &self,
+        _cx: &roam::Context,
+        params: CompletionParams,
+    ) -> Vec<CompletionItem> {
         debug!(path = ?params.path, prefix = %params.prefix, "Completion request");
 
         // Determine what kind of completions to provide based on path
@@ -1453,7 +1457,7 @@ impl StyxLspExtension for DibsExtension {
         }
     }
 
-    async fn hover(&self, params: HoverParams) -> Option<HoverResult> {
+    async fn hover(&self, _cx: &roam::Context, params: HoverParams) -> Option<HoverResult> {
         debug!(
             path = ?params.path,
             context = ?params.context,
@@ -1507,7 +1511,7 @@ impl StyxLspExtension for DibsExtension {
         None
     }
 
-    async fn inlay_hints(&self, params: InlayHintParams) -> Vec<InlayHint> {
+    async fn inlay_hints(&self, _cx: &roam::Context, params: InlayHintParams) -> Vec<InlayHint> {
         debug!(range = ?params.range, "Inlay hints request");
 
         let mut hints = Vec::new();
@@ -1532,7 +1536,7 @@ impl StyxLspExtension for DibsExtension {
         hints
     }
 
-    async fn diagnostics(&self, params: DiagnosticParams) -> Vec<Diagnostic> {
+    async fn diagnostics(&self, _cx: &roam::Context, params: DiagnosticParams) -> Vec<Diagnostic> {
         debug!("Diagnostics request");
 
         let mut diagnostics = Vec::new();
@@ -1544,12 +1548,16 @@ impl StyxLspExtension for DibsExtension {
         diagnostics
     }
 
-    async fn code_actions(&self, _params: CodeActionParams) -> Vec<CodeAction> {
+    async fn code_actions(
+        &self,
+        _cx: &roam::Context,
+        _params: CodeActionParams,
+    ) -> Vec<CodeAction> {
         // Not implemented yet
         Vec::new()
     }
 
-    async fn definition(&self, params: DefinitionParams) -> Vec<Location> {
+    async fn definition(&self, _cx: &roam::Context, params: DefinitionParams) -> Vec<Location> {
         debug!(path = ?params.path, cursor = ?params.cursor, "Definition request");
 
         // We support definition for:
@@ -1637,7 +1645,7 @@ impl StyxLspExtension for DibsExtension {
         Vec::new()
     }
 
-    async fn shutdown(&self) {
+    async fn shutdown(&self, _cx: &roam::Context) {
         info!("Shutdown requested");
     }
 }

@@ -212,19 +212,27 @@ impl DibsServiceImpl {
 }
 
 impl DibsService for DibsServiceImpl {
-    async fn schema(&self) -> SchemaInfo {
+    async fn schema(&self, _cx: &roam::Context) -> SchemaInfo {
         let schema = Schema::collect();
         schema_to_info(&schema)
     }
 
-    async fn diff(&self, request: DiffRequest) -> Result<DiffResult, DibsError> {
+    async fn diff(
+        &self,
+        _cx: &roam::Context,
+        request: DiffRequest,
+    ) -> Result<DiffResult, DibsError> {
         let ctx = self
             .compute_diff_with_context(&request.database_url)
             .await?;
         Ok(diff_to_result(&ctx.diff))
     }
 
-    async fn generate_migration_sql(&self, request: DiffRequest) -> Result<String, DibsError> {
+    async fn generate_migration_sql(
+        &self,
+        _cx: &roam::Context,
+        request: DiffRequest,
+    ) -> Result<String, DibsError> {
         let ctx = self
             .compute_diff_with_context(&request.database_url)
             .await?;
@@ -246,6 +254,7 @@ impl DibsService for DibsServiceImpl {
 
     async fn migration_status(
         &self,
+        _cx: &roam::Context,
         request: MigrationStatusRequest,
     ) -> Result<Vec<MigrationInfo>, DibsError> {
         // Connect to database
@@ -283,6 +292,7 @@ impl DibsService for DibsServiceImpl {
 
     async fn migrate(
         &self,
+        _cx: &roam::Context,
         request: MigrateRequest,
         logs: roam::Tx<MigrationLog>,
     ) -> Result<MigrateResult, DibsError> {
