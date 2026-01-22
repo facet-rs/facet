@@ -16,7 +16,7 @@
   <div id="results"></div>
   
   <script type="module">
-    import init, { apply_patches_json, set_body_inner_html, get_body_inner_html, diff_html, init_tracing } from './pkg/facet_html_diff_wasm.js';
+    import init, { apply_patches_json, set_body_inner_html, get_body_inner_html, diff_html, init_tracing, dump_browser_dom, dump_rust_parsed } from './pkg/facet_html_diff_wasm.js';
 
     window.wasmReady = false;
     window.testResults = [];
@@ -45,6 +45,8 @@
       window.applyPatchesJson = apply_patches_json;
       window.getBodyInnerHtml = get_body_inner_html;
       window.diffHtml = diff_html;
+      window.dumpBrowserDom = dump_browser_dom;
+      window.dumpRustParsed = dump_rust_parsed;
     });
 
     // Run a single test case using WASM

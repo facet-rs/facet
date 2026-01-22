@@ -1920,7 +1920,9 @@ dependencies = [
 name = "facet-html-diff-wasm"
 version = "0.42.0"
 dependencies = [
+ "facet-html",
  "facet-html-diff",
+ "facet-html-dom",
  "facet-json",
  "tracing",
  "wasm-bindgen",

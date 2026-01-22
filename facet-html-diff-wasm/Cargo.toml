@@ -20,7 +20,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+facet-html = { path = "../facet-html" }
 facet-html-diff = { path = "../facet-html-diff" }
+facet-html-dom = { path = "../facet-html-dom" }
 facet-json = { path = "../facet-json" }
 tracing = { workspace = true }
 wasm-bindgen = "0.2"

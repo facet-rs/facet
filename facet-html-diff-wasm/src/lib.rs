@@ -486,3 +486,156 @@ pub fn set_body_inner_html(html: &str) -> Result<(), JsValue> {
     body.set_inner_html(html);
     Ok(())
 }
+
+/// Dump the browser DOM structure as a string (for debugging).
+#[wasm_bindgen]
+pub fn dump_browser_dom() -> Result<String, JsValue> {
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
+    let document = window
+        .document()
+        .ok_or_else(|| JsValue::from_str("no document"))?;
+    let body = document
+        .body()
+        .ok_or_else(|| JsValue::from_str("no body"))?;
+
+    fn dump_node(node: &Node, indent: usize) -> String {
+        let prefix = "  ".repeat(indent);
+        let mut result = String::new();
+
+        let node_type = node.node_type();
+        match node_type {
+            Node::ELEMENT_NODE => {
+                let tag = node.node_name();
+                result.push_str(&format!("{}Element({})\n", prefix, tag));
+            }
+            Node::TEXT_NODE => {
+                let text = node.text_content().unwrap_or_default();
+                let escaped = text.replace('\n', "\\n").replace(' ', "·");
+                result.push_str(&format!("{}Text({:?})\n", prefix, escaped));
+            }
+            _ => {
+                result.push_str(&format!("{}Node(type={})\n", prefix, node_type));
+            }
+        }
+
+        let children = node.child_nodes();
+        for i in 0..children.length() {
+            if let Some(child) = children.get(i) {
+                result.push_str(&dump_node(&child, indent + 1));
+            }
+        }
+        result
+    }
+
+    Ok(dump_node(&body.into(), 0))
+}
+
+/// Dump the Rust-parsed HTML structure as a string (for debugging).
+#[wasm_bindgen]
+pub fn dump_rust_parsed(html: &str) -> Result<String, JsValue> {
+    use facet_html_dom::*;
+
+    let full_html = format!("<html><body>{}</body></html>", html);
+    let parsed: Html = facet_html::from_str(&full_html)
+        .map_err(|e| JsValue::from_str(&format!("parse failed: {e}")))?;
+
+    fn dump_flow_content(content: &FlowContent, indent: usize) -> String {
+        let prefix = "  ".repeat(indent);
+        match content {
+            FlowContent::Text(t) => {
+                let escaped = t.replace('\n', "\\n").replace(' ', "·");
+                format!("{}Text({:?})\n", prefix, escaped)
+            }
+            FlowContent::Ul(ul) => {
+                let mut result = format!("{}Element(UL)\n", prefix);
+                for child in &ul.children {
+                    result.push_str(&dump_ul_content(child, indent + 1));
+                }
+                result
+            }
+            FlowContent::Ol(ol) => {
+                let mut result = format!("{}Element(OL)\n", prefix);
+                for child in &ol.children {
+                    result.push_str(&dump_ol_content(child, indent + 1));
+                }
+                result
+            }
+            FlowContent::Div(div) => {
+                let mut result = format!("{}Element(DIV)\n", prefix);
+                for child in &div.children {
+                    result.push_str(&dump_flow_content(child, indent + 1));
+                }
+                result
+            }
+            FlowContent::P(p) => {
+                let mut result = format!("{}Element(P)\n", prefix);
+                for child in &p.children {
+                    result.push_str(&dump_phrasing_content(child, indent + 1));
+                }
+                result
+            }
+            _ => format!("{}Element(other)\n", prefix),
+        }
+    }
+
+    fn dump_ul_content(content: &UlContent, indent: usize) -> String {
+        let prefix = "  ".repeat(indent);
+        match content {
+            UlContent::Text(t) => {
+                let escaped = t.replace('\n', "\\n").replace(' ', "·");
+                format!("{}Text({:?})\n", prefix, escaped)
+            }
+            UlContent::Li(li) => {
+                let mut result = format!("{}Element(LI)\n", prefix);
+                for child in &li.children {
+                    result.push_str(&dump_flow_content(child, indent + 1));
+                }
+                result
+            }
+        }
+    }
+
+    fn dump_ol_content(content: &OlContent, indent: usize) -> String {
+        let prefix = "  ".repeat(indent);
+        match content {
+            OlContent::Text(t) => {
+                let escaped = t.replace('\n', "\\n").replace(' ', "·");
+                format!("{}Text({:?})\n", prefix, escaped)
+            }
+            OlContent::Li(li) => {
+                let mut result = format!("{}Element(LI)\n", prefix);
+                for child in &li.children {
+                    result.push_str(&dump_flow_content(child, indent + 1));
+                }
+                result
+            }
+        }
+    }
+
+    fn dump_phrasing_content(content: &PhrasingContent, indent: usize) -> String {
+        let prefix = "  ".repeat(indent);
+        match content {
+            PhrasingContent::Text(t) => {
+                let escaped = t.replace('\n', "\\n").replace(' ', "·");
+                format!("{}Text({:?})\n", prefix, escaped)
+            }
+            PhrasingContent::Em(em) => {
+                let mut result = format!("{}Element(EM)\n", prefix);
+                for child in &em.children {
+                    result.push_str(&dump_phrasing_content(child, indent + 1));
+                }
+                result
+            }
+            _ => format!("{}Element(phrasing)\n", prefix),
+        }
+    }
+
+    let mut result = String::from("Element(BODY)\n");
+    if let Some(body) = &parsed.body {
+        for child in &body.children {
+            result.push_str(&dump_flow_content(child, 1));
+        }
+    }
+
+    Ok(result)
+}

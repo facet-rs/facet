@@ -57,6 +57,27 @@ test.describe("facet-html-diff WASM", () => {
     expect(status).toBe("WASM loaded successfully");
   });
 
+  test("compare Rust vs browser DOM structure", async ({ page }) => {
+    const html = `<ul>\n    <li>Item A</li>\n    <li>Item B</li>\n</ul>`;
+
+    const result = await page.evaluate((html) => {
+      // Set up browser DOM
+      (window as any).setBodyInnerHtml(html);
+      const browserDom = (window as any).dumpBrowserDom();
+
+      // Get Rust-parsed structure
+      const rustParsed = (window as any).dumpRustParsed(html);
+
+      return { browserDom, rustParsed };
+    }, html);
+
+    console.log("Browser DOM:\n" + result.browserDom);
+    console.log("Rust parsed:\n" + result.rustParsed);
+
+    // They should match
+    expect(result.browserDom).toBe(result.rustParsed);
+  });
+
   for (const tc of TEST_CASES) {
     test(`roundtrip: ${tc.name}`, async ({ page }) => {
       // Capture console messages
