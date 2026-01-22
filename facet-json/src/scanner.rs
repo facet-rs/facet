@@ -490,6 +490,14 @@ impl Scanner {
     }
 
     fn resume_number(&mut self, buf: &[u8], start: usize, hint: NumberHint) -> ScanResult {
+        // Reset position to start of number and re-scan with the larger buffer.
+        // Needed since we might have stopped in an exponent. We also need to handle
+        // negative numbers by ignoring the leading - (can use the hint since it may have
+        // changed from the exponent)
+        self.pos = start;
+        if buf.get(self.pos) == Some(&b'-') {
+            self.pos += 1;
+        }
         self.scan_number_content(buf, start, hint)
     }
 
