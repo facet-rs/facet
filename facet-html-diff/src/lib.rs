@@ -184,13 +184,8 @@ pub enum PathTarget {
 
 /// Result of navigating a path through the type structure.
 struct PathNavigation {
-    /// DOM path - indices into flattened children lists only
-    dom_path: Vec<usize>,
     /// What the path points to
     target: PathTarget,
-    /// DOM path to the containing element (for attribute/text targets)
-    #[allow(dead_code)]
-    element_dom_path: Vec<usize>,
 }
 
 /// Navigate a path through the type structure, using metadata to build DOM path.
@@ -211,8 +206,6 @@ fn navigate_path(
     segments: &[PathSegment],
     root_shape: &'static facet_core::Shape,
 ) -> PathNavigation {
-    let mut dom_path = Vec::new();
-    let mut element_dom_path = Vec::new();
     let mut target = PathTarget::Other;
     let mut current_shape = root_shape;
     let mut after_variant = false; // Track if previous segment was Variant
@@ -251,10 +244,6 @@ fn navigate_path(
                             } else {
                                 target = PathTarget::Other;
                             }
-                        }
-
-                        if !field.is_attribute() && !field.is_text() {
-                            element_dom_path = dom_path.clone();
                         }
                     } else {
                         break;
@@ -296,19 +285,13 @@ fn navigate_path(
                 }
 
                 // Try to find a flattened children list to index into
-                if let Some((list_elem_shape, is_children)) = find_flattened_list(current_shape) {
-                    if is_children {
-                        dom_path.push(*idx);
-                        element_dom_path = dom_path.clone();
-                    }
+                if let Some((list_elem_shape, _is_children)) = find_flattened_list(current_shape) {
                     current_shape = list_elem_shape;
                     if is_last {
                         target = PathTarget::Element;
                     }
                 } else if let Def::List(list_def) = &current_shape.def {
                     // Direct list access
-                    dom_path.push(*idx);
-                    element_dom_path = dom_path.clone();
                     current_shape = list_def.t;
                     if is_last {
                         target = PathTarget::Element;
@@ -356,11 +339,7 @@ fn navigate_path(
         }
     }
 
-    PathNavigation {
-        dom_path,
-        target,
-        element_dom_path,
-    }
+    PathNavigation { target }
 }
 
 /// Unwrap Option type if present, otherwise return the shape as-is.
@@ -449,12 +428,6 @@ fn find_field_in_struct(
 /// Check if a shape is a list type.
 fn is_list_type(shape: &facet_core::Shape) -> bool {
     matches!(shape.def, Def::List(_))
-}
-
-/// Convert a facet path to a DOM path.
-fn to_dom_path(segments: &[PathSegment]) -> Vec<usize> {
-    let html_shape = <Html as facet_core::Facet>::SHAPE;
-    navigate_path(segments, html_shape).dom_path
 }
 
 /// Extract DOM indices from path segments.
@@ -858,36 +831,6 @@ fn collect_attributes_recursive(peek: Peek<'_, '_>, dom_path: &[usize], patches:
         }
     }
 }
-
-/// Translate an UpdateAttribute op.
-fn translate_update_attribute(
-    segments: &[PathSegment],
-    attr_name: &str,
-    new_value: Option<&str>,
-) -> Result<Patch, TranslateError> {
-    let dom_path = to_dom_path(segments);
-
-    // Special handling for _text property - this is how facet-diff represents text content
-    if attr_name == "_text" {
-        return Ok(Patch::SetText {
-            path: NodePath(dom_path),
-            text: new_value.unwrap_or("").to_string(),
-        });
-    }
-
-    match new_value {
-        Some(value) => Ok(Patch::SetAttribute {
-            path: NodePath(dom_path),
-            name: attr_name.to_string(),
-            value: value.to_string(),
-        }),
-        None => Ok(Patch::RemoveAttribute {
-            path: NodePath(dom_path),
-            name: attr_name.to_string(),
-        }),
-    }
-}
-
 /// Navigate a Peek value following path segments.
 fn navigate_peek<'mem, 'facet>(
     mut peek: Peek<'mem, 'facet>,
@@ -1065,7 +1008,7 @@ fn get_tag_from_struct(peek: Peek<'_, '_>) -> Option<String> {
 /// Cinereus always inserts "shells" - the children are populated by subsequent INSERT/MOVE ops.
 fn extract_attrs_and_children(peek: Peek<'_, '_>) -> (Vec<(String, String)>, Vec<InsertContent>) {
     let mut attrs = Vec::new();
-    let children = Vec::new(); // Always empty - cinereus handles children
+    let mut children = Vec::new();
 
     // For enums, get the inner struct
     let struct_peek = if let Ok(enum_peek) = peek.into_enum() {
@@ -1079,12 +1022,102 @@ fn extract_attrs_and_children(peek: Peek<'_, '_>) -> (Vec<(String, String)>, Vec
         return (attrs, children);
     };
 
-    // Try to get fields from a struct - only extract attributes
+    // Try to get fields from a struct
     if let Ok(s) = struct_peek.into_struct() {
-        extract_attrs_only(s, &mut attrs);
+        extract_attrs_and_children_from_struct(s, &mut attrs, &mut children);
     }
 
     (attrs, children)
+}
+
+/// Extract attributes and children from a struct.
+fn extract_attrs_and_children_from_struct(
+    s: PeekStruct<'_, '_>,
+    attrs: &mut Vec<(String, String)>,
+    children: &mut Vec<InsertContent>,
+) {
+    for (field, field_peek) in s.fields() {
+        // Handle attributes
+        if field.is_attribute() {
+            let attr_name = field
+                .rename
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| to_element_name(field.name).into_owned());
+
+            if let Ok(opt) = field_peek.into_option() {
+                if let Some(inner) = opt.value()
+                    && let Some(val) = inner.as_str()
+                {
+                    attrs.push((attr_name, val.to_string()));
+                }
+            } else if let Some(val) = field_peek.as_str() {
+                attrs.push((attr_name, val.to_string()));
+            }
+            continue;
+        }
+
+        // Handle flattened structs (like GlobalAttrs) - recurse to extract nested attrs
+        if field.is_flattened() {
+            if let Ok(inner_struct) = field_peek.into_struct() {
+                // Flattened struct - only extract attrs, no children
+                extract_attrs_only(inner_struct, attrs);
+            } else if let Ok(list) = field_peek.into_list_like() {
+                // Flattened list (like children: Vec<FlowContent>) - extract children
+                for elem in list.iter() {
+                    if let Some(content) = extract_insert_content(elem) {
+                        children.push(content);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Convert a Peek value to InsertContent (recursively).
+fn extract_insert_content(peek: Peek<'_, '_>) -> Option<InsertContent> {
+    // Check if this is an enum (like FlowContent)
+    if let Ok(enum_peek) = peek.into_enum() {
+        if let Ok(variant) = enum_peek.active_variant() {
+            // Check if it's a text variant
+            if variant.is_text() {
+                // Extract the text value
+                let text = enum_peek
+                    .field(0)
+                    .ok()
+                    .flatten()
+                    .and_then(|p| p.as_str().map(|s| s.to_string()))
+                    .unwrap_or_default();
+                return Some(InsertContent::Text(text));
+            }
+
+            // Not a text variant - it's an element
+            // Get the inner struct (field 0)
+            if let Ok(Some(inner)) = enum_peek.field(0) {
+                let tag = get_element_tag(inner);
+                let (attrs, children) = extract_attrs_and_children(inner);
+                return Some(InsertContent::Element {
+                    tag,
+                    attrs,
+                    children,
+                });
+            }
+        }
+    }
+
+    // Direct struct (not wrapped in enum)
+    if let Ok(s) = peek.into_struct() {
+        let tag = get_tag_from_struct(peek).unwrap_or_else(|| "div".to_string());
+        let mut attrs = Vec::new();
+        let mut children = Vec::new();
+        extract_attrs_and_children_from_struct(s, &mut attrs, &mut children);
+        return Some(InsertContent::Element {
+            tag,
+            attrs,
+            children,
+        });
+    }
+
+    None
 }
 
 /// Helper to extract only attributes from a struct (no children).
