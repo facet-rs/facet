@@ -2,7 +2,7 @@
 name = "facet-assert"
 version = "0.42.0"
 edition = "2024"
-rust-version = "1.89.0"
+rust-version = "1.90.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
 description = "Pretty assertions for Facet types - no PartialEq required"
