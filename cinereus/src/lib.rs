@@ -66,24 +66,26 @@ use facet_core::Facet;
 /// ```
 /// use cinereus::{Tree, NodeData, diff_trees, MatchingConfig};
 ///
-/// let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-/// tree_a.add_child(tree_a.root, NodeData::leaf(1, "leaf", "hello".to_string()));
+/// let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+/// tree_a.add_child(tree_a.root, NodeData::leaf_u64(1, "leaf", "hello".to_string()));
 ///
-/// let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-/// tree_b.add_child(tree_b.root, NodeData::leaf(2, "leaf", "world".to_string()));
+/// let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+/// tree_b.add_child(tree_b.root, NodeData::leaf_u64(2, "leaf", "world".to_string()));
 ///
 /// let ops = diff_trees(&tree_a, &tree_b, &MatchingConfig::default());
 /// // ops contains the edit operations to transform tree_a into tree_b
 /// ```
 pub fn diff_trees<'a, K, L, P>(
-    tree_a: &'a Tree<K, L, P>,
-    tree_b: &'a Tree<K, L, P>,
+    tree_a: &Tree<K, L, P>,
+    tree_b: &Tree<K, L, P>,
     config: &MatchingConfig,
 ) -> Vec<EditOp<K, L, P>>
 where
     K: Clone + Eq + Hash + Send + Sync + Facet<'a>,
     L: Clone + Eq + Send + Sync + Facet<'a>,
     P: tree::Properties + Send + Sync,
+    P::Key: Facet<'a>,
+    P::Value: Facet<'a>,
 {
     let (ops, _matching) = diff_trees_with_matching(tree_a, tree_b, config);
     ops
@@ -95,14 +97,16 @@ where
 /// into path-based operations, as you need to track which nodes in
 /// tree_a correspond to nodes in tree_b.
 pub fn diff_trees_with_matching<'a, K, L, P>(
-    tree_a: &'a Tree<K, L, P>,
-    tree_b: &'a Tree<K, L, P>,
+    tree_a: &Tree<K, L, P>,
+    tree_b: &Tree<K, L, P>,
     config: &MatchingConfig,
 ) -> (Vec<EditOp<K, L, P>>, Matching)
 where
     K: Clone + Eq + Hash + Send + Sync + Facet<'a>,
     L: Clone + Eq + Send + Sync + Facet<'a>,
     P: tree::Properties + Send + Sync,
+    P::Key: Facet<'a>,
+    P::Value: Facet<'a>,
 {
     let matching = compute_matching(tree_a, tree_b, config);
     let ops = generate_edit_script(tree_a, tree_b, &matching);

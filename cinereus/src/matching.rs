@@ -4,6 +4,7 @@
 //! 1. Top-down: Match identical subtrees by hash
 //! 2. Bottom-up: Match remaining nodes by structural similarity
 
+#[cfg(any(test, feature = "tracing"))]
 use facet_pretty::FacetPretty;
 
 #[cfg(any(test, feature = "tracing"))]
@@ -175,8 +176,8 @@ impl Default for MatchingConfig {
 
 /// Compute the matching between two trees using the GumTree algorithm.
 pub fn compute_matching<'a, K, L, P>(
-    tree_a: &'a Tree<K, L, P>,
-    tree_b: &'a Tree<K, L, P>,
+    tree_a: &Tree<K, L, P>,
+    tree_b: &Tree<K, L, P>,
     config: &MatchingConfig,
 ) -> Matching
 where
@@ -208,8 +209,8 @@ where
 /// and working down. When two nodes have the same hash, their entire subtrees
 /// are identical and can be matched recursively.
 fn top_down_phase<'a, K, L, P>(
-    tree_a: &'a Tree<K, L, P>,
-    tree_b: &'a Tree<K, L, P>,
+    tree_a: &Tree<K, L, P>,
+    tree_b: &Tree<K, L, P>,
     matching: &mut Matching,
     config: &MatchingConfig,
 ) where
@@ -246,13 +247,10 @@ fn top_down_phase<'a, K, L, P>(
 
         // If hashes match, these subtrees are identical
         if a_data.hash == b_data.hash && a_data.kind == b_data.kind {
-            let _a_kind = a_data.kind.pretty().to_string();
-            debug!(a = usize::from(a_id), a_kind = %_a_kind, b = usize::from(b_id), "top_down: hash match");
+            debug!(a = usize::from(a_id), a_kind = %a_data.kind.pretty(), b = usize::from(b_id), "top_down: hash match");
             match_subtrees(tree_a, tree_b, a_id, b_id, matching);
         } else {
-            let _a_kind = a_data.kind.pretty().to_string();
-            let _b_kind = b_data.kind.pretty().to_string();
-            trace!(a = usize::from(a_id), a_kind = %_a_kind, b = usize::from(b_id), b_kind = %_b_kind, "top_down: no hash match");
+            trace!(a = usize::from(a_id), a_kind = %a_data.kind.pretty(), b = usize::from(b_id), b_kind = %b_data.kind.pretty(), "top_down: no hash match");
             // Hashes differ - try to match children
             // IMPORTANT: Only consider children of b_id, NOT arbitrary nodes from tree B
             // This prevents cross-level matching that causes spurious operations
@@ -277,8 +275,8 @@ fn top_down_phase<'a, K, L, P>(
 
 /// Match two subtrees recursively (when their hashes match).
 fn match_subtrees<'a, K, L, P>(
-    tree_a: &'a Tree<K, L, P>,
-    tree_b: &'a Tree<K, L, P>,
+    tree_a: &Tree<K, L, P>,
+    tree_b: &Tree<K, L, P>,
     a_id: NodeId,
     b_id: NodeId,
     matching: &mut Matching,
@@ -320,7 +318,7 @@ impl DescendantMap {
 }
 
 /// Precompute all descendant sets in parallel.
-fn precompute_descendants<'a, K, L, P>(tree: &'a Tree<K, L, P>) -> DescendantMap
+fn precompute_descendants<'a, K, L, P>(tree: &Tree<K, L, P>) -> DescendantMap
 where
     K: Clone + Eq + Hash + Send + Sync + Facet<'a>,
     L: Clone + Send + Sync + Facet<'a>,
@@ -357,8 +355,8 @@ where
 fn ancestry_compatible<'a, K, L, P>(
     a_id: NodeId,
     b_id: NodeId,
-    tree_a: &'a Tree<K, L, P>,
-    tree_b: &'a Tree<K, L, P>,
+    tree_a: &Tree<K, L, P>,
+    tree_b: &Tree<K, L, P>,
     matching: &Matching,
 ) -> bool
 where
@@ -419,8 +417,8 @@ where
 ///
 /// This prevents cross-level matching of leaves that happen to have the same hash.
 fn bottom_up_phase<'a, K, L, P>(
-    tree_a: &'a Tree<K, L, P>,
-    tree_b: &'a Tree<K, L, P>,
+    tree_a: &Tree<K, L, P>,
+    tree_b: &Tree<K, L, P>,
     matching: &mut Matching,
     config: &MatchingConfig,
 ) where
@@ -473,10 +471,9 @@ fn bottom_up_phase<'a, K, L, P>(
                 .copied();
 
             if let Some(b_id) = best {
-                let _a_kind = a_data.kind.pretty().to_string();
                 debug!(
                     a = usize::from(a_id),
-                    a_kind = %_a_kind,
+                    a_kind = %a_data.kind.pretty(),
                     b = usize::from(b_id),
                     pos = a_pos,
                     "bottom_up pass1: position+kind match"
@@ -506,14 +503,11 @@ fn bottom_up_phase<'a, K, L, P>(
             }
 
             let score = dice_coefficient(a_id, b_id, matching, &desc_a, &desc_b);
-            let b_data = tree_b.get(b_id);
-            let _a_kind = a_data.kind.pretty().to_string();
-            let _b_kind = b_data.kind.pretty().to_string();
             trace!(
                 a = usize::from(a_id),
-                a_kind = %_a_kind,
+                a_kind = %a_data.kind.pretty(),
                 b = usize::from(b_id),
-                b_kind = %_b_kind,
+                b_kind = %tree_b.get(b_id).kind.pretty(),
                 score,
                 "bottom_up pass1: dice score"
             );
@@ -523,10 +517,9 @@ fn bottom_up_phase<'a, K, L, P>(
         }
 
         if let Some((b_id, _score)) = best {
-            let _a_kind = a_data.kind.pretty().to_string();
             debug!(
                 a = usize::from(a_id),
-                a_kind = %_a_kind,
+                a_kind = %a_data.kind.pretty(),
                 b = usize::from(b_id),
                 _score,
                 "bottom_up pass1: dice match"
@@ -548,10 +541,9 @@ fn bottom_up_phase<'a, K, L, P>(
                 .collect();
 
             if let Some(&b_id) = root_candidates.first() {
-                let _a_kind = a_data.kind.pretty().to_string();
                 debug!(
                     a = usize::from(a_id),
-                    a_kind = %_a_kind,
+                    a_kind = %a_data.kind.pretty(),
                     b = usize::from(b_id),
                     "bottom_up pass1: root kind match (fallback)"
                 );
@@ -610,10 +602,9 @@ fn bottom_up_phase<'a, K, L, P>(
                 .copied();
 
             if let Some(b_id) = best {
-                let _a_kind = a_data.kind.pretty().to_string();
                 debug!(
                     a = usize::from(a_id),
-                    a_kind = %_a_kind,
+                    a_kind = %a_data.kind.pretty(),
                     b = usize::from(b_id),
                     "bottom_up pass2: leaf match"
                 );
@@ -673,13 +664,13 @@ mod tests {
 
     #[test]
     fn test_identical_trees() {
-        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-        tree_a.add_child(tree_a.root, NodeData::leaf(1, "leaf", "a".to_string()));
-        tree_a.add_child(tree_a.root, NodeData::leaf(2, "leaf", "b".to_string()));
+        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+        tree_a.add_child(tree_a.root, NodeData::leaf_u64(1, "leaf", "a".to_string()));
+        tree_a.add_child(tree_a.root, NodeData::leaf_u64(2, "leaf", "b".to_string()));
 
-        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-        tree_b.add_child(tree_b.root, NodeData::leaf(1, "leaf", "a".to_string()));
-        tree_b.add_child(tree_b.root, NodeData::leaf(2, "leaf", "b".to_string()));
+        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+        tree_b.add_child(tree_b.root, NodeData::leaf_u64(1, "leaf", "a".to_string()));
+        tree_b.add_child(tree_b.root, NodeData::leaf_u64(2, "leaf", "b".to_string()));
 
         let matching = compute_matching(&tree_a, &tree_b, &MatchingConfig::default());
 
@@ -690,15 +681,25 @@ mod tests {
     #[test]
     fn test_partial_match() {
         // Trees with same structure but one leaf differs
-        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-        let child1_a = tree_a.add_child(tree_a.root, NodeData::leaf(1, "leaf", "same".to_string()));
-        let _child2_a =
-            tree_a.add_child(tree_a.root, NodeData::leaf(2, "leaf", "diff_a".to_string()));
+        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+        let child1_a = tree_a.add_child(
+            tree_a.root,
+            NodeData::leaf_u64(1, "leaf", "same".to_string()),
+        );
+        let _child2_a = tree_a.add_child(
+            tree_a.root,
+            NodeData::leaf_u64(2, "leaf", "diff_a".to_string()),
+        );
 
-        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-        let child1_b = tree_b.add_child(tree_b.root, NodeData::leaf(1, "leaf", "same".to_string()));
-        let _child2_b =
-            tree_b.add_child(tree_b.root, NodeData::leaf(3, "leaf", "diff_b".to_string()));
+        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+        let child1_b = tree_b.add_child(
+            tree_b.root,
+            NodeData::leaf_u64(1, "leaf", "same".to_string()),
+        );
+        let _child2_b = tree_b.add_child(
+            tree_b.root,
+            NodeData::leaf_u64(3, "leaf", "diff_b".to_string()),
+        );
 
         let matching = compute_matching(&tree_a, &tree_b, &MatchingConfig::default());
 

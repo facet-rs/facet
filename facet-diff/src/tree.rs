@@ -79,9 +79,9 @@ pub enum EditOp {
         /// The new value to set, None for containers
         new_value: Option<String>,
         /// Hash of the old value
-        old_hash: u64,
+        old_hash: cinereus::NodeHash,
         /// Hash of the new value
-        new_hash: u64,
+        new_hash: cinereus::NodeHash,
     },
     /// An attribute (property) was updated on a matched node.
     UpdateAttribute {
@@ -109,26 +109,26 @@ pub enum EditOp {
         /// If Some, the displaced node goes to this slot
         detach_to_slot: Option<u32>,
         /// Hash of the inserted value
-        hash: u64,
+        hash: cinereus::NodeHash,
     },
     /// A node was deleted from tree A.
     Delete {
         /// The node to delete - either at a path or in a slot
         node: NodeRef,
         /// Hash of the deleted value
-        hash: u64,
+        hash: cinereus::NodeHash,
     },
     /// A node was moved from one location to another.
-    /// If `detach_to_slot` is Some, the node at `new_path` is detached and stored in that slot.
+    /// If `detach_to_slot` is Some, the node at the target is detached and stored in that slot.
     Move {
         /// The source - either a path or a slot number
         from: NodeRef,
-        /// The target path
-        to: Path,
+        /// The target - either a path in the tree or a slot-relative path
+        to: NodeRef,
         /// If Some, the displaced node goes to this slot
         detach_to_slot: Option<u32>,
         /// Hash of the moved value
-        hash: u64,
+        hash: cinereus::NodeHash,
     },
 }
 
@@ -256,7 +256,7 @@ impl TreeBuilder {
         // Compute structural hash
         let mut hasher = DefaultHasher::new();
         peek.structural_hash(&mut hasher);
-        let hash = hasher.finish();
+        let hash = cinereus::NodeHash(hasher.finish());
 
         // Determine the node kind
         let kind = self.determine_kind(peek);
@@ -805,7 +805,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
 
                 // Create a new node in shadow tree
                 let new_data: NodeData<NodeKind, NodeLabel, HtmlProperties> = NodeData {
-                    hash: 0,
+                    hash: cinereus::NodeHash(0),
                     kind: NodeKind::Scalar("inserted"),
                     label: label.clone(),
                     properties: HtmlProperties::new(),
@@ -898,7 +898,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     // This prevents shifting of siblings.
                     let placeholder_data: NodeData<NodeKind, NodeLabel, HtmlProperties> =
                         NodeData {
-                            hash: 0,
+                            hash: cinereus::NodeHash(0),
                             kind: NodeKind::Scalar("placeholder"),
                             label: None,
                             properties: HtmlProperties::new(),
@@ -964,7 +964,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     // This prevents shifting of siblings.
                     let placeholder_data: NodeData<NodeKind, NodeLabel, HtmlProperties> =
                         NodeData {
-                            hash: 0,
+                            hash: cinereus::NodeHash(0),
                             kind: NodeKind::Scalar("placeholder"),
                             label: None,
                             properties: HtmlProperties::new(),
@@ -1006,10 +1006,32 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 // Compute the target path: parent's path + new_position
                 // We use new_position directly because that's the FINAL position in tree_b,
                 // not the current shadow tree position (which may have gaps from detached nodes).
-                let parent_path =
-                    compute_path_in_shadow(&shadow_arena, shadow_root, shadow_new_parent, tree_a);
-                let mut to = parent_path;
-                to.0.push(PathSegment::Index(new_position));
+                //
+                // Check if the parent is in a detached subtree (slot) - if so, we need
+                // to use a slot-relative path, not a root-relative path.
+                let to = if let Some(&slot) = detached_nodes.get(&shadow_new_parent) {
+                    // Parent is directly in a slot
+                    let mut rel_path = Path(vec![]);
+                    rel_path.0.push(PathSegment::Index(new_position));
+                    NodeRef::Slot(slot, Some(rel_path))
+                } else if let Some((slot, relative_path)) =
+                    find_detached_ancestor(&shadow_arena, shadow_new_parent, &detached_nodes)
+                {
+                    // An ancestor is in a slot - extend the relative path
+                    let mut rel_path = relative_path.unwrap_or_else(|| Path(vec![]));
+                    rel_path.0.push(PathSegment::Index(new_position));
+                    NodeRef::Slot(slot, Some(rel_path))
+                } else {
+                    // Parent is in the tree - compute its path
+                    let mut parent_path = compute_path_in_shadow(
+                        &shadow_arena,
+                        shadow_root,
+                        shadow_new_parent,
+                        tree_a,
+                    );
+                    parent_path.0.push(PathSegment::Index(new_position));
+                    NodeRef::Path(parent_path)
+                };
 
                 // Emit Move
                 debug!(?from, ?to, ?detach_to_slot, "MOVE: emitting");
@@ -1573,7 +1595,10 @@ mod tests {
                     NodeRef::Path(p) => Some(p),
                     NodeRef::Slot(..) => None,
                 },
-                EditOp::Move { to, .. } => Some(to),
+                EditOp::Move { to, .. } => match to {
+                    NodeRef::Path(p) => Some(p),
+                    NodeRef::Slot(..) => None,
+                },
                 EditOp::UpdateAttribute { path, .. } => Some(path),
             };
             path.is_some_and(|p| p.0.first() == Some(&PathSegment::Field("children".into())))

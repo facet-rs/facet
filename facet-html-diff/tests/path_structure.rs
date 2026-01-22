@@ -25,7 +25,10 @@ fn get_paths(old: &str, new: &str) -> Vec<Vec<PathSegment>> {
                 facet_diff::NodeRef::Path(p) => p.0,
                 facet_diff::NodeRef::Slot(..) => vec![],
             },
-            EditOp::Move { to, .. } => to.0,
+            EditOp::Move { to, .. } => match to {
+                facet_diff::NodeRef::Path(p) => p.0,
+                facet_diff::NodeRef::Slot(..) => vec![],
+            },
             EditOp::UpdateAttribute { path, .. } => path.0,
             _ => vec![],
         })
@@ -54,7 +57,10 @@ fn get_ops(old: &str, new: &str) -> Vec<(String, String)> {
                     facet_diff::NodeRef::Path(p) => ("Delete", fmt_path(&p.0)),
                     facet_diff::NodeRef::Slot(s, _) => ("DeleteSlot", format!("slot:{s}")),
                 },
-                EditOp::Move { to, .. } => ("Move", fmt_path(&to.0)),
+                EditOp::Move { to, .. } => match to {
+                    facet_diff::NodeRef::Path(p) => ("Move", fmt_path(&p.0)),
+                    facet_diff::NodeRef::Slot(s, _) => ("MoveSlot", format!("slot:{s}")),
+                },
                 EditOp::UpdateAttribute { path, .. } => ("UpdateAttr", fmt_path(&path.0)),
                 _ => ("Other", String::new()),
             };

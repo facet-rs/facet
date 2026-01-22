@@ -98,13 +98,13 @@ mod tests {
     #[test]
     fn test_simplify_subtree_insert() {
         // Tree B has a subtree: parent -> child1, child2
-        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new(0, "root"));
-        let parent = tree_b.add_child(tree_b.root, NodeData::new(1, "parent"));
-        let child1 = tree_b.add_child(parent, NodeData::leaf(2, "leaf", "a".to_string()));
-        let child2 = tree_b.add_child(parent, NodeData::leaf(3, "leaf", "b".to_string()));
+        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
+        let parent = tree_b.add_child(tree_b.root, NodeData::new_u64(1, "parent"));
+        let child1 = tree_b.add_child(parent, NodeData::leaf_u64(2, "leaf", "a".to_string()));
+        let child2 = tree_b.add_child(parent, NodeData::leaf_u64(3, "leaf", "b".to_string()));
 
         // Empty tree A for reference
-        let tree_a: Tree<&str, String> = Tree::new(NodeData::new(0, "root"));
+        let tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
 
         // Simulate raw ops: insert parent, insert child1, insert child2
         let ops: Vec<EditOp<&str, String>> = vec![
@@ -144,13 +144,13 @@ mod tests {
     #[test]
     fn test_simplify_subtree_delete() {
         // Tree A has a subtree: parent -> child1, child2
-        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new(0, "root"));
-        let parent = tree_a.add_child(tree_a.root, NodeData::new(1, "parent"));
-        let child1 = tree_a.add_child(parent, NodeData::leaf(2, "leaf", "a".to_string()));
-        let child2 = tree_a.add_child(parent, NodeData::leaf(3, "leaf", "b".to_string()));
+        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
+        let parent = tree_a.add_child(tree_a.root, NodeData::new_u64(1, "parent"));
+        let child1 = tree_a.add_child(parent, NodeData::leaf_u64(2, "leaf", "a".to_string()));
+        let child2 = tree_a.add_child(parent, NodeData::leaf_u64(3, "leaf", "b".to_string()));
 
         // Empty tree B for reference
-        let tree_b: Tree<&str, String> = Tree::new(NodeData::new(0, "root"));
+        let tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
 
         // Simulate raw ops: delete child1, delete child2, delete parent (post-order)
         let ops: Vec<EditOp<&str, String>> = vec![
@@ -171,11 +171,11 @@ mod tests {
 
     #[test]
     fn test_simplify_keeps_independent_ops() {
-        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new(0, "root"));
-        let a1 = tree_a.add_child(tree_a.root, NodeData::leaf(1, "leaf", "a".to_string()));
-        let a2 = tree_a.add_child(tree_a.root, NodeData::leaf(2, "leaf", "b".to_string()));
+        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
+        let a1 = tree_a.add_child(tree_a.root, NodeData::leaf_u64(1, "leaf", "a".to_string()));
+        let a2 = tree_a.add_child(tree_a.root, NodeData::leaf_u64(2, "leaf", "b".to_string()));
 
-        let tree_b: Tree<&str, String> = Tree::new(NodeData::new(0, "root"));
+        let tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
 
         // Two independent deletes (siblings, not parent-child)
         let ops: Vec<EditOp<&str, String>> =

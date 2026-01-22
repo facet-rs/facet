@@ -209,20 +209,50 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
                 parent.remove_child(&node)?;
             }
 
-            // Find the parent and position from the target path
-            if to.0.is_empty() {
-                return Err(JsValue::from_str("Move: cannot move to root"));
+            // Find the parent and position from the target
+            match to {
+                NodeRef::Path(path) => {
+                    if path.0.is_empty() {
+                        return Err(JsValue::from_str("Move: cannot move to root"));
+                    }
+                    let parent_path = NodePath(path.0[..path.0.len() - 1].to_vec());
+                    let target_idx = path.0[path.0.len() - 1];
+
+                    let parent_node = find_node(doc, &parent_path, slots)?;
+                    let parent_el = parent_node
+                        .dyn_ref::<Element>()
+                        .ok_or_else(|| JsValue::from_str("parent is not an element"))?;
+
+                    // Insert at the target position with Chawathe displacement
+                    insert_at_position(parent_el, &node, target_idx, *detach_to_slot, slots)?;
+                }
+                NodeRef::Slot(slot, rel_path) => {
+                    // Moving into a slot - get the slot root and navigate
+                    let slot_root = slots.get(*slot).ok_or_else(|| {
+                        JsValue::from_str(&format!("target slot {} is empty", slot))
+                    })?;
+
+                    let (parent_el, target_idx) = if let Some(path) = rel_path {
+                        if path.0.is_empty() {
+                            return Err(JsValue::from_str("Move: cannot move to slot root"));
+                        }
+                        let parent_path = NodePath(path.0[..path.0.len() - 1].to_vec());
+                        let target_idx = path.0[path.0.len() - 1];
+                        let parent_node = navigate_within_node(slot_root, &parent_path)?;
+                        let parent_el = parent_node
+                            .dyn_ref::<Element>()
+                            .ok_or_else(|| JsValue::from_str("slot parent is not an element"))?
+                            .clone();
+                        (parent_el, target_idx)
+                    } else {
+                        return Err(JsValue::from_str(
+                            "Move: cannot move to slot root without relative path",
+                        ));
+                    };
+
+                    insert_at_position(&parent_el, &node, target_idx, *detach_to_slot, slots)?;
+                }
             }
-            let parent_path = NodePath(to.0[..to.0.len() - 1].to_vec());
-            let target_idx = to.0[to.0.len() - 1];
-
-            let parent_node = find_node(doc, &parent_path, slots)?;
-            let parent_el = parent_node
-                .dyn_ref::<Element>()
-                .ok_or_else(|| JsValue::from_str("parent is not an element"))?;
-
-            // Insert at the target position with Chawathe displacement
-            insert_at_position(parent_el, &node, target_idx, *detach_to_slot, slots)?;
         }
     }
 
@@ -248,9 +278,8 @@ fn insert_at_position(
             slots.store(slot, replaced);
         }
     } else {
-        // No node at position - append or insert before next
-        let reference = children.item(pos);
-        parent.insert_before(node, reference.as_ref())?;
+        // Position is beyond current children - just append
+        parent.append_child(node)?;
     }
 
     Ok(())

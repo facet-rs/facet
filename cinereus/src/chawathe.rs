@@ -23,7 +23,6 @@ use crate::matching::Matching;
 use crate::tree::{NoProperties, Properties, Tree};
 use core::fmt;
 use core::hash::Hash;
-#[cfg(any(test, feature = "tracing"))]
 use facet_pretty::FacetPretty;
 use indextree::NodeId;
 
@@ -89,10 +88,10 @@ pub enum EditOp<K, L, P: Properties = NoProperties> {
     },
 }
 
-impl<K: fmt::Debug, L: fmt::Debug, P: Properties> fmt::Display for EditOp<K, L, P>
+impl<'a, K: Facet<'a>, L: Facet<'a>, P: Properties> fmt::Display for EditOp<K, L, P>
 where
-    P::Key: fmt::Debug,
-    P::Value: fmt::Debug,
+    P::Key: Facet<'a>,
+    P::Value: Facet<'a>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -112,10 +111,10 @@ where
             } => {
                 write!(
                     f,
-                    "UpdateProp(a:{}, {:?}={:?})",
+                    "UpdateProp(a:{}, {}={})",
                     usize::from(*node_a),
-                    key,
-                    new_value
+                    key.pretty(),
+                    new_value.pretty()
                 )
             }
             EditOp::Insert {
@@ -127,9 +126,9 @@ where
             } => {
                 write!(
                     f,
-                    "Insert(b:{} {:?} @{} under b:{})",
+                    "Insert(b:{} {} @{} under b:{})",
                     usize::from(*node_b),
-                    kind,
+                    kind.pretty(),
                     position,
                     usize::from(*parent_b)
                 )
@@ -156,22 +155,48 @@ where
     }
 }
 
+/// Wrapper for collecting edit operations with automatic tracing.
+struct Ops<K, L, P: Properties> {
+    inner: Vec<EditOp<K, L, P>>,
+}
+
+impl<'a, K: Facet<'a>, L: Facet<'a>, P: Properties> Ops<K, L, P>
+where
+    P::Key: Facet<'a>,
+    P::Value: Facet<'a>,
+{
+    fn new() -> Self {
+        Self { inner: Vec::new() }
+    }
+
+    fn push(&mut self, op: EditOp<K, L, P>) {
+        debug!(%op, "emit");
+        self.inner.push(op);
+    }
+
+    fn into_inner(self) -> Vec<EditOp<K, L, P>> {
+        self.inner
+    }
+}
+
 /// Generate an edit script from a matching between two trees.
 ///
 /// The edit script transforms tree A into tree B using INSERT, DELETE, UPDATE, MOVE,
 /// and UpdateProperty operations.
 pub fn generate_edit_script<'a, K, L, P>(
-    tree_a: &'a Tree<K, L, P>,
-    tree_b: &'a Tree<K, L, P>,
+    tree_a: &Tree<K, L, P>,
+    tree_b: &Tree<K, L, P>,
     matching: &Matching,
 ) -> Vec<EditOp<K, L, P>>
 where
     K: Clone + Eq + Hash + Facet<'a>,
     L: Clone + Eq + Facet<'a>,
     P: Properties,
+    P::Key: Facet<'a>,
+    P::Value: Facet<'a>,
 {
     debug!(matched_pairs = matching.len(), "generate_edit_script start");
-    let mut ops = Vec::new();
+    let mut ops = Ops::new();
 
     // Phase 1: UPDATE - matched nodes where hash differs (content changed)
     // Note: We compare hashes, not labels, since labels may contain paths
@@ -181,13 +206,6 @@ where
         let b_data = tree_b.get(b_id);
 
         if a_data.hash != b_data.hash {
-            debug!(
-                a = usize::from(a_id),
-                b = usize::from(b_id),
-                a_hash = a_data.hash,
-                b_hash = b_data.hash,
-                "emit UPDATE"
-            );
             ops.push(EditOp::Update {
                 node_a: a_id,
                 node_b: b_id,
@@ -198,11 +216,6 @@ where
 
         // Phase 1b: Property changes - diff properties for matched nodes
         for change in a_data.properties.diff(&b_data.properties) {
-            debug!(
-                a = usize::from(a_id),
-                b = usize::from(b_id),
-                "emit UpdateProperty"
-            );
             ops.push(EditOp::UpdateProperty {
                 node_a: a_id,
                 node_b: b_id,
@@ -222,17 +235,6 @@ where
 
             if let Some(parent_b) = parent_b {
                 let pos = tree_b.position(b_id);
-                let _parent_b_data = tree_b.get(parent_b);
-                debug!(
-                    b = usize::from(b_id),
-                    b_kind = %b_data.kind.pretty(),
-                    b_label = %b_data.label.pretty(),
-                    parent = usize::from(parent_b),
-                    parent_kind = %_parent_b_data.kind.pretty(),
-                    parent_label = %_parent_b_data.label.pretty(),
-                    pos,
-                    "emit INSERT"
-                );
                 ops.push(EditOp::Insert {
                     node_b: b_id,
                     parent_b,
@@ -260,12 +262,6 @@ where
         // was incorrect - the node should have been matched with a node under a matched parent.
         // Rather than emit a broken Move, skip it. The content will appear via the Insert.
         if !matching.contains_b(parent_b) {
-            debug!(
-                a = usize::from(a_id),
-                b = usize::from(b_id),
-                parent_b = usize::from(parent_b),
-                "skip MOVE: parent_b is unmatched (inside inserted subtree)"
-            );
             continue;
         }
 
@@ -279,14 +275,6 @@ where
         let position_changed = pos_a != pos_b;
 
         if parent_changed || position_changed {
-            debug!(
-                a = usize::from(a_id),
-                b = usize::from(b_id),
-                parent_changed,
-                pos_a,
-                pos_b,
-                "emit MOVE"
-            );
             ops.push(EditOp::Move {
                 node_a: a_id,
                 node_b: b_id,
@@ -300,19 +288,12 @@ where
     // Process in post-order so children are deleted before parents
     for a_id in tree_a.post_order() {
         if !matching.contains_a(a_id) {
-            let _a_data = tree_a.get(a_id);
-            debug!(
-                a = usize::from(a_id),
-                a_kind = %_a_data.kind.pretty(),
-                a_label = %_a_data.label.pretty(),
-                "emit DELETE"
-            );
             ops.push(EditOp::Delete { node_a: a_id });
         }
     }
 
-    debug!(total_ops = ops.len(), "generate_edit_script done");
-    ops
+    debug!(total_ops = ops.inner.len(), "generate_edit_script done");
+    ops.into_inner()
 }
 
 #[cfg(test)]
@@ -326,11 +307,11 @@ mod tests {
 
     #[test]
     fn test_no_changes() {
-        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-        tree_a.add_child(tree_a.root, NodeData::leaf(1, "leaf", "a".to_string()));
+        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+        tree_a.add_child(tree_a.root, NodeData::leaf_u64(1, "leaf", "a".to_string()));
 
-        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-        tree_b.add_child(tree_b.root, NodeData::leaf(1, "leaf", "a".to_string()));
+        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+        tree_b.add_child(tree_b.root, NodeData::leaf_u64(1, "leaf", "a".to_string()));
 
         let matching = compute_matching(&tree_a, &tree_b, &MatchingConfig::default());
         let ops = generate_edit_script(&tree_a, &tree_b, &matching);
@@ -340,11 +321,17 @@ mod tests {
 
     #[test]
     fn test_update() {
-        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-        tree_a.add_child(tree_a.root, NodeData::leaf(1, "leaf", "old".to_string()));
+        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+        tree_a.add_child(
+            tree_a.root,
+            NodeData::leaf_u64(1, "leaf", "old".to_string()),
+        );
 
-        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-        tree_b.add_child(tree_b.root, NodeData::leaf(2, "leaf", "new".to_string()));
+        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+        tree_b.add_child(
+            tree_b.root,
+            NodeData::leaf_u64(2, "leaf", "new".to_string()),
+        );
 
         let matching = compute_matching(&tree_a, &tree_b, &MatchingConfig::default());
         let ops = generate_edit_script(&tree_a, &tree_b, &matching);
@@ -359,10 +346,13 @@ mod tests {
 
     #[test]
     fn test_insert() {
-        let tree_a: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
+        let tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
 
-        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-        tree_b.add_child(tree_b.root, NodeData::leaf(1, "leaf", "new".to_string()));
+        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+        tree_b.add_child(
+            tree_b.root,
+            NodeData::leaf_u64(1, "leaf", "new".to_string()),
+        );
 
         let matching = compute_matching(&tree_a, &tree_b, &MatchingConfig::default());
         let ops = generate_edit_script(&tree_a, &tree_b, &matching);
@@ -376,10 +366,13 @@ mod tests {
 
     #[test]
     fn test_delete() {
-        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
-        tree_a.add_child(tree_a.root, NodeData::leaf(1, "leaf", "old".to_string()));
+        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
+        tree_a.add_child(
+            tree_a.root,
+            NodeData::leaf_u64(1, "leaf", "old".to_string()),
+        );
 
-        let tree_b: Tree<&str, String> = Tree::new(NodeData::new(100, "root"));
+        let tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
 
         let matching = compute_matching(&tree_a, &tree_b, &MatchingConfig::default());
         let ops = generate_edit_script(&tree_a, &tree_b, &matching);
@@ -399,14 +392,14 @@ mod tests {
 
         // Root hashes must differ (otherwise top-down recursively matches children BY POSITION).
         // With min_height=0, leaves are included in top-down and matched by hash.
-        let mut tree_a: Tree<&str, &str> = Tree::new(NodeData::new(100, "root"));
-        let child_a = tree_a.add_child(tree_a.root, NodeData::leaf(1, "leaf", "A"));
-        let child_b = tree_a.add_child(tree_a.root, NodeData::leaf(2, "leaf", "B"));
+        let mut tree_a: Tree<&str, &str> = Tree::new(NodeData::new_u64(100, "root"));
+        let child_a = tree_a.add_child(tree_a.root, NodeData::leaf_u64(1, "leaf", "A"));
+        let child_b = tree_a.add_child(tree_a.root, NodeData::leaf_u64(2, "leaf", "B"));
 
-        let mut tree_b: Tree<&str, &str> = Tree::new(NodeData::new(200, "root")); // Different root hash!
+        let mut tree_b: Tree<&str, &str> = Tree::new(NodeData::new_u64(200, "root")); // Different root hash!
         // Swap order: B first, then A
-        let child_b2 = tree_b.add_child(tree_b.root, NodeData::leaf(2, "leaf", "B"));
-        let child_a2 = tree_b.add_child(tree_b.root, NodeData::leaf(1, "leaf", "A"));
+        let child_b2 = tree_b.add_child(tree_b.root, NodeData::leaf_u64(2, "leaf", "B"));
+        let child_a2 = tree_b.add_child(tree_b.root, NodeData::leaf_u64(1, "leaf", "A"));
 
         let config = MatchingConfig {
             min_height: 0, // Include leaves in top-down matching
@@ -418,26 +411,26 @@ mod tests {
         debug!(?tree_a.root, "tree_a root");
         debug!(
             ?child_a,
-            hash = tree_a.get(child_a).hash,
+            hash = %tree_a.get(child_a).hash,
             pos = tree_a.position(child_a),
             "tree_a child_a"
         );
         debug!(
             ?child_b,
-            hash = tree_a.get(child_b).hash,
+            hash = %tree_a.get(child_b).hash,
             pos = tree_a.position(child_b),
             "tree_a child_b"
         );
         debug!(?tree_b.root, "tree_b root");
         debug!(
             ?child_b2,
-            hash = tree_b.get(child_b2).hash,
+            hash = %tree_b.get(child_b2).hash,
             pos = tree_b.position(child_b2),
             "tree_b child_b2"
         );
         debug!(
             ?child_a2,
-            hash = tree_b.get(child_a2).hash,
+            hash = %tree_b.get(child_a2).hash,
             pos = tree_b.position(child_a2),
             "tree_b child_a2"
         );
@@ -528,13 +521,13 @@ mod tests {
         // CURRENT BEHAVIOR: id:None might match class:None (same hash)
         // DESIRED BEHAVIOR: id:None should match id:"foo" (same field)
 
-        let mut tree_a: Tree<&str, &str> = Tree::new(NodeData::new(100, "div"));
-        let id_a = tree_a.add_child(tree_a.root, NodeData::leaf(0, "option", "None")); // id: None
-        let class_a = tree_a.add_child(tree_a.root, NodeData::leaf(0, "option", "None")); // class: None
+        let mut tree_a: Tree<&str, &str> = Tree::new(NodeData::new_u64(100, "div"));
+        let id_a = tree_a.add_child(tree_a.root, NodeData::leaf_u64(0, "option", "None")); // id: None
+        let class_a = tree_a.add_child(tree_a.root, NodeData::leaf_u64(0, "option", "None")); // class: None
 
-        let mut tree_b: Tree<&str, &str> = Tree::new(NodeData::new(200, "div"));
-        let id_b = tree_b.add_child(tree_b.root, NodeData::leaf(123, "option", "foo")); // id: "foo"
-        let class_b = tree_b.add_child(tree_b.root, NodeData::leaf(0, "option", "None")); // class: None
+        let mut tree_b: Tree<&str, &str> = Tree::new(NodeData::new_u64(200, "div"));
+        let id_b = tree_b.add_child(tree_b.root, NodeData::leaf_u64(123, "option", "foo")); // id: "foo"
+        let class_b = tree_b.add_child(tree_b.root, NodeData::leaf_u64(0, "option", "None")); // class: None
 
         let config = MatchingConfig {
             min_height: 0,
@@ -693,19 +686,19 @@ mod tests {
     fn test_properties_emit_update_property_ops() {
         // Tree A: root -> div (id="foo", class=None)
         let mut tree_a: Tree<&str, String, HtmlAttrs> =
-            Tree::new(NodeData::with_properties(0, "root", HtmlAttrs::new()));
+            Tree::new(NodeData::with_properties_u64(0, "root", HtmlAttrs::new()));
         let div_a = tree_a.add_child(
             tree_a.root,
-            NodeData::with_properties(1, "div", HtmlAttrs::new().with_id("foo")),
+            NodeData::with_properties_u64(1, "div", HtmlAttrs::new().with_id("foo")),
         );
 
         // Tree B: root -> div (id="bar", class="container")
         // Same structure, different properties
         let mut tree_b: Tree<&str, String, HtmlAttrs> =
-            Tree::new(NodeData::with_properties(0, "root", HtmlAttrs::new()));
+            Tree::new(NodeData::with_properties_u64(0, "root", HtmlAttrs::new()));
         let div_b = tree_b.add_child(
             tree_b.root,
-            NodeData::with_properties(
+            NodeData::with_properties_u64(
                 2, // Different hash (properties differ)
                 "div",
                 HtmlAttrs::new().with_id("bar").with_class("container"),
@@ -815,18 +808,18 @@ mod tests {
 
         // Tree A: root -> div (id=None, class=None)
         let mut tree_a: Tree<&str, String, HtmlAttrs> =
-            Tree::new(NodeData::with_properties(0, "root", HtmlAttrs::new()));
+            Tree::new(NodeData::with_properties_u64(0, "root", HtmlAttrs::new()));
         let _div_a = tree_a.add_child(
             tree_a.root,
-            NodeData::with_properties(1, "div", HtmlAttrs::new()), // Both None
+            NodeData::with_properties_u64(1, "div", HtmlAttrs::new()), // Both None
         );
 
         // Tree B: root -> div (id="myid", class=None)
         let mut tree_b: Tree<&str, String, HtmlAttrs> =
-            Tree::new(NodeData::with_properties(0, "root", HtmlAttrs::new()));
+            Tree::new(NodeData::with_properties_u64(0, "root", HtmlAttrs::new()));
         let _div_b = tree_b.add_child(
             tree_b.root,
-            NodeData::with_properties(2, "div", HtmlAttrs::new().with_id("myid")),
+            NodeData::with_properties_u64(2, "div", HtmlAttrs::new().with_id("myid")),
         );
 
         let matching = compute_matching(&tree_a, &tree_b, &MatchingConfig::default());

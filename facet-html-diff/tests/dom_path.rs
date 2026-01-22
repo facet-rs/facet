@@ -49,7 +49,12 @@ fn get_dom_paths(old: &str, new: &str) -> Vec<(String, NodePath)> {
                 Patch::SetText { path, .. } => ("SetText", path.clone()),
                 Patch::SetAttribute { path, .. } => ("SetAttribute", path.clone()),
                 Patch::RemoveAttribute { path, .. } => ("RemoveAttribute", path.clone()),
-                Patch::Move { to, .. } => ("Move", to.clone()),
+                Patch::Move { to, .. } => match to {
+                    facet_html_diff::NodeRef::Path(path) => ("Move", path.clone()),
+                    facet_html_diff::NodeRef::Slot(s, _) => {
+                        ("MoveSlot", NodePath(vec![*s as usize]))
+                    }
+                },
             };
             (kind.to_string(), path)
         })

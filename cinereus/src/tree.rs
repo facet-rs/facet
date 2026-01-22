@@ -2,8 +2,38 @@
 //!
 //! Uses `indextree` as the arena backend for efficient tree storage.
 
+use core::fmt;
 use core::hash::Hash;
 use indextree::{Arena, NodeId};
+
+/// A structural hash of a node and all its descendants (Merkle-tree style).
+/// Two nodes with the same hash are structurally identical.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct NodeHash(pub u64);
+
+impl fmt::Debug for NodeHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "NodeHash({:#018x})", self.0)
+    }
+}
+
+impl fmt::Display for NodeHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:#018x}", self.0)
+    }
+}
+
+impl From<u64> for NodeHash {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<NodeHash> for u64 {
+    fn from(value: NodeHash) -> Self {
+        value.0
+    }
+}
 
 /// A property change detected between matched nodes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +103,7 @@ impl Properties for NoProperties {
 pub struct NodeData<K, L, P = NoProperties> {
     /// Structural hash of this node and all its descendants (Merkle-tree style).
     /// Two nodes with the same hash are structurally identical.
-    pub hash: u64,
+    pub hash: NodeHash,
 
     /// The kind/type of this node.
     /// Used during matching: only nodes of the same kind can match.
@@ -91,7 +121,7 @@ pub struct NodeData<K, L, P = NoProperties> {
 
 impl<K, L> NodeData<K, L, NoProperties> {
     /// Create a new node with the given hash and kind (no properties).
-    pub const fn new(hash: u64, kind: K) -> Self {
+    pub const fn new(hash: NodeHash, kind: K) -> Self {
         Self {
             hash,
             kind,
@@ -100,10 +130,30 @@ impl<K, L> NodeData<K, L, NoProperties> {
         }
     }
 
+    /// Create a new node with the given hash (as u64) and kind (no properties).
+    pub const fn new_u64(hash: u64, kind: K) -> Self {
+        Self {
+            hash: NodeHash(hash),
+            kind,
+            label: None,
+            properties: NoProperties,
+        }
+    }
+
     /// Create a new leaf node with a label (no properties).
-    pub const fn leaf(hash: u64, kind: K, label: L) -> Self {
+    pub const fn leaf(hash: NodeHash, kind: K, label: L) -> Self {
         Self {
             hash,
+            kind,
+            label: Some(label),
+            properties: NoProperties,
+        }
+    }
+
+    /// Create a new leaf node with a label (no properties), hash as u64.
+    pub const fn leaf_u64(hash: u64, kind: K, label: L) -> Self {
+        Self {
+            hash: NodeHash(hash),
             kind,
             label: Some(label),
             properties: NoProperties,
@@ -113,7 +163,7 @@ impl<K, L> NodeData<K, L, NoProperties> {
 
 impl<K, L, P> NodeData<K, L, P> {
     /// Create a new node with properties.
-    pub const fn with_properties(hash: u64, kind: K, properties: P) -> Self {
+    pub const fn with_properties(hash: NodeHash, kind: K, properties: P) -> Self {
         Self {
             hash,
             kind,
@@ -122,10 +172,30 @@ impl<K, L, P> NodeData<K, L, P> {
         }
     }
 
+    /// Create a new node with properties, hash as u64.
+    pub const fn with_properties_u64(hash: u64, kind: K, properties: P) -> Self {
+        Self {
+            hash: NodeHash(hash),
+            kind,
+            label: None,
+            properties,
+        }
+    }
+
     /// Create a new leaf node with label and properties.
-    pub const fn leaf_with_properties(hash: u64, kind: K, label: L, properties: P) -> Self {
+    pub const fn leaf_with_properties(hash: NodeHash, kind: K, label: L, properties: P) -> Self {
         Self {
             hash,
+            kind,
+            label: Some(label),
+            properties,
+        }
+    }
+
+    /// Create a new leaf node with label and properties, hash as u64.
+    pub const fn leaf_with_properties_u64(hash: u64, kind: K, label: L, properties: P) -> Self {
+        Self {
+            hash: NodeHash(hash),
             kind,
             label: Some(label),
             properties,
@@ -264,10 +334,10 @@ mod tests {
 
     #[test]
     fn test_tree_basics() {
-        let mut tree: Tree<&str, String> = Tree::new(NodeData::new(0, "root"));
+        let mut tree: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
 
-        let child1 = tree.add_child(tree.root, NodeData::leaf(1, "leaf", "a".to_string()));
-        let child2 = tree.add_child(tree.root, NodeData::leaf(2, "leaf", "b".to_string()));
+        let child1 = tree.add_child(tree.root, NodeData::leaf_u64(1, "leaf", "a".to_string()));
+        let child2 = tree.add_child(tree.root, NodeData::leaf_u64(2, "leaf", "b".to_string()));
 
         assert_eq!(tree.child_count(tree.root), 2);
         assert_eq!(tree.position(child1), 0);
@@ -278,12 +348,12 @@ mod tests {
 
     #[test]
     fn test_post_order() {
-        let mut tree: Tree<&str, String> = Tree::new(NodeData::new(0, "root"));
+        let mut tree: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
 
-        let child1 = tree.add_child(tree.root, NodeData::new(1, "node"));
-        let _leaf1 = tree.add_child(child1, NodeData::leaf(2, "leaf", "a".to_string()));
-        let _leaf2 = tree.add_child(child1, NodeData::leaf(3, "leaf", "b".to_string()));
-        let _child2 = tree.add_child(tree.root, NodeData::leaf(4, "leaf", "c".to_string()));
+        let child1 = tree.add_child(tree.root, NodeData::new_u64(1, "node"));
+        let _leaf1 = tree.add_child(child1, NodeData::leaf_u64(2, "leaf", "a".to_string()));
+        let _leaf2 = tree.add_child(child1, NodeData::leaf_u64(3, "leaf", "b".to_string()));
+        let _child2 = tree.add_child(tree.root, NodeData::leaf_u64(4, "leaf", "c".to_string()));
 
         let order: Vec<_> = tree.post_order().collect();
         // Post-order: leaves first, then parents

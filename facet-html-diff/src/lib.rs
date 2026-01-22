@@ -100,10 +100,10 @@ pub enum Patch {
     RemoveAttribute { path: NodePath, name: String },
 
     /// Move a node from one location to another.
-    /// If `detach_to_slot` is Some, the node currently at `to` is detached and stored in that slot.
+    /// If `detach_to_slot` is Some, the node at the target is detached and stored in that slot.
     Move {
         from: NodeRef,
-        to: NodePath,
+        to: NodeRef,
         detach_to_slot: Option<u32>,
     },
 }
@@ -122,7 +122,8 @@ pub fn diff_html(old_html: &str, new_html: &str) -> Result<Vec<Patch>, String> {
         debug!(?_op, "edit op");
     }
 
-    let patches = translate_to_patches(&edit_ops, &new_doc);
+    let patches =
+        translate_to_patches(&edit_ops, &new_doc).map_err(|e| format!("Translation error: {e}"))?;
 
     debug!(count = patches.len(), "Translated patches");
     for _patch in &patches {
@@ -133,16 +134,23 @@ pub fn diff_html(old_html: &str, new_html: &str) -> Result<Vec<Patch>, String> {
 }
 
 /// Translate facet-diff EditOps into DOM Patches.
-pub fn translate_to_patches(edit_ops: &[EditOp], new_doc: &Html) -> Vec<Patch> {
-    edit_ops
-        .iter()
-        .flat_map(|op| translate_op(op, new_doc))
-        .collect()
+///
+/// Returns an error if any operation fails to translate.
+pub fn translate_to_patches(
+    edit_ops: &[EditOp],
+    new_doc: &Html,
+) -> Result<Vec<Patch>, TranslateError> {
+    let mut patches = Vec::new();
+    for op in edit_ops {
+        let op_patches = translate_op(op, new_doc)?;
+        patches.extend(op_patches);
+    }
+    Ok(patches)
 }
 
 /// What does this path point to?
 #[derive(Debug, Clone, PartialEq)]
-enum PathTarget {
+pub enum PathTarget {
     /// Text content (html::text field or variant)
     Text,
     /// An attribute (html::attribute field or map key in extra)
@@ -462,8 +470,65 @@ fn extract_dom_indices(segments: &[PathSegment]) -> Vec<usize> {
     result
 }
 
+/// Error type for translation failures.
+#[derive(Debug)]
+pub enum TranslateError {
+    /// Insert operation could not be translated
+    InsertFailed {
+        parent: facet_diff::NodeRef,
+        position: usize,
+        label_path: Vec<PathSegment>,
+        target: PathTarget,
+        reason: String,
+    },
+    /// Update operation could not be translated
+    UpdateFailed {
+        path: Vec<PathSegment>,
+        reason: String,
+    },
+    /// UpdateAttribute operation could not be translated
+    UpdateAttributeFailed {
+        path: Vec<PathSegment>,
+        attr_name: String,
+        reason: String,
+    },
+    /// Unexpected operation type
+    UnexpectedOp { op: String },
+}
+
+impl std::fmt::Display for TranslateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TranslateError::InsertFailed {
+                parent,
+                position,
+                label_path,
+                target,
+                reason,
+            } => write!(
+                f,
+                "Insert failed: parent={parent:?}, position={position}, label_path={label_path:?}, target={target:?}, reason={reason}"
+            ),
+            TranslateError::UpdateFailed { path, reason } => {
+                write!(f, "Update failed: path={path:?}, reason={reason}")
+            }
+            TranslateError::UpdateAttributeFailed {
+                path,
+                attr_name,
+                reason,
+            } => write!(
+                f,
+                "UpdateAttribute failed: path={path:?}, attr_name={attr_name}, reason={reason}"
+            ),
+            TranslateError::UnexpectedOp { op } => write!(f, "Unexpected op: {op}"),
+        }
+    }
+}
+
+impl std::error::Error for TranslateError {}
+
 /// Translate a single EditOp to DOM Patches.
-fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
+fn translate_op(op: &EditOp, new_doc: &Html) -> Result<Vec<Patch>, TranslateError> {
     trace!("translate_op: op={op:?}");
     match op {
         EditOp::Insert {
@@ -473,16 +538,17 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
             value,
             detach_to_slot,
             ..
-        } => translate_insert(
-            parent,
-            *position,
-            &label_path.0,
-            value.as_deref(),
-            *detach_to_slot,
-            new_doc,
-        )
-        .into_iter()
-        .collect(),
+        } => {
+            let patch = translate_insert(
+                parent,
+                *position,
+                &label_path.0,
+                value.as_deref(),
+                *detach_to_slot,
+                new_doc,
+            )?;
+            Ok(vec![patch])
+        }
         EditOp::Delete { node, .. } => {
             let node_ref = match node {
                 facet_diff::NodeRef::Path(p) => NodeRef::Path(NodePath(extract_dom_indices(&p.0))),
@@ -493,13 +559,14 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
                         .map(|p| NodePath(extract_dom_indices(&p.0))),
                 ),
             };
-            vec![Patch::Remove { node: node_ref }]
+            Ok(vec![Patch::Remove { node: node_ref }])
         }
         EditOp::Update {
             path, new_value, ..
-        } => translate_update(&path.0, new_value.as_deref())
-            .into_iter()
-            .collect(),
+        } => {
+            let patch = translate_update(&path.0, new_value.as_deref())?;
+            Ok(vec![patch])
+        }
         EditOp::Move {
             from,
             to,
@@ -515,23 +582,34 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Vec<Patch> {
                         .map(|p| NodePath(extract_dom_indices(&p.0))),
                 ),
             };
-            let to_path = NodePath(extract_dom_indices(&to.0));
-            vec![Patch::Move {
+            let to_ref = match to {
+                facet_diff::NodeRef::Path(p) => NodeRef::Path(NodePath(extract_dom_indices(&p.0))),
+                facet_diff::NodeRef::Slot(s, rel_path) => NodeRef::Slot(
+                    *s,
+                    rel_path
+                        .as_ref()
+                        .map(|p| NodePath(extract_dom_indices(&p.0))),
+                ),
+            };
+            Ok(vec![Patch::Move {
                 from: from_ref,
-                to: to_path,
+                to: to_ref,
                 detach_to_slot: *detach_to_slot,
-            }]
+            }])
         }
         EditOp::UpdateAttribute {
             path,
             attr_name,
             new_value,
             ..
-        } => translate_update_attribute(&path.0, attr_name, new_value.as_deref())
-            .into_iter()
-            .collect(),
+        } => {
+            let patch = translate_update_attribute(&path.0, attr_name, new_value.as_deref())?;
+            Ok(vec![patch])
+        }
         #[allow(unreachable_patterns)]
-        _ => vec![],
+        _ => Err(TranslateError::UnexpectedOp {
+            op: format!("{op:?}"),
+        }),
     }
 }
 
@@ -547,7 +625,7 @@ fn translate_insert(
     value: Option<&str>,
     detach_to_slot: Option<u32>,
     new_doc: &Html,
-) -> Option<Patch> {
+) -> Result<Patch, TranslateError> {
     let html_shape = <Html as facet_core::Facet>::SHAPE;
 
     // Use label_segments for type navigation (has Variant info)
@@ -569,11 +647,22 @@ fn translate_insert(
         ),
     };
 
+    // Clone target for use in error messages (before we match and move out of it)
+    let target_for_error = nav.target.clone();
+    let make_error = |reason: &str| TranslateError::InsertFailed {
+        parent: parent.clone(),
+        position,
+        label_path: label_segments.to_vec(),
+        target: target_for_error.clone(),
+        reason: reason.to_string(),
+    };
+
     match nav.target {
         PathTarget::Element => {
             // Navigate to the actual node to determine its type
             let peek = Peek::new(new_doc);
-            let node_peek = navigate_peek(peek, label_segments)?;
+            let node_peek = navigate_peek(peek, label_segments)
+                .ok_or_else(|| make_error("could not navigate to node in new_doc"))?;
 
             // Check if this is actually a text variant in the enum
             // (navigate_path may return Element for Index into enum lists where it can't know the variant)
@@ -588,7 +677,7 @@ fn translate_insert(
                     .flatten()
                     .and_then(|p| p.as_str().map(|s| s.to_string()))
                     .unwrap_or_default();
-                return Some(Patch::InsertText {
+                return Ok(Patch::InsertText {
                     parent: parent_ref,
                     position,
                     text,
@@ -598,11 +687,12 @@ fn translate_insert(
 
             // Not a text variant - insert element with its attrs and children
             let peek2 = Peek::new(new_doc);
-            let node_peek2 = navigate_peek(peek2, label_segments)?;
+            let node_peek2 = navigate_peek(peek2, label_segments)
+                .ok_or_else(|| make_error("could not navigate to node in new_doc (second pass)"))?;
             let tag = get_element_tag(node_peek2);
             let (attrs, children) = extract_attrs_and_children(node_peek2);
 
-            Some(Patch::InsertElement {
+            Ok(Patch::InsertElement {
                 parent: parent_ref,
                 position,
                 tag,
@@ -615,7 +705,9 @@ fn translate_insert(
             // Attributes go on the parent element
             let element_path = match &parent_ref {
                 NodeRef::Path(p) => p.clone(),
-                NodeRef::Slot(..) => return None, // Can't set attr on slot directly
+                NodeRef::Slot(..) => {
+                    return Err(make_error("cannot set attribute on slot directly"));
+                }
             };
 
             let peek = Peek::new(new_doc);
@@ -628,20 +720,23 @@ fn translate_insert(
                                 .and_then(|p| p.into_option().ok())
                                 .and_then(|o| o.value())
                                 .and_then(|inner| inner.as_str().map(|s| s.to_string()))
-                        })?;
-                        return Some(Patch::SetAttribute {
-                            path: element_path,
-                            name,
-                            value: attr_value,
                         });
+                        return match attr_value {
+                            Some(v) => Ok(Patch::SetAttribute {
+                                path: element_path,
+                                name,
+                                value: v,
+                            }),
+                            None => Err(make_error("attribute value is None")),
+                        };
                     } else {
-                        return Some(Patch::RemoveAttribute {
+                        return Ok(Patch::RemoveAttribute {
                             path: element_path,
                             name,
                         });
                     }
                 } else if let Some(s) = attr_peek.as_str() {
-                    return Some(Patch::SetAttribute {
+                    return Ok(Patch::SetAttribute {
                         path: element_path,
                         name,
                         value: s.to_string(),
@@ -649,16 +744,21 @@ fn translate_insert(
                 }
             }
 
-            value.map(|v| Patch::SetAttribute {
-                path: element_path,
-                name: name.clone(),
-                value: v.to_string(),
-            })
+            match value {
+                Some(v) => Ok(Patch::SetAttribute {
+                    path: element_path,
+                    name: name.clone(),
+                    value: v.to_string(),
+                }),
+                None => Err(make_error("attribute value is None and could not navigate")),
+            }
         }
         PathTarget::Text => {
             // Insert a text node at the given position
-            let text = value?.to_string();
-            Some(Patch::InsertText {
+            let text = value
+                .ok_or_else(|| make_error("text value is None"))?
+                .to_string();
+            Ok(Patch::InsertText {
                 parent: parent_ref,
                 position,
                 text,
@@ -668,16 +768,26 @@ fn translate_insert(
         PathTarget::FlattenedAttributeStruct => {
             let element_path = match &parent_ref {
                 NodeRef::Path(p) => p.0.clone(),
-                NodeRef::Slot(..) => return None,
+                NodeRef::Slot(..) => {
+                    return Err(make_error(
+                        "cannot handle flattened attribute struct on slot",
+                    ));
+                }
             };
             let patches = sync_attrs_from_new_doc(&element_path, label_segments, new_doc);
-            patches.into_iter().next()
+            patches
+                .into_iter()
+                .next()
+                .ok_or_else(|| make_error("flattened attribute struct produced no patches"))
         }
         PathTarget::FlattenedChildrenList => {
-            // Individual children will be inserted separately by cinereus
-            None
+            // This is intentionally a no-op: individual children will be inserted separately by cinereus.
+            // However, we shouldn't receive Insert ops for flattened children lists - they're structural.
+            Err(make_error(
+                "received Insert for FlattenedChildrenList - this should not happen",
+            ))
         }
-        PathTarget::Other => None,
+        PathTarget::Other => Err(make_error("PathTarget::Other is not supported for Insert")),
     }
 }
 
@@ -740,7 +850,10 @@ fn collect_attributes_recursive(peek: Peek<'_, '_>, dom_path: &[usize], patches:
 }
 
 /// Translate an Update operation.
-fn translate_update(segments: &[PathSegment], new_value: Option<&str>) -> Option<Patch> {
+fn translate_update(
+    segments: &[PathSegment],
+    new_value: Option<&str>,
+) -> Result<Patch, TranslateError> {
     let html_shape = <Html as facet_core::Facet>::SHAPE;
     let nav = navigate_path(segments, html_shape);
 
@@ -749,25 +862,47 @@ fn translate_update(segments: &[PathSegment], new_value: Option<&str>) -> Option
         nav.dom_path, nav.target
     );
 
+    let make_error = |reason: &str| TranslateError::UpdateFailed {
+        path: segments.to_vec(),
+        reason: reason.to_string(),
+    };
+
     match nav.target {
         PathTarget::Text => {
-            let text = new_value?.to_string();
+            let text = new_value
+                .ok_or_else(|| make_error("text value is None"))?
+                .to_string();
             // Update just the specific text node at dom_path.
             // dom_path points to the text node itself (e.g., [0, 1] means element at 0, text child at 1).
-            Some(Patch::SetText {
+            Ok(Patch::SetText {
                 path: NodePath(nav.dom_path),
                 text,
             })
         }
         PathTarget::Attribute(name) => {
-            let value = new_value?.to_string();
-            Some(Patch::SetAttribute {
+            let value = new_value
+                .ok_or_else(|| make_error("attribute value is None"))?
+                .to_string();
+            Ok(Patch::SetAttribute {
                 path: NodePath(nav.element_dom_path),
                 name,
                 value,
             })
         }
-        _ => None,
+        PathTarget::Element => {
+            // Element updates are typically structural (hash changes) - no DOM patch needed
+            // This is expected for matched elements where only children changed
+            Err(make_error(
+                "Update for PathTarget::Element - structural update, no DOM patch needed (this may be expected)",
+            ))
+        }
+        PathTarget::FlattenedAttributeStruct => Err(make_error(
+            "Update for PathTarget::FlattenedAttributeStruct not supported",
+        )),
+        PathTarget::FlattenedChildrenList => Err(make_error(
+            "Update for PathTarget::FlattenedChildrenList not supported",
+        )),
+        PathTarget::Other => Err(make_error("Update for PathTarget::Other not supported")),
     }
 }
 
@@ -776,16 +911,16 @@ fn translate_update_attribute(
     segments: &[PathSegment],
     attr_name: &str,
     new_value: Option<&str>,
-) -> Option<Patch> {
+) -> Result<Patch, TranslateError> {
     let dom_path = to_dom_path(segments);
 
     match new_value {
-        Some(value) => Some(Patch::SetAttribute {
+        Some(value) => Ok(Patch::SetAttribute {
             path: NodePath(dom_path),
             name: attr_name.to_string(),
             value: value.to_string(),
         }),
-        None => Some(Patch::RemoveAttribute {
+        None => Ok(Patch::RemoveAttribute {
             path: NodePath(dom_path),
             name: attr_name.to_string(),
         }),
@@ -965,11 +1100,11 @@ fn get_tag_from_struct(peek: Peek<'_, '_>) -> Option<String> {
     None
 }
 
-/// Extract attributes and children of an element.
-/// This is used when inserting a new subtree that has no match in the old document.
+/// Extract attributes of an element (no children - cinereus handles children separately).
+/// Cinereus always inserts "shells" - the children are populated by subsequent INSERT/MOVE ops.
 fn extract_attrs_and_children(peek: Peek<'_, '_>) -> (Vec<(String, String)>, Vec<InsertContent>) {
     let mut attrs = Vec::new();
-    let mut children = Vec::new();
+    let children = Vec::new(); // Always empty - cinereus handles children
 
     // For enums, get the inner struct
     let struct_peek = if let Ok(enum_peek) = peek.into_enum() {
@@ -983,30 +1118,24 @@ fn extract_attrs_and_children(peek: Peek<'_, '_>) -> (Vec<(String, String)>, Vec
         return (attrs, children);
     };
 
-    // Try to get fields from a struct
+    // Try to get fields from a struct - only extract attributes
     if let Ok(s) = struct_peek.into_struct() {
-        extract_from_struct(s, &mut attrs, &mut children);
+        extract_attrs_only(s, &mut attrs);
     }
 
     (attrs, children)
 }
 
-/// Helper to recursively extract attrs and children from a struct.
-fn extract_from_struct(
-    s: PeekStruct<'_, '_>,
-    attrs: &mut Vec<(String, String)>,
-    children: &mut Vec<InsertContent>,
-) {
+/// Helper to extract only attributes from a struct (no children).
+fn extract_attrs_only(s: PeekStruct<'_, '_>, attrs: &mut Vec<(String, String)>) {
     for (field, field_peek) in s.fields() {
         // Handle attributes
         if field.is_attribute() {
-            // Get the attribute name
             let attr_name = field
                 .rename
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| to_element_name(field.name).into_owned());
 
-            // Handle Option<String> attributes
             if let Ok(opt) = field_peek.into_option() {
                 if let Some(inner) = opt.value()
                     && let Some(val) = inner.as_str()
@@ -1018,66 +1147,14 @@ fn extract_from_struct(
             }
             continue;
         }
-        // Handle text field
-        if field.is_text() {
-            if let Some(text) = field_peek.as_str()
-                && !text.is_empty()
-            {
-                children.push(InsertContent::Text(text.to_string()));
-            }
-            continue;
-        }
         // Handle flattened structs (like GlobalAttrs) - recurse to extract nested attrs
-        if field.is_flattened() {
-            if let Ok(inner_struct) = field_peek.into_struct() {
-                extract_from_struct(inner_struct, attrs, children);
-            } else if let Ok(list) = field_peek.into_list_like() {
-                // Flattened children list
-                for item in list.iter() {
-                    if let Some(content) = peek_to_insert_content(item) {
-                        children.push(content);
-                    }
-                }
-            }
+        if field.is_flattened()
+            && let Ok(inner_struct) = field_peek.into_struct()
+        {
+            extract_attrs_only(inner_struct, attrs);
         }
+        // Skip flattened children lists - cinereus handles children
     }
-}
-
-/// Convert a Peek value to InsertContent.
-fn peek_to_insert_content(peek: Peek<'_, '_>) -> Option<InsertContent> {
-    // Check if it's an enum (like FlowContent, PhrasingContent)
-    if let Ok(enum_peek) = peek.into_enum()
-        && let Ok(variant) = enum_peek.active_variant()
-    {
-        if variant.is_text() {
-            // Text variant - extract the string
-            let text = enum_peek
-                .field(0)
-                .ok()
-                .flatten()
-                .and_then(|p| p.as_str().map(|s| s.to_string()))
-                .unwrap_or_default();
-            return Some(InsertContent::Text(text));
-        } else {
-            // Element variant
-            let tag = get_element_tag(peek);
-            let (attrs, children) = extract_attrs_and_children(peek);
-            return Some(InsertContent::Element {
-                tag,
-                attrs,
-                children,
-            });
-        }
-    }
-
-    // For non-enum structs (shouldn't happen in typical HTML but handle it)
-    let tag = get_element_tag(peek);
-    let (attrs, children) = extract_attrs_and_children(peek);
-    Some(InsertContent::Element {
-        tag,
-        attrs,
-        children,
-    })
 }
 
 #[cfg(test)]

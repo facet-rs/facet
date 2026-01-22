@@ -26,7 +26,8 @@ pub fn parse_html(html: &str) -> Result<Element, String> {
     Ok(doc)
 }
 
-/// Navigate within an element using a relative path and return the children vec.
+/// Navigate within an element using a relative path (all but the last index) and return the children vec.
+/// The last element of the path is the target index within the returned children.
 /// Used for operations on nodes within detached slots.
 fn navigate_to_children_in_slot<'a>(
     slot_node: &'a mut Element,
@@ -34,7 +35,13 @@ fn navigate_to_children_in_slot<'a>(
 ) -> Result<&'a mut Vec<Content>, String> {
     let mut current = slot_node;
     if let Some(path) = rel_path {
-        for &idx in &path.0 {
+        // Navigate all but the last segment (the last is the target index)
+        let nav_path = if path.0.len() > 1 {
+            &path.0[..path.0.len() - 1]
+        } else {
+            &[]
+        };
+        for &idx in nav_path {
             let child = current
                 .children
                 .get_mut(idx)
@@ -184,46 +191,98 @@ fn apply_patch(
                     .ok_or_else(|| format!("Move: slot {slot} not found"))?,
             };
 
-            // Check if we need to detach the occupant at the target position
-            if to.0.is_empty() {
-                return Err("Move: cannot move to root".to_string());
-            }
-            let to_parent_path = &to.0[..to.0.len() - 1];
-            let to_idx = to.0[to.0.len() - 1];
+            // Place the content at the target location (either in tree or in a slot)
+            match to {
+                NodeRef::Path(to_path) => {
+                    if to_path.0.is_empty() {
+                        return Err("Move: cannot move to root".to_string());
+                    }
+                    let to_parent_path = &to_path.0[..to_path.0.len() - 1];
+                    let to_idx = to_path.0[to_path.0.len() - 1];
 
-            if let Some(slot) = detach_to_slot {
-                let to_children = root.children_mut(to_parent_path).ok_or_else(|| {
-                    format!("Move: target parent not found at {to_parent_path:?}")
-                })?;
-                debug!(
-                    to_idx,
-                    to_children_len = to_children.len(),
-                    "Move detach check"
-                );
-                if to_idx < to_children.len() {
-                    let occupant =
-                        std::mem::replace(&mut to_children[to_idx], Content::Text(String::new()));
-                    debug!(slot, ?occupant, "Move detach: inserting occupant into slot");
-                    slots.insert(*slot, occupant);
-                } else {
-                    debug!(
-                        to_idx,
-                        to_children_len = to_children.len(),
-                        slot,
-                        "Move detach: to_idx >= len, NOT inserting to slot"
-                    );
+                    // Check if we need to detach the occupant at the target position
+                    if let Some(slot) = detach_to_slot {
+                        let to_children = root.children_mut(to_parent_path).ok_or_else(|| {
+                            format!("Move: target parent not found at {to_parent_path:?}")
+                        })?;
+                        debug!(
+                            to_idx,
+                            to_children_len = to_children.len(),
+                            "Move detach check"
+                        );
+                        if to_idx < to_children.len() {
+                            let occupant = std::mem::replace(
+                                &mut to_children[to_idx],
+                                Content::Text(String::new()),
+                            );
+                            debug!(slot, ?occupant, "Move detach: inserting occupant into slot");
+                            slots.insert(*slot, occupant);
+                        }
+                    }
+
+                    // Place the content at the target location
+                    let to_children = root.children_mut(to_parent_path).ok_or_else(|| {
+                        format!("Move: target parent not found at {to_parent_path:?}")
+                    })?;
+                    // Grow the array with empty text placeholders if needed
+                    while to_children.len() <= to_idx {
+                        to_children.push(Content::Text(String::new()));
+                    }
+                    to_children[to_idx] = content;
+                }
+                NodeRef::Slot(target_slot, rel_path) => {
+                    // Move into a slot (detached subtree)
+                    // Get the target index from the relative path
+                    let to_idx = rel_path
+                        .as_ref()
+                        .and_then(|p| p.0.last().copied())
+                        .ok_or_else(|| "Move: slot target missing position index".to_string())?;
+
+                    // Handle displacement if needed (in separate scope to release borrow)
+                    if let Some(slot) = detach_to_slot {
+                        let slot_content = slots
+                            .get_mut(target_slot)
+                            .ok_or_else(|| format!("Move: target slot {target_slot} not found"))?;
+
+                        let target_children = match slot_content {
+                            Content::Element(e) => {
+                                navigate_to_children_in_slot(e, rel_path.as_ref())?
+                            }
+                            Content::Text(_) => {
+                                return Err(
+                                    "Move: target slot contains text, not element".to_string()
+                                );
+                            }
+                        };
+
+                        if to_idx < target_children.len() {
+                            let occupant = std::mem::replace(
+                                &mut target_children[to_idx],
+                                Content::Text(String::new()),
+                            );
+                            slots.insert(*slot, occupant);
+                        }
+                    }
+
+                    // Re-get the slot element (previous borrow was released)
+                    let slot_content = slots
+                        .get_mut(target_slot)
+                        .ok_or_else(|| format!("Move: target slot {target_slot} not found"))?;
+
+                    let target_children = match slot_content {
+                        Content::Element(e) => navigate_to_children_in_slot(e, rel_path.as_ref())?,
+                        Content::Text(_) => {
+                            return Err("Move: target slot contains text, not element".to_string());
+                        }
+                    };
+
+                    // Grow and place
+                    while target_children.len() <= to_idx {
+                        target_children.push(Content::Text(String::new()));
+                    }
+                    target_children[to_idx] = content;
                 }
             }
-
-            // Place the content at the target location
-            let to_children = root
-                .children_mut(to_parent_path)
-                .ok_or_else(|| format!("Move: target parent not found at {to_parent_path:?}"))?;
-            // Grow the array with empty text placeholders if needed
-            while to_children.len() <= to_idx {
-                to_children.push(Content::Text(String::new()));
-            }
-            to_children[to_idx] = content;
         }
     }
     Ok(())

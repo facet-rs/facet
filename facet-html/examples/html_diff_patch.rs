@@ -193,7 +193,7 @@ fn main() {
                 println!("  DELETE {:?}", node);
             }
             EditOp::Move { from, to, .. } => {
-                println!("  MOVE {:?} -> {}", from, to);
+                println!("  MOVE {:?} -> {:?}", from, to);
             }
             _ => {
                 println!("  (other operation)");

@@ -710,4 +710,85 @@ mod sanity_tests {
         let expected = normalize_html(new).unwrap();
         assert_eq!(result, expected);
     }
+
+    /// Fuzz case: insert element before nested divs with structural changes.
+    /// Simple text change
+    #[facet_testhelpers::test]
+    fn simple_text_change() {
+        let old = r#"<html><body><p>Hi</p></body></html>"#;
+        let new = r#"<html><body><p>Bye</p></body></html>"#;
+
+        let old_doc: facet_html_dom::Html = facet_html::from_str(old).unwrap();
+        let new_doc: facet_html_dom::Html = facet_html::from_str(new).unwrap();
+
+        let ops = facet_diff::tree_diff(&old_doc, &new_doc);
+        for op in &ops {
+            tracing::info!(?op, "cinereus op");
+        }
+
+        panic!("show me the ops");
+    }
+
+    /// Minimal reproduction: insert element before existing div
+    #[facet_testhelpers::test]
+    fn insert_before_div_minimal() {
+        let old = r#"<html><body><div>content</div></body></html>"#;
+        let new = r#"<html><body><em>hi</em><div>content</div></body></html>"#;
+
+        let patches = diff_html(old, new).unwrap();
+        tracing::debug!(count = patches.len(), "Generated patches");
+        for (i, p) in patches.iter().enumerate() {
+            tracing::debug!(i, ?p, "patch");
+        }
+
+        let mut tree = parse_html(old).unwrap();
+        tracing::debug!(html = %tree.to_html(), "Old tree");
+
+        apply_patches(&mut tree, &patches).unwrap();
+        tracing::debug!(html = %tree.to_html(), "After patches");
+
+        let result = tree.to_html();
+        let expected = normalize_html(new).unwrap();
+        tracing::debug!(%expected, "Expected");
+
+        assert_eq!(result, expected);
+    }
+
+    /// This catches bugs in matching/patching deeply nested structures.
+    #[facet_testhelpers::test]
+    fn fuzz_nested_divs_with_insert_before() {
+        let old = r#"<html><body><div class="outer">
+    <div class="middle">
+      <div class="inner">
+        <span>Deep content</span>
+      </div>
+    </div>
+  </div></body></html>"#;
+
+        let new = r#"<html><body><em>hello</em><div class="outer">
+    <span>item</span>item<div class="middle">
+      <div class="inner">
+        <span>node</span>
+      </div>
+    </div>
+  </div></body></html>"#;
+
+        let patches = diff_html(old, new).unwrap();
+        tracing::debug!(count = patches.len(), "Generated patches");
+        for (i, p) in patches.iter().enumerate() {
+            tracing::debug!(i, ?p, "patch");
+        }
+
+        let mut tree = parse_html(old).unwrap();
+        tracing::debug!(html = %tree.to_html(), "Old tree");
+
+        apply_patches(&mut tree, &patches).unwrap();
+        tracing::debug!(html = %tree.to_html(), "After patches");
+
+        let result = tree.to_html();
+        let expected = normalize_html(new).unwrap();
+        tracing::debug!(%expected, "Expected");
+
+        assert_eq!(result, expected);
+    }
 }
