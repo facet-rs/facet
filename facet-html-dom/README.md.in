@@ -1,5 +1,0 @@
-# facet-html-dom
-
-Typed HTML5 element definitions for use with [facet-html](https://crates.io/crates/facet-html).
-
-This crate provides Facet-derived types for all standard HTML5 elements (`Html`, `Head`, `Body`, `Div`, `Span`, etc.) that can be used with [facet-html](https://crates.io/crates/facet-html)'s parser and serializer.

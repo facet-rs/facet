@@ -350,27 +350,4 @@ mod tests {
         assert_eq!(item.id, "123");
         assert_eq!(item.value, "hello");
     }
-
-    #[test]
-    fn parse_html_into_element() {
-        // Test if we can parse HTML into the generic Element type
-        // This would be useful for apply_patches in facet-html-diff
-        let html = r#"<html><body><div><p>Hello</p></div></body></html>"#;
-        let elem: Element = facet_html::from_str(html).unwrap();
-
-        assert_eq!(elem.tag, "html");
-
-        // Navigate to body
-        let body = elem.child_elements().next().unwrap();
-        assert_eq!(body.tag, "body");
-
-        // Navigate to div
-        let div = body.child_elements().next().unwrap();
-        assert_eq!(div.tag, "div");
-
-        // Navigate to p
-        let p = div.child_elements().next().unwrap();
-        assert_eq!(p.tag, "p");
-        assert_eq!(p.text_content(), "Hello");
-    }
 }

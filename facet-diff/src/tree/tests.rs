@@ -1,6 +1,5 @@
 use super::*;
 use facet::Facet;
-use facet_html as html;
 use facet_testhelpers::test;
 
 #[derive(Debug, Clone, PartialEq, Facet)]

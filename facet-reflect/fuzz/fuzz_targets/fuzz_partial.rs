@@ -2,7 +2,6 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 use facet::Facet;
-use facet_html_dom::{GlobalAttrs, Html};
 use facet_reflect::{Partial, Resolution};
 use facet_value::Value;
 use libfuzzer_sys::fuzz_target;
@@ -265,9 +264,6 @@ enum TargetType {
     DynamicValue,
     FlattenTarget,
     ResultTarget,
-    // Real HTML types that trigger the bug
-    HtmlType,
-    GlobalAttrsType,
     // Enum target
     EnumType,
     // Deep nested type
@@ -325,30 +321,6 @@ fuzz_target!(|input: (TargetType, Vec<PartialOp>)| {
         }
         TargetType::ResultTarget => {
             if let Ok(partial) = Partial::alloc::<ResultTarget>() {
-                let mut partial = Some(partial);
-                for op in ops {
-                    if let Some(p) = partial.take() {
-                        partial = apply_op(p, op);
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
-        TargetType::HtmlType => {
-            if let Ok(partial) = Partial::alloc::<Html>() {
-                let mut partial = Some(partial);
-                for op in ops {
-                    if let Some(p) = partial.take() {
-                        partial = apply_op(p, op);
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
-        TargetType::GlobalAttrsType => {
-            if let Ok(partial) = Partial::alloc::<GlobalAttrs>() {
                 let mut partial = Some(partial);
                 for op in ops {
                     if let Some(p) = partial.take() {

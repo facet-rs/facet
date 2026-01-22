@@ -207,43 +207,53 @@ impl Field {
 
     /// Returns true if this field is marked as text content (for XML/HTML formats).
     ///
-    /// Checks for `xml::text` or `html::text` attributes.
+    /// Checks for `#[facet(text)]`, `xml::text`, or `html::text` attributes.
     #[inline]
     pub fn is_text(&self) -> bool {
-        self.has_attr(Some("xml"), "text") || self.has_attr(Some("html"), "text")
+        self.has_builtin_attr("text")
+            || self.has_attr(Some("xml"), "text")
+            || self.has_attr(Some("html"), "text")
     }
 
     /// Returns true if this field collects multiple child elements (for XML/HTML formats).
     ///
-    /// Checks for `xml::elements`, `html::elements` attributes.
+    /// Checks for `#[facet(elements)]`, `xml::elements`, or `html::elements` attributes.
     #[inline]
     pub fn is_elements(&self) -> bool {
-        self.has_attr(Some("xml"), "elements") || self.has_attr(Some("html"), "elements")
+        self.has_builtin_attr("elements")
+            || self.has_attr(Some("xml"), "elements")
+            || self.has_attr(Some("html"), "elements")
     }
 
     /// Returns true if this field is a single child element (for XML/HTML formats).
     ///
-    /// Checks for `xml::element`, `html::element` attributes.
+    /// Checks for `#[facet(element)]`, `xml::element`, or `html::element` attributes.
     #[inline]
     pub fn is_element(&self) -> bool {
-        self.has_attr(Some("xml"), "element") || self.has_attr(Some("html"), "element")
+        self.has_builtin_attr("element")
+            || self.has_attr(Some("xml"), "element")
+            || self.has_attr(Some("html"), "element")
     }
 
     /// Returns true if this field is an attribute on the element tag (for XML/HTML formats).
     ///
-    /// Checks for `xml::attribute` or `html::attribute` attributes.
+    /// Checks for `#[facet(attribute)]`, `xml::attribute`, or `html::attribute` attributes.
     #[inline]
     pub fn is_attribute(&self) -> bool {
-        self.has_attr(Some("xml"), "attribute") || self.has_attr(Some("html"), "attribute")
+        self.has_builtin_attr("attribute")
+            || self.has_attr(Some("xml"), "attribute")
+            || self.has_attr(Some("html"), "attribute")
     }
 
     /// Returns true if this field captures the element's tag name (for XML/HTML custom elements).
     ///
-    /// Checks for `xml::tag` or `html::tag` attributes.
+    /// Checks for `#[facet(tag)]`, `xml::tag`, or `html::tag` attributes.
     /// Used by custom element types to store the element's tag name during deserialization.
     #[inline]
-    pub fn is_tag(&self) -> bool {
-        self.has_attr(Some("xml"), "tag") || self.has_attr(Some("html"), "tag")
+    pub fn is_dom_tag(&self) -> bool {
+        self.has_builtin_attr("tag")
+            || self.has_attr(Some("xml"), "tag")
+            || self.has_attr(Some("html"), "tag")
     }
 
     /// Returns true if this field stores metadata.
