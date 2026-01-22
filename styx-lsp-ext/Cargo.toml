@@ -7,4 +7,4 @@ description = "Protocol types for Styx LSP extensions"
 [dependencies]
 facet.workspace = true
 styx-tree = { path = "../styx-tree", features = ["facet"] }
-roam = { git = "https://github.com/bearcove/roam", branch = "main" }
+roam = { git = "https://github.com/bearcove/roam", branch = "main", version = "0.6.0" }
