@@ -6,9 +6,8 @@
 //! - When a subtree is moved, don't report individual child moves
 
 use crate::chawathe::EditOp;
-use crate::tree::{Properties, Tree};
+use crate::tree::{Tree, TreeTypes};
 use crate::{debug, trace};
-use core::hash::Hash;
 use indextree::NodeId;
 use std::collections::HashSet;
 
@@ -16,16 +15,11 @@ use std::collections::HashSet;
 ///
 /// This removes redundant child operations when a parent operation already
 /// covers the entire subtree.
-pub fn simplify_edit_script<K, L, P>(
-    ops: Vec<EditOp<K, L, P>>,
-    tree_a: &Tree<K, L, P>,
-    tree_b: &Tree<K, L, P>,
-) -> Vec<EditOp<K, L, P>>
-where
-    K: Clone + Eq + Hash,
-    L: Clone + Eq,
-    P: Properties,
-{
+pub fn simplify_edit_script<T: TreeTypes>(
+    ops: Vec<EditOp<T>>,
+    tree_a: &Tree<T>,
+    tree_b: &Tree<T>,
+) -> Vec<EditOp<T>> {
     debug!(ops_count = ops.len(), "simplify_edit_script start");
 
     // Collect all nodes involved in each operation type
@@ -125,21 +119,29 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tree::NodeData;
+    use crate::tree::{NodeData, SimpleTypes};
+
+    type TestTypes = SimpleTypes<&'static str, String>;
 
     #[test]
     fn test_simplify_subtree_insert() {
         // Tree B has a subtree: parent -> child1, child2
-        let mut tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
-        let parent = tree_b.add_child(tree_b.root, NodeData::new_u64(1, "parent"));
-        let child1 = tree_b.add_child(parent, NodeData::leaf_u64(2, "leaf", "a".to_string()));
-        let child2 = tree_b.add_child(parent, NodeData::leaf_u64(3, "leaf", "b".to_string()));
+        let mut tree_b: Tree<TestTypes> = Tree::new(NodeData::simple_u64(0, "root"));
+        let parent = tree_b.add_child(tree_b.root, NodeData::simple_u64(1, "parent"));
+        let child1 = tree_b.add_child(
+            parent,
+            NodeData::simple_leaf_u64(2, "leaf", "a".to_string()),
+        );
+        let child2 = tree_b.add_child(
+            parent,
+            NodeData::simple_leaf_u64(3, "leaf", "b".to_string()),
+        );
 
         // Empty tree A for reference
-        let tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
+        let tree_a: Tree<TestTypes> = Tree::new(NodeData::simple_u64(0, "root"));
 
         // Simulate raw ops: insert parent, insert child1, insert child2
-        let ops: Vec<EditOp<&str, String>> = vec![
+        let ops: Vec<EditOp<TestTypes>> = vec![
             EditOp::Insert {
                 node_b: parent,
                 parent_b: tree_b.root,
@@ -176,16 +178,22 @@ mod tests {
     #[test]
     fn test_simplify_subtree_delete() {
         // Tree A has a subtree: parent -> child1, child2
-        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
-        let parent = tree_a.add_child(tree_a.root, NodeData::new_u64(1, "parent"));
-        let child1 = tree_a.add_child(parent, NodeData::leaf_u64(2, "leaf", "a".to_string()));
-        let child2 = tree_a.add_child(parent, NodeData::leaf_u64(3, "leaf", "b".to_string()));
+        let mut tree_a: Tree<TestTypes> = Tree::new(NodeData::simple_u64(0, "root"));
+        let parent = tree_a.add_child(tree_a.root, NodeData::simple_u64(1, "parent"));
+        let child1 = tree_a.add_child(
+            parent,
+            NodeData::simple_leaf_u64(2, "leaf", "a".to_string()),
+        );
+        let child2 = tree_a.add_child(
+            parent,
+            NodeData::simple_leaf_u64(3, "leaf", "b".to_string()),
+        );
 
         // Empty tree B for reference
-        let tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
+        let tree_b: Tree<TestTypes> = Tree::new(NodeData::simple_u64(0, "root"));
 
         // Simulate raw ops: delete child1, delete child2, delete parent (post-order)
-        let ops: Vec<EditOp<&str, String>> = vec![
+        let ops: Vec<EditOp<TestTypes>> = vec![
             EditOp::Delete { node_a: child1 },
             EditOp::Delete { node_a: child2 },
             EditOp::Delete { node_a: parent },
@@ -203,14 +211,20 @@ mod tests {
 
     #[test]
     fn test_simplify_keeps_independent_ops() {
-        let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
-        let a1 = tree_a.add_child(tree_a.root, NodeData::leaf_u64(1, "leaf", "a".to_string()));
-        let a2 = tree_a.add_child(tree_a.root, NodeData::leaf_u64(2, "leaf", "b".to_string()));
+        let mut tree_a: Tree<TestTypes> = Tree::new(NodeData::simple_u64(0, "root"));
+        let a1 = tree_a.add_child(
+            tree_a.root,
+            NodeData::simple_leaf_u64(1, "leaf", "a".to_string()),
+        );
+        let a2 = tree_a.add_child(
+            tree_a.root,
+            NodeData::simple_leaf_u64(2, "leaf", "b".to_string()),
+        );
 
-        let tree_b: Tree<&str, String> = Tree::new(NodeData::new_u64(0, "root"));
+        let tree_b: Tree<TestTypes> = Tree::new(NodeData::simple_u64(0, "root"));
 
         // Two independent deletes (siblings, not parent-child)
-        let ops: Vec<EditOp<&str, String>> =
+        let ops: Vec<EditOp<TestTypes>> =
             vec![EditOp::Delete { node_a: a1 }, EditOp::Delete { node_a: a2 }];
 
         let simplified = simplify_edit_script(ops, &tree_a, &tree_b);
