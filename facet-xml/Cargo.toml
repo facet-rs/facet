@@ -37,7 +37,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet", features = ["doc", "net"] }
-facet-testhelpers = { path = "../facet-testhelpers", version = "0.42.0" }
+facet-testhelpers = { path = "../facet-testhelpers" }
 tracing = { workspace = true }
 facet-dom = { path = "../facet-dom", features = ["tracing"] }
 facet-reflect = { path = "../facet-reflect", features = ["tracing"] }

@@ -23,12 +23,12 @@ name = "gen-run-types"
 path = "src/gen_run_types.rs"
 
 [dependencies]
-benchmark-defs = { path = "../benchmark-defs" }
-facet = { path = "../../facet", features = ["indexmap"] }
-facet-args = { path = "../../facet-args" }
-facet-json = { path = "../../facet-json" }
-facet-typescript = { path = "../../facet-typescript" }
-facet-json-schema = { path = "../../facet-json-schema" }
+benchmark-defs = { path = "../benchmark-defs", version = "0.42.0" }
+facet = { path = "../../facet", features = ["indexmap"], version = "0.42.0" }
+facet-args = { path = "../../facet-args", version = "0.42.0" }
+facet-json = { path = "../../facet-json", version = "0.42.0" }
+facet-typescript = { path = "../../facet-typescript", version = "0.42.0" }
+facet-json-schema = { path = "../../facet-json-schema", version = "0.42.0" }
 console = "0.16"
 unicode-width = "0.2"
 owo-colors = "4"

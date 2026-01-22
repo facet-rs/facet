@@ -44,7 +44,7 @@ compact_str = { workspace = true }
 facet = { path = "../facet", features = ["doc", "net", "compact_str", "smol_str", "iddqd"] }
 facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] }
 facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
-facet-testhelpers = { path = "../facet-testhelpers", version = "0.42.0" }
+facet-testhelpers = { path = "../facet-testhelpers" }
 serde_json = { workspace = true }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net", "tokio"] }
 indoc = { workspace = true }

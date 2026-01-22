@@ -98,11 +98,6 @@ changelog_path = "CHANGELOG.md"
 
 # Utilities
 [[package]]
-name = "cinereus"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
 name = "facet-diff-core"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
@@ -185,16 +180,6 @@ changelog_path = "CHANGELOG.md"
 
 [[package]]
 name = "facet-xdr"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-html"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-html-dom"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
