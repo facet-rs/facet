@@ -1,4 +1,5 @@
 use facet_html_diff::{InsertContent, NodePath, NodeRef, Patch, apply_patches, parse_html};
+use facet_testhelpers::test;
 use facet_xml_node::Content;
 
 #[test]

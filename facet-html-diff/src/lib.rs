@@ -1093,29 +1093,15 @@ fn extract_attrs_only(s: PeekStruct<'_, '_>, attrs: &mut Vec<(String, String)>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use facet_testhelpers::test;
 
     #[test]
     fn test_replace_element_with_attrs() {
-        // This test reproduces the single_element_roundtrip failure
         let old = "<html><body><div></div></body></html>";
         let new = r#"<html><body><p class="a"> </p></body></html>"#;
 
-        let old_doc: Html = facet_html::from_str(old).unwrap();
-        let new_doc: Html = facet_html::from_str(new).unwrap();
-        let ops = tree_diff(&old_doc, &new_doc);
-        eprintln!("EditOps for replace_element_with_attrs:");
-        for op in &ops {
-            eprintln!("  {:?}", op);
-        }
-
         let patches = diff_html(old, new).unwrap();
 
-        eprintln!("Patches:");
-        for p in &patches {
-            eprintln!("  {:?}", p);
-        }
-
-        // Apply patches and verify
         let mut tree = apply::parse_html(old).unwrap();
         apply::apply_patches(&mut tree, &patches).unwrap();
         let result = tree.to_html();
@@ -1125,26 +1111,11 @@ mod tests {
 
     #[test]
     fn test_add_element_with_text() {
-        // This tests adding a new element that has text content
         let old = "<html><body><p>First</p></body></html>";
         let new = "<html><body><p>First</p><p>Second</p></body></html>";
 
-        let old_doc: Html = facet_html::from_str(old).unwrap();
-        let new_doc: Html = facet_html::from_str(new).unwrap();
-        let ops = tree_diff(&old_doc, &new_doc);
-        eprintln!("EditOps for add_element_with_text:");
-        for op in &ops {
-            eprintln!("  {:?}", op);
-        }
-
         let patches = diff_html(old, new).unwrap();
 
-        eprintln!("Patches:");
-        for p in &patches {
-            eprintln!("  {:?}", p);
-        }
-
-        // Apply patches and verify
         let mut tree = apply::parse_html(old).unwrap();
         apply::apply_patches(&mut tree, &patches).unwrap();
         let result = tree.to_html();
@@ -1154,25 +1125,10 @@ mod tests {
 
     #[test]
     fn test_text_insert_generates_insert_text() {
-        // Old: empty div, New: div with text
         let old = "<html><body><div></div></body></html>";
         let new = "<html><body><div>a</div></body></html>";
 
-        // First, let's see what EditOps are generated
-        let old_doc: Html = facet_html::from_str(old).unwrap();
-        let new_doc: Html = facet_html::from_str(new).unwrap();
-        let ops = tree_diff(&old_doc, &new_doc);
-        eprintln!("EditOps:");
-        for op in &ops {
-            eprintln!("  {:?}", op);
-        }
-
         let patches = diff_html(old, new).unwrap();
-
-        eprintln!("Patches:");
-        for p in &patches {
-            eprintln!("  {:?}", p);
-        }
 
         // Should have InsertText, not InsertElement with tag "text"
         let has_text_element = patches
@@ -1194,44 +1150,15 @@ mod tests {
 
     #[test]
     fn test_add_second_p_with_same_text() {
-        // This is the minimal failure from proptest
-        // Old: <p> </p>  (one p with space text)
-        // New: <p> </p><p class="a"> </p>  (two p's, both with space text)
         let old = "<html><body><p> </p></body></html>";
         let new = r#"<html><body><p> </p><p class="a"> </p></body></html>"#;
 
-        let old_doc: Html = facet_html::from_str(old).unwrap();
-        let new_doc: Html = facet_html::from_str(new).unwrap();
-
-        let ops = tree_diff(&old_doc, &new_doc);
-        eprintln!("EditOps:");
-        for op in &ops {
-            eprintln!("  {:?}", op);
-        }
-
-        // The critical question: is there a Move operation?
-        // There should NOT be one - the text in old P should stay in place
-        let has_move = ops
-            .iter()
-            .any(|op| matches!(op, facet_diff::EditOp::Move { .. }));
-        if has_move {
-            eprintln!("ERROR: Move operation detected - this is the bug!");
-            eprintln!("The text ' ' in old <p> should match with text ' ' in new <p>[0].");
-            eprintln!("No Move should be needed.");
-        }
-
         let patches = diff_html(old, new).unwrap();
-        eprintln!("Patches:");
-        for p in &patches {
-            eprintln!("  {:?}", p);
-        }
 
-        // Apply patches and verify
         let mut tree = apply::parse_html(old).unwrap();
         apply::apply_patches(&mut tree, &patches).unwrap();
         let result = tree.to_html();
 
-        // The first <p> should remain, and a second <p class="a"> should be added
         assert_eq!(result, r#"<body><p> </p><p class="a"> </p></body>"#);
     }
 }

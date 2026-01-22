@@ -7,6 +7,7 @@
 
 use crate::chawathe::EditOp;
 use crate::tree::{Properties, Tree};
+use crate::{debug, trace};
 use core::hash::Hash;
 use indextree::NodeId;
 use std::collections::HashSet;
@@ -25,6 +26,8 @@ where
     L: Clone + Eq,
     P: Properties,
 {
+    debug!(ops_count = ops.len(), "simplify_edit_script start");
+
     // Collect all nodes involved in each operation type
     let mut inserted_nodes: HashSet<NodeId> = HashSet::new();
     let mut deleted_nodes: HashSet<NodeId> = HashSet::new();
@@ -44,6 +47,13 @@ where
             EditOp::UpdateProperties { .. } => {}
         }
     }
+
+    debug!(
+        inserted = inserted_nodes.len(),
+        deleted = deleted_nodes.len(),
+        moved = moved_nodes_b.len(),
+        "collected nodes"
+    );
 
     // Find "root" operations - those whose parent is not also in the set
     let root_inserts: HashSet<NodeId> = inserted_nodes
@@ -79,15 +89,37 @@ where
         .copied()
         .collect();
 
+    debug!(
+        root_inserts = root_inserts.len(),
+        root_deletes = root_deletes.len(),
+        root_moves = root_moves.len(),
+        "found root operations"
+    );
+
     // Filter operations to only include roots
-    ops.into_iter()
-        .filter(|op| match op {
-            EditOp::Insert { node_b, .. } => root_inserts.contains(node_b),
-            EditOp::Delete { node_a } => root_deletes.contains(node_a),
-            EditOp::Move { node_b, .. } => root_moves.contains(node_b),
-            EditOp::UpdateProperties { .. } => true, // Always keep property updates
+    let result: Vec<_> = ops
+        .into_iter()
+        .filter(|op| {
+            let dominated = match op {
+                EditOp::Insert { node_b, .. } => !root_inserts.contains(node_b),
+                EditOp::Delete { node_a } => !root_deletes.contains(node_a),
+                EditOp::Move { node_b, .. } => !root_moves.contains(node_b),
+                EditOp::UpdateProperties { .. } => false, // Always keep property updates
+            };
+            if dominated {
+                trace!("simplify: dropping dominated op");
+            }
+            !dominated
         })
-        .collect()
+        .collect();
+
+    debug!(
+        before = inserted_nodes.len() + deleted_nodes.len() + moved_nodes_b.len(),
+        after = result.len(),
+        "simplify_edit_script done"
+    );
+
+    result
 }
 
 #[cfg(test)]

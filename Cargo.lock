@@ -1902,6 +1902,7 @@ dependencies = [
 name = "facet-html-diff"
 version = "0.42.0"
 dependencies = [
+ "datatest-stable",
  "facet",
  "facet-core",
  "facet-diff",
@@ -1912,7 +1913,6 @@ dependencies = [
  "facet-reflect",
  "facet-testhelpers",
  "facet-xml-node",
- "proptest",
  "tracing",
 ]
 

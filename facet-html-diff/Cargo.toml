@@ -33,10 +33,14 @@ tracing = { workspace = true, optional = true }
 [dev-dependencies]
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-json = { path = "../facet-json" }
-proptest = "1.9"
 tracing = { workspace = true }
+datatest-stable = "0.3"
 # Enable tracing in tests for debugging
 facet-diff = { path = "../facet-diff", features = ["tracing"] }
+
+[[test]]
+name = "roundtrip"
+harness = false
 
 [lints]
 workspace = true
