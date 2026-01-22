@@ -2,6 +2,19 @@
 
 // Queries for my-app ecommerce example.
 // These are parsed by dibs-query-gen and generate Rust code + SQL.
+//
+// This file showcases all supported query features including:
+// - Basic queries with WHERE, ORDER BY, LIMIT/OFFSET
+// - Parameters and filters (@null, @ilike, @gte, @lte, @in, @ne)
+// - Relations (first true, vec relations)
+// - Mutations (INSERT, UPDATE, UPSERT, DELETE)
+// - SQL functions (@now, @coalesce, @lower, @concat, etc.)
+// - DISTINCT and COUNT queries
+// - JSONB operators (@>, @?, ->, ->>)
+
+// ============================================================================
+// Basic Queries
+// ============================================================================
 
 AllProducts @query{
     from product
@@ -64,17 +77,110 @@ ProductWithTranslation @query{
     }
 }
 
+// Query with vec relation - returns product with all translations
+
+ProductWithTranslations @query{
+    params {handle @string}
+    from product
+    where {handle $handle, deleted_at @null}
+    first true
+    select {
+        id
+        handle
+        status
+        translations @rel{
+            from product_translation
+            select {locale, title, description}
+        }
+    }
+}
+
+// DISTINCT query - unique statuses
+
+UniqueStatuses @query{
+    from product
+    where {deleted_at @null}
+    distinct true
+    select {status}
+}
+
+// COUNT query - count products by status
+
+CountProducts @query{
+    from product
+    where {deleted_at @null}
+    count true
+}
+
+// Query with filter operators
+
+ProductsByPriceRange @query{
+    params {min_price @int, max_price @int}
+    from product
+    where {
+        price @gte($min_price)
+        price @lte($max_price)
+        deleted_at @null
+    }
+    select {id, handle, price}
+}
+
+// Query with @in filter
+
+ProductsByHandles @query{
+    params {handles @array(@string)}
+    from product
+    where {handle @in($handles), deleted_at @null}
+    select {id, handle, status}
+}
+
+// Query with @ne filter
+
+ProductsExcludingStatus @query{
+    params {excluded_status @string}
+    from product
+    where {status @ne($excluded_status), deleted_at @null}
+    select {id, handle, status}
+}
+
 // ============================================================================
 // Mutations
 // ============================================================================
 
-// Insert a new product
+// Insert a new product with @now function
 
 CreateProduct @insert{
     params {handle @string, status @string}
     into product
     values {handle $handle, status $status, created_at @now}
     returning {id, handle, status}
+}
+
+// Insert with multiple SQL functions
+
+CreateProductWithFunctions @insert{
+    params {handle @string, status @string, description @string}
+    into product
+    values {
+        handle @lower($handle)
+        status @coalesce($status "draft")
+        description $description
+        created_at @now
+    }
+    returning {id, handle, status}
+}
+
+// Insert with nested function calls
+
+CreateProductNormalized @insert{
+    params {handle @string}
+    into product
+    values {
+        handle @lower(@concat("prod-" $handle))
+        status "draft"
+        created_at @now
+    }
+    returning {id, handle}
 }
 
 // Insert a product with default status
@@ -109,6 +215,20 @@ UpdateProductStatus @update{
     returning {id, handle, status}
 }
 
+// Update with SQL functions
+
+UpdateProductWithFunctions @update{
+    params {handle @string, new_handle @string, new_status @string}
+    table product
+    set {
+        handle @lower($new_handle)
+        status @coalesce($new_status "draft")
+        updated_at @now
+    }
+    where {handle $handle}
+    returning {id, handle, status}
+}
+
 // Soft delete a product
 
 SoftDeleteProduct @update{
@@ -126,4 +246,133 @@ DeleteProduct @delete{
     from product
     where {id $id}
     returning {id, handle}
+}
+
+// ============================================================================
+// JSONB Operators (if you have JSONB columns)
+// ============================================================================
+
+// Query with JSONB containment (@>)
+// Finds products where metadata contains the specified key-value pair
+
+ProductsByMetadataContains @query{
+    params {search_metadata @jsonb}
+    from product
+    where {metadata @>($search_metadata), deleted_at @null}
+    select {id, handle, metadata}
+}
+
+// Query with JSONB key exists (@?)
+// Finds products where metadata has a specific key
+
+ProductsWithMetadataKey @query{
+    params {key_name @string}
+    from product
+    where {metadata @?($key_name), deleted_at @null}
+    select {id, handle, metadata}
+}
+
+// Query with JSONB field access (->)
+// Extracts a specific field from JSONB column
+
+ProductsByMetadataField @query{
+    params {tag @string}
+    from product
+    where {metadata -> "tags" @>($tag), deleted_at @null}
+    select {id, handle, metadata}
+}
+
+// Query with JSONB text extraction (->>)
+// Extracts text value from JSONB column
+
+ProductsByMetadataText @query{
+    params {category @string}
+    from product
+    where {metadata ->> "category" $category, deleted_at @null}
+    select {id, handle, metadata}
+}
+
+// ============================================================================
+// Advanced Examples
+// ============================================================================
+
+// Complex query with multiple relations, filters, and ordering
+
+ProductDetailsFull @query{
+    params {id @int}
+    from product
+    where {id $id, deleted_at @null}
+    first true
+    select {
+        id
+        handle
+        status
+        active
+        price
+        created_at
+        updated_at
+        translations @rel{
+            from product_translation
+            where {locale @in("en" "fr")}
+            order-by {locale asc}
+            select {locale, title, description}
+        }
+        variants @rel{
+            from product_variant
+            where {deleted_at @null}
+            order-by {position asc}
+            select {
+                id
+                sku
+                price
+                inventory_quantity
+            }
+        }
+    }
+}
+
+// Upsert with functions - insert with fallback values
+
+UpsertProductWithDefaults @upsert{
+    params {handle @string, status @string, description @string}
+    into product
+    on-conflict {
+        target {handle}
+        update {
+            status @coalesce($status status)
+            description @coalesce($description description)
+            updated_at @now
+        }
+    }
+    values {
+        handle @lower($handle)
+        status @coalesce($status "draft")
+        description $description
+        created_at @now
+    }
+    returning {id, handle, status, description}
+}
+
+// Query with raw SQL (for complex queries not expressible in DSL)
+
+ProductStats @query{
+    sql """
+        SELECT
+            status,
+            COUNT(*) as count,
+            AVG(price) as avg_price,
+            MIN(price) as min_price,
+            MAX(price) as max_price
+        FROM product
+        WHERE deleted_at IS NULL
+        GROUP BY status
+        ORDER BY status
+    """
+    returns {
+        status @string
+        count @int
+        avg_price @decimal
+        min_price @decimal
+        max_price @decimal
+    }
 }
