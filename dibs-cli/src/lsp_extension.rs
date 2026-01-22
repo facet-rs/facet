@@ -538,9 +538,27 @@ impl DibsExtension {
                     }
                 }
 
-                // Recurse into select to find @rel blocks
+                // Find and lint @rel blocks in select with parent table context
                 for entry in &obj.entries {
                     if entry.key.as_str() == Some("select") {
+                        // First lint @rel blocks with parent table context for FK validation
+                        if let Some(styx_tree::Payload::Object(select_obj)) = &entry.value.payload {
+                            for select_entry in &select_obj.entries {
+                                if let Some(tag) = &select_entry.value.tag {
+                                    if tag.name == "rel" {
+                                        self.lint_relation(
+                                            document_uri,
+                                            &select_entry.value,
+                                            table_name.as_deref(),
+                                            &schema,
+                                            diagnostics,
+                                        )
+                                        .await;
+                                    }
+                                }
+                            }
+                        }
+                        // Then recurse for other diagnostics
                         Box::pin(self.collect_diagnostics(document_uri, &entry.value, diagnostics))
                             .await;
                     }
@@ -551,16 +569,10 @@ impl DibsExtension {
             return;
         }
 
-        // Recurse into children (and handle @rel blocks)
+        // Recurse into children
+        // Note: @rel blocks are handled from within query/update handlers with parent table context
         if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
             for entry in &obj.entries {
-                // Check if this entry's value is a @rel for relation-specific linting
-                if let Some(tag) = &entry.value.tag {
-                    if tag.name == "rel" {
-                        self.lint_relation(document_uri, &entry.value, diagnostics)
-                            .await;
-                    }
-                }
                 Box::pin(self.collect_diagnostics(document_uri, &entry.value, diagnostics)).await;
             }
         } else if let Some(obj) = value.as_object() {
@@ -850,12 +862,16 @@ impl DibsExtension {
         &self,
         document_uri: &str,
         rel_value: &styx_tree::Value,
+        parent_table: Option<&str>,
+        schema: &SchemaInfo,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
         if let Some(styx_tree::Payload::Object(obj)) = &rel_value.payload {
             let mut has_first = false;
             let mut has_order_by = false;
             let mut first_span: Option<&styx_tree::Span> = None;
+            let mut rel_table: Option<&str> = None;
+            let mut from_span: Option<&styx_tree::Span> = None;
 
             for entry in &obj.entries {
                 let key = entry.key.as_str().unwrap_or("");
@@ -865,6 +881,10 @@ impl DibsExtension {
                         first_span = entry.key.span.as_ref();
                     }
                     "order-by" => has_order_by = true,
+                    "from" => {
+                        rel_table = entry.value.as_str();
+                        from_span = entry.value.span.as_ref();
+                    }
                     _ => {}
                 }
             }
@@ -883,7 +903,49 @@ impl DibsExtension {
                     });
                 }
             }
+
+            // Lint: no FK relationship between parent and relation table
+            if let (Some(parent), Some(rel)) = (parent_table, rel_table) {
+                if let Some(span) = from_span {
+                    if !self.has_fk_relationship(parent, rel, schema) {
+                        diagnostics.push(Diagnostic {
+                            range: self.span_to_range(document_uri, span).await,
+                            severity: DiagnosticSeverity::Error,
+                            message: format!(
+                                "no FK relationship between '{}' and '{}'",
+                                parent, rel
+                            ),
+                            source: Some("dibs".to_string()),
+                            code: Some("no-fk-relationship".to_string()),
+                            data: None,
+                        });
+                    }
+                }
+            }
         }
+    }
+
+    /// Check if there's a FK relationship between two tables (in either direction).
+    fn has_fk_relationship(&self, table_a: &str, table_b: &str, schema: &SchemaInfo) -> bool {
+        // Check if table_a has FK pointing to table_b
+        if let Some(table_info) = schema.tables.iter().find(|t| t.name == table_a) {
+            for fk in &table_info.foreign_keys {
+                if fk.references_table == table_b {
+                    return true;
+                }
+            }
+        }
+
+        // Check if table_b has FK pointing to table_a
+        if let Some(table_info) = schema.tables.iter().find(|t| t.name == table_b) {
+            for fk in &table_info.foreign_keys {
+                if fk.references_table == table_a {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Collect inlay hints from a value tree.

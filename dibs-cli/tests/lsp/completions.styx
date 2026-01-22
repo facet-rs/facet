@@ -590,4 +590,89 @@ tests (
             has ({message "type mismatch" code "literal-type-mismatch"})
         }
     }
+
+    // ========================================================================
+    // FK Relationship Tests
+    // ========================================================================
+
+    {
+        name "lint: valid FK relationship (product -> product_translation)"
+        input <<STYX
+            GoodQuery @query{
+                from product
+                where {deleted_at @null}
+                select {
+                    id
+                    translation @rel{
+                        from product_translation
+                        select {title}
+                    }
+                }
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
+
+    {
+        name "lint: valid FK relationship (product_variant -> variant_price)"
+        input <<STYX
+            GoodQuery @query{
+                from product_variant
+                where {deleted_at @null}
+                select {
+                    id
+                    prices @rel{
+                        from variant_price
+                        select {amount, currency_code}
+                    }
+                }
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
+
+    {
+        name "lint: no FK relationship error"
+        input <<STYX
+            BadQuery @query{
+                from product
+                where {deleted_at @null}
+                select {
+                    id
+                    prices @rel{
+                        from variant_price
+                        select {amount}
+                    }
+                }
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "no FK relationship" code "no-fk-relationship"})
+        }
+    }
+
+    {
+        name "lint: no FK relationship between unrelated tables"
+        input <<STYX
+            BadQuery @query{
+                from product_source
+                select {
+                    id
+                    translations @rel{
+                        from product_translation
+                        select {title}
+                    }
+                }
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "no FK relationship" code "no-fk-relationship"})
+        }
+    }
 )
