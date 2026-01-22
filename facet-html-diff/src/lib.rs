@@ -468,7 +468,7 @@ pub enum TranslateError {
     InsertFailed {
         parent: facet_diff::NodeRef,
         position: usize,
-        label_path: Vec<PathSegment>,
+        path: Vec<PathSegment>,
         target: PathTarget,
         reason: String,
     },
@@ -488,12 +488,12 @@ impl std::fmt::Display for TranslateError {
             TranslateError::InsertFailed {
                 parent,
                 position,
-                label_path,
+                path,
                 target,
                 reason,
             } => write!(
                 f,
-                "Insert failed: parent={parent:?}, position={position}, label_path={label_path:?}, target={target:?}, reason={reason}"
+                "Insert failed: parent={parent:?}, position={position}, path={path:?}, target={target:?}, reason={reason}"
             ),
             TranslateError::UpdateAttributeFailed {
                 path,
@@ -517,7 +517,7 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Result<Vec<Patch>, TranslateErro
         EditOp::Insert {
             parent,
             position,
-            label_path,
+            path,
             value,
             detach_to_slot,
             ..
@@ -525,7 +525,7 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Result<Vec<Patch>, TranslateErro
             let patch = translate_insert(
                 parent,
                 *position,
-                &label_path.0,
+                &path.0,
                 value.as_deref(),
                 *detach_to_slot,
                 new_doc,
@@ -598,24 +598,23 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Result<Vec<Patch>, TranslateErro
 
 /// Translate an Insert operation.
 ///
-/// `segments` is the path from EditOp - DOM position with Variants stripped.
-/// `label_segments` is the label_path - full type navigation path with Variants.
+/// `path_segments` is the path from EditOp - full type navigation path with Variants.
 /// `detach_to_slot` - if Some, the displaced node goes to this slot.
 fn translate_insert(
     parent: &facet_diff::NodeRef,
     position: usize,
-    label_segments: &[PathSegment],
+    path_segments: &[PathSegment],
     value: Option<&str>,
     detach_to_slot: Option<u32>,
     new_doc: &Html,
 ) -> Result<Patch, TranslateError> {
     let html_shape = <Html as facet_core::Facet>::SHAPE;
 
-    // Use label_segments for type navigation (has Variant info)
-    let nav = navigate_path(label_segments, html_shape);
+    // Use path_segments for type navigation (has Variant info)
+    let nav = navigate_path(path_segments, html_shape);
 
     debug!(
-        "translate_insert: parent={parent:?}, position={position}, label_segments={label_segments:?}, target={:?}, value={value:?}",
+        "translate_insert: parent={parent:?}, position={position}, path_segments={path_segments:?}, target={:?}, value={value:?}",
         nav.target
     );
 
@@ -635,7 +634,7 @@ fn translate_insert(
     let make_error = |reason: &str| TranslateError::InsertFailed {
         parent: parent.clone(),
         position,
-        label_path: label_segments.to_vec(),
+        path: path_segments.to_vec(),
         target: target_for_error.clone(),
         reason: reason.to_string(),
     };
@@ -644,7 +643,7 @@ fn translate_insert(
         PathTarget::Element => {
             // Navigate to the actual node to determine its type
             let peek = Peek::new(new_doc);
-            let node_peek = navigate_peek(peek, label_segments)
+            let node_peek = navigate_peek(peek, path_segments)
                 .ok_or_else(|| make_error("could not navigate to node in new_doc"))?;
 
             // Check if this is actually a text variant in the enum
@@ -670,7 +669,7 @@ fn translate_insert(
 
             // Not a text variant - insert element with its attrs and children
             let peek2 = Peek::new(new_doc);
-            let node_peek2 = navigate_peek(peek2, label_segments)
+            let node_peek2 = navigate_peek(peek2, path_segments)
                 .ok_or_else(|| make_error("could not navigate to node in new_doc (second pass)"))?;
             let tag = get_element_tag(node_peek2);
             let (attrs, children) = extract_attrs_and_children(node_peek2);
@@ -694,12 +693,12 @@ fn translate_insert(
             };
 
             let peek = Peek::new(new_doc);
-            if let Some(attr_peek) = navigate_peek(peek, label_segments) {
+            if let Some(attr_peek) = navigate_peek(peek, path_segments) {
                 if let Ok(opt) = attr_peek.into_option() {
                     if opt.value().is_some() {
                         let attr_value = value.map(|s| s.to_string()).or_else(|| {
                             let p2 = Peek::new(new_doc);
-                            navigate_peek(p2, label_segments)
+                            navigate_peek(p2, path_segments)
                                 .and_then(|p| p.into_option().ok())
                                 .and_then(|o| o.value())
                                 .and_then(|inner| inner.as_str().map(|s| s.to_string()))
@@ -757,7 +756,7 @@ fn translate_insert(
                     ));
                 }
             };
-            let patches = sync_attrs_from_new_doc(&element_path, label_segments, new_doc);
+            let patches = sync_attrs_from_new_doc(&element_path, path_segments, new_doc);
             patches
                 .into_iter()
                 .next()

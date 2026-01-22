@@ -49,48 +49,47 @@ pub struct NodeLabel {
     pub path: Path,
 }
 
-/// An edit operation in the diff.
+/// An edit operation that transforms tree_a (old) into tree_b (new).
 ///
 /// Each operation is self-contained with all information needed to apply it.
 /// Consumers do not have access to the original trees.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EditOp {
-    /// Multiple attributes (properties) were updated on a matched node.
+    /// Attributes changed on a node that exists in both trees.
     UpdateAttributes {
-        /// The path to the node containing the attributes
+        /// Path to the node (same in both trees since the node matched)
         path: Path,
-        /// The attribute changes
+        /// The attribute changes (old_value → new_value)
         changes: Vec<AttributeChange>,
     },
-    /// A node was inserted in tree B.
+    /// A node from tree_b (new) needs to be inserted.
     /// In Chawathe semantics, Insert does NOT shift - it places at a position
     /// and whatever was there gets displaced (detached to a slot for later reinsertion).
     Insert {
-        /// The parent node - either a path in the tree or a slot number
+        /// Where to insert: parent node in tree_a (old), or a slot
         parent: NodeRef,
-        /// The position within the parent's children
+        /// Position within the parent's children
         position: usize,
-        /// The path in tree_b coordinates (for navigating new_doc to get content)
-        label_path: Path,
-        /// The value to insert (for leaf nodes), None for containers
+        /// Path in tree_b (new) - use this to get the content to insert
+        path: Path,
+        /// For leaf nodes: the text value to insert. None for containers.
         value: Option<String>,
-        /// If Some, the displaced node goes to this slot
+        /// If Some, the displaced node at this position goes to this slot
         detach_to_slot: Option<u32>,
     },
-    /// A node was deleted from tree A.
+    /// A node from tree_a (old) needs to be deleted.
     Delete {
-        /// The node to delete - either at a path or in a slot
+        /// The node to delete in tree_a (old), or from a slot
         node: NodeRef,
     },
-    /// A node was moved from one location to another.
-    /// If `detach_to_slot` is Some, the node at the target is detached and stored in that slot.
+    /// A node needs to move from one location to another.
     Move {
-        /// The source - either a path or a slot number
+        /// Source: where the node is in tree_a (old), or a slot
         from: NodeRef,
-        /// The target - either a path in the tree or a slot-relative path
+        /// Destination: where it should go (tree_a path or slot-relative)
         to: NodeRef,
-        /// If Some, the displaced node goes to this slot
+        /// If Some, the displaced node at the destination goes to this slot
         detach_to_slot: Option<u32>,
     },
 }
@@ -819,19 +818,19 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     NodeRef::Path(parent_path)
                 };
 
-                // Extract value for leaf nodes using the tree_b label path
-                let label_path = tree_b
+                // Extract value for leaf nodes using the tree_b path
+                let path = tree_b
                     .get(node_b)
                     .label
                     .as_ref()
                     .map(|l| l.path.clone())
                     .unwrap_or_else(|| Path(vec![]));
-                let value = extract_value_at_path(peek_b, &label_path);
+                let value = extract_value_at_path(peek_b, &path);
 
                 let edit_op = EditOp::Insert {
                     parent,
                     position,
-                    label_path,
+                    path,
                     value,
                     detach_to_slot,
                 };

@@ -270,8 +270,8 @@ fn test_diff_list_insert() {
     // (The exact strategy may vary - e.g., update items[1] to "b" and insert "c" at items[2],
     // or insert "b" at items[1] directly)
     let has_insert_in_items = ops.iter().any(|op| {
-        if let EditOp::Insert { label_path, .. } = op {
-            label_path.0.first() == Some(&PathSegment::Field("items".into()))
+        if let EditOp::Insert { path, .. } = op {
+            path.0.first() == Some(&PathSegment::Field("items".into()))
         } else {
             false
         }
@@ -318,7 +318,7 @@ fn test_nested_list_paths() {
     // At minimum, there should be something touching children
     let has_children_op = ops.iter().any(|op| {
         let path = match op {
-            EditOp::Insert { label_path, .. } => Some(label_path),
+            EditOp::Insert { path, .. } => Some(path),
             EditOp::Delete { node, .. } => match node {
                 NodeRef::Path(p) => Some(p),
                 NodeRef::Slot(..) => None,
