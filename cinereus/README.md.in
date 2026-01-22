@@ -1,9 +1,0 @@
-GumTree-style tree diffing with Chawathe edit script generation.
-
-This crate provides a generic tree diffing algorithm based on the GumTree approach:
-
-1. **Top-down matching**: Finds identical subtrees by hash
-2. **Bottom-up matching**: Matches remaining nodes by structural similarity
-3. **Chawathe edit script**: Generates minimal INSERT, DELETE, UPDATE, and MOVE operations
-
-Used by `facet-diff` for structural comparison of Facet types.

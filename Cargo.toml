@@ -40,7 +40,6 @@ members = [
     "facet-axum",
 
     # utilities
-    "cinereus",
     "facet-diff-core",
     "facet-diff",
     "facet-assert",

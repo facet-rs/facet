@@ -20,17 +20,6 @@ pub struct SameOptions {
     /// If set, two floats are considered equal if their absolute difference
     /// is less than or equal to this value.
     float_tolerance: Option<f64>,
-
-    /// Similarity threshold for tree-based element matching in sequences.
-    /// If set, sequence elements with structural similarity >= this threshold
-    /// are paired for inline diffing rather than shown as remove+add.
-    ///
-    /// This uses the cinereus GumTree algorithm to compute structural similarity
-    /// based on hash matching and Dice coefficient.
-    ///
-    /// Recommended values: 0.5-0.7. Higher = stricter matching.
-    /// When None (default), uses exact equality only.
-    similarity_threshold: Option<f64>,
 }
 
 impl SameOptions {
@@ -60,32 +49,6 @@ impl SameOptions {
     /// ```
     pub const fn float_tolerance(mut self, tolerance: f64) -> Self {
         self.float_tolerance = Some(tolerance);
-        self
-    }
-
-    /// Set the similarity threshold for tree-based element matching.
-    ///
-    /// When set, sequence elements with structural similarity >= this threshold
-    /// are paired for inline field-level diffing rather than shown as remove+add.
-    ///
-    /// This uses the cinereus GumTree algorithm to compute structural similarity
-    /// based on hash matching and Dice coefficient.
-    ///
-    /// # Arguments
-    /// * `threshold` - Minimum similarity score (0.0 to 1.0). Recommended: 0.5-0.7.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use facet_assert::SameOptions;
-    ///
-    /// // Use tree-based similarity for sequence diffing
-    /// let options = SameOptions::new()
-    ///     .float_tolerance(0.001)
-    ///     .similarity_threshold(0.6);
-    /// ```
-    pub const fn similarity_threshold(mut self, threshold: f64) -> Self {
-        self.similarity_threshold = Some(threshold);
         self
     }
 }
@@ -263,9 +226,6 @@ pub fn check_sameish_with_report<'f, 'mem, T: Facet<'f>, U: Facet<'f>>(
     let mut diff_options = DiffOptions::new();
     if let Some(tol) = options.float_tolerance {
         diff_options = diff_options.with_float_tolerance(tol);
-    }
-    if let Some(threshold) = options.similarity_threshold {
-        diff_options = diff_options.with_similarity_threshold(threshold);
     }
 
     // Compute diff with options applied during computation
