@@ -132,7 +132,10 @@ impl TypeMapper {
                 } else {
                     self.type_name(schemas[1].value())?
                 };
-                Ok(GoType::Primitive(format!("map[{}]{}", key_type, value_type)))
+                Ok(GoType::Primitive(format!(
+                    "map[{}]{}",
+                    key_type, value_type
+                )))
             }
             Schema::Enum(enum_schema) => {
                 let enum_variants = enum_schema
@@ -140,9 +143,7 @@ impl TypeMapper {
                     .keys()
                     .map(|documented_name| EnumVariant {
                         name: documented_name.value().clone(),
-                        doc: documented_name
-                            .doc()
-                            .map(|lines| lines.join("\n")),
+                        doc: documented_name.doc().map(|lines| lines.join("\n")),
                     })
                     .collect();
                 Ok(GoType::Enum {
@@ -159,9 +160,7 @@ impl TypeMapper {
                 let inner = default_schema.0.1.value();
                 self.map_schema_type(inner)
             }
-            Schema::Union(_) | Schema::OneOf(_) => {
-                Ok(GoType::Primitive("interface{}".to_string()))
-            }
+            Schema::Union(_) | Schema::OneOf(_) => Ok(GoType::Primitive("interface{}".to_string())),
             Schema::Flatten(flatten_schema) => {
                 let inner = flatten_schema.0.0.value();
                 self.map_schema_type(inner)
@@ -191,7 +190,11 @@ impl TypeMapper {
         };
 
         let type_name = self.type_name(inner_schema)?;
-        let type_name = if optional && !type_name.starts_with('*') && !type_name.starts_with('[') && !type_name.starts_with("map[") {
+        let type_name = if optional
+            && !type_name.starts_with('*')
+            && !type_name.starts_with('[')
+            && !type_name.starts_with("map[")
+        {
             format!("*{}", type_name)
         } else {
             type_name
@@ -290,7 +293,10 @@ impl TypeMapper {
             Schema::Enum(_) => Ok("string".to_string()),
             Schema::Optional(opt_schema) => {
                 let inner_type = self.type_name(opt_schema.0.0.value())?;
-                if inner_type.starts_with('*') || inner_type.starts_with('[') || inner_type.starts_with("map[") {
+                if inner_type.starts_with('*')
+                    || inner_type.starts_with('[')
+                    || inner_type.starts_with("map[")
+                {
                     Ok(inner_type)
                 } else {
                     Ok(format!("*{}", inner_type))

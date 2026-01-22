@@ -99,11 +99,7 @@ fn generate_type_definition(
                     field.styx_name,
                     if field.optional { ",optional" } else { "" }
                 );
-                writeln!(
-                    out,
-                    "\t{} {} {}",
-                    field.go_name, field.type_name, tags
-                )?;
+                writeln!(out, "\t{} {} {}", field.go_name, field.type_name, tags)?;
             }
             writeln!(out, "}}")?;
         }
@@ -153,10 +149,7 @@ fn generate_validation_file(mapper: &TypeMapper, package_name: &str) -> Result<S
     writeln!(out, "}}")?;
     writeln!(out)?;
     writeln!(out, "func (e *ValidationError) Error() string {{")?;
-    writeln!(
-        out,
-        "\treturn fmt.Sprintf(\"%s: %s\", e.Field, e.Message)"
-    )?;
+    writeln!(out, "\treturn fmt.Sprintf(\"%s: %s\", e.Field, e.Message)")?;
     writeln!(out, "}}")?;
     writeln!(out)?;
 
@@ -201,16 +194,8 @@ fn generate_validation_function(
     type_name: &str,
     fields: &[types::StructField],
 ) -> Result<(), GenError> {
-    writeln!(
-        out,
-        "// Validate validates the {} instance.",
-        type_name
-    )?;
-    writeln!(
-        out,
-        "func (v *{}) Validate() error {{",
-        type_name
-    )?;
+    writeln!(out, "// Validate validates the {} instance.", type_name)?;
+    writeln!(out, "func (v *{}) Validate() error {{", type_name)?;
     writeln!(out, "\tvar errs ValidationErrors")?;
     writeln!(out)?;
 
@@ -380,7 +365,10 @@ fn generate_parse_file(
     writeln!(out, "import (")?;
     writeln!(out, "\t\"os\"")?;
     writeln!(out)?;
-    writeln!(out, "\t\"github.com/bearcove/styx/implementations/styx-go\"")?;
+    writeln!(
+        out,
+        "\t\"github.com/bearcove/styx/implementations/styx-go\""
+    )?;
     writeln!(out, ")")?;
     writeln!(out)?;
 
@@ -419,11 +407,7 @@ fn generate_parse_file(
             "// Parse parses and validates a {} from a .styx string.",
             root_type
         )?;
-        writeln!(
-            out,
-            "func Parse(source string) (*{}, error) {{",
-            root_type
-        )?;
+        writeln!(out, "func Parse(source string) (*{}, error) {{", root_type)?;
         writeln!(out, "\tdoc, err := styx.Parse(source)")?;
         writeln!(out, "\tif err != nil {{")?;
         writeln!(out, "\t\treturn nil, err")?;
