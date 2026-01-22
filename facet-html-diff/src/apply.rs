@@ -6,9 +6,6 @@ use crate::{InsertContent, NodePath, Patch};
 use facet_xml_node::{Content, Element};
 use std::collections::HashMap;
 
-/// Re-export Element as Node for external use.
-pub type Node = Element;
-
 /// Parse an HTML string into an Element tree, returning the body.
 pub fn parse_html(html: &str) -> Result<Element, String> {
     // Use facet-html to parse directly into Element

@@ -5,7 +5,7 @@
 //! We generate random HTML trees, diff them, apply the patches,
 //! and verify the result matches the expected output.
 
-use facet_html_diff::{Node, apply_patches, diff_html, parse_html};
+use facet_html_diff::{apply_patches, diff_html, parse_html};
 use proptest::prelude::*;
 
 /// Generate a random text string (no HTML special chars).

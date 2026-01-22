@@ -9,7 +9,8 @@ mod macros;
 pub mod apply;
 
 // Re-export for convenience
-pub use apply::{Node, apply_patches, parse_html};
+pub use apply::{apply_patches, parse_html};
+pub use facet_xml_node::Element;
 
 use facet_core::{Def, Field, Type, UserType};
 use facet_diff::{EditOp, PathSegment, tree_diff};
