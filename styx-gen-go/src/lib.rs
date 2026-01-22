@@ -434,7 +434,7 @@ fn generate_parse_file(
 }
 
 fn to_pascal_case(s: &str) -> String {
-    s.split(|c: char| c == '_' || c == '-')
+    s.split(['_', '-'])
         .filter(|s| !s.is_empty())
         .map(|word| {
             let mut chars = word.chars();

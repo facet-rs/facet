@@ -1,7 +1,7 @@
 //! Type mapping from Styx schemas to Go types.
 
 use crate::error::GenError;
-use facet_styx::{Documented, Schema};
+use facet_styx::Schema;
 use std::collections::HashMap;
 
 /// A Go type representation.
@@ -18,6 +18,7 @@ pub enum GoType {
         doc: Option<String>,
     },
     /// A primitive or built-in type
+    #[allow(dead_code)]
     Primitive(String),
 }
 
@@ -217,39 +218,21 @@ impl TypeMapper {
     /// Extract constraints from a schema type.
     fn extract_constraints(&self, schema: &Schema) -> Option<FieldConstraints> {
         match schema {
-            Schema::String(constraints_opt) => {
-                if let Some(c) = constraints_opt {
-                    Some(FieldConstraints {
-                        min_length: c.min_len,
-                        max_length: c.max_len,
-                        ..Default::default()
-                    })
-                } else {
-                    None
-                }
-            }
-            Schema::Int(constraints_opt) => {
-                if let Some(c) = constraints_opt {
-                    Some(FieldConstraints {
-                        min_int: c.min.map(|v| v as i64),
-                        max_int: c.max.map(|v| v as i64),
-                        ..Default::default()
-                    })
-                } else {
-                    None
-                }
-            }
-            Schema::Float(constraints_opt) => {
-                if let Some(c) = constraints_opt {
-                    Some(FieldConstraints {
-                        min_float: c.min,
-                        max_float: c.max,
-                        ..Default::default()
-                    })
-                } else {
-                    None
-                }
-            }
+            Schema::String(constraints_opt) => constraints_opt.as_ref().map(|c| FieldConstraints {
+                min_length: c.min_len,
+                max_length: c.max_len,
+                ..Default::default()
+            }),
+            Schema::Int(constraints_opt) => constraints_opt.as_ref().map(|c| FieldConstraints {
+                min_int: c.min.map(|v| v as i64),
+                max_int: c.max.map(|v| v as i64),
+                ..Default::default()
+            }),
+            Schema::Float(constraints_opt) => constraints_opt.as_ref().map(|c| FieldConstraints {
+                min_float: c.min,
+                max_float: c.max,
+                ..Default::default()
+            }),
             _ => None,
         }
     }
@@ -319,7 +302,7 @@ impl TypeMapper {
 }
 
 fn to_pascal_case(s: &str) -> String {
-    s.split(|c: char| c == '_' || c == '-')
+    s.split(['_', '-'])
         .filter(|s| !s.is_empty())
         .map(|word| {
             let mut chars = word.chars();
