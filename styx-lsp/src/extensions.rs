@@ -358,7 +358,7 @@ impl StyxLspHostImpl {
 }
 
 impl StyxLspHost for StyxLspHostImpl {
-    async fn get_subtree(&self, params: GetSubtreeParams) -> Option<Value> {
+    async fn get_subtree(&self, _cx: &roam_session::Context, params: GetSubtreeParams) -> Option<Value> {
         let uri = Url::parse(&params.document_uri).ok()?;
         let docs = self.documents.read().await;
         let doc = docs.get(&uri)?;
@@ -378,21 +378,21 @@ impl StyxLspHost for StyxLspHostImpl {
         Some(current.clone())
     }
 
-    async fn get_document(&self, params: GetDocumentParams) -> Option<Value> {
+    async fn get_document(&self, _cx: &roam_session::Context, params: GetDocumentParams) -> Option<Value> {
         let uri = Url::parse(&params.document_uri).ok()?;
         let docs = self.documents.read().await;
         let doc = docs.get(&uri)?;
         doc.tree.clone()
     }
 
-    async fn get_source(&self, params: GetSourceParams) -> Option<String> {
+    async fn get_source(&self, _cx: &roam_session::Context, params: GetSourceParams) -> Option<String> {
         let uri = Url::parse(&params.document_uri).ok()?;
         let docs = self.documents.read().await;
         let doc = docs.get(&uri)?;
         Some(doc.content.clone())
     }
 
-    async fn get_schema(&self, params: GetSchemaParams) -> Option<SchemaInfo> {
+    async fn get_schema(&self, _cx: &roam_session::Context, params: GetSchemaParams) -> Option<SchemaInfo> {
         let uri = Url::parse(&params.document_uri).ok()?;
         let docs = self.documents.read().await;
         let doc = docs.get(&uri)?;
@@ -407,6 +407,7 @@ impl StyxLspHost for StyxLspHostImpl {
 
     async fn offset_to_position(
         &self,
+        _cx: &roam_session::Context,
         params: OffsetToPositionParams,
     ) -> Option<styx_lsp_ext::Position> {
         let uri = Url::parse(&params.document_uri).ok()?;
@@ -426,7 +427,7 @@ impl StyxLspHost for StyxLspHostImpl {
         Some(styx_lsp_ext::Position { line, character })
     }
 
-    async fn position_to_offset(&self, params: PositionToOffsetParams) -> Option<u32> {
+    async fn position_to_offset(&self, _cx: &roam_session::Context, params: PositionToOffsetParams) -> Option<u32> {
         let uri = Url::parse(&params.document_uri).ok()?;
         let docs = self.documents.read().await;
         let doc = docs.get(&uri)?;

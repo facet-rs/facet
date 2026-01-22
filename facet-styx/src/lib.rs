@@ -54,6 +54,8 @@ mod serializer;
 #[cfg(test)]
 mod tag_events_test;
 mod tracing_macros;
+#[cfg(test)]
+mod value_expr_test;
 
 pub use error::{RenderError, StyxError, StyxErrorKind};
 pub use facet_format::DeserializeError;
