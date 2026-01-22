@@ -3,6 +3,11 @@ name = "my-app-queries"
 version = "0.1.0"
 edition = "2024"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 my-app-db = { path = "../my-app-db" }
 dibs-runtime.workspace = true

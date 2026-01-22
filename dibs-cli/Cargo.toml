@@ -7,6 +7,11 @@ description = "CLI for dibs - Postgres toolkit for Rust"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/bearcove/dibs"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [[bin]]
 name = "dibs"
 path = "src/main.rs"

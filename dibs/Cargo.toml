@@ -9,6 +9,11 @@ repository = "https://github.com/bearcove/dibs"
 keywords = ["postgres", "database", "migrations", "facet"]
 categories = ["database"]
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 bytes.workspace = true
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }

@@ -284,18 +284,40 @@ pub struct Values {
     pub columns: IndexMap<String, Option<ValueExpr>>,
 }
 
+/// Payload of a value expression - can be scalar or sequence.
+#[derive(Debug, Facet)]
+#[facet(untagged)]
+#[repr(u8)]
+pub enum Payload {
+    /// Scalar payload (for bare values like $name)
+    Scalar(String),
+    /// Sequence payload (for functions with args like @coalesce($a $b))
+    Seq(Vec<ValueExpr>),
+}
+
 /// A value expression in INSERT/UPDATE.
+///
+/// Special cases:
+/// - `@default` - the DEFAULT keyword
+/// - `@funcname` or `@funcname(args...)` - SQL function calls like NOW(), COALESCE(), etc.
+/// - Bare scalars - parameter references ($name) or literals
 #[derive(Debug, Facet)]
 #[facet(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum ValueExpr {
-    /// Current timestamp (@now).
-    Now,
     /// Default value (@default).
     Default,
-    /// Parameter or literal - bare scalar fallback.
+    /// Everything else: functions and bare scalars.
+    /// - Bare scalars: tag=None, content=Some(Scalar(...))
+    /// - Nullary functions: tag=Some("name"), content=None
+    /// - Functions with args: tag=Some("name"), content=Some(Seq(...))
     #[facet(other)]
-    Expr(String),
+    Other {
+        #[facet(tag)]
+        tag: Option<String>,
+        #[facet(content)]
+        content: Option<Payload>,
+    },
 }
 
 /// ON CONFLICT clause for UPSERT.
@@ -321,18 +343,21 @@ pub struct ConflictUpdate {
     pub columns: IndexMap<String, Option<UpdateValue>>,
 }
 
-/// Value for an update column - either a param reference or special value.
+/// Value for an update column - mirrors `ValueExpr`.
 #[derive(Debug, Facet)]
 #[facet(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum UpdateValue {
-    /// Current timestamp (@now).
-    Now,
     /// Default value (@default).
     Default,
-    /// Parameter or literal - bare scalar fallback.
+    /// Everything else: functions and bare scalars.
     #[facet(other)]
-    Expr(String),
+    Other {
+        #[facet(tag)]
+        tag: Option<String>,
+        #[facet(content)]
+        content: Option<Payload>,
+    },
 }
 
 /// RETURNING clause.

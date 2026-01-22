@@ -5,4 +5,9 @@ edition = "2024"
 description = "Minimal Docker CLI wrapper for testing - no serde, no bollard"
 license = "MIT OR Apache-2.0"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]

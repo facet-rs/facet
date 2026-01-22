@@ -7,6 +7,11 @@ description = "Protocol definitions for dibs CLI-to-service communication"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/bearcove/dibs"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 facet.workspace = true
 roam.workspace = true

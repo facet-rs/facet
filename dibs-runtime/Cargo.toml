@@ -5,6 +5,11 @@ edition = "2024"
 description = "Runtime types for dibs-generated query code"
 license = "MIT OR Apache-2.0"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 tokio-postgres.workspace = true
 facet.workspace = true
