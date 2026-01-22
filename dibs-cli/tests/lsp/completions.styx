@@ -190,4 +190,143 @@ tests (
             empty true
         }
     }
+
+    // ========================================================================
+    // Query Linting Tests
+    // ========================================================================
+
+    {
+        name "lint: offset without limit"
+        input <<STYX
+            BadQuery @query{
+                from product
+                offset 10
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "without 'limit'" code "offset-without-limit"})
+        }
+    }
+
+    {
+        name "lint: limit without order-by"
+        input <<STYX
+            BadQuery @query{
+                from product
+                limit 10
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "without 'order-by'" code "limit-without-order-by"})
+        }
+    }
+
+    {
+        name "lint: first without order-by"
+        input <<STYX
+            BadQuery @query{
+                from product
+                first true
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "without 'order-by'" code "first-without-order-by"})
+        }
+    }
+
+    {
+        name "lint: no warning when limit has order-by"
+        input <<STYX
+            GoodQuery @query{
+                from product
+                order-by {id asc}
+                limit 10
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
+
+    {
+        name "lint: update without where"
+        input <<STYX
+            DangerousUpdate @update{
+                table product
+                set {status "deleted"}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "without 'where'" code "mutation-without-where"})
+        }
+    }
+
+    {
+        name "lint: delete without where"
+        input <<STYX
+            DangerousDelete @delete{
+                from product
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "without 'where'" code "mutation-without-where"})
+        }
+    }
+
+    {
+        name "lint: no warning when update has where"
+        input <<STYX
+            SafeUpdate @update{
+                table product
+                set {status "active"}
+                where {id 1}
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
+
+    {
+        name "lint: unused param"
+        input <<STYX
+            BadQuery @query{
+                from product
+                params {
+                    unused_param TEXT
+                }
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "never used" code "unused-param"})
+        }
+    }
+
+    {
+        name "lint: no warning when param is used"
+        input <<STYX
+            GoodQuery @query{
+                from product
+                params {
+                    handle TEXT
+                }
+                where {handle $handle}
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
 )

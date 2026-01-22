@@ -220,6 +220,40 @@ impl DibsExtension {
         None
     }
 
+    /// Collect all $param references in a value tree.
+    fn collect_param_refs(&self, value: &styx_tree::Value) -> Vec<String> {
+        let mut params = Vec::new();
+        self.collect_param_refs_inner(value, &mut params);
+        params
+    }
+
+    fn collect_param_refs_inner(&self, value: &styx_tree::Value, params: &mut Vec<String>) {
+        // Check if this value is a scalar that looks like $param
+        if let Some(text) = value.as_str() {
+            if let Some(param_name) = text.strip_prefix('$') {
+                params.push(param_name.to_string());
+            }
+        }
+
+        // Recurse into object entries (but skip the "params" block itself)
+        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+            for entry in &obj.entries {
+                // Skip the params declaration block
+                if entry.key.as_str() != Some("params") {
+                    self.collect_param_refs_inner(&entry.key, params);
+                    self.collect_param_refs_inner(&entry.value, params);
+                }
+            }
+        }
+
+        // Recurse into sequences
+        if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
+            for item in &seq.items {
+                self.collect_param_refs_inner(item, params);
+            }
+        }
+    }
+
     /// Get the schema, returning an empty schema if not initialized.
     async fn schema(&self) -> SchemaInfo {
         let state = self.state.read().await;
@@ -256,49 +290,193 @@ impl DibsExtension {
     ) {
         let schema = self.schema().await;
 
-        // If this is a tagged @query object, validate references
-        if let Some(tag) = &value.tag
-            && tag.name == "query"
-        {
+        // Handle tagged objects (@query, @update, @delete, @insert, @upsert)
+        if let Some(tag) = &value.tag {
+            let tag_name = tag.name.as_str();
+
             if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
-                // Find the "from" field and validate the table name
+                // Collect info about the query structure
+                let mut has_limit = false;
+                let mut has_offset = false;
+                let mut has_order_by = false;
+                let mut has_where = false;
+                let mut has_first = false;
+                let mut offset_span: Option<&styx_tree::Span> = None;
+                let mut limit_span: Option<&styx_tree::Span> = None;
+                let mut first_span: Option<&styx_tree::Span> = None;
+                let mut declared_params: Vec<String> = Vec::new();
                 let mut table_name = None;
+
                 for entry in &obj.entries {
-                    if entry.key.as_str() == Some("from")
-                        && let Some(name) = entry.value.as_str()
-                    {
-                        if !schema.tables.iter().any(|t| t.name == name) {
-                            // Unknown table
-                            if let Some(span) = &entry.value.span {
-                                diagnostics.push(Diagnostic {
-                                    range: self.span_to_range(document_uri, span).await,
-                                    severity: DiagnosticSeverity::Error,
-                                    message: format!("Unknown table '{}'", name),
-                                    source: Some("dibs".to_string()),
-                                    code: Some("unknown-table".to_string()),
-                                    data: None,
-                                });
+                    let key = entry.key.as_str().unwrap_or("");
+                    match key {
+                        "limit" => {
+                            has_limit = true;
+                            limit_span = entry.key.span.as_ref();
+                        }
+                        "offset" => {
+                            has_offset = true;
+                            offset_span = entry.key.span.as_ref();
+                        }
+                        "order-by" => has_order_by = true,
+                        "where" => has_where = true,
+                        "first" => {
+                            has_first = true;
+                            first_span = entry.key.span.as_ref();
+                        }
+                        "from" | "into" | "table" => {
+                            if let Some(name) = entry.value.as_str() {
+                                if !schema.tables.iter().any(|t| t.name == name) {
+                                    if let Some(span) = &entry.value.span {
+                                        diagnostics.push(Diagnostic {
+                                            range: self.span_to_range(document_uri, span).await,
+                                            severity: DiagnosticSeverity::Error,
+                                            message: format!("Unknown table '{}'", name),
+                                            source: Some("dibs".to_string()),
+                                            code: Some("unknown-table".to_string()),
+                                            data: None,
+                                        });
+                                    }
+                                } else {
+                                    table_name = Some(name.to_string());
+                                }
                             }
-                        } else {
-                            table_name = Some(name.to_string());
+                        }
+                        "params" => {
+                            // Collect declared param names
+                            if let Some(styx_tree::Payload::Object(params_obj)) =
+                                &entry.value.payload
+                            {
+                                for param_entry in &params_obj.entries {
+                                    if let Some(name) = param_entry.key.as_str() {
+                                        declared_params.push(name.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Lint: OFFSET without LIMIT
+                if has_offset && !has_limit {
+                    if let Some(span) = offset_span {
+                        diagnostics.push(Diagnostic {
+                            range: self.span_to_range(document_uri, span).await,
+                            severity: DiagnosticSeverity::Warning,
+                            message: "'offset' without 'limit' - did you forget limit?".to_string(),
+                            source: Some("dibs".to_string()),
+                            code: Some("offset-without-limit".to_string()),
+                            data: None,
+                        });
+                    }
+                }
+
+                // Lint: LIMIT without ORDER BY (for @query only)
+                if tag_name == "query" && has_limit && !has_order_by {
+                    if let Some(span) = limit_span {
+                        diagnostics.push(Diagnostic {
+                            range: self.span_to_range(document_uri, span).await,
+                            severity: DiagnosticSeverity::Warning,
+                            message: "'limit' without 'order-by' returns arbitrary rows"
+                                .to_string(),
+                            source: Some("dibs".to_string()),
+                            code: Some("limit-without-order-by".to_string()),
+                            data: None,
+                        });
+                    }
+                }
+
+                // Lint: first without ORDER BY (for @query only)
+                if tag_name == "query" && has_first && !has_order_by {
+                    if let Some(span) = first_span {
+                        diagnostics.push(Diagnostic {
+                            range: self.span_to_range(document_uri, span).await,
+                            severity: DiagnosticSeverity::Warning,
+                            message: "'first' without 'order-by' returns arbitrary row".to_string(),
+                            source: Some("dibs".to_string()),
+                            code: Some("first-without-order-by".to_string()),
+                            data: None,
+                        });
+                    }
+                }
+
+                // Lint: @update/@delete without WHERE
+                if matches!(tag_name, "update" | "delete") && !has_where {
+                    if let Some(span) = &tag.span {
+                        diagnostics.push(Diagnostic {
+                            range: self.span_to_range(document_uri, span).await,
+                            severity: DiagnosticSeverity::Error,
+                            message: format!(
+                                "@{} without 'where' affects all rows - add 'where' or 'all true'",
+                                tag_name
+                            ),
+                            source: Some("dibs".to_string()),
+                            code: Some("mutation-without-where".to_string()),
+                            data: None,
+                        });
+                    }
+                }
+
+                // Lint: unused params - collect used params and compare
+                if !declared_params.is_empty() {
+                    let used_params = self.collect_param_refs(value);
+                    for param in &declared_params {
+                        if !used_params.contains(param) {
+                            // Find the param entry to get its span
+                            for entry in &obj.entries {
+                                if entry.key.as_str() == Some("params") {
+                                    if let Some(styx_tree::Payload::Object(params_obj)) =
+                                        &entry.value.payload
+                                    {
+                                        for param_entry in &params_obj.entries {
+                                            if param_entry.key.as_str() == Some(param.as_str()) {
+                                                if let Some(span) = &param_entry.key.span {
+                                                    diagnostics.push(Diagnostic {
+                                                        range: self
+                                                            .span_to_range(document_uri, span)
+                                                            .await,
+                                                        severity: DiagnosticSeverity::Warning,
+                                                        message: format!(
+                                                            "param '{}' is declared but never used",
+                                                            param
+                                                        ),
+                                                        source: Some("dibs".to_string()),
+                                                        code: Some("unused-param".to_string()),
+                                                        data: None,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                // If we have a valid table, validate column references
-                if let Some(table_name) = table_name
-                    && let Some(table) = schema.tables.iter().find(|t| t.name == table_name)
-                {
-                    for entry in &obj.entries {
-                        let key = entry.key.as_str().unwrap_or("");
-                        if matches!(key, "select" | "where" | "order_by" | "group_by") {
-                            self.validate_columns(document_uri, &entry.value, table, diagnostics)
+                // Validate column references if we have a valid table
+                if tag_name == "query" {
+                    if let Some(table_name) = table_name
+                        && let Some(table) = schema.tables.iter().find(|t| t.name == table_name)
+                    {
+                        for entry in &obj.entries {
+                            let key = entry.key.as_str().unwrap_or("");
+                            if matches!(key, "select" | "where" | "order-by" | "group-by") {
+                                self.validate_columns(
+                                    document_uri,
+                                    &entry.value,
+                                    table,
+                                    diagnostics,
+                                )
                                 .await;
+                            }
                         }
                     }
                 }
             }
-            // Don't recurse into @query - we've handled it
+
+            // Don't recurse into tagged blocks - we've handled them
             return;
         }
 
