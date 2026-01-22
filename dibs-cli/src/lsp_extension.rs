@@ -15,9 +15,10 @@ use std::path::Path;
 use std::sync::Arc;
 use styx_lsp_ext::{
     Capability, CodeAction, CodeActionParams, CompletionItem, CompletionKind, CompletionParams,
-    Diagnostic, DiagnosticParams, DiagnosticSeverity, HoverParams, HoverResult, InitializeParams,
-    InitializeResult, InlayHint, InlayHintKind, InlayHintParams, Position, Range, StyxLspExtension,
-    StyxLspExtensionDispatcher, StyxLspHostClient,
+    DefinitionParams, Diagnostic, DiagnosticParams, DiagnosticSeverity, HoverParams, HoverResult,
+    InitializeParams, InitializeResult, InlayHint, InlayHintKind, InlayHintParams, Location,
+    OffsetToPositionParams, Position, Range, StyxLspExtension, StyxLspExtensionDispatcher,
+    StyxLspHostClient,
 };
 use tokio::io::{stdin, stdout};
 use tokio::sync::RwLock;
@@ -45,9 +46,9 @@ pub async fn run() {
     // Accept the roam handshake (we're the responder)
     let handshake_config = HandshakeConfig::default();
 
-    // Create a placeholder dispatcher - we'll set the real host client after handshake
+    // Create the extension - we'll set the host client after handshake
     let extension = DibsExtension::new();
-    let dispatcher = StyxLspExtensionDispatcher::new(extension);
+    let dispatcher = StyxLspExtensionDispatcher::new(extension.clone());
 
     let (handle, _incoming, driver) =
         match roam_session::accept_framed(framed, handshake_config, dispatcher).await {
@@ -61,7 +62,10 @@ pub async fn run() {
     debug!("Roam session established");
 
     // The handle can be used to call back to the host via StyxLspHostClient
-    let _host_client = StyxLspHostClient::new(handle);
+    let host_client = StyxLspHostClient::new(handle);
+
+    // Store the host client in the extension so it can call back for offset_to_position
+    extension.set_host(host_client).await;
 
     // Run the driver until the connection closes
     if let Err(e) = driver.run().await {
@@ -134,13 +138,86 @@ struct ExtensionState {
 struct DibsExtension {
     /// State populated during initialize. None until then.
     state: Arc<RwLock<Option<ExtensionState>>>,
+    /// The host client for calling back to the LSP.
+    host: Arc<RwLock<Option<StyxLspHostClient>>>,
 }
 
 impl DibsExtension {
     fn new() -> Self {
         Self {
             state: Arc::new(RwLock::new(None)),
+            host: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Set the host client after handshake.
+    async fn set_host(&self, host: StyxLspHostClient) {
+        *self.host.write().await = Some(host);
+    }
+
+    /// Convert a byte offset to a Position using the host's offset_to_position.
+    async fn offset_to_position(&self, document_uri: &str, offset: u32) -> Position {
+        let host = self.host.read().await;
+        if let Some(host) = host.as_ref()
+            && let Ok(Some(pos)) = host
+                .offset_to_position(OffsetToPositionParams {
+                    document_uri: document_uri.to_string(),
+                    offset,
+                })
+                .await
+        {
+            return pos;
+        }
+        // Fallback: use offset as character on line 0
+        Position {
+            line: 0,
+            character: offset,
+        }
+    }
+
+    /// Convert a styx span to an LSP range using proper line numbers.
+    async fn span_to_range(&self, document_uri: &str, span: &styx_tree::Span) -> Range {
+        let start = self.offset_to_position(document_uri, span.start).await;
+        let end = self.offset_to_position(document_uri, span.end).await;
+        Range { start, end }
+    }
+
+    /// Find a $param reference at the given cursor offset.
+    /// Returns the param name (without the $) if found.
+    fn find_param_at_offset(&self, value: &styx_tree::Value, offset: usize) -> Option<String> {
+        // Check if this value is a scalar that looks like $param
+        if let Some(text) = value.as_str() {
+            if let Some(span) = &value.span {
+                let start = span.start as usize;
+                let end = span.end as usize;
+                if offset >= start && offset <= end {
+                    if let Some(param_name) = text.strip_prefix('$') {
+                        return Some(param_name.to_string());
+                    }
+                }
+            }
+        }
+
+        // Recurse into object entries
+        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+            for entry in &obj.entries {
+                // Check the value of each entry
+                if let Some(name) = self.find_param_at_offset(&entry.value, offset) {
+                    return Some(name);
+                }
+            }
+        }
+
+        // Recurse into sequences
+        if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
+            for item in &seq.items {
+                if let Some(name) = self.find_param_at_offset(item, offset) {
+                    return Some(name);
+                }
+            }
+        }
+
+        None
     }
 
     /// Get the schema, returning an empty schema if not initialized.
@@ -173,6 +250,7 @@ impl DibsExtension {
     /// Collect diagnostics from a value tree.
     async fn collect_diagnostics(
         &self,
+        document_uri: &str,
         value: &styx_tree::Value,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
@@ -193,7 +271,7 @@ impl DibsExtension {
                             // Unknown table
                             if let Some(span) = &entry.value.span {
                                 diagnostics.push(Diagnostic {
-                                    range: span_to_range(span),
+                                    range: self.span_to_range(document_uri, span).await,
                                     severity: DiagnosticSeverity::Error,
                                     message: format!("Unknown table '{}'", name),
                                     source: Some("dibs".to_string()),
@@ -214,7 +292,8 @@ impl DibsExtension {
                     for entry in &obj.entries {
                         let key = entry.key.as_str().unwrap_or("");
                         if matches!(key, "select" | "where" | "order_by" | "group_by") {
-                            Self::validate_columns(&entry.value, table, diagnostics);
+                            self.validate_columns(document_uri, &entry.value, table, diagnostics)
+                                .await;
                         }
                     }
                 }
@@ -226,23 +305,25 @@ impl DibsExtension {
         // Recurse into children
         if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
             for entry in &obj.entries {
-                Box::pin(self.collect_diagnostics(&entry.value, diagnostics)).await;
+                Box::pin(self.collect_diagnostics(document_uri, &entry.value, diagnostics)).await;
             }
         } else if let Some(obj) = value.as_object() {
             for entry in &obj.entries {
-                Box::pin(self.collect_diagnostics(&entry.value, diagnostics)).await;
+                Box::pin(self.collect_diagnostics(document_uri, &entry.value, diagnostics)).await;
             }
         }
 
         if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
             for item in &seq.items {
-                Box::pin(self.collect_diagnostics(item, diagnostics)).await;
+                Box::pin(self.collect_diagnostics(document_uri, item, diagnostics)).await;
             }
         }
     }
 
     /// Validate column references in a select/where/etc block.
-    fn validate_columns(
+    async fn validate_columns(
+        &self,
+        document_uri: &str,
         value: &styx_tree::Value,
         table: &TableInfo,
         diagnostics: &mut Vec<Diagnostic>,
@@ -255,7 +336,7 @@ impl DibsExtension {
                     // Unknown column
                     if let Some(span) = &entry.key.span {
                         diagnostics.push(Diagnostic {
-                            range: span_to_range(span),
+                            range: self.span_to_range(document_uri, span).await,
                             severity: DiagnosticSeverity::Error,
                             message: format!(
                                 "Unknown column '{}' in table '{}'",
@@ -272,7 +353,12 @@ impl DibsExtension {
     }
 
     /// Collect inlay hints from a value tree.
-    async fn collect_inlay_hints(&self, value: &styx_tree::Value, hints: &mut Vec<InlayHint>) {
+    async fn collect_inlay_hints(
+        &self,
+        document_uri: &str,
+        value: &styx_tree::Value,
+        hints: &mut Vec<InlayHint>,
+    ) {
         let schema = self.schema().await;
 
         // If this is a tagged @query or @rel object, look for column references
@@ -296,7 +382,8 @@ impl DibsExtension {
                         for entry in &obj.entries {
                             let key = entry.key.as_str().unwrap_or("");
                             if matches!(key, "select" | "where" | "order_by" | "group_by") {
-                                Self::add_column_hints(&entry.value, table, hints, &schema);
+                                self.add_column_hints(document_uri, &entry.value, table, hints)
+                                    .await;
                             }
                         }
                     }
@@ -304,7 +391,7 @@ impl DibsExtension {
 
                 // Continue recursing to find nested @rel blocks in select
                 for entry in &obj.entries {
-                    Box::pin(self.collect_inlay_hints(&entry.value, hints)).await;
+                    Box::pin(self.collect_inlay_hints(document_uri, &entry.value, hints)).await;
                 }
             }
             return;
@@ -313,28 +400,29 @@ impl DibsExtension {
         // Recurse into children - but only through one path to avoid double-visiting
         if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
             for entry in &obj.entries {
-                Box::pin(self.collect_inlay_hints(&entry.value, hints)).await;
+                Box::pin(self.collect_inlay_hints(document_uri, &entry.value, hints)).await;
             }
         } else if let Some(obj) = value.as_object() {
             // Only use as_object() if payload wasn't an object
             for entry in &obj.entries {
-                Box::pin(self.collect_inlay_hints(&entry.value, hints)).await;
+                Box::pin(self.collect_inlay_hints(document_uri, &entry.value, hints)).await;
             }
         }
 
         if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
             for item in &seq.items {
-                Box::pin(self.collect_inlay_hints(item, hints)).await;
+                Box::pin(self.collect_inlay_hints(document_uri, item, hints)).await;
             }
         }
     }
 
     /// Add inlay hints for column references in a select/where/etc block.
-    fn add_column_hints(
+    async fn add_column_hints(
+        &self,
+        document_uri: &str,
         value: &styx_tree::Value,
         table: &TableInfo,
         hints: &mut Vec<InlayHint>,
-        _schema: &SchemaInfo,
     ) {
         // The value should be an object with column names as keys
         if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
@@ -356,11 +444,10 @@ impl DibsExtension {
                     if let Some(col) = table.columns.iter().find(|c| c.name == col_name) {
                         // Get the position at the end of the column name
                         if let Some(span) = &entry.key.span {
-                            let line = 0; // TODO: compute actual line from offset
-                            let character = span.end;
+                            let position = self.offset_to_position(document_uri, span.end).await;
 
                             hints.push(InlayHint {
-                                position: Position { line, character },
+                                position,
                                 label: format!(": {}", col.sql_type),
                                 kind: Some(InlayHintKind::Type),
                                 padding_left: false,
@@ -600,6 +687,7 @@ impl StyxLspExtension for DibsExtension {
                     Capability::Hover,
                     Capability::Diagnostics,
                     Capability::InlayHints,
+                    Capability::Definition,
                 ]
             } else {
                 // No schema = no capabilities
@@ -745,7 +833,8 @@ impl StyxLspExtension for DibsExtension {
         );
 
         // Find all @query blocks and add type hints for columns
-        self.collect_inlay_hints(&context, &mut hints).await;
+        self.collect_inlay_hints(&params.document_uri, &context, &mut hints)
+            .await;
 
         debug!(count = hints.len(), "Returning inlay hints");
         hints
@@ -757,7 +846,7 @@ impl StyxLspExtension for DibsExtension {
         let mut diagnostics = Vec::new();
 
         // Find all @query blocks and validate references
-        self.collect_diagnostics(&params.tree, &mut diagnostics)
+        self.collect_diagnostics(&params.document_uri, &params.tree, &mut diagnostics)
             .await;
 
         diagnostics
@@ -765,6 +854,94 @@ impl StyxLspExtension for DibsExtension {
 
     async fn code_actions(&self, _params: CodeActionParams) -> Vec<CodeAction> {
         // Not implemented yet
+        Vec::new()
+    }
+
+    async fn definition(&self, params: DefinitionParams) -> Vec<Location> {
+        debug!(path = ?params.path, cursor = ?params.cursor, "Definition request");
+
+        // We support definition for:
+        // 1. $param references → jump to param declaration in same query
+        // 2. Table names → could jump to Rust struct (needs source locations in schema)
+        // 3. Column names → could jump to column in struct (needs source locations)
+
+        let Some(tagged_context) = &params.tagged_context else {
+            return Vec::new();
+        };
+
+        // Try to find a $param reference at the cursor position
+        let cursor_offset = params.cursor.offset as usize;
+
+        if let Some(param_name) = self.find_param_at_offset(tagged_context, cursor_offset) {
+            debug!(%param_name, "Found param reference at cursor");
+
+            // The tagged_context might be the query itself (if cursor is in a non-tagged area)
+            // or a nested tag like @eq. We need to get the query block.
+            // The path's first element is the query name.
+            let query_value =
+                if tagged_context.tag.as_ref().map(|t| t.name.as_str()) == Some("query") {
+                    // tagged_context is already the query
+                    Some(tagged_context.clone())
+                } else if !params.path.is_empty() {
+                    // Fetch the query subtree from the host
+                    let host = self.host.read().await;
+                    if let Some(host) = host.as_ref() {
+                        match host
+                            .get_subtree(styx_lsp_ext::GetSubtreeParams {
+                                document_uri: params.document_uri.clone(),
+                                path: vec![params.path[0].clone()],
+                            })
+                            .await
+                        {
+                            Ok(Some(v)) => Some(v),
+                            Ok(None) => {
+                                debug!("get_subtree returned None");
+                                None
+                            }
+                            Err(e) => {
+                                debug!(%e, "get_subtree failed");
+                                None
+                            }
+                        }
+                    } else {
+                        debug!("No host client available");
+                        None
+                    }
+                } else {
+                    None
+                };
+
+            if let Some(query_value) = query_value {
+                // Find the params block in the query
+                if let Some(obj) = query_value.as_object() {
+                    for entry in &obj.entries {
+                        if entry.key.as_str() == Some("params") {
+                            // Found the params block - look for our param
+                            if let Some(styx_tree::Payload::Object(params_obj)) =
+                                &entry.value.payload
+                            {
+                                for param_entry in &params_obj.entries {
+                                    if param_entry.key.as_str() == Some(&param_name) {
+                                        debug!(%param_name, "Found param declaration");
+                                        // Found it! Return its location
+                                        if let Some(span) = &param_entry.key.span {
+                                            let range = self
+                                                .span_to_range(&params.document_uri, span)
+                                                .await;
+                                            return vec![Location {
+                                                uri: params.document_uri.clone(),
+                                                range,
+                                            }];
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Vec::new()
     }
 
@@ -831,23 +1008,6 @@ async fn connect_and_fetch_schema(document_uri: &str) -> Result<ExtensionState, 
     })
 }
 
-/// Convert a styx span to an LSP range.
-/// Note: This is a simplified conversion that doesn't compute actual line numbers.
-fn span_to_range(span: &styx_tree::Span) -> Range {
-    // For now, we use character offsets as "character" positions
-    // A proper implementation would need the source text to compute line numbers
-    Range {
-        start: Position {
-            line: 0,
-            character: span.start,
-        },
-        end: Position {
-            line: 0,
-            character: span.end,
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -880,9 +1040,11 @@ mod tests {
                 field_names.contains(&"where"),
                 "Query should have 'where' field"
             );
+            // Field is named with hyphen in styx (order-by), not underscore
             assert!(
-                field_names.contains(&"order_by"),
-                "Query should have 'order_by' field"
+                field_names.contains(&"order-by"),
+                "Query should have 'order-by' field, got: {:?}",
+                field_names
             );
         } else {
             panic!("Query should be an object schema");

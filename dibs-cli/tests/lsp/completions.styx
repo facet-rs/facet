@@ -157,4 +157,37 @@ tests (
             count 0
         }
     }
+
+    {
+        name "definition: param reference jumps to declaration"
+        input <<STYX
+            ProductByHandle @query{
+                from product
+                params {
+                    handle TEXT
+                }
+                where {
+                    handle @eq($han|dle)
+                }
+                select {id handle}
+            }
+            STYX
+        definition {
+            count 1
+            has ({line 4})
+        }
+    }
+
+    {
+        name "definition: no result for non-param"
+        input <<STYX
+            AllProducts @query{
+                from product
+                select {han|dle}
+            }
+            STYX
+        definition {
+            empty true
+        }
+    }
 )
