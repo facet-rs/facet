@@ -641,6 +641,69 @@ impl LanguageServer for StyxLanguageServer {
             }
         }
 
+        // Case 4: Try extension for domain-specific definition (e.g., $param → declaration)
+        if let Ok(schema_file) = load_document_schema(tree, &uri) {
+            let schema_id = &schema_file.meta.id;
+            tracing::debug!(%schema_id, "Trying extension for definition");
+            if let Some(client) = self.extensions.get_client(schema_id).await {
+                tracing::debug!("Got extension client, calling definition");
+                let field_path = find_field_path_at_offset(tree, offset).unwrap_or_default();
+                let context_obj = find_object_at_offset(tree, offset);
+                let tagged_context = find_tagged_context_at_offset(tree, offset);
+
+                let ext_params = ext::DefinitionParams {
+                    document_uri: uri.to_string(),
+                    cursor: ext::Cursor {
+                        line: position.line,
+                        character: position.character,
+                        offset: offset as u32,
+                    },
+                    path: field_path,
+                    context: context_obj.map(|c| Value {
+                        tag: None,
+                        payload: Some(styx_tree::Payload::Object(c.object)),
+                        span: None,
+                    }),
+                    tagged_context,
+                };
+
+                match client.definition(ext_params).await {
+                    Ok(locations) if !locations.is_empty() => {
+                        tracing::debug!(count = locations.len(), "Extension returned definitions");
+                        let lsp_locations: Vec<Location> = locations
+                            .into_iter()
+                            .map(|loc| Location {
+                                uri: Url::parse(&loc.uri).unwrap_or_else(|_| uri.clone()),
+                                range: Range {
+                                    start: Position {
+                                        line: loc.range.start.line,
+                                        character: loc.range.start.character,
+                                    },
+                                    end: Position {
+                                        line: loc.range.end.line,
+                                        character: loc.range.end.character,
+                                    },
+                                },
+                            })
+                            .collect();
+                        if lsp_locations.len() == 1 {
+                            return Ok(Some(GotoDefinitionResponse::Scalar(
+                                lsp_locations.into_iter().next().unwrap(),
+                            )));
+                        } else {
+                            return Ok(Some(GotoDefinitionResponse::Array(lsp_locations)));
+                        }
+                    }
+                    Ok(_) => {
+                        tracing::debug!("Extension returned empty definitions");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Extension definition failed");
+                    }
+                }
+            }
+        }
+
         Ok(None)
     }
 

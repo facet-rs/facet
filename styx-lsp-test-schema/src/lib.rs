@@ -61,6 +61,10 @@ pub struct TestCase {
     /// Expected inlay hints for the document.
     #[facet(default)]
     pub inlay_hints: Option<InlayHintExpectations>,
+
+    /// Expected definition locations at cursor position.
+    #[facet(default)]
+    pub definition: Option<DefinitionExpectations>,
 }
 
 /// Expectations for completion results.
@@ -162,4 +166,32 @@ pub struct InlayHintExpectation {
     /// Expected line number (1-indexed).
     #[facet(default)]
     pub line: Option<u32>,
+}
+
+/// Expectations for definition results.
+#[derive(Debug, Clone, Facet)]
+pub struct DefinitionExpectations {
+    /// Expected number of locations (if specified).
+    #[facet(default)]
+    pub count: Option<u32>,
+
+    /// Whether we expect no results (empty).
+    #[facet(default)]
+    pub empty: bool,
+
+    /// Locations that must be present.
+    #[facet(default)]
+    pub has: Vec<DefinitionExpectation>,
+}
+
+/// Expectation for a single definition location.
+#[derive(Debug, Clone, Facet)]
+pub struct DefinitionExpectation {
+    /// Expected line number (1-indexed).
+    #[facet(default)]
+    pub line: Option<u32>,
+
+    /// Expected URI (substring match).
+    #[facet(default)]
+    pub uri: Option<String>,
 }

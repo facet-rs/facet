@@ -59,6 +59,9 @@ pub trait StyxLspExtension {
     /// Provide code actions for a range.
     async fn code_actions(&self, params: CodeActionParams) -> Vec<CodeAction>;
 
+    /// Go to definition of a symbol.
+    async fn definition(&self, params: DefinitionParams) -> Vec<Location>;
+
     /// Shutdown the extension gracefully.
     async fn shutdown(&self);
 }
@@ -374,6 +377,35 @@ pub struct DocumentEdit {
 pub struct TextEdit {
     pub range: Range,
     pub new_text: String,
+}
+
+// =============================================================================
+// Go to definition
+// =============================================================================
+
+/// Parameters for a go-to-definition request.
+#[derive(Debug, Clone, Facet)]
+#[facet(skip_all_unless_truthy)]
+pub struct DefinitionParams {
+    /// URI of the document.
+    pub document_uri: String,
+    /// Cursor position.
+    pub cursor: Cursor,
+    /// Path to the symbol.
+    pub path: Vec<String>,
+    /// Context subtree (innermost object at cursor).
+    pub context: Option<Value>,
+    /// The closest enclosing tagged value (e.g., `@query{...}`).
+    pub tagged_context: Option<Value>,
+}
+
+/// A location in a document (URI + range).
+#[derive(Debug, Clone, Facet)]
+pub struct Location {
+    /// URI of the target document.
+    pub uri: String,
+    /// Range within the document.
+    pub range: Range,
 }
 
 // =============================================================================

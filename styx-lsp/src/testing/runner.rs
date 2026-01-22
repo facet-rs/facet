@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use styx_lsp_test_schema::{
-    CompletionExpectations, DiagnosticExpectations, HoverExpectations, InlayHintExpectations,
-    TestCase, TestFile,
+    CompletionExpectations, DefinitionExpectations, DiagnosticExpectations, HoverExpectations,
+    InlayHintExpectations, TestCase, TestFile,
 };
 
 use super::{HarnessError, TestDocument, TestHarness};
@@ -194,6 +194,22 @@ async fn run_test_case(harness: &TestHarness, test_case: &TestCase, index: usize
         }
     }
 
+    // Check definition if expected
+    if let Some(ref expected) = test_case.definition {
+        if doc.cursor.is_none() {
+            errors.push("definition test requires cursor marker (|) in input".to_string());
+        } else {
+            match harness.definition(&uri).await {
+                Ok(locations) => {
+                    check_definition(&locations, expected, &mut errors);
+                }
+                Err(e) => {
+                    errors.push(format!("definition request failed: {}", e));
+                }
+            }
+        }
+    }
+
     TestResult {
         name,
         passed: errors.is_empty(),
@@ -357,6 +373,63 @@ fn check_inlay_hints(
         let found = hints.iter().any(|h| h.label == exp.label);
         if !found {
             errors.push(format!("expected inlay hint '{}' not found", exp.label));
+        }
+    }
+}
+
+fn check_definition(
+    locations: &[styx_lsp_ext::Location],
+    expected: &DefinitionExpectations,
+    errors: &mut Vec<String>,
+) {
+    // Check if we expected empty results
+    if expected.empty && !locations.is_empty() {
+        errors.push(format!(
+            "expected no definition locations, got {}",
+            locations.len()
+        ));
+        return;
+    }
+
+    // Check count if specified
+    if let Some(count) = expected.count
+        && locations.len() != count as usize
+    {
+        errors.push(format!(
+            "expected {} definition locations, got {}",
+            count,
+            locations.len()
+        ));
+    }
+
+    // Check 'has' expectations
+    for exp in &expected.has {
+        let found = locations.iter().any(|loc| {
+            // Check line if specified (convert from 1-indexed to 0-indexed)
+            if let Some(line) = exp.line
+                && loc.range.start.line != line - 1
+            {
+                return false;
+            }
+            // Check URI if specified (substring match)
+            if let Some(ref uri) = exp.uri
+                && !loc.uri.contains(uri)
+            {
+                return false;
+            }
+            true
+        });
+        if !found {
+            let desc = match (&exp.line, &exp.uri) {
+                (Some(line), Some(uri)) => format!("line {} in '{}'", line, uri),
+                (Some(line), None) => format!("line {}", line),
+                (None, Some(uri)) => format!("in '{}'", uri),
+                (None, None) => "any location".to_string(),
+            };
+            errors.push(format!(
+                "expected definition at {} not found (got: {:?})",
+                desc, locations
+            ));
         }
     }
 }

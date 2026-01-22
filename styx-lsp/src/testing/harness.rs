@@ -38,9 +38,9 @@ use tower_lsp::lsp_types::Url;
 use crate::extensions::{ChildStdio, StyxLspHostImpl};
 use crate::server::{DocumentMap, DocumentState};
 use styx_lsp_ext::{
-    CompletionItem, CompletionParams, Cursor, Diagnostic, DiagnosticParams, HoverParams,
-    HoverResult, InitializeParams, InlayHint, InlayHintParams, Position, Range,
-    StyxLspExtensionClient, StyxLspHostDispatcher,
+    CompletionItem, CompletionParams, Cursor, DefinitionParams, Diagnostic, DiagnosticParams,
+    HoverParams, HoverResult, InitializeParams, InlayHint, InlayHintParams, Location, Position,
+    Range, StyxLspExtensionClient, StyxLspHostDispatcher,
 };
 
 /// A document for testing, with optional cursor position.
@@ -369,6 +369,56 @@ impl TestHarness {
             .diagnostics(DiagnosticParams {
                 document_uri: document_uri.to_string(),
                 tree,
+            })
+            .await
+            .map_err(|e| HarnessError::CallFailed(e.to_string()))
+    }
+
+    /// Get definition locations for the symbol at cursor.
+    pub async fn definition(&self, document_uri: &str) -> Result<Vec<Location>, HarnessError> {
+        let uri = Url::parse(document_uri).map_err(|e| HarnessError::InvalidUri(e.to_string()))?;
+
+        let cursors = self.cursors.read().await;
+        let cursor_info = cursors
+            .get(document_uri)
+            .copied()
+            .ok_or_else(|| HarnessError::NoCursor(document_uri.to_string()))?;
+        drop(cursors);
+
+        let docs = self.documents.read().await;
+        let doc = docs
+            .get(&uri)
+            .ok_or_else(|| HarnessError::DocumentNotFound(document_uri.to_string()))?;
+
+        let path = doc
+            .tree
+            .as_ref()
+            .and_then(|t| find_path_at_offset(t, cursor_info.offset))
+            .unwrap_or_default();
+
+        let context = doc
+            .tree
+            .as_ref()
+            .and_then(|t| find_context_at_offset(t, cursor_info.offset));
+
+        let tagged_context = doc
+            .tree
+            .as_ref()
+            .and_then(|t| find_tagged_context_at_offset(t, cursor_info.offset));
+
+        drop(docs);
+
+        self.client
+            .definition(DefinitionParams {
+                document_uri: document_uri.to_string(),
+                cursor: Cursor {
+                    line: cursor_info.line,
+                    character: cursor_info.character,
+                    offset: cursor_info.offset as u32,
+                },
+                path,
+                context,
+                tagged_context,
             })
             .await
             .map_err(|e| HarnessError::CallFailed(e.to_string()))
