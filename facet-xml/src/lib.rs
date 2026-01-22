@@ -173,5 +173,15 @@ facet::define_attr_grammar! {
         /// When deserializing, if no variant name matches the element tag,
         /// this variant is selected. Use with `xml::tag` to capture the tag name.
         CustomElement,
+        /// Marks a field as capturing the DOCTYPE declaration from the XML document.
+        ///
+        /// Usage: `#[facet(xml::doctype)]`
+        ///
+        /// When deserializing, this field captures the DOCTYPE declaration if present.
+        /// When serializing, the field's value is emitted as the DOCTYPE declaration.
+        /// This attribute is ignored on non-root structs to allow struct reuse.
+        ///
+        /// The field type should be `Option<String>` to handle documents without DOCTYPE.
+        Doctype,
     }
 }

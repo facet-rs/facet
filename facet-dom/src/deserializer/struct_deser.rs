@@ -121,6 +121,42 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             self.using_deferred = true;
         }
 
+        // Handle DOCTYPE if present and if struct has a doctype field
+        let has_doctype_field = self.field_map.doctype_field.is_some();
+        if has_doctype_field {
+            // Peek to see if there's a Doctype event
+            if let Ok(event) = self.parser().peek_event()
+                && let Some(DomEvent::Doctype(doctype_content)) = event
+            {
+                // Clone the content before consuming the event
+                let doctype = doctype_content.to_string();
+                // Consume the Doctype event
+                let _ = self
+                    .parser()
+                    .next_event()
+                    .map_err(DomDeserializeError::Parser)?;
+                let idx = self.field_map.doctype_field.as_ref().unwrap().idx;
+                let field_name = self.field_map.doctype_field.as_ref().unwrap().field.name;
+                trace!("→ .{} (doctype)", field_name);
+                wip = self
+                    .dom_deser
+                    .set_string_value(wip.begin_nth_field(idx)?, Cow::Owned(doctype))?
+                    .end()?;
+            }
+        } else {
+            // No doctype field - skip any DOCTYPE events
+            while let Ok(event) = self.parser().peek_event() {
+                if let Some(DomEvent::Doctype(_)) = event {
+                    let _ = self
+                        .parser()
+                        .next_event()
+                        .map_err(DomDeserializeError::Parser)?;
+                } else {
+                    break;
+                }
+            }
+        }
+
         self.tag = self.parser().expect_node_start()?;
 
         // Validate root element name matches expected, unless struct has a tag field

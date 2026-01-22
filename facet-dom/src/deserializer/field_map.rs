@@ -83,6 +83,8 @@ pub(crate) struct StructFieldMap {
     pub text_field: Option<FieldInfo>,
     /// The field marked with `xml::tag` or `html::tag` (captures element tag name)
     pub tag_field: Option<FieldInfo>,
+    /// The field marked with `xml::doctype` (captures DOCTYPE declaration)
+    pub doctype_field: Option<FieldInfo>,
     /// The field marked with `#[facet(other)]` (fallback when root doesn't match)
     pub other_field: Option<FieldInfo>,
     /// For tuple structs: fields in order for positional matching.
@@ -122,6 +124,7 @@ impl StructFieldMap {
         let mut attributes_field = None;
         let mut text_field = None;
         let mut tag_field = None;
+        let mut doctype_field = None;
         let mut other_field = None;
         let mut flattened_children: HashMap<String, Vec<FlattenedChildInfo>> = HashMap::new();
         let mut flattened_attributes: HashMap<String, Vec<FlattenedChildInfo>> = HashMap::new();
@@ -371,6 +374,17 @@ impl StructFieldMap {
                     namespace,
                 };
                 tag_field = Some(info);
+            } else if field.is_doctype() {
+                let info = FieldInfo {
+                    idx,
+                    field,
+                    is_list,
+                    is_array,
+                    is_set,
+                    is_tuple,
+                    namespace,
+                };
+                doctype_field = Some(info);
             } else {
                 // Check if this field is marked as "other" - if so, register it as the fallback
                 // for tag mismatches, but ALSO register it as a normal element field so it
@@ -462,6 +476,7 @@ impl StructFieldMap {
             attributes_field,
             text_field,
             tag_field,
+            doctype_field,
             other_field,
             tuple_fields,
             flattened_children,

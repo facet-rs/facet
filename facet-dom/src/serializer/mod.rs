@@ -71,6 +71,14 @@ pub trait DomSerializer {
         Ok(())
     }
 
+    /// Emit a DOCTYPE declaration (XML/HTML).
+    ///
+    /// This is called before the root element when a field marked with
+    /// `#[facet(xml::doctype)]` or similar is encountered.
+    fn doctype(&mut self, _content: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Metadata hooks
     // ─────────────────────────────────────────────────────────────────────────
@@ -119,6 +127,11 @@ pub trait DomSerializer {
 
     /// Check if the current field is a "tag" field (stores the element's tag name).
     fn is_tag_field(&self) -> bool {
+        false
+    }
+
+    /// Check if the current field is a "doctype" field (stores the DOCTYPE declaration).
+    fn is_doctype_field(&self) -> bool {
         false
     }
 
@@ -326,8 +339,10 @@ where
         let fields: Vec<_> = struct_.fields_for_serialize().collect();
 
         // Find the tag field if present (html::tag or xml::tag)
-        let tag_field_value: Option<String> = {
-            let mut result = None;
+        // and the doctype field if present (xml::doctype)
+        let (tag_field_value, doctype_field_value): (Option<String>, Option<String>) = {
+            let mut tag_result = None;
+            let mut doctype_result = None;
             for (field_item, field_value) in &fields {
                 serializer
                     .field_metadata(field_item)
@@ -335,14 +350,21 @@ where
                 if serializer.is_tag_field() {
                     // Extract the string value from the tag field
                     if let Some(s) = field_value.as_str() {
-                        result = Some(s.to_string());
+                        tag_result = Some(s.to_string());
                     } else if let Some(s) = value_to_string(*field_value, serializer) {
-                        result = Some(s);
+                        tag_result = Some(s);
+                    }
+                } else if serializer.is_doctype_field() {
+                    // Extract the string value from the doctype field
+                    if let Some(s) = field_value.as_str() {
+                        doctype_result = Some(s.to_string());
+                    } else if let Some(s) = value_to_string(*field_value, serializer) {
+                        doctype_result = Some(s);
                     }
                 }
                 serializer.clear_field_state();
             }
-            result
+            (tag_result, doctype_result)
         };
 
         // Determine element name: tag field value > provided name > shape rename > type identifier (lowerCamelCase)
@@ -357,6 +379,14 @@ where
             to_element_name(value.shape().type_identifier)
         };
         trace!(tag = %tag, "element_start");
+
+        // Emit doctype before element_start if present
+        if let Some(ref doctype_value) = doctype_field_value {
+            trace!(doctype = %doctype_value, "emitting doctype");
+            serializer
+                .doctype(doctype_value)
+                .map_err(DomSerializeError::Backend)?;
+        }
 
         serializer
             .element_start(&tag, None)
@@ -434,6 +464,12 @@ where
 
             // Skip tag fields - the value was already used as the element name
             if serializer.is_tag_field() {
+                serializer.clear_field_state();
+                continue;
+            }
+
+            // Skip doctype fields - the value was already emitted as DOCTYPE
+            if serializer.is_doctype_field() {
                 serializer.clear_field_state();
                 continue;
             }
