@@ -10,7 +10,7 @@ use facet::Facet;
 use tower_lsp::lsp_types::Url;
 
 /// The embedded schema hints registry.
-const SCHEMA_HINTS_SOURCE: &str = include_str!("../../../registry/schema-hints.styx");
+const SCHEMA_HINTS_SOURCE: &str = include_str!("../registry/schema-hints.styx");
 
 /// A schema hint entry for a tool.
 #[derive(Debug, Clone, Facet)]
