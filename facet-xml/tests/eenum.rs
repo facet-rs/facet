@@ -203,3 +203,122 @@ fn enum_as_attribute_value_with_option() {
     assert_eq!(task2.name, "test2");
     assert_eq!(task2.priority, None);
 }
+
+// ============================================================================
+// Enum variant fields with xml::attribute (issue #1855)
+// ============================================================================
+
+#[test]
+fn enum_variant_fields_with_attributes() {
+    // Reproduces issue #1855: xml::attribute on enum variant fields
+    // was being ignored during serialization
+
+    #[derive(Debug, PartialEq, Facet)]
+    #[repr(C)]
+    enum Foo {
+        #[facet(rename = "Foo")]
+        Variant {
+            #[facet(xml::attribute)]
+            name: String,
+            #[facet(xml::attribute)]
+            value: String,
+        },
+    }
+
+    // Test deserialization
+    let x: Foo = facet_xml::from_str(r#"<Foo name="bar" value="baz" />"#).unwrap();
+    assert_eq!(
+        x,
+        Foo::Variant {
+            name: "bar".to_string(),
+            value: "baz".to_string()
+        }
+    );
+
+    // Test serialization - should produce attributes, not child elements
+    let y = facet_xml::to_string_pretty(&x).unwrap();
+
+    // Should serialize with attributes, not child elements
+    assert!(y.contains(r#"name="bar""#), "name should be an attribute");
+    assert!(y.contains(r#"value="baz""#), "value should be an attribute");
+    assert!(!y.contains("<name>"), "name should not be a child element");
+    assert!(
+        !y.contains("<value>"),
+        "value should not be a child element"
+    );
+}
+
+#[test]
+fn enum_variant_mixed_attributes_and_elements() {
+    // Test enum variants with both attributes and child elements
+
+    #[derive(Debug, PartialEq, Facet)]
+    #[non_exhaustive]
+    #[repr(C)]
+    enum XmlParameter {
+        #[facet(rename = "Property")]
+        Property {
+            #[facet(xml::attribute)]
+            name: String,
+            #[facet(xml::attribute)]
+            value: String,
+        },
+        #[facet(rename = "Array")]
+        Array {
+            #[facet(xml::attribute)]
+            name: String,
+            #[facet(flatten)]
+            value: Vec<XmlParameter>,
+        },
+        #[facet(rename = "Group")]
+        Group {
+            #[facet(xml::attribute)]
+            name: String,
+            #[facet(flatten)]
+            value: Vec<XmlParameter>,
+        },
+    }
+
+    // Test deserialization
+    let p: XmlParameter = facet_xml::from_str(
+        r#"
+        <Array name="State_Text">
+            <Property name="State_Text" value="A" />
+            <Property name="State_Text" value="B Text" />
+            <Property name="State_Text" value="C text" />
+            <Group name="Voltage_Range">
+                <Property name="Voltage_Range" value="foo" />
+            </Group>
+        </Array>
+        "#,
+    )
+    .unwrap();
+
+    // Test serialization roundtrip
+    let serialized = facet_xml::to_string_pretty(&p).unwrap();
+
+    // Should have attributes on all variants
+    assert!(
+        serialized.contains(r#"<Array name="State_Text">"#),
+        "Array should have name attribute"
+    );
+    assert!(
+        serialized.contains(r#"<Property name="State_Text" value="A""#),
+        "Property should have attributes"
+    );
+    assert!(
+        serialized.contains(r#"<Group name="Voltage_Range">"#),
+        "Group should have name attribute"
+    );
+
+    // Verify roundtrip works
+    let roundtrip: XmlParameter = facet_xml::from_str(&serialized).unwrap();
+
+    // Compare by serializing both and checking they produce the same result
+    let original_serialized = facet_xml::to_string_pretty(&p).unwrap();
+    let roundtrip_serialized = facet_xml::to_string_pretty(&roundtrip).unwrap();
+    assert_eq!(
+        original_serialized, roundtrip_serialized,
+        "Roundtrip should produce identical XML"
+    );
+}

@@ -507,7 +507,9 @@ where
                 if is_elements && explicit_rename.is_none() {
                     None // Items determine their own element names
                 } else if is_flattened {
-                    // Flattened field - use the variant's effective name
+                    // Flattened field: the FieldsForSerializeIter expands collections and yields
+                    // individual items. For enums, it yields the variant name in field_item.
+                    // Use that name as the element name for the item.
                     Some(to_element_name(field_item.effective_name()))
                 } else if let Some(rename) = explicit_rename {
                     // Use the explicit rename value as-is
@@ -693,9 +695,7 @@ where
                     .map_err(DomSerializeError::Backend)?;
 
                 // Emit variant fields
-                for (field_item, field_value) in enum_.fields_for_serialize() {
-                    serialize_value(serializer, field_value, Some(&field_item.name))?;
-                }
+                serialize_enum_variant_fields(serializer, enum_)?;
 
                 serializer
                     .children_end()
@@ -739,9 +739,7 @@ where
                 serializer
                     .children_start()
                     .map_err(DomSerializeError::Backend)?;
-                for (field_item, field_value) in enum_.fields_for_serialize() {
-                    serialize_value(serializer, field_value, Some(&field_item.name))?;
-                }
+                serialize_enum_variant_fields(serializer, enum_)?;
                 serializer
                     .children_end()
                     .map_err(DomSerializeError::Backend)?;
@@ -765,12 +763,7 @@ where
                     serializer
                         .element_start(tag, None)
                         .map_err(DomSerializeError::Backend)?;
-                    serializer
-                        .children_start()
-                        .map_err(DomSerializeError::Backend)?;
-                    for (field_item, field_value) in enum_.fields_for_serialize() {
-                        serialize_value(serializer, field_value, Some(&field_item.name))?;
-                    }
+                    serialize_enum_variant_fields(serializer, enum_)?;
                     serializer
                         .children_end()
                         .map_err(DomSerializeError::Backend)?;
@@ -791,12 +784,7 @@ where
                     serializer
                         .element_start(&variant_name, None)
                         .map_err(DomSerializeError::Backend)?;
-                    serializer
-                        .children_start()
-                        .map_err(DomSerializeError::Backend)?;
-                    for (field_item, field_value) in enum_.fields_for_serialize() {
-                        serialize_value(serializer, field_value, Some(&field_item.name))?;
-                    }
+                    serialize_enum_variant_fields(serializer, enum_)?;
                     serializer
                         .children_end()
                         .map_err(DomSerializeError::Backend)?;
@@ -823,6 +811,158 @@ where
         "unsupported type: {:?}",
         value.shape().def
     ))))
+}
+
+/// Serialize enum variant fields, handling attributes correctly.
+///
+/// This function implements a two-pass approach similar to struct serialization:
+/// 1. First pass: emit all fields marked with `xml::attribute` as XML attributes
+/// 2. Second pass: emit remaining fields as child elements or text
+fn serialize_enum_variant_fields<S>(
+    serializer: &mut S,
+    enum_: facet_reflect::PeekEnum<'_, '_>,
+) -> Result<(), DomSerializeError<S::Error>>
+where
+    S: DomSerializer,
+{
+    // Collect all fields into a Vec so we can iterate twice
+    let fields: Vec<_> = enum_.fields_for_serialize().collect();
+
+    // First pass: emit attributes
+    for (field_item, field_value) in &fields {
+        serializer
+            .field_metadata(field_item)
+            .map_err(DomSerializeError::Backend)?;
+
+        if serializer.is_attribute_field() {
+            // Compute attribute name: rename > lowerCamelCase(field.name)
+            let attr_name = if let Some(field) = field_item.field {
+                field
+                    .rename
+                    .map(Cow::Borrowed)
+                    .unwrap_or_else(|| to_element_name(&field_item.name))
+            } else {
+                field_item.name.clone()
+            };
+
+            // Check for proxy
+            let format_ns = serializer.format_namespace();
+            let proxy_def = field_item
+                .field
+                .and_then(|f| f.effective_proxy(format_ns))
+                .or_else(|| field_value.shape().effective_proxy(format_ns));
+
+            if let Some(proxy_def) = proxy_def {
+                match field_value.custom_serialization_with_proxy(proxy_def) {
+                    Ok(proxy_peek) => {
+                        serializer
+                            .attribute(&attr_name, proxy_peek.as_peek(), None)
+                            .map_err(DomSerializeError::Backend)?;
+                    }
+                    Err(e) => {
+                        return Err(DomSerializeError::Reflect(e));
+                    }
+                }
+            } else {
+                serializer
+                    .attribute(&attr_name, *field_value, None)
+                    .map_err(DomSerializeError::Backend)?;
+            }
+        }
+        serializer.clear_field_state();
+    }
+
+    // Start children section
+    serializer
+        .children_start()
+        .map_err(DomSerializeError::Backend)?;
+
+    // Second pass: emit child elements and text
+    for (field_item, field_value) in &fields {
+        serializer
+            .field_metadata(field_item)
+            .map_err(DomSerializeError::Backend)?;
+
+        // Skip attributes (already handled)
+        if serializer.is_attribute_field() {
+            serializer.clear_field_state();
+            continue;
+        }
+
+        // Skip tag fields
+        if serializer.is_tag_field() {
+            serializer.clear_field_state();
+            continue;
+        }
+
+        // Skip doctype fields
+        if serializer.is_doctype_field() {
+            serializer.clear_field_state();
+            continue;
+        }
+
+        // Handle text fields
+        if serializer.is_text_field() {
+            if let Some(s) = value_to_string(*field_value, serializer) {
+                serializer.text(&s).map_err(DomSerializeError::Backend)?;
+            }
+            serializer.clear_field_state();
+            continue;
+        }
+
+        // Handle text variants from flattened enums
+        if field_item.is_text_variant {
+            if let Some(s) = value_to_string(*field_value, serializer) {
+                serializer.text(&s).map_err(DomSerializeError::Backend)?;
+            }
+            serializer.clear_field_state();
+            continue;
+        }
+
+        // Compute field element name
+        let is_elements = serializer.is_elements_field();
+        let explicit_rename = field_item.field.and_then(|f| f.rename);
+        let is_flattened = field_item.flattened;
+
+        let field_element_name: Option<Cow<'_, str>> = if is_elements && explicit_rename.is_none() {
+            None // Items determine their own element names
+        } else if is_flattened {
+            // For flattened collections (Vec, etc.), pass None so items determine their own names
+            None
+        } else if let Some(rename) = explicit_rename {
+            Some(Cow::Borrowed(rename))
+        } else {
+            Some(to_element_name(&field_item.name))
+        };
+
+        // Check for proxy
+        let format_ns = serializer.format_namespace();
+        let proxy_def = field_item
+            .field
+            .and_then(|f| f.effective_proxy(format_ns))
+            .or_else(|| field_value.shape().effective_proxy(format_ns));
+
+        if let Some(proxy_def) = proxy_def {
+            match field_value.custom_serialization_with_proxy(proxy_def) {
+                Ok(proxy_peek) => {
+                    serialize_value(
+                        serializer,
+                        proxy_peek.as_peek(),
+                        field_element_name.as_deref(),
+                    )?;
+                }
+                Err(e) => {
+                    return Err(DomSerializeError::Reflect(e));
+                }
+            }
+        } else {
+            serialize_value(serializer, *field_value, field_element_name.as_deref())?;
+        }
+
+        serializer.clear_field_state();
+    }
+
+    Ok(())
 }
 
 /// Serialize through a proxy type.
