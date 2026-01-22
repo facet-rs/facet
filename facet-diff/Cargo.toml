@@ -1,6 +1,6 @@
 [package]
 name = "facet-diff"
-version = "0.42.0"
+version = "0.43.0"
 edition = "2024"
 rust-version = "1.90.0"
 license = "MIT OR Apache-2.0"
@@ -18,11 +18,11 @@ default = []
 tracing = ["dep:tracing"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.42.0" }
-facet-core = { path = "../facet-core", version = "0.42.0" }
-facet-diff-core = { path = "../facet-diff-core", version = "0.42.0" }
-facet-pretty = { path = "../facet-pretty", version = "0.42.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
+facet = { path = "../facet", version = "0.43.0" }
+facet-core = { path = "../facet-core", version = "0.43.0" }
+facet-diff-core = { path = "../facet-diff-core", version = "0.43.0" }
+facet-pretty = { path = "../facet-pretty", version = "0.43.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.43.0" }
 log = { workspace = true }
 owo-colors = "4"
 tracing = { version = "0.1", optional = true }

@@ -1,6 +1,6 @@
 [package]
 name = "metrics-tui"
-version = "0.42.0"
+version = "0.43.0"
 edition = "2024"
 rust-version = "1.90.0"
 publish = false
@@ -14,8 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 crossterm = { version = "0.29", default-features = false }
-facet = { path = "../../facet", version = "0.42.0" }
-facet-json = { path = "../../facet-json", version = "0.42.0" }
+facet = { path = "../../facet", version = "0.43.0" }
+facet-json = { path = "../../facet-json", version = "0.43.0" }
 ratatui = { version = "0.30.0-beta.0", default-features = false, features = ["crossterm"] }
 
 [lints]

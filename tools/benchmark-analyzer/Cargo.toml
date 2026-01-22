@@ -1,6 +1,6 @@
 [package]
 name = "benchmark-analyzer"
-version = "0.42.0"
+version = "0.43.0"
 edition = "2024"
 rust-version = "1.90.0"
 publish = false
@@ -23,12 +23,12 @@ name = "gen-run-types"
 path = "src/gen_run_types.rs"
 
 [dependencies]
-benchmark-defs = { path = "../benchmark-defs", version = "0.42.0" }
-facet = { path = "../../facet", features = ["indexmap"], version = "0.42.0" }
-facet-args = { path = "../../facet-args", version = "0.42.0" }
-facet-json = { path = "../../facet-json", version = "0.42.0" }
-facet-typescript = { path = "../../facet-typescript", version = "0.42.0" }
-facet-json-schema = { path = "../../facet-json-schema", version = "0.42.0" }
+benchmark-defs = { path = "../benchmark-defs", version = "0.43.0" }
+facet = { path = "../../facet", features = ["indexmap"], version = "0.43.0" }
+facet-args = { path = "../../facet-args", version = "0.43.0" }
+facet-json = { path = "../../facet-json", version = "0.43.0" }
+facet-typescript = { path = "../../facet-typescript", version = "0.43.0" }
+facet-json-schema = { path = "../../facet-json-schema", version = "0.43.0" }
 console = "0.16"
 unicode-width = "0.2"
 owo-colors = "4"

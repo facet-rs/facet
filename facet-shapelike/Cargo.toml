@@ -16,10 +16,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [features]
 
 [dependencies]
-facet = { path = "../facet", version = "0.42.0", features = ["all-impls", "doc"] }
-facet-core = { path = "../facet-core", version = "0.42.0", features = ["alloc"] }
-facet-postcard = { path = "../facet-postcard", version = "0.42.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.42.0", default-features = false }
+facet = { path = "../facet", version = "0.43.0", features = ["all-impls", "doc"] }
+facet-core = { path = "../facet-core", version = "0.43.0", features = ["alloc"] }
+facet-postcard = { path = "../facet-postcard", version = "0.43.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.43.0", default-features = false }
 
 [dev-dependencies]
 facet-args = { path = "../facet-args" }

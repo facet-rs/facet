@@ -92,7 +92,7 @@ exclude = [
 resolver = "3"
 
 [workspace.package]
-version = "0.42.0"
+version = "0.43.0"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
