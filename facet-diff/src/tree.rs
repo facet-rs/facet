@@ -314,10 +314,9 @@ impl TreeBuilder {
                 }
             }
             _ => {
-                // For scalar string values, store as _text property
-                if let Some(s) = peek.as_str() {
-                    props.set("_text", Some(s.to_string()));
-                }
+                // For scalar values, store as _text property using Display
+                // This handles strings, numbers, bools, etc.
+                props.set("_text", Some(format!("{}", peek)));
             }
         }
     }
