@@ -86,7 +86,11 @@ impl TypeMapper {
     }
 
     /// Map a schema type to a Go type, registering nested types as needed.
-    fn map_schema_type(&mut self, parent_name: Option<&str>, schema: &Schema) -> Result<GoType, GenError> {
+    fn map_schema_type(
+        &mut self,
+        parent_name: Option<&str>,
+        schema: &Schema,
+    ) -> Result<GoType, GenError> {
         match schema {
             Schema::String(_) => Ok(GoType::Primitive("string".to_string())),
             Schema::Int(_) => Ok(GoType::Primitive("int64".to_string())),
@@ -99,7 +103,9 @@ impl TypeMapper {
                 for (documented_key, field_schema) in &obj_schema.0 {
                     let key = documented_key.value();
                     if let Some(field_name) = &key.value {
-                        let field = self.map_field(parent_name, field_name, field_schema)?;
+                        let field_doc = documented_key.doc.as_ref().map(|lines| lines.join(" "));
+                        let field =
+                            self.map_field(parent_name, field_name, field_schema, field_doc)?;
                         struct_fields.push(field);
                     }
                 }
@@ -182,7 +188,13 @@ impl TypeMapper {
     }
 
     /// Map a field to a struct field, registering nested types as needed.
-    fn map_field(&mut self, parent_name: Option<&str>, field_name: &str, schema: &Schema) -> Result<StructField, GenError> {
+    fn map_field(
+        &mut self,
+        parent_name: Option<&str>,
+        field_name: &str,
+        schema: &Schema,
+        doc: Option<String>,
+    ) -> Result<StructField, GenError> {
         // Unwrap Default and Optional wrappers to find the core type
         let mut current = schema;
         let mut is_optional = false;
@@ -233,7 +245,6 @@ impl TypeMapper {
         };
 
         let constraints = self.extract_constraints(inner_schema);
-        let doc = None; // TODO: Extract doc from Documented wrapper
 
         Ok(StructField {
             go_name: to_pascal_case(field_name),
@@ -316,10 +327,16 @@ impl TypeMapper {
                     Ok(format!("*{}", inner_type))
                 }
             }
-            Schema::Default(default_schema) => self.type_name(_parent_name, default_schema.0.1.value()),
+            Schema::Default(default_schema) => {
+                self.type_name(_parent_name, default_schema.0.1.value())
+            }
             Schema::Union(_) | Schema::OneOf(_) => Ok("interface{}".to_string()),
-            Schema::Flatten(flatten_schema) => self.type_name(_parent_name, flatten_schema.0.0.value()),
-            Schema::Deprecated(depr_schema) => self.type_name(_parent_name, depr_schema.0.1.value()),
+            Schema::Flatten(flatten_schema) => {
+                self.type_name(_parent_name, flatten_schema.0.0.value())
+            }
+            Schema::Deprecated(depr_schema) => {
+                self.type_name(_parent_name, depr_schema.0.1.value())
+            }
             Schema::Literal(_) => Ok("string".to_string()),
             Schema::Type { name } => {
                 if let Some(n) = name {
