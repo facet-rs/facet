@@ -8,7 +8,7 @@ facet-diff computes the minimal edit script to transform one value into another.
 It works on any type that implements `Facet`, using reflection to traverse the
 structure without requiring manual diff implementations.
 
-```rust
+```rust,ignore
 use facet_diff::tree_diff;
 
 let old = MyStruct { name: "alice", count: 1 };
