@@ -265,6 +265,8 @@ pub struct XmlSerializer {
     pending_is_text: bool,
     /// True if the current field is an xml::elements list (no wrapper element)
     pending_is_elements: bool,
+    /// True if the current field is a doctype field (xml::doctype)
+    pending_is_doctype: bool,
     /// Pending namespace for the next field
     pending_namespace: Option<String>,
     /// Serialization options (pretty-printing, float formatting, etc.)
@@ -295,6 +297,7 @@ impl XmlSerializer {
             pending_is_attribute: false,
             pending_is_text: false,
             pending_is_elements: false,
+            pending_is_doctype: false,
             pending_namespace: None,
             options,
             depth: 0,
@@ -476,6 +479,7 @@ impl XmlSerializer {
         self.pending_is_attribute = false;
         self.pending_is_text = false;
         self.pending_is_elements = false;
+        self.pending_is_doctype = false;
         self.pending_namespace = None;
     }
 }
@@ -574,6 +578,7 @@ impl DomSerializer for XmlSerializer {
             self.pending_is_attribute = true;
             self.pending_is_text = false;
             self.pending_is_elements = false;
+            self.pending_is_doctype = false;
             return Ok(());
         };
 
@@ -583,6 +588,8 @@ impl DomSerializer for XmlSerializer {
         self.pending_is_text = field_def.get_attr(Some("xml"), "text").is_some();
         // Check if this field is an xml::elements list
         self.pending_is_elements = field_def.get_attr(Some("xml"), "elements").is_some();
+        // Check if this field is a doctype field
+        self.pending_is_doctype = field_def.get_attr(Some("xml"), "doctype").is_some();
 
         // Extract xml::ns attribute from the field
         if let Some(ns_attr) = field_def.get_attr(Some("xml"), "ns")
@@ -617,6 +624,21 @@ impl DomSerializer for XmlSerializer {
 
     fn is_elements_field(&self) -> bool {
         self.pending_is_elements
+    }
+
+    fn is_doctype_field(&self) -> bool {
+        self.pending_is_doctype
+    }
+
+    fn doctype(&mut self, content: &str) -> Result<(), Self::Error> {
+        // Emit DOCTYPE declaration
+        self.out.write_all(b"<!DOCTYPE ").unwrap();
+        self.out.write_all(content.as_bytes()).unwrap();
+        self.out.write_all(b">").unwrap();
+        if self.options.pretty {
+            self.out.write_all(b"\n").unwrap();
+        }
+        Ok(())
     }
 
     fn clear_field_state(&mut self) {

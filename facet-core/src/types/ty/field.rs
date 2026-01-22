@@ -256,6 +256,15 @@ impl Field {
             || self.has_attr(Some("html"), "tag")
     }
 
+    /// Returns true if this field captures the DOCTYPE declaration (for XML documents).
+    ///
+    /// Checks for `xml::doctype` attribute.
+    /// Used to store the DOCTYPE declaration during deserialization.
+    #[inline]
+    pub fn is_doctype(&self) -> bool {
+        self.has_attr(Some("xml"), "doctype")
+    }
+
     /// Returns true if this field stores metadata.
     ///
     /// Metadata fields are excluded from structural hashing and equality.
