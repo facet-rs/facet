@@ -15,11 +15,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = []
-matching-stats = ["cinereus/matching-stats"]
-tracing = ["cinereus/tracing", "dep:tracing"]
+tracing = ["dep:tracing"]
 
 [dependencies]
-cinereus = { path = "../cinereus", version = "0.42.0" }
 facet = { path = "../facet", version = "0.42.0" }
 facet-core = { path = "../facet-core", version = "0.42.0" }
 facet-diff-core = { path = "../facet-diff-core", version = "0.42.0" }
@@ -38,7 +36,6 @@ facet-value = { path = "../facet-value" }
 insta = { workspace = true }
 owo-colors = "4"
 tracing = { workspace = true }
-cinereus = { path = "../cinereus", features = ["tracing"] }
 
 [lints]
 workspace = true

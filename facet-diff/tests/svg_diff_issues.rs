@@ -81,9 +81,7 @@ fn diff_to_xml<'f, T: facet_core::Facet<'f>>(from: &T, to: &T, float_tolerance: 
     let left = Peek::new(from);
     let right = Peek::new(to);
 
-    let options = DiffOptions::new()
-        .with_float_tolerance(float_tolerance)
-        .with_similarity_threshold(0.5);
+    let options = DiffOptions::new().with_float_tolerance(float_tolerance);
     let diff = diff_new_peek_with_options(left, right, &options);
 
     let report = DiffReport::new(diff, left, right).with_float_tolerance(float_tolerance);
