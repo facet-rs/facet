@@ -18,6 +18,7 @@ styx-cst.workspace = true
 styx-format.workspace = true
 styx-lsp.workspace = true
 styx-embed.workspace = true
+styx-gen-go.workspace = true
 facet-styx.workspace = true
 facet.workspace = true
 facet-args.workspace = true

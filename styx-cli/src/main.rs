@@ -178,6 +178,25 @@ enum Command {
         #[facet(args::positional)]
         shell: String,
     },
+
+    /// Generate code from schema
+    Gen {
+        /// Target language
+        #[facet(args::positional)]
+        language: String,
+
+        /// Schema file
+        #[facet(args::positional)]
+        schema: String,
+
+        /// Output directory (default: current directory)
+        #[facet(args::named, default)]
+        output: Option<String>,
+
+        /// Package name (for Go: defaults to schema basename)
+        #[facet(args::named, default)]
+        package: Option<String>,
+    },
 }
 
 // ============================================================================
@@ -273,7 +292,8 @@ fn print_help() {
     eprintln!("    publish <schema> [-y]           Publish to staging.crates.io");
     eprintln!("    cache [--open|--clear]          Cache management");
     eprintln!("    skill                           Output Claude Code skill");
-    eprintln!("    completions <shell>             Generate shell completions (bash, zsh, fish)\n");
+    eprintln!("    completions <shell>             Generate shell completions (bash, zsh, fish)");
+    eprintln!("    gen <lang> <schema>             Generate code from schema (go)\n");
     eprintln!("EXAMPLES:");
     eprintln!("    styx config.styx                Format and print to stdout");
     eprintln!("    styx config.styx --in-place     Format file in place");
@@ -388,6 +408,12 @@ fn run_subcommand_mode(args: &[String]) -> Result<(), CliError> {
         Some(Command::Cache { open, clear }) => run_cache(open, clear),
         Some(Command::Skill) => run_skill(),
         Some(Command::Completions { shell }) => run_completions(&shell),
+        Some(Command::Gen {
+            language,
+            schema,
+            output,
+            package,
+        }) => run_gen(&language, &schema, output.as_deref(), package.as_deref()),
         None => {
             print_help();
             Ok(())
@@ -446,6 +472,12 @@ impl From<io::Error> for CliError {
 impl From<styx_tree::BuildError> for CliError {
     fn from(e: styx_tree::BuildError) -> Self {
         CliError::Parse(e.to_string())
+    }
+}
+
+impl From<styx_gen_go::GenError> for CliError {
+    fn from(e: styx_gen_go::GenError) -> Self {
+        CliError::Io(io::Error::other(e.to_string()))
     }
 }
 
@@ -559,6 +591,52 @@ fn run_completions(shell: &str) -> Result<(), CliError> {
     let completions = facet_args::generate_completions::<Args>(shell_enum, "styx");
     print!("{completions}");
     Ok(())
+}
+
+fn run_gen(
+    language: &str,
+    schema_file: &str,
+    output: Option<&str>,
+    package: Option<&str>,
+) -> Result<(), CliError> {
+    match language.to_lowercase().as_str() {
+        "go" => {
+            // Load and parse schema
+            let schema_content = std::fs::read_to_string(schema_file).map_err(|e| {
+                CliError::Io(io::Error::new(
+                    e.kind(),
+                    format!("schema file '{}': {}", schema_file, e),
+                ))
+            })?;
+
+            let schema: facet_styx::SchemaFile = facet_styx::from_str(&schema_content)
+                .map_err(|e| CliError::Parse(format!("failed to parse schema: {}", e)))?;
+
+            // Determine package name
+            let pkg_name = package.unwrap_or_else(|| {
+                Path::new(schema_file)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("config")
+            });
+
+            // Sanitize package name for Go (replace hyphens with underscores)
+            let sanitized_pkg_name = pkg_name.replace('-', "_");
+
+            // Determine output directory
+            let output_dir = output.unwrap_or(".");
+
+            // Generate Go code
+            styx_gen_go::generate(&schema, &sanitized_pkg_name, output_dir)?;
+
+            eprintln!("Generated Go code in {}/", output_dir);
+            Ok(())
+        }
+        _ => Err(CliError::Usage(format!(
+            "unknown language '{}', expected: go",
+            language
+        ))),
+    }
 }
 
 fn run_cache(open: bool, clear: bool) -> Result<(), CliError> {
