@@ -8,7 +8,7 @@ pub use cinereus::matching::{
     get_stats as get_matching_stats, reset_stats as reset_matching_stats,
 };
 
-use crate::{debug, trace_verbose};
+use crate::{debug, trace, trace_verbose};
 
 use core::hash::{Hash, Hasher};
 use std::borrow::Cow;
@@ -719,7 +719,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     .collect();
 
                 debug!(
-                    ?path,
+                    %path,
                     num_changes = changes.len(),
                     "emitting EditOp::UpdateAttributes"
                 );
@@ -734,7 +734,12 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 label,
                 ..
             } => {
-                debug!(?node_b, ?parent_b, position, "INSERT: starting");
+                debug!(
+                    node_b = usize::from(node_b),
+                    parent_b = usize::from(parent_b),
+                    position,
+                    "INSERT: starting"
+                );
 
                 // Find the parent in our shadow tree
                 let shadow_parent = b_to_shadow.get(&parent_b).copied().unwrap_or(shadow_root);
@@ -757,7 +762,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     let occupant_slot = next_slot;
                     next_slot += 1;
                     debug!(
-                        ?occupant,
+                        occupant = usize::from(occupant),
                         occupant_slot, "INSERT: will detach occupant to slot"
                     );
                     // Insert new_node before occupant, then detach occupant
@@ -865,9 +870,9 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 new_position,
             } => {
                 debug!(
-                    ?node_a,
-                    ?node_b,
-                    ?new_parent_b,
+                    node_a = usize::from(node_a),
+                    node_b = usize::from(node_b),
+                    new_parent_b = usize::from(new_parent_b),
                     new_position,
                     "MOVE: starting"
                 );
@@ -878,9 +883,9 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                         // new_parent_b is not in b_to_shadow - this shouldn't happen after matching fixes.
                         // If this occurs, cinereus should have skipped this Move because parent_b is unmatched.
                         debug!(
-                            ?new_parent_b,
-                            ?node_a,
-                            ?node_b,
+                            new_parent_b = usize::from(new_parent_b),
+                            node_a = usize::from(node_a),
+                            node_b = usize::from(node_b),
                             "WARNING: new_parent_b not in b_to_shadow, falling back to shadow_root"
                         );
                         shadow_root
@@ -1004,14 +1009,17 @@ fn find_detached_ancestor(
     let mut current = node;
     // Collect (child_node, parent_node) pairs as we traverse up
     let mut traversal: Vec<(NodeId, NodeId)> = Vec::new();
-    debug!(?node, ?detached_nodes, "find_detached_ancestor: starting");
+    trace!(node = usize::from(node), "find_detached_ancestor: starting");
 
     loop {
-        debug!(?current, "find_detached_ancestor: checking");
+        trace!(
+            current = usize::from(current),
+            "find_detached_ancestor: checking"
+        );
         // Check if current node is detached
         if let Some(&slot) = detached_nodes.get(&current) {
-            debug!(
-                ?current,
+            trace!(
+                current = usize::from(current),
                 slot,
                 traversal_len = traversal.len(),
                 "find_detached_ancestor: found!"
@@ -1038,7 +1046,7 @@ fn find_detached_ancestor(
                     // The relative path is the suffix after the slot root's path
                     if full_path.len() > slot_root_path_len {
                         let relative_segments = full_path[slot_root_path_len..].to_vec();
-                        debug!(
+                        trace!(
                             ?relative_segments,
                             "find_detached_ancestor: relative path from labels"
                         );
@@ -1069,7 +1077,10 @@ fn find_detached_ancestor(
             traversal.push((current, parent_id));
             current = parent_id;
         } else {
-            debug!(?current, "find_detached_ancestor: no parent, stopping");
+            trace!(
+                current = usize::from(current),
+                "find_detached_ancestor: no parent, stopping"
+            );
             // No more parents
             break;
         }
@@ -1118,7 +1129,7 @@ fn compute_adjusted_path(
     let mut depth_to_position: HashMap<usize, usize> = HashMap::new();
     let mut current = node;
 
-    debug!(?node, ?original_path, "compute_adjusted_path start");
+    debug!(node = usize::from(node), %original_path, "compute_adjusted_path start");
 
     while current != shadow_root {
         // Get the current node's path depth from its stored label
@@ -1137,10 +1148,10 @@ fn compute_adjusted_path(
                 let children: Vec<_> = parent_id.children(shadow_arena).collect();
                 let pos = children.iter().position(|&c| c == current).unwrap_or(0);
                 debug!(
-                    ?current,
-                    ?parent_id,
-                    ?depth,
-                    ?pos,
+                    current = usize::from(current),
+                    parent = usize::from(parent_id),
+                    depth,
+                    pos,
                     num_children = children.len(),
                     "recording position"
                 );
