@@ -77,15 +77,11 @@ pub enum EditOp {
         value: Option<String>,
         /// If Some, the displaced node goes to this slot
         detach_to_slot: Option<u32>,
-        /// Hash of the inserted value
-        hash: cinereus::NodeHash,
     },
     /// A node was deleted from tree A.
     Delete {
         /// The node to delete - either at a path or in a slot
         node: NodeRef,
-        /// Hash of the deleted value
-        hash: cinereus::NodeHash,
     },
     /// A node was moved from one location to another.
     /// If `detach_to_slot` is Some, the node at the target is detached and stored in that slot.
@@ -96,8 +92,6 @@ pub enum EditOp {
         to: NodeRef,
         /// If Some, the displaced node goes to this slot
         detach_to_slot: Option<u32>,
-        /// Hash of the moved value
-        hash: cinereus::NodeHash,
     },
 }
 
@@ -840,7 +834,6 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     label_path,
                     value,
                     detach_to_slot,
-                    hash: tree_b.get(node_b).hash,
                 };
                 debug!(?edit_op, "emitting Insert");
                 result.push(edit_op);
@@ -880,10 +873,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     NodeRef::Path(path)
                 };
 
-                let edit_op = EditOp::Delete {
-                    node,
-                    hash: tree_a.get(node_a).hash,
-                };
+                let edit_op = EditOp::Delete { node };
                 debug!(?edit_op, "emitting Delete");
                 result.push(edit_op);
 
@@ -1010,7 +1000,6 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     from,
                     to,
                     detach_to_slot,
-                    hash: tree_b.get(node_b).hash,
                 });
 
                 // Update b_to_shadow
