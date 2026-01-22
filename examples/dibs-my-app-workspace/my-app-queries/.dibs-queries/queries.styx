@@ -58,7 +58,7 @@ ProductsPaginated @query{
     offset $page_offset
     select {id, handle, status, active}
 }
-// Query with JOIN - returns product with its first translation
+// Query with JOIN - returns product with its first translation (singular relation)
 
 ProductWithTranslation @query{
     params {handle @string}
@@ -72,6 +72,24 @@ ProductWithTranslation @query{
         translation @rel{
             from product_translation
             first true
+            select {locale, title, description}
+        }
+    }
+}
+
+// Query with vec relation - returns product with all translations (plural relation)
+
+ProductWithAllTranslations @query{
+    params {handle @string}
+    from product
+    where {handle $handle, deleted_at @null}
+    first true
+    select {
+        id
+        handle
+        status
+        all_translations @rel{
+            from product_translation
             select {locale, title, description}
         }
     }
