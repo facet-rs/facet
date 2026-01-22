@@ -51,4 +51,3 @@ ariadne.workspace = true
 
 [dev-dependencies]
 styx-lsp.workspace = true
-styx-lsp-test-schema.workspace = true

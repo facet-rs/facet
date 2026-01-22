@@ -21,6 +21,5 @@ dotenvy.workspace = true
 facet = { workspace = true, features = ["jiff02", "rust_decimal"] }
 jiff.workspace = true
 rust_decimal.workspace = true
-rust_decimal_macros.workspace = true
 tokio.workspace = true
 tokio-postgres.workspace = true

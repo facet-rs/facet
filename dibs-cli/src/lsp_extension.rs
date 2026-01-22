@@ -186,15 +186,16 @@ impl DibsExtension {
     /// Returns the param name (without the $) if found.
     fn find_param_at_offset(&self, value: &styx_tree::Value, offset: usize) -> Option<String> {
         // Check if this value is a scalar that looks like $param
-        if let Some(text) = value.as_str() {
-            if let Some(span) = &value.span {
-                let start = span.start as usize;
-                let end = span.end as usize;
-                if offset >= start && offset <= end {
-                    if let Some(param_name) = text.strip_prefix('$') {
-                        return Some(param_name.to_string());
-                    }
-                }
+        if let Some(text) = value.as_str()
+            && let Some(span) = &value.span
+        {
+            let start = span.start as usize;
+            let end = span.end as usize;
+            if offset >= start
+                && offset <= end
+                && let Some(param_name) = text.strip_prefix('$')
+            {
+                return Some(param_name.to_string());
             }
         }
 
@@ -229,10 +230,10 @@ impl DibsExtension {
 
     fn collect_param_refs_inner(&self, value: &styx_tree::Value, params: &mut Vec<String>) {
         // Check if this value is a scalar that looks like $param
-        if let Some(text) = value.as_str() {
-            if let Some(param_name) = text.strip_prefix('$') {
-                params.push(param_name.to_string());
-            }
+        if let Some(text) = value.as_str()
+            && let Some(param_name) = text.strip_prefix('$')
+        {
+            params.push(param_name.to_string());
         }
 
         // Recurse into object entries (but skip the "params" block itself)
@@ -325,11 +326,12 @@ impl DibsExtension {
                             has_offset = true;
                             offset_span = entry.key.span.as_ref();
                             // Try to parse offset value for large offset warning
-                            if let Some(val_str) = entry.value.as_str() {
-                                if let Ok(offset_val) = val_str.parse::<i64>() {
-                                    if offset_val > 1000 {
-                                        if let Some(span) = &entry.value.span {
-                                            diagnostics.push(Diagnostic {
+                            if let Some(val_str) = entry.value.as_str()
+                                && let Ok(offset_val) = val_str.parse::<i64>()
+                                && offset_val > 1000
+                                && let Some(span) = &entry.value.span
+                            {
+                                diagnostics.push(Diagnostic {
                                                 range: self.span_to_range(document_uri, span).await,
                                                 severity: DiagnosticSeverity::Warning,
                                                 message: format!(
@@ -340,9 +342,6 @@ impl DibsExtension {
                                                 code: Some("large-offset".to_string()),
                                                 data: None,
                                             });
-                                        }
-                                    }
-                                }
                             }
                         }
                         "order-by" => has_order_by = true,
@@ -379,7 +378,7 @@ impl DibsExtension {
                                         // Get the type tag (e.g., @string, @int)
                                         let param_type =
                                             param_entry.value.tag.as_ref().map(|t| t.name.clone());
-                                        let span = param_entry.key.span.clone();
+                                        let span = param_entry.key.span;
                                         declared_params.push((name.to_string(), param_type, span));
                                     }
                                 }
@@ -390,83 +389,88 @@ impl DibsExtension {
                 }
 
                 // Lint: OFFSET without LIMIT
-                if has_offset && !has_limit {
-                    if let Some(span) = offset_span {
-                        diagnostics.push(Diagnostic {
-                            range: self.span_to_range(document_uri, span).await,
-                            severity: DiagnosticSeverity::Warning,
-                            message: "'offset' without 'limit' - did you forget limit?".to_string(),
-                            source: Some("dibs".to_string()),
-                            code: Some("offset-without-limit".to_string()),
-                            data: None,
-                        });
-                    }
+                if has_offset
+                    && !has_limit
+                    && let Some(span) = offset_span
+                {
+                    diagnostics.push(Diagnostic {
+                        range: self.span_to_range(document_uri, span).await,
+                        severity: DiagnosticSeverity::Warning,
+                        message: "'offset' without 'limit' - did you forget limit?".to_string(),
+                        source: Some("dibs".to_string()),
+                        code: Some("offset-without-limit".to_string()),
+                        data: None,
+                    });
                 }
 
                 // Lint: LIMIT without ORDER BY (for @query only)
-                if tag_name == "query" && has_limit && !has_order_by {
-                    if let Some(span) = limit_span {
-                        diagnostics.push(Diagnostic {
-                            range: self.span_to_range(document_uri, span).await,
-                            severity: DiagnosticSeverity::Warning,
-                            message: "'limit' without 'order-by' returns arbitrary rows"
-                                .to_string(),
-                            source: Some("dibs".to_string()),
-                            code: Some("limit-without-order-by".to_string()),
-                            data: None,
-                        });
-                    }
+                if tag_name == "query"
+                    && has_limit
+                    && !has_order_by
+                    && let Some(span) = limit_span
+                {
+                    diagnostics.push(Diagnostic {
+                        range: self.span_to_range(document_uri, span).await,
+                        severity: DiagnosticSeverity::Warning,
+                        message: "'limit' without 'order-by' returns arbitrary rows".to_string(),
+                        source: Some("dibs".to_string()),
+                        code: Some("limit-without-order-by".to_string()),
+                        data: None,
+                    });
                 }
 
                 // Lint: first without ORDER BY (for @query only)
-                if tag_name == "query" && has_first && !has_order_by {
-                    if let Some(span) = first_span {
-                        diagnostics.push(Diagnostic {
-                            range: self.span_to_range(document_uri, span).await,
-                            severity: DiagnosticSeverity::Warning,
-                            message: "'first' without 'order-by' returns arbitrary row".to_string(),
-                            source: Some("dibs".to_string()),
-                            code: Some("first-without-order-by".to_string()),
-                            data: None,
-                        });
-                    }
+                if tag_name == "query"
+                    && has_first
+                    && !has_order_by
+                    && let Some(span) = first_span
+                {
+                    diagnostics.push(Diagnostic {
+                        range: self.span_to_range(document_uri, span).await,
+                        severity: DiagnosticSeverity::Warning,
+                        message: "'first' without 'order-by' returns arbitrary row".to_string(),
+                        source: Some("dibs".to_string()),
+                        code: Some("first-without-order-by".to_string()),
+                        data: None,
+                    });
                 }
 
                 // Lint: @update/@delete without WHERE
-                if matches!(tag_name, "update" | "delete") && !has_where {
-                    if let Some(span) = &tag.span {
-                        diagnostics.push(Diagnostic {
-                            range: self.span_to_range(document_uri, span).await,
-                            severity: DiagnosticSeverity::Error,
-                            message: format!(
-                                "@{} without 'where' affects all rows - add 'where' or 'all true'",
-                                tag_name
-                            ),
-                            source: Some("dibs".to_string()),
-                            code: Some("mutation-without-where".to_string()),
-                            data: None,
-                        });
-                    }
+                if matches!(tag_name, "update" | "delete")
+                    && !has_where
+                    && let Some(span) = &tag.span
+                {
+                    diagnostics.push(Diagnostic {
+                        range: self.span_to_range(document_uri, span).await,
+                        severity: DiagnosticSeverity::Error,
+                        message: format!(
+                            "@{} without 'where' affects all rows - add 'where' or 'all true'",
+                            tag_name
+                        ),
+                        source: Some("dibs".to_string()),
+                        code: Some("mutation-without-where".to_string()),
+                        data: None,
+                    });
                 }
 
                 // Lint: unused params - collect used params and compare
                 if !declared_params.is_empty() {
                     let used_params = self.collect_param_refs(value);
                     for (param_name, _param_type, param_span) in &declared_params {
-                        if !used_params.contains(param_name) {
-                            if let Some(span) = param_span {
-                                diagnostics.push(Diagnostic {
-                                    range: self.span_to_range(document_uri, span).await,
-                                    severity: DiagnosticSeverity::Warning,
-                                    message: format!(
-                                        "param '{}' is declared but never used",
-                                        param_name
-                                    ),
-                                    source: Some("dibs".to_string()),
-                                    code: Some("unused-param".to_string()),
-                                    data: None,
-                                });
-                            }
+                        if !used_params.contains(param_name)
+                            && let Some(span) = param_span
+                        {
+                            diagnostics.push(Diagnostic {
+                                range: self.span_to_range(document_uri, span).await,
+                                severity: DiagnosticSeverity::Warning,
+                                message: format!(
+                                    "param '{}' is declared but never used",
+                                    param_name
+                                ),
+                                source: Some("dibs".to_string()),
+                                code: Some("unused-param".to_string()),
+                                data: None,
+                            });
                         }
                     }
                 }
@@ -514,19 +518,18 @@ impl DibsExtension {
                 }
 
                 // Lint: @delete on table with deleted_at (should use soft delete)
-                if tag_name == "delete" && has_deleted_at_column {
-                    if let Some(span) = &tag.span {
-                        diagnostics.push(Diagnostic {
+                if tag_name == "delete"
+                    && has_deleted_at_column
+                    && let Some(span) = &tag.span
+                {
+                    diagnostics.push(Diagnostic {
                             range: self.span_to_range(document_uri, span).await,
                             severity: DiagnosticSeverity::Warning,
-                            message: format!(
-                                "@delete on table with 'deleted_at' column - consider soft delete with @update instead"
-                            ),
+                            message: "@delete on table with 'deleted_at' column - consider soft delete with @update instead".to_string(),
                             source: Some("dibs".to_string()),
                             code: Some("hard-delete-on-soft-delete-table".to_string()),
                             data: None,
                         });
-                    }
                 }
 
                 // Validations that don't require table info
@@ -543,30 +546,25 @@ impl DibsExtension {
                 }
 
                 // Validate column references if we have a valid table
-                if tag_name == "query" {
-                    if let Some(table) = table_info {
-                        for entry in &obj.entries {
-                            let key = entry.key.as_str().unwrap_or("");
-                            if matches!(key, "select" | "where" | "order-by" | "group-by") {
-                                self.validate_columns(
-                                    document_uri,
-                                    &entry.value,
-                                    table,
-                                    diagnostics,
-                                )
+                if tag_name == "query"
+                    && let Some(table) = table_info
+                {
+                    for entry in &obj.entries {
+                        let key = entry.key.as_str().unwrap_or("");
+                        if matches!(key, "select" | "where" | "order-by" | "group-by") {
+                            self.validate_columns(document_uri, &entry.value, table, diagnostics)
                                 .await;
-                            }
-                            // Type check param usages in where clause
-                            if key == "where" {
-                                self.validate_param_types(
-                                    document_uri,
-                                    &entry.value,
-                                    table,
-                                    &declared_params,
-                                    diagnostics,
-                                )
-                                .await;
-                            }
+                        }
+                        // Type check param usages in where clause
+                        if key == "where" {
+                            self.validate_param_types(
+                                document_uri,
+                                &entry.value,
+                                table,
+                                &declared_params,
+                                diagnostics,
+                            )
+                            .await;
                         }
                     }
                 }
@@ -577,17 +575,17 @@ impl DibsExtension {
                         // First lint @rel blocks with parent table context for FK validation
                         if let Some(styx_tree::Payload::Object(select_obj)) = &entry.value.payload {
                             for select_entry in &select_obj.entries {
-                                if let Some(tag) = &select_entry.value.tag {
-                                    if tag.name == "rel" {
-                                        self.lint_relation(
-                                            document_uri,
-                                            &select_entry.value,
-                                            table_name.as_deref(),
-                                            &schema,
-                                            diagnostics,
-                                        )
-                                        .await;
-                                    }
+                                if let Some(tag) = &select_entry.value.tag
+                                    && tag.name == "rel"
+                                {
+                                    self.lint_relation(
+                                        document_uri,
+                                        &select_entry.value,
+                                        table_name.as_deref(),
+                                        &schema,
+                                        diagnostics,
+                                    )
+                                    .await;
                                 }
                             }
                         }
@@ -679,17 +677,18 @@ impl DibsExtension {
                 .any(|e| e.value.tag.as_ref().map(|t| t.name.as_str()) == Some("rel"));
 
             // Warn if no columns selected (but having only @rel entries is fine)
-            if non_rel_entries.is_empty() && !has_rel_entries {
-                if let Some(span) = &value.span {
-                    diagnostics.push(Diagnostic {
-                        range: self.span_to_range(document_uri, span).await,
-                        severity: DiagnosticSeverity::Warning,
-                        message: "empty select block - no columns selected".to_string(),
-                        source: Some("dibs".to_string()),
-                        code: Some("empty-select".to_string()),
-                        data: None,
-                    });
-                }
+            if non_rel_entries.is_empty()
+                && !has_rel_entries
+                && let Some(span) = &value.span
+            {
+                diagnostics.push(Diagnostic {
+                    range: self.span_to_range(document_uri, span).await,
+                    severity: DiagnosticSeverity::Warning,
+                    message: "empty select block - no columns selected".to_string(),
+                    source: Some("dibs".to_string()),
+                    code: Some("empty-select".to_string()),
+                    data: None,
+                });
             }
             // Note: Duplicate columns are caught by the styx parser itself
         }
@@ -739,10 +738,10 @@ impl DibsExtension {
         diagnostics: &mut Vec<Diagnostic>,
     ) {
         // Skip special tags like @null, @now, @default - they're type-flexible
-        if let Some(tag) = &value.tag {
-            if matches!(tag.name.as_str(), "null" | "now" | "default") {
-                return;
-            }
+        if let Some(tag) = &value.tag
+            && matches!(tag.name.as_str(), "null" | "now" | "default")
+        {
+            return;
         }
 
         // Check if value is a scalar
@@ -765,44 +764,43 @@ impl DibsExtension {
 
             // Check literal type vs column type
             let literal_type = self.infer_literal_type(text, scalar.kind);
-            if let Some(lit_type) = literal_type {
-                if !self.literal_type_compatible(&lit_type, &column.sql_type) {
-                    if let Some(span) = &value.span {
-                        diagnostics.push(Diagnostic {
-                            range: self.span_to_range(document_uri, span).await,
-                            severity: DiagnosticSeverity::Error,
-                            message: format!(
-                                "type mismatch: {} literal '{}' for column '{}' ({})",
-                                lit_type, text, column.name, column.sql_type
-                            ),
-                            source: Some("dibs".to_string()),
-                            code: Some("literal-type-mismatch".to_string()),
-                            data: None,
-                        });
-                    }
-                }
+            if let Some(lit_type) = literal_type
+                && !self.literal_type_compatible(lit_type, &column.sql_type)
+                && let Some(span) = &value.span
+            {
+                diagnostics.push(Diagnostic {
+                    range: self.span_to_range(document_uri, span).await,
+                    severity: DiagnosticSeverity::Error,
+                    message: format!(
+                        "type mismatch: {} literal '{}' for column '{}' ({})",
+                        lit_type, text, column.name, column.sql_type
+                    ),
+                    source: Some("dibs".to_string()),
+                    code: Some("literal-type-mismatch".to_string()),
+                    data: None,
+                });
             }
 
             // Check enum value if column has enum variants
             if !column.enum_variants.is_empty() {
                 // Strip quotes from the literal value for comparison
                 let value_to_check = text.trim_matches('"').trim_matches('\'');
-                if !column.enum_variants.iter().any(|v| v == value_to_check) {
-                    if let Some(span) = &value.span {
-                        diagnostics.push(Diagnostic {
-                            range: self.span_to_range(document_uri, span).await,
-                            severity: DiagnosticSeverity::Error,
-                            message: format!(
-                                "invalid enum value '{}' for column '{}' - expected one of: {}",
-                                value_to_check,
-                                column.name,
-                                column.enum_variants.join(", ")
-                            ),
-                            source: Some("dibs".to_string()),
-                            code: Some("invalid-enum-value".to_string()),
-                            data: None,
-                        });
-                    }
+                if !column.enum_variants.iter().any(|v| v == value_to_check)
+                    && let Some(span) = &value.span
+                {
+                    diagnostics.push(Diagnostic {
+                        range: self.span_to_range(document_uri, span).await,
+                        severity: DiagnosticSeverity::Error,
+                        message: format!(
+                            "invalid enum value '{}' for column '{}' - expected one of: {}",
+                            value_to_check,
+                            column.name,
+                            column.enum_variants.join(", ")
+                        ),
+                        source: Some("dibs".to_string()),
+                        code: Some("invalid-enum-value".to_string()),
+                        data: None,
+                    });
                 }
             }
         }
@@ -901,22 +899,21 @@ impl DibsExtension {
             .iter()
             .find(|(name, _, _)| name == param_name);
 
-        if let Some((_, Some(param_type), _)) = param_info {
-            if !self.types_compatible(param_type, &column.sql_type) {
-                if let Some(span) = span {
-                    diagnostics.push(Diagnostic {
-                        range: self.span_to_range(document_uri, span).await,
-                        severity: DiagnosticSeverity::Error,
-                        message: format!(
-                            "type mismatch: param '{}' is @{} but column '{}' is {}",
-                            param_name, param_type, column.name, column.sql_type
-                        ),
-                        source: Some("dibs".to_string()),
-                        code: Some("param-type-mismatch".to_string()),
-                        data: None,
-                    });
-                }
-            }
+        if let Some((_, Some(param_type), _)) = param_info
+            && !self.types_compatible(param_type, &column.sql_type)
+            && let Some(span) = span
+        {
+            diagnostics.push(Diagnostic {
+                range: self.span_to_range(document_uri, span).await,
+                severity: DiagnosticSeverity::Error,
+                message: format!(
+                    "type mismatch: param '{}' is @{} but column '{}' is {}",
+                    param_name, param_type, column.name, column.sql_type
+                ),
+                source: Some("dibs".to_string()),
+                code: Some("param-type-mismatch".to_string()),
+                data: None,
+            });
         }
     }
 
@@ -986,37 +983,33 @@ impl DibsExtension {
             }
 
             // Lint: first without order-by in relation
-            if has_first && !has_order_by {
-                if let Some(span) = first_span {
-                    diagnostics.push(Diagnostic {
-                        range: self.span_to_range(document_uri, span).await,
-                        severity: DiagnosticSeverity::Warning,
-                        message: "'first' in @rel without 'order-by' returns arbitrary row"
-                            .to_string(),
-                        source: Some("dibs".to_string()),
-                        code: Some("rel-first-without-order-by".to_string()),
-                        data: None,
-                    });
-                }
+            if has_first
+                && !has_order_by
+                && let Some(span) = first_span
+            {
+                diagnostics.push(Diagnostic {
+                    range: self.span_to_range(document_uri, span).await,
+                    severity: DiagnosticSeverity::Warning,
+                    message: "'first' in @rel without 'order-by' returns arbitrary row".to_string(),
+                    source: Some("dibs".to_string()),
+                    code: Some("rel-first-without-order-by".to_string()),
+                    data: None,
+                });
             }
 
             // Lint: no FK relationship between parent and relation table
-            if let (Some(parent), Some(rel)) = (parent_table, rel_table) {
-                if let Some(span) = from_span {
-                    if !self.has_fk_relationship(parent, rel, schema) {
-                        diagnostics.push(Diagnostic {
-                            range: self.span_to_range(document_uri, span).await,
-                            severity: DiagnosticSeverity::Error,
-                            message: format!(
-                                "no FK relationship between '{}' and '{}'",
-                                parent, rel
-                            ),
-                            source: Some("dibs".to_string()),
-                            code: Some("no-fk-relationship".to_string()),
-                            data: None,
-                        });
-                    }
-                }
+            if let (Some(parent), Some(rel)) = (parent_table, rel_table)
+                && let Some(span) = from_span
+                && !self.has_fk_relationship(parent, rel, schema)
+            {
+                diagnostics.push(Diagnostic {
+                    range: self.span_to_range(document_uri, span).await,
+                    severity: DiagnosticSeverity::Error,
+                    message: format!("no FK relationship between '{}' and '{}'", parent, rel),
+                    source: Some("dibs".to_string()),
+                    code: Some("no-fk-relationship".to_string()),
+                    data: None,
+                });
             }
         }
     }
