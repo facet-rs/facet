@@ -424,7 +424,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "benchmark-analyzer"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "axum",
  "benchmark-defs",
@@ -455,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "benchmark-generator"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "benchmark-defs",
  "regex",
@@ -3401,7 +3401,7 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
 name = "metrics-tui"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "crossterm",
  "facet",
@@ -3718,7 +3718,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "perf-index-generator"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "benchmark-analyzer",
  "chrono",
