@@ -22,9 +22,6 @@ indextree = { workspace = true }
 rapidhash = "1"
 rayon = "1"
 tracing = { version = "0.1", optional = true }
-facet-core = { workspace = true }
-facet-pretty.workspace = true
-facet = { path = "../facet" }
 
 [dev-dependencies]
 tracing = { workspace = true }

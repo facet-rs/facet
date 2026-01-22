@@ -886,8 +886,6 @@ name = "cinereus"
 version = "0.42.0"
 dependencies = [
  "facet",
- "facet-core",
- "facet-pretty",
  "facet-testhelpers",
  "indextree",
  "rapidhash",
