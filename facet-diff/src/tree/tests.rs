@@ -389,12 +389,12 @@ fn test_collect_properties_direct_attrs() {
     // Should collect both attribute fields
     assert_eq!(
         props.get("id"),
-        Some(&Some("my-id".to_string())),
+        Some(&PropValue(Some("my-id".to_string()))),
         "Should collect id attribute"
     );
     assert_eq!(
         props.get("class"),
-        Some(&Some("my-class".to_string())),
+        Some(&PropValue(Some("my-class".to_string()))),
         "Should collect class attribute"
     );
     // Should NOT collect non-attribute field
@@ -419,12 +419,12 @@ fn test_collect_properties_none_values() {
     // Should collect None as None
     assert_eq!(
         props.get("id"),
-        Some(&None),
+        Some(&PropValue(None)),
         "Should collect None attribute"
     );
     assert_eq!(
         props.get("class"),
-        Some(&Some("visible".to_string())),
+        Some(&PropValue(Some("visible".to_string()))),
         "Should collect Some attribute"
     );
 }
@@ -447,17 +447,17 @@ fn test_collect_properties_flattened_attrs() {
     // Should collect attributes from flattened struct
     assert_eq!(
         props.get("id"),
-        Some(&Some("my-id".to_string())),
+        Some(&PropValue(Some("my-id".to_string()))),
         "Should collect id from flattened attrs"
     );
     assert_eq!(
         props.get("class"),
-        Some(&Some("my-class".to_string())),
+        Some(&PropValue(Some("my-class".to_string()))),
         "Should collect class from flattened attrs"
     );
     assert_eq!(
         props.get("style"),
-        Some(&None),
+        Some(&PropValue(None)),
         "Should collect style=None from flattened attrs"
     );
 }

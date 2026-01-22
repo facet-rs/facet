@@ -167,7 +167,7 @@ where
 /// - A "kind" for type-based matching (nodes of different kinds don't match)
 /// - An optional label for leaf nodes (the actual value)
 /// - Properties: key-value pairs that are NOT tree children
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct NodeData<T: TreeTypes> {
     /// Structural hash of this node and all its descendants (Merkle-tree style).
     /// Two nodes with the same hash are structurally identical.
@@ -185,6 +185,17 @@ pub struct NodeData<T: TreeTypes> {
     /// Properties: key-value pairs attached to this node.
     /// Unlike children, properties are diffed field-by-field when nodes match.
     pub properties: T::Props,
+}
+
+impl<T: TreeTypes> Clone for NodeData<T> {
+    fn clone(&self) -> Self {
+        Self {
+            hash: self.hash,
+            kind: self.kind.clone(),
+            label: self.label.clone(),
+            properties: self.properties.clone(),
+        }
+    }
 }
 
 impl<T: TreeTypes> NodeData<T> {

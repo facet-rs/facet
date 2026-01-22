@@ -15,6 +15,16 @@ pub enum PropKey {
     Attr(String),
 }
 
+impl std::fmt::Display for PropKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PropKey::Tag => write!(f, "tag"),
+            PropKey::Text => write!(f, "text"),
+            PropKey::Attr(name) => write!(f, "@{}", name),
+        }
+    }
+}
+
 impl From<&str> for PropKey {
     fn from(s: &str) -> Self {
         PropKey::Attr(s.to_string())
@@ -39,7 +49,8 @@ use std::borrow::Cow;
 use std::hash::DefaultHasher;
 
 use cinereus::{
-    EditOp as CinereusEditOp, Matching, MatchingConfig, NodeData, Tree, diff_trees_with_matching,
+    EditOp as CinereusEditOp, Matching, MatchingConfig, NodeData, Tree, TreeTypes,
+    diff_trees_with_matching,
     indextree::{self, NodeId},
     tree::{Properties, PropertyChange},
 };
@@ -66,11 +77,76 @@ pub enum NodeKind {
     Scalar(&'static str),
 }
 
+impl std::fmt::Display for NodeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeKind::Struct(name) => write!(f, "struct {}", name),
+            NodeKind::EnumVariant(enum_name, variant) => write!(f, "{}::{}", enum_name, variant),
+            NodeKind::List(name) => write!(f, "list<{}>", name),
+            NodeKind::Map(name) => write!(f, "map<{}>", name),
+            NodeKind::Option(name) => write!(f, "option<{}>", name),
+            NodeKind::Scalar(name) => write!(f, "{}", name),
+        }
+    }
+}
+
 /// Label for a node (the actual value for leaves).
-#[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, facet::Facet)]
 pub struct NodeLabel {
     /// The path to this node from the root.
     pub path: Path,
+}
+
+impl std::fmt::Display for NodeLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.path)
+    }
+}
+
+/// Property value wrapper that implements Display.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PropValue(pub Option<String>);
+
+impl PropValue {
+    /// Get the inner Option<String>.
+    pub fn inner(&self) -> &Option<String> {
+        &self.0
+    }
+
+    /// Unwrap into the inner Option<String>.
+    pub fn into_inner(self) -> Option<String> {
+        self.0
+    }
+}
+
+impl std::fmt::Display for PropValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some(s) => write!(f, "{}", s),
+            None => write!(f, "none"),
+        }
+    }
+}
+
+impl From<Option<String>> for PropValue {
+    fn from(v: Option<String>) -> Self {
+        PropValue(v)
+    }
+}
+
+impl From<PropValue> for Option<String> {
+    fn from(v: PropValue) -> Self {
+        v.0
+    }
+}
+
+/// Tree type bundle for facet-diff trees.
+pub struct FacetTreeTypes;
+
+impl TreeTypes for FacetTreeTypes {
+    type Kind = NodeKind;
+    type Label = NodeLabel;
+    type Props = HtmlProperties;
 }
 
 /// An edit operation that transforms tree_a (old) into tree_b (new).
@@ -148,8 +224,8 @@ pub struct AttributeChange {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HtmlProperties {
     /// Property values keyed by PropKey.
-    /// Values are stored as `Option<String>` to handle both present and absent attributes.
-    pub props: HashMap<PropKey, Option<String>>,
+    /// Values are stored as `PropValue` (wrapping `Option<String>`) to handle both present and absent attributes.
+    pub props: HashMap<PropKey, PropValue>,
 }
 
 impl HtmlProperties {
@@ -159,7 +235,7 @@ impl HtmlProperties {
     }
 
     /// Get a property value.
-    pub fn get(&self, key: impl Into<PropKey>) -> Option<&Option<String>> {
+    pub fn get(&self, key: impl Into<PropKey>) -> Option<&PropValue> {
         self.props.get(&key.into())
     }
 
@@ -170,18 +246,19 @@ impl HtmlProperties {
 
     /// Set a property value.
     pub fn set(&mut self, key: PropKey, value: Option<String>) {
-        self.props.insert(key, value);
+        self.props.insert(key, PropValue(value));
     }
 
     /// Set a named attribute.
     pub fn set_attr(&mut self, name: impl Into<String>, value: Option<String>) {
-        self.props.insert(PropKey::Attr(name.into()), value);
+        self.props
+            .insert(PropKey::Attr(name.into()), PropValue(value));
     }
 }
 
 impl Properties for HtmlProperties {
     type Key = PropKey;
-    type Value = Option<String>;
+    type Value = PropValue;
 
     fn similarity(&self, other: &Self) -> f64 {
         // If Tag differs, elements are not similar at all (can't change tag name in DOM)
@@ -258,7 +335,7 @@ impl Properties for HtmlProperties {
 }
 
 /// A tree built from a Peek value, ready for diffing.
-pub type FacetTree = Tree<NodeKind, NodeLabel, HtmlProperties>;
+pub type FacetTree = Tree<FacetTreeTypes>;
 
 /// Build a cinereus tree from a Peek value.
 pub fn build_tree<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> FacetTree {
@@ -271,7 +348,7 @@ pub fn build_tree<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> FacetTree {
 }
 
 struct TreeBuilder {
-    arena: cinereus::indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    arena: cinereus::indextree::Arena<NodeData<FacetTreeTypes>>,
 }
 
 impl TreeBuilder {
@@ -689,7 +766,7 @@ fn extract_value_at_path<'mem, 'facet>(
 /// Format the shadow tree for debugging with colors.
 #[allow(dead_code, clippy::only_used_in_recursion)]
 fn format_shadow_tree(
-    arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    arena: &indextree::Arena<NodeData<FacetTreeTypes>>,
     _root: NodeId,
     node: NodeId,
     depth: usize,
@@ -738,7 +815,7 @@ fn format_shadow_tree(
             .properties
             .props
             .get(&PropKey::Text)
-            .and_then(|v| v.as_ref())
+            .and_then(|v| v.0.as_ref())
             .map(|v| format!(" = {GREEN}{v:?}{RESET}"))
             .unwrap_or_default();
 
@@ -768,7 +845,7 @@ fn format_shadow_tree(
 /// The peeks are used to extract actual values for leaf nodes, making
 /// the resulting EditOps self-contained.
 fn convert_ops_with_shadow<'mem, 'facet>(
-    ops: Vec<CinereusEditOp<NodeKind, NodeLabel, HtmlProperties>>,
+    ops: Vec<CinereusEditOp<FacetTreeTypes>>,
     tree_a: &FacetTree,
     tree_b: &FacetTree,
     matching: &Matching,
@@ -816,9 +893,9 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     .into_iter()
                     .map(|c| AttributeChange {
                         key: c.key,
-                        // Flatten Option<Option<String>> to Option<String>
-                        old_value: c.old_value.flatten(),
-                        new_value: c.new_value.flatten(),
+                        // Unwrap Option<PropValue> to Option<String>
+                        old_value: c.old_value.and_then(|v| v.into_inner()),
+                        new_value: c.new_value.and_then(|v| v.into_inner()),
                     })
                     .collect();
 
@@ -849,7 +926,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 let shadow_parent = b_to_shadow.get(&parent_b).copied().unwrap_or(shadow_root);
 
                 // Create a new node in shadow tree
-                let new_data: NodeData<NodeKind, NodeLabel, HtmlProperties> = NodeData {
+                let new_data: NodeData<FacetTreeTypes> = NodeData {
                     hash: cinereus::NodeHash(0),
                     kind: NodeKind::Scalar("inserted"),
                     label: label.clone(),
@@ -940,13 +1017,12 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
                     // Swap with placeholder (insert placeholder before, then detach)
                     // This prevents shifting of siblings.
-                    let placeholder_data: NodeData<NodeKind, NodeLabel, HtmlProperties> =
-                        NodeData {
-                            hash: cinereus::NodeHash(0),
-                            kind: NodeKind::Scalar("placeholder"),
-                            label: None,
-                            properties: HtmlProperties::new(),
-                        };
+                    let placeholder_data: NodeData<FacetTreeTypes> = NodeData {
+                        hash: cinereus::NodeHash(0),
+                        kind: NodeKind::Scalar("placeholder"),
+                        label: None,
+                        properties: HtmlProperties::new(),
+                    };
                     let placeholder = shadow_arena.new_node(placeholder_data);
                     node_a.insert_before(placeholder, &mut shadow_arena);
                     node_a.detach(&mut shadow_arena);
@@ -1003,13 +1079,12 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                         compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
                     // Swap node_a with a placeholder (insert placeholder before, then detach)
                     // This prevents shifting of siblings.
-                    let placeholder_data: NodeData<NodeKind, NodeLabel, HtmlProperties> =
-                        NodeData {
-                            hash: cinereus::NodeHash(0),
-                            kind: NodeKind::Scalar("placeholder"),
-                            label: None,
-                            properties: HtmlProperties::new(),
-                        };
+                    let placeholder_data: NodeData<FacetTreeTypes> = NodeData {
+                        hash: cinereus::NodeHash(0),
+                        kind: NodeKind::Scalar("placeholder"),
+                        label: None,
+                        properties: HtmlProperties::new(),
+                    };
                     let placeholder = shadow_arena.new_node(placeholder_data);
                     node_a.insert_before(placeholder, &mut shadow_arena);
                     node_a.detach(&mut shadow_arena);
@@ -1101,7 +1176,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
 /// The relative_path is the path from the detached ancestor (slot root) to the node,
 /// preserving the actual PathSegments (including Variant segments) from the node labels.
 fn find_detached_ancestor(
-    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    shadow_arena: &indextree::Arena<NodeData<FacetTreeTypes>>,
     node: NodeId,
     detached_nodes: &HashMap<NodeId, u32>,
 ) -> Option<(u32, Option<Path>)> {
@@ -1192,7 +1267,7 @@ fn find_detached_ancestor(
 /// For inserted nodes, we compute the path by walking up and determining
 /// the position at each level.
 fn compute_path_in_shadow(
-    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    shadow_arena: &indextree::Arena<NodeData<FacetTreeTypes>>,
     shadow_root: NodeId,
     node: NodeId,
     _tree_a: &FacetTree,
@@ -1218,7 +1293,7 @@ fn compute_path_in_shadow(
 /// Key insight: tree depth and path depth may NOT be 1:1 because Option types add a tree
 /// node but not a path segment. We must use each node's stored path length to track depth.
 fn compute_adjusted_path(
-    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    shadow_arena: &indextree::Arena<NodeData<FacetTreeTypes>>,
     shadow_root: NodeId,
     node: NodeId,
     original_path: &Path,
@@ -1288,7 +1363,7 @@ fn compute_adjusted_path(
 
 /// Compute path for a node by walking up the tree.
 fn compute_path_by_walking(
-    shadow_arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
+    shadow_arena: &indextree::Arena<NodeData<FacetTreeTypes>>,
     shadow_root: NodeId,
     node: NodeId,
 ) -> Path {
