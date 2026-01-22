@@ -42,12 +42,19 @@ impl Path {
 impl core::fmt::Display for Path {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         for (i, segment) in self.0.iter().enumerate() {
-            if i > 0 {
-                write!(f, ".")?;
-            }
             match segment {
-                PathSegment::Field(name) => write!(f, "{}", name)?,
-                PathSegment::Index(idx) => write!(f, "[{}]", idx)?,
+                PathSegment::Field(name) => {
+                    if i > 0 {
+                        write!(f, ".")?;
+                    }
+                    write!(f, "{}", name)?;
+                }
+                PathSegment::Index(idx) => {
+                    if i > 0 {
+                        write!(f, ".")?;
+                    }
+                    write!(f, "{}", idx)?;
+                }
                 PathSegment::Key(key) => write!(f, "[{:?}]", key)?,
                 PathSegment::Variant(name) => write!(f, "::{}", name)?,
             }

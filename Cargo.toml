@@ -156,3 +156,6 @@ inherits = "dev"
 opt-level = 3
 incremental = false
 codegen-units = 1
+
+[profile.dev.package.backtrace]
+opt-level = 3
