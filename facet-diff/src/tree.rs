@@ -146,7 +146,7 @@ pub struct FacetTreeTypes;
 impl TreeTypes for FacetTreeTypes {
     type Kind = NodeKind;
     type Label = NodeLabel;
-    type Props = HtmlProperties;
+    type Props = Props;
 }
 
 /// An edit operation that transforms tree_a (old) into tree_b (new).
@@ -216,19 +216,17 @@ pub struct AttributeChange {
     pub new_value: Option<String>,
 }
 
-/// Properties for HTML/XML nodes: attribute key-value pairs.
+/// Node properties: key-value pairs for fields marked with `#[facet(attribute)]` or `#[facet(text)]`.
 ///
-/// These are fields marked with `#[facet(attribute)]`.
-/// They are diffed field-by-field when nodes match, avoiding the cross-matching problem
+/// Properties are diffed field-by-field when nodes match, avoiding the cross-matching problem
 /// where identical Option values (like None) get matched across different fields.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct HtmlProperties {
+pub struct Props {
     /// Property values keyed by PropKey.
-    /// Values are stored as `PropValue` (wrapping `Option<String>`) to handle both present and absent attributes.
     pub props: HashMap<PropKey, PropValue>,
 }
 
-impl HtmlProperties {
+impl Props {
     /// Create empty properties.
     pub fn new() -> Self {
         Self::default()
@@ -256,7 +254,7 @@ impl HtmlProperties {
     }
 }
 
-impl Properties for HtmlProperties {
+impl Properties for Props {
     type Key = PropKey;
     type Value = PropValue;
 
@@ -392,8 +390,8 @@ impl TreeBuilder {
     }
 
     /// Collect attribute fields as properties.
-    fn collect_properties<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> HtmlProperties {
-        let mut props = HtmlProperties::new();
+    fn collect_properties<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> Props {
+        let mut props = Props::new();
         self.collect_properties_recursive(peek, &mut props);
         trace_verbose!(
             shape = peek.shape().type_identifier,
@@ -407,7 +405,7 @@ impl TreeBuilder {
     fn collect_properties_recursive<'mem, 'facet>(
         &self,
         peek: Peek<'mem, 'facet>,
-        props: &mut HtmlProperties,
+        props: &mut Props,
     ) {
         trace_verbose!(
             shape = peek.shape().type_identifier,
@@ -930,7 +928,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                     hash: cinereus::NodeHash(0),
                     kind: NodeKind::Scalar("inserted"),
                     label: label.clone(),
-                    properties: HtmlProperties::new(),
+                    properties: Props::new(),
                 };
                 let new_node = shadow_arena.new_node(new_data);
 
@@ -1021,7 +1019,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                         hash: cinereus::NodeHash(0),
                         kind: NodeKind::Scalar("placeholder"),
                         label: None,
-                        properties: HtmlProperties::new(),
+                        properties: Props::new(),
                     };
                     let placeholder = shadow_arena.new_node(placeholder_data);
                     node_a.insert_before(placeholder, &mut shadow_arena);
@@ -1083,7 +1081,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                         hash: cinereus::NodeHash(0),
                         kind: NodeKind::Scalar("placeholder"),
                         label: None,
-                        properties: HtmlProperties::new(),
+                        properties: Props::new(),
                     };
                     let placeholder = shadow_arena.new_node(placeholder_data);
                     node_a.insert_before(placeholder, &mut shadow_arena);
