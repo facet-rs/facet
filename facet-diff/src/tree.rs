@@ -108,12 +108,12 @@ impl std::fmt::Display for NodeLabel {
 pub struct PropValue(pub Option<String>);
 
 impl PropValue {
-    /// Get the inner Option<String>.
+    /// Get the inner `Option<String>`.
     pub fn inner(&self) -> &Option<String> {
         &self.0
     }
 
-    /// Unwrap into the inner Option<String>.
+    /// Unwrap into the inner `Option<String>`.
     pub fn into_inner(self) -> Option<String> {
         self.0
     }
