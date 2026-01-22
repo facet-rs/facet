@@ -14,10 +14,10 @@ pub fn parse_html(html: &str) -> Result<Element, String> {
     // Return the body element if this is an <html> document
     if doc.tag == "html" {
         for child in &doc.children {
-            if let Content::Element(e) = child {
-                if e.tag == "body" {
-                    return Ok(e.clone());
-                }
+            if let Content::Element(e) = child
+                && e.tag == "body"
+            {
+                return Ok(e.clone());
             }
         }
     }
@@ -248,12 +248,12 @@ fn insert_at_position(
 
             // In Chawathe semantics, Insert does NOT shift - it places at position
             // and whatever was there gets displaced (detached to a slot).
-            if let Some(slot) = detach_to_slot {
-                if position < children.len() {
-                    let occupant =
-                        std::mem::replace(&mut children[position], Content::Text(String::new()));
-                    slots.insert(slot, occupant);
-                }
+            if let Some(slot) = detach_to_slot
+                && position < children.len()
+            {
+                let occupant =
+                    std::mem::replace(&mut children[position], Content::Text(String::new()));
+                slots.insert(slot, occupant);
             }
 
             // Grow the array with empty text placeholders if needed

@@ -119,13 +119,8 @@ impl Element {
         match child {
             Content::Element(e) => e.get_mut(&path[1..]),
             Content::Text(_) => {
-                // Text nodes can't have children, so we can only
-                // reach them if this is the final index
-                if path.len() == 1 {
-                    None // Can't return &mut Element for a text node
-                } else {
-                    None
-                }
+                // Text nodes can't have children and we can't return &mut Element for text
+                None
             }
         }
     }

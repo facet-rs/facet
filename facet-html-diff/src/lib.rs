@@ -132,11 +132,6 @@ pub fn diff_html(old_html: &str, new_html: &str) -> Result<Vec<Patch>, String> {
     Ok(patches)
 }
 
-#[cfg(not(feature = "tracing"))]
-pub fn diff_html_debug(old_html: &str, new_html: &str) -> Result<Vec<Patch>, String> {
-    diff_html(old_html, new_html)
-}
-
 /// Translate facet-diff EditOps into DOM Patches.
 pub fn translate_to_patches(edit_ops: &[EditOp], new_doc: &Html) -> Vec<Patch> {
     edit_ops
@@ -582,24 +577,23 @@ fn translate_insert(
 
             // Check if this is actually a text variant in the enum
             // (navigate_path may return Element for Index into enum lists where it can't know the variant)
-            if let Ok(enum_peek) = node_peek.into_enum() {
-                if let Ok(variant) = enum_peek.active_variant() {
-                    if variant.is_text() {
-                        // This is a text variant - extract the text value and emit InsertText
-                        let text = enum_peek
-                            .field(0)
-                            .ok()
-                            .flatten()
-                            .and_then(|p| p.as_str().map(|s| s.to_string()))
-                            .unwrap_or_default();
-                        return Some(Patch::InsertText {
-                            parent: parent_ref,
-                            position,
-                            text,
-                            detach_to_slot,
-                        });
-                    }
-                }
+            if let Ok(enum_peek) = node_peek.into_enum()
+                && let Ok(variant) = enum_peek.active_variant()
+                && variant.is_text()
+            {
+                // This is a text variant - extract the text value and emit InsertText
+                let text = enum_peek
+                    .field(0)
+                    .ok()
+                    .flatten()
+                    .and_then(|p| p.as_str().map(|s| s.to_string()))
+                    .unwrap_or_default();
+                return Some(Patch::InsertText {
+                    parent: parent_ref,
+                    position,
+                    text,
+                    detach_to_slot,
+                });
             }
 
             // Not a text variant - insert element with its attrs and children
@@ -928,22 +922,22 @@ fn get_element_tag(peek: Peek<'_, '_>) -> String {
     use std::borrow::Cow;
 
     // If it's an enum, get the inner struct and check for a tag field
-    if let Ok(enum_peek) = peek.into_enum() {
-        if let Ok(variant) = enum_peek.active_variant() {
-            // First, check if the inner struct has a tag field (for Custom* elements)
-            if let Some(inner) = enum_peek.field(0).ok().flatten() {
-                if let Some(tag) = get_tag_from_struct(inner) {
-                    return tag;
-                }
-            }
-            // Otherwise use the variant's rename or name
-            let variant_name: Cow<'_, str> = variant
-                .get_builtin_attr("rename")
-                .and_then(|a| a.get_as::<&str>().copied())
-                .map(Cow::Borrowed)
-                .unwrap_or_else(|| to_element_name(variant.name));
-            return variant_name.into_owned();
+    if let Ok(enum_peek) = peek.into_enum()
+        && let Ok(variant) = enum_peek.active_variant()
+    {
+        // First, check if the inner struct has a tag field (for Custom* elements)
+        if let Some(inner) = enum_peek.field(0).ok().flatten()
+            && let Some(tag) = get_tag_from_struct(inner)
+        {
+            return tag;
         }
+        // Otherwise use the variant's rename or name
+        let variant_name: Cow<'_, str> = variant
+            .get_builtin_attr("rename")
+            .and_then(|a| a.get_as::<&str>().copied())
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|| to_element_name(variant.name));
+        return variant_name.into_owned();
     }
 
     // For structs, first check for a tag field
@@ -1010,14 +1004,14 @@ fn extract_from_struct(
             let attr_name = field
                 .rename
                 .map(|s| s.to_string())
-                .unwrap_or_else(|| to_element_name(&field.name).into_owned());
+                .unwrap_or_else(|| to_element_name(field.name).into_owned());
 
             // Handle Option<String> attributes
             if let Ok(opt) = field_peek.into_option() {
-                if let Some(inner) = opt.value() {
-                    if let Some(val) = inner.as_str() {
-                        attrs.push((attr_name, val.to_string()));
-                    }
+                if let Some(inner) = opt.value()
+                    && let Some(val) = inner.as_str()
+                {
+                    attrs.push((attr_name, val.to_string()));
                 }
             } else if let Some(val) = field_peek.as_str() {
                 attrs.push((attr_name, val.to_string()));
@@ -1026,10 +1020,10 @@ fn extract_from_struct(
         }
         // Handle text field
         if field.is_text() {
-            if let Some(text) = field_peek.as_str() {
-                if !text.is_empty() {
-                    children.push(InsertContent::Text(text.to_string()));
-                }
+            if let Some(text) = field_peek.as_str()
+                && !text.is_empty()
+            {
+                children.push(InsertContent::Text(text.to_string()));
             }
             continue;
         }
@@ -1052,27 +1046,27 @@ fn extract_from_struct(
 /// Convert a Peek value to InsertContent.
 fn peek_to_insert_content(peek: Peek<'_, '_>) -> Option<InsertContent> {
     // Check if it's an enum (like FlowContent, PhrasingContent)
-    if let Ok(enum_peek) = peek.into_enum() {
-        if let Ok(variant) = enum_peek.active_variant() {
-            if variant.is_text() {
-                // Text variant - extract the string
-                let text = enum_peek
-                    .field(0)
-                    .ok()
-                    .flatten()
-                    .and_then(|p| p.as_str().map(|s| s.to_string()))
-                    .unwrap_or_default();
-                return Some(InsertContent::Text(text));
-            } else {
-                // Element variant
-                let tag = get_element_tag(peek);
-                let (attrs, children) = extract_attrs_and_children(peek);
-                return Some(InsertContent::Element {
-                    tag,
-                    attrs,
-                    children,
-                });
-            }
+    if let Ok(enum_peek) = peek.into_enum()
+        && let Ok(variant) = enum_peek.active_variant()
+    {
+        if variant.is_text() {
+            // Text variant - extract the string
+            let text = enum_peek
+                .field(0)
+                .ok()
+                .flatten()
+                .and_then(|p| p.as_str().map(|s| s.to_string()))
+                .unwrap_or_default();
+            return Some(InsertContent::Text(text));
+        } else {
+            // Element variant
+            let tag = get_element_tag(peek);
+            let (attrs, children) = extract_attrs_and_children(peek);
+            return Some(InsertContent::Element {
+                tag,
+                attrs,
+                children,
+            });
         }
     }
 
