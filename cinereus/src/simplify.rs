@@ -41,7 +41,7 @@ where
             EditOp::Move { node_b, .. } => {
                 moved_nodes_b.insert(*node_b);
             }
-            EditOp::Update { .. } | EditOp::UpdateProperty { .. } => {}
+            EditOp::UpdateProperties { .. } => {}
         }
     }
 
@@ -85,7 +85,7 @@ where
             EditOp::Insert { node_b, .. } => root_inserts.contains(node_b),
             EditOp::Delete { node_a } => root_deletes.contains(node_a),
             EditOp::Move { node_b, .. } => root_moves.contains(node_b),
-            EditOp::Update { .. } | EditOp::UpdateProperty { .. } => true, // Always keep updates
+            EditOp::UpdateProperties { .. } => true, // Always keep property updates
         })
         .collect()
 }

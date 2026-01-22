@@ -16,7 +16,6 @@ fn get_paths(old: &str, new: &str) -> Vec<Vec<PathSegment>> {
     get_raw_ops(old, new)
         .into_iter()
         .map(|op| match op {
-            EditOp::Update { path, .. } => path.0,
             EditOp::Insert { parent, .. } => match parent {
                 facet_diff::NodeRef::Path(p) => p.0,
                 facet_diff::NodeRef::Slot(..) => vec![],
@@ -29,7 +28,8 @@ fn get_paths(old: &str, new: &str) -> Vec<Vec<PathSegment>> {
                 facet_diff::NodeRef::Path(p) => p.0,
                 facet_diff::NodeRef::Slot(..) => vec![],
             },
-            EditOp::UpdateAttribute { path, .. } => path.0,
+            EditOp::UpdateAttributes { path, .. } => path.0,
+            #[allow(unreachable_patterns)]
             _ => vec![],
         })
         .collect()
@@ -42,7 +42,6 @@ fn get_ops(old: &str, new: &str) -> Vec<(String, String)> {
     ops.iter()
         .map(|op| {
             let (kind, path) = match op {
-                EditOp::Update { path, .. } => ("Update", fmt_path(&path.0)),
                 EditOp::Insert {
                     parent, position, ..
                 } => match parent {
@@ -61,7 +60,8 @@ fn get_ops(old: &str, new: &str) -> Vec<(String, String)> {
                     facet_diff::NodeRef::Path(p) => ("Move", fmt_path(&p.0)),
                     facet_diff::NodeRef::Slot(s, _) => ("MoveSlot", format!("slot:{s}")),
                 },
-                EditOp::UpdateAttribute { path, .. } => ("UpdateAttr", fmt_path(&path.0)),
+                EditOp::UpdateAttributes { path, .. } => ("UpdateAttrs", fmt_path(&path.0)),
+                #[allow(unreachable_patterns)]
                 _ => ("Other", String::new()),
             };
             (kind.to_string(), path)
@@ -175,43 +175,42 @@ fn add_id_and_child_generates_ops() {
         "Should generate edit ops for adding id and child"
     );
 
-    // Should have UpdateAttribute op for the id attribute
-    let has_update_attr = ops
-        .iter()
-        .any(|op| matches!(op, EditOp::UpdateAttribute { attr_name, .. } if *attr_name == "id"));
+    // Should have UpdateAttributes op containing the id attribute change
+    let has_update_attr = ops.iter().any(|op| {
+        if let EditOp::UpdateAttributes { changes, .. } = op {
+            changes.iter().any(|c| c.attr_name == "id")
+        } else {
+            false
+        }
+    });
     assert!(
         has_update_attr,
-        "Should have UpdateAttribute op for id, got: {:?}",
+        "Should have UpdateAttributes op with id change, got: {:?}",
         ops
     );
 }
 
 #[test]
-fn update_op_contains_new_value_for_text() {
+fn text_change_generates_structural_ops() {
+    // Text changes now generate Insert/Delete ops since Update was removed
     let ops = get_raw_ops(
         "<html><body>Hello</body></html>",
         "<html><body>World</body></html>",
     );
 
-    let text_update = ops.iter().find(|op| {
-        if let EditOp::Update { path, .. } = op {
-            path.0
-                .iter()
-                .any(|s| matches!(s, PathSegment::Variant(v) if v == "Text"))
-        } else {
-            false
-        }
+    // Should have some structural ops (Insert/Delete/Move) for the text change
+    let has_structural = ops.iter().any(|op| {
+        matches!(
+            op,
+            EditOp::Insert { .. } | EditOp::Delete { .. } | EditOp::Move { .. }
+        )
     });
 
-    assert!(text_update.is_some(), "Should have Update op for text");
-
-    if let Some(EditOp::Update { new_value, .. }) = text_update {
-        assert!(
-            new_value.is_some(),
-            "Update op for text should have new_value populated"
-        );
-        assert_eq!(new_value.as_deref(), Some("World"));
-    }
+    assert!(
+        has_structural,
+        "Text change should generate structural ops, got: {:?}",
+        ops
+    );
 }
 
 // =============================================================================

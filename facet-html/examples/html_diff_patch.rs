@@ -175,8 +175,9 @@ fn main() {
     println!("Found {} edit operations:", edit_ops.len());
     for op in &edit_ops {
         match op {
-            EditOp::Update { path, .. } => {
-                println!("  UPDATE at {}", path);
+            EditOp::UpdateAttributes { path, changes } => {
+                let names: Vec<_> = changes.iter().map(|c| c.attr_name).collect();
+                println!("  UPDATE ATTRS {:?} at {}", names, path);
             }
             EditOp::Insert {
                 parent,
@@ -195,6 +196,7 @@ fn main() {
             EditOp::Move { from, to, .. } => {
                 println!("  MOVE {:?} -> {:?}", from, to);
             }
+            #[allow(unreachable_patterns)]
             _ => {
                 println!("  (other operation)");
             }

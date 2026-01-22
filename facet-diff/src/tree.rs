@@ -70,29 +70,12 @@ pub struct NodeLabel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EditOp {
-    /// A value was updated (matched but content differs).
-    Update {
-        /// The path to the updated node
+    /// Multiple attributes (properties) were updated on a matched node.
+    UpdateAttributes {
+        /// The path to the node containing the attributes
         path: Path,
-        /// The old value (for display/verification), None for containers
-        old_value: Option<String>,
-        /// The new value to set, None for containers
-        new_value: Option<String>,
-        /// Hash of the old value
-        old_hash: cinereus::NodeHash,
-        /// Hash of the new value
-        new_hash: cinereus::NodeHash,
-    },
-    /// An attribute (property) was updated on a matched node.
-    UpdateAttribute {
-        /// The path to the node containing the attribute
-        path: Path,
-        /// The attribute name (field name)
-        attr_name: &'static str,
-        /// The old value (None if attribute was absent)
-        old_value: Option<String>,
-        /// The new value (None if attribute is being removed)
-        new_value: Option<String>,
+        /// The attribute changes
+        changes: Vec<AttributeChange>,
     },
     /// A node was inserted in tree B.
     /// In Chawathe semantics, Insert does NOT shift - it places at a position
@@ -141,6 +124,17 @@ pub enum NodeRef {
     /// The optional path is relative to the slot root - used when the target
     /// is nested inside the detached subtree.
     Slot(u32, Option<Path>),
+}
+
+/// A single attribute change within an UpdateAttributes operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttributeChange {
+    /// The attribute name (field name)
+    pub attr_name: &'static str,
+    /// The old value (None if attribute was absent)
+    pub old_value: Option<String>,
+    /// The new value (None if attribute is being removed)
+    pub new_value: Option<String>,
 }
 
 /// Properties for HTML/XML nodes: attribute key-value pairs.
@@ -679,7 +673,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
     tree_a: &FacetTree,
     tree_b: &FacetTree,
     matching: &Matching,
-    peek_a: Peek<'mem, 'facet>,
+    _peek_a: Peek<'mem, 'facet>,
     peek_b: Peek<'mem, 'facet>,
 ) -> Vec<EditOp> {
     // Shadow tree: mutable clone of tree_a's structure
@@ -710,85 +704,32 @@ fn convert_ops_with_shadow<'mem, 'facet>(
     // For each op: update shadow tree first, THEN compute paths from updated tree.
     for op in ops {
         match op {
-            CinereusEditOp::Update {
-                node_a,
-                node_b,
-                old_label: _,
-                new_label: _,
-            } => {
-                // Path for applying the patch comes from shadow tree (current position in DOM)
-                let mut path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
-
-                // Extract actual values using the stored paths in tree labels
-                let old_path = tree_a.get(node_a).label.as_ref().map(|l| &l.path);
-                let new_path_in_b = tree_b.get(node_b).label.as_ref().map(|l| &l.path);
-
-                let old_value = old_path.and_then(|p| extract_value_at_path(peek_a, p));
-                let new_value = new_path_in_b.and_then(|p| extract_value_at_path(peek_b, p));
-                debug!(
-                    ?old_path,
-                    ?new_path_in_b,
-                    ?old_value,
-                    ?new_value,
-                    "Update op values"
-                );
-
-                // For struct field changes (e.g., attribute fields like id->class),
-                // replace the last segment with the new field name.
-                // This preserves the position but updates the field name.
-                if let (Some(old_p), Some(new_p)) = (old_path, new_path_in_b)
-                    && let (
-                        Some(PathSegment::Field(old_field)),
-                        Some(PathSegment::Field(new_field)),
-                    ) = (old_p.0.last(), new_p.0.last())
-                    && old_field != new_field
-                    && !path.0.is_empty()
-                    && let Some(PathSegment::Field(_)) = path.0.last()
-                {
-                    // Replace the last field segment with the new field name
-                    path.0.pop();
-                    path.0.push(PathSegment::Field(new_field.clone()));
-                }
-
-                debug!(?path, ?old_value, ?new_value, "emitting EditOp::Update");
-                result.push(EditOp::Update {
-                    path,
-                    old_value,
-                    new_value,
-                    old_hash: tree_a.get(node_a).hash,
-                    new_hash: tree_b.get(node_b).hash,
-                });
-                // No structural change for Update
-            }
-
-            CinereusEditOp::UpdateProperty {
+            CinereusEditOp::UpdateProperties {
                 node_a,
                 node_b: _,
-                key,
-                old_value,
-                new_value,
+                changes,
             } => {
-                // Path to the node containing the attribute
+                // Path to the node containing the attributes
                 let path = compute_path_in_shadow(&shadow_arena, shadow_root, node_a, tree_a);
 
-                // Flatten Option<Option<String>> to Option<String>
-                let old_value = old_value.flatten();
-                let new_value = new_value.flatten();
+                // Convert cinereus PropertyChange to our AttributeChange
+                let changes: Vec<AttributeChange> = changes
+                    .into_iter()
+                    .map(|c| AttributeChange {
+                        attr_name: c.key,
+                        // Flatten Option<Option<String>> to Option<String>
+                        old_value: c.old_value.flatten(),
+                        new_value: c.new_value.flatten(),
+                    })
+                    .collect();
 
                 debug!(
                     ?path,
-                    ?key,
-                    ?old_value,
-                    ?new_value,
-                    "emitting EditOp::UpdateAttribute"
+                    num_changes = changes.len(),
+                    "emitting EditOp::UpdateAttributes"
                 );
-                result.push(EditOp::UpdateAttribute {
-                    path,
-                    attr_name: key,
-                    old_value,
-                    new_value,
-                });
-                // No structural change for UpdateAttribute
+                result.push(EditOp::UpdateAttributes { path, changes });
+                // No structural change for UpdateAttributes
             }
 
             CinereusEditOp::Insert {
@@ -1589,7 +1530,6 @@ mod tests {
         // At minimum, there should be something touching children
         let has_children_op = ops.iter().any(|op| {
             let path = match op {
-                EditOp::Update { path, .. } => Some(path),
                 EditOp::Insert { label_path, .. } => Some(label_path),
                 EditOp::Delete { node, .. } => match node {
                     NodeRef::Path(p) => Some(p),
@@ -1599,7 +1539,9 @@ mod tests {
                     NodeRef::Path(p) => Some(p),
                     NodeRef::Slot(..) => None,
                 },
-                EditOp::UpdateAttribute { path, .. } => Some(path),
+                EditOp::UpdateAttributes { path, .. } => Some(path),
+                #[allow(unreachable_patterns)]
+                _ => None,
             };
             path.is_some_and(|p| p.0.first() == Some(&PathSegment::Field("children".into())))
         });
@@ -1756,30 +1698,34 @@ mod tests {
 
         eprintln!("All ops: {:#?}", ops);
 
-        // Should emit UpdateAttribute ops for changed attributes
-        let update_attrs: Vec<_> = ops
+        // Should emit UpdateAttributes op with changes for both attributes
+        let update_attrs_ops: Vec<_> = ops
             .iter()
-            .filter_map(|op| {
-                if let EditOp::UpdateAttribute { attr_name, .. } = op {
-                    Some(*attr_name)
-                } else {
-                    None
-                }
-            })
+            .filter(|op| matches!(op, EditOp::UpdateAttributes { .. }))
             .collect();
 
-        eprintln!("UpdateAttribute attrs: {:?}", update_attrs);
+        assert_eq!(
+            update_attrs_ops.len(),
+            1,
+            "Should have 1 UpdateAttributes op, got {:?}",
+            update_attrs_ops
+        );
 
-        assert!(
-            update_attrs.contains(&"id"),
-            "Should emit UpdateAttribute for id change, got ops: {:?}",
-            ops
-        );
-        assert!(
-            update_attrs.contains(&"class"),
-            "Should emit UpdateAttribute for class change, got ops: {:?}",
-            ops
-        );
+        if let Some(EditOp::UpdateAttributes { changes, .. }) = update_attrs_ops.first() {
+            let attr_names: Vec<_> = changes.iter().map(|c| c.attr_name).collect();
+            eprintln!("UpdateAttributes attr names: {:?}", attr_names);
+
+            assert!(
+                attr_names.contains(&"id"),
+                "Should have change for id, got: {:?}",
+                attr_names
+            );
+            assert!(
+                attr_names.contains(&"class"),
+                "Should have change for class, got: {:?}",
+                attr_names
+            );
+        }
     }
 }
 

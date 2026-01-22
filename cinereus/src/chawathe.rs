@@ -1,14 +1,13 @@
 //! Chawathe edit script generation algorithm.
 //!
-//! Generates a minimal edit script (INSERT, DELETE, UPDATE, MOVE) from a node matching.
+//! Generates a minimal edit script (INSERT, DELETE, MOVE, UpdateProperty) from a node matching.
 //! Based on "Change Detection in Hierarchically Structured Information" (Chawathe et al., 1996).
 //!
-//! The algorithm has 5 phases:
-//! 1. UPDATE: Change labels of matched nodes where values differ
-//! 2. ALIGN: Reorder children to match destination order
-//! 3. INSERT: Add nodes that exist only in the destination tree
-//! 4. MOVE: Relocate nodes to new parents
-//! 5. DELETE: Remove nodes that exist only in the source tree
+//! The algorithm has 4 phases:
+//! 1. UpdateProperty: Diff properties for matched nodes
+//! 2. INSERT: Add nodes that exist only in the destination tree
+//! 3. MOVE: Relocate nodes to new parents or positions
+//! 4. DELETE: Remove nodes that exist only in the source tree
 
 use facet::Facet;
 #[cfg(any(test, feature = "tracing"))]
@@ -20,7 +19,7 @@ macro_rules! debug {
 }
 
 use crate::matching::Matching;
-use crate::tree::{NoProperties, Properties, Tree};
+use crate::tree::{NoProperties, Properties, PropertyChange, Tree};
 use core::fmt;
 use core::hash::Hash;
 use facet_pretty::FacetPretty;
@@ -29,30 +28,14 @@ use indextree::NodeId;
 /// An edit operation in the diff.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditOp<K, L, P: Properties = NoProperties> {
-    /// Update a node's label (value changed but structure same).
-    Update {
-        /// The node in tree A that was updated
-        node_a: NodeId,
-        /// The corresponding node in tree B
-        node_b: NodeId,
-        /// Old label
-        old_label: Option<L>,
-        /// New label
-        new_label: Option<L>,
-    },
-
-    /// Update a single property on a matched node.
-    UpdateProperty {
+    /// Update multiple properties on a matched node.
+    UpdateProperties {
         /// The node in tree A
         node_a: NodeId,
         /// The corresponding node in tree B
         node_b: NodeId,
-        /// The property key
-        key: P::Key,
-        /// Old value (None if property was added)
-        old_value: Option<P::Value>,
-        /// New value (None if property was removed)
-        new_value: Option<P::Value>,
+        /// The property changes
+        changes: Vec<PropertyChange<P::Key, P::Value>>,
     },
 
     /// Insert a new node.
@@ -95,26 +78,14 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EditOp::Update { node_a, node_b, .. } => {
-                write!(
-                    f,
-                    "Update(a:{} → b:{})",
-                    usize::from(*node_a),
-                    usize::from(*node_b)
-                )
-            }
-            EditOp::UpdateProperty {
-                node_a,
-                key,
-                new_value,
-                ..
+            EditOp::UpdateProperties {
+                node_a, changes, ..
             } => {
                 write!(
                     f,
-                    "UpdateProp(a:{}, {}={})",
+                    "UpdateProps(a:{}, {} changes)",
                     usize::from(*node_a),
-                    key.pretty(),
-                    new_value.pretty()
+                    changes.len()
                 )
             }
             EditOp::Insert {
@@ -181,7 +152,7 @@ where
 
 /// Generate an edit script from a matching between two trees.
 ///
-/// The edit script transforms tree A into tree B using INSERT, DELETE, UPDATE, MOVE,
+/// The edit script transforms tree A into tree B using INSERT, DELETE, MOVE,
 /// and UpdateProperty operations.
 pub fn generate_edit_script<'a, K, L, P>(
     tree_a: &Tree<K, L, P>,
@@ -198,30 +169,17 @@ where
     debug!(matched_pairs = matching.len(), "generate_edit_script start");
     let mut ops = Ops::new();
 
-    // Phase 1: UPDATE - matched nodes where hash differs (content changed)
-    // Note: We compare hashes, not labels, since labels may contain paths
-    // which differ even when content is identical
+    // Phase 1: Property changes - diff properties for matched nodes
     for (a_id, b_id) in matching.pairs() {
         let a_data = tree_a.get(a_id);
         let b_data = tree_b.get(b_id);
 
-        if a_data.hash != b_data.hash {
-            ops.push(EditOp::Update {
+        let changes: Vec<_> = a_data.properties.diff(&b_data.properties);
+        if !changes.is_empty() {
+            ops.push(EditOp::UpdateProperties {
                 node_a: a_id,
                 node_b: b_id,
-                old_label: a_data.label.clone(),
-                new_label: b_data.label.clone(),
-            });
-        }
-
-        // Phase 1b: Property changes - diff properties for matched nodes
-        for change in a_data.properties.diff(&b_data.properties) {
-            ops.push(EditOp::UpdateProperty {
-                node_a: a_id,
-                node_b: b_id,
-                key: change.key,
-                old_value: change.old_value,
-                new_value: change.new_value,
+                changes,
             });
         }
     }
@@ -320,7 +278,10 @@ mod tests {
     }
 
     #[test]
-    fn test_update() {
+    fn test_matched_nodes_different_hash_no_op() {
+        // When matched nodes have different hashes but no properties,
+        // no edit ops are emitted (structural differences are handled
+        // by Insert/Delete/Move on descendants).
         let mut tree_a: Tree<&str, String> = Tree::new(NodeData::new_u64(100, "root"));
         tree_a.add_child(
             tree_a.root,
@@ -336,12 +297,13 @@ mod tests {
         let matching = compute_matching(&tree_a, &tree_b, &MatchingConfig::default());
         let ops = generate_edit_script(&tree_a, &tree_b, &matching);
 
-        // Should have an update operation
-        let updates: Vec<_> = ops
-            .iter()
-            .filter(|op| matches!(op, EditOp::Update { .. }))
-            .collect();
-        assert!(!updates.is_empty(), "Should have update operation");
+        // No ops - nodes are matched, hash differs but no properties to update
+        // (The label change is reflected in the hash, but we don't emit Update ops anymore)
+        assert!(
+            ops.is_empty(),
+            "Matched nodes with different hashes but no properties should have no edits, got {:?}",
+            ops
+        );
     }
 
     #[test]
@@ -573,11 +535,7 @@ mod tests {
             debug!("  {:?}", op);
         }
 
-        // Count the ops - with cross-matching we get Insert+Delete instead of Update
-        let updates = ops
-            .iter()
-            .filter(|op| matches!(op, EditOp::Update { .. }))
-            .count();
+        // Count the ops - with cross-matching we get Insert+Delete
         let inserts = ops
             .iter()
             .filter(|op| matches!(op, EditOp::Insert { .. }))
@@ -587,13 +545,10 @@ mod tests {
             .filter(|op| matches!(op, EditOp::Delete { .. }))
             .count();
 
-        debug!(
-            "updates={}, inserts={}, deletes={}",
-            updates, inserts, deletes
-        );
+        debug!("inserts={}, deletes={}", inserts, deletes);
 
-        // IDEAL: 1 update (id: None -> "foo"), 0 inserts, 0 deletes
-        // ACTUAL: likely 1 insert, 1 delete, maybe 1 update
+        // IDEAL: 0 inserts, 0 deletes (with properties, the id field would get UpdateProperty)
+        // ACTUAL: likely 1 insert, 1 delete
         // This test documents the problem - it may pass or fail depending on
         // which None gets matched to which.
     }
@@ -719,10 +674,10 @@ mod tests {
         // Generate edit script
         let ops = generate_edit_script(&tree_a, &tree_b, &matching);
 
-        // Should get UpdateProperty ops, NOT Insert+Delete
-        let update_property_ops: Vec<_> = ops
+        // Should get UpdateProperties op, NOT Insert+Delete
+        let update_props_ops: Vec<_> = ops
             .iter()
-            .filter(|op| matches!(op, EditOp::UpdateProperty { .. }))
+            .filter(|op| matches!(op, EditOp::UpdateProperties { .. }))
             .collect();
 
         let insert_ops: Vec<_> = ops
@@ -737,12 +692,12 @@ mod tests {
 
         debug!("All ops: {:#?}", ops);
 
-        // We should have 2 UpdateProperty ops (id changed, class added)
+        // We should have 1 UpdateProperties op with 2 changes (id changed, class added)
         assert_eq!(
-            update_property_ops.len(),
-            2,
-            "Expected 2 UpdateProperty ops for id and class changes, got {:?}",
-            update_property_ops
+            update_props_ops.len(),
+            1,
+            "Expected 1 UpdateProperties op, got {:?}",
+            update_props_ops
         );
 
         // We should NOT have Insert or Delete ops
@@ -758,38 +713,22 @@ mod tests {
         );
 
         // Verify the specific property changes
-        let id_change = update_property_ops
-            .iter()
-            .find(|op| matches!(op, EditOp::UpdateProperty { key: "id", .. }));
-        assert!(id_change.is_some(), "Should have UpdateProperty for 'id'");
+        if let Some(EditOp::UpdateProperties { changes, .. }) = update_props_ops.first() {
+            assert_eq!(changes.len(), 2, "Should have 2 property changes");
 
-        let class_change = update_property_ops
-            .iter()
-            .find(|op| matches!(op, EditOp::UpdateProperty { key: "class", .. }));
-        assert!(
-            class_change.is_some(),
-            "Should have UpdateProperty for 'class'"
-        );
+            let id_change = changes.iter().find(|c| c.key == "id");
+            assert!(id_change.is_some(), "Should have change for 'id'");
+            if let Some(change) = id_change {
+                assert_eq!(change.old_value, Some("foo".to_string()));
+                assert_eq!(change.new_value, Some("bar".to_string()));
+            }
 
-        // Verify the values
-        if let Some(EditOp::UpdateProperty {
-            old_value,
-            new_value,
-            ..
-        }) = id_change
-        {
-            assert_eq!(old_value, &Some("foo".to_string()));
-            assert_eq!(new_value, &Some("bar".to_string()));
-        }
-
-        if let Some(EditOp::UpdateProperty {
-            old_value,
-            new_value,
-            ..
-        }) = class_change
-        {
-            assert_eq!(old_value, &None);
-            assert_eq!(new_value, &Some("container".to_string()));
+            let class_change = changes.iter().find(|c| c.key == "class");
+            assert!(class_change.is_some(), "Should have change for 'class'");
+            if let Some(change) = class_change {
+                assert_eq!(change.old_value, None);
+                assert_eq!(change.new_value, Some("container".to_string()));
+            }
         }
     }
 
@@ -825,26 +764,23 @@ mod tests {
         let matching = compute_matching(&tree_a, &tree_b, &MatchingConfig::default());
         let ops = generate_edit_script(&tree_a, &tree_b, &matching);
 
-        // Should get exactly 1 UpdateProperty op for id
-        let update_property_ops: Vec<_> = ops
+        // Should get exactly 1 UpdateProperties op with 1 change for id
+        let update_props_ops: Vec<_> = ops
             .iter()
-            .filter(|op| matches!(op, EditOp::UpdateProperty { .. }))
+            .filter(|op| matches!(op, EditOp::UpdateProperties { .. }))
             .collect();
 
         assert_eq!(
-            update_property_ops.len(),
+            update_props_ops.len(),
             1,
-            "Expected 1 UpdateProperty op for id, got {:?}",
-            update_property_ops
+            "Expected 1 UpdateProperties op, got {:?}",
+            update_props_ops
         );
 
-        // class stayed None, so no change for it
-        let class_change = update_property_ops
-            .iter()
-            .find(|op| matches!(op, EditOp::UpdateProperty { key: "class", .. }));
-        assert!(
-            class_change.is_none(),
-            "Should NOT have UpdateProperty for 'class' since it didn't change"
-        );
+        // Verify only id changed, not class
+        if let Some(EditOp::UpdateProperties { changes, .. }) = update_props_ops.first() {
+            assert_eq!(changes.len(), 1, "Should have 1 property change (id only)");
+            assert_eq!(changes[0].key, "id", "The change should be for 'id'");
+        }
     }
 }

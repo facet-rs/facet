@@ -172,6 +172,7 @@ struct PathNavigation {
     /// What the path points to
     target: PathTarget,
     /// DOM path to the containing element (for attribute/text targets)
+    #[allow(dead_code)]
     element_dom_path: Vec<usize>,
 }
 
@@ -481,11 +482,6 @@ pub enum TranslateError {
         target: PathTarget,
         reason: String,
     },
-    /// Update operation could not be translated
-    UpdateFailed {
-        path: Vec<PathSegment>,
-        reason: String,
-    },
     /// UpdateAttribute operation could not be translated
     UpdateAttributeFailed {
         path: Vec<PathSegment>,
@@ -509,9 +505,6 @@ impl std::fmt::Display for TranslateError {
                 f,
                 "Insert failed: parent={parent:?}, position={position}, label_path={label_path:?}, target={target:?}, reason={reason}"
             ),
-            TranslateError::UpdateFailed { path, reason } => {
-                write!(f, "Update failed: path={path:?}, reason={reason}")
-            }
             TranslateError::UpdateAttributeFailed {
                 path,
                 attr_name,
@@ -561,12 +554,6 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Result<Vec<Patch>, TranslateErro
             };
             Ok(vec![Patch::Remove { node: node_ref }])
         }
-        EditOp::Update {
-            path, new_value, ..
-        } => {
-            let patch = translate_update(&path.0, new_value.as_deref())?;
-            Ok(vec![patch])
-        }
         EditOp::Move {
             from,
             to,
@@ -597,14 +584,17 @@ fn translate_op(op: &EditOp, new_doc: &Html) -> Result<Vec<Patch>, TranslateErro
                 detach_to_slot: *detach_to_slot,
             }])
         }
-        EditOp::UpdateAttribute {
-            path,
-            attr_name,
-            new_value,
-            ..
-        } => {
-            let patch = translate_update_attribute(&path.0, attr_name, new_value.as_deref())?;
-            Ok(vec![patch])
+        EditOp::UpdateAttributes { path, changes } => {
+            let mut patches = Vec::with_capacity(changes.len());
+            for change in changes {
+                let patch = translate_update_attribute(
+                    &path.0,
+                    change.attr_name,
+                    change.new_value.as_deref(),
+                )?;
+                patches.push(patch);
+            }
+            Ok(patches)
         }
         #[allow(unreachable_patterns)]
         _ => Err(TranslateError::UnexpectedOp {
@@ -846,63 +836,6 @@ fn collect_attributes_recursive(peek: Peek<'_, '_>, dom_path: &[usize], patches:
                 });
             }
         }
-    }
-}
-
-/// Translate an Update operation.
-fn translate_update(
-    segments: &[PathSegment],
-    new_value: Option<&str>,
-) -> Result<Patch, TranslateError> {
-    let html_shape = <Html as facet_core::Facet>::SHAPE;
-    let nav = navigate_path(segments, html_shape);
-
-    debug!(
-        "translate_update: segments={segments:?}, dom_path={:?}, target={:?}, value={new_value:?}",
-        nav.dom_path, nav.target
-    );
-
-    let make_error = |reason: &str| TranslateError::UpdateFailed {
-        path: segments.to_vec(),
-        reason: reason.to_string(),
-    };
-
-    match nav.target {
-        PathTarget::Text => {
-            let text = new_value
-                .ok_or_else(|| make_error("text value is None"))?
-                .to_string();
-            // Update just the specific text node at dom_path.
-            // dom_path points to the text node itself (e.g., [0, 1] means element at 0, text child at 1).
-            Ok(Patch::SetText {
-                path: NodePath(nav.dom_path),
-                text,
-            })
-        }
-        PathTarget::Attribute(name) => {
-            let value = new_value
-                .ok_or_else(|| make_error("attribute value is None"))?
-                .to_string();
-            Ok(Patch::SetAttribute {
-                path: NodePath(nav.element_dom_path),
-                name,
-                value,
-            })
-        }
-        PathTarget::Element => {
-            // Element updates are typically structural (hash changes) - no DOM patch needed
-            // This is expected for matched elements where only children changed
-            Err(make_error(
-                "Update for PathTarget::Element - structural update, no DOM patch needed (this may be expected)",
-            ))
-        }
-        PathTarget::FlattenedAttributeStruct => Err(make_error(
-            "Update for PathTarget::FlattenedAttributeStruct not supported",
-        )),
-        PathTarget::FlattenedChildrenList => Err(make_error(
-            "Update for PathTarget::FlattenedChildrenList not supported",
-        )),
-        PathTarget::Other => Err(make_error("Update for PathTarget::Other not supported")),
     }
 }
 
