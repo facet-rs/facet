@@ -324,6 +324,26 @@ impl DibsExtension {
                         "offset" => {
                             has_offset = true;
                             offset_span = entry.key.span.as_ref();
+                            // Try to parse offset value for large offset warning
+                            if let Some(val_str) = entry.value.as_str() {
+                                if let Ok(offset_val) = val_str.parse::<i64>() {
+                                    if offset_val > 1000 {
+                                        if let Some(span) = &entry.value.span {
+                                            diagnostics.push(Diagnostic {
+                                                range: self.span_to_range(document_uri, span).await,
+                                                severity: DiagnosticSeverity::Warning,
+                                                message: format!(
+                                                    "large offset ({}) may cause performance issues - consider cursor pagination",
+                                                    offset_val
+                                                ),
+                                                source: Some("dibs".to_string()),
+                                                code: Some("large-offset".to_string()),
+                                                data: None,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
                         }
                         "order-by" => has_order_by = true,
                         "where" => has_where = true,
@@ -509,6 +529,19 @@ impl DibsExtension {
                     }
                 }
 
+                // Validations that don't require table info
+                if tag_name == "query" {
+                    for entry in &obj.entries {
+                        let key = entry.key.as_str().unwrap_or("");
+                        // Check for empty select block
+                        if key == "select" {
+                            self.validate_select_block(document_uri, &entry.value, diagnostics)
+                                .await;
+                        }
+                        // Note: Conflicting WHERE conditions (duplicate keys) are caught by styx parser
+                    }
+                }
+
                 // Validate column references if we have a valid table
                 if tag_name == "query" {
                     if let Some(table) = table_info {
@@ -625,6 +658,46 @@ impl DibsExtension {
         }
     }
 
+    /// Validate select block for empty selects and duplicate columns.
+    async fn validate_select_block(
+        &self,
+        document_uri: &str,
+        value: &styx_tree::Value,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+            // Check for empty select (no columns, only @rel or truly empty)
+            let non_rel_entries: Vec<_> = obj
+                .entries
+                .iter()
+                .filter(|e| e.value.tag.as_ref().map(|t| t.name.as_str()) != Some("rel"))
+                .collect();
+
+            let has_rel_entries = obj
+                .entries
+                .iter()
+                .any(|e| e.value.tag.as_ref().map(|t| t.name.as_str()) == Some("rel"));
+
+            // Warn if no columns selected (but having only @rel entries is fine)
+            if non_rel_entries.is_empty() && !has_rel_entries {
+                if let Some(span) = &value.span {
+                    diagnostics.push(Diagnostic {
+                        range: self.span_to_range(document_uri, span).await,
+                        severity: DiagnosticSeverity::Warning,
+                        message: "empty select block - no columns selected".to_string(),
+                        source: Some("dibs".to_string()),
+                        code: Some("empty-select".to_string()),
+                        data: None,
+                    });
+                }
+            }
+            // Note: Duplicate columns are caught by the styx parser itself
+        }
+    }
+
+    // Note: Conflicting WHERE conditions (e.g., status "active", status "draft")
+    // are caught by the styx parser itself as duplicate keys.
+
     /// Validate param types against column types in a where clause.
     async fn validate_param_types(
         &self,
@@ -704,6 +777,29 @@ impl DibsExtension {
                             ),
                             source: Some("dibs".to_string()),
                             code: Some("literal-type-mismatch".to_string()),
+                            data: None,
+                        });
+                    }
+                }
+            }
+
+            // Check enum value if column has enum variants
+            if !column.enum_variants.is_empty() {
+                // Strip quotes from the literal value for comparison
+                let value_to_check = text.trim_matches('"').trim_matches('\'');
+                if !column.enum_variants.iter().any(|v| v == value_to_check) {
+                    if let Some(span) = &value.span {
+                        diagnostics.push(Diagnostic {
+                            range: self.span_to_range(document_uri, span).await,
+                            severity: DiagnosticSeverity::Error,
+                            message: format!(
+                                "invalid enum value '{}' for column '{}' - expected one of: {}",
+                                value_to_check,
+                                column.name,
+                                column.enum_variants.join(", ")
+                            ),
+                            source: Some("dibs".to_string()),
+                            code: Some("invalid-enum-value".to_string()),
                             data: None,
                         });
                     }

@@ -675,4 +675,59 @@ tests (
             has ({message "no FK relationship" code "no-fk-relationship"})
         }
     }
+
+    // ========================================================================
+    // Additional Lint Tests
+    // ========================================================================
+
+    {
+        name "lint: large offset warning"
+        input <<STYX
+            BadQuery @query{
+                from product
+                where {deleted_at @null}
+                order-by {id asc}
+                offset 5000
+                limit 10
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "large offset" code "large-offset"})
+        }
+    }
+
+    {
+        name "lint: no warning for small offset"
+        input <<STYX
+            GoodQuery @query{
+                from product
+                where {deleted_at @null}
+                order-by {id asc}
+                offset 100
+                limit 10
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
+
+    {
+        name "lint: empty select block"
+        input <<STYX
+            BadQuery @query{
+                from product
+                where {deleted_at @null}
+                select {}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "empty select" code "empty-select"})
+        }
+    }
+
 )
