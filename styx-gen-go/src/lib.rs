@@ -359,7 +359,10 @@ fn generate_parse_file(
     writeln!(out, "import (")?;
     writeln!(out, "\t\"os\"")?;
     writeln!(out)?;
-    writeln!(out, "\tstyx \"github.com/bearcove/styx/implementations/styx-go\"")?;
+    writeln!(
+        out,
+        "\tstyx \"github.com/bearcove/styx/implementations/styx-go\""
+    )?;
     writeln!(out, ")")?;
     writeln!(out)?;
 
