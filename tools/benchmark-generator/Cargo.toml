@@ -2,7 +2,7 @@
 name = "benchmark-generator"
 version = "0.41.0"
 edition = "2024"
-rust-version = "1.89.0"
+rust-version = "1.90.0"
 publish = false
 
 [package.metadata]
