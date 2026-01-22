@@ -131,26 +131,22 @@ changelog_path = "CHANGELOG.md"
 name = "facet-singularize"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
-git_release_enable = false
 
 [[package]]
 name = "facet-validate"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
-git_release_enable = false
 
 # Format crates
 [[package]]
 name = "facet-dessert"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
-git_release_enable = false
 
 [[package]]
 name = "facet-dom"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
-git_release_enable = false
 
 [[package]]
 name = "facet-format"
@@ -181,19 +177,16 @@ changelog_path = "CHANGELOG.md"
 name = "facet-xml-node"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
-git_release_enable = false
 
 [[package]]
 name = "facet-xml-diff"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
-git_release_enable = false
 
 [[package]]
 name = "facet-atom"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
-git_release_enable = false
 
 [[package]]
 name = "facet-svg"
@@ -239,13 +232,11 @@ changelog_path = "CHANGELOG.md"
 name = "facet-python"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
-git_release_enable = false
 
 [[package]]
 name = "facet-tokio-postgres"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
-git_release_enable = false
 
 # ============================================================================
 # Dev-only packages - excluded from releases
