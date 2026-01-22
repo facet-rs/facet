@@ -559,6 +559,7 @@ impl<'src> Parser<'src> {
                         span: token.span,
                         kind: ScalarKind::Bare,
                         content: AtomContent::Error,
+                        adjacent_block_span: None,
                     });
                 }
 
@@ -600,15 +601,26 @@ impl<'src> Parser<'src> {
                 span: start_span,
                 kind: ScalarKind::Bare,
                 content: AtomContent::Scalar(first_key),
+                adjacent_block_span: None,
             };
         };
 
         if eq_kind != TokenKind::Gt || eq_start != start_span.end {
             // No > or whitespace gap - return as regular scalar
+            // parser[impl entry.whitespace]
+            // Check if immediately followed by { or ( without whitespace
+            let adjacent_block_span = if matches!(eq_kind, TokenKind::LBrace | TokenKind::LParen)
+                && eq_start == start_span.end
+            {
+                Some(Span::new(eq_start, eq_end))
+            } else {
+                None
+            };
             return Atom {
                 span: start_span,
                 kind: ScalarKind::Bare,
                 content: AtomContent::Scalar(first_key),
+                adjacent_block_span,
             };
         }
 
@@ -632,6 +644,7 @@ impl<'src> Parser<'src> {
                     entries: vec![],
                     trailing_gt_spans,
                 },
+                adjacent_block_span: None,
             };
         };
 
@@ -645,6 +658,7 @@ impl<'src> Parser<'src> {
                     entries: vec![],
                     trailing_gt_spans,
                 },
+                adjacent_block_span: None,
             };
         }
 
@@ -668,6 +682,7 @@ impl<'src> Parser<'src> {
                     entries: vec![],
                     trailing_gt_spans,
                 },
+                adjacent_block_span: None,
             };
         }
 
@@ -683,6 +698,7 @@ impl<'src> Parser<'src> {
                     entries: vec![],
                     trailing_gt_spans,
                 },
+                adjacent_block_span: None,
             };
         };
 
@@ -785,6 +801,7 @@ impl<'src> Parser<'src> {
                 entries: attrs,
                 trailing_gt_spans,
             },
+            adjacent_block_span: None,
         }
     }
 
@@ -815,16 +832,19 @@ impl<'src> Parser<'src> {
                 span: token.span,
                 kind: ScalarKind::Bare,
                 content: AtomContent::Scalar(token.text),
+                adjacent_block_span: None,
             },
             TokenKind::QuotedScalar => Atom {
                 span: token.span,
                 kind: ScalarKind::Quoted,
                 content: AtomContent::Scalar(token.text),
+                adjacent_block_span: None,
             },
             TokenKind::RawScalar => Atom {
                 span: token.span,
                 kind: ScalarKind::Raw,
                 content: AtomContent::Scalar(token.text),
+                adjacent_block_span: None,
             },
             TokenKind::HeredocStart => {
                 // Collect heredoc content
@@ -877,6 +897,7 @@ impl<'src> Parser<'src> {
                         },
                         kind: ScalarKind::Heredoc,
                         content: AtomContent::Error,
+                        adjacent_block_span: None,
                     }
                 } else {
                     Atom {
@@ -886,6 +907,7 @@ impl<'src> Parser<'src> {
                         },
                         kind: ScalarKind::Heredoc,
                         content: AtomContent::Heredoc(content),
+                        adjacent_block_span: None,
                     }
                 }
             }
@@ -1013,6 +1035,7 @@ impl<'src> Parser<'src> {
                                     span: key.span,
                                     kind: ScalarKind::Bare,
                                     content: AtomContent::Unit,
+                                    adjacent_block_span: None,
                                 },
                                 None,
                             )
@@ -1050,6 +1073,7 @@ impl<'src> Parser<'src> {
                 dangling_doc_comment_spans,
                 unclosed,
             },
+            adjacent_block_span: None,
         }
     }
 
@@ -1119,6 +1143,7 @@ impl<'src> Parser<'src> {
                 unclosed,
                 comma_spans,
             },
+            adjacent_block_span: None,
         }
     }
 
@@ -1188,6 +1213,7 @@ impl<'src> Parser<'src> {
                     },
                     kind: ScalarKind::Bare,
                     content: AtomContent::Unit,
+                    adjacent_block_span: None,
                 })
             } else {
                 // Check for payload (must immediately follow tag name, no whitespace)
@@ -1210,6 +1236,7 @@ impl<'src> Parser<'src> {
                         None
                     },
                 },
+                adjacent_block_span: None,
             };
         }
 
@@ -1218,6 +1245,7 @@ impl<'src> Parser<'src> {
             span: start_span,
             kind: ScalarKind::Bare,
             content: AtomContent::Unit,
+            adjacent_block_span: None,
         }
     }
 
@@ -1266,6 +1294,7 @@ impl<'src> Parser<'src> {
                     span: at.span,
                     kind: ScalarKind::Bare,
                     content: AtomContent::Unit,
+                    adjacent_block_span: None,
                 })
             }
             // Anything else - implicit unit (no payload)
@@ -1537,6 +1566,17 @@ impl<'src> Parser<'src> {
         atom: &Atom<'src>,
         callback: &mut C,
     ) -> bool {
+        // parser[impl entry.whitespace]
+        // Check for missing whitespace before { or ( after bare scalar
+        if let Some(span) = atom.adjacent_block_span
+            && !callback.event(Event::Error {
+                span,
+                kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+            })
+        {
+            return false;
+        }
+
         match &atom.content {
             AtomContent::Scalar(text) => {
                 // parser[impl scalar.quoted.escapes]
@@ -1905,6 +1945,9 @@ struct Atom<'src> {
     span: Span,
     kind: ScalarKind,
     content: AtomContent<'src>,
+    /// Span of adjacent `{` or `(` without whitespace (for error reporting).
+    /// parser[impl entry.whitespace]
+    adjacent_block_span: Option<Span>,
 }
 
 /// Content of an atom.
@@ -3437,6 +3480,125 @@ mod tests {
         assert!(
             !events.iter().any(|e| matches!(e, Event::Error { .. })),
             "Different top-level paths should not conflict"
+        );
+    }
+
+    // parser[verify entry.whitespace]
+    #[test]
+    fn test_bare_key_requires_whitespace_before_brace() {
+        // `key{}` without whitespace should be an error
+        let events = parse("config{}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                    ..
+                }
+            )),
+            "config{{}} without whitespace should error"
+        );
+    }
+
+    // parser[verify entry.whitespace]
+    #[test]
+    fn test_bare_key_requires_whitespace_before_paren() {
+        // `key()` without whitespace should be an error
+        let events = parse("items(1 2 3)");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                    ..
+                }
+            )),
+            "items() without whitespace should error"
+        );
+    }
+
+    // parser[verify entry.whitespace]
+    #[test]
+    fn test_bare_key_with_whitespace_before_brace_ok() {
+        // `key {}` with whitespace should be fine
+        let events = parse("config {}");
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                    ..
+                }
+            )),
+            "config {{}} with whitespace should not error"
+        );
+    }
+
+    // parser[verify entry.whitespace]
+    #[test]
+    fn test_bare_key_with_whitespace_before_paren_ok() {
+        // `key ()` with whitespace should be fine
+        let events = parse("items (1 2 3)");
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                    ..
+                }
+            )),
+            "items () with whitespace should not error"
+        );
+    }
+
+    // parser[verify entry.whitespace]
+    #[test]
+    fn test_tag_with_brace_no_whitespace_ok() {
+        // `@tag{}` (tag with object payload) should NOT require whitespace
+        let events = parse("config @object{}");
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                    ..
+                }
+            )),
+            "@tag{{}} should not require whitespace"
+        );
+    }
+
+    // parser[verify entry.whitespace]
+    #[test]
+    fn test_quoted_key_no_whitespace_ok() {
+        // `"key"{}` - quoted keys don't have this restriction
+        let events = parse(r#""config"{}"#);
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                    ..
+                }
+            )),
+            "quoted key before {{}} should not require whitespace"
+        );
+    }
+
+    // parser[verify entry.whitespace]
+    #[test]
+    fn test_minified_styx_with_whitespace() {
+        // Minified Styx should work with required whitespace
+        let events = parse("{server {host localhost,port 8080}}");
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                    ..
+                }
+            )),
+            "minified styx with whitespace should work"
         );
     }
 }

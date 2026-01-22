@@ -213,6 +213,23 @@ An **entry** consists of a key and an optional value.
 > config @object{}         // config = @object{}
 > ```
 
+> r[entry.whitespace]
+> A bare scalar key MUST be separated from a following `{` or `(` by whitespace.
+> This prevents visual confusion with tag syntax (e.g., `@tag{...}`).
+>
+> ```styx
+> config {}                // valid: whitespace before {
+> items (1 2 3)            // valid: whitespace before (
+> ```
+>
+> ```styx,bad
+> config{}                 // ERROR: missing whitespace before {
+> items(1 2 3)             // ERROR: missing whitespace before (
+> ```
+>
+> Note: Quoted scalars, raw scalars, and tags do not have this restriction
+> since they have clear delimiters. `@tag{}` is a tagged object (one atom).
+
 > r[entry.toomany]
 > An entry with more than two atoms is a parse error.
 >
@@ -436,7 +453,7 @@ A Styx document is an object. Top-level entries do not require braces.
 Styx can be written on a single line using commas and explicit braces:
 
 ```styx
-{server{host localhost,port 8080},database{url "postgres://..."}}
+{server {host localhost,port 8080},database {url "postgres://..."}}
 ```
 
 This is equivalent to:

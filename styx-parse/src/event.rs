@@ -183,6 +183,9 @@ pub enum ParseErrorKind {
     },
     /// Comma in sequence (sequences are whitespace-separated, not comma-separated).
     CommaInSequence,
+    /// Missing whitespace between bare scalar and `{` or `(`.
+    // parser[impl entry.whitespace]
+    MissingWhitespaceBeforeBlock,
 }
 
 impl std::fmt::Display for ParseErrorKind {
@@ -225,6 +228,12 @@ impl std::fmt::Display for ParseErrorKind {
                 write!(
                     f,
                     "unexpected `,` in sequence (sequences are whitespace-separated, not comma-separated)"
+                )
+            }
+            ParseErrorKind::MissingWhitespaceBeforeBlock => {
+                write!(
+                    f,
+                    "missing whitespace before `{{` or `(` (required after bare scalar to distinguish from tag syntax like `@tag{{}}`)"
                 )
             }
         }

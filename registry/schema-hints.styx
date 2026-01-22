@@ -14,7 +14,7 @@ hints {
         description "Git hooks manager for Rust projects"
         homepage "https://github.com/bearcove/captain"
         patterns ("**/.config/captain/config.styx")
-        schema {id crate:captain-cli@1, cli captain}
+        schema {id crate:captain-config@1, cli captain}
     }
     dodeca {
         title "Dodeca"
@@ -52,4 +52,3 @@ hints {
         schema {id crate:styx-lsp-config@1, cli styx}
     }
 }
-

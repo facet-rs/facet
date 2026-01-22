@@ -61,7 +61,11 @@ pub fn load_config() -> Result<Option<StyxUserConfig>, LoadConfigError> {
             error: e.to_string(),
         })?;
 
-    info!(?path, extensions = config.allowed_extensions.len(), "Loaded user config");
+    info!(
+        ?path,
+        extensions = config.allowed_extensions.len(),
+        "Loaded user config"
+    );
     Ok(Some(config))
 }
 
@@ -102,8 +106,14 @@ pub fn save_config(config: &StyxUserConfig) -> Result<(), SaveConfigError> {
 /// Error loading the user config.
 #[derive(Debug)]
 pub enum LoadConfigError {
-    Io { path: PathBuf, error: std::io::Error },
-    Parse { path: PathBuf, error: String },
+    Io {
+        path: PathBuf,
+        error: std::io::Error,
+    },
+    Parse {
+        path: PathBuf,
+        error: String,
+    },
 }
 
 impl std::fmt::Display for LoadConfigError {
@@ -125,8 +135,13 @@ impl std::error::Error for LoadConfigError {}
 #[derive(Debug)]
 pub enum SaveConfigError {
     NoConfigDir,
-    Io { path: PathBuf, error: std::io::Error },
-    Serialize { error: String },
+    Io {
+        path: PathBuf,
+        error: std::io::Error,
+    },
+    Serialize {
+        error: String,
+    },
 }
 
 impl std::fmt::Display for SaveConfigError {

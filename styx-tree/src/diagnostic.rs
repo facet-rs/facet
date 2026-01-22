@@ -204,6 +204,16 @@ impl ParseError {
                         .with_color(Color::Red),
                 )
                 .with_help("sequences are whitespace-separated, not comma-separated"),
+
+            // diag[impl diagnostic.parser.missing-whitespace]
+            ParseErrorKind::MissingWhitespaceBeforeBlock => Report::build(ReportKind::Error, (filename, range.clone()))
+                .with_message("missing whitespace before block")
+                .with_label(
+                    Label::new((filename, range))
+                        .with_message("add whitespace before this")
+                        .with_color(Color::Red),
+                )
+                .with_help("bare keys must be separated from `{` or `(` by whitespace (to distinguish from tags like `@tag{}`)"),
         }
     }
 }
@@ -231,6 +241,9 @@ impl std::fmt::Display for ParseError {
                 write!(f, "cannot nest into `{}`", terminal_path.join("."))
             }
             ParseErrorKind::CommaInSequence => write!(f, "unexpected comma in sequence"),
+            ParseErrorKind::MissingWhitespaceBeforeBlock => {
+                write!(f, "missing whitespace before block")
+            }
         }?;
         write!(f, " at offset {}", self.span.start)
     }

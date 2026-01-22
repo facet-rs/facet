@@ -196,6 +196,7 @@ fn format_error(kind: &styx_parse::ParseErrorKind) -> String {
             )
         }
         CommaInSequence => "Sequences use whitespace separators, not commas".to_string(),
+        MissingWhitespaceBeforeBlock => "Missing whitespace before '{' or '(' after bare key (to distinguish from tags like @tag{})".to_string(),
     }
 }
 
