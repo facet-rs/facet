@@ -14,11 +14,21 @@
 //! See `cinereus/CHAWATHE_SEMANTICS.md` for details.
 
 use facet_html_diff::InsertContent;
+use tracing::debug;
 use wasm_bindgen::prelude::*;
 use web_sys::{Document, Element, Node};
 
+/// Initialize tracing subscriber for WASM (sends output to browser console).
+/// Call this once at startup.
+#[wasm_bindgen]
+pub fn init_tracing() {
+    let mut config = wasm_tracing::WasmLayerConfig::default();
+    config.set_max_level(tracing::Level::TRACE);
+    wasm_tracing::set_as_global_default_with_config(config);
+}
+
 // Re-export patch types for reference
-pub use facet_html_diff::{NodePath, NodeRef, Patch};
+pub use facet_html_diff::{NodePath, NodeRef, Patch, PropChange};
 
 /// Compute diff between two HTML documents and return patches as JSON.
 /// This allows computing diffs in the browser for fuzzing tests.
@@ -101,6 +111,7 @@ pub fn apply_patches(patches: &[Patch]) -> Result<usize, JsValue> {
 }
 
 fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), JsValue> {
+    debug!(?patch, "applying patch");
     match patch {
         Patch::SetText { path, text } => {
             let node = find_node(doc, path, slots)?;
@@ -118,13 +129,19 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
         }
 
         Patch::Remove { node } => {
-            let target = resolve_node_ref(doc, node, slots)?;
-            if let Some(parent) = target.parent_node() {
-                parent.remove_child(&target)?;
-            }
-            // If it was a slot, it's now gone
-            if let NodeRef::Slot(s, _) = node {
-                slots.take(*s);
+            match node {
+                NodeRef::Path(path) => {
+                    // Replace with empty text node (no shifting - Chawathe semantics)
+                    let target = find_node(doc, path, slots)?;
+                    if let Some(parent) = target.parent_node() {
+                        let empty_text = doc.create_text_node("");
+                        parent.replace_child(&empty_text, &target)?;
+                    }
+                }
+                NodeRef::Slot(s, _) => {
+                    // Just remove from slots - the node was already detached
+                    slots.take(*s);
+                }
             }
         }
 
@@ -156,7 +173,14 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
             }
 
             // Insert at position with Chawathe displacement semantics
-            insert_at_position(parent_el, &new_el.into(), *position, *detach_to_slot, slots)?;
+            insert_at_position(
+                doc,
+                parent_el,
+                &new_el.into(),
+                *position,
+                *detach_to_slot,
+                slots,
+            )?;
         }
 
         Patch::InsertText {
@@ -175,12 +199,38 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
 
             // Insert at position with Chawathe displacement semantics
             insert_at_position(
+                doc,
                 parent_el,
                 &text_node.into(),
                 *position,
                 *detach_to_slot,
                 slots,
             )?;
+        }
+
+        Patch::UpdateProps { path, changes } => {
+            let node = find_node(doc, path, slots)?;
+            for change in changes {
+                if change.name == "_text" {
+                    // Special handling for _text property - sets text content
+                    // Works on both text nodes and elements
+                    match &change.value {
+                        Some(v) => node.set_text_content(Some(v)),
+                        None => node.set_text_content(None),
+                    }
+                } else {
+                    // Regular attribute - requires an element
+                    let el = node.dyn_ref::<Element>().ok_or_else(|| {
+                        JsValue::from_str(
+                            "UpdateProps: node is not an element for attribute change",
+                        )
+                    })?;
+                    match &change.value {
+                        Some(v) => el.set_attribute(&change.name, v)?,
+                        None => el.remove_attribute(&change.name)?,
+                    }
+                }
+            }
         }
 
         Patch::Move {
@@ -190,7 +240,15 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
         } => {
             // Get the node to move (from path or slot)
             let node = match from {
-                NodeRef::Path(path) => find_node(doc, path, slots)?,
+                NodeRef::Path(path) => {
+                    let node = find_node(doc, path, slots)?;
+                    // Replace with empty text node (no shifting - Chawathe semantics)
+                    if let Some(parent) = node.parent_node() {
+                        let empty_text = doc.create_text_node("");
+                        parent.replace_child(&empty_text, &node)?;
+                    }
+                    node
+                }
                 NodeRef::Slot(slot, rel_path) => {
                     let slot_root = slots
                         .take(*slot)
@@ -203,11 +261,6 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
                     }
                 }
             };
-
-            // Remove from current location (if it has a parent - slots don't)
-            if let Some(parent) = node.parent_node() {
-                parent.remove_child(&node)?;
-            }
 
             // Find the parent and position from the target
             match to {
@@ -224,7 +277,7 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
                         .ok_or_else(|| JsValue::from_str("parent is not an element"))?;
 
                     // Insert at the target position with Chawathe displacement
-                    insert_at_position(parent_el, &node, target_idx, *detach_to_slot, slots)?;
+                    insert_at_position(doc, parent_el, &node, target_idx, *detach_to_slot, slots)?;
                 }
                 NodeRef::Slot(slot, rel_path) => {
                     // Moving into a slot - get the slot root and navigate
@@ -250,7 +303,7 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
                         ));
                     };
 
-                    insert_at_position(&parent_el, &node, target_idx, *detach_to_slot, slots)?;
+                    insert_at_position(doc, &parent_el, &node, target_idx, *detach_to_slot, slots)?;
                 }
             }
         }
@@ -262,6 +315,7 @@ fn apply_patch(doc: &Document, patch: &Patch, slots: &mut Slots) -> Result<(), J
 /// Insert a node at a position within a parent, using Chawathe displacement semantics.
 /// If there's a node at the position, it gets replaced (and optionally stored in a slot).
 fn insert_at_position(
+    doc: &Document,
     parent: &Element,
     node: &Node,
     position: usize,
@@ -269,16 +323,22 @@ fn insert_at_position(
     slots: &mut Slots,
 ) -> Result<(), JsValue> {
     let children = parent.child_nodes();
+    let current_len = children.length() as usize;
     let pos = position as u32;
 
-    if let Some(existing) = children.item(pos) {
-        // Replace existing node (Chawathe semantics - no shift)
+    if position < current_len {
+        // Position exists - replace (Chawathe semantics - no shift)
+        let existing = children.item(pos).unwrap();
         let replaced = parent.replace_child(node, &existing)?;
         if let Some(slot) = detach_to_slot {
             slots.store(slot, replaced);
         }
     } else {
-        // Position is beyond current children - just append
+        // Position is beyond current children - grow with empty text placeholders
+        for _ in current_len..position {
+            let placeholder = doc.create_text_node("");
+            parent.append_child(&placeholder)?;
+        }
         parent.append_child(node)?;
     }
 

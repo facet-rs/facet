@@ -1922,7 +1922,9 @@ version = "0.42.0"
 dependencies = [
  "facet-html-diff",
  "facet-json",
+ "tracing",
  "wasm-bindgen",
+ "wasm-tracing",
  "web-sys",
 ]
 
@@ -5987,6 +5989,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cbc538057e648b67f72a982e708d485b2efa771e1ac05fec311f9f63e5800db4"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasm-tracing"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11ab253baf6d3772bbdb37a0966b67d37ab80657ccd1a084b4d7b3de3232375d"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+ "wasm-bindgen",
 ]
 
 [[package]]

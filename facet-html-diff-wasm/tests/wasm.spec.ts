@@ -51,14 +51,22 @@ test.describe("facet-html-diff WASM", () => {
 
   for (const tc of TEST_CASES) {
     test(`roundtrip: ${tc.name}`, async ({ page }) => {
+      // Capture console messages
+      const consoleLogs: string[] = [];
+      page.on("console", (msg) => consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
+
       const result = await page.evaluate(
         ({ oldHtml, newHtml }) => {
           const fullOld = `<html><body>${oldHtml}</body></html>`;
           const fullNew = `<html><body>${newHtml}</body></html>`;
 
+          let patchesJson = "";
           try {
             // Compute patches dynamically
-            const patchesJson = (window as any).diffHtml(fullOld, fullNew);
+            patchesJson = (window as any).diffHtml(fullOld, fullNew);
+            console.log(`Old: ${oldHtml}`);
+            console.log(`New: ${newHtml}`);
+            console.log(`Patches: ${patchesJson}`);
 
             // Apply patches
             (window as any).setBodyInnerHtml(oldHtml);
@@ -84,12 +92,18 @@ test.describe("facet-html-diff WASM", () => {
               };
             }
           } catch (e) {
-            return { pass: false, error: String(e) };
+            return { pass: false, error: String(e), patches: patchesJson };
           }
         },
         { oldHtml: tc.old, newHtml: tc.new },
       );
 
+      if (!result.pass) {
+        console.log("Console logs from browser:");
+        for (const log of consoleLogs) {
+          console.log(log);
+        }
+      }
       expect(result.pass, result.error || "").toBe(true);
     });
   }
