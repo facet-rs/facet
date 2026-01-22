@@ -3,6 +3,8 @@ name = "styx-lsp-test-schema"
 version = "1.0.0"
 edition.workspace = true
 description = "Schema types for LSP extension test files"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 facet.workspace = true

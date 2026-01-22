@@ -11,11 +11,11 @@ tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }
 
 # Styx crates
-styx-cst = { path = "../styx-cst" }
-styx-tree = { path = "../styx-tree" }
-styx-format = { path = "../styx-format" }
-styx-embed = { path = "../styx-embed" }
-facet-styx = { path = "../facet-styx" }
+styx-cst = { path = "../styx-cst", version = "1.0" }
+styx-tree = { path = "../styx-tree", version = "1.0" }
+styx-format = { path = "../styx-format", version = "1.0" }
+styx-embed = { path = "../styx-embed", version = "1.0" }
+facet-styx = { path = "../facet-styx", version = "1.0" }
 
 # Binary lookup
 which = "7"
@@ -42,10 +42,10 @@ roam-stream = { git = "https://github.com/bearcove/roam", branch = "main" }
 roam-session = { git = "https://github.com/bearcove/roam", branch = "main" }
 
 # Extension protocol
-styx-lsp-ext = { path = "../styx-lsp-ext" }
+styx-lsp-ext = { path = "../styx-lsp-ext", version = "1.0" }
 
 # Testing
-styx-lsp-test-schema = { path = "../styx-lsp-test-schema" }
+styx-lsp-test-schema = { path = "../styx-lsp-test-schema", version = "1.0" }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -53,4 +53,4 @@ serde_json.workspace = true
 
 [build-dependencies]
 facet.workspace = true
-facet-styx = { path = "../facet-styx" }
+facet-styx = { path = "../facet-styx", version = "1.0" }

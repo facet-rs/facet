@@ -3,8 +3,10 @@ name = "styx-lsp-ext"
 version = "1.0.0"
 edition.workspace = true
 description = "Protocol types for Styx LSP extensions"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 facet.workspace = true
-styx-tree = { path = "../styx-tree", features = ["facet"] }
+styx-tree = { path = "../styx-tree", version = "1.0", features = ["facet"] }
 roam = { git = "https://github.com/bearcove/roam", branch = "main", version = "0.6.0" }

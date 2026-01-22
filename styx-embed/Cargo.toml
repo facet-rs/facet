@@ -11,4 +11,4 @@ lz4_flex = "0.11"
 blake3 = "1"
 memmap2 = "0.9"
 goblin = "0.9"
-styx-embed-macros = { path = "../styx-embed-macros" }
+styx-embed-macros = { path = "../styx-embed-macros", version = "1.0" }
