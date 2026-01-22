@@ -120,7 +120,6 @@ tests (
             }
             STYX
         diagnostics {
-            count 1
             has ({message "Unknown table 'nonexistent_table'"})
         }
     }
@@ -130,6 +129,7 @@ tests (
         input <<STYX
             AllProducts @query{
                 from product
+                where {deleted_at @null}
                 select {
                     id
                     nonexistent_column
@@ -147,6 +147,7 @@ tests (
         input <<STYX
             AllProducts @query{
                 from product
+                where {deleted_at @null}
                 select {
                     id
                     handle
@@ -167,6 +168,7 @@ tests (
                     handle TEXT
                 }
                 where {
+                    deleted_at @null
                     handle @eq($han|dle)
                 }
                 select {id handle}
@@ -183,6 +185,7 @@ tests (
         input <<STYX
             AllProducts @query{
                 from product
+                where {deleted_at @null}
                 select {han|dle}
             }
             STYX
@@ -200,6 +203,7 @@ tests (
         input <<STYX
             BadQuery @query{
                 from product
+                where {deleted_at @null}
                 offset 10
                 select {id}
             }
@@ -215,6 +219,7 @@ tests (
         input <<STYX
             BadQuery @query{
                 from product
+                where {deleted_at @null}
                 limit 10
                 select {id}
             }
@@ -230,6 +235,7 @@ tests (
         input <<STYX
             BadQuery @query{
                 from product
+                where {deleted_at @null}
                 first true
                 select {id}
             }
@@ -245,6 +251,7 @@ tests (
         input <<STYX
             GoodQuery @query{
                 from product
+                where {deleted_at @null}
                 order-by {id asc}
                 limit 10
                 select {id}
@@ -264,7 +271,6 @@ tests (
             }
             STYX
         diagnostics {
-            count 1
             has ({message "without 'where'" code "mutation-without-where"})
         }
     }
@@ -277,7 +283,6 @@ tests (
             }
             STYX
         diagnostics {
-            count 1
             has ({message "without 'where'" code "mutation-without-where"})
         }
     }
@@ -301,6 +306,7 @@ tests (
         input <<STYX
             BadQuery @query{
                 from product
+                where {deleted_at @null}
                 params {
                     unused_param TEXT
                 }
@@ -321,8 +327,94 @@ tests (
                 params {
                     handle TEXT
                 }
-                where {handle $handle}
+                where {deleted_at @null, handle $handle}
                 select {id}
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
+
+    {
+        name "lint: missing deleted_at filter"
+        input <<STYX
+            BadQuery @query{
+                from product
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "doesn't filter 'deleted_at'" code "missing-deleted-at-filter"})
+        }
+    }
+
+    {
+        name "lint: no warning when deleted_at is filtered"
+        input <<STYX
+            GoodQuery @query{
+                from product
+                where {deleted_at @null}
+                select {id}
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
+
+    {
+        name "lint: hard delete on soft-delete table"
+        input <<STYX
+            BadDelete @delete{
+                from product
+                where {id 1}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "consider soft delete" code "hard-delete-on-soft-delete-table"})
+        }
+    }
+
+    {
+        name "lint: relation first without order-by"
+        input <<STYX
+            QueryWithRel @query{
+                from product
+                where {deleted_at @null}
+                select {
+                    id
+                    translation @rel{
+                        from product_translation
+                        first true
+                        select {title}
+                    }
+                }
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "@rel without 'order-by'" code "rel-first-without-order-by"})
+        }
+    }
+
+    {
+        name "lint: no warning when relation has order-by"
+        input <<STYX
+            QueryWithRel @query{
+                from product
+                where {deleted_at @null}
+                select {
+                    id
+                    translation @rel{
+                        from product_translation
+                        order-by {locale asc}
+                        first true
+                        select {title}
+                    }
+                }
             }
             STYX
         diagnostics {

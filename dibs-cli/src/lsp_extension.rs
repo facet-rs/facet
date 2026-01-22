@@ -291,8 +291,14 @@ impl DibsExtension {
         let schema = self.schema().await;
 
         // Handle tagged objects (@query, @update, @delete, @insert, @upsert)
+        // Note: @rel blocks are handled separately by lint_relation()
         if let Some(tag) = &value.tag {
             let tag_name = tag.name.as_str();
+
+            // Skip @rel - handled by lint_relation() called from parent
+            if tag_name == "rel" {
+                return;
+            }
 
             if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
                 // Collect info about the query structure
@@ -455,11 +461,67 @@ impl DibsExtension {
                     }
                 }
 
+                // Get table info for soft delete checks
+                let table_info = table_name
+                    .as_ref()
+                    .and_then(|name| schema.tables.iter().find(|t| &t.name == name));
+
+                // Check if table has deleted_at column (soft delete pattern)
+                let has_deleted_at_column = table_info
+                    .map(|t| t.columns.iter().any(|c| c.name == "deleted_at"))
+                    .unwrap_or(false);
+
+                // Check if where clause filters on deleted_at
+                let filters_deleted_at = obj.entries.iter().any(|entry| {
+                    if entry.key.as_str() == Some("where") {
+                        self.where_filters_deleted_at(&entry.value)
+                    } else {
+                        false
+                    }
+                });
+
+                // Lint: query on soft-delete table without deleted_at filter
+                if tag_name == "query" && has_deleted_at_column && !filters_deleted_at {
+                    // Find the "from" entry for span
+                    for entry in &obj.entries {
+                        if entry.key.as_str() == Some("from") {
+                            if let Some(span) = &entry.value.span {
+                                diagnostics.push(Diagnostic {
+                                    range: self.span_to_range(document_uri, span).await,
+                                    severity: DiagnosticSeverity::Warning,
+                                    message: format!(
+                                        "query on '{}' doesn't filter 'deleted_at' - add 'deleted_at @null' to exclude soft-deleted rows",
+                                        table_name.as_deref().unwrap_or("table")
+                                    ),
+                                    source: Some("dibs".to_string()),
+                                    code: Some("missing-deleted-at-filter".to_string()),
+                                    data: None,
+                                });
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // Lint: @delete on table with deleted_at (should use soft delete)
+                if tag_name == "delete" && has_deleted_at_column {
+                    if let Some(span) = &tag.span {
+                        diagnostics.push(Diagnostic {
+                            range: self.span_to_range(document_uri, span).await,
+                            severity: DiagnosticSeverity::Warning,
+                            message: format!(
+                                "@delete on table with 'deleted_at' column - consider soft delete with @update instead"
+                            ),
+                            source: Some("dibs".to_string()),
+                            code: Some("hard-delete-on-soft-delete-table".to_string()),
+                            data: None,
+                        });
+                    }
+                }
+
                 // Validate column references if we have a valid table
                 if tag_name == "query" {
-                    if let Some(table_name) = table_name
-                        && let Some(table) = schema.tables.iter().find(|t| t.name == table_name)
-                    {
+                    if let Some(table) = table_info {
                         for entry in &obj.entries {
                             let key = entry.key.as_str().unwrap_or("");
                             if matches!(key, "select" | "where" | "order-by" | "group-by") {
@@ -474,15 +536,30 @@ impl DibsExtension {
                         }
                     }
                 }
+
+                // Recurse into select to find @rel blocks
+                for entry in &obj.entries {
+                    if entry.key.as_str() == Some("select") {
+                        Box::pin(self.collect_diagnostics(document_uri, &entry.value, diagnostics))
+                            .await;
+                    }
+                }
             }
 
             // Don't recurse into tagged blocks - we've handled them
             return;
         }
 
-        // Recurse into children
+        // Recurse into children (and handle @rel blocks)
         if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
             for entry in &obj.entries {
+                // Check if this entry's value is a @rel for relation-specific linting
+                if let Some(tag) = &entry.value.tag {
+                    if tag.name == "rel" {
+                        self.lint_relation(document_uri, &entry.value, diagnostics)
+                            .await;
+                    }
+                }
                 Box::pin(self.collect_diagnostics(document_uri, &entry.value, diagnostics)).await;
             }
         } else if let Some(obj) = value.as_object() {
@@ -508,6 +585,11 @@ impl DibsExtension {
     ) {
         if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
             for entry in &obj.entries {
+                // Skip entries that are relations (@rel) - they're not column names
+                if entry.value.tag.as_ref().map(|t| t.name.as_str()) == Some("rel") {
+                    continue;
+                }
+
                 if let Some(col_name) = entry.key.as_str()
                     && !table.columns.iter().any(|c| c.name == col_name)
                 {
@@ -525,6 +607,59 @@ impl DibsExtension {
                             data: None,
                         });
                     }
+                }
+            }
+        }
+    }
+
+    /// Check if a where clause filters on deleted_at.
+    fn where_filters_deleted_at(&self, where_value: &styx_tree::Value) -> bool {
+        if let Some(styx_tree::Payload::Object(obj)) = &where_value.payload {
+            for entry in &obj.entries {
+                if entry.key.as_str() == Some("deleted_at") {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Lint a @rel block for relation-specific issues.
+    async fn lint_relation(
+        &self,
+        document_uri: &str,
+        rel_value: &styx_tree::Value,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        if let Some(styx_tree::Payload::Object(obj)) = &rel_value.payload {
+            let mut has_first = false;
+            let mut has_order_by = false;
+            let mut first_span: Option<&styx_tree::Span> = None;
+
+            for entry in &obj.entries {
+                let key = entry.key.as_str().unwrap_or("");
+                match key {
+                    "first" => {
+                        has_first = true;
+                        first_span = entry.key.span.as_ref();
+                    }
+                    "order-by" => has_order_by = true,
+                    _ => {}
+                }
+            }
+
+            // Lint: first without order-by in relation
+            if has_first && !has_order_by {
+                if let Some(span) = first_span {
+                    diagnostics.push(Diagnostic {
+                        range: self.span_to_range(document_uri, span).await,
+                        severity: DiagnosticSeverity::Warning,
+                        message: "'first' in @rel without 'order-by' returns arbitrary row"
+                            .to_string(),
+                        source: Some("dibs".to_string()),
+                        code: Some("rel-first-without-order-by".to_string()),
+                        data: None,
+                    });
                 }
             }
         }
