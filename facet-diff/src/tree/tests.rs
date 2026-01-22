@@ -346,9 +346,9 @@ fn test_nested_list_paths() {
 /// Simple struct with direct attribute fields
 #[derive(Debug, Clone, PartialEq, Facet)]
 struct SimpleElement {
-    #[facet(html::attribute)]
+    #[facet(attribute)]
     id: Option<String>,
-    #[facet(html::attribute)]
+    #[facet(attribute)]
     class: Option<String>,
     // Non-attribute field
     content: String,
@@ -357,11 +357,11 @@ struct SimpleElement {
 /// Attrs struct that gets flattened (like GlobalAttrs in facet-html-dom)
 #[derive(Debug, Clone, PartialEq, Default, Facet)]
 struct Attrs {
-    #[facet(html::attribute)]
+    #[facet(attribute)]
     id: Option<String>,
-    #[facet(html::attribute)]
+    #[facet(attribute)]
     class: Option<String>,
-    #[facet(html::attribute)]
+    #[facet(attribute)]
     style: Option<String>,
 }
 
@@ -388,18 +388,18 @@ fn test_collect_properties_direct_attrs() {
 
     // Should collect both attribute fields
     assert_eq!(
-        props.attrs.get("id"),
+        props.get("id"),
         Some(&Some("my-id".to_string())),
         "Should collect id attribute"
     );
     assert_eq!(
-        props.attrs.get("class"),
+        props.get("class"),
         Some(&Some("my-class".to_string())),
         "Should collect class attribute"
     );
     // Should NOT collect non-attribute field
     assert!(
-        !props.attrs.contains_key("content"),
+        !props.contains("content"),
         "Should not collect non-attribute field"
     );
 }
@@ -418,12 +418,12 @@ fn test_collect_properties_none_values() {
 
     // Should collect None as None
     assert_eq!(
-        props.attrs.get("id"),
+        props.get("id"),
         Some(&None),
         "Should collect None attribute"
     );
     assert_eq!(
-        props.attrs.get("class"),
+        props.get("class"),
         Some(&Some("visible".to_string())),
         "Should collect Some attribute"
     );
@@ -446,17 +446,17 @@ fn test_collect_properties_flattened_attrs() {
 
     // Should collect attributes from flattened struct
     assert_eq!(
-        props.attrs.get("id"),
+        props.get("id"),
         Some(&Some("my-id".to_string())),
         "Should collect id from flattened attrs"
     );
     assert_eq!(
-        props.attrs.get("class"),
+        props.get("class"),
         Some(&Some("my-class".to_string())),
         "Should collect class from flattened attrs"
     );
     assert_eq!(
-        props.attrs.get("style"),
+        props.get("style"),
         Some(&None),
         "Should collect style=None from flattened attrs"
     );
@@ -499,18 +499,18 @@ fn test_diff_emits_update_attribute_for_flattened() {
     );
 
     if let Some(EditOp::UpdateAttributes { changes, .. }) = update_attrs_ops.first() {
-        let attr_names: Vec<_> = changes.iter().map(|c| c.attr_name).collect();
-        eprintln!("UpdateAttributes attr names: {:?}", attr_names);
+        let keys: Vec<_> = changes.iter().map(|c| c.key.clone()).collect();
+        eprintln!("UpdateAttributes keys: {:?}", keys);
 
         assert!(
-            attr_names.contains(&"id"),
+            keys.contains(&PropKey::Attr("id".into())),
             "Should have change for id, got: {:?}",
-            attr_names
+            keys
         );
         assert!(
-            attr_names.contains(&"class"),
+            keys.contains(&PropKey::Attr("class".into())),
             "Should have change for class, got: {:?}",
-            attr_names
+            keys
         );
     }
 }

@@ -3,6 +3,30 @@
 //! This module provides the bridge between facet-reflect's `Peek` and
 //! cinereus's tree diffing algorithm.
 
+/// Property key for node properties (tag, text, or named attributes).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, facet::Facet)]
+#[repr(u8)]
+pub enum PropKey {
+    /// The tag name (e.g., HTML element tag like "div", "span").
+    Tag,
+    /// Text content of the node.
+    Text,
+    /// A named attribute (e.g., "id", "class", "href").
+    Attr(String),
+}
+
+impl From<&str> for PropKey {
+    fn from(s: &str) -> Self {
+        PropKey::Attr(s.to_string())
+    }
+}
+
+impl From<String> for PropKey {
+    fn from(s: String) -> Self {
+        PropKey::Attr(s)
+    }
+}
+
 #[cfg(feature = "matching-stats")]
 pub use cinereus::matching::{
     get_stats as get_matching_stats, reset_stats as reset_matching_stats,
@@ -108,8 +132,8 @@ pub enum NodeRef {
 /// A single attribute change within an UpdateAttributes operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttributeChange {
-    /// The attribute name (field name)
-    pub attr_name: &'static str,
+    /// The property key
+    pub key: PropKey,
     /// The old value (None if attribute was absent)
     pub old_value: Option<String>,
     /// The new value (None if attribute is being removed)
@@ -118,14 +142,14 @@ pub struct AttributeChange {
 
 /// Properties for HTML/XML nodes: attribute key-value pairs.
 ///
-/// These are fields marked with `#[facet(html::attribute)]` or `#[facet(xml::attribute)]`.
+/// These are fields marked with `#[facet(attribute)]`.
 /// They are diffed field-by-field when nodes match, avoiding the cross-matching problem
 /// where identical Option values (like None) get matched across different fields.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HtmlProperties {
-    /// Attribute values keyed by field name.
+    /// Property values keyed by PropKey.
     /// Values are stored as `Option<String>` to handle both present and absent attributes.
-    pub attrs: HashMap<&'static str, Option<String>>,
+    pub props: HashMap<PropKey, Option<String>>,
 }
 
 impl HtmlProperties {
@@ -134,20 +158,56 @@ impl HtmlProperties {
         Self::default()
     }
 
-    /// Set an attribute value.
-    pub fn set(&mut self, key: &'static str, value: Option<String>) {
-        self.attrs.insert(key, value);
+    /// Get a property value.
+    pub fn get(&self, key: impl Into<PropKey>) -> Option<&Option<String>> {
+        self.props.get(&key.into())
+    }
+
+    /// Check if a property exists.
+    pub fn contains(&self, key: impl Into<PropKey>) -> bool {
+        self.props.contains_key(&key.into())
+    }
+
+    /// Set a property value.
+    pub fn set(&mut self, key: PropKey, value: Option<String>) {
+        self.props.insert(key, value);
+    }
+
+    /// Set a named attribute.
+    pub fn set_attr(&mut self, name: impl Into<String>, value: Option<String>) {
+        self.props.insert(PropKey::Attr(name.into()), value);
     }
 }
 
 impl Properties for HtmlProperties {
-    type Key = &'static str;
+    type Key = PropKey;
     type Value = Option<String>;
 
     fn similarity(&self, other: &Self) -> f64 {
-        // Count matching attributes
-        let all_keys: std::collections::HashSet<_> =
-            self.attrs.keys().chain(other.attrs.keys()).collect();
+        // If Tag differs, elements are not similar at all (can't change tag name in DOM)
+        // This is for HTML elements where the tag name is semantic identity.
+        let self_tag = self.props.get(&PropKey::Tag);
+        let other_tag = other.props.get(&PropKey::Tag);
+
+        match (self_tag, other_tag) {
+            // Both have Tag - compare them (HTML elements)
+            (Some(a), Some(b)) if a != b => return 0.0,
+            // Only one has Tag - incompatible
+            (Some(_), None) | (None, Some(_)) => return 0.0,
+            // Neither has Tag - this is a regular Rust struct, same type = same identity
+            // Return 1.0 because the NodeKind already ensures type compatibility
+            (None, None) => return 1.0,
+            // Both have same Tag - continue to attribute comparison
+            _ => {}
+        }
+
+        // Count matching attributes (excluding Tag which we already checked)
+        let all_keys: std::collections::HashSet<_> = self
+            .props
+            .keys()
+            .chain(other.props.keys())
+            .filter(|k| !matches!(k, PropKey::Tag))
+            .collect();
 
         if all_keys.is_empty() {
             return 1.0; // Both empty = perfect match
@@ -155,7 +215,7 @@ impl Properties for HtmlProperties {
 
         let mut matches = 0;
         for key in &all_keys {
-            if self.attrs.get(*key) == other.attrs.get(*key) {
+            if self.props.get(*key) == other.props.get(*key) {
                 matches += 1;
             }
         }
@@ -167,11 +227,11 @@ impl Properties for HtmlProperties {
         let mut changes = Vec::new();
 
         // Check all keys in self
-        for (key, old_value) in &self.attrs {
-            let new_value = other.attrs.get(key);
+        for (key, old_value) in &self.props {
+            let new_value = other.props.get(key);
             if new_value != Some(old_value) {
                 changes.push(PropertyChange {
-                    key: *key,
+                    key: key.clone(),
                     old_value: Some(old_value.clone()),
                     new_value: new_value.cloned(),
                 });
@@ -179,10 +239,10 @@ impl Properties for HtmlProperties {
         }
 
         // Check keys only in other (additions)
-        for (key, new_value) in &other.attrs {
-            if !self.attrs.contains_key(key) {
+        for (key, new_value) in &other.props {
+            if !self.props.contains_key(key) {
                 changes.push(PropertyChange {
-                    key: *key,
+                    key: key.clone(),
                     old_value: None,
                     new_value: Some(new_value.clone()),
                 });
@@ -193,7 +253,7 @@ impl Properties for HtmlProperties {
     }
 
     fn is_empty(&self) -> bool {
-        self.attrs.is_empty()
+        self.props.is_empty()
     }
 }
 
@@ -260,7 +320,7 @@ impl TreeBuilder {
         self.collect_properties_recursive(peek, &mut props);
         trace_verbose!(
             shape = peek.shape().type_identifier,
-            props_count = props.attrs.len(),
+            props_count = props.props.len(),
             "collect_properties result"
         );
         props
@@ -283,12 +343,17 @@ impl TreeBuilder {
                     for (field, field_peek) in s.fields() {
                         if field.is_attribute() {
                             if let Ok(value) = self.extract_attribute_value(field_peek) {
-                                props.set(field.name, value);
+                                props.set_attr(field.name, value);
                             }
                         } else if field.is_text() {
-                            // Text content stored as special _text property
+                            // Text content stored as Text property
                             if let Ok(value) = self.extract_attribute_value(field_peek) {
-                                props.set("_text", value);
+                                props.set(PropKey::Text, value);
+                            }
+                        } else if field.is_tag() {
+                            // Tag field stored as Tag property for element matching
+                            if let Some(tag) = field_peek.as_str() {
+                                props.set(PropKey::Tag, Some(tag.to_string()));
                             }
                         } else if field.is_flattened() {
                             self.collect_properties_recursive(field_peek, props);
@@ -307,9 +372,21 @@ impl TreeBuilder {
                 }
             }
             _ => {
-                // For scalar values, store as _text property using Display
+                // Handle flattened maps (like HashMap<String, String> for attributes)
+                if let Def::Map(_) = &peek.shape().def
+                    && let Ok(map) = peek.into_map()
+                {
+                    for (k, v) in map.iter() {
+                        if let Some(key) = k.as_str() {
+                            let value = v.as_str().map(|s| s.to_string());
+                            props.set_attr(key, value);
+                        }
+                    }
+                    return;
+                }
+                // For scalar values, store as Text property using Display
                 // This handles strings, numbers, bools, etc.
-                props.set("_text", Some(format!("{}", peek)));
+                props.set(PropKey::Text, Some(format!("{}", peek)));
             }
         }
     }
@@ -370,6 +447,10 @@ impl TreeBuilder {
                         }
                         // Skip attribute fields - they're stored as properties, not children
                         if field.is_attribute() {
+                            continue;
+                        }
+                        // Skip tag fields - they're stored as properties for matching, not as children
+                        if field.is_tag() {
                             continue;
                         }
                         // For flattened fields, we need to decide based on what they contain:
@@ -652,11 +733,11 @@ fn format_shadow_tree(
             NodeKind::Scalar(_) => String::new(),
         };
 
-        // Get _text value for scalars
+        // Get Text value for scalars
         let value_str = data
             .properties
-            .attrs
-            .get("_text")
+            .props
+            .get(&PropKey::Text)
             .and_then(|v| v.as_ref())
             .map(|v| format!(" = {GREEN}{v:?}{RESET}"))
             .unwrap_or_default();
@@ -734,7 +815,7 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 let changes: Vec<AttributeChange> = changes
                     .into_iter()
                     .map(|c| AttributeChange {
-                        attr_name: c.key,
+                        key: c.key,
                         // Flatten Option<Option<String>> to Option<String>
                         old_value: c.old_value.flatten(),
                         new_value: c.new_value.flatten(),

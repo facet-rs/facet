@@ -6,12 +6,20 @@
 
 /// Emit an extremely verbose trace-level log message.
 /// This is for tracing that's too noisy even for trace level.
-/// Uncomment the forwarding to enable.
+/// Uncomment the tracing::trace! line below to enable.
+#[cfg(any(test, feature = "tracing"))]
 #[macro_export]
 macro_rules! trace_verbose {
     ($($arg:tt)*) => {
         // tracing::trace!($($arg)*);
     };
+}
+
+/// Emit an extremely verbose trace-level log message (no-op version).
+#[cfg(not(any(test, feature = "tracing")))]
+#[macro_export]
+macro_rules! trace_verbose {
+    ($($arg:tt)*) => {};
 }
 
 /// Emit a trace-level log message.

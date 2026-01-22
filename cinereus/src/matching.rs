@@ -455,9 +455,14 @@ fn bottom_up_phase<'a, K, L, P>(
             // Match by position - don't fall back to first candidate as that can cause
             // incorrect matches between semantically different elements (e.g., two divs
             // with different classes).
+            // Also check property compatibility (e.g., elements with different tags shouldn't match)
             let best = candidates
                 .iter()
-                .find(|&&b_id| tree_b.position(b_id) == a_pos)
+                .find(|&&b_id| {
+                    tree_b.position(b_id) == a_pos
+                        && a_data.properties.similarity(&tree_b.get(b_id).properties)
+                            >= config.similarity_threshold
+                })
                 .copied();
 
             if let Some(b_id) = best {
@@ -489,6 +494,12 @@ fn bottom_up_phase<'a, K, L, P>(
 
             // Check ancestry constraint
             if !ancestry_compatible(a_id, b_id, tree_a, tree_b, matching) {
+                continue;
+            }
+
+            // Check property compatibility (e.g., elements with different tags shouldn't match)
+            let prop_sim = a_data.properties.similarity(&tree_b.get(b_id).properties);
+            if prop_sim < config.similarity_threshold {
                 continue;
             }
 
@@ -527,6 +538,8 @@ fn bottom_up_phase<'a, K, L, P>(
                     !matching.contains_b(b_id)
                         && tree_b.child_count(b_id) > 0
                         && tree_b.parent(b_id).is_none() // Must also be a root
+                        && a_data.properties.similarity(&tree_b.get(b_id).properties)
+                            >= config.similarity_threshold
                 })
                 .collect();
 
@@ -573,7 +586,7 @@ fn bottom_up_phase<'a, K, L, P>(
                 })
                 .collect();
 
-            // Prefer same position with same hash, then same hash, then same kind+position
+            // Prefer same position with same hash, then same hash, then same kind+position+compatible props
             let best = candidates
                 .iter()
                 .find(|&&b_id| {
@@ -585,9 +598,12 @@ fn bottom_up_phase<'a, K, L, P>(
                         .find(|&&b_id| tree_b.get(b_id).hash == a_data.hash)
                 })
                 .or_else(|| {
-                    candidates
-                        .iter()
-                        .find(|&&b_id| tree_b.position(b_id) == a_pos)
+                    // Position-only match requires compatible properties
+                    candidates.iter().find(|&&b_id| {
+                        tree_b.position(b_id) == a_pos
+                            && a_data.properties.similarity(&tree_b.get(b_id).properties)
+                                >= config.similarity_threshold
+                    })
                 })
                 .copied();
 
