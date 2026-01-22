@@ -613,42 +613,73 @@ fn extract_value_at_path<'mem, 'facet>(
     peek.as_str().map(|s| s.to_string())
 }
 
-/// Format the shadow tree for debugging.
+/// Format the shadow tree for debugging with colors.
 #[allow(dead_code, clippy::only_used_in_recursion)]
 fn format_shadow_tree(
     arena: &indextree::Arena<NodeData<NodeKind, NodeLabel, HtmlProperties>>,
-    root: NodeId,
+    _root: NodeId,
     node: NodeId,
     depth: usize,
 ) -> String {
+    use std::fmt::Write;
+
+    // ANSI color codes
+    const DIM: &str = "\x1b[2m";
+    const CYAN: &str = "\x1b[36m";
+    const YELLOW: &str = "\x1b[33m";
+    const GREEN: &str = "\x1b[32m";
+    const MAGENTA: &str = "\x1b[35m";
+    const RESET: &str = "\x1b[0m";
+
     let mut out = String::new();
     let indent = "  ".repeat(depth);
 
     if let Some(node_ref) = arena.get(node) {
         let data = node_ref.get();
-        let kind_str = match &data.kind {
-            NodeKind::Struct(name) => format!("Struct({name})"),
-            NodeKind::EnumVariant(e, v) => format!("Variant({e}::{v})"),
-            NodeKind::List(name) => format!("List({name})"),
-            NodeKind::Map(name) => format!("Map({name})"),
-            NodeKind::Option(name) => format!("Option({name})"),
-            NodeKind::Scalar(name) => format!("Scalar({name})"),
-        };
-        let label_str = data
+
+        // Get the last path segment to show what this node adds
+        let segment_str = data
             .label
             .as_ref()
-            .map(|l| format!(" path={}", l.path))
+            .and_then(|l| l.path.0.last())
+            .map(|seg| match seg {
+                PathSegment::Field(name) => format!("{CYAN}.{name}{RESET}"),
+                PathSegment::Index(idx) => format!("{YELLOW}[{idx}]{RESET}"),
+                PathSegment::Key(key) => format!("{YELLOW}[{key:?}]{RESET}"),
+                PathSegment::Variant(name) => format!("{MAGENTA}::{name}{RESET}"),
+            })
             .unwrap_or_default();
 
-        out.push_str(&format!(
-            "{indent}[{id}] {kind}{label}\n",
+        // Format the kind, showing type name for containers
+        let kind_str = match &data.kind {
+            NodeKind::Struct(name) => format!(" {MAGENTA}{name}{RESET}"),
+            NodeKind::EnumVariant(_, v) => format!(" {MAGENTA}::{v}{RESET}"),
+            NodeKind::List(_) => format!(" {DIM}[]{RESET}"),
+            NodeKind::Map(_) => format!(" {DIM}{{}}{RESET}"),
+            NodeKind::Option(_) => format!(" {DIM}?{RESET}"),
+            NodeKind::Scalar(_) => String::new(),
+        };
+
+        // Get _text value for scalars
+        let value_str = data
+            .properties
+            .attrs
+            .get("_text")
+            .and_then(|v| v.as_ref())
+            .map(|v| format!(" = {GREEN}{v:?}{RESET}"))
+            .unwrap_or_default();
+
+        let _ = writeln!(
+            out,
+            "{indent}{DIM}[{id}]{RESET} {segment}{kind}{value}",
             id = usize::from(node),
+            segment = segment_str,
             kind = kind_str,
-            label = label_str
-        ));
+            value = value_str
+        );
 
         for child in node.children(arena) {
-            out.push_str(&format_shadow_tree(arena, root, child, depth + 1));
+            out.push_str(&format_shadow_tree(arena, _root, child, depth + 1));
         }
     }
 
@@ -691,8 +722,8 @@ fn convert_ops_with_shadow<'mem, 'facet>(
     let mut next_slot: u32 = 0;
 
     debug!(
-        "SHADOW TREE INITIAL STATE:\n{}",
-        format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+        tree = %format!("\n{}", format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)),
+        "shadow tree initial state"
     );
 
     // Process operations in cinereus order.
@@ -816,8 +847,8 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 result.push(edit_op);
 
                 debug!(
-                    "SHADOW TREE AFTER INSERT:\n{}",
-                    format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+                    tree = %format!("\n{}", format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)),
+                    "shadow tree after insert"
                 );
             }
 
@@ -858,8 +889,8 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 result.push(edit_op);
 
                 debug!(
-                    "SHADOW TREE AFTER DELETE:\n{}",
-                    format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+                    tree = %format!("\n{}", format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)),
+                    "shadow tree after delete"
                 );
             }
 
@@ -987,8 +1018,8 @@ fn convert_ops_with_shadow<'mem, 'facet>(
                 b_to_shadow.insert(node_b, node_a);
 
                 debug!(
-                    "SHADOW TREE AFTER MOVE:\n{}",
-                    format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)
+                    tree = %format!("\n{}", format_shadow_tree(&shadow_arena, shadow_root, shadow_root, 0)),
+                    "shadow tree after move"
                 );
             }
         }
@@ -1129,7 +1160,7 @@ fn compute_adjusted_path(
     let mut depth_to_position: HashMap<usize, usize> = HashMap::new();
     let mut current = node;
 
-    debug!(node = usize::from(node), %original_path, "compute_adjusted_path start");
+    trace!(node = usize::from(node), %original_path, "compute_adjusted_path start");
 
     while current != shadow_root {
         // Get the current node's path depth from its stored label
@@ -1147,7 +1178,7 @@ fn compute_adjusted_path(
             {
                 let children: Vec<_> = parent_id.children(shadow_arena).collect();
                 let pos = children.iter().position(|&c| c == current).unwrap_or(0);
-                debug!(
+                trace!(
                     current = usize::from(current),
                     parent = usize::from(parent_id),
                     depth,

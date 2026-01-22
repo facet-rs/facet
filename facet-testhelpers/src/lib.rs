@@ -79,7 +79,7 @@ static SUBSCRIBER_INIT: LazyLock<()> = LazyLock::new(|| {
     let filter = std::env::var("FACET_LOG")
         .ok()
         .and_then(|s| s.parse::<Targets>().ok())
-        .unwrap_or_else(|| Targets::new().with_default(tracing::Level::TRACE));
+        .unwrap_or_else(|| Targets::new().with_default(tracing::Level::DEBUG));
 
     tracing_subscriber::registry()
         .with(

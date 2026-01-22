@@ -471,7 +471,7 @@ fn bottom_up_phase<'a, K, L, P>(
                 .copied();
 
             if let Some(b_id) = best {
-                debug!(
+                trace!(
                     a = usize::from(a_id),
                     a_kind = %a_data.kind.pretty(),
                     b = usize::from(b_id),
@@ -517,7 +517,7 @@ fn bottom_up_phase<'a, K, L, P>(
         }
 
         if let Some((b_id, _score)) = best {
-            debug!(
+            trace!(
                 a = usize::from(a_id),
                 a_kind = %a_data.kind.pretty(),
                 b = usize::from(b_id),
@@ -541,7 +541,7 @@ fn bottom_up_phase<'a, K, L, P>(
                 .collect();
 
             if let Some(&b_id) = root_candidates.first() {
-                debug!(
+                trace!(
                     a = usize::from(a_id),
                     a_kind = %a_data.kind.pretty(),
                     b = usize::from(b_id),
@@ -602,7 +602,7 @@ fn bottom_up_phase<'a, K, L, P>(
                 .copied();
 
             if let Some(b_id) = best {
-                debug!(
+                trace!(
                     a = usize::from(a_id),
                     a_kind = %a_data.kind.pretty(),
                     b = usize::from(b_id),
