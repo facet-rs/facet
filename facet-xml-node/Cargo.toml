@@ -1,0 +1,27 @@
+[package]
+name = "facet-xml-node"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Raw XML node types for facet-xml - represent arbitrary XML without a schema"
+keywords = ["xml", "dom", "node", "facet", "serialization"]
+categories = ["encoding", "parsing"]
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet = { workspace = true }
+facet-core = { workspace = true }
+facet-dom = { workspace = true }
+facet-reflect = { workspace = true }
+facet-xml = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true
