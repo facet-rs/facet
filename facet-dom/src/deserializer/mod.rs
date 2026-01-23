@@ -357,16 +357,17 @@ where
                         }
                         self.parser.expect_node_end()?;
                     }
-                    StructKind::TupleStruct => {
-                        // Newtype variant: deserialize the inner type
+                    StructKind::TupleStruct if variant.data.fields.len() == 1 => {
+                        // Newtype variant (single unnamed field): deserialize the inner type
                         // Use deserialize_into_named to handle proxies and pass through element name
                         wip = wip
                             .begin_nth_field(0)?
                             .deserialize_with_name(self, variant_element_name)?
                             .end()?;
                     }
-                    StructKind::Struct | StructKind::Tuple => {
-                        // Struct/tuple variant: deserialize using the variant's data as a StructType
+                    StructKind::TupleStruct | StructKind::Struct | StructKind::Tuple => {
+                        // Struct variant, tuple variant (2+ fields), or tuple type:
+                        // deserialize using the variant's data as a StructType
                         wip =
                             self.deserialize_struct_innards(wip, &variant.data, variant_element_name)?;
                     }

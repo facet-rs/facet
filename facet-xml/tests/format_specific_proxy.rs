@@ -712,3 +712,249 @@ fn test_enum_variant_without_proxy_still_works() {
     let roundtripped: ShapeEnum = from_str(&xml).unwrap();
     assert_eq!(original, roundtripped);
 }
+
+// ============================================================================
+// Proxies inside enum variants - comprehensive tests
+// ============================================================================
+
+/// Enum with struct variant that has a field with field-level proxy.
+#[derive(Facet, Debug, PartialEq)]
+#[repr(C)]
+enum EnumWithFieldProxyInStructVariant {
+    Named {
+        name: String,
+        #[facet(xml::proxy = BinaryString)]
+        flags: u32,
+    },
+    Other {
+        value: i32,
+    },
+}
+
+#[test]
+fn test_enum_struct_variant_with_field_level_proxy_roundtrip() {
+    let original = EnumWithFieldProxyInStructVariant::Named {
+        name: "test".to_string(),
+        flags: 0b10101010,
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("0b10101010"),
+        "Should use binary proxy in struct variant field, got: {xml}"
+    );
+
+    let roundtripped: EnumWithFieldProxyInStructVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Enum with struct variant where a field's type has container-level proxy.
+#[derive(Facet, Debug, PartialEq)]
+#[repr(C)]
+enum EnumWithContainerProxyInStructVariant {
+    WithPoint {
+        name: String,
+        location: Point, // Point has container-level proxy
+    },
+    WithBinary {
+        label: String,
+        value: BinaryU32, // BinaryU32 has container-level proxy
+    },
+}
+
+#[test]
+fn test_enum_struct_variant_with_container_proxy_point_roundtrip() {
+    let original = EnumWithContainerProxyInStructVariant::WithPoint {
+        name: "origin".to_string(),
+        location: Point { x: 0, y: 0 },
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: EnumWithContainerProxyInStructVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_enum_struct_variant_with_container_proxy_binary_roundtrip() {
+    let original = EnumWithContainerProxyInStructVariant::WithBinary {
+        label: "flags".to_string(),
+        value: BinaryU32(0b11110000),
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("0b11110000"),
+        "Should use binary proxy, got: {xml}"
+    );
+
+    let roundtripped: EnumWithContainerProxyInStructVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Enum with newtype variant where the inner type has container-level proxy.
+#[derive(Facet, Debug, PartialEq)]
+#[repr(C)]
+enum EnumWithNewtypeProxyVariant {
+    PointVariant(Point),       // Point has container-level proxy
+    BinaryVariant(BinaryU32),  // BinaryU32 has container-level proxy
+    PlainVariant(String),
+}
+
+#[test]
+fn test_enum_newtype_variant_with_container_proxy_point_roundtrip() {
+    let original = EnumWithNewtypeProxyVariant::PointVariant(Point { x: 42, y: 84 });
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: EnumWithNewtypeProxyVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_enum_newtype_variant_with_container_proxy_binary_roundtrip() {
+    let original = EnumWithNewtypeProxyVariant::BinaryVariant(BinaryU32(0b1111));
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("0b1111"),
+        "Should use binary proxy in newtype variant, got: {xml}"
+    );
+
+    let roundtripped: EnumWithNewtypeProxyVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_enum_newtype_variant_plain_still_works() {
+    let original = EnumWithNewtypeProxyVariant::PlainVariant("hello".to_string());
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: EnumWithNewtypeProxyVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Enum with tuple variant where one element has container-level proxy.
+#[derive(Facet, Debug, PartialEq)]
+#[repr(C)]
+enum EnumWithTupleProxyVariant {
+    NamedPoint(String, Point),        // Point has proxy
+    NamedBinary(String, BinaryU32),   // BinaryU32 has proxy
+    TwoPoints(Point, Point),          // Both have proxy
+}
+
+#[test]
+fn test_enum_tuple_variant_with_container_proxy_roundtrip() {
+    let original = EnumWithTupleProxyVariant::NamedPoint(
+        "origin".to_string(),
+        Point { x: 0, y: 0 },
+    );
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: EnumWithTupleProxyVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_enum_tuple_variant_with_binary_proxy_roundtrip() {
+    let original = EnumWithTupleProxyVariant::NamedBinary(
+        "flags".to_string(),
+        BinaryU32(0b10101010),
+    );
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("0b10101010"),
+        "Should use binary proxy in tuple variant, got: {xml}"
+    );
+
+    let roundtripped: EnumWithTupleProxyVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_enum_tuple_variant_with_two_proxied_types_roundtrip() {
+    let original = EnumWithTupleProxyVariant::TwoPoints(
+        Point { x: 1, y: 2 },
+        Point { x: 3, y: 4 },
+    );
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: EnumWithTupleProxyVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Enum with struct variant containing Vec field with field-level proxy.
+#[derive(Facet, Debug, PartialEq)]
+#[repr(C)]
+enum EnumWithVecProxyInVariant {
+    WithNumbers {
+        name: String,
+        #[facet(xml::proxy = CommaSeparatedU32s)]
+        values: Vec<u32>,
+    },
+    Simple {
+        name: String,
+    },
+}
+
+#[test]
+fn test_enum_struct_variant_with_vec_field_proxy_roundtrip() {
+    let original = EnumWithVecProxyInVariant::WithNumbers {
+        name: "test".to_string(),
+        values: vec![1, 2, 3, 4, 5],
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("1,2,3,4,5"),
+        "Should use comma-separated proxy in enum variant, got: {xml}"
+    );
+
+    let roundtripped: EnumWithVecProxyInVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Enum with struct variant containing Option field with field-level proxy.
+#[derive(Facet, Debug, PartialEq)]
+#[repr(C)]
+enum EnumWithOptionProxyInVariant {
+    WithDescription {
+        name: String,
+        #[facet(xml::proxy = OptionalStringProxy)]
+        description: Option<String>,
+    },
+}
+
+#[test]
+fn test_enum_struct_variant_with_option_proxy_some_roundtrip() {
+    let original = EnumWithOptionProxyInVariant::WithDescription {
+        name: "test".to_string(),
+        description: Some("hello".to_string()),
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: EnumWithOptionProxyInVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_enum_struct_variant_with_option_proxy_none_roundtrip() {
+    let original = EnumWithOptionProxyInVariant::WithDescription {
+        name: "test".to_string(),
+        description: None,
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("N/A"),
+        "Should use 'N/A' for None in enum variant, got: {xml}"
+    );
+
+    let roundtripped: EnumWithOptionProxyInVariant = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
