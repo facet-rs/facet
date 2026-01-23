@@ -1476,6 +1476,7 @@ mod tests {
     #[test]
     fn test_default_in_enum_variant() {
         #[derive(Facet)]
+        #[allow(dead_code)]
         #[repr(C)]
         enum Message {
             Text {
