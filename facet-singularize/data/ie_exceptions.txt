@@ -1,8 +1,0 @@
-# Manual -ies -> -ie exceptions. One plural form per line.
-movies
-cookies
-pies
-ties
-brownies
-rookies
-selfies

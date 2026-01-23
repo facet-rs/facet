@@ -123,11 +123,6 @@ version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
 [[package]]
-name = "facet-singularize"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
 name = "facet-validate"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
@@ -135,11 +130,6 @@ changelog_path = "CHANGELOG.md"
 # Format crates
 [[package]]
 name = "facet-dessert"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-dom"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
@@ -160,31 +150,6 @@ changelog_path = "CHANGELOG.md"
 
 [[package]]
 name = "facet-msgpack"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-xml"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-xml-node"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-xml-diff"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-atom"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-svg"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
@@ -225,11 +190,6 @@ changelog_path = "CHANGELOG.md"
 
 [[package]]
 name = "facet-python"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-tokio-postgres"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
 

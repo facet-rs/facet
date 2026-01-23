@@ -71,6 +71,13 @@ And the less developed:
 
 - [facet-inspect](https://github.com/facet-rs/facet-inspect): Utilities to inspect the content of a Facet object
 
+## Extracted crates
+
+These crates were previously part of this monorepo but have been extracted to their own repositories:
+
+- [facet-xml](https://github.com/facet-rs/facet-xml): XML/DOM ecosystem (includes facet-xml, facet-dom, facet-svg, facet-atom, facet-xml-node, facet-xml-diff, facet-singularize)
+- [facet-axum](https://github.com/facet-rs/facet-axum): Axum web framework integration
+
 ## Extended cinematic universe
 
 Some crates are developed completely independently from the facet org:

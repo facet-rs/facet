@@ -65,22 +65,15 @@ members = [
     "facet-json",
     "facet-postcard",
     "facet-msgpack",
-    "facet-xml",
-    "facet-xml-diff",
-    "facet-svg",
     "facet-toml",
     "facet-yaml",
     "facet-format-suite",
     "facet-asn1",
     "facet-csv",
     "facet-xdr",
-    "facet-dom",
-    "facet-atom",
-    "facet-singularize",
     "facet-json-schema",
     "facet-typescript",
     "facet-python",
-    "facet-xml-node",
 ]
 exclude = [
     # proto-attr experiment uses nightly features
