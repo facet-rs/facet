@@ -1,0 +1,10 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1319
+expression: d
+---
+export interface Data {
+  empty: Empty;
+}
+
+export type Empty = object;

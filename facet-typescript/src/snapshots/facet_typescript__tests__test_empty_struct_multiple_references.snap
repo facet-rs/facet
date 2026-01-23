@@ -1,0 +1,12 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1398
+expression: ts
+---
+export interface Container {
+  first: Empty;
+  second: Empty;
+  third?: Empty;
+}
+
+export type Empty = object;

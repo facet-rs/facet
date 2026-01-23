@@ -193,6 +193,48 @@ impl TypeScriptGenerator {
         result
     }
 
+    /// Check if a struct has any fields that will be serialized.
+    /// This accounts for skipped fields and flattened structs.
+    fn has_serializable_fields(
+        field_owner_shape: &'static Shape,
+        fields: &'static [Field],
+    ) -> bool {
+        let mut flatten_stack: Vec<&'static str> = Vec::new();
+        flatten_stack.push(Self::shape_key(field_owner_shape));
+        Self::has_serializable_fields_guarded(fields, &mut flatten_stack)
+    }
+
+    fn has_serializable_fields_guarded(
+        fields: &'static [Field],
+        flatten_stack: &mut Vec<&'static str>,
+    ) -> bool {
+        for field in fields {
+            if field.should_skip_serializing_unconditional() {
+                continue;
+            }
+            if field.is_flattened() {
+                let (inner_shape, _) = Self::unwrap_to_inner_shape(field.shape.get());
+                if let Type::User(UserType::Struct(st)) = &inner_shape.ty {
+                    let inner_key = Self::shape_key(inner_shape);
+                    if flatten_stack.contains(&inner_key) {
+                        continue;
+                    }
+                    flatten_stack.push(inner_key);
+                    let has_fields =
+                        Self::has_serializable_fields_guarded(st.fields, flatten_stack);
+                    flatten_stack.pop();
+                    if has_fields {
+                        return true;
+                    }
+                    continue;
+                }
+            }
+            // Found a field that will be serialized
+            return true;
+        }
+        false
+    }
+
     /// Write struct fields to output, handling skip and flatten recursively.
     fn write_struct_fields_for_shape(
         &mut self,
@@ -389,18 +431,28 @@ impl TypeScriptGenerator {
                 .unwrap();
             }
             StructKind::Struct => {
-                writeln!(
-                    self.output,
-                    "export interface {} {{",
-                    exported_shape.type_identifier
-                )
-                .unwrap();
-                self.indent += 1;
+                // Empty structs should use `object` type to prevent accepting primitives
+                if !Self::has_serializable_fields(field_owner_shape, fields) {
+                    writeln!(
+                        self.output,
+                        "export type {} = object;",
+                        exported_shape.type_identifier
+                    )
+                    .unwrap();
+                } else {
+                    writeln!(
+                        self.output,
+                        "export interface {} {{",
+                        exported_shape.type_identifier
+                    )
+                    .unwrap();
+                    self.indent += 1;
 
-                self.write_struct_fields_for_shape(field_owner_shape, fields);
+                    self.write_struct_fields_for_shape(field_owner_shape, fields);
 
-                self.indent -= 1;
-                self.output.push_str("}\n");
+                    self.indent -= 1;
+                    self.output.push_str("}\n");
+                }
             }
         }
         self.output.push('\n');
@@ -1300,5 +1352,64 @@ mod tests {
             "skip_serializing_inline_enum_variant_and_flatten_cycle_guard",
             ts
         );
+    }
+
+    #[test]
+    fn test_empty_struct() {
+        #[derive(Facet)]
+        struct Data {
+            empty: Empty,
+        }
+
+        #[derive(Facet)]
+        struct Empty {}
+
+        let e = to_typescript::<Empty>();
+        let d = to_typescript::<Data>();
+        insta::assert_snapshot!("test_empty_struct", e);
+        insta::assert_snapshot!("test_empty_struct_wrap", d);
+    }
+
+    #[test]
+    fn test_empty_struct_with_skipped_fields() {
+        #[derive(Facet)]
+        struct EmptyAfterSkip {
+            #[facet(skip_serializing)]
+            internal: String,
+        }
+
+        let ts = to_typescript::<EmptyAfterSkip>();
+        insta::assert_snapshot!("test_empty_struct_with_skipped_fields", ts);
+    }
+
+    #[test]
+    fn test_empty_struct_multiple_references() {
+        #[derive(Facet)]
+        struct Container {
+            first: Empty,
+            second: Empty,
+            third: Option<Empty>,
+        }
+
+        #[derive(Facet)]
+        struct Empty {}
+
+        let ts = to_typescript::<Container>();
+        insta::assert_snapshot!("test_empty_struct_multiple_references", ts);
+    }
+
+    #[test]
+    fn test_flatten_empty_struct() {
+        #[derive(Facet)]
+        struct Empty {}
+
+        #[derive(Facet)]
+        struct Wrapper {
+            #[facet(flatten)]
+            empty: Empty,
+        }
+
+        let ts = to_typescript::<Wrapper>();
+        insta::assert_snapshot!("test_flatten_empty_struct", ts);
     }
 }
