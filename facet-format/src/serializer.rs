@@ -974,6 +974,7 @@ where
 
         let numeric = value.shape().is_numeric();
         let untagged = value.shape().is_untagged();
+        let is_cow = value.shape().is_cow();
         let tag = value.shape().get_tag_attr();
         let content = value.shape().get_content_attr();
 
@@ -982,6 +983,19 @@ where
         }
         if untagged {
             return serialize_untagged_enum(serializer, enum_, variant);
+        }
+        // Cow-like enums serialize transparently as their inner value
+        if is_cow {
+            // Both Borrowed and Owned variants are newtypes with a single field
+            let inner = enum_
+                .field(0)
+                .map_err(|_| {
+                    SerializeError::Internal(Cow::Borrowed("cow variant field lookup failed"))
+                })?
+                .ok_or(SerializeError::Internal(Cow::Borrowed(
+                    "cow variant has no field",
+                )))?;
+            return shared_serialize(serializer, inner);
         }
 
         match (tag, content) {

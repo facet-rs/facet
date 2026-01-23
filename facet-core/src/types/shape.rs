@@ -511,6 +511,19 @@ impl Shape {
         self.flags.contains(ShapeFlags::METADATA_CONTAINER)
     }
 
+    /// Returns true if this enum has cow-like semantics.
+    ///
+    /// Cow-like enums have `Borrowed` and `Owned` variants that are semantically
+    /// equivalent - the variant name is an implementation detail for memory management.
+    /// These enums serialize/deserialize transparently as their inner value.
+    #[inline]
+    pub const fn is_cow(&self) -> bool {
+        match &self.ty {
+            Type::User(UserType::Enum(e)) => e.is_cow,
+            _ => false,
+        }
+    }
+
     /// Returns the tag field name for internally/adjacently tagged enums.
     ///
     /// This is the direct field access (O(1)), not an attribute lookup.
