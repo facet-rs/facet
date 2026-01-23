@@ -84,9 +84,11 @@ where
 
                 if let Some(matched_name) = matched_variant {
                     // Found a matching unit variant
+                    // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
+                    let actual_variant = Self::cow_redirect_variant_name(enum_def, matched_name);
                     self.expect_event("value")?;
                     wip = wip
-                        .select_variant_named(matched_name)
+                        .select_variant_named(actual_variant)
                         .map_err(DeserializeError::reflect)?;
                     return Ok(wip);
                 }
@@ -221,8 +223,10 @@ where
                 }
             };
 
+            // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
+            let actual_variant = Self::cow_redirect_variant_name(enum_def, variant_name);
             wip = wip
-                .select_variant_named(variant_name)
+                .select_variant_named(actual_variant)
                 .map_err(DeserializeError::reflect)?;
 
             // For #[facet(other)] variants, check for #[facet(tag)] and #[facet(content)] fields
@@ -290,8 +294,10 @@ where
                 path: None,
             })?;
 
+        // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
+        let actual_variant = Self::cow_redirect_variant_name(enum_def, variant_name);
         wip = wip
-            .select_variant_named(variant_name)
+            .select_variant_named(actual_variant)
             .map_err(DeserializeError::reflect)?;
 
         // For #[facet(other)] fallback variants, if the content is Unit, use the field key name as the value
@@ -358,8 +364,14 @@ where
         }
 
         // Step 3: Select the variant
+        // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
+        let enum_def = match &wip.shape().ty {
+            Type::User(UserType::Enum(e)) => e,
+            _ => return Err(DeserializeError::Unsupported("expected enum".into())),
+        };
+        let actual_variant = Self::cow_redirect_variant_name(enum_def, &variant_name);
         wip = wip
-            .select_variant_named(&variant_name)
+            .select_variant_named(actual_variant)
             .map_err(DeserializeError::reflect)?;
 
         // Get the selected variant info
@@ -950,8 +962,14 @@ where
         }
 
         // Step 3: Select the variant
+        // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
+        let enum_def = match &wip.shape().ty {
+            Type::User(UserType::Enum(e)) => e,
+            _ => return Err(DeserializeError::Unsupported("expected enum".into())),
+        };
+        let actual_variant = Self::cow_redirect_variant_name(enum_def, &variant_name);
         wip = wip
-            .select_variant_named(&variant_name)
+            .select_variant_named(actual_variant)
             .map_err(DeserializeError::reflect)?;
 
         // Step 4: Process fields in any order
@@ -1515,6 +1533,28 @@ where
         }
 
         Ok(wip)
+    }
+
+    /// For cow-like enums, redirects "Borrowed" variant to "Owned" when borrowing is disabled.
+    ///
+    /// When BORROW=false and the enum has `#[facet(cow)]`, selecting the "Borrowed" variant
+    /// would fail during field deserialization (can't deserialize into `&str`). Instead, we
+    /// redirect to the "Owned" variant which can hold the data in an owned form.
+    ///
+    /// Returns the (potentially redirected) variant name.
+    fn cow_redirect_variant_name<'a>(
+        enum_def: &facet_core::EnumType,
+        variant_name: &'a str,
+    ) -> &'a str {
+        // Only redirect if:
+        // 1. The enum has cow-like semantics
+        // 2. Borrowing is disabled
+        // 3. The requested variant is "Borrowed"
+        if !BORROW && enum_def.is_cow && variant_name == "Borrowed" {
+            "Owned"
+        } else {
+            variant_name
+        }
     }
 }
 

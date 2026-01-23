@@ -344,6 +344,53 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         }
     };
 
+    // Cow-like semantics for enums with Borrowed/Owned variants
+    let cow_call = {
+        if pe.container.attrs.has_builtin("cow") {
+            // Validate: must have exactly 2 variants named "Borrowed" and "Owned"
+            let variant_names: Vec<&str> = pe
+                .variants
+                .iter()
+                .map(|v| v.name.original.as_str())
+                .collect();
+
+            if variant_names.len() != 2 {
+                let span = pe
+                    .container
+                    .attrs
+                    .facet
+                    .iter()
+                    .find(|a| a.is_builtin() && a.key_str() == "cow")
+                    .map(|a| a.key.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+                return quote_spanned! { span =>
+                    compile_error!("#[facet(cow)] requires exactly 2 variants named 'Borrowed' and 'Owned'");
+                };
+            }
+
+            let has_borrowed = variant_names.contains(&"Borrowed");
+            let has_owned = variant_names.contains(&"Owned");
+
+            if !has_borrowed || !has_owned {
+                let span = pe
+                    .container
+                    .attrs
+                    .facet
+                    .iter()
+                    .find(|a| a.is_builtin() && a.key_str() == "cow")
+                    .map(|a| a.key.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+                return quote_spanned! { span =>
+                    compile_error!("#[facet(cow)] requires exactly 2 variants named 'Borrowed' and 'Owned'");
+                };
+            }
+
+            quote! { .cow() }
+        } else {
+            quote! {}
+        }
+    };
+
     // POD flag - marks type as Plain Old Data (no invariants)
     let pod_call = if pe.container.attrs.has_builtin("pod") {
         quote! { .pod() }
@@ -950,6 +997,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         #(#variant_expressions),*
                     ]})
                         .repr(#repr)
+                        #cow_call
                         .build()
                 ))
             },

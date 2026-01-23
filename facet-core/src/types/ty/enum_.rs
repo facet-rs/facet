@@ -12,6 +12,38 @@ pub struct EnumType {
 
     /// all variants for this enum
     pub variants: &'static [Variant],
+
+    /// Whether this enum has cow-like semantics (Borrowed/Owned variants).
+    ///
+    /// When true, deserializers should automatically select the `Owned` variant
+    /// when borrowing is disabled, rather than failing to deserialize `&str`.
+    pub is_cow: bool,
+}
+
+impl EnumType {
+    /// Returns the "Borrowed" variant if this is a cow-like enum.
+    ///
+    /// For cow-like enums (`#[facet(cow)]`), this returns the variant named "Borrowed".
+    #[inline]
+    pub fn borrowed_variant(&self) -> Option<&'static Variant> {
+        if self.is_cow {
+            self.variants.iter().find(|v| v.name == "Borrowed")
+        } else {
+            None
+        }
+    }
+
+    /// Returns the "Owned" variant if this is a cow-like enum.
+    ///
+    /// For cow-like enums (`#[facet(cow)]`), this returns the variant named "Owned".
+    #[inline]
+    pub fn owned_variant(&self) -> Option<&'static Variant> {
+        if self.is_cow {
+            self.variants.iter().find(|v| v.name == "Owned")
+        } else {
+            None
+        }
+    }
 }
 
 /// Describes a variant of an enum
@@ -314,6 +346,7 @@ pub struct EnumTypeBuilder {
     repr: Repr,
     enum_repr: EnumRepr,
     variants: &'static [Variant],
+    is_cow: bool,
 }
 
 impl EnumTypeBuilder {
@@ -329,6 +362,7 @@ impl EnumTypeBuilder {
             repr: Repr::c(),
             enum_repr,
             variants,
+            is_cow: false,
         }
     }
 
@@ -341,6 +375,19 @@ impl EnumTypeBuilder {
         self
     }
 
+    /// Marks this enum as having cow-like semantics.
+    ///
+    /// When set, deserializers will automatically select the `Owned` variant
+    /// when borrowing is disabled, rather than failing to deserialize `&str`.
+    ///
+    /// The enum must have exactly two variants: `Borrowed` (containing a reference)
+    /// and `Owned` (containing an owned type like `String` or `CompactString`).
+    #[inline]
+    pub const fn cow(mut self) -> Self {
+        self.is_cow = true;
+        self
+    }
+
     /// Builds the final [`EnumType`] instance.
     #[inline]
     pub const fn build(self) -> EnumType {
@@ -348,6 +395,7 @@ impl EnumTypeBuilder {
             repr: self.repr,
             enum_repr: self.enum_repr,
             variants: self.variants,
+            is_cow: self.is_cow,
         }
     }
 }
