@@ -36,9 +36,6 @@ members = [
     "facet-args",
     "facet-urlencoded",
 
-    # web framework integrations
-    "facet-axum",
-
     # utilities
     "facet-diff-core",
     "facet-diff",

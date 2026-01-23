@@ -1438,23 +1438,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-axum"
-version = "0.43.1"
-dependencies = [
- "axum",
- "facet",
- "facet-json",
- "facet-msgpack",
- "facet-postcard",
- "facet-toml",
- "facet-urlencoded",
- "facet-xml",
- "facet-yaml",
- "tokio",
- "tower",
-]
-
-[[package]]
 name = "facet-bloatbench"
 version = "0.43.0"
 dependencies = [

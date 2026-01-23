@@ -91,11 +91,6 @@ name = "facet-urlencoded"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
-[[package]]
-name = "facet-axum"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
 # Utilities
 [[package]]
 name = "facet-diff-core"
