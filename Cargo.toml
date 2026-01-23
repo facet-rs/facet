@@ -127,6 +127,7 @@ ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
 rust_decimal = { version = "^1.38.0", default-features = false, features = ["std"] }
+smallvec = { version = "^1.15", default-features = false }
 iddqd = { version = "^0.3", default-features = false }
 libtest-mimic = "^0.8.1"
 

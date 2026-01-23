@@ -8,6 +8,7 @@ mod cow;
 
 mod btreemap;
 mod btreeset;
+mod smallvec;
 mod vec;
 
 mod string;
