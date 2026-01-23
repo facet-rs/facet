@@ -70,6 +70,10 @@ pub use facet_yaml::{Yaml, YamlRejection};
 #[cfg(feature = "toml")]
 pub use facet_toml::{Toml, TomlRejection};
 
+// Re-export XML types
+#[cfg(feature = "xml")]
+pub use facet_xml::{Xml, XmlRejection};
+
 // Re-export MessagePack types
 #[cfg(feature = "msgpack")]
 pub use facet_msgpack::{MsgPack, MsgPackRejection};
