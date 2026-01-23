@@ -1311,7 +1311,15 @@ where
                         .ok_or(SerializeError::Internal(Cow::Borrowed(
                             "variant reported 1 field but field(0) returned None",
                         )))?;
-                    shared_serialize(serializer, inner)?;
+                    // Check for field-level proxy
+                    if let Some(field_def) = variant.data.fields.first()
+                        && let Some(proxy_def) =
+                            field_def.effective_proxy(serializer.format_namespace())
+                    {
+                        serialize_via_proxy(serializer, inner, proxy_def)?;
+                    } else {
+                        shared_serialize(serializer, inner)?;
+                    }
                 } else {
                     serializer.begin_seq().map_err(SerializeError::Backend)?;
                     for idx in 0..field_count {
@@ -1325,7 +1333,15 @@ where
                             .ok_or(SerializeError::Internal(Cow::Borrowed(
                                 "variant field missing while iterating tuple fields",
                             )))?;
-                        shared_serialize(serializer, inner)?;
+                        // Check for field-level proxy
+                        if let Some(field_def) = variant.data.fields.get(idx)
+                            && let Some(proxy_def) =
+                                field_def.effective_proxy(serializer.format_namespace())
+                        {
+                            serialize_via_proxy(serializer, inner, proxy_def)?;
+                        } else {
+                            shared_serialize(serializer, inner)?;
+                        }
                     }
                     serializer.end_seq().map_err(SerializeError::Backend)?;
                 }

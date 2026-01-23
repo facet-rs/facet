@@ -136,8 +136,10 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
                     .next_event()
                     .map_err(DomDeserializeError::Parser)?;
                 let idx = self.field_map.doctype_field.as_ref().unwrap().idx;
-                let field_name = self.field_map.doctype_field.as_ref().unwrap().field.name;
-                trace!("→ .{} (doctype)", field_name);
+                trace!(
+                    "→ .{} (doctype)",
+                    self.field_map.doctype_field.as_ref().unwrap().field.name
+                );
                 wip = self
                     .dom_deser
                     .set_string_value(wip.begin_nth_field(idx)?, Cow::Owned(doctype))?
