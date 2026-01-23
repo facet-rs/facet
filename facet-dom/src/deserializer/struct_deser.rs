@@ -714,49 +714,25 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         Ok(wip)
     }
 
-    /// Deserialize a sequence item (list/set element), handling struct items specially.
+    /// Deserialize a sequence item (list/set element).
     ///
-    /// For struct items, we use the field's effective name as the element name
-    /// (from rename attribute or singularized field name) rather than the type's name.
+    /// The element name comes from the field (rename attribute or singularized field name).
     fn deserialize_sequence_item(
         &mut self,
-        mut wip: Partial<'de, BORROW>,
+        wip: Partial<'de, BORROW>,
         field: &'static facet_core::Field,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        let item_shape = wip.shape();
-
-        // Check if the item type is a struct
-        if let Type::User(UserType::Struct(inner_struct_def)) = &item_shape.ty {
-            // Compute expected element name from field: rename > singularized(lowerCamelCase(field.name))
-            let expected_name: Cow<'static, str> = if field.rename.is_some() {
-                Cow::Borrowed(field.effective_name())
-            } else {
-                // For list fields without rename, use singularized lowerCamelCase
-                let camel = crate::naming::to_element_name(field.name);
-                Cow::Owned(facet_singularize::singularize(&camel))
-            };
-
-            // Get ns_all from the item struct's shape
-            let ns_all = item_shape
-                .attributes
-                .iter()
-                .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
-                .and_then(|attr| attr.get_as::<&str>().copied());
-
-            let deny_unknown_fields = item_shape.has_deny_unknown_fields_attr();
-
-            wip = StructDeserializer::new(
-                self.dom_deser,
-                inner_struct_def,
-                ns_all,
-                expected_name,
-                deny_unknown_fields,
-            )
-            .deserialize(wip)?;
+        // Compute expected element name from field: rename > singularized(lowerCamelCase(field.name))
+        let expected_name: Cow<'static, str> = if field.rename.is_some() {
+            Cow::Borrowed(field.effective_name())
         } else {
-            wip = wip.deserialize_with(self.dom_deser)?;
-        }
-        Ok(wip)
+            // For list fields without rename, use singularized lowerCamelCase
+            let camel = crate::naming::to_element_name(field.name);
+            Cow::Owned(facet_singularize::singularize(&camel))
+        };
+
+        // Use deserialize_with_name - handles proxies and all type variants uniformly
+        wip.deserialize_with_name(self.dom_deser, expected_name)
     }
 
     fn handle_scalar_element(
@@ -768,83 +744,21 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         trace!(idx, "matched scalar element field");
 
         let field = &self.struct_def.fields[idx];
-        let field_shape = field.shape();
 
-        // Find the innermost struct type, looking through Option/Pointer wrappers
-        let inner_struct_info = self.find_inner_struct(field_shape);
-
-        // Check if the field type (or its inner type) is a struct - if so, we need to deserialize it
-        // using the field's element name, not the type's name
-        if let Some((inner_struct_def, inner_shape)) = inner_struct_info {
-            // Compute expected element name from field: rename > lowerCamelCase(field.name)
-            // Note: effective_name() returns rename if set, else field.name
-            // We still need to convert to lowerCamelCase if not renamed
-            let expected_name: Cow<'static, str> = if field.rename.is_some() {
-                Cow::Borrowed(field.effective_name())
-            } else {
-                crate::naming::to_element_name(field.name)
-            };
-
-            // Get ns_all from the inner struct's shape
-            let ns_all = inner_shape
-                .attributes
-                .iter()
-                .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
-                .and_then(|attr| attr.get_as::<&str>().copied());
-
-            let deny_unknown_fields = inner_shape.has_deny_unknown_fields_attr();
-
-            wip = wip.begin_nth_field(idx)?;
-
-            // Handle Option wrapper if present
-            if matches!(&field_shape.def, Def::Option(_)) {
-                wip = wip.begin_some()?;
-            }
-
-            wip = StructDeserializer::new(
-                self.dom_deser,
-                inner_struct_def,
-                ns_all,
-                expected_name,
-                deny_unknown_fields,
-            )
-            .deserialize(wip)?;
-
-            // Close Option wrapper if present
-            if matches!(&field_shape.def, Def::Option(_)) {
-                wip = wip.end()?;
-            }
-
-            wip = wip.end()?;
+        // Compute expected element name from field: rename > lowerCamelCase(field.name)
+        let expected_name: Cow<'static, str> = if field.rename.is_some() {
+            Cow::Borrowed(field.effective_name())
         } else {
-            wip = wip
-                .begin_nth_field(idx)?
-                .deserialize_with(self.dom_deser)?
-                .end()?;
-        }
+            crate::naming::to_element_name(field.name)
+        };
+
+        // Use deserialize_with_name - handles Options, proxies, and all type variants uniformly
+        wip = wip
+            .begin_nth_field(idx)?
+            .deserialize_with_name(self.dom_deser, expected_name)?
+            .end()?;
+
         Ok(wip)
-    }
-
-    /// Find the innermost struct type, looking through Option wrappers.
-    /// Returns the struct definition and its shape if found.
-    fn find_inner_struct(
-        &self,
-        shape: &'static Shape,
-    ) -> Option<(&'static StructType, &'static Shape)> {
-        // Direct struct type
-        if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
-            return Some((struct_def, shape));
-        }
-
-        // Option<T> - check inner type
-        if let Def::Option(option_def) = &shape.def {
-            let inner_shape = option_def.t;
-            if let Type::User(UserType::Struct(struct_def)) = &inner_shape.ty {
-                return Some((struct_def, inner_shape));
-            }
-        }
-
-        None
     }
 
     fn handle_tuple_item(

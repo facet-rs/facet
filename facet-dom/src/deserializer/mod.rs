@@ -23,6 +23,13 @@ pub(crate) trait PartialDeserializeExt<'de, const BORROW: bool, P: DomParser<'de
         self,
         deserializer: &mut DomDeserializer<'de, BORROW, P>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>>;
+
+    /// Deserialize into this partial with an explicit expected element name.
+    fn deserialize_with_name(
+        self,
+        deserializer: &mut DomDeserializer<'de, BORROW, P>,
+        expected_name: Cow<'static, str>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>>;
 }
 
 impl<'de, const BORROW: bool, P: DomParser<'de>> PartialDeserializeExt<'de, BORROW, P>
@@ -33,6 +40,14 @@ impl<'de, const BORROW: bool, P: DomParser<'de>> PartialDeserializeExt<'de, BORR
         deserializer: &mut DomDeserializer<'de, BORROW, P>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         deserializer.deserialize_into(self)
+    }
+
+    fn deserialize_with_name(
+        self,
+        deserializer: &mut DomDeserializer<'de, BORROW, P>,
+        expected_name: Cow<'static, str>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        deserializer.deserialize_into_named(self, Some(expected_name))
     }
 }
 
@@ -63,7 +78,53 @@ where
     /// including the closing `NodeEnd` for struct types.
     pub fn deserialize_into(
         &mut self,
+        wip: Partial<'de, BORROW>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        self.deserialize_into_named(wip, None)
+    }
+
+    /// Deserialize a value into an existing Partial with an optional expected element name.
+    ///
+    /// When `expected_name` is `Some`, it overrides the element name that would normally
+    /// be computed from the type. This is used when deserializing struct fields, where
+    /// the XML element name comes from the field name rather than the type name.
+    ///
+    /// When `expected_name` is `None`, the element name is computed from the type's
+    /// `#[facet(rename = "...")]` attribute or its type identifier.
+    pub(crate) fn deserialize_into_named(
+        &mut self,
+        wip: Partial<'de, BORROW>,
+        expected_name: Option<Cow<'static, str>>,
+    ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        let format_ns = self.parser.format_namespace();
+
+        // Check for container-level proxy (e.g., #[facet(xml::proxy = ProxyType)])
+        // If present, we deserialize into the proxy type, then convert via TryFrom.
+        // The expected_name is preserved - it controls the XML element name, not the type.
+        if wip.shape().effective_proxy(format_ns).is_some() {
+            let (proxy_wip, found) = wip
+                .begin_custom_deserialization_from_shape_with_format(format_ns)
+                .map_err(DomDeserializeError::Reflect)?;
+
+            if found {
+                // Deserialize into proxy buffer with the same expected_name
+                let proxy_wip = self.deserialize_into_inner(proxy_wip, expected_name)?;
+                // Convert proxy -> target via TryFrom
+                return proxy_wip.end().map_err(DomDeserializeError::Reflect);
+            }
+            // Proxy check returned true but begin_custom_deserialization didn't find it
+            // (shouldn't happen, but fall through to normal path)
+            return self.deserialize_into_inner(proxy_wip, expected_name);
+        }
+
+        self.deserialize_into_inner(wip, expected_name)
+    }
+
+    /// Inner deserialization logic, called after proxy handling.
+    fn deserialize_into_inner(
+        &mut self,
         mut wip: Partial<'de, BORROW>,
+        expected_name: Option<Cow<'static, str>>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let shape = wip.shape();
         #[cfg(any(test, feature = "tracing"))]
@@ -95,21 +156,21 @@ where
             )
         {
             wip = wip.begin_inner().map_err(DomDeserializeError::Reflect)?;
-            wip = self.deserialize_into(wip)?;
+            wip = self.deserialize_into_named(wip, expected_name)?;
             wip = wip.end().map_err(DomDeserializeError::Reflect)?;
             return Ok(wip);
         }
 
         match &shape.ty {
-            Type::User(UserType::Struct(_)) => self.deserialize_struct(wip),
-            Type::User(UserType::Enum(_)) => self.deserialize_enum(wip),
+            Type::User(UserType::Struct(_)) => self.deserialize_struct(wip, expected_name),
+            Type::User(UserType::Enum(_)) => self.deserialize_enum(wip, expected_name),
             _ => match &shape.def {
                 Def::Scalar => self.deserialize_scalar(wip),
-                Def::Pointer(_) => self.deserialize_pointer(wip),
-                Def::List(_) => self.deserialize_list(wip),
-                Def::Set(_) => self.deserialize_set(wip),
+                Def::Pointer(_) => self.deserialize_pointer(wip, expected_name),
+                Def::List(_) => self.deserialize_list(wip, expected_name),
+                Def::Set(_) => self.deserialize_set(wip, expected_name),
                 Def::Map(_) => self.deserialize_map(wip),
-                Def::Option(_) => self.deserialize_option(wip),
+                Def::Option(_) => self.deserialize_option(wip, expected_name),
                 _ => Err(DomDeserializeError::Unsupported(format!(
                     "unsupported type: {:?}",
                     shape.ty
@@ -125,9 +186,13 @@ where
     /// **Entry:** Parser is positioned before the struct's `NodeStart` (peeked, not consumed).
     ///
     /// **Exit:** Parser has consumed through the struct's closing `NodeEnd`.
+    ///
+    /// If `expected_name` is `Some`, it overrides the element name (used when deserializing
+    /// a field where the element name comes from the field, not the type).
     fn deserialize_struct(
         &mut self,
         wip: Partial<'de, BORROW>,
+        expected_name: Option<Cow<'static, str>>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let shape = wip.shape();
         let struct_def = match &shape.ty {
@@ -139,11 +204,13 @@ where
             }
         };
 
-        // Compute expected element name from shape: rename > lowerCamelCase(type_identifier)
-        let expected_name = shape
-            .get_builtin_attr_value::<&str>("rename")
-            .map(Cow::Borrowed)
-            .unwrap_or_else(|| to_element_name(shape.type_identifier));
+        // Use provided expected_name, or compute from shape: rename > lowerCamelCase(type_identifier)
+        let expected_name = expected_name.unwrap_or_else(|| {
+            shape
+                .get_builtin_attr_value::<&str>("rename")
+                .map(Cow::Borrowed)
+                .unwrap_or_else(|| to_element_name(shape.type_identifier))
+        });
 
         self.deserialize_struct_innards(wip, struct_def, expected_name)
     }
@@ -190,9 +257,13 @@ where
     /// `#[rename]` attributes). If no match, looks for a variant with `#[xml::custom_element]`.
     ///
     /// For `Text`: Looks for a variant with `#[xml::text]` attribute.
+    ///
+    /// If `expected_name` is `Some`, it's used for untagged enums. For tagged enums,
+    /// the element name is determined by the variant.
     fn deserialize_enum(
         &mut self,
         mut wip: Partial<'de, BORROW>,
+        expected_name: Option<Cow<'static, str>>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let event = self.parser.peek_event_or_eof("NodeStart or Text")?;
 
@@ -242,6 +313,23 @@ where
                 wip = wip.select_nth_variant(variant_idx)?;
                 trace!(variant_name = variant.name, variant_kind = ?variant.data.kind, is_untagged, "selected variant");
 
+                // Compute element name for this variant
+                let variant_element_name: Cow<'static, str> = if is_untagged {
+                    // For untagged enums, use provided expected_name or compute from enum type
+                    expected_name.clone().unwrap_or_else(|| {
+                        let shape = wip.shape();
+                        if let Some(renamed) = shape.get_builtin_attr_value::<&str>("rename") {
+                            Cow::Borrowed(renamed)
+                        } else {
+                            to_element_name(shape.type_identifier)
+                        }
+                    })
+                } else if variant.rename.is_some() {
+                    Cow::Borrowed(variant.effective_name())
+                } else {
+                    to_element_name(variant.name)
+                };
+
                 // Handle variant based on its kind
                 match variant.data.kind {
                     StructKind::Unit => {
@@ -257,72 +345,16 @@ where
                     }
                     StructKind::TupleStruct => {
                         // Newtype variant: deserialize the inner type
-                        // The variant data has one field (index 0)
-                        let inner_field = &variant.data.fields[0];
-                        let inner_shape = inner_field.shape();
-
-                        // Check if the inner type is a struct - if so, we need to deserialize
-                        // its fields from the same element that identified the variant
-                        if let Type::User(UserType::Struct(inner_struct_def)) = &inner_shape.ty {
-                            // For struct newtypes, use the variant's element name and deserialize
-                            // the struct's fields directly from this element
-                            let expected_name: Cow<'_, str> = if is_untagged {
-                                let shape = wip.shape();
-                                if let Some(renamed) =
-                                    shape.get_builtin_attr_value::<&str>("rename")
-                                {
-                                    Cow::Borrowed(renamed)
-                                } else {
-                                    to_element_name(shape.type_identifier)
-                                }
-                            } else if variant.rename.is_some() {
-                                Cow::Borrowed(variant.effective_name())
-                            } else {
-                                to_element_name(variant.name)
-                            };
-
-                            // Get ns_all from the inner struct's shape
-                            let ns_all = inner_shape
-                                .attributes
-                                .iter()
-                                .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
-                                .and_then(|attr| attr.get_as::<&str>().copied());
-
-                            let deny_unknown_fields = inner_shape.has_deny_unknown_fields_attr();
-
-                            wip = wip.begin_nth_field(0)?;
-                            wip = StructDeserializer::new(
-                                self,
-                                inner_struct_def,
-                                ns_all,
-                                expected_name,
-                                deny_unknown_fields,
-                            )
-                            .deserialize(wip)?;
-                            wip = wip.end()?;
-                        } else {
-                            // For non-struct newtypes (e.g., Text(String)), deserialize normally
-                            wip = wip.begin_nth_field(0)?.deserialize_with(self)?.end()?;
-                        }
+                        // Use deserialize_into_named to handle proxies and pass through element name
+                        wip = wip
+                            .begin_nth_field(0)?
+                            .deserialize_with_name(self, variant_element_name)?
+                            .end()?;
                     }
                     StructKind::Struct | StructKind::Tuple => {
                         // Struct/tuple variant: deserialize using the variant's data as a StructType
-                        // For untagged enums, use the enum's rename as element name (already matched above)
-                        // For tagged enums, use variant rename if present, else lowerCamelCase(variant.name)
-                        let expected_name: Cow<'_, str> = if is_untagged {
-                            // For untagged, the element name is the enum's name/rename
-                            let shape = wip.shape();
-                            if let Some(renamed) = shape.get_builtin_attr_value::<&str>("rename") {
-                                Cow::Borrowed(renamed)
-                            } else {
-                                to_element_name(shape.type_identifier)
-                            }
-                        } else if variant.rename.is_some() {
-                            Cow::Borrowed(variant.effective_name())
-                        } else {
-                            to_element_name(variant.name)
-                        };
-                        wip = self.deserialize_struct_innards(wip, &variant.data, expected_name)?;
+                        wip =
+                            self.deserialize_struct_innards(wip, &variant.data, variant_element_name)?;
                     }
                 }
             }
@@ -569,9 +601,12 @@ where
     /// This is used for "wrapped" list semantics where a parent element contains
     /// the list items. For "flat" list semantics (items directly as siblings),
     /// see the flat sequence handling in `deserialize_struct_innards`.
+    ///
+    /// If `expected_name` is provided, it's used as the element name for each item.
     fn deserialize_list(
         &mut self,
         mut wip: Partial<'de, BORROW>,
+        expected_name: Option<Cow<'static, str>>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         wip = wip.init_list()?;
 
@@ -581,7 +616,9 @@ where
                 break;
             }
 
-            wip = wip.begin_list_item()?.deserialize_with(self)?.end()?;
+            wip = wip.begin_list_item()?;
+            wip = self.deserialize_into_named(wip, expected_name.clone())?;
+            wip = wip.end()?;
         }
 
         Ok(wip)
@@ -590,9 +627,12 @@ where
     /// Deserialize a set type (HashSet, BTreeSet, etc.).
     ///
     /// Works the same as lists: each child element becomes a set item.
+    ///
+    /// If `expected_name` is provided, it's used as the element name for each item.
     fn deserialize_set(
         &mut self,
         mut wip: Partial<'de, BORROW>,
+        expected_name: Option<Cow<'static, str>>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         wip = wip.init_set()?;
 
@@ -602,7 +642,9 @@ where
                 break;
             }
 
-            wip = wip.begin_set_item()?.deserialize_with(self)?.end()?;
+            wip = wip.begin_set_item()?;
+            wip = self.deserialize_into_named(wip, expected_name.clone())?;
+            wip = wip.end()?;
         }
 
         Ok(wip)
@@ -723,15 +765,20 @@ where
     ///
     /// The option is `None` if the next event is `ChildrenEnd` or `NodeEnd`
     /// (indicating no content). Otherwise, the inner value is deserialized.
+    ///
+    /// If `expected_name` is provided, it's passed through to the inner deserialization.
     fn deserialize_option(
         &mut self,
         mut wip: Partial<'de, BORROW>,
+        expected_name: Option<Cow<'static, str>>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let event = self.parser.peek_event_or_eof("value")?;
         if matches!(event, DomEvent::ChildrenEnd | DomEvent::NodeEnd) {
             wip = wip.set_default()?;
         } else {
-            wip = wip.begin_some()?.deserialize_with(self)?.end()?;
+            wip = wip.begin_some()?;
+            wip = self.deserialize_into_named(wip, expected_name)?;
+            wip = wip.end()?;
         }
         Ok(wip)
     }
@@ -750,9 +797,12 @@ where
     /// - `HandleAsScalar`: Treat as scalar (e.g., `Box<str>`)
     /// - `SliceBuilder`: Build a slice (e.g., `Arc<[T]>`)
     /// - `SizedPointee`: Regular pointer to sized type
+    ///
+    /// If `expected_name` is provided, it's passed through to the inner deserialization.
     fn deserialize_pointer(
         &mut self,
         wip: Partial<'de, BORROW>,
+        expected_name: Option<Cow<'static, str>>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         use facet_dessert::{PointerAction, begin_pointer};
 
@@ -760,8 +810,10 @@ where
 
         match action {
             PointerAction::HandleAsScalar => self.deserialize_scalar(wip),
-            PointerAction::SliceBuilder => Ok(self.deserialize_list(wip)?.end()?),
-            PointerAction::SizedPointee => Ok(wip.deserialize_with(self)?.end()?),
+            PointerAction::SliceBuilder => Ok(self.deserialize_list(wip, expected_name)?.end()?),
+            PointerAction::SizedPointee => {
+                Ok(self.deserialize_into_named(wip, expected_name)?.end()?)
+            }
         }
     }
 
