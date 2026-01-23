@@ -1,6 +1,6 @@
 [package]
 name = "facet-assert"
-version = "0.43.1"
+version = "0.43.2"
 edition = "2024"
 rust-version = "1.90.0"
 license = "MIT OR Apache-2.0"
@@ -16,10 +16,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [features]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.43.1" }
-facet-diff = { path = "../facet-diff", version = "0.43.1" }
-facet-diff-core = { path = "../facet-diff-core", version = "0.43.1" }
-facet-reflect = { path = "../facet-reflect", version = "0.43.1" }
+facet-core = { path = "../facet-core", version = "0.43.2" }
+facet-diff = { path = "../facet-diff", version = "0.43.2" }
+facet-diff-core = { path = "../facet-diff-core", version = "0.43.2" }
+facet-reflect = { path = "../facet-reflect", version = "0.43.2" }
 
 [dev-dependencies]
 facet = { path = "../facet" }

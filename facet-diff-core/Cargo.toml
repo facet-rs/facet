@@ -1,6 +1,6 @@
 [package]
 name = "facet-diff-core"
-version = "0.43.1"
+version = "0.43.2"
 edition = "2024"
 rust-version = "1.90.0"
 license = "MIT OR Apache-2.0"
@@ -15,10 +15,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 confusables = "0.1"
-facet = { path = "../facet", version = "0.43.1" }
-facet-core = { path = "../facet-core", version = "0.43.1" }
-facet-pretty = { path = "../facet-pretty", version = "0.43.1" }
-facet-reflect = { path = "../facet-reflect", version = "0.43.1" }
+facet = { path = "../facet", version = "0.43.2" }
+facet-core = { path = "../facet-core", version = "0.43.2" }
+facet-pretty = { path = "../facet-pretty", version = "0.43.2" }
+facet-reflect = { path = "../facet-reflect", version = "0.43.2" }
 indextree = { workspace = true }
 owo-colors = "4"
 palette = { version = "0.7", default-features = false, features = ["std"] }

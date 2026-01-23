@@ -1045,7 +1045,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "autocfg",
  "facet-args",
@@ -1063,7 +1063,7 @@ dependencies = [
 
 [[package]]
 name = "facet-args"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "ariadne",
  "facet",
@@ -1079,7 +1079,7 @@ dependencies = [
 
 [[package]]
 name = "facet-asn1"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-core",
@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "facet-assert"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-core",
@@ -1105,7 +1105,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "autocfg",
  "bytes",
@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "facet-csv"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-core",
@@ -1151,14 +1151,14 @@ dependencies = [
 
 [[package]]
 name = "facet-default"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-dessert"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "facet-diff"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "boxen",
  "facet",
@@ -1185,7 +1185,7 @@ dependencies = [
 
 [[package]]
 name = "facet-diff-core"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "confusables",
  "facet",
@@ -1201,14 +1201,14 @@ dependencies = [
 
 [[package]]
 name = "facet-error"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-format"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "cranelift",
  "cranelift-jit",
@@ -1228,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "facet-format-suite"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "arborium",
  "bytes",
@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "axum-core",
  "compact_str",
@@ -1290,7 +1290,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json-schema"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-core",
@@ -1300,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -1309,7 +1309,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1318,14 +1318,14 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -1337,7 +1337,7 @@ dependencies = [
 
 [[package]]
 name = "facet-msgpack"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "axum-core",
  "divan",
@@ -1356,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "facet-path"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-core",
@@ -1366,7 +1366,7 @@ dependencies = [
 
 [[package]]
 name = "facet-postcard"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "axum-core",
  "bytes",
@@ -1399,7 +1399,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "camino",
  "facet",
@@ -1413,7 +1413,7 @@ dependencies = [
 
 [[package]]
 name = "facet-python"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-core",
@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "camino",
  "eyre",
@@ -1440,7 +1440,7 @@ dependencies = [
 
 [[package]]
 name = "facet-shapelike"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-args",
@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "facet-solver"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "divan",
  "facet",
@@ -1478,7 +1478,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -1489,7 +1489,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "quote",
  "unsynn",
@@ -1497,7 +1497,7 @@ dependencies = [
 
 [[package]]
 name = "facet-toml"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "axum-core",
  "facet",
@@ -1519,7 +1519,7 @@ dependencies = [
 
 [[package]]
 name = "facet-typescript"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-core",
@@ -1528,7 +1528,7 @@ dependencies = [
 
 [[package]]
 name = "facet-urlencoded"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "axum-core",
  "facet",
@@ -1543,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "facet-validate"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-core",
@@ -1553,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "facet-value"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "bolero",
  "divan",
@@ -1572,7 +1572,7 @@ dependencies = [
 
 [[package]]
 name = "facet-xdr"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-core",
@@ -1583,7 +1583,7 @@ dependencies = [
 
 [[package]]
 name = "facet-yaml"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "axum-core",
  "datatest-stable",

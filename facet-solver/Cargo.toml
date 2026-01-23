@@ -1,6 +1,6 @@
 [package]
 name = "facet-solver"
-version = "0.43.1"
+version = "0.43.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -21,8 +21,8 @@ suggestions = ["strsim", "alloc"]
 tracing = ["dep:tracing", "facet-reflect/tracing"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.43.1", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.43.1", default-features = false }
+facet-core = { path = "../facet-core", version = "0.43.2", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.43.2", default-features = false }
 strsim = { workspace = true, optional = true }
 
 # Tracing (optional - compiles to nothing when disabled)

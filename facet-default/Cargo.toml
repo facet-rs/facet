@@ -15,7 +15,7 @@ categories = ["rust-patterns", "development-tools"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.43.1" }
+facet = { path = "../facet", version = "0.43.2" }
 
 [dev-dependencies]
 facet = { path = "../facet" }
