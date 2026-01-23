@@ -48,6 +48,11 @@ where
             return self.deserialize_enum_untagged(wip);
         }
 
+        // Cow-like enums deserialize transparently from their inner value
+        if shape.is_cow() {
+            return self.deserialize_cow_enum(wip);
+        }
+
         if let (Some(tag_key), Some(content_key)) = (tag_attr, content_attr) {
             // Adjacently tagged: {"t": "VariantName", "c": {...}}
             return self.deserialize_enum_adjacently_tagged(wip, tag_key, content_key);
@@ -1249,6 +1254,30 @@ where
                 Ok(wip)
             }
         }
+    }
+
+    /// Deserialize a cow-like enum transparently from its inner value.
+    ///
+    /// Cow-like enums (`#[facet(cow)]`) serialize/deserialize transparently as their
+    /// inner value, without any variant wrapper. The Borrowed/Owned distinction is
+    /// purely an implementation detail for memory management.
+    ///
+    /// This always selects the "Owned" variant since we need to own the deserialized data.
+    fn deserialize_cow_enum(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Always use Owned variant - we need to own the deserialized data
+        wip = wip
+            .select_variant_named("Owned")
+            .map_err(DeserializeError::reflect)?;
+
+        // Deserialize directly into the variant's single field
+        wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
+        wip = self.deserialize_into(wip)?;
+        wip = wip.end().map_err(DeserializeError::reflect)?;
+
+        Ok(wip)
     }
 
     fn deserialize_numeric_enum(
