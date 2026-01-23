@@ -1538,3 +1538,161 @@ fn variant_named() -> Result<(), IPanic> {
     );
     Ok(())
 }
+
+// ============================================================================
+// Tests for from_raw + finish_in_place (stack-friendly deserialization)
+// ============================================================================
+
+#[test]
+fn from_raw_simple_struct() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
+    let mut slot = MaybeUninit::<Point>::uninit();
+    let ptr = PtrUninit::new(slot.as_mut_ptr().cast::<u8>());
+
+    let mut partial: Partial<'_> = unsafe { Partial::from_raw(ptr, Point::SHAPE)? };
+    partial = partial.set_field("x", 10i32)?;
+    partial = partial.set_field("y", 20i32)?;
+    partial.finish_in_place()?;
+
+    let point = unsafe { slot.assume_init() };
+    assert_eq!(point, Point { x: 10, y: 20 });
+    Ok(())
+}
+
+#[test]
+fn from_raw_nested_struct() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        value: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Outer {
+        name: String,
+        inner: Inner,
+    }
+
+    let mut slot = MaybeUninit::<Outer>::uninit();
+    let ptr = PtrUninit::new(slot.as_mut_ptr().cast::<u8>());
+
+    let mut partial: Partial<'_> = unsafe { Partial::from_raw(ptr, Outer::SHAPE)? };
+    partial = partial.set_field("name", "test".to_string())?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set_field("value", "nested".to_string())?;
+    partial = partial.end()?;
+    partial.finish_in_place()?;
+
+    let outer = unsafe { slot.assume_init() };
+    assert_eq!(outer.name, "test");
+    assert_eq!(outer.inner.value, "nested");
+    Ok(())
+}
+
+#[test]
+fn from_raw_drop_on_error() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropTracker(String);
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    #[derive(Facet, Debug)]
+    struct TwoFields {
+        first: DropTracker,
+        second: DropTracker,
+    }
+
+    DROP_COUNT.store(0, Ordering::Release);
+
+    let mut slot = MaybeUninit::<TwoFields>::uninit();
+    let ptr = PtrUninit::new(slot.as_mut_ptr().cast::<u8>());
+
+    let mut partial: Partial<'_> = unsafe { Partial::from_raw(ptr, TwoFields::SHAPE)? };
+    partial = partial.set_field("first", DropTracker("first".to_string()))?;
+    // Don't set second field - this should cause finish_in_place to fail
+
+    let result = partial.finish_in_place();
+    assert!(result.is_err());
+
+    // The first field should have been dropped during cleanup
+    assert_eq!(DROP_COUNT.load(Ordering::Acquire), 1);
+
+    Ok(())
+}
+
+#[test]
+fn from_raw_drop_on_partial_drop() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropTracker(String);
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    #[derive(Facet, Debug)]
+    struct TwoFields {
+        first: DropTracker,
+        second: DropTracker,
+    }
+
+    DROP_COUNT.store(0, Ordering::Release);
+
+    let mut slot = MaybeUninit::<TwoFields>::uninit();
+    let ptr = PtrUninit::new(slot.as_mut_ptr().cast::<u8>());
+
+    let mut partial: Partial<'_> = unsafe { Partial::from_raw(ptr, TwoFields::SHAPE)? };
+    partial = partial.set_field("first", DropTracker("first".to_string()))?;
+    // Drop the partial without calling finish_in_place
+    drop(partial);
+
+    // The first field should have been dropped during Partial::drop
+    assert_eq!(DROP_COUNT.load(Ordering::Acquire), 1);
+
+    Ok(())
+}
+
+#[test]
+fn from_raw_with_vec() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct WithVec {
+        items: Vec<i32>,
+    }
+
+    let mut slot = MaybeUninit::<WithVec>::uninit();
+    let ptr = PtrUninit::new(slot.as_mut_ptr().cast::<u8>());
+
+    let mut partial: Partial<'_> = unsafe { Partial::from_raw(ptr, WithVec::SHAPE)? };
+    partial = partial.begin_field("items")?;
+    partial = partial.init_list()?;
+    partial = partial.begin_list_item()?;
+    partial = partial.set(1i32)?;
+    partial = partial.end()?;
+    partial = partial.begin_list_item()?;
+    partial = partial.set(2i32)?;
+    partial = partial.end()?;
+    partial = partial.begin_list_item()?;
+    partial = partial.set(3i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    partial.finish_in_place()?;
+
+    let with_vec = unsafe { slot.assume_init() };
+    assert_eq!(with_vec.items, vec![1, 2, 3]);
+    Ok(())
+}
