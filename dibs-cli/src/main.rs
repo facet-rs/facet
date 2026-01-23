@@ -54,6 +54,12 @@ enum Commands {
         #[facet(args::positional)]
         name: String,
     },
+    /// Generate a migration from schema diff
+    GenerateFromDiff {
+        /// Migration name (e.g., "add-users-table")
+        #[facet(args::positional)]
+        name: String,
+    },
     /// Browse the current schema
     Schema {
         /// Output as plain text (default when not a TTY)
@@ -107,6 +113,9 @@ fn run(cli: Cli) {
         }
         Some(Commands::Generate { name }) => {
             generate_migration(&name);
+        }
+        Some(Commands::GenerateFromDiff { name }) => {
+            run_generate_from_diff(&name);
         }
         Some(Commands::Schema { plain, sql }) => {
             let schema = dibs::Schema::collect();
@@ -1391,4 +1400,320 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> Result<()> {{
     println!();
     println!("Don't forget to add the module to your migrations/mod.rs:");
     println!("  mod {};", filename.trim_end_matches(".rs"));
+}
+
+fn run_generate_from_diff(name: &str) {
+    let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        eprintln!("Error: DATABASE_URL environment variable not set.");
+        eprintln!();
+        eprintln!("Set it via:");
+        eprintln!("  export DATABASE_URL=postgres://user:pass@host/db");
+        std::process::exit(1);
+    });
+
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+
+    // Try to load dibs.toml - if present, use roam to call the db crate
+    if let Ok((cfg, config_path)) = config::load() {
+        rt.block_on(run_generate_from_diff_via_roam(
+            &cfg,
+            &config_path,
+            &url,
+            name,
+        ));
+    } else {
+        // No dibs.toml - use local schema collection
+        rt.block_on(run_generate_from_diff_local(&url, name));
+    }
+}
+
+async fn run_generate_from_diff_via_roam(
+    cfg: &config::Config,
+    config_path: &Path,
+    database_url: &str,
+    name: &str,
+) {
+    use dibs_proto::DiffRequest;
+    use owo_colors::OwoColorize as _;
+
+    println!(
+        "{}",
+        format!("Using config: {}", config_path.display())
+            .as_str()
+            .dimmed()
+    );
+
+    // Connect to the db crate via roam
+    let conn = match service::connect_to_service(cfg).await {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("Failed to connect to db service: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let client = conn.client();
+
+    // Call generate_migration_sql method
+    let result = client
+        .generate_migration_sql(DiffRequest {
+            database_url: database_url.to_string(),
+        })
+        .await;
+
+    match result {
+        Ok(sql) => {
+            if sql.trim().is_empty() {
+                println!("{}", "No changes detected.".green());
+                println!();
+                println!("Schema matches database - no migration needed.");
+                return;
+            }
+
+            // Create migration file
+            match create_migration_file_from_sql(name, &sql) {
+                Ok(path) => {
+                    println!("{}", "Migration created successfully!".green());
+                    println!();
+                    println!("File: {}", path);
+                }
+                Err(e) => {
+                    eprintln!("Failed to create migration file: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to generate migration SQL: {:?}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn run_generate_from_diff_local(database_url: &str, name: &str) {
+    // Collect local schema
+    let rust_schema = dibs::Schema::collect();
+
+    if rust_schema.tables.is_empty() {
+        eprintln!("No tables registered.");
+        eprintln!();
+        eprintln!("Define tables using #[facet(dibs::table = \"name\")] on Facet structs.");
+        std::process::exit(1);
+    }
+
+    // Connect to database and introspect
+    let result = async {
+        let (client, connection) =
+            tokio_postgres::connect(database_url, tokio_postgres::NoTls).await?;
+
+        // Spawn connection handler
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Database connection error: {}", e);
+            }
+        });
+
+        // Introspect database schema
+        let db_schema = dibs::Schema::from_database(&client).await?;
+
+        Ok::<_, dibs::Error>(db_schema)
+    }
+    .await;
+
+    let db_schema = match result {
+        Ok(schema) => schema,
+        Err(e) => {
+            eprintln!("Failed to introspect database: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Compute diff
+    let diff = rust_schema.diff(&db_schema);
+
+    if diff.is_empty() {
+        #[allow(unused_imports)]
+        use owo_colors::OwoColorize as _;
+        println!("{}", "No changes detected.".green());
+        println!();
+        println!("Schema matches database - no migration needed.");
+        return;
+    }
+
+    // Convert diff to SQL
+    let current_schema = dibs::solver::VirtualSchema::from_tables(&db_schema.tables);
+    let desired_schema = dibs::solver::VirtualSchema::from_tables(&rust_schema.tables);
+
+    let sql = match diff.to_ordered_sql(&current_schema, &desired_schema) {
+        Ok(sql) => sql,
+        Err(e) => {
+            eprintln!("Failed to generate SQL from diff: {:?}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Create migration file
+    match create_migration_file_from_sql(name, &sql) {
+        Ok(path) => {
+            use owo_colors::OwoColorize as _;
+            println!("{}", "Migration created successfully!".green());
+            println!();
+            println!("File: {}", path);
+        }
+        Err(e) => {
+            eprintln!("Failed to create migration file: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn create_migration_file_from_sql(name: &str, sql: &str) -> Result<String, std::io::Error> {
+    use std::fs;
+    use std::io::Write;
+
+    let now = Zoned::now();
+    let timestamp = now.strftime("%Y_%m_%d_%H%M%S");
+
+    // Convert name to snake_case for the module name
+    let module_name = name.replace('-', "_").to_lowercase();
+
+    // Create migrations directory if it doesn't exist
+    let migrations_dir = Path::new("src/migrations");
+    if !migrations_dir.exists() {
+        fs::create_dir_all(migrations_dir)?;
+    }
+
+    // Generate filename: m_2026_01_23_103000_name.rs
+    let filename = format!("m{}_{}.rs", timestamp, module_name);
+    let filepath = migrations_dir.join(&filename);
+
+    if filepath.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("Migration file already exists: {}", filepath.display()),
+        ));
+    }
+
+    // Parse SQL into ctx.execute() calls
+    let sql_calls = parse_sql_to_calls(sql);
+
+    // Generate Rust migration content
+    let content = format!(
+        r#"//! Migration: {name}
+//! Created: {created}
+
+use dibs::{{MigrationContext, MigrationResult}};
+
+#[dibs::migration]
+pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
+{sql_calls}
+    Ok(())
+}}
+"#,
+        name = name,
+        created = now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        sql_calls = sql_calls,
+    );
+
+    let mut file = fs::File::create(&filepath)?;
+    file.write_all(content.as_bytes())?;
+
+    // Add to mod.rs
+    let mod_rs_path = migrations_dir.join("mod.rs");
+    let module_line = format!("mod m{}_{};", timestamp, module_name);
+
+    if mod_rs_path.exists() {
+        // Read existing mod.rs and append
+        let existing = fs::read_to_string(&mod_rs_path)?;
+        if !existing.contains(&module_line) {
+            let mut mod_file = fs::OpenOptions::new().append(true).open(&mod_rs_path)?;
+            mod_file.write_all(format!("\n{}", module_line).as_bytes())?;
+        }
+    } else {
+        // Create new mod.rs
+        let mut mod_file = fs::File::create(&mod_rs_path)?;
+        mod_file.write_all(format!("//! Database migrations.\n\n{}\n", module_line).as_bytes())?;
+    }
+
+    Ok(filepath.display().to_string())
+}
+
+/// Parse SQL into migration function calls.
+///
+/// Splits SQL by statements (semicolons) and generates appropriate
+/// ctx.execute() calls. Multi-line statements use raw string literals.
+fn parse_sql_to_calls(sql: &str) -> String {
+    let mut result = String::new();
+    let mut current_statement = String::new();
+
+    for line in sql.lines() {
+        let trimmed = line.trim();
+
+        // Handle SQL comments - convert to Rust comments
+        if trimmed.starts_with("--") {
+            // Flush any pending statement first
+            if !current_statement.trim().is_empty() {
+                result.push_str(&format_sql_call(&current_statement));
+                current_statement.clear();
+            }
+            // Add as Rust comment
+            result.push_str(&format!(
+                "    // {}\n",
+                trimmed.trim_start_matches("--").trim()
+            ));
+            continue;
+        }
+
+        // Skip empty lines between statements
+        if trimmed.is_empty() && current_statement.trim().is_empty() {
+            continue;
+        }
+
+        // Add line to current statement
+        if !current_statement.is_empty() {
+            current_statement.push('\n');
+        }
+        current_statement.push_str(line);
+
+        // Check if statement ends with semicolon
+        if trimmed.ends_with(';') {
+            result.push_str(&format_sql_call(&current_statement));
+            current_statement.clear();
+        }
+    }
+
+    // Flush any remaining statement
+    if !current_statement.trim().is_empty() {
+        result.push_str(&format_sql_call(&current_statement));
+    }
+
+    result
+}
+
+/// Format a single SQL statement as a ctx.execute() call.
+fn format_sql_call(sql: &str) -> String {
+    let trimmed = sql.trim().trim_end_matches(';');
+
+    // Single-line statements use regular string literals
+    if !trimmed.contains('\n') {
+        return format!(
+            "    ctx.execute(\"{}\").await?;\n",
+            trimmed.replace('"', "\\\"")
+        );
+    }
+
+    // Multi-line statements use raw string literals
+    // We need to use enough hashes to avoid conflicts with content
+    let mut hash_count = 3;
+    let test_pattern = "#".repeat(hash_count);
+    while trimmed.contains(&format!("\"{}\"", test_pattern)) {
+        hash_count += 1;
+    }
+    let hashes = "#".repeat(hash_count);
+
+    format!(
+        "    ctx.execute(r{hashes}\"{sql}\"{hashes}).await?;\n",
+        hashes = hashes,
+        sql = trimmed
+    )
 }
