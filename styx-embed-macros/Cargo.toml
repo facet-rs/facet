@@ -1,6 +1,6 @@
 [package]
 name = "styx-embed-macros"
-version = "1.0.0"
+version = "1.0.1"
 edition.workspace = true
 description = "Proc macros for embedding Styx schemas in binaries"
 license.workspace = true

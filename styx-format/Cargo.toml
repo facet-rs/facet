@@ -1,6 +1,6 @@
 [package]
 name = "styx-format"
-version = "1.0.0"
+version = "1.0.1"
 edition.workspace = true
 description = "Core formatting and parsing utilities for Styx"
 license.workspace = true

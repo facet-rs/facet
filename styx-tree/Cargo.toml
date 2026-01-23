@@ -1,6 +1,6 @@
 [package]
 name = "styx-tree"
-version = "1.0.0"
+version = "1.0.1"
 edition.workspace = true
 description = "High-level syntax tree for the Styx configuration language"
 license.workspace = true

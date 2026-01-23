@@ -1,6 +1,6 @@
 [package]
 name = "styx-lsp-ext"
-version = "1.0.0"
+version = "1.0.1"
 edition.workspace = true
 description = "Protocol types for Styx LSP extensions"
 license.workspace = true

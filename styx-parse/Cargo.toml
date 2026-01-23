@@ -1,6 +1,6 @@
 [package]
 name = "styx-parse"
-version = "1.0.0"
+version = "1.0.1"
 edition.workspace = true
 license.workspace = true
 description = "Event-based parser for the Styx configuration language"

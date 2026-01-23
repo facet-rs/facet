@@ -1,6 +1,6 @@
 [package]
 name = "styx-gen-go"
-version = "1.0.0"
+version = "1.0.1"
 edition.workspace = true
 description = "Go code generator for Styx schemas"
 license.workspace = true
