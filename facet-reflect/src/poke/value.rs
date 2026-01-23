@@ -4,7 +4,7 @@ use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, Type, UserType};
 
 use crate::ReflectError;
 
-use super::PokeStruct;
+use super::{PokeList, PokeStruct};
 
 /// A mutable view into a value with runtime type information.
 ///
@@ -145,6 +145,22 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
                 actual: self.shape,
             }),
         }
+    }
+
+    /// Converts this into a `PokeList` if the value is a list.
+    #[inline]
+    pub const fn into_list(self) -> Result<PokeList<'mem, 'facet>, ReflectError> {
+        if let Def::List(def) = self.shape.def {
+            // SAFETY: The ListDef comes from self.shape.def, where self.shape is obtained
+            // from a trusted source (either T::SHAPE from the Facet trait, or validated
+            // through other safe constructors). The vtable is therefore trusted.
+            return Ok(unsafe { PokeList::new(self, def) });
+        }
+
+        Err(ReflectError::WasNotA {
+            expected: "list",
+            actual: self.shape,
+        })
     }
 
     /// Gets a reference to the underlying value.
