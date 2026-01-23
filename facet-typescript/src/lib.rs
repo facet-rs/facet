@@ -478,8 +478,9 @@ impl TypeScriptGenerator {
             for variant in enum_type.variants {
                 match variant.data.kind {
                     StructKind::Unit => {
-                        // Unit variant in untagged enum - this is unusual but we represent as null
-                        variant_types.push("null".to_string());
+                        // Unit variant in untagged enum - serializes as variant name string
+                        let variant_name = variant.effective_name();
+                        variant_types.push(format!("\"{}\"", variant_name));
                     }
                     StructKind::TupleStruct if variant.data.fields.len() == 1 => {
                         // Newtype variant: just the inner type
@@ -1491,5 +1492,37 @@ mod tests {
 
         let ts = to_typescript::<Message>();
         insta::assert_snapshot!("test_default_in_enum_variant", ts);
+    }
+
+    #[test]
+    fn test_untagged_enum_unit_and_newtype_variants() {
+        #[derive(Facet, Clone, PartialEq, PartialOrd)]
+        #[repr(C)]
+        #[allow(dead_code)]
+        #[facet(untagged)]
+        pub enum Enum {
+            Daily,
+            Weekly,
+            Custom(f64),
+        }
+
+        let ts = to_typescript::<Enum>();
+        insta::assert_snapshot!("test_untagged_enum_unit_and_newtype_variants", ts);
+    }
+
+    #[test]
+    fn test_untagged_enum_with_tuple_variant() {
+        #[derive(Facet)]
+        #[repr(C)]
+        #[allow(dead_code)]
+        #[facet(untagged)]
+        pub enum Message {
+            Text(String),
+            Pair(String, i32),
+            Struct { x: i32, y: i32 },
+        }
+
+        let ts = to_typescript::<Message>();
+        insta::assert_snapshot!("test_untagged_enum_with_tuple_variant", ts);
     }
 }
