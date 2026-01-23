@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Styx format support for facet.
 //!
 //! This crate provides Styx deserialization and serialization using the facet

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Serde support for the Styx configuration language.
 //!
 //! This crate provides Styx serialization and deserialization using serde.

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Core formatting and parsing utilities for Styx.
 //!
 //! This crate provides the low-level building blocks for Styx serialization

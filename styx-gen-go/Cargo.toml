@@ -13,4 +13,3 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet-styx.workspace = true
-styx-tree.workspace = true

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Go code generation from Styx schemas.
 
 use facet_styx::SchemaFile;

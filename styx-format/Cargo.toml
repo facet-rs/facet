@@ -22,7 +22,6 @@ tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 tracing.workspace = true
-facet-testhelpers.workspace = true
 insta = "1"
 proptest.workspace = true
 

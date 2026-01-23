@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! WebAssembly bindings for the Styx parser.
 //!
 //! This crate provides JavaScript-callable functions for parsing Styx documents,

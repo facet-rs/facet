@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Lossless Concrete Syntax Tree for the Styx configuration language.
 //!
 //! This crate provides a CST (Concrete Syntax Tree) representation of Styx documents

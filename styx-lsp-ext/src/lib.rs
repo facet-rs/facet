@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Protocol types for Styx LSP extensions.
 //!
 //! This crate defines the Roam service traits and types used for communication

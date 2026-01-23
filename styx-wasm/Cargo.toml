@@ -26,4 +26,3 @@ styx-tree = { path = "../styx-tree", version = "1.0" }
 styx-format = { path = "../styx-format", version = "1.0" }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3"

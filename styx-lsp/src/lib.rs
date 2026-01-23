@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Styx Language Server
 //!
 //! LSP server for the Styx configuration language, providing:

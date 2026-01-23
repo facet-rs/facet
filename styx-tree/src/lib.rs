@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Document tree representation for Styx configuration files.
 //!
 //! This crate provides a high-level API for working with Styx documents,

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Embed Styx schemas in binaries for zero-execution discovery.
 //!
 //! This crate provides macros to embed schemas in your binary, and functions to

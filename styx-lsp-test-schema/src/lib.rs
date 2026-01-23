@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Schema types for LSP extension test files.
 //!
 //! These types define the structure of `.styx` test files that exercise

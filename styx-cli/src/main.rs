@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Styx CLI tool
 //!
 //! Disambiguation heuristic:
@@ -37,7 +38,7 @@ const EXIT_IO_ERROR: i32 = 3;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// File mode arguments: styx <file> [options]
+/// File mode arguments: `styx <file> [options]`
 #[derive(Facet, Debug, Default)]
 struct FileArgs {
     /// Input file path (or "-" for stdin)
@@ -142,7 +143,7 @@ enum Command {
         #[facet(args::named)]
         version: String,
 
-        /// Output directory (default: ./<name>)
+        /// Output directory (default: `./<name>`)
         #[facet(args::named, default)]
         output: Option<String>,
     },

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Proc macros for embedding Styx schemas in binaries.
 //!
 //! These macros compress schemas at compile time and embed them

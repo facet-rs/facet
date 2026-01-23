@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! C bindings for the Styx configuration language parser.
 //!
 //! This crate provides a C-compatible API for parsing Styx documents.

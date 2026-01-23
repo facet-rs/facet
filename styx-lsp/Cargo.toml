@@ -53,7 +53,6 @@ styx-lsp-ext = { path = "../styx-lsp-ext", version = "1.0" }
 styx-lsp-test-schema = { path = "../styx-lsp-test-schema", version = "1.0" }
 
 [dev-dependencies]
-serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 
 [build-dependencies]

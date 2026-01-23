@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Event-based parser for the Styx configuration language.
 //!
 //! This crate provides a low-level lexer and event-based parser for Styx documents.
