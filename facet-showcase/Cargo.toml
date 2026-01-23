@@ -15,8 +15,8 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 arborium = { workspace = true, features = ["lang-rust", "lang-xml", "lang-yaml"] }
-facet = { path = "../facet", version = "0.43.0", features = ["all-impls", "doc"] }
-facet-pretty = { path = "../facet-pretty", version = "0.43.0" }
+facet = { path = "../facet", version = "0.43.1", features = ["all-impls", "doc"] }
+facet-pretty = { path = "../facet-pretty", version = "0.43.1" }
 
 # Terminal colors
 owo-colors = "4"

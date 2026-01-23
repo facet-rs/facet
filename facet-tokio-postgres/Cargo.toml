@@ -16,8 +16,8 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.43.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.43.0" }
+facet-core = { path = "../facet-core", version = "0.43.1" }
+facet-reflect = { path = "../facet-reflect", version = "0.43.1" }
 tokio-postgres = "0.7"
 postgres-types = "0.2"
 rust_decimal = { workspace = true, optional = true, features = ["db-tokio-postgres"] }

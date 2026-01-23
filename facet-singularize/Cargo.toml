@@ -30,8 +30,8 @@ gen-ie-exceptions = [
 
 [dependencies]
 # Optional deps for gen-ie-exceptions binary
-facet = { path = "../facet", version = "0.43.0", optional = true }
-facet-json = { path = "../facet-json", version = "0.43.0", optional = true }
+facet = { path = "../facet", version = "0.43.1", optional = true }
+facet-json = { path = "../facet-json", version = "0.43.1", optional = true }
 rmp = { version = "0.8", optional = true }
 flate2 = { version = "1.1", optional = true }
 rc-zip-sync = { version = "4", optional = true }

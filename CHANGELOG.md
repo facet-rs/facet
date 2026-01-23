@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.1](https://github.com/facet-rs/facet/compare/facet-core-v0.43.0...facet-core-v0.43.1) - 2026-01-23
+
+### Added
+
+- add Facet implementation for tendril crate ([#1870](https://github.com/facet-rs/facet/pull/1870))
+
 ## [0.42.0](https://github.com/facet-rs/facet/compare/facet-core-v0.41.0...facet-core-v0.42.0) - 2026-01-06
 
 ### Added

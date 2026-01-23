@@ -14,8 +14,8 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.43.0" }
-facet-xml = { path = "../facet-xml", version = "0.43.0" }
+facet = { path = "../facet", version = "0.43.1" }
+facet-xml = { path = "../facet-xml", version = "0.43.1" }
 
 [dev-dependencies]
 indoc = { workspace = true }
