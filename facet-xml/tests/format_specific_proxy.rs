@@ -517,3 +517,198 @@ fn test_field_level_proxy_vec_as_comma_separated_string_empty_roundtrip() {
     let roundtripped: ContainerWithCommaSeparatedField = from_str(&xml).unwrap();
     assert_eq!(original, roundtripped);
 }
+
+// ============================================================================
+// Edge case tests for proxy handling
+// ============================================================================
+
+/// Edge case 1: Field-level proxy on an attribute field.
+/// Tests that `#[facet(xml::attribute, xml::proxy = P)]` works correctly.
+#[derive(Facet, Debug, PartialEq)]
+struct StructWithProxiedAttribute {
+    name: String,
+    #[facet(facet_xml::attribute, xml::proxy = BinaryString)]
+    flags: u32,
+}
+
+#[test]
+fn test_field_level_proxy_on_attribute_roundtrip() {
+    let original = StructWithProxiedAttribute {
+        name: "test".to_string(),
+        flags: 0b10101010,
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains(r#"flags="0b10101010""#),
+        "Attribute should use binary proxy, got: {xml}"
+    );
+
+    let roundtripped: StructWithProxiedAttribute = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Edge case 2: Field-level proxy combined with rename.
+/// Tests that `#[facet(rename = "foo", xml::proxy = P)]` works correctly.
+#[derive(Facet, Debug, PartialEq)]
+struct StructWithRenamedProxiedField {
+    name: String,
+    #[facet(rename = "binaryValue", xml::proxy = BinaryString)]
+    value: u32,
+}
+
+#[test]
+fn test_field_level_proxy_with_rename_roundtrip() {
+    let original = StructWithRenamedProxiedField {
+        name: "test".to_string(),
+        value: 0b11110000,
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("<binaryValue>0b11110000</binaryValue>"),
+        "Should use renamed element with binary proxy, got: {xml}"
+    );
+
+    let roundtripped: StructWithRenamedProxiedField = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// A proxy for Option<String> that uses "N/A" for None.
+#[derive(Facet, Clone, Debug)]
+#[facet(transparent)]
+pub struct OptionalStringProxy(pub String);
+
+impl TryFrom<OptionalStringProxy> for Option<String> {
+    type Error = std::convert::Infallible;
+    fn try_from(proxy: OptionalStringProxy) -> Result<Self, Self::Error> {
+        if proxy.0 == "N/A" {
+            Ok(None)
+        } else {
+            Ok(Some(proxy.0))
+        }
+    }
+}
+
+impl From<&Option<String>> for OptionalStringProxy {
+    fn from(opt: &Option<String>) -> Self {
+        match opt {
+            Some(s) => OptionalStringProxy(s.clone()),
+            None => OptionalStringProxy("N/A".to_string()),
+        }
+    }
+}
+
+/// Edge case 3: Field-level proxy on Option<T> where the proxy handles the whole Option.
+/// This is different from Option<T> where T has a proxy - here we proxy the Option itself.
+#[derive(Facet, Debug, PartialEq)]
+struct StructWithProxiedOption {
+    name: String,
+    #[facet(xml::proxy = OptionalStringProxy)]
+    description: Option<String>,
+}
+
+#[test]
+fn test_field_level_proxy_on_option_some_roundtrip() {
+    let original = StructWithProxiedOption {
+        name: "test".to_string(),
+        description: Some("hello world".to_string()),
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("<description>hello world</description>"),
+        "Should serialize Some value, got: {xml}"
+    );
+
+    let roundtripped: StructWithProxiedOption = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_field_level_proxy_on_option_none_roundtrip() {
+    let original = StructWithProxiedOption {
+        name: "test".to_string(),
+        description: None,
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("<description>N/A</description>"),
+        "Should serialize None as 'N/A', got: {xml}"
+    );
+
+    let roundtripped: StructWithProxiedOption = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Edge case 4: Multiple fields with different proxies in the same struct.
+#[derive(Facet, Debug, PartialEq)]
+struct StructWithMultipleProxies {
+    name: String,
+    #[facet(xml::proxy = BinaryString)]
+    binary_value: u32,
+    #[facet(xml::proxy = HexString)]
+    hex_value: u32,
+    #[facet(xml::proxy = CommaSeparatedU32s)]
+    list_value: Vec<u32>,
+}
+
+#[test]
+fn test_multiple_fields_with_different_proxies_roundtrip() {
+    let original = StructWithMultipleProxies {
+        name: "test".to_string(),
+        binary_value: 0b1111,
+        hex_value: 0xFF,
+        list_value: vec![1, 2, 3],
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("0b1111"),
+        "binary_value should use binary proxy, got: {xml}"
+    );
+    assert!(
+        xml.contains("0xff"),
+        "hex_value should use hex proxy, got: {xml}"
+    );
+    assert!(
+        xml.contains("1,2,3"),
+        "list_value should use comma-separated proxy, got: {xml}"
+    );
+
+    let roundtripped: StructWithMultipleProxies = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Edge case 5: Enum with variant containing a field that has container-level proxy.
+#[derive(Facet, Debug, PartialEq)]
+#[repr(C)]
+enum ShapeEnum {
+    Circle { radius: u32 },
+    Rectangle { width: u32, height: u32 },
+    Point(Point), // Point has container-level proxy
+}
+
+#[test]
+fn test_enum_variant_with_container_proxy_roundtrip() {
+    let original = ShapeEnum::Point(Point { x: 10, y: 20 });
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: ShapeEnum = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_enum_variant_without_proxy_still_works() {
+    let original = ShapeEnum::Rectangle {
+        width: 100,
+        height: 50,
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: ShapeEnum = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
