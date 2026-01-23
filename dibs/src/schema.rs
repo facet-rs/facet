@@ -512,6 +512,37 @@ impl Table {
     }
 }
 
+/// Map a Rust type to a Postgres type.
+///
+/// Takes a Shape to properly handle generic types like `Vec<u8>`.
+pub fn shape_to_pg_type(shape: &Shape) -> Option<PgType> {
+    // Check for Vec<u8> (bytea) - shape.def is List and inner is u8
+    if matches!(&shape.def, facet::Def::List(_)) {
+        if shape
+            .inner
+            .is_some_and(|inner| inner.type_identifier == "u8")
+        {
+            return Some(PgType::Bytea);
+        }
+        // Other Vec types are not supported
+        return None;
+    }
+
+    // Check for slice &[u8] (bytea)
+    if matches!(&shape.def, facet::Def::Slice(_)) {
+        if shape
+            .inner
+            .is_some_and(|inner| inner.type_identifier == "u8")
+        {
+            return Some(PgType::Bytea);
+        }
+        return None;
+    }
+
+    // Fall back to type name matching
+    rust_type_to_pg(shape.type_identifier)
+}
+
 /// Map a Rust type name to a Postgres type.
 pub fn rust_type_to_pg(type_name: &str) -> Option<PgType> {
     match type_name {
@@ -524,7 +555,6 @@ pub fn rust_type_to_pg(type_name: &str) -> Option<PgType> {
         "Decimal" | "rust_decimal::Decimal" => Some(PgType::Numeric),
         "bool" => Some(PgType::Boolean),
         "String" | "&str" => Some(PgType::Text),
-        "Vec<u8>" | "&[u8]" => Some(PgType::Bytea),
         // Datetime types
         "Timestamp" | "jiff::Timestamp" | "jiff::tz::Timestamp" => Some(PgType::Timestamptz),
         "Zoned" | "jiff::Zoned" | "jiff::tz::Zoned" => Some(PgType::Timestamptz),
@@ -662,7 +692,7 @@ impl TableDef {
                     let idx_name = composite
                         .name
                         .map(|s| s.to_string())
-                        .unwrap_or_else(|| format!("idx_{}_{}", table_name, cols.join("_")));
+                        .unwrap_or_else(|| crate::index_name(&table_name, &cols));
                     indices.push(Index {
                         name: idx_name,
                         columns: cols,
@@ -684,7 +714,19 @@ impl TableDef {
             let (inner_shape, nullable) = unwrap_option(field_shape);
 
             // Map type to Postgres
-            let pg_type = rust_type_to_pg(inner_shape.type_identifier)?;
+            let pg_type = match shape_to_pg_type(inner_shape) {
+                Some(pg_type) => pg_type,
+                None => {
+                    eprintln!(
+                        "dibs: unsupported type '{}' for column '{}' in table '{}' ({})",
+                        inner_shape.type_identifier,
+                        field.name,
+                        table_name,
+                        self.shape.source_file.unwrap_or("<unknown>")
+                    );
+                    return None;
+                }
+            };
 
             // Check for primary key
             let primary_key = field_has_dibs_attr(field, "pk");
@@ -764,7 +806,7 @@ impl TableDef {
                 let idx_name = field_get_dibs_attr_str(field, "index")
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("idx_{}_{}", table_name, col_name));
+                    .unwrap_or_else(|| crate::index_name(&table_name, &[&col_name]));
                 indices.push(Index {
                     name: idx_name,
                     columns: vec![col_name.clone()],

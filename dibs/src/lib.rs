@@ -95,6 +95,21 @@ pub fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
+/// Generate a standard index name for a table and columns.
+///
+/// Uses the convention `idx_{table}_{columns}` where columns are joined by underscore.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(dibs::index_name("user", &["email"]), "idx_user_email");
+/// assert_eq!(dibs::index_name("post", &["author_id", "created_at"]), "idx_post_author_id_created_at");
+/// ```
+pub fn index_name(table: &str, columns: &[impl AsRef<str>]) -> String {
+    let cols: Vec<&str> = columns.iter().map(|c| c.as_ref()).collect();
+    format!("idx_{}_{}", table, cols.join("_"))
+}
+
 /// Derive migration version from filename.
 ///
 /// This is used internally by the `#[dibs::migration]` macro to derive the

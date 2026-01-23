@@ -1953,7 +1953,7 @@ mod tests {
         let mut schema = VirtualSchema::from_existing(&["users".to_string()].into_iter().collect());
 
         let idx = crate::Index {
-            name: "users_email_idx".to_string(),
+            name: crate::index_name("users", &["email"]),
             columns: vec!["email".to_string()],
             unique: false,
         };
@@ -1967,7 +1967,7 @@ mod tests {
         let mut schema = VirtualSchema::new();
 
         let idx = crate::Index {
-            name: "users_email_idx".to_string(),
+            name: crate::index_name("users", &["email"]),
             columns: vec!["email".to_string()],
             unique: false,
         };
@@ -2530,7 +2530,7 @@ mod proptests {
             // ~50% chance to create an index
             if i % 2 == 0 {
                 indices.push(Index {
-                    name: format!("{}_{}_idx", table_name, col),
+                    name: crate::index_name(&table_name, &[*col]),
                     columns: vec![(*col).clone()],
                     unique: false,
                 });
