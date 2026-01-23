@@ -1,6 +1,8 @@
-//! OTLP HTTP exporter using reqwest.
+//! Span exporters for roam-telemetry.
 //!
-//! Batches spans and sends them to an OTLP HTTP endpoint.
+//! Provides:
+//! - [`OtlpExporter`] - batches and sends spans to an OTLP HTTP endpoint
+//! - [`LoggingExporter`] - prints spans to the console (for development/debugging)
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,6 +13,117 @@ use crate::otlp::{
     ExportTraceServiceRequest, InstrumentationScope, KeyValue, Resource, ResourceSpans, ScopeSpans,
     Span,
 };
+
+// ============================================================================
+// Exporter Trait
+// ============================================================================
+
+/// Trait for span exporters.
+///
+/// Implement this to create custom exporters (e.g., for testing or custom backends).
+pub trait SpanExporter: Clone + Send + Sync + 'static {
+    /// Queue a span for export.
+    fn send(&self, span: Span);
+
+    /// Get the service name.
+    fn service_name(&self) -> &str;
+}
+
+// ============================================================================
+// Logging Exporter (for development/debugging)
+// ============================================================================
+
+/// A simple exporter that logs spans to the console.
+///
+/// Useful for development and debugging when you don't have an OTLP collector.
+///
+/// # Example
+///
+/// ```ignore
+/// use roam_telemetry::{LoggingExporter, TelemetryMiddleware};
+///
+/// let exporter = LoggingExporter::new("my-service");
+/// let telemetry = TelemetryMiddleware::new(exporter);
+/// ```
+#[derive(Clone)]
+pub struct LoggingExporter {
+    service_name: String,
+}
+
+impl LoggingExporter {
+    /// Create a new logging exporter with the given service name.
+    pub fn new(service_name: impl Into<String>) -> Self {
+        Self {
+            service_name: service_name.into(),
+        }
+    }
+
+    /// Queue a span for logging.
+    ///
+    /// The span is logged immediately using the `tracing` crate.
+    pub fn send(&self, span: Span) {
+        // Format attributes as key=value pairs
+        let attrs: Vec<String> = span
+            .attributes
+            .iter()
+            .map(|kv| {
+                let value = kv
+                    .value
+                    .string_value
+                    .as_ref()
+                    .cloned()
+                    .or_else(|| kv.value.int_value.as_ref().cloned())
+                    .or_else(|| kv.value.bool_value.map(|b| b.to_string()))
+                    .unwrap_or_else(|| "?".to_string());
+                format!("{}={}", kv.key, value)
+            })
+            .collect();
+
+        let duration_ns = span
+            .end_time_unix_nano
+            .parse::<u64>()
+            .unwrap_or(0)
+            .saturating_sub(span.start_time_unix_nano.parse::<u64>().unwrap_or(0));
+        let duration_ms = duration_ns as f64 / 1_000_000.0;
+
+        let parent = span
+            .parent_span_id
+            .as_ref()
+            .map(|p| format!(" parent={}", p))
+            .unwrap_or_default();
+
+        tracing::info!(
+            target: "roam_telemetry",
+            "[{}] {} trace={} span={}{} {:.2}ms [{}]",
+            self.service_name,
+            span.name,
+            &span.trace_id[..8],
+            &span.span_id[..8],
+            parent,
+            duration_ms,
+            attrs.join(" "),
+        );
+    }
+
+    /// Get the service name.
+    pub fn service_name(&self) -> &str {
+        &self.service_name
+    }
+}
+
+impl SpanExporter for LoggingExporter {
+    fn send(&self, span: Span) {
+        self.send(span)
+    }
+
+    fn service_name(&self) -> &str {
+        self.service_name()
+    }
+}
+
+// ============================================================================
+// OTLP HTTP Exporter
+// ============================================================================
 
 /// Configuration for the OTLP exporter.
 #[derive(Debug, Clone)]
@@ -93,6 +206,16 @@ impl OtlpExporter {
     /// Get the service name.
     pub fn service_name(&self) -> &str {
         &self.config.service_name
+    }
+}
+
+impl SpanExporter for OtlpExporter {
+    fn send(&self, span: Span) {
+        self.send(span)
+    }
+
+    fn service_name(&self) -> &str {
+        self.service_name()
     }
 }
 

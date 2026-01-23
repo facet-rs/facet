@@ -103,6 +103,12 @@ pub struct Context {
     /// Middleware can insert values here (e.g., authenticated user info)
     /// that handlers can later retrieve.
     pub extensions: Extensions,
+
+    /// Argument names for the method being called.
+    ///
+    /// Set by the generated dispatcher. Middleware can use this to create
+    /// per-argument span attributes (e.g., `rpc.args.user_id`).
+    pub arg_names: &'static [&'static str],
 }
 
 impl Context {
@@ -121,7 +127,21 @@ impl Context {
             metadata,
             channels,
             extensions: Extensions::new(),
+            arg_names: &[],
         }
+    }
+
+    /// Set the argument names for this context.
+    ///
+    /// Called by generated dispatchers before invoking middleware.
+    pub fn with_arg_names(mut self, arg_names: &'static [&'static str]) -> Self {
+        self.arg_names = arg_names;
+        self
+    }
+
+    /// Get the argument names.
+    pub fn arg_names(&self) -> &'static [&'static str] {
+        self.arg_names
     }
 
     /// Get the connection ID.
@@ -172,6 +192,7 @@ impl Clone for Context {
             // This is intentional: middleware modifies extensions on its copy,
             // but the inner dispatch already captured what it needs.
             extensions: Extensions::new(),
+            arg_names: self.arg_names,
         }
     }
 }

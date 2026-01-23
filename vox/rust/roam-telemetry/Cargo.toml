@@ -34,3 +34,6 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+roam = { workspace = true }
+roam-stream = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

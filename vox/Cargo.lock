@@ -2457,10 +2457,13 @@ dependencies = [
  "facet-pretty",
  "rand",
  "reqwest",
+ "roam",
  "roam-session",
+ "roam-stream",
  "roam-wire",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

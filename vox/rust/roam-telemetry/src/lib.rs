@@ -26,6 +26,6 @@ mod middleware;
 mod otlp;
 
 pub use client::{CurrentTrace, TracingCaller};
-pub use exporter::{ExporterConfig, OtlpExporter};
+pub use exporter::{ExporterConfig, LoggingExporter, OtlpExporter, SpanExporter};
 pub use middleware::{PendingSpan, TelemetryMiddleware};
 pub use otlp::{KeyValue, Span, SpanKind, StatusCode, TraceContext};

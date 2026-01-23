@@ -10,7 +10,7 @@ use facet_pretty::PrettyPrinter;
 use roam_session::{Context, MethodOutcome, Middleware, Rejection, SendPeek};
 
 use crate::client::CurrentTrace;
-use crate::exporter::OtlpExporter;
+use crate::exporter::SpanExporter;
 use crate::otlp::{
     KeyValue, Span, SpanKind, Status, TraceContext, generate_span_id, generate_trace_id,
 };
@@ -158,18 +158,18 @@ impl PendingSpan {
 ///     .with_middleware(telemetry);
 /// ```
 #[derive(Clone)]
-pub struct TelemetryMiddleware {
-    exporter: OtlpExporter,
+pub struct TelemetryMiddleware<E> {
+    exporter: E,
 }
 
-impl TelemetryMiddleware {
+impl<E: SpanExporter> TelemetryMiddleware<E> {
     /// Create a new telemetry middleware with the given exporter.
-    pub fn new(exporter: OtlpExporter) -> Self {
+    pub fn new(exporter: E) -> Self {
         Self { exporter }
     }
 }
 
-impl Middleware for TelemetryMiddleware {
+impl<E: SpanExporter> Middleware for TelemetryMiddleware<E> {
     fn pre<'a>(
         &'a self,
         ctx: &'a mut Context,
@@ -179,12 +179,24 @@ impl Middleware for TelemetryMiddleware {
             // Start a span and store it in extensions
             let mut span = PendingSpan::start(ctx);
 
-            // Capture args as a pretty-printed string (truncated for span attribute limits)
-            let args_str = PrettyPrinter::new()
+            // Add per-argument span attributes using arg names from context
+            let printer = PrettyPrinter::new()
                 .with_colors(facet_pretty::ColorMode::Never)
-                .with_max_content_len(256)
-                .format_peek(args.peek());
-            span.attributes.push(KeyValue::string("rpc.args", args_str));
+                .with_max_content_len(128);
+
+            let arg_names = ctx.arg_names();
+            let peek = args.peek();
+
+            // Args is a tuple - iterate through its fields
+            if let Ok(tuple) = peek.into_struct() {
+                for (i, name) in arg_names.iter().enumerate() {
+                    if let Ok(field) = tuple.field(i) {
+                        let value_str = printer.format_peek(field);
+                        span.attributes
+                            .push(KeyValue::string(format!("rpc.args.{}", name), value_str));
+                    }
+                }
+            }
 
             // Also insert CurrentTrace so that TracingCaller can propagate
             // the trace context to downstream calls

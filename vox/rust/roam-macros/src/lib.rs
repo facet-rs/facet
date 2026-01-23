@@ -386,6 +386,14 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
 
     let method_name_str = method.name();
 
+    // Build static array of arg name strings for middleware
+    let arg_name_strs: Vec<String> = method.args().map(|arg| arg.name().to_string()).collect();
+    let arg_names_static = if arg_name_strs.is_empty() {
+        quote! { &[] }
+    } else {
+        quote! { &[#(#arg_name_strs),*] }
+    };
+
     // For logging, we need to reference the args tuple (no colors for log output)
     let args_log = if arg_names.is_empty() {
         quote! { "()" }
@@ -530,6 +538,7 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
 
             Box::pin(#roam::session::DISPATCH_CONTEXT.scope(dispatch_ctx, async move {
                 let mut cx = cx;
+                cx.arg_names = #arg_names_static;
 
                 // 4. Run pre-middleware (ASYNC)
                 if !middleware.is_empty() {
