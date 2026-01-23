@@ -1,3 +1,4 @@
+mod cow_enum;
 mod cross_compat;
 mod external_types;
 mod issue_1453;
