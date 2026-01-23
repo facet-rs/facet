@@ -19,6 +19,14 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let shape = wip.shape();
 
+        // Cow-like enums serialize/deserialize transparently as their inner value,
+        // without any variant wrapper or discriminant. Check this BEFORE hint_enum
+        // and is_numeric because cow enums may have #[repr(u8)] but should still
+        // be transparent.
+        if shape.is_cow() {
+            return self.deserialize_cow_enum(wip);
+        }
+
         // Hint to non-self-describing parsers what variant metadata to expect
         if let Type::User(UserType::Enum(enum_def)) = &shape.ty {
             let variant_hints: Vec<crate::EnumVariantHint> = enum_def
@@ -43,14 +51,8 @@ where
             return self.deserialize_numeric_enum(wip);
         }
 
-        // Determine tagging mode
         if is_untagged {
             return self.deserialize_enum_untagged(wip);
-        }
-
-        // Cow-like enums deserialize transparently from their inner value
-        if shape.is_cow() {
-            return self.deserialize_cow_enum(wip);
         }
 
         if let (Some(tag_key), Some(content_key)) = (tag_attr, content_attr) {
