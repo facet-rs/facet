@@ -8,8 +8,6 @@
 
 Provides a proc macro attribute named `#[test]` which calls `facet_testhelpers::setup()`
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

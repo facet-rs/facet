@@ -39,8 +39,6 @@ Benchmarked to be fast enough for hot paths. The implementation prioritizes
 predictable performance over completeness—it handles the common cases well
 rather than trying to be a full linguistic library.
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

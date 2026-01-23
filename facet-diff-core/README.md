@@ -37,8 +37,6 @@ This crate is typically used by serializers (facet-xml, facet-json, etc.) to
 render diffs consistently. You probably want to use `facet-diff` directly
 instead of this crate.
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

@@ -58,8 +58,6 @@ tag byte:
 1e                      # value: varint 30
 ```
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

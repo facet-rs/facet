@@ -67,8 +67,6 @@ The deserializer maps DOM concepts to Rust types using facet attributes:
 Handles automatic case conversion between DOM naming (kebab-case) and
 Rust naming (snake_case), plus singularization for collection fields.
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

@@ -17,8 +17,6 @@ Synthetic schema generator and A/B build-time/code-size benchmark used for compa
 
 This crate is for internal benchmarking only and is not published.
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

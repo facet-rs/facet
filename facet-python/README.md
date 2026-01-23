@@ -62,8 +62,6 @@ class User(TypedDict, total=False):
 - **Reserved keywords**: Automatically handles Python reserved words as field names
 - **Generic support**: Maps Rust generics to Python type parameters
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

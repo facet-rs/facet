@@ -73,8 +73,6 @@ assert_eq!(svg.width, Some("100".to_string()));
 - Extracting geometric data from SVG files
 - Type-safe SVG manipulation in Rust applications
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

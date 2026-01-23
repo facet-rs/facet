@@ -86,8 +86,6 @@ assert_eq!(feed.entries.len(), 1);
 - [RFC 4287 - The Atom Syndication Format](https://www.rfc-editor.org/rfc/rfc4287)
 - [Atom on Wikipedia](https://en.wikipedia.org/wiki/Atom_(web_standard))
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

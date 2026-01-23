@@ -10,8 +10,6 @@
 
 Deserialize tokio-postgres Rows into any type implementing Facet.
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

@@ -41,8 +41,6 @@ let person2: Person = from_value(value).unwrap();
 assert_eq!(person, person2);
 ```
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:
