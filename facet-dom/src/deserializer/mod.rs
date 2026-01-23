@@ -98,7 +98,21 @@ where
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         let format_ns = self.parser.format_namespace();
 
-        // Check for container-level proxy (e.g., #[facet(xml::proxy = ProxyType)])
+        // Check for field-level proxy first (e.g., #[facet(xml::proxy = ProxyType)] on a field)
+        // This takes precedence over container-level proxies.
+        if let Some(field) = wip.parent_field() {
+            if field.effective_proxy(format_ns).is_some() {
+                let proxy_wip = wip
+                    .begin_custom_deserialization_with_format(format_ns)
+                    .map_err(DomDeserializeError::Reflect)?;
+                // Deserialize into proxy buffer with the same expected_name
+                let proxy_wip = self.deserialize_into_inner(proxy_wip, expected_name)?;
+                // Convert proxy -> target via TryFrom
+                return proxy_wip.end().map_err(DomDeserializeError::Reflect);
+            }
+        }
+
+        // Check for container-level proxy (e.g., #[facet(xml::proxy = ProxyType)] on the type)
         // If present, we deserialize into the proxy type, then convert via TryFrom.
         // The expected_name is preserved - it controls the XML element name, not the type.
         if wip.shape().effective_proxy(format_ns).is_some() {
