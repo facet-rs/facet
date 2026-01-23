@@ -238,7 +238,8 @@ fn download_wordfreq_wheel() -> (Vec<u8>, String) {
         .call()
         .expect("Failed to fetch wordfreq metadata");
     let json = response
-        .into_string()
+        .into_body()
+        .read_to_string()
         .expect("Failed to read wordfreq metadata");
     let meta: PypiResponse =
         facet_json::from_str(&json).expect("Failed to parse wordfreq metadata");
@@ -256,12 +257,11 @@ fn download_wordfreq_wheel() -> (Vec<u8>, String) {
         .expect("No py3-none-any wheel found for wordfreq");
     eprintln!("→ downloading {}", wheel.filename);
 
-    let mut data = Vec::new();
-    ureq::get(&wheel.url)
+    let data = ureq::get(&wheel.url)
         .call()
         .expect("Failed to download wordfreq wheel")
-        .into_reader()
-        .read_to_end(&mut data)
+        .into_body()
+        .read_to_vec()
         .expect("Failed to read wheel data");
 
     (data, wheel.filename.clone())
