@@ -439,23 +439,15 @@ impl ChannelRegistry {
 
         let shape = poke.shape();
 
-        trace!(
-            module_path = ?shape.module_path,
-            type_identifier = shape.type_identifier,
-            "bind_streams_recursive: visiting type"
-        );
-
         // Check if this is an Rx or Tx type
-        if shape.module_path == Some("roam_session") {
-            if shape.type_identifier == "Rx" {
-                debug!("bind_streams_recursive: found Rx, binding");
-                self.bind_rx_stream(poke);
-                return;
-            } else if shape.type_identifier == "Tx" {
-                debug!("bind_streams_recursive: found Tx, binding");
-                self.bind_tx_stream(poke);
-                return;
-            }
+        if shape.decl_id == crate::Rx::<()>::SHAPE.decl_id {
+            debug!("bind_streams_recursive: found Rx, binding");
+            self.bind_rx_stream(poke);
+            return;
+        } else if shape.decl_id == crate::Tx::<()>::SHAPE.decl_id {
+            debug!("bind_streams_recursive: found Tx, binding");
+            self.bind_tx_stream(poke);
+            return;
         }
 
         // Dispatch based on the shape's definition

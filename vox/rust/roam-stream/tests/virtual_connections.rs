@@ -250,7 +250,7 @@ async fn rpc_over_virtual_connection() {
     tokio::spawn(async move { driver.run().await });
 
     // Open a virtual connection
-    let virtual_handle: ConnectionHandle = root_handle.connect(vec![]).await.unwrap();
+    let virtual_handle: ConnectionHandle = root_handle.connect(vec![], None).await.unwrap();
 
     // Use the generated client over the virtual connection
     let client = TestbedClient::new(virtual_handle);
@@ -282,8 +282,8 @@ async fn multiple_virtual_connections_independent() {
     tokio::spawn(async move { driver.run().await });
 
     // Open multiple virtual connections
-    let virtual1 = root_handle.connect(vec![]).await.unwrap();
-    let virtual2 = root_handle.connect(vec![]).await.unwrap();
+    let virtual1 = root_handle.connect(vec![], None).await.unwrap();
+    let virtual2 = root_handle.connect(vec![], None).await.unwrap();
 
     let client1 = TestbedClient::new(virtual1);
     let client2 = TestbedClient::new(virtual2);
@@ -320,7 +320,7 @@ async fn root_and_virtual_connections_coexist() {
     let root_client = TestbedClient::new(root_handle.clone());
 
     // Open virtual connection and create client
-    let virtual_handle = root_handle.connect(vec![]).await.unwrap();
+    let virtual_handle = root_handle.connect(vec![], None).await.unwrap();
     let virtual_client = TestbedClient::new(virtual_handle);
 
     // Make calls on both connections
@@ -363,7 +363,7 @@ async fn streaming_over_virtual_connection() {
     tokio::spawn(async move { driver.run().await });
 
     // Open virtual connection
-    let virtual_handle = root_handle.connect(vec![]).await.unwrap();
+    let virtual_handle = root_handle.connect(vec![], None).await.unwrap();
     let client = TestbedClient::new(virtual_handle);
 
     // Test client-to-server streaming (sum)
@@ -411,7 +411,7 @@ async fn user_errors_over_virtual_connection() {
 
     tokio::spawn(async move { driver.run().await });
 
-    let virtual_handle = root_handle.connect(vec![]).await.unwrap();
+    let virtual_handle = root_handle.connect(vec![], None).await.unwrap();
     let client = TestbedClient::new(virtual_handle);
 
     // Test successful call - divide returns Result<i64, CallError<MathError>>
@@ -446,7 +446,7 @@ async fn bidirectional_streaming_over_virtual_connection() {
 
     tokio::spawn(async move { driver.run().await });
 
-    let virtual_handle = root_handle.connect(vec![]).await.unwrap();
+    let virtual_handle = root_handle.connect(vec![], None).await.unwrap();
     let client = TestbedClient::new(virtual_handle);
 
     // Test bidirectional streaming (transform: input strings, output uppercase)
@@ -493,7 +493,7 @@ async fn concurrent_calls_on_virtual_connection() {
 
     tokio::spawn(async move { driver.run().await });
 
-    let virtual_handle = root_handle.connect(vec![]).await.unwrap();
+    let virtual_handle = root_handle.connect(vec![], None).await.unwrap();
     let client = TestbedClient::new(virtual_handle);
 
     // Launch many concurrent calls on the same virtual connection
@@ -535,7 +535,7 @@ async fn complex_types_over_virtual_connection() {
 
     tokio::spawn(async move { driver.run().await });
 
-    let virtual_handle = root_handle.connect(vec![]).await.unwrap();
+    let virtual_handle = root_handle.connect(vec![], None).await.unwrap();
     let client = TestbedClient::new(virtual_handle);
 
     // Test struct (Point)
@@ -588,7 +588,7 @@ async fn virtual_connection_cannot_accept_nested() {
     tokio::spawn(async move { driver.run().await });
 
     // Open a virtual connection
-    let virtual_handle = root_handle.connect(vec![]).await.unwrap();
+    let virtual_handle = root_handle.connect(vec![], None).await.unwrap();
 
     // The virtual_handle is a ConnectionHandle, not the root handle.
     // It should not have an IncomingConnections receiver - that's only for the root.
@@ -619,7 +619,7 @@ async fn many_virtual_connections() {
 
     // Open many virtual connections and use them
     for i in 0..20 {
-        let virtual_handle = root_handle.connect(vec![]).await.unwrap();
+        let virtual_handle = root_handle.connect(vec![], None).await.unwrap();
         let client = TestbedClient::new(virtual_handle);
         let msg = format!("connection {i}");
         let result = client.echo(msg.clone()).await.unwrap();
@@ -667,7 +667,7 @@ async fn connect_with_metadata() {
             MetadataValue::String("1.0".to_string()),
         ),
     ];
-    let virtual_handle = root_handle.connect(metadata).await.unwrap();
+    let virtual_handle = root_handle.connect(metadata, None).await.unwrap();
 
     // Verify the connection works
     let client = TestbedClient::new(virtual_handle);
@@ -726,7 +726,7 @@ async fn connect_explicit_rejection() {
     tokio::spawn(async move { driver.run().await });
 
     // Try to open virtual connection - should be rejected
-    let result = root_handle.connect(vec![]).await;
+    let result = root_handle.connect(vec![], None).await;
     assert!(matches!(result, Err(ConnectError::Rejected(reason)) if reason == "not authorized"));
 
     server.abort();
@@ -751,8 +751,8 @@ async fn interleaved_streaming_multiple_connections() {
     tokio::spawn(async move { driver.run().await });
 
     // Open two virtual connections
-    let virtual1 = root_handle.connect(vec![]).await.unwrap();
-    let virtual2 = root_handle.connect(vec![]).await.unwrap();
+    let virtual1 = root_handle.connect(vec![], None).await.unwrap();
+    let virtual2 = root_handle.connect(vec![], None).await.unwrap();
 
     let client1 = TestbedClient::new(virtual1);
     let client2 = TestbedClient::new(virtual2);
@@ -819,7 +819,7 @@ async fn server_initiated_virtual_connection() {
         });
 
         // Server opens a virtual connection back to the client
-        let virtual_handle = handle.connect(vec![]).await.unwrap();
+        let virtual_handle = handle.connect(vec![], None).await.unwrap();
         let client = TestbedClient::new(virtual_handle);
 
         // Make a call over the server-initiated virtual connection
@@ -911,7 +911,7 @@ async fn link_closure_during_streaming_call() {
 
     tokio::spawn(async move { driver.run().await });
 
-    let virtual_handle = root_handle.connect(vec![]).await.unwrap();
+    let virtual_handle = root_handle.connect(vec![], None).await.unwrap();
     let client = TestbedClient::new(virtual_handle);
 
     // Start a streaming call

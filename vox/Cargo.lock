@@ -2365,6 +2365,7 @@ version = "0.6.0"
 dependencies = [
  "facet",
  "facet-core",
+ "roam-session",
 ]
 
 [[package]]

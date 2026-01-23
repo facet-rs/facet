@@ -116,11 +116,11 @@ fn tx_rx_shape_metadata() {
     let tx_shape = <Tx<i32> as Facet>::SHAPE;
     let rx_shape = <Rx<i32> as Facet>::SHAPE;
 
-    // Verify module_path and type_identifier are set correctly
-    assert_eq!(tx_shape.module_path, Some("roam_session"));
-    assert_eq!(tx_shape.type_identifier, "Tx");
-    assert_eq!(rx_shape.module_path, Some("roam_session"));
-    assert_eq!(rx_shape.type_identifier, "Rx");
+    // Verify decl_id is consistent across different generic instantiations
+    assert_eq!(tx_shape.decl_id, Tx::<()>::SHAPE.decl_id);
+    assert_eq!(tx_shape.decl_id, Tx::<String>::SHAPE.decl_id);
+    assert_eq!(rx_shape.decl_id, Rx::<()>::SHAPE.decl_id);
+    assert_eq!(rx_shape.decl_id, Rx::<String>::SHAPE.decl_id);
 
     // Verify type_params are populated
     assert_eq!(tx_shape.type_params.len(), 1);

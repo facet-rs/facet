@@ -110,34 +110,14 @@ pub enum MismatchExplanation {
 // Helper functions for working with Shape
 // ============================================================================
 
-// TODO(facet): Replace these string comparisons with `decl_id` comparison once
-// facet supports declaration IDs. Declaration IDs would allow comparing generic
-// types like `Tx<i32>` and `Tx<String>` as "the same type declaration" without
-// string matching. See: https://github.com/facet-rs/facet/issues/XXXX
-//
-// For now, we use `fully_qualified_type_path()` which returns paths like
-// "roam_session::Tx<i32>" - we check if it starts with "roam_session::Tx<".
-// See also: https://github.com/facet-rs/facet/issues/1716
-
-/// Returns the fully qualified type path, e.g. "std::collections::HashMap<K, V>".
-///
-/// Combines module_path and type_identifier. For types without a module_path
-/// (primitives), returns just the type_identifier.
-pub fn fully_qualified_type_path(shape: &Shape) -> std::borrow::Cow<'static, str> {
-    match shape.module_path {
-        Some(module) => std::borrow::Cow::Owned(format!("{}::{}", module, shape.type_identifier)),
-        None => std::borrow::Cow::Borrowed(shape.type_identifier),
-    }
-}
-
 /// Check if a shape represents a Tx (caller→callee) stream.
 pub fn is_tx(shape: &Shape) -> bool {
-    shape.module_path == Some("roam_session") && shape.type_identifier == "Tx"
+    shape.decl_id == roam_session::Tx::<()>::SHAPE.decl_id
 }
 
 /// Check if a shape represents an Rx (callee→caller) stream.
 pub fn is_rx(shape: &Shape) -> bool {
-    shape.module_path == Some("roam_session") && shape.type_identifier == "Rx"
+    shape.decl_id == roam_session::Rx::<()>::SHAPE.decl_id
 }
 
 /// Check if a shape represents any streaming type (Tx or Rx).

@@ -125,12 +125,12 @@ async fn guest_initiates_virtual_connection() {
     let mut host_incoming = fixture.host_incoming;
 
     // Guest initiates a virtual connection
-    let connect_fut = fixture.guest_handle.connect(Metadata::default());
+    let connect_fut = fixture.guest_handle.connect(Metadata::default(), None);
 
     // Host accepts the incoming connection
     let accept_fut = async {
         let incoming = host_incoming.recv().await.unwrap();
-        incoming.accept(Metadata::default()).await.unwrap()
+        incoming.accept(Metadata::default(), None).await.unwrap()
     };
 
     let (guest_virtual, _host_virtual) = tokio::join!(connect_fut, accept_fut);
@@ -152,12 +152,12 @@ async fn host_initiates_virtual_connection() {
     let mut guest_incoming = fixture.guest_incoming;
 
     // Host initiates a virtual connection
-    let connect_fut = fixture.host_handle.connect(Metadata::default());
+    let connect_fut = fixture.host_handle.connect(Metadata::default(), None);
 
     // Guest accepts the incoming connection
     let accept_fut = async {
         let incoming = guest_incoming.recv().await.unwrap();
-        incoming.accept(Metadata::default()).await.unwrap()
+        incoming.accept(Metadata::default(), None).await.unwrap()
     };
 
     let (host_virtual, _guest_virtual) = tokio::join!(connect_fut, accept_fut);
@@ -179,19 +179,19 @@ async fn multiple_virtual_connections() {
     let mut host_incoming = fixture.host_incoming;
 
     // Create first virtual connection
-    let connect1_fut = fixture.guest_handle.connect(Metadata::default());
+    let connect1_fut = fixture.guest_handle.connect(Metadata::default(), None);
     let accept1_fut = async {
         let incoming = host_incoming.recv().await.unwrap();
-        incoming.accept(Metadata::default()).await.unwrap()
+        incoming.accept(Metadata::default(), None).await.unwrap()
     };
     let (virtual1, _) = tokio::join!(connect1_fut, accept1_fut);
     let virtual1 = virtual1.unwrap();
 
     // Create second virtual connection
-    let connect2_fut = fixture.guest_handle.connect(Metadata::default());
+    let connect2_fut = fixture.guest_handle.connect(Metadata::default(), None);
     let accept2_fut = async {
         let incoming = host_incoming.recv().await.unwrap();
-        incoming.accept(Metadata::default()).await.unwrap()
+        incoming.accept(Metadata::default(), None).await.unwrap()
     };
     let (virtual2, _) = tokio::join!(connect2_fut, accept2_fut);
     let virtual2 = virtual2.unwrap();
@@ -221,10 +221,10 @@ async fn root_and_virtual_connections_coexist() {
     assert_eq!(root_result, "[host] root");
 
     // Create virtual connection
-    let connect_fut = fixture.guest_handle.connect(Metadata::default());
+    let connect_fut = fixture.guest_handle.connect(Metadata::default(), None);
     let accept_fut = async {
         let incoming = host_incoming.recv().await.unwrap();
-        incoming.accept(Metadata::default()).await.unwrap()
+        incoming.accept(Metadata::default(), None).await.unwrap()
     };
     let (virtual_handle, _) = tokio::join!(connect_fut, accept_fut);
     let virtual_handle = virtual_handle.unwrap();
@@ -246,10 +246,10 @@ async fn streaming_over_virtual_connection() {
     let mut host_incoming = fixture.host_incoming;
 
     // Create virtual connection
-    let connect_fut = fixture.guest_handle.connect(Metadata::default());
+    let connect_fut = fixture.guest_handle.connect(Metadata::default(), None);
     let accept_fut = async {
         let incoming = host_incoming.recv().await.unwrap();
-        incoming.accept(Metadata::default()).await.unwrap()
+        incoming.accept(Metadata::default(), None).await.unwrap()
     };
     let (virtual_handle, _) = tokio::join!(connect_fut, accept_fut);
     let virtual_handle = virtual_handle.unwrap();
@@ -290,7 +290,7 @@ async fn virtual_connection_rejection() {
     let mut host_incoming = fixture.host_incoming;
 
     // Guest initiates a virtual connection
-    let connect_fut = fixture.guest_handle.connect(Metadata::default());
+    let connect_fut = fixture.guest_handle.connect(Metadata::default(), None);
 
     // Host rejects the incoming connection
     let reject_fut = async {
@@ -312,19 +312,19 @@ async fn bidirectional_virtual_connections() {
     let mut guest_incoming = fixture.guest_incoming;
 
     // Guest initiates connection to host
-    let guest_connect_fut = fixture.guest_handle.connect(Metadata::default());
+    let guest_connect_fut = fixture.guest_handle.connect(Metadata::default(), None);
     let host_accept_fut = async {
         let incoming = host_incoming.recv().await.unwrap();
-        incoming.accept(Metadata::default()).await.unwrap()
+        incoming.accept(Metadata::default(), None).await.unwrap()
     };
     let (guest_to_host, _) = tokio::join!(guest_connect_fut, host_accept_fut);
     let guest_to_host = guest_to_host.unwrap();
 
     // Host initiates connection to guest
-    let host_connect_fut = fixture.host_handle.connect(Metadata::default());
+    let host_connect_fut = fixture.host_handle.connect(Metadata::default(), None);
     let guest_accept_fut = async {
         let incoming = guest_incoming.recv().await.unwrap();
-        incoming.accept(Metadata::default()).await.unwrap()
+        incoming.accept(Metadata::default(), None).await.unwrap()
     };
     let (host_to_guest, _) = tokio::join!(host_connect_fut, guest_accept_fut);
     let host_to_guest = host_to_guest.unwrap();
