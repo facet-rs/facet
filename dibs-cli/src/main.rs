@@ -1555,7 +1555,6 @@ async fn run_generate_from_diff_local(database_url: &str, name: &str) {
     // Create migration file
     match create_migration_file_from_sql(name, &sql) {
         Ok(path) => {
-            use owo_colors::OwoColorize as _;
             println!("{}", "Migration created successfully!".green());
             println!();
             println!("File: {}", path);

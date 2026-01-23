@@ -15,4 +15,5 @@ path = "src/main.rs"
 [dependencies]
 dibs-proto.workspace = true
 roam-codegen.workspace = true
-clap.workspace = true
+facet.workspace = true
+facet-args.workspace = true

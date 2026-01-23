@@ -2,31 +2,33 @@
 //!
 //! Generates TypeScript client code for SquelService and DibsService.
 
-use clap::Parser;
 use dibs_proto::{dibs_service_service_detail, squel_service_service_detail};
+use facet::Facet;
+use facet_args as args;
 use roam_codegen::targets::typescript::generate_service;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Parser)]
-#[command(name = "dibs-codegen")]
-#[command(about = "Generate client code for dibs services")]
+#[derive(Facet)]
 struct Args {
     /// Output directory for generated files
-    #[arg(short, long, default_value = ".")]
+    #[facet(args::named, args::short = 'o', default = ".")]
     output: PathBuf,
 
     /// Generate TypeScript client
-    #[arg(long)]
+    #[facet(args::named)]
     typescript: bool,
 
     /// Which service to generate (squel, dibs, or all)
-    #[arg(long, default_value = "all")]
+    #[facet(args::named, default = "all")]
     service: String,
 }
 
 fn main() {
-    let args = Args::parse();
+    let args: Args = args::from_std_args().unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
 
     if !args.typescript {
         eprintln!("No output format specified. Use --typescript");
