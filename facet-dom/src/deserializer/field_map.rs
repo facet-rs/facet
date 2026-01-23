@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use facet_core::{Def, Field, StructKind, StructType, Type, UserType};
 
-use crate::naming::dom_key;
+use crate::naming::{apply_rename_all, dom_key};
 use facet_singularize::singularize;
 
 /// Info about a field in a struct for deserialization purposes.
@@ -112,13 +112,44 @@ pub(crate) struct StructFieldMap {
     pub has_flatten: bool,
 }
 
+/// Compute the effective DOM key for a field, considering `rename_all` from the parent type.
+///
+/// Priority:
+/// 1. Explicit field rename (field.rename) - use as-is
+/// 2. Parent type's rename_all - apply transformation to field.name
+/// 3. Default lowerCamelCase conversion via dom_key
+fn field_dom_key<'a>(
+    field_name: &'a str,
+    field_rename: Option<&'a str>,
+    rename_all: Option<&str>,
+) -> Cow<'a, str> {
+    if let Some(rename) = field_rename {
+        // Explicit rename takes precedence
+        Cow::Borrowed(rename)
+    } else if let Some(rename_all) = rename_all {
+        // Apply rename_all transformation
+        Cow::Owned(apply_rename_all(field_name, rename_all))
+    } else {
+        // Default: lowerCamelCase
+        dom_key(field_name, None)
+    }
+}
+
 impl StructFieldMap {
     /// Build the field map from a struct definition.
     ///
     /// The `ns_all` parameter is the default namespace for element fields that don't
     /// have an explicit `xml::ns` attribute. When set, fields without `xml::ns` will
     /// inherit this namespace.
-    pub fn new(struct_def: &'static StructType, ns_all: Option<&'static str>) -> Self {
+    ///
+    /// The `rename_all` parameter, when set, applies a naming transformation to all
+    /// fields that don't have explicit renames. This is used to propagate `rename_all`
+    /// from parent enums to their struct variant fields.
+    pub fn new(
+        struct_def: &'static StructType,
+        ns_all: Option<&'static str>,
+        rename_all: Option<&'static str>,
+    ) -> Self {
         let mut attribute_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
         let mut element_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
         let mut elements_fields: HashMap<String, FieldInfo> = HashMap::new();
@@ -302,9 +333,9 @@ impl StructFieldMap {
                 .and_then(|attr| attr.get_as::<&str>().copied());
 
             // For all fields (list or not):
-            //   - element name uses rename if present, else lowerCamelCase(field.name)
+            //   - element name uses rename if present, else rename_all transformation, else lowerCamelCase
             // For list fields, this is the repeated item element name (flat, no wrapper)
-            let element_key = dom_key(field.name, field.rename);
+            let element_key = field_dom_key(field.name, field.rename, rename_all);
 
             if field.is_attribute() {
                 let info = FieldInfo {
@@ -320,8 +351,8 @@ impl StructFieldMap {
                 if (is_list || is_set) && field.rename.is_none() {
                     attributes_field = Some(info);
                 } else {
-                    // Named attribute: uses rename or lowerCamelCase(field.name)
-                    let attr_key = dom_key(field.name, field.rename);
+                    // Named attribute: uses rename > rename_all > lowerCamelCase
+                    let attr_key = field_dom_key(field.name, field.rename, rename_all);
                     attribute_fields
                         .entry(attr_key.into_owned())
                         .or_default()
@@ -370,8 +401,9 @@ impl StructFieldMap {
                     // Item type has a rename attribute
                     elements_fields.insert(item_rename.to_string(), info);
                 } else {
-                    // Fallback to singularized field name
-                    let element_key = singularize(&dom_key(field.name, None));
+                    // Fallback to singularized field name (with rename_all if present)
+                    let element_key =
+                        singularize(&field_dom_key(field.name, None, rename_all));
                     elements_fields.insert(element_key, info);
                 };
             } else if field.is_text() {
