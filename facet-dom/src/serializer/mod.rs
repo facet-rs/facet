@@ -320,9 +320,11 @@ where
     if let Ok(struct_) = value.into_struct() {
         let kind = struct_.ty().kind;
 
-        // For tuples, serialize as a flat sequence (like Vec)
+        // For standalone tuple types (A, B, C), serialize as a flat sequence
         // Each tuple field becomes a sibling element with the same tag name
-        if kind == StructKind::Tuple || kind == StructKind::TupleStruct {
+        // Note: TupleStruct (struct Foo(A, B)) is handled like regular structs below,
+        // with fields named _0, _1, etc. (valid XML element names)
+        if kind == StructKind::Tuple {
             for (_field_item, field_value) in struct_.fields_for_serialize() {
                 serialize_value(serializer, field_value, element_name)?;
             }

@@ -958,3 +958,89 @@ fn test_enum_struct_variant_with_option_proxy_none_roundtrip() {
     let roundtripped: EnumWithOptionProxyInVariant = from_str(&xml).unwrap();
     assert_eq!(original, roundtripped);
 }
+
+// ============================================================================
+// Additional edge cases to round out to 40 tests
+// ============================================================================
+
+/// Edge case: Tuple struct (not enum variant) with a proxied inner type.
+#[derive(Facet, Debug, PartialEq)]
+struct TupleStructWithProxy(Point, String);
+
+#[test]
+fn test_tuple_struct_with_proxied_field_roundtrip() {
+    let original = TupleStructWithProxy(Point { x: 10, y: 20 }, "label".to_string());
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    // Should have wrapper element with _0 and _1 children
+    assert!(
+        xml.contains("<_0>") && xml.contains("<_1>"),
+        "Should have _0 and _1 elements for tuple fields, got: {xml}"
+    );
+
+    let roundtripped: TupleStructWithProxy = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Edge case: Box<T> where T has a container-level proxy.
+#[derive(Facet, Debug, PartialEq)]
+struct ContainerWithBoxedProxy {
+    name: String,
+    point: Box<Point>,
+}
+
+#[test]
+fn test_boxed_type_with_container_proxy_roundtrip() {
+    let original = ContainerWithBoxedProxy {
+        name: "boxed".to_string(),
+        point: Box::new(Point { x: 100, y: 200 }),
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: ContainerWithBoxedProxy = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Edge case: Deeply nested proxy - struct containing struct containing proxied type.
+#[derive(Facet, Debug, PartialEq)]
+struct Level1 {
+    name: String,
+    level2: Level2,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Level2 {
+    id: u32,
+    level3: Level3,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Level3 {
+    #[facet(xml::proxy = BinaryString)]
+    flags: u32,
+    point: Point, // container-level proxy
+}
+
+#[test]
+fn test_deeply_nested_proxies_roundtrip() {
+    let original = Level1 {
+        name: "root".to_string(),
+        level2: Level2 {
+            id: 42,
+            level3: Level3 {
+                flags: 0b11001100,
+                point: Point { x: 5, y: 10 },
+            },
+        },
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("0b11001100"),
+        "Should use binary proxy at level 3, got: {xml}"
+    );
+
+    let roundtripped: Level1 = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
