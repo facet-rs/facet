@@ -18,9 +18,6 @@ fail-fast = true
 # Status level
 status-level = "pass"
 
-# Base timeout per test
-test-timeout = "60s"
-
 # Slow test warning threshold
 slow-timeout = { period = "2s", terminate-after = 2 }
 
