@@ -628,57 +628,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_xml_flavor_field_presentation_with_attrs() {
-        use facet_xml as xml;
-
-        #[derive(Facet)]
-        struct Element {
-            #[facet(xml::attribute)]
-            id: String,
-            #[facet(xml::element)]
-            title: String,
-            #[facet(xml::text)]
-            content: String,
-            #[facet(xml::elements)]
-            items: Vec<String>,
-        }
-
-        let shape = <Element as Facet>::SHAPE;
-        let flavor = XmlFlavor;
-
-        let id_field = get_field(shape, "id");
-        let title_field = get_field(shape, "title");
-        let content_field = get_field(shape, "content");
-        let items_field = get_field(shape, "items");
-
-        assert_eq!(
-            flavor.field_presentation(id_field),
-            FieldPresentation::Attribute {
-                name: Cow::Borrowed("id")
-            }
-        );
-
-        assert_eq!(
-            flavor.field_presentation(title_field),
-            FieldPresentation::Child {
-                name: Cow::Borrowed("title")
-            }
-        );
-
-        assert_eq!(
-            flavor.field_presentation(content_field),
-            FieldPresentation::TextContent
-        );
-
-        assert_eq!(
-            flavor.field_presentation(items_field),
-            FieldPresentation::Children {
-                item_name: Cow::Borrowed("items")
-            }
-        );
-    }
-
     fn format_to_string<F: DiffFlavor>(flavor: &F, peek: Peek<'_, '_>) -> String {
         let mut buf = String::new();
         flavor.format_value(peek, &mut buf).unwrap();

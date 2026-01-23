@@ -32,7 +32,6 @@ tracing = { workspace = true, optional = true }
 divan = { workspace = true }
 facet = { path = "../facet", features = ["all-impls", "doc"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
-facet-xml = { path = "../facet-xml" }
 json-event-parser = "0.2"
 
 # Required for tests - makes tracing macros resolve
