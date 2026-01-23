@@ -1594,26 +1594,32 @@ struct Issue7Root {
 }
 
 #[test]
-fn test_issue7_current_behavior() {
-    // Currently, rename_all does NOT affect the root element name.
-    // The root uses lowerCamelCase of the type name: issue7Root
-    // Fields DO get PascalCase: Value
-    let xml = r#"<issue7Root><Value>foo</Value></issue7Root>"#;
+fn test_issue7_rename_all_affects_root_element() {
+    // Issue #7: rename_all should affect the root element name
+    // With rename_all = "PascalCase", Issue7Root becomes <Issue7Root>
+    let xml = r#"<Issue7Root><Value>foo</Value></Issue7Root>"#;
     let parsed: Issue7Root = from_str(xml).unwrap();
     assert_eq!(parsed.value, "foo");
 
-    // Serialization also uses lowerCamelCase for root
+    // Serialization should also use PascalCase for root
     let serialized = to_string(&parsed).unwrap();
-    assert!(serialized.contains("<issue7Root>"), "Current behavior: {}", serialized);
+    assert!(
+        serialized.contains("<Issue7Root>"),
+        "Expected <Issue7Root> but got: {}",
+        serialized
+    );
+
+    // Roundtrip
+    let roundtripped: Issue7Root = from_str(&serialized).unwrap();
+    assert_eq!(parsed, roundtripped);
 }
 
 #[test]
-#[should_panic(expected = "UnknownElement")]
-fn test_issue7_desired_behavior_not_yet_implemented() {
-    // This is what issue #7 wants: rename_all should affect root element too
-    // Currently this FAILS - documenting desired behavior for future fix
-    let xml = r#"<Issue7Root><Value>foo</Value></Issue7Root>"#;
-    let _parsed: Issue7Root = from_str(xml).unwrap();
+fn test_issue7_wrong_case_rejected() {
+    // With rename_all = "PascalCase", lowerCamelCase root should be rejected
+    let xml = r#"<issue7Root><Value>foo</Value></issue7Root>"#;
+    let result: Result<Issue7Root, _> = from_str(xml);
+    assert!(result.is_err(), "Should reject lowerCamelCase root");
 }
 
 // ============================================================================

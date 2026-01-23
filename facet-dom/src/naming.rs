@@ -12,6 +12,7 @@
 use std::borrow::Cow;
 
 pub use heck::AsLowerCamelCase;
+use heck::{AsKebabCase, AsPascalCase, AsShoutySnakeCase, AsSnakeCase};
 
 /// Convert a Rust identifier to a valid XML element name in lowerCamelCase.
 ///
@@ -44,5 +45,34 @@ pub fn dom_key<'a>(name: &'a str, rename: Option<&'a str>) -> Cow<'a, str> {
     match rename {
         Some(r) => Cow::Borrowed(r),
         None => to_element_name(name),
+    }
+}
+
+/// Apply a rename_all transformation to a name.
+///
+/// Supported values (matching serde conventions):
+/// - "lowercase" - all lowercase
+/// - "UPPERCASE" - all uppercase
+/// - "PascalCase" / "UpperCamelCase" - first letter of each word uppercase
+/// - "camelCase" / "lowerCamelCase" - like PascalCase but first letter lowercase
+/// - "snake_case" - lowercase with underscores
+/// - "SCREAMING_SNAKE_CASE" / "UPPER_SNAKE_CASE" - uppercase with underscores
+/// - "kebab-case" - lowercase with dashes
+/// - "SCREAMING-KEBAB-CASE" / "UPPER-KEBAB-CASE" - uppercase with dashes
+///
+/// Returns the original name if the rename_all value is not recognized.
+pub fn apply_rename_all(name: &str, rename_all: &str) -> String {
+    match rename_all {
+        "lowercase" => name.to_lowercase(),
+        "UPPERCASE" => name.to_uppercase(),
+        "PascalCase" | "UpperCamelCase" => format!("{}", AsPascalCase(name)),
+        "camelCase" | "lowerCamelCase" => format!("{}", AsLowerCamelCase(name)),
+        "snake_case" => format!("{}", AsSnakeCase(name)),
+        "SCREAMING_SNAKE_CASE" | "UPPER_SNAKE_CASE" => format!("{}", AsShoutySnakeCase(name)),
+        "kebab-case" => format!("{}", AsKebabCase(name)),
+        "SCREAMING-KEBAB-CASE" | "UPPER-KEBAB-CASE" => {
+            format!("{}", AsKebabCase(name)).to_uppercase()
+        }
+        _ => name.to_string(),
     }
 }
