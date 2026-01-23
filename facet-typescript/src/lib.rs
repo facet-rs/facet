@@ -132,15 +132,16 @@ impl TypeScriptGenerator {
     }
 
     /// Format a field for inline object types (e.g., in enum variants).
-    /// Returns a string like `"fieldName: Type"` or `"fieldName?: Type"` for Option fields.
+    /// Returns a string like `"fieldName: Type"` or `"fieldName?: Type"` for Option fields or fields with defaults.
     fn format_inline_field(&mut self, field: &Field, force_optional: bool) -> String {
         let field_name = field.effective_name();
         let field_shape = field.shape.get();
+        let has_default = field.default.is_some();
 
         if let Def::Option(opt) = &field_shape.def {
             let inner_type = self.type_for_shape(opt.t);
             format!("{}?: {}", field_name, inner_type)
-        } else if force_optional {
+        } else if force_optional || has_default {
             let field_type = self.type_for_shape(field_shape);
             format!("{}?: {}", field_name, field_type)
         } else {
@@ -299,11 +300,13 @@ impl TypeScriptGenerator {
 
         self.write_indent();
 
-        // Use optional marker for Option fields or when explicitly forced (flattened Option parents).
+        // Use optional marker for Option fields, fields with defaults, or when explicitly forced (flattened Option parents).
+        let has_default = field.default.is_some();
+
         if let Def::Option(opt) = &field_shape.def {
             let inner_type = self.type_for_shape(opt.t);
             writeln!(self.output, "{}?: {};", field_name, inner_type).unwrap();
-        } else if force_optional {
+        } else if force_optional || has_default {
             let field_type = self.type_for_shape(field_shape);
             writeln!(self.output, "{}?: {};", field_name, field_type).unwrap();
         } else {
@@ -1411,5 +1414,82 @@ mod tests {
 
         let ts = to_typescript::<Wrapper>();
         insta::assert_snapshot!("test_flatten_empty_struct", ts);
+    }
+
+    #[test]
+    fn test_default_not_required() {
+        #[derive(Facet, Default)]
+        struct Def {
+            pub a: i32,
+            pub b: i32,
+        }
+
+        #[derive(Facet)]
+        struct Wrapper {
+            pub a: String,
+            #[facet(default)]
+            pub d: Def,
+        }
+
+        let ts = to_typescript::<Wrapper>();
+        insta::assert_snapshot!("test_default_not_required", ts);
+    }
+
+    #[test]
+    fn test_default_mixed_fields() {
+        #[derive(Facet)]
+        struct MixedDefaults {
+            pub required: String,
+            pub optional: Option<String>,
+            #[facet(default)]
+            pub with_default: i32,
+            #[facet(default = 100)]
+            pub with_default_expr: i32,
+            #[facet(default)]
+            pub option_with_default: Option<String>,
+        }
+
+        let ts = to_typescript::<MixedDefaults>();
+        insta::assert_snapshot!("test_default_mixed_fields", ts);
+    }
+
+    #[test]
+    fn test_default_in_flattened_struct() {
+        #[derive(Facet)]
+        struct FlattenedInner {
+            pub foo: String,
+            #[facet(default)]
+            pub bar: u32,
+        }
+
+        #[derive(Facet)]
+        struct WithFlatten {
+            pub outer_field: String,
+            #[facet(flatten)]
+            pub inner: FlattenedInner,
+        }
+
+        let ts = to_typescript::<WithFlatten>();
+        insta::assert_snapshot!("test_default_in_flattened_struct", ts);
+    }
+
+    #[test]
+    fn test_default_in_enum_variant() {
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        #[repr(C)]
+        enum Message {
+            Text {
+                content: String,
+            },
+            Data {
+                required: String,
+                #[facet(default)]
+                optional: i32,
+            },
+        }
+
+        let ts = to_typescript::<Message>();
+        insta::assert_snapshot!("test_default_in_enum_variant", ts);
     }
 }

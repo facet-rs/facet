@@ -1,0 +1,8 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1524
+expression: ts
+---
+export type Message =
+  | { Text: { content: string } }
+  | { Data: { required: string; optional?: number } };
