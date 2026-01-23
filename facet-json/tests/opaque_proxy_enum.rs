@@ -21,6 +21,7 @@ impl TryFrom<OpaqueTypeProxy> for OpaqueType {
     }
 }
 
+#[allow(clippy::infallible_try_from)]
 impl TryFrom<&OpaqueType> for OpaqueTypeProxy {
     type Error = std::convert::Infallible;
     fn try_from(opaque: &OpaqueType) -> Result<Self, Self::Error> {
@@ -60,6 +61,7 @@ impl TryFrom<TendrilProxy> for StrTendril {
     }
 }
 
+#[allow(clippy::infallible_try_from)]
 impl TryFrom<&StrTendril> for TendrilProxy {
     type Error = std::convert::Infallible;
     fn try_from(tendril: &StrTendril) -> Result<Self, Self::Error> {
