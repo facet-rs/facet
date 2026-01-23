@@ -2530,7 +2530,7 @@ mod proptests {
             // ~50% chance to create an index
             if i % 2 == 0 {
                 indices.push(Index {
-                    name: crate::index_name(&table_name, &[*col]),
+                    name: crate::index_name(table_name, &[*col]),
                     columns: vec![(*col).clone()],
                     unique: false,
                 });
