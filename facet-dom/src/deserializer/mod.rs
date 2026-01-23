@@ -218,12 +218,16 @@ where
             }
         };
 
-        // Use provided expected_name, or compute from shape: rename > lowerCamelCase(type_identifier)
+        // Use provided expected_name, or compute from shape:
+        // rename > rename_all(type_identifier) > lowerCamelCase(type_identifier)
         let expected_name = expected_name.unwrap_or_else(|| {
-            shape
-                .get_builtin_attr_value::<&str>("rename")
-                .map(Cow::Borrowed)
-                .unwrap_or_else(|| to_element_name(shape.type_identifier))
+            if let Some(rename) = shape.get_builtin_attr_value::<&str>("rename") {
+                Cow::Borrowed(rename)
+            } else if let Some(rename_all) = shape.get_builtin_attr_value::<&str>("rename_all") {
+                Cow::Owned(crate::naming::apply_rename_all(shape.type_identifier, rename_all))
+            } else {
+                to_element_name(shape.type_identifier)
+            }
         });
 
         self.deserialize_struct_innards(wip, struct_def, expected_name)

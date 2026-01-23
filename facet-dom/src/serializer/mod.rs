@@ -369,13 +369,19 @@ where
             (tag_result, doctype_result)
         };
 
-        // Determine element name: tag field value > provided name > shape rename > type identifier (lowerCamelCase)
+        // Determine element name: tag field value > provided name > shape rename > rename_all > lowerCamelCase
         let tag: Cow<'_, str> = if let Some(ref tag_value) = tag_field_value {
             Cow::Owned(tag_value.clone())
         } else if let Some(name) = element_name {
             Cow::Borrowed(name)
         } else if let Some(rename) = value.shape().get_builtin_attr_value::<&str>("rename") {
             Cow::Borrowed(rename)
+        } else if let Some(rename_all) = value.shape().get_builtin_attr_value::<&str>("rename_all")
+        {
+            Cow::Owned(crate::naming::apply_rename_all(
+                value.shape().type_identifier,
+                rename_all,
+            ))
         } else {
             // No explicit name - apply lowerCamelCase to type identifier
             to_element_name(value.shape().type_identifier)
