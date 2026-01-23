@@ -480,9 +480,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // Return WITHOUT popping - the frame stays and will be built/dropped normally
                         return Ok(self);
                     }
-                    FrameOwnership::TrackedBuffer | FrameOwnership::BorrowedInPlace => {
+                    FrameOwnership::TrackedBuffer
+                    | FrameOwnership::BorrowedInPlace
+                    | FrameOwnership::External => {
                         return Err(ReflectError::InvariantViolation {
-                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace ownership after conversion",
+                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External ownership after conversion",
                         });
                     }
                 }

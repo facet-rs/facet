@@ -86,6 +86,81 @@ impl Partial<'static, false> {
     }
 }
 
+/// Create a Partial that writes into externally-owned memory (e.g., caller's stack).
+/// This enables stack-friendly deserialization without heap allocation.
+impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
+    /// Creates a [Partial] that writes into caller-provided memory.
+    ///
+    /// This is useful for stack-friendly deserialization where you want to avoid
+    /// heap allocation. The caller provides a `MaybeUninit<T>` and this Partial
+    /// will deserialize directly into that memory.
+    ///
+    /// After successful deserialization, call [`finish_in_place`](Self::finish_in_place)
+    /// to validate the value is fully initialized. On success, the caller can safely
+    /// call `MaybeUninit::assume_init()`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure:
+    /// - `ptr` points to valid, properly aligned memory for the type described by `shape`
+    /// - The memory has at least `shape.layout.size()` bytes available
+    /// - The memory is not accessed (read or written) through any other pointer while
+    ///   the Partial exists, except through this Partial's methods
+    /// - If deserialization fails (returns Err) or panics, the memory must not be
+    ///   assumed to contain a valid value - it may be partially initialized
+    /// - The memory must remain valid for the lifetime of the Partial
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::mem::MaybeUninit;
+    /// use facet_core::{Facet, PtrUninit};
+    /// use facet_reflect::Partial;
+    ///
+    /// let mut slot = MaybeUninit::<MyStruct>::uninit();
+    /// let ptr = PtrUninit::new(slot.as_mut_ptr().cast());
+    ///
+    /// let partial = unsafe { Partial::from_raw(ptr, MyStruct::SHAPE)? };
+    /// // ... deserialize into partial ...
+    /// partial.finish_in_place()?;
+    ///
+    /// // Now safe to assume initialized
+    /// let value = unsafe { slot.assume_init() };
+    /// ```
+    pub unsafe fn from_raw(ptr: PtrUninit, shape: &'static Shape) -> Result<Self, ReflectError> {
+        crate::trace!(
+            "from_raw({:p}, {:?}), with layout {:?}",
+            ptr.as_mut_byte_ptr(),
+            shape,
+            shape.layout.sized_layout()
+        );
+
+        // Verify the shape is sized
+        let allocated_size = shape
+            .layout
+            .sized_layout()
+            .map_err(|_| ReflectError::Unsized {
+                shape,
+                operation: "from_raw",
+            })?
+            .size();
+
+        // Preallocate a couple of frames for nested structures
+        let mut stack = Vec::with_capacity(4);
+        stack.push(Frame::new(
+            ptr,
+            AllocatedShape::new(shape, allocated_size),
+            FrameOwnership::External,
+        ));
+
+        Ok(Partial {
+            mode: FrameMode::Strict { stack },
+            state: PartialState::Active,
+            invariant: PhantomData,
+        })
+    }
+}
+
 fn alloc_shape_inner<'facet, const BORROW: bool>(
     shape: &'static Shape,
 ) -> Result<Partial<'facet, BORROW>, ReflectError> {

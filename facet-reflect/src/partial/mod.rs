@@ -284,14 +284,20 @@ pub(crate) enum FrameOwnership {
     /// NOT safe to drop on deinit - parent collection has no per-entry tracking
     /// and would try to drop the freed value again (double-free).
     BorrowedInPlace,
+
+    /// Pointer to externally-owned memory (e.g., caller's stack via MaybeUninit).
+    /// Used by `from_raw()` for stack-friendly deserialization.
+    /// On drop: deinit if initialized (drop partially constructed values), but do NOT deallocate.
+    /// The caller owns the memory and is responsible for its lifetime.
+    External,
 }
 
 impl FrameOwnership {
     /// Returns true if this frame is responsible for deallocating its memory.
     ///
     /// Both `Owned` and `TrackedBuffer` frames allocated their memory and need
-    /// to deallocate it. `Field` and `BorrowedInPlace` frames borrow from
-    /// parent or existing structures.
+    /// to deallocate it. `Field`, `BorrowedInPlace`, and `External` frames borrow from
+    /// parent, existing structures, or caller-provided memory.
     const fn needs_dealloc(&self) -> bool {
         matches!(self, FrameOwnership::Owned | FrameOwnership::TrackedBuffer)
     }
