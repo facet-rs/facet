@@ -11,7 +11,7 @@ use crate::trace;
 use crate::{AttributeRecord, DomEvent, DomParser, DomParserExt};
 
 use super::PartialDeserializeExt;
-use super::field_map::{FieldInfo, FlattenedChildInfo, StructFieldMap};
+use super::field_map::{FieldInfo, FlattenedChildInfo, StructFieldMap, get_item_type_rename};
 
 /// State for a flat sequence field being deserialized.
 pub(crate) enum SeqState {
@@ -722,15 +722,20 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
 
     /// Deserialize a sequence item (list/set element).
     ///
-    /// The element name comes from the field (rename attribute or singularized field name).
+    /// The element name comes from the field (rename attribute, item type's rename, or singularized field name).
     fn deserialize_sequence_item(
         &mut self,
         wip: Partial<'de, BORROW>,
         field: &'static facet_core::Field,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
-        // Compute expected element name from field: rename > singularized(lowerCamelCase(field.name))
+        // Compute expected element name from field:
+        // 1. field.rename (explicit rename on the field)
+        // 2. item type's rename (from #[facet(rename = "...")] on the item type)
+        // 3. singularized(lowerCamelCase(field.name))
         let expected_name: Cow<'static, str> = if field.rename.is_some() {
             Cow::Borrowed(field.effective_name())
+        } else if let Some(item_rename) = get_item_type_rename(field.shape()) {
+            Cow::Borrowed(item_rename)
         } else {
             // For list fields without rename, use singularized lowerCamelCase
             let camel = crate::naming::to_element_name(field.name);

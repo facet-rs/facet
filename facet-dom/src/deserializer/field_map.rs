@@ -1,5 +1,6 @@
 //! Precomputed field lookup for struct deserialization.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use facet_core::{Def, Field, StructKind, StructType, Type, UserType};
@@ -345,13 +346,34 @@ impl StructFieldMap {
                     is_tuple,
                     namespace,
                 };
-                // Key is the singularized field name (or rename if present)
-                let element_key = if let Some(rename) = field.rename {
-                    rename.to_string()
+                // Key priority:
+                // 1. Explicit field rename - single key
+                // 2. Item type is enum - register each variant name
+                // 3. Item type's rename (from #[facet(rename = "...")] on the item type)
+                // 4. Singularized field name
+                if let Some(rename) = field.rename {
+                    // Explicit field rename - single key
+                    elements_fields.insert(rename.to_string(), info);
+                } else if let Some(enum_def) = get_item_type_enum(shape) {
+                    // Item type is an enum - register each variant name
+                    // Match the same logic as deserialize_enum: rename.is_some() uses
+                    // effective_name(), otherwise apply to_element_name() for lowerCamelCase
+                    for variant in enum_def.variants.iter() {
+                        let variant_key: Cow<'_, str> = if variant.rename.is_some() {
+                            Cow::Borrowed(variant.effective_name())
+                        } else {
+                            dom_key(variant.name, None)
+                        };
+                        elements_fields.insert(variant_key.into_owned(), info.clone());
+                    }
+                } else if let Some(item_rename) = get_item_type_rename(shape) {
+                    // Item type has a rename attribute
+                    elements_fields.insert(item_rename.to_string(), info);
                 } else {
-                    singularize(&dom_key(field.name, None))
+                    // Fallback to singularized field name
+                    let element_key = singularize(&dom_key(field.name, None));
+                    elements_fields.insert(element_key, info);
                 };
-                elements_fields.insert(element_key, info);
             } else if field.is_text() {
                 let info = FieldInfo {
                     idx,
@@ -685,4 +707,59 @@ fn classify_sequence_shape(shape: &facet_core::Shape) -> (bool, bool, bool, bool
             (false, false, false, false)
         }
     }
+}
+
+/// Get the item type's enum definition for a collection field.
+/// For `Vec<MyEnum>`, returns `Some(&EnumType)`.
+/// Returns `None` if the field is not a collection or the item type is not an enum.
+fn get_item_type_enum(shape: &facet_core::Shape) -> Option<&'static facet_core::EnumType> {
+    // Get the item shape for collections
+    let item_shape = match &shape.def {
+        Def::List(list_def) => Some(list_def.t()),
+        Def::Set(set_def) => Some(set_def.t()),
+        Def::Slice(slice_def) => Some(slice_def.t()),
+        Def::Array(array_def) => Some(array_def.t()),
+        Def::Pointer(ptr_def) => {
+            // Look through smart pointers like Arc<[T]>
+            ptr_def.pointee().and_then(|inner| match &inner.def {
+                Def::List(list_def) => Some(list_def.t()),
+                Def::Set(set_def) => Some(set_def.t()),
+                Def::Slice(slice_def) => Some(slice_def.t()),
+                _ => None,
+            })
+        }
+        _ => None,
+    }?;
+
+    // Check if the item type is an enum
+    match &item_shape.ty {
+        Type::User(UserType::Enum(enum_def)) => Some(enum_def),
+        _ => None,
+    }
+}
+
+/// Get the item type's rename attribute for a collection field.
+/// For `Vec<Container>` where `Container` has `#[facet(rename = "Object")]`, returns `Some("Object")`.
+/// Returns `None` if the field is not a collection or the item type has no rename.
+pub(crate) fn get_item_type_rename(shape: &facet_core::Shape) -> Option<&'static str> {
+    // Get the item shape for collections
+    let item_shape = match &shape.def {
+        Def::List(list_def) => Some(list_def.t()),
+        Def::Set(set_def) => Some(set_def.t()),
+        Def::Slice(slice_def) => Some(slice_def.t()),
+        Def::Array(array_def) => Some(array_def.t()),
+        Def::Pointer(ptr_def) => {
+            // Look through smart pointers like Arc<[T]>
+            ptr_def.pointee().and_then(|inner| match &inner.def {
+                Def::List(list_def) => Some(list_def.t()),
+                Def::Set(set_def) => Some(set_def.t()),
+                Def::Slice(slice_def) => Some(slice_def.t()),
+                _ => None,
+            })
+        }
+        _ => None,
+    }?;
+
+    // Check if the item type has a rename attribute
+    item_shape.get_builtin_attr_value::<&str>("rename")
 }

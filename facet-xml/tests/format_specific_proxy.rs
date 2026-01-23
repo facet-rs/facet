@@ -269,13 +269,12 @@ pub struct Point {
     pub y: i32,
 }
 
-impl TryFrom<PointProxy> for Point {
-    type Error = std::convert::Infallible;
-    fn try_from(proxy: PointProxy) -> Result<Self, Self::Error> {
-        Ok(Point {
+impl From<PointProxy> for Point {
+    fn from(proxy: PointProxy) -> Self {
+        Point {
             x: proxy.x,
             y: proxy.y,
-        })
+        }
     }
 }
 
@@ -579,13 +578,12 @@ fn test_field_level_proxy_with_rename_roundtrip() {
 #[facet(transparent)]
 pub struct OptionalStringProxy(pub String);
 
-impl TryFrom<OptionalStringProxy> for Option<String> {
-    type Error = std::convert::Infallible;
-    fn try_from(proxy: OptionalStringProxy) -> Result<Self, Self::Error> {
+impl From<OptionalStringProxy> for Option<String> {
+    fn from(proxy: OptionalStringProxy) -> Self {
         if proxy.0 == "N/A" {
-            Ok(None)
+            None
         } else {
-            Ok(Some(proxy.0))
+            Some(proxy.0)
         }
     }
 }
@@ -795,25 +793,25 @@ fn test_enum_struct_variant_with_container_proxy_binary_roundtrip() {
 /// Enum with newtype variant where the inner type has container-level proxy.
 #[derive(Facet, Debug, PartialEq)]
 #[repr(C)]
-enum EnumWithNewtypeProxyVariant {
-    PointVariant(Point),       // Point has container-level proxy
-    BinaryVariant(BinaryU32),  // BinaryU32 has container-level proxy
-    PlainVariant(String),
+enum EnumWithNewtypeProxy {
+    Point(Point),         // Point has container-level proxy
+    Binary(BinaryU32),    // BinaryU32 has container-level proxy
+    Plain(String),
 }
 
 #[test]
 fn test_enum_newtype_variant_with_container_proxy_point_roundtrip() {
-    let original = EnumWithNewtypeProxyVariant::PointVariant(Point { x: 42, y: 84 });
+    let original = EnumWithNewtypeProxy::Point(Point { x: 42, y: 84 });
     let xml = to_string(&original).unwrap();
     eprintln!("XML: {xml}");
 
-    let roundtripped: EnumWithNewtypeProxyVariant = from_str(&xml).unwrap();
+    let roundtripped: EnumWithNewtypeProxy = from_str(&xml).unwrap();
     assert_eq!(original, roundtripped);
 }
 
 #[test]
 fn test_enum_newtype_variant_with_container_proxy_binary_roundtrip() {
-    let original = EnumWithNewtypeProxyVariant::BinaryVariant(BinaryU32(0b1111));
+    let original = EnumWithNewtypeProxy::Binary(BinaryU32(0b1111));
     let xml = to_string(&original).unwrap();
     eprintln!("XML: {xml}");
     assert!(
@@ -821,17 +819,17 @@ fn test_enum_newtype_variant_with_container_proxy_binary_roundtrip() {
         "Should use binary proxy in newtype variant, got: {xml}"
     );
 
-    let roundtripped: EnumWithNewtypeProxyVariant = from_str(&xml).unwrap();
+    let roundtripped: EnumWithNewtypeProxy = from_str(&xml).unwrap();
     assert_eq!(original, roundtripped);
 }
 
 #[test]
 fn test_enum_newtype_variant_plain_still_works() {
-    let original = EnumWithNewtypeProxyVariant::PlainVariant("hello".to_string());
+    let original = EnumWithNewtypeProxy::Plain("hello".to_string());
     let xml = to_string(&original).unwrap();
     eprintln!("XML: {xml}");
 
-    let roundtripped: EnumWithNewtypeProxyVariant = from_str(&xml).unwrap();
+    let roundtripped: EnumWithNewtypeProxy = from_str(&xml).unwrap();
     assert_eq!(original, roundtripped);
 }
 
@@ -1505,4 +1503,156 @@ fn test_recursive_structure_with_proxy() {
 
     let roundtripped: TreeNode = from_str(&xml).unwrap();
     assert_eq!(original, roundtripped);
+}
+
+// ============================================================================
+// xml::elements should use item type's rename
+// ============================================================================
+
+// Import to make xml:: prefix work in attributes
+use facet_xml as xml;
+
+#[derive(Debug, Facet, PartialEq)]
+#[repr(C)]
+enum XmlTag {
+    #[facet(rename = "TagFoo")]
+    Foo {
+        #[facet(facet_xml::attribute)]
+        name: String,
+        #[facet(facet_xml::attribute)]
+        value: u32,
+    },
+    #[facet(rename = "TagBar")]
+    Bar {
+        #[facet(facet_xml::attribute)]
+        name: String,
+        #[facet(facet_xml::attribute)]
+        bar_value: String,
+    },
+    #[facet(rename = "TagBaz")]
+    Baz {
+        #[facet(facet_xml::attribute)]
+        name: String,
+        #[facet(facet_xml::attribute)]
+        baz: Option<String>,
+    },
+}
+
+#[derive(Debug, Facet, PartialEq)]
+#[facet(rename = "Object")]
+struct XmlObject {
+    #[facet(xml::attribute)]
+    id: String,
+    #[facet(xml::elements)]
+    elements: Vec<XmlTag>,
+}
+
+#[derive(Debug, Facet, PartialEq)]
+#[facet(rename = "Outer")]
+struct XmlOuter {
+    #[facet(xml::elements)]
+    // Should automatically use "Object" from XmlObject's rename
+    objects: Vec<XmlObject>,
+}
+
+#[test]
+fn test_xml_elements_uses_item_type_rename() {
+    let xml = r#"
+<Outer>
+    <Object id="first">
+        <TagFoo name="Foo" value="420" />
+        <TagBar name="Bar" barValue="Bar Value" />
+        <TagBaz name="BazNotUsableAsAtag" />
+        <TagBaz name="BazWithValue" baz="bazbazbaz" />
+    </Object>
+    <Object id="second">
+    </Object>
+</Outer>
+"#;
+    let parsed: XmlOuter = from_str(xml).unwrap();
+    assert_eq!(parsed.objects.len(), 2);
+    assert_eq!(parsed.objects[0].id, "first");
+    assert_eq!(parsed.objects[0].elements.len(), 4);
+    assert_eq!(parsed.objects[1].id, "second");
+    assert_eq!(parsed.objects[1].elements.len(), 0);
+
+    // Roundtrip
+    let serialized = to_string(&parsed).unwrap();
+    let roundtripped: XmlOuter = from_str(&serialized).unwrap();
+    assert_eq!(parsed, roundtripped);
+}
+
+// ============================================================================
+// Issue #7: rename_all should affect root element name (NOT YET FIXED)
+// https://github.com/facet-rs/facet-xml/issues/7
+// ============================================================================
+
+#[derive(Debug, Facet, PartialEq)]
+#[facet(rename_all = "PascalCase")]
+struct Issue7Root {
+    value: String,
+}
+
+#[test]
+fn test_issue7_current_behavior() {
+    // Currently, rename_all does NOT affect the root element name.
+    // The root uses lowerCamelCase of the type name: issue7Root
+    // Fields DO get PascalCase: Value
+    let xml = r#"<issue7Root><Value>foo</Value></issue7Root>"#;
+    let parsed: Issue7Root = from_str(xml).unwrap();
+    assert_eq!(parsed.value, "foo");
+
+    // Serialization also uses lowerCamelCase for root
+    let serialized = to_string(&parsed).unwrap();
+    assert!(serialized.contains("<issue7Root>"), "Current behavior: {}", serialized);
+}
+
+#[test]
+#[should_panic(expected = "UnknownElement")]
+fn test_issue7_desired_behavior_not_yet_implemented() {
+    // This is what issue #7 wants: rename_all should affect root element too
+    // Currently this FAILS - documenting desired behavior for future fix
+    let xml = r#"<Issue7Root><Value>foo</Value></Issue7Root>"#;
+    let _parsed: Issue7Root = from_str(xml).unwrap();
+}
+
+// ============================================================================
+// More xml::elements edge cases with rename/flatten
+// ============================================================================
+
+#[derive(Debug, Facet, PartialEq)]
+#[repr(C)]
+enum MixedRenameEnum {
+    // No rename - uses lowerCamelCase default
+    DefaultCase {
+        #[facet(xml::attribute)]
+        id: String,
+    },
+    // Explicit rename overrides rename_all
+    #[facet(rename = "CustomName")]
+    ExplicitRename {
+        #[facet(xml::attribute)]
+        id: String,
+    },
+}
+
+#[derive(Debug, Facet, PartialEq)]
+#[facet(rename = "Container")]
+struct MixedRenameContainer {
+    #[facet(xml::elements)]
+    items: Vec<MixedRenameEnum>,
+}
+
+#[test]
+fn test_xml_elements_with_mixed_variant_renames() {
+    // DefaultCase has no rename -> uses lowerCamelCase: defaultCase
+    // ExplicitRename has #[facet(rename = "CustomName")] -> uses CustomName
+    let xml = r#"<Container><defaultCase id="a"/><CustomName id="b"/></Container>"#;
+    let parsed: MixedRenameContainer = from_str(xml).unwrap();
+    assert_eq!(parsed.items.len(), 2);
+
+    // Roundtrip
+    let serialized = to_string(&parsed).unwrap();
+    let roundtripped: MixedRenameContainer = from_str(&serialized).unwrap();
+    assert_eq!(parsed, roundtripped);
 }
