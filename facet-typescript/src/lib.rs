@@ -665,6 +665,18 @@ impl TypeScriptGenerator {
             // Char as string
             "char" => "string".to_string(),
 
+            // chrono types
+            "NaiveDate"
+            | "NaiveDateTime"
+            | "NaiveTime"
+            | "DateTime<Utc>"
+            | "DateTime<FixedOffset>"
+            | "DateTime<Local>"
+                if shape.module_path == Some("chrono") =>
+            {
+                "string".to_string()
+            }
+
             // Unknown scalar
             _ => "unknown".to_string(),
         }
@@ -1524,5 +1536,17 @@ mod tests {
 
         let ts = to_typescript::<Message>();
         insta::assert_snapshot!("test_untagged_enum_with_tuple_variant", ts);
+    }
+    #[test]
+    fn test_chrono_naive_date() {
+        use chrono::NaiveDate;
+
+        #[derive(Facet)]
+        struct WithChronoDate {
+            birthday: NaiveDate,
+        }
+
+        let ts = to_typescript::<WithChronoDate>();
+        insta::assert_snapshot!(ts);
     }
 }

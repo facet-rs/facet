@@ -1521,6 +1521,7 @@ dependencies = [
 name = "facet-typescript"
 version = "0.43.2"
 dependencies = [
+ "chrono",
  "facet",
  "facet-core",
  "insta",
