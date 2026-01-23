@@ -17,10 +17,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.43.0" }
-facet-core = { path = "../facet-core", version = "0.43.0" }
-facet-dom = { path = "../facet-dom", version = "0.43.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.43.0" }
+facet = { path = "../facet", version = "0.43.1" }
+facet-core = { path = "../facet-core", version = "0.43.1" }
+facet-dom = { path = "../facet-dom", version = "0.43.1" }
+facet-reflect = { path = "../facet-reflect", version = "0.43.1" }
 
 # XML parsing - using quick-xml which is the most mature Rust XML parser
 quick-xml = { version = "0.39", default-features = false }

@@ -15,11 +15,11 @@ categories = ["encoding", "parsing"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.43.0" }
-facet-core = { path = "../facet-core", version = "0.43.0" }
-facet-dom = { path = "../facet-dom", version = "0.43.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.43.0" }
-facet-xml = { path = "../facet-xml", version = "0.43.0" }
+facet = { path = "../facet", version = "0.43.1" }
+facet-core = { path = "../facet-core", version = "0.43.1" }
+facet-dom = { path = "../facet-dom", version = "0.43.1" }
+facet-reflect = { path = "../facet-reflect", version = "0.43.1" }
+facet-xml = { path = "../facet-xml", version = "0.43.1" }
 
 [dev-dependencies]
 
