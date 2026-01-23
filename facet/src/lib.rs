@@ -172,6 +172,34 @@ pub mod builtin {
             /// Usage: `#[facet(is_numeric)]`
             IsNumeric,
 
+            /// Marks an enum as having cow-like semantics (Borrowed/Owned variants).
+            ///
+            /// When deserializing into a cow-like enum and borrowing is not available
+            /// (e.g., from JSON), the deserializer automatically selects the `Owned` variant
+            /// instead of the `Borrowed` variant. This allows types like `Stem<'a>` to be
+            /// deserialized from formats that cannot provide borrowed data.
+            ///
+            /// Requirements:
+            /// - The enum must have exactly 2 variants named `Borrowed` and `Owned`
+            /// - `Borrowed` typically contains a reference type (e.g., `&'a str`)
+            /// - `Owned` contains an owned equivalent (e.g., `String`, `CompactString`)
+            ///
+            /// Usage: `#[facet(cow)]`
+            ///
+            /// # Example
+            ///
+            /// ```ignore
+            /// #[derive(Facet)]
+            /// #[facet(cow)]
+            /// #[repr(u8)]
+            /// pub enum Stem<'a> {
+            ///     Borrowed(&'a str),
+            ///     Owned(CompactString),
+            /// }
+            /// ```
+            #[target(container)]
+            Cow,
+
             /// Marks a type as Plain Old Data.
             ///
             /// POD types have no invariants - any combination of valid field values

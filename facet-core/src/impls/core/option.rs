@@ -267,6 +267,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                                 .build(),
                             ]
                         },
+                        is_cow: false,
                     })
                 } else {
                     UserType::Opaque

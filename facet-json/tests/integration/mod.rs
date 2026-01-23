@@ -6,6 +6,7 @@ mod issue_1726;
 mod issue_1775;
 mod issue_1791;
 mod issue_1852;
+mod issue_1896;
 mod jit_deserialize;
 mod nested_flatten_map;
 mod opaque_proxy_enum;
