@@ -16,8 +16,11 @@ tracing = ["dep:tracing"]
 
 [dependencies]
 facet.workspace = true
+facet-core.workspace = true
+facet-format.workspace = true
 facet-postcard.workspace = true
 facet-pretty.workspace = true
+facet-reflect.workspace = true
 roam-frame.workspace = true
 roam-wire.workspace = true
 roam-task-local.workspace = true

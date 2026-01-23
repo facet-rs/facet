@@ -45,11 +45,17 @@ pub use flow_control::*;
 
 mod dispatch;
 pub use dispatch::*;
-// Re-export internal items needed by other modules
-pub(crate) use dispatch::{DispatchContext, get_dispatch_context};
+// Re-export internal items needed by channel binding
+pub(crate) use dispatch::get_dispatch_context;
 
 mod forwarding;
 pub use forwarding::*;
+
+mod extensions;
+pub use extensions::*;
+
+mod middleware;
+pub use middleware::*;
 
 pub(crate) const CHANNEL_SIZE: usize = 1024;
 pub(crate) const RX_STREAM_BUFFER_SIZE: usize = 1024;

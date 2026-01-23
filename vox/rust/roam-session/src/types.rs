@@ -228,9 +228,10 @@ impl ChannelRegistry {
 
     /// Get the dispatch context for response channel binding.
     ///
-    /// Used by `dispatch_call` and `dispatch_call_infallible` to set up
-    /// thread-local context so `roam::channel()` can create bound channels.
-    pub(crate) fn dispatch_context(&self) -> DispatchContext {
+    /// Used by dispatch methods to set up task-local context so
+    /// `roam::channel()` can create bound channels. The context should
+    /// be passed to `DISPATCH_CONTEXT.scope()` in the async block.
+    pub fn dispatch_context(&self) -> DispatchContext {
         DispatchContext {
             conn_id: self.conn_id,
             channel_ids: self.response_channel_ids.clone(),
@@ -432,6 +433,27 @@ impl ChannelRegistry {
         self.bind_streams_recursive(poke);
     }
 
+    /// Bind streams in args using a type-erased pointer and shape (non-generic).
+    ///
+    /// This is the non-generic version of [`Self::bind_streams`] for use with the
+    /// `prepare()` function.
+    ///
+    /// # Safety
+    ///
+    /// - `args_ptr` must point to valid, initialized memory matching `args_shape`
+    #[allow(unsafe_code)]
+    pub unsafe fn bind_streams_by_shape(
+        &mut self,
+        args_ptr: *mut (),
+        args_shape: &'static facet_core::Shape,
+    ) {
+        // SAFETY: Caller guarantees args_ptr is valid and initialized
+        let poke = unsafe {
+            facet::Poke::from_raw_parts(facet_core::PtrMut::new(args_ptr.cast::<u8>()), args_shape)
+        };
+        self.bind_streams_recursive(poke);
+    }
+
     /// Recursively walk a Poke value looking for Rx/Tx streams to bind.
     #[allow(unsafe_code)]
     fn bind_streams_recursive(&mut self, mut poke: facet::Poke<'_, '_>) {
@@ -441,11 +463,11 @@ impl ChannelRegistry {
 
         // Check if this is an Rx or Tx type
         if shape.decl_id == crate::Rx::<()>::SHAPE.decl_id {
-            debug!("bind_streams_recursive: found Rx, binding");
+            trace!("bind_streams_recursive: found Rx");
             self.bind_rx_stream(poke);
             return;
         } else if shape.decl_id == crate::Tx::<()>::SHAPE.decl_id {
-            debug!("bind_streams_recursive: found Tx, binding");
+            trace!("bind_streams_recursive: found Tx");
             self.bind_tx_stream(poke);
             return;
         }
@@ -528,7 +550,7 @@ impl ChannelRegistry {
                 return;
             };
 
-            debug!(channel_id, "bind_rx_stream: registering incoming channel");
+            trace!(channel_id, "bind_rx_stream: registering incoming channel");
 
             // Create channel and set receiver slot
             let (tx, rx) = crate::runtime::channel(RX_STREAM_BUFFER_SIZE);
@@ -541,7 +563,7 @@ impl ChannelRegistry {
 
             // Register for incoming data routing
             self.register_incoming(channel_id, tx);
-            debug!(channel_id, "bind_rx_stream: channel registered");
+            trace!(channel_id, "bind_rx_stream: channel registered");
         } else {
             warn!("bind_rx_stream: could not convert poke to struct");
         }

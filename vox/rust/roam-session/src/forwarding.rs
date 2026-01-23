@@ -60,7 +60,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
 
     fn dispatch(
         &self,
-        cx: &Context,
+        cx: Context,
         payload: Vec<u8>,
         registry: &mut ChannelRegistry,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
@@ -406,7 +406,7 @@ impl ServiceDispatcher for LateBoundForwarder {
 
     fn dispatch(
         &self,
-        cx: &Context,
+        cx: Context,
         payload: Vec<u8>,
         registry: &mut ChannelRegistry,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {

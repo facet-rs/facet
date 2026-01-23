@@ -49,6 +49,9 @@ pub use roam_wire as wire;
 // Re-export facet for derive macros in service types
 pub use facet;
 
+// Re-export facet_core for macro-generated code that needs PtrConst
+pub use facet_core;
+
 // Re-export facet-pretty for macro-generated logging
 pub use facet_pretty;
 pub use facet_pretty::PrettyPrinter;

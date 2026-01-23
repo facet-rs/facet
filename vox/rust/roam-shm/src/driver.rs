@@ -838,7 +838,7 @@ where
             request_id, method_id, "dispatching incoming request"
         );
 
-        let handler_fut = dispatcher.dispatch(&cx, payload, &mut conn.server_channel_registry);
+        let handler_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let join_handle = tokio::spawn(handler_fut);
@@ -2364,7 +2364,7 @@ impl MultiPeerHostDriver {
             conn_id = conn_id.raw(),
             request_id, method_id, "dispatching incoming request"
         );
-        let handler_fut = dispatcher.dispatch(&cx, payload, &mut conn.server_channel_registry);
+        let handler_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let join_handle = tokio::spawn(handler_fut);

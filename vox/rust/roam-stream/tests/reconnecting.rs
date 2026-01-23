@@ -44,7 +44,7 @@ impl ServiceDispatcher for TestService {
 
     fn dispatch(
         &self,
-        cx: &Context,
+        cx: Context,
         payload: Vec<u8>,
         registry: &mut ChannelRegistry,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
@@ -53,12 +53,12 @@ impl ServiceDispatcher for TestService {
         match cx.method_id().raw() {
             // Echo method
             1 => dispatch_call::<String, String, (), _, _>(
-                cx,
+                &cx,
                 payload,
                 registry,
                 |input: String| async move { Ok(input) },
             ),
-            _ => dispatch_unknown_method(cx, registry),
+            _ => dispatch_unknown_method(&cx, registry),
         }
     }
 }

@@ -49,7 +49,7 @@ impl ServiceDispatcher for StreamingService {
 
     fn dispatch(
         &self,
-        cx: &Context,
+        cx: Context,
         payload: Vec<u8>,
         registry: &mut ChannelRegistry,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
@@ -58,7 +58,7 @@ impl ServiceDispatcher for StreamingService {
         match cx.method_id().raw() {
             // echo(message: String) -> String
             METHOD_ECHO => dispatch_call::<String, String, (), _, _>(
-                cx,
+                &cx,
                 payload,
                 registry,
                 |input: String| async move { Ok(input) },
@@ -66,7 +66,7 @@ impl ServiceDispatcher for StreamingService {
 
             // sum(numbers: Rx<i32>) -> i64
             METHOD_SUM => dispatch_call::<Rx<i32>, i64, (), _, _>(
-                cx,
+                &cx,
                 payload,
                 registry,
                 |mut numbers: Rx<i32>| async move {
@@ -80,7 +80,7 @@ impl ServiceDispatcher for StreamingService {
 
             // generate(count: u32, output: Tx<i32>)
             METHOD_GENERATE => dispatch_call::<(u32, Tx<i32>), (), (), _, _>(
-                cx,
+                &cx,
                 payload,
                 registry,
                 |(count, output): (u32, Tx<i32>)| async move {
@@ -93,7 +93,7 @@ impl ServiceDispatcher for StreamingService {
 
             // transform(input: Rx<String>, output: Tx<String>)
             METHOD_TRANSFORM => dispatch_call::<(Rx<String>, Tx<String>), (), (), _, _>(
-                cx,
+                &cx,
                 payload,
                 registry,
                 |(mut input, output): (Rx<String>, Tx<String>)| async move {
@@ -104,7 +104,7 @@ impl ServiceDispatcher for StreamingService {
                 },
             ),
 
-            _ => dispatch_unknown_method(cx, registry),
+            _ => dispatch_unknown_method(&cx, registry),
         }
     }
 }

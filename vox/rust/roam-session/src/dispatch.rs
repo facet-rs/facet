@@ -9,9 +9,14 @@
 use std::sync::Arc;
 
 use facet::Facet;
+use facet_core::{PtrConst, PtrMut, PtrUninit, Shape};
+use facet_format::FormatDeserializer;
+use facet_postcard::PostcardParser;
+use facet_reflect::Partial;
 
 use crate::{
-    ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage, Rx, Tx, runtime::Sender,
+    ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage, Extensions, Middleware,
+    Rejection, Rx, SendPeek, Tx, runtime::Sender,
 };
 
 // ============================================================================
@@ -23,8 +28,10 @@ use crate::{
 /// When a service handler creates a channel with `roam::channel()` and returns
 /// the Rx, the Tx needs to be bound to send Data over the wire. This context
 /// provides the channel ID allocator and driver_tx needed for binding.
+///
+/// This is public for use by generated dispatchers with `DISPATCH_CONTEXT.scope()`.
 #[derive(Clone)]
-pub(crate) struct DispatchContext {
+pub struct DispatchContext {
     pub(crate) conn_id: roam_wire::ConnectionId,
     pub(crate) channel_ids: Arc<ChannelIdAllocator>,
     pub(crate) driver_tx: Sender<DriverMessage>,
@@ -34,7 +41,9 @@ roam_task_local::task_local! {
     /// Task-local dispatch context. Using task_local instead of thread_local
     /// is critical: thread_local can leak across different async tasks that
     /// happen to run on the same worker thread, causing channel binding bugs.
-    pub(crate) static DISPATCH_CONTEXT: DispatchContext;
+    ///
+    /// This is public for use by generated dispatchers.
+    pub static DISPATCH_CONTEXT: DispatchContext;
 }
 
 /// Get the current dispatch context, if any.
@@ -51,9 +60,10 @@ pub(crate) fn get_dispatch_context() -> Option<DispatchContext> {
 /// Contains information about the request that may be useful to the handler:
 /// - `conn_id`: Which virtual connection the request came from
 /// - `metadata`: Key-value pairs sent with the request
+/// - `extensions`: Type-safe storage for values inserted by middleware
 ///
 /// This enables services to identify callers and access per-request metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Context {
     /// The connection ID this request arrived on.
     ///
@@ -78,6 +88,12 @@ pub struct Context {
     ///
     /// Used for stream binding. Proxies can use this to remap channel IDs.
     pub channels: Vec<u64>,
+
+    /// Type-safe extension storage.
+    ///
+    /// Middleware can insert values here (e.g., authenticated user info)
+    /// that handlers can later retrieve.
+    pub extensions: Extensions,
 }
 
 impl Context {
@@ -95,6 +111,7 @@ impl Context {
             method_id,
             metadata,
             channels,
+            extensions: Extensions::new(),
         }
     }
 
@@ -121,6 +138,22 @@ impl Context {
     /// Get the channel IDs.
     pub fn channels(&self) -> &[u64] {
         &self.channels
+    }
+}
+
+impl Clone for Context {
+    fn clone(&self) -> Self {
+        Self {
+            conn_id: self.conn_id,
+            request_id: self.request_id,
+            method_id: self.method_id,
+            metadata: self.metadata.clone(),
+            channels: self.channels.clone(),
+            // Extensions are NOT cloned - each clone gets fresh extensions.
+            // This is intentional: middleware modifies extensions on its copy,
+            // but the inner dispatch already captured what it needs.
+            extensions: Extensions::new(),
+        }
     }
 }
 
@@ -201,13 +234,13 @@ where
     };
 
     // Patch channel IDs from Request framing into deserialized args
-    debug!(channels = ?channels, "dispatch_call: patching channel IDs");
+    trace!(channels = ?channels, "dispatch_call: patching channel IDs");
     patch_channel_ids(&mut args, channels);
 
     // Bind streams via reflection - THIS MUST HAPPEN SYNCHRONOUSLY
-    debug!("dispatch_call: binding streams SYNC");
+    trace!("dispatch_call: binding streams SYNC");
     registry.bind_streams(&mut args);
-    debug!("dispatch_call: streams bound SYNC - channels should now be registered");
+    trace!("dispatch_call: streams bound");
 
     let task_tx = registry.driver_tx();
     let dispatch_ctx = registry.dispatch_context();
@@ -216,9 +249,9 @@ where
     // This is critical: unlike thread_local, task_local won't leak to other
     // tasks that happen to run on the same worker thread.
     Box::pin(DISPATCH_CONTEXT.scope(dispatch_ctx, async move {
-        debug!("dispatch_call: handler ASYNC starting");
+        trace!("dispatch_call: handler starting");
         let result = handler(args).await;
-        debug!("dispatch_call: handler ASYNC finished");
+        trace!("dispatch_call: handler finished");
         let (payload, response_channels) = match result {
             Ok(ref ok_result) => {
                 // Collect channel IDs from the result (e.g., Rx<T> in return type)
@@ -309,7 +342,7 @@ where
         // Collect channel IDs from the result (e.g., Rx<T> in return type)
         let response_channels = collect_channel_ids(&result);
         if !response_channels.is_empty() {
-            debug!(
+            trace!(
                 channels = ?response_channels,
                 "dispatch_call_infallible: collected response channels"
             );
@@ -356,6 +389,431 @@ pub fn dispatch_unknown_method(
             })
             .await;
     })
+}
+
+// ============================================================================
+// Non-Generic Dispatch Infrastructure (roam-next)
+// ============================================================================
+
+/// Error during the prepare phase of dispatch.
+#[derive(Debug)]
+pub enum PrepareError {
+    /// Failed to deserialize the request payload.
+    Deserialize(String),
+    /// Request has wrong number of channel IDs for the method's Tx/Rx arguments.
+    ChannelCountMismatch { expected: usize, got: usize },
+    /// Middleware rejected the request.
+    Rejected(Rejection),
+    /// Failed to serialize the response.
+    SerializeFailed,
+}
+
+impl std::fmt::Display for PrepareError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PrepareError::Deserialize(msg) => write!(f, "deserialization error: {}", msg),
+            PrepareError::ChannelCountMismatch { expected, got } => {
+                write!(
+                    f,
+                    "channel count mismatch: expected {}, got {}",
+                    expected, got
+                )
+            }
+            PrepareError::Rejected(r) => write!(f, "rejected: {}", r.message),
+            PrepareError::SerializeFailed => write!(f, "response serialization failed"),
+        }
+    }
+}
+
+impl std::error::Error for PrepareError {}
+
+/// Prepare args synchronously for dispatch (non-generic).
+///
+/// This function performs all the **synchronous** pre-handler work via reflection:
+///
+/// 1. Deserializes payload into `args_ptr` using the provided `args_shape`
+/// 2. Counts Tx/Rx fields and validates against provided channel count
+/// 3. Patches channel IDs from the request into deserialized args
+/// 4. Binds Tx/Rx streams via the registry
+///
+/// After this returns `Ok(())`, the caller can safely read from `args_ptr`,
+/// then run middleware and call the handler.
+///
+/// # Why Sync?
+///
+/// Stream binding requires `&mut ChannelRegistry`, which cannot be held across
+/// await points. This function must complete before the async block starts.
+///
+/// # Safety
+///
+/// - `args_ptr` must point to valid, aligned, properly-sized uninitialized memory
+///   for the type described by `args_shape`
+/// - The args type must be `Send` (enforced by the `#[service]` macro)
+/// - On success, caller MUST read from `args_ptr` (to take ownership of the
+///   initialized value) - failing to do so will leak memory
+///
+/// # Example
+///
+/// ```ignore
+/// let mut args_slot = MaybeUninit::<(String, Rx<i32>)>::uninit();
+///
+/// // SYNC: prepare args
+/// unsafe {
+///     prepare_sync(
+///         args_slot.as_mut_ptr().cast(),
+///         <(String, Rx<i32>)>::SHAPE,
+///         &payload,
+///         &channels,
+///         registry,
+///     )?;
+/// }
+/// let args = unsafe { args_slot.assume_init_read() };
+///
+/// // ASYNC: middleware + handler
+/// Box::pin(async move {
+///     run_middleware(SendPeek::from(&args), &mut ctx, &middleware).await?;
+///     handler.method(&ctx, args).await
+/// })
+/// ```
+#[allow(unsafe_code)]
+pub unsafe fn prepare_sync(
+    args_ptr: *mut (),
+    args_shape: &'static Shape,
+    payload: &[u8],
+    channels: &[u64],
+    registry: &mut ChannelRegistry,
+) -> Result<(), PrepareError> {
+    // 1. Deserialize into args_ptr using reflection
+    // SAFETY: caller guarantees args_ptr is valid and properly sized
+    unsafe { deserialize_into(args_ptr, args_shape, payload) }?;
+
+    // 2. Count expected channels and validate
+    // SAFETY: args_ptr was just initialized by deserialize_into
+    let expected_channels = unsafe { count_channels_by_shape(args_ptr, args_shape) };
+    if channels.len() != expected_channels {
+        return Err(PrepareError::ChannelCountMismatch {
+            expected: expected_channels,
+            got: channels.len(),
+        });
+    }
+
+    // 3. Patch channel IDs from Request framing into deserialized args
+    trace!(channels = ?channels, "prepare_sync: patching channel IDs");
+    // SAFETY: args_ptr is valid and initialized, channel count validated
+    unsafe {
+        patch_channel_ids_by_shape(args_ptr, args_shape, channels);
+    }
+
+    // 4. Bind streams via reflection
+    trace!("prepare_sync: binding streams");
+    // SAFETY: args_ptr is valid and initialized
+    unsafe {
+        registry.bind_streams_by_shape(args_ptr, args_shape);
+    }
+
+    Ok(())
+}
+
+/// Deserialize payload into a type-erased pointer using Shape.
+///
+/// This is the non-generic deserialization function used by generated dispatchers.
+/// It deserializes directly into caller-provided memory (typically stack-allocated
+/// via `MaybeUninit`) to avoid heap allocation.
+///
+/// # Safety
+///
+/// - `ptr` must point to valid, properly aligned memory for the type described by `shape`
+/// - The memory must have at least `shape.layout.size()` bytes available
+/// - On success, the memory at `ptr` will be initialized with the deserialized value
+/// - On error, the memory at `ptr` may be partially initialized and MUST NOT be read
+#[allow(unsafe_code)]
+pub unsafe fn deserialize_into(
+    ptr: *mut (),
+    shape: &'static Shape,
+    payload: &[u8],
+) -> Result<(), PrepareError> {
+    // Create a Partial that writes directly into caller-provided memory.
+    // This avoids heap allocation - the value is constructed in-place.
+    let ptr_uninit = PtrUninit::new(ptr.cast::<u8>());
+
+    // SAFETY: Caller guarantees ptr is valid, aligned, and properly sized
+    let partial: Partial<'_, false> = unsafe { Partial::from_raw(ptr_uninit, shape) }
+        .map_err(|e| PrepareError::Deserialize(e.to_string()))?;
+
+    // Use facet-format's FormatDeserializer with PostcardParser to deserialize.
+    // This is non-generic - it uses the Shape for all type information.
+    let parser = PostcardParser::new(payload);
+    let mut deserializer: FormatDeserializer<'_, false, _> = FormatDeserializer::new_owned(parser);
+    let partial = deserializer
+        .deserialize_into(partial)
+        .map_err(|e| PrepareError::Deserialize(e.to_string()))?;
+
+    // Validate the value is fully initialized and leave it in place.
+    // After this succeeds, the caller can safely read from ptr.
+    partial
+        .finish_in_place()
+        .map_err(|e| PrepareError::Deserialize(e.to_string()))?;
+
+    Ok(())
+}
+
+/// Count the number of Tx/Rx fields in args by walking with Peek (non-generic).
+///
+/// Used to validate that the request has the correct number of channel IDs.
+///
+/// # Safety
+///
+/// - `args_ptr` must point to valid, initialized memory matching `args_shape`
+#[allow(unsafe_code)]
+pub unsafe fn count_channels_by_shape(args_ptr: *const (), args_shape: &'static Shape) -> usize {
+    // SAFETY: Caller guarantees args_ptr is valid and initialized
+    let peek =
+        unsafe { facet::Peek::unchecked_new(PtrConst::new(args_ptr.cast::<u8>()), args_shape) };
+    count_channels_recursive(peek)
+}
+
+fn count_channels_recursive(peek: facet::Peek<'_, '_>) -> usize {
+    let shape = peek.shape();
+
+    // Check if this is an Rx or Tx type
+    if shape.decl_id == Rx::<()>::SHAPE.decl_id || shape.decl_id == Tx::<()>::SHAPE.decl_id {
+        return 1;
+    }
+
+    let mut count = 0;
+
+    // Recurse into struct/tuple fields
+    if let Ok(ps) = peek.into_struct() {
+        let field_count = ps.field_count();
+        for i in 0..field_count {
+            if let Ok(field_peek) = ps.field(i) {
+                count += count_channels_recursive(field_peek);
+            }
+        }
+        return count;
+    }
+
+    // Recurse into Option<T>
+    if let Ok(po) = peek.into_option() {
+        if let Some(inner) = po.value() {
+            count += count_channels_recursive(inner);
+        }
+        return count;
+    }
+
+    // Recurse into enum variants
+    if let Ok(pe) = peek.into_enum() {
+        if let Ok(Some(variant_peek)) = pe.field(0) {
+            count += count_channels_recursive(variant_peek);
+        }
+        return count;
+    }
+
+    // Recurse into sequences
+    if let Ok(pl) = peek.into_list() {
+        for element in pl.iter() {
+            count += count_channels_recursive(element);
+        }
+    }
+
+    count
+}
+
+/// Patch channel IDs into deserialized args by walking with Poke (non-generic).
+///
+/// This is the non-generic version of `patch_channel_ids()`. It walks the
+/// deserialized args and overwrites the `channel_id` field of any `Rx<T>` or
+/// `Tx<T>` with the authoritative channel IDs from the request framing.
+///
+/// # Safety
+///
+/// - `args_ptr` must point to valid, initialized memory matching `args_shape`
+#[allow(unsafe_code)]
+pub unsafe fn patch_channel_ids_by_shape(
+    args_ptr: *mut (),
+    args_shape: &'static Shape,
+    channels: &[u64],
+) {
+    trace!(channels = ?channels, "patch_channel_ids_by_shape: patching channels");
+    let mut idx = 0;
+    // SAFETY: Caller guarantees args_ptr is valid and initialized
+    let poke =
+        unsafe { facet::Poke::from_raw_parts(PtrMut::new(args_ptr.cast::<u8>()), args_shape) };
+    patch_channel_ids_recursive(poke, channels, &mut idx);
+}
+
+// ============================================================================
+// Non-Generic Response Helpers
+// ============================================================================
+
+/// Serialize and send an OK response using non-generic operations.
+///
+/// This function handles the response serialization and sending via reflection,
+/// avoiding monomorphization:
+///
+/// 1. Collects channel IDs from the result (for `Rx<T>` in return types)
+/// 2. Serializes the result using Shape reflection
+/// 3. Sends the Response message via the driver channel
+///
+/// If serialization fails, sends an Internal error response instead.
+///
+/// Takes `SendPeek` instead of a raw pointer because `SendPeek` is Send,
+/// allowing this async function's Future to be Send.
+pub async fn send_ok_response(
+    result: SendPeek<'_>,
+    driver_tx: &Sender<DriverMessage>,
+    conn_id: roam_wire::ConnectionId,
+    request_id: u64,
+) {
+    let peek = result.peek();
+
+    // Collect channel IDs from the result (e.g., Rx<T> in return type)
+    let response_channels = collect_channel_ids_from_peek(peek);
+
+    // Result::Ok(0) + serialized value
+    let mut payload = vec![0u8];
+    match facet_postcard::peek_to_vec(peek) {
+        Ok(bytes) => payload.extend(bytes),
+        Err(_) => {
+            // Serialization failed - send Internal error
+            send_prepare_error(
+                PrepareError::SerializeFailed,
+                driver_tx,
+                conn_id,
+                request_id,
+            )
+            .await;
+            return;
+        }
+    }
+
+    // Send Response with channel IDs
+    let _ = driver_tx
+        .send(DriverMessage::Response {
+            conn_id,
+            request_id,
+            channels: response_channels,
+            payload,
+        })
+        .await;
+}
+
+/// Serialize and send a user error response using non-generic operations.
+///
+/// This function handles error serialization and sending via reflection:
+///
+/// 1. Serializes the user error using Shape reflection
+/// 2. Sends the Response message with error encoding
+///
+/// If serialization fails, sends an Internal error response instead.
+///
+/// Takes `SendPeek` instead of a raw pointer because `SendPeek` is Send,
+/// allowing this async function's Future to be Send.
+pub async fn send_error_response(
+    error: SendPeek<'_>,
+    driver_tx: &Sender<DriverMessage>,
+    conn_id: roam_wire::ConnectionId,
+    request_id: u64,
+) {
+    let peek = error.peek();
+
+    // Result::Err(1) + RoamError::User(0) + serialized user error
+    let mut payload = vec![1u8, 0u8];
+    match facet_postcard::peek_to_vec(peek) {
+        Ok(bytes) => payload.extend(bytes),
+        Err(_) => {
+            // Serialization failed - send Internal error
+            send_prepare_error(
+                PrepareError::SerializeFailed,
+                driver_tx,
+                conn_id,
+                request_id,
+            )
+            .await;
+            return;
+        }
+    }
+
+    // Send Response (no channels for error responses)
+    let _ = driver_tx
+        .send(DriverMessage::Response {
+            conn_id,
+            request_id,
+            channels: Vec::new(),
+            payload,
+        })
+        .await;
+}
+
+/// Run middleware on args via SendPeek.
+///
+/// This is called from the async block in generated dispatchers, after stream
+/// binding has completed synchronously. The caller creates a `SendPeek` from
+/// the owned args and passes it here.
+///
+/// Taking `SendPeek` instead of a raw pointer is critical: `SendPeek` is Send,
+/// so capturing it in an async Future is safe. Raw pointers are not Send, so
+/// passing them to an async function would make the Future not Send.
+pub async fn run_middleware(
+    send_peek: SendPeek<'_>,
+    ctx: &mut Context,
+    middleware: &[Arc<dyn Middleware>],
+) -> Result<(), Rejection> {
+    for mw in middleware {
+        mw.intercept(ctx, send_peek).await?;
+    }
+
+    Ok(())
+}
+
+/// Send a prepare error (deserialization, channel mismatch, rejection, etc.) as a response.
+///
+/// Maps each error type to the appropriate RoamError variant.
+pub async fn send_prepare_error(
+    error: PrepareError,
+    driver_tx: &Sender<DriverMessage>,
+    conn_id: roam_wire::ConnectionId,
+    request_id: u64,
+) {
+    let payload = match error {
+        PrepareError::Deserialize(_) => {
+            // Result::Err(1) + RoamError::InvalidPayload(2)
+            vec![1, 2]
+        }
+        PrepareError::ChannelCountMismatch { .. } => {
+            // Channel count mismatch is a protocol error - treat as InvalidPayload
+            // Result::Err(1) + RoamError::InvalidPayload(2)
+            vec![1, 2]
+        }
+        PrepareError::Rejected(_) => {
+            // Middleware rejection - map to Internal for now
+            // Result::Err(1) + RoamError::Internal(3)
+            vec![1, 3]
+        }
+        PrepareError::SerializeFailed => {
+            // Serialization failure is an internal error
+            // Result::Err(1) + RoamError::Internal(3)
+            vec![1, 3]
+        }
+    };
+
+    let _ = driver_tx
+        .send(DriverMessage::Response {
+            conn_id,
+            request_id,
+            channels: Vec::new(),
+            payload,
+        })
+        .await;
+}
+
+/// Collect channel IDs from a Peek value by walking its structure.
+///
+/// This is the non-generic version of `collect_channel_ids()`.
+fn collect_channel_ids_from_peek(peek: facet::Peek<'_, '_>) -> Vec<u64> {
+    let mut ids = Vec::new();
+    collect_channel_ids_recursive(peek, &mut ids);
+    ids
 }
 
 // ============================================================================
@@ -431,7 +889,7 @@ fn collect_channel_ids_recursive(peek: facet::Peek<'_, '_>, ids: &mut Vec<u64>) 
 /// Overwrites channel_id fields in Rx/Tx in declaration order.
 /// Used by the server to apply the authoritative `channels` vec from Request.
 pub fn patch_channel_ids<T: Facet<'static>>(args: &mut T, channels: &[u64]) {
-    debug!(channels = ?channels, "patch_channel_ids: patching channels from wire");
+    trace!(channels = ?channels, "patch_channel_ids: patching channels");
     let mut idx = 0;
     let poke = facet::Poke::new(args);
     patch_channel_ids_recursive(poke, channels, &mut idx);
@@ -557,7 +1015,7 @@ pub trait ServiceDispatcher: Send + Sync {
     /// r[impl channeling.allocation.caller] - Stream IDs are from Request.channels (caller allocated).
     fn dispatch(
         &self,
-        cx: &Context,
+        cx: Context,
         payload: Vec<u8>,
         registry: &mut ChannelRegistry,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>;
@@ -608,7 +1066,7 @@ where
 
     fn dispatch(
         &self,
-        cx: &Context,
+        cx: Context,
         payload: Vec<u8>,
         registry: &mut ChannelRegistry,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {

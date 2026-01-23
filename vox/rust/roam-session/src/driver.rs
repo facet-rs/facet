@@ -1202,7 +1202,7 @@ where
             request_id, method_id, "dispatching incoming request"
         );
 
-        let handler_fut = dispatcher.dispatch(&cx, payload, &mut conn.server_channel_registry);
+        let handler_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let abort_handle = spawn_with_abort(async move {
@@ -1565,7 +1565,7 @@ impl ServiceDispatcher for NoDispatcher {
 
     fn dispatch(
         &self,
-        cx: &Context,
+        cx: Context,
         _payload: Vec<u8>,
         registry: &mut ChannelRegistry,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {

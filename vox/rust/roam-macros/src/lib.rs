@@ -275,9 +275,13 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
 
     quote! {
         /// Dispatcher for this service.
+        ///
+        /// Supports middleware that can inspect deserialized args before the handler runs.
+        /// Middleware is configured via [`with_middleware`](Self::with_middleware).
         #[derive(Clone)]
         pub struct #dispatcher_name<H> {
             handler: H,
+            middleware: Vec<std::sync::Arc<dyn #roam::session::Middleware>>,
         }
 
         impl<H> #dispatcher_name<H> {
@@ -291,8 +295,28 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         where
             H: #trait_name + Clone + 'static,
         {
+            /// Create a new dispatcher with no middleware.
             pub fn new(handler: H) -> Self {
-                Self { handler }
+                Self {
+                    handler,
+                    middleware: Vec::new(),
+                }
+            }
+
+            /// Add middleware to this dispatcher.
+            ///
+            /// Middleware runs after deserialization but before the handler.
+            /// It can inspect args via reflection and reject requests.
+            /// Middleware runs in the order it was added.
+            pub fn with_middleware<M: #roam::session::Middleware + 'static>(mut self, mw: M) -> Self {
+                self.middleware.push(std::sync::Arc::new(mw));
+                self
+            }
+
+            /// Add already-Arc'd middleware to this dispatcher.
+            pub fn with_middleware_arc(mut self, mw: std::sync::Arc<dyn #roam::session::Middleware>) -> Self {
+                self.middleware.push(mw);
+                self
             }
 
             #(#dispatch_methods)*
@@ -308,14 +332,14 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
 
             fn dispatch(
                 &self,
-                cx: &#roam::Context,
+                cx: #roam::Context,
                 payload: Vec<u8>,
                 registry: &mut #roam::session::ChannelRegistry,
             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
                 let method_id = cx.method_id().raw();
                 #(#dispatch_arms)*
                 else {
-                    #roam::session::dispatch_unknown_method(cx, registry)
+                    #roam::session::dispatch_unknown_method(&cx, registry)
                 }
             }
         }
@@ -350,14 +374,14 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
         quote! { #(#arg_names),* }
     };
 
-    // Determine whether to use dispatch_call (fallible) or dispatch_call_infallible
-    let return_type = method.return_type();
-    let dispatch_call = if return_type.as_result().is_some() {
-        // Fallible method: Result<T, E> -> dispatch_call
-        quote! { #roam::session::dispatch_call }
+    // Build a let binding to destructure args
+    let args_binding = if arg_names.is_empty() {
+        quote! { let _args: () = args; }
+    } else if arg_names.len() == 1 {
+        let n = &arg_names[0];
+        quote! { let (#n,) = args; }
     } else {
-        // Infallible method: T -> dispatch_call_infallible
-        quote! { #roam::session::dispatch_call_infallible }
+        quote! { let (#(#arg_names),*) = args; }
     };
 
     let method_name_str = method.name();
@@ -369,31 +393,160 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
         quote! { args.pretty_with(#roam::PrettyPrinter::new().with_colors(#roam::facet_pretty::ColorMode::Never).with_max_content_len(64)) }
     };
 
-    // Build a let binding to capture args for logging
-    let args_binding = if arg_names.is_empty() {
-        quote! { let _args: () = args; }
-    } else if arg_names.len() == 1 {
-        let n = &arg_names[0];
-        quote! { let (#n,) = args; }
+    // Determine how to handle the result based on return type
+    let return_type = method.return_type();
+    let is_fallible = return_type.as_result().is_some();
+
+    let (result_type, error_type) = if let Some((ok_ty, err_ty)) = return_type.as_result() {
+        (ok_ty.to_token_stream(), Some(err_ty.to_token_stream()))
     } else {
-        quote! { let (#(#arg_names),*) = args; }
+        (return_type.to_token_stream(), None)
+    };
+
+    // Generate the response sending code based on fallibility
+    // We create SendPeek before calling the async functions to avoid capturing
+    // raw pointers in the Future state (raw pointers are not Send).
+    let send_response = if is_fallible {
+        let err_ty = error_type.unwrap();
+        quote! {
+            match &result {
+                Ok(value) => {
+                    // Create SendPeek before calling async function to avoid !Send pointer
+                    // SAFETY: value is valid, initialized, and Send
+                    let send_peek = unsafe {
+                        let peek = #roam::facet::Peek::unchecked_new(
+                            #roam::facet_core::PtrConst::new((value as *const #result_type).cast::<u8>()),
+                            <#result_type as #roam::facet::Facet>::SHAPE,
+                        );
+                        #roam::session::SendPeek::new(peek)
+                    };
+                    #roam::session::send_ok_response(
+                        send_peek,
+                        &driver_tx,
+                        conn_id,
+                        request_id,
+                    ).await;
+                }
+                Err(error) => {
+                    // Create SendPeek before calling async function
+                    // SAFETY: error is valid, initialized, and Send
+                    let send_peek = unsafe {
+                        let peek = #roam::facet::Peek::unchecked_new(
+                            #roam::facet_core::PtrConst::new((error as *const #err_ty).cast::<u8>()),
+                            <#err_ty as #roam::facet::Facet>::SHAPE,
+                        );
+                        #roam::session::SendPeek::new(peek)
+                    };
+                    #roam::session::send_error_response(
+                        send_peek,
+                        &driver_tx,
+                        conn_id,
+                        request_id,
+                    ).await;
+                }
+            }
+        }
+    } else {
+        quote! {
+            // Create SendPeek before calling async function to avoid !Send pointer
+            // SAFETY: result is valid, initialized, and Send
+            let send_peek = unsafe {
+                let peek = #roam::facet::Peek::unchecked_new(
+                    #roam::facet_core::PtrConst::new((&result as *const #result_type).cast::<u8>()),
+                    <#result_type as #roam::facet::Facet>::SHAPE,
+                );
+                #roam::session::SendPeek::new(peek)
+            };
+            #roam::session::send_ok_response(
+                send_peek,
+                &driver_tx,
+                conn_id,
+                request_id,
+            ).await;
+        }
     };
 
     quote! {
+        #[allow(unsafe_code)]
         fn #dispatch_name(
             &self,
-            cx: &#roam::Context,
+            cx: #roam::Context,
             payload: Vec<u8>,
             registry: &mut #roam::session::ChannelRegistry,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
+            use std::mem::MaybeUninit;
+
             let handler = self.handler.clone();
-            let cx_clone = cx.clone();
-            #dispatch_call(cx, payload, registry, move |args: #tuple_type| async move {
+            let middleware = self.middleware.clone();
+            let driver_tx = registry.driver_tx();
+            let dispatch_ctx = registry.dispatch_context();
+            let channels = cx.channels.clone();
+            let conn_id = cx.conn_id;
+            let request_id = cx.request_id.raw();
+
+            // 1. Allocate args on stack
+            let mut args_slot = MaybeUninit::<#tuple_type>::uninit();
+
+            // 2. Prepare: deserialize, validate channels, patch IDs, bind streams (all SYNC)
+            // SAFETY: args_slot is valid memory for tuple_type
+            if let Err(e) = unsafe {
+                #roam::session::prepare_sync(
+                    args_slot.as_mut_ptr().cast(),
+                    <#tuple_type as #roam::facet::Facet>::SHAPE,
+                    &payload,
+                    &channels,
+                    registry,
+                )
+            } {
+                return Box::pin(async move {
+                    #roam::session::send_prepare_error(e, &driver_tx, conn_id, request_id).await;
+                });
+            }
+
+            // 3. Read args - moves ownership for the async block
+            // SAFETY: args are fully initialized after prepare_sync
+            let args: #tuple_type = unsafe { args_slot.assume_init_read() };
+
+            Box::pin(#roam::session::DISPATCH_CONTEXT.scope(dispatch_ctx, async move {
+                let mut cx = cx;
+
+                // 4. Run middleware (ASYNC)
+                if !middleware.is_empty() {
+                    // SAFETY: args is valid, initialized, and the tuple type is Send
+                    let send_peek = unsafe {
+                        let peek = #roam::facet::Peek::unchecked_new(
+                            #roam::facet_core::PtrConst::new((&args as *const #tuple_type).cast::<u8>()),
+                            <#tuple_type as #roam::facet::Facet>::SHAPE,
+                        );
+                        #roam::session::SendPeek::new(peek)
+                    };
+
+                    if let Err(rejection) = #roam::session::run_middleware(
+                        send_peek,
+                        &mut cx,
+                        &middleware,
+                    ).await {
+                        #roam::session::send_prepare_error(
+                            #roam::session::PrepareError::Rejected(rejection),
+                            &driver_tx,
+                            conn_id,
+                            request_id,
+                        ).await;
+                        return;
+                    }
+                }
+
+                // 5. Log, destructure args, call handler
                 use #roam::facet_pretty::FacetPretty;
-                if #method_name_str != "emit_tracing" { #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, args = %#args_log, "handling"); }
+                if #method_name_str != "emit_tracing" {
+                    #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, args = %#args_log, "handling");
+                }
                 #args_binding
-                handler.#method_name(&cx_clone, #args_call).await
-            })
+                let result = handler.#method_name(&cx, #args_call).await;
+
+                // 6. Send response
+                #send_response
+            }))
         }
     }
 }
