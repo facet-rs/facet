@@ -3,7 +3,7 @@ name = "strid"
 description = "Improve and strengthen your strings by making them strongly-typed with less boilerplate"
 keywords = [ "string", "newtype", "validation", "normalization" ]
 categories = [ "data-structures", "rust-patterns" ]
-version = "7.0.0"
+version = "8.0.0"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,7 +15,7 @@ default = ["alloc"]
 alloc = []
 
 [dependencies]
-strid-macros = { version = "7.0.0", path = "../strid-macros" }
+strid-macros = { version = "8.0.0", path = "../strid-macros" }
 facet.workspace = true
 
 [dev-dependencies]
