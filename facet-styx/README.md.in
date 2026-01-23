@@ -1,0 +1,1 @@
+[Facet](https://github.com/facet-rs/facet) integration for the [Styx](https://github.com/bearcove/styx) configuration language. Deserialize Styx documents directly into Rust types using reflection.

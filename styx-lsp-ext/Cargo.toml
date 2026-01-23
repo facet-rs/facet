@@ -6,6 +6,11 @@ description = "Protocol types for Styx LSP extensions"
 license.workspace = true
 repository.workspace = true
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 facet.workspace = true
 styx-tree = { path = "../styx-tree", version = "1.0", features = ["facet"] }

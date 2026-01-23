@@ -1,0 +1,1 @@
+Proc macros for embedding [Styx](https://github.com/bearcove/styx) schemas in binaries. Used by `styx-embed` to compress and embed schema data at compile time.

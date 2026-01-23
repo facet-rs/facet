@@ -1,0 +1,1 @@
+Go code generator for [Styx](https://github.com/bearcove/styx) schemas. Generates type-safe Go structs from Styx schema definitions.

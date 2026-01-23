@@ -6,6 +6,11 @@ license.workspace = true
 repository.workspace = true
 description = "Language server for Styx configuration language"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }

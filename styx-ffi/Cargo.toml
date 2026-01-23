@@ -6,6 +6,11 @@ license.workspace = true
 repository.workspace = true
 description = "C bindings for the Styx configuration language parser"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [lib]
 crate-type = ["cdylib", "staticlib"]
 

@@ -1,0 +1,1 @@
+High-level syntax tree for the [Styx](https://github.com/bearcove/styx) configuration language. Provides a convenient API for working with parsed Styx documents.

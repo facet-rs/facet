@@ -1,0 +1,1 @@
+Event-based parser for the [Styx](https://github.com/bearcove/styx) configuration language. This crate provides low-level parsing primitives that other Styx crates build upon.

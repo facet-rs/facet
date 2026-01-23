@@ -1,0 +1,1 @@
+Core formatting and parsing utilities for the [Styx](https://github.com/bearcove/styx) configuration language. Handles document parsing, validation, and pretty-printing.

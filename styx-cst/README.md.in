@@ -1,0 +1,1 @@
+Lossless Concrete Syntax Tree for the [Styx](https://github.com/bearcove/styx) configuration language. Preserves all whitespace and comments for formatting and refactoring tools.

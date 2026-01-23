@@ -3,3 +3,8 @@ name = "xtask"
 version = "1.0.0"
 edition.workspace = true
 publish = false
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]

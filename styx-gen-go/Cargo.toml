@@ -6,6 +6,11 @@ description = "Go code generator for Styx schemas"
 license.workspace = true
 repository.workspace = true
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 facet-styx.workspace = true
 styx-tree.workspace = true

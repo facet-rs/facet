@@ -6,6 +6,11 @@ license.workspace = true
 description = "Lossless Concrete Syntax Tree for the Styx configuration language"
 repository.workspace = true
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 styx-parse.workspace = true
 rowan = "0.16"

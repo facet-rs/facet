@@ -1,0 +1,1 @@
+Schema types for [Styx](https://github.com/bearcove/styx) LSP extension test files. Internal crate used for testing the language server.

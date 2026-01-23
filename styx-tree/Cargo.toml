@@ -6,6 +6,11 @@ description = "High-level syntax tree for the Styx configuration language"
 license.workspace = true
 repository.workspace = true
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 default = []
 facet = ["dep:facet", "styx-parse/facet"]

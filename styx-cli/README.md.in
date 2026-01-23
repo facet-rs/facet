@@ -1,0 +1,1 @@
+Command-line interface for the [Styx](https://github.com/bearcove/styx) configuration language. Provides tools for validation, formatting, schema generation, and language server integration.

@@ -6,6 +6,11 @@ description = "Embed Styx schemas in binaries for zero-execution discovery"
 license.workspace = true
 repository.workspace = true
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 lz4_flex = "0.11"
 blake3 = "1"

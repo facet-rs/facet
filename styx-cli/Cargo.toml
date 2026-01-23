@@ -7,6 +7,11 @@ repository.workspace = true
 description = "CLI for the Styx configuration language"
 homepage = "https://styx.bearcove.eu"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [[bin]]
 name = "styx"
 path = "src/main.rs"

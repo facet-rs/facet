@@ -1,0 +1,1 @@
+Tree-sitter grammar for the [Styx](https://github.com/bearcove/styx) configuration language. Enables syntax highlighting, code folding, and structural editing in editors that support tree-sitter.

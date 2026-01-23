@@ -6,6 +6,11 @@ license.workspace = true
 description = "Event-based parser for the Styx configuration language"
 repository.workspace = true
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 default = []
 tracing = ["dep:tracing"]

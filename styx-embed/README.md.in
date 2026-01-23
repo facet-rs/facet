@@ -1,0 +1,1 @@
+Embed Styx schemas in Rust binaries for zero-execution discovery. Allows tools to extract schema information from compiled binaries without running them.

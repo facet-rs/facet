@@ -1,0 +1,1 @@
+C FFI bindings for the [Styx](https://github.com/bearcove/styx) configuration language. Allows using Styx from C, C++, and other languages with C interop.

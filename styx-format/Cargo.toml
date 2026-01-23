@@ -6,6 +6,11 @@ description = "Core formatting and parsing utilities for Styx"
 license.workspace = true
 repository.workspace = true
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 styx-cst.workspace = true
 styx-parse.workspace = true
