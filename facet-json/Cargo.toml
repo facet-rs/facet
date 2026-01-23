@@ -89,5 +89,8 @@ iddqd = ["facet/iddqd"]
 # yoke support
 yoke = ["facet/yoke", "facet-format-suite/yoke"]
 
+# smallvec support
+smallvec = ["facet/smallvec"]
+
 [lints]
 workspace = true

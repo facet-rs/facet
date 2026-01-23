@@ -46,6 +46,7 @@ all-impls = [
     "lock_api",
     "iddqd",
     "yoke",
+    "smallvec",
 ] # Enable all optional Facet trait implementations for third-party types
 alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
 nonzero = ["facet-core/nonzero"] # Provide Facet trait implementations for NonZero<T> types
@@ -105,6 +106,9 @@ iddqd = [
 yoke = [
     "facet-core/yoke",
 ] # Provide Facet trait implementations for yoke::Yoke
+smallvec = [
+    "facet-core/smallvec",
+] # Provide Facet trait implementations for smallvec::SmallVec
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.
