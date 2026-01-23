@@ -1,11 +1,8 @@
 use std::marker::PhantomData;
 
-#[cfg(not(target_arch = "wasm32"))]
 use facet::Facet;
 
-use crate::ConnectionHandle;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::{CallError, ResponseData, TransportError};
+use crate::{CallError, ConnectionHandle, DecodeError, ResponseData, RoamError, TransportError};
 
 /// Trait for making RPC calls.
 ///
@@ -183,8 +180,6 @@ where
         } = self;
 
         Box::pin(async move {
-            use crate::decode_response;
-
             let response = caller
                 .call_with_metadata(method_id, &mut args, metadata)
                 .await
@@ -225,5 +220,50 @@ where
             caller.bind_response_streams(&mut result, &response.channels);
             Ok(result)
         })
+    }
+}
+
+// ============================================================================
+// Response Decoding
+// ============================================================================
+
+/// Decode a response payload into the expected type.
+///
+/// This is the core response decoding logic used by generated clients.
+/// It handles the wire format: `[0] + value_bytes` for Ok, `[1, discriminant] + error_bytes` for Err.
+///
+/// Returns `Result<T, CallError<E>>` with the decoded value or error.
+pub fn decode_response<T: Facet<'static>, E: Facet<'static>>(
+    payload: &[u8],
+) -> Result<T, CallError<E>> {
+    if payload.is_empty() {
+        return Err(DecodeError::EmptyPayload.into());
+    }
+
+    match payload[0] {
+        0 => {
+            // Ok variant: deserialize the value
+            facet_postcard::from_slice(&payload[1..]).map_err(CallError::Decode)
+        }
+        1 => {
+            // Err variant: deserialize RoamError<E>
+            if payload.len() < 2 {
+                return Err(DecodeError::TruncatedError.into());
+            }
+            let roam_error = match payload[1] {
+                0 => {
+                    // User error
+                    let user_error: E =
+                        facet_postcard::from_slice(&payload[2..]).map_err(CallError::Decode)?;
+                    RoamError::User(user_error)
+                }
+                1 => RoamError::UnknownMethod,
+                2 => RoamError::InvalidPayload,
+                3 => RoamError::Cancelled,
+                d => return Err(DecodeError::UnknownRoamErrorDiscriminant(d).into()),
+            };
+            Err(CallError::Roam(roam_error))
+        }
+        d => Err(DecodeError::InvalidResultDiscriminant(d).into()),
     }
 }

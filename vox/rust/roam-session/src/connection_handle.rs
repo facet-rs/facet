@@ -1,17 +1,69 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use facet::Facet;
 
 use crate::{
-    ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage, HandleShared,
-    RX_STREAM_BUFFER_SIZE, ReceiverSlot, RequestIdGenerator, ResponseData, SenderSlot,
-    ServiceDispatcher, TransportError, collect_channel_ids, diagnostic, patch_channel_ids,
-    runtime::oneshot,
+    ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage,
+    RX_STREAM_BUFFER_SIZE, ReceiverSlot, ResponseData, SenderSlot, ServiceDispatcher,
+    TransportError, collect_channel_ids, diagnostic, patch_channel_ids, runtime::oneshot,
 };
 use crate::{
     Role,
     runtime::{Receiver, Sender},
 };
+
+// ============================================================================
+// Request ID generation
+// ============================================================================
+
+/// Generates unique request IDs for a connection.
+///
+/// r[impl call.request-id.uniqueness] - monotonically increasing counter starting at 1
+pub struct RequestIdGenerator {
+    next: AtomicU64,
+}
+
+impl RequestIdGenerator {
+    /// Create a new generator starting at 1.
+    pub fn new() -> Self {
+        Self {
+            next: AtomicU64::new(1),
+        }
+    }
+
+    /// Generate the next unique request ID.
+    pub fn next(&self) -> u64 {
+        self.next.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
+impl Default for RequestIdGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Shared state between ConnectionHandle and Driver
+// ============================================================================
+
+/// Shared state between ConnectionHandle and Driver.
+pub(crate) struct HandleShared {
+    /// Connection ID for this handle (0 = root connection).
+    pub(crate) conn_id: roam_wire::ConnectionId,
+    /// Unified channel to send all messages to the driver.
+    pub(crate) driver_tx: Sender<DriverMessage>,
+    /// Request ID generator.
+    pub(crate) request_ids: RequestIdGenerator,
+    /// Stream ID allocator.
+    pub(crate) channel_ids: ChannelIdAllocator,
+    /// Stream registry for routing incoming data.
+    /// Protected by a mutex since handles may create streams concurrently.
+    pub(crate) channel_registry: std::sync::Mutex<ChannelRegistry>,
+    /// Optional diagnostic state for SIGUSR1 dumps.
+    pub(crate) diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>>,
+}
 
 /// Handle for making outgoing RPC calls.
 ///

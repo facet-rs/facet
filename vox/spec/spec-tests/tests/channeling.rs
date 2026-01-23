@@ -9,12 +9,10 @@ use std::time::Duration;
 
 use facet::Facet;
 use roam_wire::{Hello, Message, MetadataValue};
+use std::convert::Infallible;
+
 use spec_tests::harness::{accept_subject, our_hello, run_async};
 use spec_tests::testbed::method_id;
-
-// TODO: Remove this shim once facet implements `Facet` for `core::convert::Infallible`
-#[derive(Debug, Clone, PartialEq, Eq, Facet)]
-struct Never;
 
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 #[repr(u8)]
@@ -127,7 +125,7 @@ fn streaming_sum_client_to_server() {
             other => return Err(format!("expected Response, got {other:?}")),
         };
 
-        let decoded: Result<i64, RoamError<Never>> =
+        let decoded: Result<i64, RoamError<Infallible>> =
             facet_postcard::from_slice(&payload).map_err(|e| format!("postcard resp: {e}"))?;
 
         match decoded {

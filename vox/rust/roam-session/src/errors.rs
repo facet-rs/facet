@@ -1,7 +1,7 @@
+use std::convert::Infallible;
+
 use facet::Facet;
 use roam_frame::OwnedMessage;
-
-use crate::Never;
 
 #[derive(Debug)]
 pub enum ClientError<TransportError> {
@@ -77,9 +77,9 @@ pub type BorrowedCallResult<T, E> = OwnedMessage<CallResult<T, E>>;
 /// into a single `Result<T, CallError<E>>` for better ergonomics.
 ///
 /// The type parameter `E` represents the user's error type from fallible methods.
-/// For infallible methods, use `CallError<Never>`.
+/// For infallible methods, use `CallError<Infallible>`.
 #[derive(Debug)]
-pub enum CallError<E = Never> {
+pub enum CallError<E = Infallible> {
     /// The remote returned a roam-level error (user error or protocol error).
     Roam(RoamError<E>),
     /// Failed to encode request payload.

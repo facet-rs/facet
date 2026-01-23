@@ -524,8 +524,8 @@ fn format_client_return_type(
         let ty_tokens = return_type.to_token_stream();
         (
             ty_tokens.clone(),
-            quote! { #roam::session::Never },
-            quote! { Result<#ty_tokens, #roam::session::CallError<#roam::session::Never>> },
+            quote! { ::core::convert::Infallible },
+            quote! { Result<#ty_tokens, #roam::session::CallError<::core::convert::Infallible>> },
         )
     }
 }

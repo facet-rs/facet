@@ -38,10 +38,7 @@ enum RoamErrorWithUser<E> {
     Cancelled = 3,
 }
 
-// TODO: Remove this shim once facet implements `Facet` for `core::convert::Infallible`
-// and for the never type `!`, then use `Infallible` as the error type parameter.
-#[derive(Debug, Clone, PartialEq, Eq, Facet)]
-struct Never;
+use std::convert::Infallible;
 
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 #[repr(u8)]
@@ -143,7 +140,7 @@ fn rpc_echo_roundtrip() {
             other => return Err(format!("expected Response, got {other:?}")),
         };
 
-        let decoded: Result<String, RoamError<Never>> =
+        let decoded: Result<String, RoamError<Infallible>> =
             facet_postcard::from_slice(&payload).map_err(|e| format!("postcard resp: {e}"))?;
 
         match decoded {
@@ -291,7 +288,7 @@ fn rpc_unknown_method_returns_unknownmethod_error() {
             other => return Err(format!("expected Response, got {other:?}")),
         };
 
-        let decoded: Result<String, RoamError<Never>> =
+        let decoded: Result<String, RoamError<Infallible>> =
             facet_postcard::from_slice(&payload).map_err(|e| format!("postcard resp: {e}"))?;
 
         match decoded {
@@ -356,7 +353,7 @@ fn rpc_invalid_payload_returns_invalidpayload_error() {
             other => return Err(format!("expected Response, got {other:?}")),
         };
 
-        let decoded: Result<String, RoamError<Never>> =
+        let decoded: Result<String, RoamError<Infallible>> =
             facet_postcard::from_slice(&payload).map_err(|e| format!("postcard resp: {e}"))?;
 
         match decoded {
@@ -424,7 +421,7 @@ fn rpc_pipelining_multiple_requests() {
                     payload,
                     ..
                 } => {
-                    let decoded: Result<String, RoamError<Never>> =
+                    let decoded: Result<String, RoamError<Infallible>> =
                         facet_postcard::from_slice(&payload)
                             .map_err(|e| format!("postcard resp: {e}"))?;
                     match decoded {
