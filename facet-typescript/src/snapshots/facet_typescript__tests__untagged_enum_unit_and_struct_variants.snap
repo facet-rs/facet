@@ -1,6 +1,6 @@
 ---
 source: facet-typescript/src/lib.rs
-assertion_line: 639
+assertion_line: 885
 expression: ts
 ---
-export type Event = null | { x: number; y: number };
+export type Event = "None" | { x: number; y: number };
