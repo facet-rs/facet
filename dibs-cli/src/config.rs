@@ -5,6 +5,7 @@
 pub use dibs_config::Config;
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// Load configuration from `.config/dibs.styx`, searching up the directory tree.
 pub fn load() -> Result<(Config, PathBuf), ConfigError> {
@@ -67,3 +68,54 @@ impl std::fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
+
+/// Find the migrations directory for the configured crate.
+///
+/// Uses `cargo metadata` to find the crate path, then returns `{crate_path}/src/migrations`.
+/// Falls back to `./src/migrations` if no crate is configured or if the crate can't be found.
+pub fn find_migrations_dir(config: &Config, project_root: &Path) -> PathBuf {
+    if let Some(crate_name) = &config.db.crate_name {
+        if let Some(crate_path) = find_crate_path(crate_name, project_root) {
+            return crate_path.join("src/migrations");
+        }
+    }
+    // Fallback to current directory
+    PathBuf::from("src/migrations")
+}
+
+/// Cargo metadata output (subset we care about)
+#[derive(Debug, facet::Facet)]
+struct CargoMetadata {
+    packages: Vec<Package>,
+}
+
+#[derive(Debug, facet::Facet)]
+struct Package {
+    name: String,
+    manifest_path: String,
+}
+
+/// Find the path to a crate in the workspace using cargo metadata.
+fn find_crate_path(crate_name: &str, project_root: &Path) -> Option<PathBuf> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let metadata: CargoMetadata = facet_json::from_str(&stdout).ok()?;
+
+    for package in metadata.packages {
+        if package.name == crate_name {
+            let manifest_path = PathBuf::from(&package.manifest_path);
+            return manifest_path.parent().map(|p| p.to_path_buf());
+        }
+    }
+
+    None
+}

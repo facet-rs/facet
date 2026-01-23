@@ -1342,10 +1342,19 @@ fn generate_migration(name: &str) {
     // Convert name to snake_case for the module name
     let module_name = name.replace('-', "_").to_lowercase();
 
-    // Create migrations directory if it doesn't exist
-    let migrations_dir = Path::new("src/migrations");
+    // Find migrations directory from config
+    let (cfg, config_path) = config::load().unwrap_or_else(|e| {
+        eprintln!("Warning: {}", e);
+        eprintln!("Using default migrations path: src/migrations");
+        (config::Config::default(), std::path::PathBuf::from("."))
+    });
+    let project_root = config_path
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or(Path::new("."));
+    let migrations_dir = config::find_migrations_dir(&cfg, project_root);
     if !migrations_dir.exists()
-        && let Err(e) = fs::create_dir_all(migrations_dir)
+        && let Err(e) = fs::create_dir_all(&migrations_dir)
     {
         eprintln!("Failed to create migrations directory: {}", e);
         std::process::exit(1);
@@ -1576,10 +1585,16 @@ fn create_migration_file_from_sql(name: &str, sql: &str) -> Result<String, std::
     // Convert name to snake_case for the module name
     let module_name = name.replace('-', "_").to_lowercase();
 
-    // Create migrations directory if it doesn't exist
-    let migrations_dir = Path::new("src/migrations");
+    // Find migrations directory from config
+    let (cfg, config_path) = config::load()
+        .unwrap_or_else(|_| (config::Config::default(), std::path::PathBuf::from(".")));
+    let project_root = config_path
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or(Path::new("."));
+    let migrations_dir = config::find_migrations_dir(&cfg, project_root);
     if !migrations_dir.exists() {
-        fs::create_dir_all(migrations_dir)?;
+        fs::create_dir_all(&migrations_dir)?;
     }
 
     // Generate filename: m_2026_01_23_103000_name.rs

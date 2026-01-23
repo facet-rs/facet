@@ -1414,10 +1414,20 @@ impl App {
         // Convert name to snake_case for the module name
         let module_name = name.replace('-', "_").to_lowercase();
 
-        // Create migrations directory if it doesn't exist
-        let migrations_dir = std::path::Path::new("src/migrations");
+        // Find migrations directory from config
+        let (cfg, config_path) = crate::config::load().unwrap_or_else(|_| {
+            (
+                crate::config::Config::default(),
+                std::path::PathBuf::from("."),
+            )
+        });
+        let project_root = config_path
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap_or(std::path::Path::new("."));
+        let migrations_dir = crate::config::find_migrations_dir(&cfg, project_root);
         if !migrations_dir.exists() {
-            fs::create_dir_all(migrations_dir)?;
+            fs::create_dir_all(&migrations_dir)?;
         }
 
         // Generate filename: m_2026_01_18_173711_name.rs

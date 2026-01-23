@@ -33,6 +33,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", 
 tokio-postgres.workspace = true
 facet.workspace = true
 facet-args.workspace = true
+facet-json.workspace = true
 facet-styx.workspace = true
 roam.workspace = true
 roam-session.workspace = true

@@ -7,7 +7,7 @@
 use facet::Facet;
 
 /// Configuration loaded from `dibs.styx`.
-#[derive(Debug, Clone, Facet)]
+#[derive(Debug, Clone, Default, Facet)]
 pub struct Config {
     /// Database crate configuration.
     #[facet(default)]

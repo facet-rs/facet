@@ -349,8 +349,9 @@ pub async fn start_service(config: &Config) -> Result<BuildProcess, ServiceError
         config.db.binary.as_ref().map(std::path::PathBuf::from)
     };
 
-    // Migrations directory is relative to current working directory
-    let migrations_dir = Some(std::path::PathBuf::from("src/migrations"));
+    // Find migrations directory from config
+    let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let migrations_dir = Some(crate::config::find_migrations_dir(config, &project_root));
 
     Ok(BuildProcess {
         output_rx,
