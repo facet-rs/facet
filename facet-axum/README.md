@@ -60,6 +60,7 @@ let app = Router::new()
 - `form` (default): Enables `Form<T>` and `Query<T>` extractors using `facet-urlencoded`
 - `yaml`: Enables `Yaml<T>` extractor/response using `facet-yaml`
 - `toml`: Enables `Toml<T>` extractor/response using `facet-toml`
+- `xml`: Enables `Xml<T>` extractor/response using `facet-xml`
 - `msgpack`: Enables `MsgPack<T>` extractor/response using `facet-msgpack`
 - `postcard`: Enables `Postcard<T>` extractor/response using `facet-postcard`
 - `all`: Enables all format features

@@ -16,15 +16,17 @@ json = ["facet-json/axum"]
 form = ["facet-urlencoded/axum"]
 yaml = ["facet-yaml/axum"]
 toml = ["facet-toml/axum"]
+xml = ["facet-xml/axum"]
 msgpack = ["facet-msgpack/axum"]
 postcard = ["facet-postcard/axum"]
-all = ["json", "form", "yaml", "toml", "msgpack", "postcard"]
+all = ["json", "form", "yaml", "toml", "xml", "msgpack", "postcard"]
 
 [dependencies]
 facet-json = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43.1", optional = true }
 facet-msgpack = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43.1", optional = true }
 facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43.1", optional = true }
 facet-toml = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43.1", optional = true }
+facet-xml = { git = "https://github.com/facet-rs/facet-xml", branch = "main", version = "0.43.1", optional = true }
 facet-yaml = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43.1", optional = true }
 facet-urlencoded = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43.1", optional = true }
 
