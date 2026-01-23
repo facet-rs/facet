@@ -1225,7 +1225,7 @@ fn run_benchmark_with_progress(
         cmd.arg("--nocapture");
     }
 
-    cmd.current_dir(workspace_root.join("facet-perf-shootout"));
+    cmd.current_dir(workspace_root.join("tools/facet-perf-shootout"));
 
     if is_ci {
         // In CI: stream output to both stdout AND capture for parsing

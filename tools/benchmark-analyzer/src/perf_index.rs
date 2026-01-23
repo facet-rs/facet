@@ -274,9 +274,12 @@ pub fn copy_reports(
 pub fn generate_index(workspace_root: &Path, perf_dir: &Path) -> Result<(), String> {
     println!("📊 Generating index pages...");
 
+    let tools_manifest = workspace_root.join("tools/Cargo.toml");
     let status = Command::new("cargo")
         .args([
             "run",
+            "--manifest-path",
+            tools_manifest.to_str().unwrap(),
             "--release",
             "-p",
             "perf-index-generator",
