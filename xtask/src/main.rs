@@ -109,9 +109,18 @@ fn main() {
 }
 
 fn gen_benchmarks() {
-    // Delegate to the benchmark-generator binary
+    // Delegate to the benchmark-generator binary (in tools workspace)
+    let manifest = tools_manifest_path();
     let status = Command::new("cargo")
-        .args(["run", "-p", "benchmark-generator", "--release", "--"])
+        .args([
+            "run",
+            "--manifest-path",
+            manifest.to_str().unwrap(),
+            "-p",
+            "benchmark-generator",
+            "--release",
+            "--",
+        ])
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
@@ -462,7 +471,7 @@ fn measure(experiment_name: &str) {
     let target_dir = workspace.join("target").join("measure");
 
     // Touch source file to ensure recompilation
-    let generated_rs = workspace.join("facet-bloatbench/src/generated.rs");
+    let generated_rs = workspace.join("tools/facet-bloatbench/src/generated.rs");
     if let Ok(file) = fs::OpenOptions::new().write(true).open(&generated_rs) {
         let _ = file.set_modified(std::time::SystemTime::now());
     }
@@ -473,11 +482,14 @@ fn measure(experiment_name: &str) {
         let _ = fs::remove_dir_all(&target_dir);
     }
 
+    let manifest = tools_manifest_path();
     let start = Instant::now();
     let build_output = Command::new("cargo")
         .arg("+nightly")
         .args([
             "rustc",
+            "--manifest-path",
+            manifest.to_str().unwrap(),
             "-p",
             "facet-bloatbench",
             "--lib",
@@ -507,6 +519,8 @@ fn measure(experiment_name: &str) {
         .arg("+nightly")
         .args([
             "build",
+            "--manifest-path",
+            manifest.to_str().unwrap(),
             "-p",
             "facet-bloatbench",
             "--features",
@@ -678,6 +692,8 @@ fn measure(experiment_name: &str) {
         .arg("+nightly")
         .args([
             "llvm-lines",
+            "--manifest-path",
+            manifest.to_str().unwrap(),
             "-p",
             "facet-bloatbench",
             "--lib",
@@ -748,6 +764,8 @@ fn measure(experiment_name: &str) {
         .arg("+nightly")
         .args([
             "rustc",
+            "--manifest-path",
+            manifest.to_str().unwrap(),
             "-p",
             "facet-bloatbench",
             "--lib",
@@ -977,6 +995,7 @@ fn generate_schema() {
     let output = generator.render();
 
     let out_path = workspace_root()
+        .join("tools")
         .join("facet-bloatbench")
         .join("src")
         .join("generated.rs");
@@ -1018,6 +1037,8 @@ fn schema_build(
         .map(PathBuf::from)
         .unwrap_or_else(|_| workspace.join("target").join("schema-build"));
 
+    let manifest = tools_manifest_path();
+
     generate_schema();
 
     let build = |feature: &str, fmt: &str, clean: bool| {
@@ -1026,6 +1047,8 @@ fn schema_build(
             cmd.arg(format!("+{tc}"));
         }
         cmd.arg("build")
+            .arg("--manifest-path")
+            .arg(manifest.to_str().unwrap())
             .arg("-p")
             .arg("facet-bloatbench")
             .arg("--no-default-features")
