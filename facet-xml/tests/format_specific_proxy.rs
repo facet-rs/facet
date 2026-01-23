@@ -1044,3 +1044,465 @@ fn test_deeply_nested_proxies_roundtrip() {
     let roundtripped: Level1 = from_str(&xml).unwrap();
     assert_eq!(original, roundtripped);
 }
+
+// ============================================================================
+// Devious proxy edge cases (10 more tests)
+// ============================================================================
+
+/// Devious case 1: Field-level proxy OVERRIDING container-level proxy.
+/// Point has container-level proxy (PointProxy), but field uses HexPoint instead.
+#[derive(Facet, Clone, Debug)]
+#[facet(transparent)]
+pub struct HexPointProxy(pub String);
+
+impl TryFrom<HexPointProxy> for Point {
+    type Error = &'static str;
+    fn try_from(proxy: HexPointProxy) -> Result<Self, Self::Error> {
+        // Format: "x:hex,y:hex" e.g., "a:14" for x=10, y=20
+        let parts: Vec<&str> = proxy.0.split(',').collect();
+        if parts.len() != 2 {
+            return Err("invalid hex point format");
+        }
+        let x = i32::from_str_radix(parts[0], 16).map_err(|_| "invalid hex x")?;
+        let y = i32::from_str_radix(parts[1], 16).map_err(|_| "invalid hex y")?;
+        Ok(Point { x, y })
+    }
+}
+
+impl From<&Point> for HexPointProxy {
+    fn from(p: &Point) -> Self {
+        HexPointProxy(format!("{:x},{:x}", p.x, p.y))
+    }
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct FieldProxyOverridesContainer {
+    /// Uses Point's container-level proxy (PointProxy - struct with x, y elements)
+    normal_point: Point,
+    /// Field-level proxy overrides to use hex string format
+    #[facet(xml::proxy = HexPointProxy)]
+    hex_point: Point,
+}
+
+#[test]
+fn test_field_proxy_overrides_container_proxy() {
+    let original = FieldProxyOverridesContainer {
+        normal_point: Point { x: 10, y: 20 },
+        hex_point: Point { x: 255, y: 256 },
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    // normal_point should use PointProxy (struct elements)
+    assert!(
+        xml.contains("<x>10</x>"),
+        "normal_point should use container proxy, got: {xml}"
+    );
+    // hex_point should use HexPointProxy (single hex string)
+    assert!(
+        xml.contains("ff,100"),
+        "hex_point should use field proxy override, got: {xml}"
+    );
+
+    let roundtripped: FieldProxyOverridesContainer = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Devious case 2: Same underlying type with DIFFERENT field-level proxies.
+#[derive(Facet, Debug, PartialEq)]
+struct SameTypeDifferentProxies {
+    #[facet(xml::proxy = BinaryString)]
+    as_binary: u32,
+    #[facet(xml::proxy = HexString)]
+    as_hex: u32,
+    /// No proxy - uses default decimal representation
+    as_decimal: u32,
+}
+
+#[test]
+fn test_same_type_different_field_proxies() {
+    let original = SameTypeDifferentProxies {
+        as_binary: 255,
+        as_hex: 255,
+        as_decimal: 255,
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(xml.contains("0b11111111"), "Should have binary, got: {xml}");
+    assert!(xml.contains("0xff"), "Should have hex, got: {xml}");
+    assert!(xml.contains(">255<"), "Should have decimal, got: {xml}");
+
+    let roundtripped: SameTypeDifferentProxies = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Devious case 3: Boolean serialized as "yes"/"no" string.
+#[derive(Facet, Clone, Debug)]
+#[facet(transparent)]
+pub struct YesNoProxy(pub String);
+
+impl TryFrom<YesNoProxy> for bool {
+    type Error = &'static str;
+    fn try_from(proxy: YesNoProxy) -> Result<Self, Self::Error> {
+        match proxy.0.to_lowercase().as_str() {
+            "yes" | "true" | "1" => Ok(true),
+            "no" | "false" | "0" => Ok(false),
+            _ => Err("expected yes/no"),
+        }
+    }
+}
+
+impl From<&bool> for YesNoProxy {
+    fn from(b: &bool) -> Self {
+        YesNoProxy(if *b { "yes" } else { "no" }.to_string())
+    }
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct BoolAsYesNo {
+    name: String,
+    #[facet(xml::proxy = YesNoProxy)]
+    enabled: bool,
+    #[facet(xml::proxy = YesNoProxy)]
+    visible: bool,
+}
+
+#[test]
+fn test_bool_as_yes_no_proxy() {
+    let original = BoolAsYesNo {
+        name: "feature".to_string(),
+        enabled: true,
+        visible: false,
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("<enabled>yes</enabled>"),
+        "true should be 'yes', got: {xml}"
+    );
+    assert!(
+        xml.contains("<visible>no</visible>"),
+        "false should be 'no', got: {xml}"
+    );
+
+    let roundtripped: BoolAsYesNo = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Devious case 4: Nested Vec - Vec<Vec<T>> where T has proxy.
+#[derive(Facet, Debug, PartialEq)]
+struct GridOfColors {
+    name: String,
+    #[facet(rename = "row")]
+    rows: Vec<ColorRow>,
+}
+
+#[derive(Facet, Debug, Clone, PartialEq)]
+struct ColorRow {
+    #[facet(rename = "cell")]
+    cells: Vec<Color>,
+}
+
+#[test]
+fn test_nested_vec_with_proxied_items() {
+    let original = GridOfColors {
+        name: "checkerboard".to_string(),
+        rows: vec![
+            ColorRow {
+                cells: vec![
+                    Color { r: 0, g: 0, b: 0 },
+                    Color {
+                        r: 255,
+                        g: 255,
+                        b: 255,
+                    },
+                ],
+            },
+            ColorRow {
+                cells: vec![
+                    Color {
+                        r: 255,
+                        g: 255,
+                        b: 255,
+                    },
+                    Color { r: 0, g: 0, b: 0 },
+                ],
+            },
+        ],
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    // Each color should use the hex string proxy
+    assert!(
+        xml.contains("#000000"),
+        "Should have black cells, got: {xml}"
+    );
+    assert!(
+        xml.contains("#ffffff"),
+        "Should have white cells, got: {xml}"
+    );
+
+    let roundtripped: GridOfColors = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Devious case 5: Option<Vec<T>> where T has container-level proxy.
+#[derive(Facet, Debug, PartialEq)]
+struct OptionalVecOfProxied {
+    name: String,
+    #[facet(rename = "point")]
+    points: Option<Vec<Point>>,
+}
+
+#[test]
+fn test_option_vec_of_proxied_some() {
+    let original = OptionalVecOfProxied {
+        name: "path".to_string(),
+        points: Some(vec![Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]),
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: OptionalVecOfProxied = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_option_vec_of_proxied_none() {
+    let original = OptionalVecOfProxied {
+        name: "empty".to_string(),
+        points: None,
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: OptionalVecOfProxied = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Devious case 6: Proxy that collapses a struct into a single delimited string.
+#[derive(Facet, Clone, Debug)]
+#[facet(transparent)]
+pub struct RgbString(pub String);
+
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(xml::proxy = RgbString)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl TryFrom<RgbString> for Color {
+    type Error = &'static str;
+    fn try_from(proxy: RgbString) -> Result<Self, Self::Error> {
+        // Format: "r,g,b" or "#RRGGBB"
+        let s = proxy.0.trim();
+        if s.starts_with('#') && s.len() == 7 {
+            let r = u8::from_str_radix(&s[1..3], 16).map_err(|_| "invalid r")?;
+            let g = u8::from_str_radix(&s[3..5], 16).map_err(|_| "invalid g")?;
+            let b = u8::from_str_radix(&s[5..7], 16).map_err(|_| "invalid b")?;
+            Ok(Color { r, g, b })
+        } else {
+            let parts: Vec<&str> = s.split(',').collect();
+            if parts.len() != 3 {
+                return Err("expected r,g,b or #RRGGBB");
+            }
+            let r: u8 = parts[0].trim().parse().map_err(|_| "invalid r")?;
+            let g: u8 = parts[1].trim().parse().map_err(|_| "invalid g")?;
+            let b: u8 = parts[2].trim().parse().map_err(|_| "invalid b")?;
+            Ok(Color { r, g, b })
+        }
+    }
+}
+
+impl From<&Color> for RgbString {
+    fn from(c: &Color) -> Self {
+        RgbString(format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b))
+    }
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct PaletteEntry {
+    name: String,
+    color: Color,
+}
+
+#[test]
+fn test_struct_collapsed_to_string_proxy() {
+    let original = PaletteEntry {
+        name: "red".to_string(),
+        color: Color {
+            r: 255,
+            g: 0,
+            b: 128,
+        },
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    // Color should be serialized as hex string, not struct
+    assert!(
+        xml.contains("#ff0080"),
+        "Color should be hex string, got: {xml}"
+    );
+    assert!(
+        !xml.contains("<r>"),
+        "Should NOT have <r> element, got: {xml}"
+    );
+
+    let roundtripped: PaletteEntry = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Devious case 7: Vec of colors (each color uses its container proxy).
+#[derive(Facet, Debug, PartialEq)]
+struct Palette {
+    name: String,
+    #[facet(rename = "color")]
+    colors: Vec<Color>,
+}
+
+#[test]
+fn test_vec_of_struct_with_string_proxy() {
+    let original = Palette {
+        name: "primary".to_string(),
+        colors: vec![
+            Color { r: 255, g: 0, b: 0 },
+            Color { r: 0, g: 255, b: 0 },
+            Color { r: 0, g: 0, b: 255 },
+        ],
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(xml.contains("#ff0000"), "Should have red");
+    assert!(xml.contains("#00ff00"), "Should have green");
+    assert!(xml.contains("#0000ff"), "Should have blue");
+
+    let roundtripped: Palette = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Devious case 8: Enum variants with different proxy behaviors.
+#[derive(Facet, Debug, PartialEq)]
+#[repr(C)]
+enum ShapeWithMixedProxies {
+    /// Point uses its container-level proxy
+    Point(Point),
+    /// Color uses its container-level proxy (string)
+    ColoredDot { location: Point, color: Color },
+    /// Raw coordinates (no proxy involvement)
+    RawCoords { x: i32, y: i32 },
+}
+
+#[test]
+fn test_enum_variants_with_mixed_proxy_behaviors() {
+    let point = ShapeWithMixedProxies::Point(Point { x: 5, y: 10 });
+    let xml = to_string(&point).unwrap();
+    eprintln!("Point XML: {xml}");
+    let rt: ShapeWithMixedProxies = from_str(&xml).unwrap();
+    assert_eq!(point, rt);
+
+    let colored = ShapeWithMixedProxies::ColoredDot {
+        location: Point { x: 100, y: 200 },
+        color: Color {
+            r: 128,
+            g: 64,
+            b: 32,
+        },
+    };
+    let xml = to_string(&colored).unwrap();
+    eprintln!("ColoredDot XML: {xml}");
+    assert!(xml.contains("#804020"), "Color should be hex string");
+    let rt: ShapeWithMixedProxies = from_str(&xml).unwrap();
+    assert_eq!(colored, rt);
+
+    let raw = ShapeWithMixedProxies::RawCoords { x: 42, y: 84 };
+    let xml = to_string(&raw).unwrap();
+    eprintln!("RawCoords XML: {xml}");
+    let rt: ShapeWithMixedProxies = from_str(&xml).unwrap();
+    assert_eq!(raw, rt);
+}
+
+/// Devious case 9: Proxy combined with xml::attribute.
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename = "rect")]
+struct RectWithProxiedAttributes {
+    #[facet(facet_xml::attribute, xml::proxy = HexString)]
+    width: u32,
+    #[facet(facet_xml::attribute, xml::proxy = HexString)]
+    height: u32,
+    #[facet(facet_xml::attribute)]
+    fill: Color,
+}
+
+#[test]
+fn test_multiple_proxied_attributes() {
+    let original = RectWithProxiedAttributes {
+        width: 256,
+        height: 128,
+        fill: Color {
+            r: 255,
+            g: 128,
+            b: 0,
+        },
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    // Attributes should use proxies
+    assert!(
+        xml.contains(r#"width="0x100""#),
+        "width should be hex, got: {xml}"
+    );
+    assert!(
+        xml.contains(r#"height="0x80""#),
+        "height should be hex, got: {xml}"
+    );
+    assert!(
+        xml.contains(r##"fill="#ff8000""##),
+        "fill should be color hex, got: {xml}"
+    );
+
+    let roundtripped: RectWithProxiedAttributes = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Devious case 10: Recursive structure where proxy is used at each level.
+#[derive(Facet, Debug, Clone, PartialEq)]
+struct TreeNode {
+    value: Color,
+    #[facet(rename = "child")]
+    children: Vec<TreeNode>,
+}
+
+#[test]
+fn test_recursive_structure_with_proxy() {
+    let original = TreeNode {
+        value: Color { r: 255, g: 0, b: 0 },
+        children: vec![
+            TreeNode {
+                value: Color { r: 0, g: 255, b: 0 },
+                children: vec![TreeNode {
+                    value: Color { r: 0, g: 0, b: 255 },
+                    children: vec![],
+                }],
+            },
+            TreeNode {
+                value: Color {
+                    r: 255,
+                    g: 255,
+                    b: 0,
+                },
+                children: vec![],
+            },
+        ],
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    // All colors at all levels should use the proxy
+    assert!(xml.contains("#ff0000"), "Root should be red");
+    assert!(xml.contains("#00ff00"), "Child should be green");
+    assert!(xml.contains("#0000ff"), "Grandchild should be blue");
+    assert!(xml.contains("#ffff00"), "Second child should be yellow");
+
+    let roundtripped: TreeNode = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
