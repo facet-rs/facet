@@ -589,9 +589,14 @@ impl Schema {
         // Tables to add (not involved in a rename)
         for table in &added_tables {
             if !renamed_to.contains(table.name.as_str()) {
+                let mut changes = vec![Change::AddTable((*table).clone())];
+                // Also add indices for new tables (to_create_table_sql doesn't include them)
+                for idx in &table.indices {
+                    changes.push(Change::AddIndex(idx.clone()));
+                }
                 table_diffs.push(TableDiff {
                     table: table.name.clone(),
-                    changes: vec![Change::AddTable((*table).clone())],
+                    changes,
                 });
             }
         }

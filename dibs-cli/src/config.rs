@@ -74,10 +74,10 @@ impl std::error::Error for ConfigError {}
 /// Uses `cargo metadata` to find the crate path, then returns `{crate_path}/src/migrations`.
 /// Falls back to `./src/migrations` if no crate is configured or if the crate can't be found.
 pub fn find_migrations_dir(config: &Config, project_root: &Path) -> PathBuf {
-    if let Some(crate_name) = &config.db.crate_name {
-        if let Some(crate_path) = find_crate_path(crate_name, project_root) {
-            return crate_path.join("src/migrations");
-        }
+    if let Some(crate_name) = &config.db.crate_name
+        && let Some(crate_path) = find_crate_path(crate_name, project_root)
+    {
+        return crate_path.join("src/migrations");
     }
     // Fallback to current directory
     PathBuf::from("src/migrations")
@@ -118,4 +118,11 @@ fn find_crate_path(crate_name: &str, project_root: &Path) -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Find the path to a crate for file watching.
+/// Uses the current directory as the project root.
+pub fn find_crate_path_for_watch(crate_name: &str) -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    find_crate_path(crate_name, &cwd)
 }

@@ -49,6 +49,7 @@ arborium.workspace = true
 arborium-highlight.workspace = true
 arborium-theme.workspace = true
 ariadne.workspace = true
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 
 [dev-dependencies]
 styx-lsp.workspace = true

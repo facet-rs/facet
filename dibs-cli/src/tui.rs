@@ -1,6 +1,7 @@
 //! Unified TUI for dibs - shows schema, diff, and migrations in one interface.
 
 use std::io::{self, stdout};
+use std::sync::mpsc;
 use std::time::Duration;
 
 use arborium::Highlighter;
@@ -13,6 +14,7 @@ use crossterm::{
 use dibs_proto::{
     DibsError, DiffRequest, DiffResult, MigrationInfo, MigrationStatusRequest, SchemaInfo, SqlError,
 };
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{
     prelude::*,
     widgets::{
@@ -394,10 +396,10 @@ pub struct App {
     loading: Option<String>,
     /// Error message
     error: Option<String>,
-    /// Selected table index (for schema tab)
+    /// Selected table index (for Rust tab)
     table_state: ListState,
     selected_table: usize,
-    /// Selected migration index (for migrations tab)
+    /// Selected migration index (for Postgres tab)
     migration_state: ListState,
     selected_migration: usize,
     /// Pending 'g' for gg
@@ -426,7 +428,7 @@ pub struct App {
     show_error_modal: bool,
     /// Error lines for modal display (pre-highlighted)
     error_modal_lines: Vec<Line<'static>>,
-    /// Which pane has focus in schema view (0 = table list, 1 = details)
+    /// Which pane has focus in Rust tab (0 = table list, 1 = details)
     schema_focus: usize,
     /// Selected item index in details pane (columns then foreign keys)
     details_selection: usize,
@@ -434,6 +436,16 @@ pub struct App {
     details_scroll: u16,
     /// Flag to trigger a rebuild
     needs_rebuild: bool,
+    /// Postgres tab mode (HasPending or AllApplied)
+    postgres_mode: PostgresMode,
+    /// Postgres tab selection state
+    postgres_selection: PostgresSelection,
+    /// Whether we're currently rebuilding (for spinner display)
+    rebuilding: bool,
+    /// File watcher for auto-rebuild on source changes
+    file_watcher_rx: Option<std::sync::mpsc::Receiver<()>>,
+    /// Pending migration to apply and commit after rebuild (path, name)
+    pending_migration_commit: Option<(String, String)>,
 }
 
 /// The current phase of the application.
@@ -462,39 +474,53 @@ enum DiffState {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
-    Schema,
-    Diff,
-    Migrations,
+    Rust,
+    Postgres,
 }
 
 impl Tab {
     fn all() -> &'static [Tab] {
-        &[Tab::Schema, Tab::Diff, Tab::Migrations]
+        &[Tab::Rust, Tab::Postgres]
     }
 
     fn index(self) -> usize {
         match self {
-            Tab::Schema => 0,
-            Tab::Diff => 1,
-            Tab::Migrations => 2,
+            Tab::Rust => 0,
+            Tab::Postgres => 1,
         }
     }
 
     fn from_index(i: usize) -> Self {
         match i {
-            0 => Tab::Schema,
-            1 => Tab::Diff,
-            _ => Tab::Migrations,
+            0 => Tab::Rust,
+            _ => Tab::Postgres,
         }
     }
 
     fn name(self) -> &'static str {
         match self {
-            Tab::Schema => "Schema",
-            Tab::Diff => "Diff",
-            Tab::Migrations => "Migrations",
+            Tab::Rust => "Rust",
+            Tab::Postgres => "Postgres",
         }
     }
+}
+
+/// The current mode of the Postgres tab.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PostgresMode {
+    /// Has unapplied migrations - blocks diff/generation
+    HasPending,
+    /// All caught up - can generate new migrations
+    AllApplied,
+}
+
+/// Selection state within the Postgres tab.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PostgresSelection {
+    /// Selected a migration by index
+    Migration(usize),
+    /// Selected the virtual "New Changes" item
+    NewChanges,
 }
 
 impl App {
@@ -513,7 +539,7 @@ impl App {
 
         Self {
             phase: AppPhase::Building,
-            tab: Tab::Schema,
+            tab: Tab::Rust,
             conn: None,
             database_url,
             schema: None,
@@ -542,6 +568,91 @@ impl App {
             details_selection: 0,
             details_scroll: 0,
             needs_rebuild: false,
+            postgres_mode: PostgresMode::AllApplied,
+            postgres_selection: PostgresSelection::NewChanges,
+            rebuilding: false,
+            file_watcher_rx: None,
+            pending_migration_commit: None,
+        }
+    }
+
+    /// Set up file watcher for auto-rebuild on source changes.
+    /// Watches the crate's src/ directory for .rs file changes.
+    fn setup_file_watcher(&mut self, config: &Config) -> Option<RecommendedWatcher> {
+        let (tx, rx) = mpsc::channel::<()>();
+        self.file_watcher_rx = Some(rx);
+
+        // Find the crate path to watch
+        let watch_path = if let Some(crate_name) = &config.db.crate_name {
+            // Find the crate using cargo metadata
+            if let Some(path) = crate::config::find_crate_path_for_watch(crate_name) {
+                path.join("src")
+            } else {
+                std::path::PathBuf::from("src")
+            }
+        } else {
+            std::path::PathBuf::from("src")
+        };
+
+        // Create a debounced watcher
+        let mut last_event = std::time::Instant::now();
+        let debounce_duration = Duration::from_millis(500);
+
+        let watcher =
+            notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = res {
+                    // Only trigger on .rs file modifications
+                    let is_rs_change = event
+                        .paths
+                        .iter()
+                        .any(|p| p.extension().map(|e| e == "rs").unwrap_or(false));
+
+                    if is_rs_change
+                        && matches!(
+                            event.kind,
+                            notify::EventKind::Modify(_)
+                                | notify::EventKind::Create(_)
+                                | notify::EventKind::Remove(_)
+                        )
+                    {
+                        // Debounce: only send if enough time has passed
+                        let now = std::time::Instant::now();
+                        if now.duration_since(last_event) > debounce_duration {
+                            last_event = now;
+                            let _ = tx.send(());
+                        }
+                    }
+                }
+            });
+
+        match watcher {
+            Ok(mut w) => {
+                if watch_path.exists()
+                    && let Err(e) = w.watch(&watch_path, RecursiveMode::Recursive)
+                {
+                    eprintln!("Warning: Failed to watch {}: {}", watch_path.display(), e);
+                    return None;
+                }
+                Some(w)
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to create file watcher: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Check for file change notifications (non-blocking).
+    fn check_file_changes(&mut self) -> bool {
+        if let Some(rx) = &self.file_watcher_rx {
+            // Drain all pending notifications and return true if any
+            let mut changed = false;
+            while rx.try_recv().is_ok() {
+                changed = true;
+            }
+            changed
+        } else {
+            false
         }
     }
 
@@ -571,13 +682,16 @@ impl App {
     }
 
     /// Run the TUI with build phase, then main loop.
-    /// Supports rebuilding via the 'R' key.
+    /// Supports rebuilding via the 'R' key or automatic file watching.
     fn run_with_build(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         rt: &tokio::runtime::Runtime,
         config: &Config,
     ) -> io::Result<()> {
+        // Set up file watcher for auto-rebuild (keep watcher alive in scope)
+        let _watcher = self.setup_file_watcher(config);
+
         loop {
             // Reset state for fresh build
             self.phase = AppPhase::Building;
@@ -586,6 +700,7 @@ impl App {
             self.build_scroll = 0;
             self.build_auto_scroll = true;
             self.needs_rebuild = false;
+            self.rebuilding = false;
             self.error = None;
 
             // Start the build process
@@ -609,7 +724,7 @@ impl App {
                     // Connected, run main loop
                     let result = self.main_loop(terminal, rt);
                     if self.needs_rebuild {
-                        // User requested rebuild, loop again
+                        // User requested rebuild or file changed, loop again
                         continue;
                     }
                     return result;
@@ -715,6 +830,9 @@ impl App {
         let client = conn.client().clone();
         let database_url = self.database_url.clone();
 
+        // Check if we have a pending migration to apply and commit
+        let pending_commit = self.pending_migration_commit.take();
+
         // Fetch schema
         match client.schema().await {
             Ok(schema) => self.schema = Some(schema),
@@ -722,7 +840,7 @@ impl App {
         }
 
         // Fetch migrations and diff if we have a database URL
-        if let Some(url) = database_url {
+        if let Some(url) = database_url.clone() {
             self.loading = Some("Fetching migration status...".to_string());
             match client
                 .migration_status(MigrationStatusRequest {
@@ -730,7 +848,10 @@ impl App {
                 })
                 .await
             {
-                Ok(migrations) => self.migrations = Some(migrations),
+                Ok(migrations) => {
+                    self.update_postgres_mode(&migrations);
+                    self.migrations = Some(migrations);
+                }
                 Err(e) => self.show_error(format!("Migration status: {:?}", e)),
             }
 
@@ -742,6 +863,131 @@ impl App {
             }
         }
         self.loading = None;
+
+        // If we have a pending migration commit, apply and commit it now
+        if let Some((path, name)) = pending_commit {
+            self.apply_and_commit_migration(&path, &name).await;
+        }
+    }
+
+    /// Apply pending migrations and commit to git.
+    async fn apply_and_commit_migration(&mut self, path: &str, name: &str) {
+        self.loading = Some("Applying migration...".to_string());
+
+        // Apply migrations
+        if let (Some(conn), Some(url)) = (&self.conn, &self.database_url) {
+            use dibs_proto::MigrateRequest;
+
+            let (log_tx, mut log_rx) = roam::channel::<dibs_proto::MigrationLog>();
+
+            let client = conn.client().clone();
+            let url = url.clone();
+
+            let result = client
+                .migrate(
+                    MigrateRequest {
+                        database_url: url,
+                        migration: None,
+                    },
+                    log_tx,
+                )
+                .await;
+
+            // Drain any remaining logs
+            while let Ok(Some(_)) = log_rx.recv().await {}
+
+            match result {
+                Ok(res) => {
+                    if !res.applied.is_empty() {
+                        // Commit the migration
+                        self.loading = Some("Committing...".to_string());
+                        if let Err(e) = self.git_commit(name) {
+                            self.show_error(format!("Migration applied but commit failed: {}", e));
+                        } else {
+                            self.error = Some(format!(
+                                "Applied {} migration(s), committed: {}",
+                                res.applied.len(),
+                                name
+                            ));
+                        }
+                    } else {
+                        // No migrations applied (maybe already applied?)
+                        // Still commit the new file
+                        self.loading = Some("Committing...".to_string());
+                        if let Err(e) = self.git_commit(name) {
+                            self.show_error(format!("File created but commit failed: {}", e));
+                        } else {
+                            self.error = Some(format!("Created and committed: {}", path));
+                        }
+                    }
+                    // Refresh migrations list and diff
+                    self.refresh_migrations().await;
+                    self.refresh_diff().await;
+                }
+                Err(e) => {
+                    self.show_migration_error(&e);
+                    // Migration failed - unstage the file
+                    let _ = self.git_reset(path);
+                }
+            }
+        }
+
+        self.loading = None;
+    }
+
+    /// Commit staged changes with a migration message.
+    fn git_commit(&self, name: &str) -> Result<(), String> {
+        use std::process::Command;
+
+        let message = format!("migration: {}", name);
+
+        let output = Command::new("git")
+            .args(["commit", "-m", &message])
+            .output()
+            .map_err(|e| format!("Failed to run git: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git commit failed: {}", stderr));
+        }
+
+        Ok(())
+    }
+
+    /// Unstage a file (git reset).
+    fn git_reset(&self, path: &str) -> Result<(), String> {
+        use std::process::Command;
+
+        let output = Command::new("git")
+            .args(["reset", "HEAD", "--", path])
+            .output()
+            .map_err(|e| format!("Failed to run git: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git reset failed: {}", stderr));
+        }
+
+        Ok(())
+    }
+
+    /// Update postgres_mode based on migration status.
+    fn update_postgres_mode(&mut self, migrations: &[MigrationInfo]) {
+        let pending_count = migrations.iter().filter(|m| !m.applied).count();
+        if pending_count > 0 {
+            self.postgres_mode = PostgresMode::HasPending;
+            // Select first pending migration
+            if let Some(first_pending) = migrations.iter().position(|m| !m.applied) {
+                self.postgres_selection = PostgresSelection::Migration(first_pending);
+                self.selected_migration = first_pending;
+                self.migration_state.select(Some(first_pending));
+            }
+        } else {
+            self.postgres_mode = PostgresMode::AllApplied;
+            // Default to NewChanges in AllApplied mode
+            self.postgres_selection = PostgresSelection::NewChanges;
+            self.migration_state.select(None);
+        }
     }
 
     /// Render the build phase UI.
@@ -856,7 +1102,18 @@ impl App {
         rt: &tokio::runtime::Runtime,
     ) -> io::Result<()> {
         loop {
+            // Check for file changes (triggers auto-rebuild)
+            if self.check_file_changes() {
+                self.needs_rebuild = true;
+                return Ok(());
+            }
+
             terminal.draw(|frame| self.ui(frame))?;
+
+            // Use poll to allow checking file changes periodically
+            if !event::poll(Duration::from_millis(100))? {
+                continue;
+            }
 
             if let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
@@ -966,24 +1223,23 @@ impl App {
                     }
                     // Tab switching (only when not viewing source)
                     KeyCode::Char('1') if !self.show_migration_source => {
-                        self.tab = Tab::Schema;
+                        self.tab = Tab::Rust;
                         self.schema_focus = 0;
                     }
                     KeyCode::Char('2') if !self.show_migration_source => {
-                        self.tab = Tab::Diff;
+                        self.tab = Tab::Postgres;
                     }
-                    KeyCode::Char('3') if !self.show_migration_source => self.tab = Tab::Migrations,
                     KeyCode::Tab if !self.show_migration_source => {
-                        // In Schema tab, Tab cycles between panes
-                        if self.tab == Tab::Schema {
+                        // In Rust tab, Tab cycles between panes
+                        if self.tab == Tab::Rust {
                             self.schema_focus = (self.schema_focus + 1) % 2;
                         } else {
                             self.next_tab();
                         }
                     }
                     KeyCode::BackTab if !self.show_migration_source => {
-                        // In Schema tab, Shift+Tab cycles between panes in reverse
-                        if self.tab == Tab::Schema {
+                        // In Rust tab, Shift+Tab cycles between panes in reverse
+                        if self.tab == Tab::Rust {
                             self.schema_focus = (self.schema_focus + 1) % 2;
                         } else {
                             self.prev_tab();
@@ -993,8 +1249,10 @@ impl App {
                     KeyCode::Up | KeyCode::Char('k') => {
                         if self.show_migration_source {
                             self.source_scroll = self.source_scroll.saturating_sub(1);
-                        } else if self.tab == Tab::Schema && self.schema_focus == 1 {
+                        } else if self.tab == Tab::Rust && self.schema_focus == 1 {
                             self.details_selection_up();
+                        } else if self.tab == Tab::Postgres {
+                            self.postgres_move_up();
                         } else {
                             self.move_up();
                         }
@@ -1002,26 +1260,21 @@ impl App {
                     KeyCode::Down | KeyCode::Char('j') => {
                         if self.show_migration_source {
                             self.source_scroll = self.source_scroll.saturating_add(1);
-                        } else if self.tab == Tab::Schema && self.schema_focus == 1 {
+                        } else if self.tab == Tab::Rust && self.schema_focus == 1 {
                             self.details_selection_down();
+                        } else if self.tab == Tab::Postgres {
+                            self.postgres_move_down();
                         } else {
                             self.move_down();
                         }
                     }
-                    KeyCode::Char('g') if self.tab == Tab::Diff && !self.show_migration_source => {
-                        // Check for pending migrations first
-                        let pending_count = self
-                            .migrations
-                            .as_ref()
-                            .map(|m| m.iter().filter(|m| !m.applied).count())
-                            .unwrap_or(0);
-
-                        if pending_count > 0 {
-                            self.error = Some(format!(
-                                "Apply {} pending migration(s) first! Press 3, then m",
-                                pending_count
-                            ));
-                        } else if let DiffState::Loaded(diff) = &self.diff {
+                    KeyCode::Char('g')
+                        if self.tab == Tab::Postgres
+                            && self.postgres_mode == PostgresMode::AllApplied
+                            && !self.show_migration_source =>
+                    {
+                        // Generate migration if there are changes
+                        if let DiffState::Loaded(diff) = &self.diff {
                             if !diff.table_diffs.is_empty() {
                                 // Start with empty input - user can leave empty for auto-generated name
                                 self.migration_name_input.clear();
@@ -1053,11 +1306,14 @@ impl App {
                     }
                     // Enter to view migration source or follow FK
                     KeyCode::Enter => {
-                        if self.tab == Tab::Schema && self.schema_focus == 1 {
+                        if self.tab == Tab::Rust && self.schema_focus == 1 {
                             self.follow_foreign_key();
-                        } else if self.tab == Tab::Migrations && !self.show_migration_source {
-                            self.show_migration_source = true;
-                            self.source_scroll = 0;
+                        } else if self.tab == Tab::Postgres && !self.show_migration_source {
+                            // Only show source if a migration is selected (not NewChanges)
+                            if let PostgresSelection::Migration(_) = self.postgres_selection {
+                                self.show_migration_source = true;
+                                self.source_scroll = 0;
+                            }
                         } else if self.show_migration_source {
                             self.show_migration_source = false;
                             self.source_scroll = 0;
@@ -1065,14 +1321,19 @@ impl App {
                     }
                     // Actions
                     KeyCode::Char('m') if !self.show_migration_source => {
-                        // Run migrations
-                        if self.tab == Tab::Migrations {
+                        // Run migrations (only in Postgres tab with pending migrations)
+                        if self.tab == Tab::Postgres
+                            && self.postgres_mode == PostgresMode::HasPending
+                        {
                             rt.block_on(self.run_migrations());
                         }
                     }
                     KeyCode::Char('d') if !self.show_migration_source => {
                         // Delete migration (only if not committed)
-                        if self.tab == Tab::Migrations {
+                        if self.tab == Tab::Postgres
+                            && let PostgresSelection::Migration(idx) = self.postgres_selection
+                        {
+                            self.selected_migration = idx;
                             self.delete_selected_migration();
                         }
                     }
@@ -1386,7 +1647,25 @@ impl App {
                     // Generate migration file
                     match self.create_migration_file(name, &sql) {
                         Ok(path) => {
-                            self.error = Some(format!("Created: {}", path));
+                            // Stage the migration file with git
+                            if let Err(e) = self.git_add(&path) {
+                                self.show_error(format!("Failed to stage file: {}", e));
+                                self.loading = None;
+                                return;
+                            }
+
+                            // Also stage mod.rs if it exists in the same directory
+                            if let Some(parent) = std::path::Path::new(&path).parent() {
+                                let mod_rs = parent.join("mod.rs");
+                                if mod_rs.exists() {
+                                    let _ = self.git_add(&mod_rs.display().to_string());
+                                }
+                            }
+
+                            // Store pending commit info for after rebuild
+                            self.pending_migration_commit = Some((path.clone(), name.to_string()));
+
+                            self.error = Some(format!("Created: {} (rebuilding...)", path));
                             // Automatically rebuild to pick up the new migration
                             self.needs_rebuild = true;
                         }
@@ -1401,6 +1680,23 @@ impl App {
             }
             self.loading = None;
         }
+    }
+
+    /// Stage a file with git add.
+    fn git_add(&self, path: &str) -> Result<(), String> {
+        use std::process::Command;
+
+        let output = Command::new("git")
+            .args(["add", path])
+            .output()
+            .map_err(|e| format!("Failed to run git: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git add failed: {}", stderr));
+        }
+
+        Ok(())
     }
 
     fn create_migration_file(&self, name: &str, sql: &str) -> Result<String, std::io::Error> {
@@ -1706,7 +2002,10 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
                 })
                 .await
             {
-                Ok(migrations) => self.migrations = Some(migrations),
+                Ok(migrations) => {
+                    self.update_postgres_mode(&migrations);
+                    self.migrations = Some(migrations);
+                }
                 Err(e) => self.show_error(format!("Migration status: {:?}", e)),
             }
         }
@@ -1740,7 +2039,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
 
     fn move_up(&mut self) {
         match self.tab {
-            Tab::Schema => {
+            Tab::Rust => {
                 if self.schema.is_some() && self.selected_table > 0 {
                     self.selected_table -= 1;
                     self.table_state.select(Some(self.selected_table));
@@ -1748,19 +2047,15 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
                     self.details_scroll = 0;
                 }
             }
-            Tab::Migrations => {
-                if self.selected_migration > 0 {
-                    self.selected_migration -= 1;
-                    self.migration_state.select(Some(self.selected_migration));
-                }
+            Tab::Postgres => {
+                self.postgres_move_up();
             }
-            Tab::Diff => {}
         }
     }
 
     fn move_down(&mut self) {
         match self.tab {
-            Tab::Schema => {
+            Tab::Rust => {
                 if let Some(schema) = &self.schema
                     && self.selected_table < schema.tables.len().saturating_sub(1)
                 {
@@ -1770,47 +2065,95 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
                     self.details_scroll = 0;
                 }
             }
-            Tab::Migrations => {
-                if let Some(migrations) = &self.migrations
-                    && self.selected_migration < migrations.len().saturating_sub(1)
-                {
-                    self.selected_migration += 1;
-                    self.migration_state.select(Some(self.selected_migration));
+            Tab::Postgres => {
+                self.postgres_move_down();
+            }
+        }
+    }
+
+    /// Move up in Postgres tab - through migrations then to NewChanges
+    fn postgres_move_up(&mut self) {
+        match self.postgres_selection {
+            PostgresSelection::Migration(idx) => {
+                if idx > 0 {
+                    self.postgres_selection = PostgresSelection::Migration(idx - 1);
+                    self.selected_migration = idx - 1;
+                    self.migration_state.select(Some(idx - 1));
                 }
             }
-            Tab::Diff => {}
+            PostgresSelection::NewChanges => {
+                // Move to last migration if any
+                if let Some(migrations) = &self.migrations
+                    && !migrations.is_empty()
+                {
+                    let last_idx = migrations.len() - 1;
+                    self.postgres_selection = PostgresSelection::Migration(last_idx);
+                    self.selected_migration = last_idx;
+                    self.migration_state.select(Some(last_idx));
+                }
+            }
+        }
+    }
+
+    /// Move down in Postgres tab - through migrations then to NewChanges
+    fn postgres_move_down(&mut self) {
+        let migration_count = self.migrations.as_ref().map(|m| m.len()).unwrap_or(0);
+
+        match self.postgres_selection {
+            PostgresSelection::Migration(idx) => {
+                if idx + 1 < migration_count {
+                    self.postgres_selection = PostgresSelection::Migration(idx + 1);
+                    self.selected_migration = idx + 1;
+                    self.migration_state.select(Some(idx + 1));
+                } else if self.postgres_mode == PostgresMode::AllApplied {
+                    // Move to NewChanges
+                    self.postgres_selection = PostgresSelection::NewChanges;
+                    self.migration_state.select(None);
+                }
+            }
+            PostgresSelection::NewChanges => {
+                // Already at bottom, do nothing
+            }
         }
     }
 
     fn go_to_first(&mut self) {
         match self.tab {
-            Tab::Schema => {
+            Tab::Rust => {
                 self.selected_table = 0;
                 self.table_state.select(Some(0));
             }
-            Tab::Migrations => {
-                self.selected_migration = 0;
-                self.migration_state.select(Some(0));
+            Tab::Postgres => {
+                if let Some(migrations) = &self.migrations
+                    && !migrations.is_empty()
+                {
+                    self.postgres_selection = PostgresSelection::Migration(0);
+                    self.selected_migration = 0;
+                    self.migration_state.select(Some(0));
+                }
             }
-            Tab::Diff => {}
         }
     }
 
     fn go_to_last(&mut self) {
         match self.tab {
-            Tab::Schema => {
+            Tab::Rust => {
                 if let Some(schema) = &self.schema {
                     self.selected_table = schema.tables.len().saturating_sub(1);
                     self.table_state.select(Some(self.selected_table));
                 }
             }
-            Tab::Migrations => {
-                if let Some(migrations) = &self.migrations {
-                    self.selected_migration = migrations.len().saturating_sub(1);
-                    self.migration_state.select(Some(self.selected_migration));
+            Tab::Postgres => {
+                if self.postgres_mode == PostgresMode::AllApplied {
+                    self.postgres_selection = PostgresSelection::NewChanges;
+                    self.migration_state.select(None);
+                } else if let Some(migrations) = &self.migrations {
+                    let last_idx = migrations.len().saturating_sub(1);
+                    self.postgres_selection = PostgresSelection::Migration(last_idx);
+                    self.selected_migration = last_idx;
+                    self.migration_state.select(Some(last_idx));
                 }
             }
-            Tab::Diff => {}
         }
     }
 
@@ -1937,21 +2280,19 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
                     Span::raw(t.name()),
                 ];
 
-                // Add count indicators
-                match t {
-                    Tab::Diff if diff_count > 0 => {
+                // Add count indicators for Postgres tab
+                if *t == Tab::Postgres {
+                    if pending_migrations > 0 {
                         spans.push(Span::styled(
-                            format!(" ({})", diff_count),
+                            format!(" ({} pending)", pending_migrations),
+                            Style::default().fg(Color::Red),
+                        ));
+                    } else if diff_count > 0 {
+                        spans.push(Span::styled(
+                            format!(" ({} changes)", diff_count),
                             Style::default().fg(Color::Magenta),
                         ));
                     }
-                    Tab::Migrations if pending_migrations > 0 => {
-                        spans.push(Span::styled(
-                            format!(" ({})", pending_migrations),
-                            Style::default().fg(Color::Red),
-                        ));
-                    }
-                    _ => {}
                 }
 
                 Line::from(spans)
@@ -1973,9 +2314,8 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
 
         // Content area
         match self.tab {
-            Tab::Schema => self.render_schema(frame, chunks[1]),
-            Tab::Diff => self.render_diff(frame, chunks[1]),
-            Tab::Migrations => self.render_migrations(frame, chunks[1]),
+            Tab::Rust => self.render_rust_tab(frame, chunks[1]),
+            Tab::Postgres => self.render_postgres_tab(frame, chunks[1]),
         }
 
         // Status bar
@@ -2210,7 +2550,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
         frame.render_widget(status, chunks[3]);
     }
 
-    fn render_schema(&mut self, frame: &mut Frame, area: Rect) {
+    fn render_rust_tab(&mut self, frame: &mut Frame, area: Rect) {
         if let Some(loading) = &self.loading {
             let p = Paragraph::new(loading.as_str())
                 .block(Block::default().borders(Borders::ALL).title(" Schema "));
@@ -2391,31 +2731,229 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
         }
     }
 
-    fn render_diff(&self, frame: &mut Frame, area: Rect) {
-        // Handle non-loaded states
+    /// Render the Postgres tab - shows different UI based on mode
+    fn render_postgres_tab(&mut self, frame: &mut Frame, area: Rect) {
+        if let Some(loading) = &self.loading {
+            let p = Paragraph::new(loading.as_str())
+                .block(Block::default().borders(Borders::ALL).title(" Postgres "));
+            frame.render_widget(p, area);
+            return;
+        }
+
+        // Handle no database URL
+        if self.database_url.is_none() {
+            let p = Paragraph::new("No DATABASE_URL set. Set it in .env or environment.")
+                .block(Block::default().borders(Borders::ALL).title(" Postgres "));
+            frame.render_widget(p, area);
+            return;
+        }
+
+        // Clone migrations to avoid borrow issues
+        let migrations = self.migrations.clone().unwrap_or_default();
+
+        // If showing source, split the view
+        if self.show_migration_source {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+                .split(area);
+
+            // Render migration list on left
+            self.render_postgres_list(frame, chunks[0], &migrations);
+
+            // Render source on right
+            self.render_migration_source(frame, chunks[1], &migrations);
+        } else {
+            // Split: migrations list on left, right panel content depends on mode
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+                .split(area);
+
+            // Render migration list on left
+            self.render_postgres_list(frame, chunks[0], &migrations);
+
+            // Render right panel based on mode and selection
+            match self.postgres_mode {
+                PostgresMode::HasPending => {
+                    self.render_postgres_action_required(frame, chunks[1], &migrations);
+                }
+                PostgresMode::AllApplied => {
+                    self.render_postgres_changes(frame, chunks[1]);
+                }
+            }
+        }
+    }
+
+    /// Render the migration list with "New Changes" item in AllApplied mode
+    fn render_postgres_list(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        migrations: &[MigrationInfo],
+    ) {
+        let mut items: Vec<ListItem> = migrations
+            .iter()
+            .enumerate()
+            .map(|(idx, m)| {
+                let status = if m.applied { "✓" } else { "○" };
+                let status_style = if m.applied {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::Yellow)
+                };
+                let is_selected =
+                    matches!(self.postgres_selection, PostgresSelection::Migration(i) if i == idx);
+                let highlight = if is_selected {
+                    Style::default().bg(Color::DarkGray)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(status, status_style),
+                    Span::styled(" ", highlight),
+                    Span::styled(&m.version, highlight),
+                    Span::styled(" ", highlight),
+                    Span::styled(&m.name, highlight),
+                ]))
+            })
+            .collect();
+
+        // In AllApplied mode, add "New Changes" item
+        if self.postgres_mode == PostgresMode::AllApplied {
+            let change_count = if let DiffState::Loaded(diff) = &self.diff {
+                diff.table_diffs
+                    .iter()
+                    .map(|td| td.changes.len())
+                    .sum::<usize>()
+            } else {
+                0
+            };
+
+            let is_selected = matches!(self.postgres_selection, PostgresSelection::NewChanges);
+            let style = if is_selected {
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .fg(Color::Magenta)
+                    .bold()
+            } else {
+                Style::default().fg(Color::Magenta)
+            };
+
+            let indicator = if change_count > 0 {
+                format!("+ New Changes ({})", change_count)
+            } else {
+                "+ New Changes".to_string()
+            };
+
+            items.push(ListItem::new(Line::from(vec![Span::styled(
+                indicator, style,
+            )])));
+        }
+
+        let title = " Migrations ";
+
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .title_style(Style::default().fg(Color::Cyan)),
+            )
+            .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White).bold())
+            .highlight_symbol("› ");
+
+        frame.render_stateful_widget(list, area, &mut self.migration_state);
+    }
+
+    /// Render "Action Required" panel when there are pending migrations
+    fn render_postgres_action_required(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        migrations: &[MigrationInfo],
+    ) {
+        let pending_count = migrations.iter().filter(|m| !m.applied).count();
+
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("  {} pending migration(s)", pending_count),
+                Style::default().fg(Color::Yellow).bold(),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Press ", Style::default().fg(Color::White)),
+                Span::styled(
+                    " m ",
+                    Style::default().fg(Color::Black).bg(Color::Yellow).bold(),
+                ),
+                Span::styled(" to apply all", Style::default().fg(Color::White)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Cannot generate new migrations",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(
+                "  until pending ones are applied.",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+
+        // Show which migrations are pending
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Pending:",
+            Style::default().fg(Color::Yellow),
+        )));
+        for m in migrations.iter().filter(|m| !m.applied) {
+            lines.push(Line::from(vec![
+                Span::styled("    ○ ", Style::default().fg(Color::Yellow)),
+                Span::raw(&m.version),
+                Span::styled(" - ", Style::default().fg(Color::DarkGray)),
+                Span::raw(&m.name),
+            ]));
+        }
+
+        let p = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Action Required ")
+                .title_style(Style::default().fg(Color::Yellow)),
+        );
+        frame.render_widget(p, area);
+    }
+
+    /// Render "Schema Changes" panel when all migrations are applied
+    fn render_postgres_changes(&self, frame: &mut Frame, area: Rect) {
         let diff = match &self.diff {
             DiffState::NoDatabaseUrl => {
-                let p = Paragraph::new("No DATABASE_URL set. Set it in .env or environment.")
-                    .block(Block::default().borders(Borders::ALL).title(" Diff "));
+                let p = Paragraph::new("No DATABASE_URL set.").block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Schema Changes "),
+                );
                 frame.render_widget(p, area);
                 return;
             }
-            DiffState::NotLoaded => {
-                let p = Paragraph::new("Press 'r' to load diff")
-                    .block(Block::default().borders(Borders::ALL).title(" Diff "));
-                frame.render_widget(p, area);
-                return;
-            }
-            DiffState::Loading => {
-                let p = Paragraph::new("Computing diff...")
-                    .block(Block::default().borders(Borders::ALL).title(" Diff "));
+            DiffState::NotLoaded | DiffState::Loading => {
+                let p = Paragraph::new("Loading diff...").block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Schema Changes "),
+                );
                 frame.render_widget(p, area);
                 return;
             }
             DiffState::Error(err) => {
                 let p = Paragraph::new(format!("Error: {}\n\nPress 'r' to retry", err))
                     .style(Style::default().fg(Color::Red))
-                    .block(Block::default().borders(Borders::ALL).title(" Diff "));
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Schema Changes "),
+                    );
                 frame.render_widget(p, area);
                 return;
             }
@@ -2424,66 +2962,29 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
 
         let mut lines = vec![];
 
-        // Check for pending migrations
-        let pending_count = self
-            .migrations
-            .as_ref()
-            .map(|m| m.iter().filter(|m| !m.applied).count())
-            .unwrap_or(0);
-
-        if pending_count > 0 {
-            // Warning: pending migrations exist
-            lines.push(Line::from(vec![
-                Span::styled("  ⚠ ", Style::default().fg(Color::Yellow)),
-                Span::styled(
-                    format!("{} pending migration(s) - apply them first!", pending_count),
-                    Style::default().fg(Color::Yellow).bold(),
-                ),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("    Press ", Style::default().fg(Color::DarkGray)),
-                Span::styled("3", Style::default().fg(Color::Yellow)),
-                Span::styled(
-                    " to go to Migrations, then ",
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled("m", Style::default().fg(Color::Yellow)),
-                Span::styled(" to apply", Style::default().fg(Color::DarkGray)),
-            ]));
-            lines.push(Line::from(""));
-        }
-
         if diff.table_diffs.is_empty() {
+            lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "✓ No changes - schema matches database",
+                "  ✓ No changes",
                 Style::default().fg(Color::Green),
             )));
-        } else {
-            // Prominent call-to-action (only if no pending migrations)
-            if pending_count == 0 {
-                lines.push(Line::from(vec![
-                    Span::styled("  Press ", Style::default().fg(Color::White)),
-                    Span::styled(
-                        " g ",
-                        Style::default().fg(Color::Black).bg(Color::Yellow).bold(),
-                    ),
-                    Span::styled(
-                        " to generate a migration",
-                        Style::default().fg(Color::White),
-                    ),
-                ]));
-                lines.push(Line::from(""));
-            }
-
             lines.push(Line::from(Span::styled(
-                format!(
-                    "Changes detected ({} tables affected):",
-                    diff.table_diffs.len()
-                ),
-                Style::default().fg(Color::Yellow),
+                "  Schema matches database",
+                Style::default().fg(Color::DarkGray),
             )));
+        } else {
+            // Call to action
+            lines.push(Line::from(vec![
+                Span::styled("  Press ", Style::default().fg(Color::White)),
+                Span::styled(
+                    " g ",
+                    Style::default().fg(Color::Black).bg(Color::Yellow).bold(),
+                ),
+                Span::styled(" to generate", Style::default().fg(Color::White)),
+            ]));
             lines.push(Line::from(""));
 
+            // Show changes
             for td in &diff.table_diffs {
                 lines.push(Line::from(Span::styled(
                     format!("{}:", td.table),
@@ -2508,101 +3009,10 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
         let p = Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Diff (Schema vs Database) ")
+                .title(" Schema Changes ")
                 .title_style(Style::default().fg(Color::Cyan)),
         );
         frame.render_widget(p, area);
-    }
-
-    fn render_migrations(&mut self, frame: &mut Frame, area: Rect) {
-        if let Some(loading) = &self.loading {
-            let p = Paragraph::new(loading.as_str())
-                .block(Block::default().borders(Borders::ALL).title(" Migrations "));
-            frame.render_widget(p, area);
-            return;
-        }
-
-        let Some(migrations) = &self.migrations else {
-            let msg = if self.database_url.is_none() {
-                "No DATABASE_URL set. Set it in .env or environment."
-            } else {
-                "No migration info available"
-            };
-            let p = Paragraph::new(msg)
-                .block(Block::default().borders(Borders::ALL).title(" Migrations "));
-            frame.render_widget(p, area);
-            return;
-        };
-
-        if migrations.is_empty() {
-            let p = Paragraph::new("No migrations registered.")
-                .block(Block::default().borders(Borders::ALL).title(" Migrations "));
-            frame.render_widget(p, area);
-            return;
-        }
-
-        // Clone migrations to avoid borrow issues
-        let migrations = migrations.clone();
-
-        // If showing source, split the view
-        if self.show_migration_source {
-            let chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-                .split(area);
-
-            // Render migration list on left
-            self.render_migration_list(frame, chunks[0], &migrations);
-
-            // Render source on right
-            self.render_migration_source(frame, chunks[1], &migrations);
-        } else {
-            // Just render the list
-            self.render_migration_list(frame, area, &migrations);
-        }
-    }
-
-    fn render_migration_list(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        migrations: &[MigrationInfo],
-    ) {
-        let items: Vec<ListItem> = migrations
-            .iter()
-            .map(|m| {
-                let status = if m.applied { "✓" } else { "○" };
-                let style = if m.applied {
-                    Style::default().fg(Color::Green)
-                } else {
-                    Style::default().fg(Color::Yellow)
-                };
-                ListItem::new(Line::from(vec![
-                    Span::styled(status, style),
-                    Span::raw(" "),
-                    Span::raw(&m.version),
-                    Span::raw(" - "),
-                    Span::raw(&m.name),
-                ]))
-            })
-            .collect();
-
-        let applied = migrations.iter().filter(|m| m.applied).count();
-        let pending = migrations.len() - applied;
-
-        let title = format!(" Migrations ({} applied, {} pending) ", applied, pending);
-
-        let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title)
-                    .title_style(Style::default().fg(Color::Cyan)),
-            )
-            .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White).bold())
-            .highlight_symbol("› ");
-
-        frame.render_stateful_widget(list, area, &mut self.migration_state);
     }
 
     fn render_migration_source(
@@ -2666,18 +3076,20 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
             spans.push(Span::styled("R ", Style::default().fg(Color::Yellow)));
             spans.push(Span::raw("rebuild  "));
 
-            if self.tab == Tab::Migrations {
-                spans.push(Span::styled("Enter ", Style::default().fg(Color::Yellow)));
-                spans.push(Span::raw("view  "));
-                spans.push(Span::styled("m ", Style::default().fg(Color::Yellow)));
-                spans.push(Span::raw("migrate  "));
-                spans.push(Span::styled("d ", Style::default().fg(Color::Yellow)));
-                spans.push(Span::raw("delete  "));
-            }
-
-            if self.tab == Tab::Diff {
-                spans.push(Span::styled("g ", Style::default().fg(Color::Yellow)));
-                spans.push(Span::raw("generate  "));
+            if self.tab == Tab::Postgres {
+                if self.postgres_mode == PostgresMode::HasPending {
+                    spans.push(Span::styled("m ", Style::default().fg(Color::Yellow)));
+                    spans.push(Span::raw("apply all  "));
+                } else {
+                    spans.push(Span::styled("g ", Style::default().fg(Color::Yellow)));
+                    spans.push(Span::raw("generate  "));
+                }
+                if let PostgresSelection::Migration(_) = self.postgres_selection {
+                    spans.push(Span::styled("Enter ", Style::default().fg(Color::Yellow)));
+                    spans.push(Span::raw("view  "));
+                    spans.push(Span::styled("d ", Style::default().fg(Color::Yellow)));
+                    spans.push(Span::raw("delete  "));
+                }
             }
 
             spans.push(Span::styled("q ", Style::default().fg(Color::Yellow)));
