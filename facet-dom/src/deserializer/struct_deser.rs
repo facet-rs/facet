@@ -523,7 +523,13 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         trace!(tag = %tag, namespace = ?namespace, "got child NodeStart");
 
         if let Some(info) = self.field_map.find_element(tag, namespace) {
-            if info.is_list || info.is_array || info.is_set || info.is_tuple {
+            // Check if the field has a field-level proxy - if so, the XML representation
+            // is the proxy's shape, not the actual field type. A Vec<u32> with a string proxy
+            // should be deserialized as a scalar (string), not as a flat sequence.
+            let format_ns = self.dom_deser.parser.format_namespace();
+            let has_field_proxy = info.field.effective_proxy(format_ns).is_some();
+
+            if !has_field_proxy && (info.is_list || info.is_array || info.is_set || info.is_tuple) {
                 self.handle_flat_sequence(
                     wip,
                     info.idx,

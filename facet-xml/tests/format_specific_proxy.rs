@@ -453,3 +453,67 @@ fn test_container_level_proxy_on_vec_items_roundtrip() {
     let roundtripped: ContainerWithProxiedItemList = from_str(&xml).unwrap();
     assert_eq!(original, roundtripped);
 }
+
+/// A proxy that represents a Vec<u32> as a comma-separated string.
+#[derive(Facet, Clone, Debug)]
+#[facet(transparent)]
+pub struct CommaSeparatedU32s(pub String);
+
+impl TryFrom<CommaSeparatedU32s> for Vec<u32> {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: CommaSeparatedU32s) -> Result<Self, Self::Error> {
+        if proxy.0.is_empty() {
+            return Ok(vec![]);
+        }
+        proxy.0.split(',').map(|s| s.trim().parse()).collect()
+    }
+}
+
+impl From<&Vec<u32>> for CommaSeparatedU32s {
+    fn from(v: &Vec<u32>) -> Self {
+        CommaSeparatedU32s(
+            v.iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        )
+    }
+}
+
+/// Test field-level proxy that converts entire Vec to a single string.
+#[derive(Facet, Debug, PartialEq)]
+struct ContainerWithCommaSeparatedField {
+    name: String,
+    #[facet(xml::proxy = CommaSeparatedU32s)]
+    numbers: Vec<u32>,
+}
+
+#[test]
+fn test_field_level_proxy_vec_as_comma_separated_string_roundtrip() {
+    let original = ContainerWithCommaSeparatedField {
+        name: "test".to_string(),
+        numbers: vec![1, 2, 3, 4, 5],
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(
+        xml.contains("1,2,3,4,5"),
+        "Should serialize as comma-separated string, got: {xml}"
+    );
+
+    let roundtripped: ContainerWithCommaSeparatedField = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_field_level_proxy_vec_as_comma_separated_string_empty_roundtrip() {
+    let original = ContainerWithCommaSeparatedField {
+        name: "empty".to_string(),
+        numbers: vec![],
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: ContainerWithCommaSeparatedField = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
