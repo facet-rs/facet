@@ -981,6 +981,29 @@ pub(crate) fn gen_field_from_pfield(
                     // Use args directly to preserve spans for IDE hover/navigation
                     let proxy_type = &attr.args;
                     // Generate a full ProxyDef with convert functions for field-level proxy
+                    // If the field is also marked as opaque, we need to unwrap Opaque<T> to get T
+                    let is_opaque = field.attrs.has_builtin("opaque");
+                    let convert_out_impl = if is_opaque {
+                        quote! {
+                            // Field is opaque, so field_ptr points to Opaque<T>, not T
+                            // Opaque<T> is #[repr(transparent)] with a single field T
+                            // So we can safely get &T by getting &Opaque<T>.0
+                            let opaque_ref: &#facet_crate::Opaque<#field_type> = field_ptr.get();
+                            let field_ref: &#field_type = &opaque_ref.0;
+                            match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
+                                𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
+                                𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
+                            }
+                        }
+                    } else {
+                        quote! {
+                            let field_ref: &#field_type = field_ptr.get();
+                            match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
+                                𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
+                                𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
+                            }
+                        }
+                    };
                     proxy_value = Some(quote! {
                         &const {
                             extern crate alloc as __alloc;
@@ -1000,11 +1023,7 @@ pub(crate) fn gen_field_from_pfield(
                                 field_ptr: #facet_crate::PtrConst,
                                 proxy_ptr: #facet_crate::PtrUninit,
                             ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
-                                let field_ref: &#field_type = field_ptr.get();
-                                match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
-                                    𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
-                                    𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
-                                }
+                                #convert_out_impl
                             }
 
                             #facet_crate::ProxyDef {
@@ -1031,6 +1050,29 @@ pub(crate) fn gen_field_from_pfield(
             if key == "proxy" {
                 // Format-specific proxy: #[facet(xml::proxy = ProxyType)]
                 let proxy_type = &attr.args;
+                // If the field is also marked as opaque, we need to unwrap Opaque<T> to get T
+                let is_opaque = field.attrs.has_builtin("opaque");
+                let convert_out_impl = if is_opaque {
+                    quote! {
+                        // Field is opaque, so field_ptr points to Opaque<T>, not T
+                        // Opaque<T> is #[repr(transparent)] with a single field T
+                        // So we can safely get &T by getting &Opaque<T>.0
+                        let opaque_ref: &#facet_crate::Opaque<#field_type> = field_ptr.get();
+                        let field_ref: &#field_type = &opaque_ref.0;
+                        match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
+                            𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
+                            𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
+                        }
+                    }
+                } else {
+                    quote! {
+                        let field_ref: &#field_type = field_ptr.get();
+                        match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
+                            𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
+                            𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
+                        }
+                    }
+                };
                 let format_proxy = quote! {
                     #facet_crate::FormatProxy {
                         format: #ns_str,
@@ -1052,11 +1094,7 @@ pub(crate) fn gen_field_from_pfield(
                                 field_ptr: #facet_crate::PtrConst,
                                 proxy_ptr: #facet_crate::PtrUninit,
                             ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
-                                let field_ref: &#field_type = field_ptr.get();
-                                match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
-                                    𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
-                                    𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
-                                }
+                                #convert_out_impl
                             }
 
                             #facet_crate::ProxyDef {
